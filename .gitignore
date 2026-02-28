@@ -1,0 +1,36 @@
+# Binaries
+gleann
+gleann-server
+gleann-mcp
+*.exe
+
+# Build
+/build/
+/dist/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Test
+coverage.out
+coverage.html
+*.test
+
+# Indexes
+indexes/
+*.index
+*.passages.jsonl
+*.passages.idx
+*.meta.json
+
+# Temp
+/tmp/
+*.log

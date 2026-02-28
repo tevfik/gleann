@@ -1,0 +1,453 @@
+// Package embedding provides embedding computation via various providers
+// (Ollama, OpenAI-compatible APIs).
+package embedding
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"os"
+	"sync"
+	"time"
+)
+
+// Provider is the embedding computation provider type.
+type Provider string
+
+const (
+	ProviderOllama Provider = "ollama"
+	ProviderOpenAI Provider = "openai"
+	ProviderGemini Provider = "gemini"
+)
+
+// Computer computes embeddings using a specified provider.
+type Computer struct {
+	provider       Provider
+	model          string
+	baseURL        string
+	apiKey         string
+	dimensions     int
+	batchSize      int
+	promptTemplate string
+	client         *http.Client
+	mu             sync.Mutex
+	dimOnce        sync.Once
+}
+
+// Options configures the embedding computer.
+type Options struct {
+	Provider       Provider
+	Model          string
+	BaseURL        string
+	APIKey         string
+	BatchSize      int
+	PromptTemplate string // Prepended to text before embedding
+}
+
+// NewComputer creates a new embedding computer.
+func NewComputer(opts Options) *Computer {
+	if opts.BatchSize <= 0 {
+		opts.BatchSize = 32
+	}
+	if opts.Model == "" {
+		opts.Model = "bge-m3"
+	}
+	if opts.Provider == "" {
+		opts.Provider = ProviderOllama
+	}
+	if opts.BaseURL == "" {
+		switch opts.Provider {
+		case ProviderOllama:
+			opts.BaseURL = resolveOllamaHost()
+		case ProviderOpenAI:
+			opts.BaseURL = resolveOpenAIBaseURL()
+		case ProviderGemini:
+			opts.BaseURL = "https://generativelanguage.googleapis.com"
+		}
+	}
+	if opts.APIKey == "" {
+		switch opts.Provider {
+		case ProviderOpenAI:
+			opts.APIKey = os.Getenv("OPENAI_API_KEY")
+		case ProviderGemini:
+			opts.APIKey = os.Getenv("GEMINI_API_KEY")
+			if opts.APIKey == "" {
+				opts.APIKey = os.Getenv("GOOGLE_API_KEY")
+			}
+		}
+	}
+
+	return &Computer{
+		provider:       opts.Provider,
+		model:          opts.Model,
+		baseURL:        opts.BaseURL,
+		apiKey:         opts.APIKey,
+		batchSize:      opts.BatchSize,
+		promptTemplate: opts.PromptTemplate,
+		client: &http.Client{
+			Timeout: 120 * time.Second,
+		},
+	}
+}
+
+// Compute computes embeddings for the given texts.
+func (c *Computer) Compute(ctx context.Context, texts []string) ([][]float32, error) {
+	if len(texts) == 0 {
+		return nil, nil
+	}
+
+	// Apply prompt template if set.
+	processedTexts := texts
+	if c.promptTemplate != "" {
+		processedTexts = make([]string, len(texts))
+		for i, t := range texts {
+			processedTexts[i] = c.promptTemplate + t
+		}
+	}
+
+	// Truncate texts that exceed model's token limit.
+	tokenLimit := GetModelTokenLimit(c.model)
+	for i, t := range processedTexts {
+		processedTexts[i] = TruncateToTokenLimit(t, tokenLimit)
+	}
+
+	var allEmbeddings [][]float32
+
+	// Process in batches.
+	for i := 0; i < len(processedTexts); i += c.batchSize {
+		end := i + c.batchSize
+		if end > len(processedTexts) {
+			end = len(processedTexts)
+		}
+		batch := processedTexts[i:end]
+
+		var embeddings [][]float32
+		var err error
+
+		switch c.provider {
+		case ProviderOllama:
+			embeddings, err = c.computeOllama(ctx, batch)
+		case ProviderOpenAI:
+			embeddings, err = c.computeOpenAI(ctx, batch)
+		case ProviderGemini:
+			embeddings, err = c.computeGemini(ctx, batch)
+		default:
+			return nil, fmt.Errorf("unsupported provider: %s", c.provider)
+		}
+
+		if err != nil {
+			return nil, fmt.Errorf("compute batch %d-%d: %w", i, end, err)
+		}
+
+		allEmbeddings = append(allEmbeddings, embeddings...)
+	}
+
+	// Cache dimensions from first result.
+	if len(allEmbeddings) > 0 && c.dimensions == 0 {
+		c.mu.Lock()
+		c.dimensions = len(allEmbeddings[0])
+		c.mu.Unlock()
+	}
+
+	return allEmbeddings, nil
+}
+
+// ComputeSingle computes an embedding for a single text.
+func (c *Computer) ComputeSingle(ctx context.Context, text string) ([]float32, error) {
+	results, err := c.Compute(ctx, []string{text})
+	if err != nil {
+		return nil, err
+	}
+	if len(results) == 0 {
+		return nil, fmt.Errorf("no embedding returned")
+	}
+	return results[0], nil
+}
+
+// Dimensions returns the embedding dimensions (0 if not yet computed).
+func (c *Computer) Dimensions() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.dimensions
+}
+
+// ModelName returns the model name.
+func (c *Computer) ModelName() string {
+	return c.model
+}
+
+// SetPromptTemplate updates the prompt template (e.g., switch between build/query templates).
+func (c *Computer) SetPromptTemplate(template string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.promptTemplate = template
+}
+
+// modelTokenLimits maps model names to their maximum token limits.
+var modelTokenLimits = map[string]int{
+	// OpenAI
+	"text-embedding-3-small":  8191,
+	"text-embedding-3-large":  8191,
+	"text-embedding-ada-002":  8191,
+	// Ollama / open-source
+	"bge-m3":                  8192,
+	"bge-large-en-v1.5":      512,
+	"bge-small-en-v1.5":      512,
+	"nomic-embed-text":       8192,
+	"mxbai-embed-large":      512,
+	"all-minilm":             256,
+	"snowflake-arctic-embed": 512,
+	// Gemini
+	"text-embedding-004":     2048,
+	// Default fallback
+	"default":                512,
+}
+
+// GetModelTokenLimit returns the token limit for a model.
+func GetModelTokenLimit(model string) int {
+	if limit, ok := modelTokenLimits[model]; ok {
+		return limit
+	}
+	return modelTokenLimits["default"]
+}
+
+// TruncateToTokenLimit approximates token count (~4 chars per token) and truncates if needed.
+func TruncateToTokenLimit(text string, maxTokens int) string {
+	if maxTokens <= 0 {
+		return text
+	}
+	// Approximate: 1 token ≈ 4 characters for English text.
+	maxChars := maxTokens * 4
+	if len(text) <= maxChars {
+		return text
+	}
+	// Truncate at word boundary.
+	truncated := text[:maxChars]
+	lastSpace := len(truncated) - 1
+	for lastSpace > 0 && truncated[lastSpace] != ' ' {
+		lastSpace--
+	}
+	if lastSpace > 0 {
+		return truncated[:lastSpace]
+	}
+	return truncated
+}
+
+// --- Ollama Provider ---
+
+type ollamaEmbedRequest struct {
+	Model string `json:"model"`
+	Input any    `json:"input"` // string or []string
+}
+
+type ollamaEmbedResponse struct {
+	Embeddings [][]float32 `json:"embeddings"`
+}
+
+func (c *Computer) computeOllama(ctx context.Context, texts []string) ([][]float32, error) {
+	// Ollama /api/embed supports batch input.
+	reqBody := ollamaEmbedRequest{
+		Model: c.model,
+		Input: texts,
+	}
+
+	body, err := json.Marshal(reqBody)
+	if err != nil {
+		return nil, fmt.Errorf("marshal request: %w", err)
+	}
+
+	url := c.baseURL + "/api/embed"
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("POST %s: %w", url, err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("POST %s returned %d: %s", url, resp.StatusCode, string(respBody))
+	}
+
+	var result ollamaEmbedResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("decode response: %w", err)
+	}
+
+	if len(result.Embeddings) != len(texts) {
+		return nil, fmt.Errorf("expected %d embeddings, got %d", len(texts), len(result.Embeddings))
+	}
+
+	return result.Embeddings, nil
+}
+
+// --- OpenAI Provider ---
+
+type openAIEmbedRequest struct {
+	Model string   `json:"model"`
+	Input []string `json:"input"`
+}
+
+type openAIEmbedResponse struct {
+	Data []struct {
+		Embedding []float32 `json:"embedding"`
+		Index     int       `json:"index"`
+	} `json:"data"`
+	Usage struct {
+		PromptTokens int `json:"prompt_tokens"`
+		TotalTokens  int `json:"total_tokens"`
+	} `json:"usage"`
+}
+
+func (c *Computer) computeOpenAI(ctx context.Context, texts []string) ([][]float32, error) {
+	reqBody := openAIEmbedRequest{
+		Model: c.model,
+		Input: texts,
+	}
+
+	body, err := json.Marshal(reqBody)
+	if err != nil {
+		return nil, fmt.Errorf("marshal request: %w", err)
+	}
+
+	url := c.baseURL + "/v1/embeddings"
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if c.apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+c.apiKey)
+	}
+
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("POST %s: %w", url, err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("POST %s returned %d: %s", url, resp.StatusCode, string(respBody))
+	}
+
+	var result openAIEmbedResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("decode response: %w", err)
+	}
+
+	// Sort by index to preserve order.
+	embeddings := make([][]float32, len(texts))
+	for _, d := range result.Data {
+		if d.Index < len(embeddings) {
+			embeddings[d.Index] = d.Embedding
+		}
+	}
+
+	return embeddings, nil
+}
+
+// --- Settings ---
+
+func resolveOllamaHost() string {
+	if host := os.Getenv("OLLAMA_HOST"); host != "" {
+		return host
+	}
+	return "http://localhost:11434"
+}
+
+func resolveOpenAIBaseURL() string {
+	if url := os.Getenv("OPENAI_BASE_URL"); url != "" {
+		return url
+	}
+	return "https://api.openai.com"
+}
+
+// --- Gemini Provider ---
+
+type geminiEmbedRequest struct {
+	Requests []geminiEmbedPart `json:"requests"`
+}
+
+type geminiEmbedPart struct {
+	Model   string          `json:"model"`
+	Content geminiContent   `json:"content"`
+}
+
+type geminiContent struct {
+	Parts []geminiTextPart `json:"parts"`
+}
+
+type geminiTextPart struct {
+	Text string `json:"text"`
+}
+
+type geminiEmbedResponse struct {
+	Embeddings []struct {
+		Values []float32 `json:"values"`
+	} `json:"embeddings"`
+}
+
+func (c *Computer) computeGemini(ctx context.Context, texts []string) ([][]float32, error) {
+	model := c.model
+	if model == "" {
+		model = "text-embedding-004"
+	}
+
+	// Gemini batch embed endpoint.
+	requests := make([]geminiEmbedPart, len(texts))
+	for i, text := range texts {
+		requests[i] = geminiEmbedPart{
+			Model: "models/" + model,
+			Content: geminiContent{
+				Parts: []geminiTextPart{{Text: text}},
+			},
+		}
+	}
+
+	reqBody := geminiEmbedRequest{Requests: requests}
+	body, err := json.Marshal(reqBody)
+	if err != nil {
+		return nil, fmt.Errorf("marshal request: %w", err)
+	}
+
+	url := fmt.Sprintf("%s/v1beta/models/%s:batchEmbedContents?key=%s",
+		c.baseURL, model, c.apiKey)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("POST gemini: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("gemini returned %d: %s", resp.StatusCode, string(respBody))
+	}
+
+	var result geminiEmbedResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("decode response: %w", err)
+	}
+
+	embeddings := make([][]float32, len(result.Embeddings))
+	for i, emb := range result.Embeddings {
+		embeddings[i] = emb.Values
+	}
+
+	return embeddings, nil
+}

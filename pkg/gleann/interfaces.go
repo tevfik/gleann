@@ -1,0 +1,102 @@
+package gleann
+
+import "context"
+
+// BackendBuilder is the interface that backend builders must implement.
+// It mirrors Python LEANN's BackendBuilder ABC.
+type BackendBuilder interface {
+	// Build constructs the index from the given embeddings and returns
+	// the serialized index data.
+	Build(ctx context.Context, embeddings [][]float32) ([]byte, error)
+
+	// AddVectors adds new vectors to an existing index.
+	AddVectors(ctx context.Context, indexData []byte, embeddings [][]float32, startID int64) ([]byte, error)
+
+	// RemoveVectors removes vectors by their IDs from the index.
+	RemoveVectors(ctx context.Context, indexData []byte, ids []int64) ([]byte, error)
+}
+
+// BackendSearcher is the interface that backend searchers must implement.
+// It mirrors Python LEANN's BackendSearcher ABC.
+type BackendSearcher interface {
+	// Load loads the index from serialized data.
+	Load(ctx context.Context, indexData []byte, meta IndexMeta) error
+
+	// Search performs a vector search and returns (ids, distances).
+	Search(ctx context.Context, query []float32, topK int) ([]int64, []float32, error)
+
+	// SearchWithRecompute performs search with on-the-fly embedding recomputation.
+	// This is LEANN's core innovation — instead of storing all embeddings,
+	// only recompute those needed during the graph traversal.
+	SearchWithRecompute(ctx context.Context, query []float32, topK int, recompute EmbeddingRecomputer) ([]int64, []float32, error)
+
+	// Close releases any resources held by the searcher.
+	Close() error
+}
+
+// EmbeddingRecomputer is a function that recomputes embeddings for given passage IDs.
+// This is the core of LEANN's storage optimization — embeddings are not stored
+// but recomputed on-demand during search.
+type EmbeddingRecomputer func(ctx context.Context, ids []int64) ([][]float32, error)
+
+// BackendFactory creates BackendBuilder and BackendSearcher instances.
+type BackendFactory interface {
+	// Name returns the backend name (e.g., "hnsw", "ivf").
+	Name() string
+
+	// NewBuilder creates a new BackendBuilder with the given config.
+	NewBuilder(config Config) BackendBuilder
+
+	// NewSearcher creates a new BackendSearcher with the given config.
+	NewSearcher(config Config) BackendSearcher
+}
+
+// EmbeddingComputer computes embeddings for text passages.
+type EmbeddingComputer interface {
+	// Compute computes embeddings for the given texts.
+	Compute(ctx context.Context, texts []string) ([][]float32, error)
+
+	// ComputeSingle computes embedding for a single text.
+	ComputeSingle(ctx context.Context, text string) ([]float32, error)
+
+	// Dimensions returns the embedding dimensions.
+	Dimensions() int
+
+	// ModelName returns the model name.
+	ModelName() string
+}
+
+// EmbeddingServer manages an in-process embedding computation service.
+// In Python LEANN, this is done via ZMQ subprocess.
+// In gleann-go, this is done via goroutines and channels.
+type EmbeddingServer interface {
+	// Start starts the embedding server.
+	Start(ctx context.Context) error
+
+	// Stop stops the embedding server.
+	Stop() error
+
+	// ComputeEmbeddings sends a request to compute embeddings for given IDs.
+	ComputeEmbeddings(ctx context.Context, ids []int64) ([][]float32, error)
+
+	// IsRunning returns whether the server is running.
+	IsRunning() bool
+}
+
+// Chunker splits text into smaller chunks for indexing.
+type Chunker interface {
+	// Chunk splits the given text into chunks.
+	Chunk(text string) []string
+
+	// ChunkWithMetadata splits text and preserves source metadata.
+	ChunkWithMetadata(text string, metadata map[string]any) []Item
+}
+
+// Scorer provides scoring for search results (e.g., BM25).
+type Scorer interface {
+	// Score scores the query against the given passages.
+	Score(query string, passages []Passage) []float32
+
+	// AddDocuments adds documents to the scorer's index.
+	AddDocuments(passages []Passage)
+}

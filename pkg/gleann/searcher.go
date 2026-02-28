@@ -1,0 +1,319 @@
+package gleann
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"math"
+	"os"
+	"path/filepath"
+	"sort"
+)
+
+// LeannSearcher performs search on built indexes.
+// This mirrors Python LEANN's LeannSearcher.
+type LeannSearcher struct {
+	config    Config
+	backend   BackendSearcher
+	passages  *PassageManager
+	meta      IndexMeta
+	embedder  EmbeddingComputer
+	scorer    Scorer
+	embServer EmbeddingServer
+
+	loaded bool
+}
+
+// NewSearcher creates a new LeannSearcher.
+func NewSearcher(config Config, embedder EmbeddingComputer) *LeannSearcher {
+	return &LeannSearcher{
+		config:   config,
+		embedder: embedder,
+	}
+}
+
+// SetScorer sets a BM25 scorer for hybrid search.
+func (s *LeannSearcher) SetScorer(scorer Scorer) {
+	s.scorer = scorer
+}
+
+// SetEmbeddingServer sets the embedding server for recomputation during search.
+func (s *LeannSearcher) SetEmbeddingServer(server EmbeddingServer) {
+	s.embServer = server
+}
+
+// Load loads an index for searching.
+func (s *LeannSearcher) Load(ctx context.Context, name string) error {
+	indexDir := filepath.Join(s.config.IndexDir, name)
+	basePath := filepath.Join(indexDir, name)
+
+	// Load metadata.
+	metaPath := basePath + ".meta.json"
+	metaData, err := os.ReadFile(metaPath)
+	if err != nil {
+		return fmt.Errorf("read metadata: %w", err)
+	}
+	if err := json.Unmarshal(metaData, &s.meta); err != nil {
+		return fmt.Errorf("unmarshal metadata: %w", err)
+	}
+
+	// Load passages.
+	s.passages = NewPassageManager(basePath)
+	if err := s.passages.Load(); err != nil {
+		return fmt.Errorf("load passages: %w", err)
+	}
+
+	// Load index.
+	indexPath := basePath + ".index"
+	indexData, err := os.ReadFile(indexPath)
+	if err != nil {
+		return fmt.Errorf("read index: %w", err)
+	}
+
+	// Get backend.
+	factory, err := GetBackend(s.meta.Backend)
+	if err != nil {
+		return fmt.Errorf("get backend: %w", err)
+	}
+	s.backend = factory.NewSearcher(s.config)
+
+	if err := s.backend.Load(ctx, indexData, s.meta); err != nil {
+		return fmt.Errorf("load backend: %w", err)
+	}
+
+	// Build BM25 index if scorer is set.
+	if s.scorer != nil {
+		s.scorer.AddDocuments(s.passages.All())
+	}
+
+	s.loaded = true
+	return nil
+}
+
+// Search performs a search and returns results.
+func (s *LeannSearcher) Search(ctx context.Context, query string, opts ...SearchOption) ([]SearchResult, error) {
+	if !s.loaded {
+		return nil, fmt.Errorf("no index loaded; call Load() first")
+	}
+
+	// Apply options.
+	searchOpts := s.config.SearchConfig
+	for _, opt := range opts {
+		opt(&searchOpts)
+	}
+
+	topK := searchOpts.TopK
+	if topK <= 0 {
+		topK = 10
+	}
+
+	// Compute query embedding.
+	queryEmb, err := s.embedder.ComputeSingle(ctx, query)
+	if err != nil {
+		return nil, fmt.Errorf("compute query embedding: %w", err)
+	}
+
+	// Vector search.
+	var ids []int64
+	var distances []float32
+
+	if s.embServer != nil && s.embServer.IsRunning() {
+		// Use recomputation-based search (LEANN's core optimization).
+		ids, distances, err = s.backend.SearchWithRecompute(ctx, queryEmb, topK*2, s.embServer.ComputeEmbeddings)
+	} else {
+		// Standard search with stored embeddings.
+		ids, distances, err = s.backend.Search(ctx, queryEmb, topK*2)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("vector search: %w", err)
+	}
+
+	// Convert distances to cosine-like scores (higher = better).
+	vectorScores := make(map[int64]float32, len(ids))
+	maxDist := float32(0)
+	for _, d := range distances {
+		if d > maxDist {
+			maxDist = d
+		}
+	}
+	for i, id := range ids {
+		if maxDist > 0 {
+			vectorScores[id] = 1.0 - distances[i]/maxDist
+		} else {
+			vectorScores[id] = 1.0
+		}
+	}
+
+	// Hybrid search with BM25.
+	alpha := searchOpts.HybridAlpha
+	finalScores := make(map[int64]float32)
+
+	if s.scorer != nil && alpha < 1.0 {
+		bm25Scores := s.scorer.Score(query, s.passages.All())
+		// Normalize BM25 scores.
+		maxBM25 := float32(0)
+		for _, score := range bm25Scores {
+			if score > maxBM25 {
+				maxBM25 = score
+			}
+		}
+
+		// Merge all candidate IDs.
+		allIDs := make(map[int64]bool)
+		for _, id := range ids {
+			allIDs[id] = true
+		}
+		for i := range bm25Scores {
+			if bm25Scores[i] > 0 {
+				allIDs[s.passages.All()[i].ID] = true
+			}
+		}
+
+		for id := range allIDs {
+			vs := vectorScores[id]
+			bs := float32(0)
+			if int(id) < len(bm25Scores) {
+				bs = bm25Scores[id]
+				if maxBM25 > 0 {
+					bs /= maxBM25
+				}
+			}
+			finalScores[id] = alpha*vs + (1-alpha)*bs
+		}
+	} else {
+		finalScores = vectorScores
+	}
+
+	// Sort by score.
+	type scored struct {
+		id    int64
+		score float32
+	}
+	sortedResults := make([]scored, 0, len(finalScores))
+	for id, score := range finalScores {
+		if score >= searchOpts.MinScore {
+			sortedResults = append(sortedResults, scored{id: id, score: score})
+		}
+	}
+	sort.Slice(sortedResults, func(i, j int) bool {
+		return sortedResults[i].score > sortedResults[j].score
+	})
+
+	if len(sortedResults) > topK {
+		sortedResults = sortedResults[:topK]
+	}
+
+	// Build results.
+	results := make([]SearchResult, 0, len(sortedResults))
+	for _, sr := range sortedResults {
+		passage, err := s.passages.Get(sr.id)
+		if err != nil {
+			continue
+		}
+		results = append(results, SearchResult{
+			ID:       sr.id,
+			Text:     passage.Text,
+			Score:    sr.score,
+			Metadata: passage.Metadata,
+		})
+	}
+
+	// Apply metadata filters if configured.
+	if len(searchOpts.MetadataFilters) > 0 {
+		engine := NewMetadataFilterEngine(searchOpts.MetadataFilters)
+		if searchOpts.FilterLogic != "" {
+			engine.Logic = searchOpts.FilterLogic
+		}
+		results = engine.FilterResults(results)
+	}
+
+	return results, nil
+}
+
+// Close releases resources.
+func (s *LeannSearcher) Close() error {
+	if s.backend != nil {
+		return s.backend.Close()
+	}
+	return nil
+}
+
+// Meta returns the index metadata.
+func (s *LeannSearcher) Meta() IndexMeta {
+	return s.meta
+}
+
+// SearchOption modifies search parameters.
+type SearchOption func(*SearchConfig)
+
+// WithTopK sets the number of results to return.
+func WithTopK(k int) SearchOption {
+	return func(c *SearchConfig) {
+		c.TopK = k
+	}
+}
+
+// WithHybridAlpha sets the vector vs BM25 weight.
+func WithHybridAlpha(alpha float32) SearchOption {
+	return func(c *SearchConfig) {
+		c.HybridAlpha = alpha
+	}
+}
+
+// WithMinScore sets the minimum score threshold.
+func WithMinScore(score float32) SearchOption {
+	return func(c *SearchConfig) {
+		c.MinScore = score
+	}
+}
+
+// ListIndexes returns all available indexes in the configured directory.
+func ListIndexes(indexDir string) ([]IndexMeta, error) {
+	entries, err := os.ReadDir(indexDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("read index directory: %w", err)
+	}
+
+	var indexes []IndexMeta
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		metaPath := filepath.Join(indexDir, entry.Name(), entry.Name()+".meta.json")
+		data, err := os.ReadFile(metaPath)
+		if err != nil {
+			continue
+		}
+		var meta IndexMeta
+		if err := json.Unmarshal(data, &meta); err != nil {
+			continue
+		}
+		indexes = append(indexes, meta)
+	}
+
+	return indexes, nil
+}
+
+// RemoveIndex removes an index and all its files.
+func RemoveIndex(indexDir, name string) error {
+	indexPath := filepath.Join(indexDir, name)
+	return os.RemoveAll(indexPath)
+}
+
+// cosineSimilarity computes cosine similarity between two vectors.
+func cosineSimilarity(a, b []float32) float32 {
+	var dot, normA, normB float32
+	for i := range a {
+		dot += a[i] * b[i]
+		normA += a[i] * a[i]
+		normB += b[i] * b[i]
+	}
+	denominator := float32(math.Sqrt(float64(normA)) * math.Sqrt(float64(normB)))
+	if denominator == 0 {
+		return 0
+	}
+	return dot / denominator
+}
