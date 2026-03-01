@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"math"
 	"os"
 	"path/filepath"
@@ -19,6 +20,7 @@ type LeannSearcher struct {
 	meta      IndexMeta
 	embedder  EmbeddingComputer
 	scorer    Scorer
+	reranker  Reranker
 	embServer EmbeddingServer
 
 	loaded bool
@@ -35,6 +37,11 @@ func NewSearcher(config Config, embedder EmbeddingComputer) *LeannSearcher {
 // SetScorer sets a BM25 scorer for hybrid search.
 func (s *LeannSearcher) SetScorer(scorer Scorer) {
 	s.scorer = scorer
+}
+
+// SetReranker sets a reranker for two-stage retrieval.
+func (s *LeannSearcher) SetReranker(reranker Reranker) {
+	s.reranker = reranker
 }
 
 // SetEmbeddingServer sets the embedding server for recomputation during search.
@@ -55,6 +62,15 @@ func (s *LeannSearcher) Load(ctx context.Context, name string) error {
 	}
 	if err := json.Unmarshal(metaData, &s.meta); err != nil {
 		return fmt.Errorf("unmarshal metadata: %w", err)
+	}
+
+	// Warn if the current embedding model differs from what was used to build the index.
+	if s.config.EmbeddingModel != "" && s.meta.EmbeddingModel != "" &&
+		s.config.EmbeddingModel != s.meta.EmbeddingModel {
+		log.Printf("⚠  WARNING: Index %q was built with embedding model %q (%d dims) "+
+			"but current config uses %q — search results may be incorrect. "+
+			"Rebuild with: gleann build %s --docs <dir>",
+			name, s.meta.EmbeddingModel, s.meta.Dimensions, s.config.EmbeddingModel, name)
 	}
 
 	// Load passages.
@@ -81,8 +97,11 @@ func (s *LeannSearcher) Load(ctx context.Context, name string) error {
 		return fmt.Errorf("load backend: %w", err)
 	}
 
-	// Build BM25 index if scorer is set.
+	// Build BM25 index if scorer is set (requires all passages in memory).
 	if s.scorer != nil {
+		if err := s.passages.LoadAll(); err != nil {
+			return fmt.Errorf("load all passages for BM25: %w", err)
+		}
 		s.scorer.AddDocuments(s.passages.All())
 	}
 
@@ -107,6 +126,16 @@ func (s *LeannSearcher) Search(ctx context.Context, query string, opts ...Search
 		topK = 10
 	}
 
+	// When reranking is enabled, fetch more candidates from stage-1
+	// so the reranker has a richer pool to work with.
+	retrieveK := topK * 2
+	if s.reranker != nil && searchOpts.UseReranker {
+		retrieveK = topK * 4
+		if retrieveK < 50 {
+			retrieveK = 50
+		}
+	}
+
 	// Compute query embedding.
 	queryEmb, err := s.embedder.ComputeSingle(ctx, query)
 	if err != nil {
@@ -119,10 +148,10 @@ func (s *LeannSearcher) Search(ctx context.Context, query string, opts ...Search
 
 	if s.embServer != nil && s.embServer.IsRunning() {
 		// Use recomputation-based search (LEANN's core optimization).
-		ids, distances, err = s.backend.SearchWithRecompute(ctx, queryEmb, topK*2, s.embServer.ComputeEmbeddings)
+		ids, distances, err = s.backend.SearchWithRecompute(ctx, queryEmb, retrieveK, s.embServer.ComputeEmbeddings)
 	} else {
 		// Standard search with stored embeddings.
-		ids, distances, err = s.backend.Search(ctx, queryEmb, topK*2)
+		ids, distances, err = s.backend.Search(ctx, queryEmb, retrieveK)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("vector search: %w", err)
@@ -227,6 +256,17 @@ func (s *LeannSearcher) Search(ctx context.Context, query string, opts ...Search
 		results = engine.FilterResults(results)
 	}
 
+	// Reranking stage: re-score results with cross-encoder if configured.
+	if s.reranker != nil && searchOpts.UseReranker {
+		reranked, err := s.reranker.Rerank(ctx, query, results, topK)
+		if err != nil {
+			// Log but don't fail — fall back to original ranking.
+			fmt.Fprintf(os.Stderr, "reranker warning: %v (using original ranking)\n", err)
+		} else {
+			results = reranked
+		}
+	}
+
 	return results, nil
 }
 
@@ -264,6 +304,13 @@ func WithHybridAlpha(alpha float32) SearchOption {
 func WithMinScore(score float32) SearchOption {
 	return func(c *SearchConfig) {
 		c.MinScore = score
+	}
+}
+
+// WithReranker enables reranking for this search query.
+func WithReranker(enabled bool) SearchOption {
+	return func(c *SearchConfig) {
+		c.UseReranker = enabled
 	}
 }
 

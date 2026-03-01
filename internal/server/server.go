@@ -121,6 +121,8 @@ type searchRequest struct {
 	MinScore           float32                `json:"min_score,omitempty"`
 	EfSearch           int                    `json:"ef_search,omitempty"`
 	RecomputeEmbeddings bool                  `json:"recompute_embeddings,omitempty"`
+	Rerank             bool                   `json:"rerank,omitempty"`
+	RerankModel        string                 `json:"rerank_model,omitempty"`
 	MetadataFilters    []gleann.MetadataFilter `json:"metadata_filters,omitempty"`
 	FilterLogic        string                `json:"filter_logic,omitempty"`
 }
@@ -172,6 +174,26 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.FilterLogic != "" {
 		opts = append(opts, gleann.WithFilterLogic(req.FilterLogic))
+	}
+
+	// Set up per-request reranker if requested.
+	if req.Rerank || s.config.SearchConfig.UseReranker {
+		opts = append(opts, gleann.WithReranker(true))
+		// Ensure the searcher has a reranker configured.
+		rerankModel := req.RerankModel
+		if rerankModel == "" {
+			rerankModel = s.config.SearchConfig.RerankerConfig.Model
+		}
+		if rerankModel == "" {
+			rerankModel = "bge-reranker-v2-m3"
+		}
+		rerankerCfg := gleann.RerankerConfig{
+			Provider: gleann.RerankerProvider(s.config.EmbeddingProvider),
+			Model:    rerankModel,
+			BaseURL:  s.config.OllamaHost,
+			APIKey:   s.config.OpenAIAPIKey,
+		}
+		searcher.SetReranker(gleann.NewReranker(rerankerCfg))
 	}
 
 	results, err := searcher.Search(r.Context(), req.Query, opts...)

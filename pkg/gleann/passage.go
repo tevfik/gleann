@@ -171,25 +171,69 @@ func (pm *PassageManager) All() []Passage {
 func (pm *PassageManager) Count() int {
 	pm.mu.RLock()
 	defer pm.mu.RUnlock()
-	return len(pm.passages)
+	if len(pm.passages) > 0 {
+		return len(pm.passages)
+	}
+	return len(pm.offsets)
 }
 
 // Load loads passages and offsets from disk.
+// By default it uses lazy loading: only the offset index is read (typically <1 KB),
+// and individual passages are fetched on demand via readFromDisk.
 func (pm *PassageManager) Load() error {
 	pm.mu.Lock()
 	defer pm.mu.Unlock()
 
-	// Load offsets.
+	// Try loading just the offset index (tiny file).
 	if err := pm.loadOffsets(); err != nil {
-		// Offsets may not exist yet — rebuild from JSONL.
-		if err := pm.loadFromJSONL(); err != nil {
+		// Offsets file doesn't exist — build it from JSONL.
+		if err := pm.buildOffsets(); err != nil {
 			return err
 		}
-		return pm.writeOffsets()
+		if err := pm.writeOffsets(); err != nil {
+			return fmt.Errorf("write offsets: %w", err)
+		}
 	}
 
-	// Load all passages from JSONL.
+	// Don't load full JSONL into memory. Passages are loaded on demand.
+	pm.loaded = false
+	return nil
+}
+
+// LoadAll loads all passages into memory (needed for BM25 scoring).
+func (pm *PassageManager) LoadAll() error {
+	pm.mu.Lock()
+	defer pm.mu.Unlock()
 	return pm.loadFromJSONL()
+}
+
+// buildOffsets scans the JSONL file to build the offset index
+// without parsing each line's JSON content.
+func (pm *PassageManager) buildOffsets() error {
+	f, err := os.Open(pm.jsonlPath())
+	if err != nil {
+		if os.IsNotExist(err) {
+			pm.offsets = nil
+			pm.loaded = true
+			return nil
+		}
+		return fmt.Errorf("open JSONL: %w", err)
+	}
+	defer f.Close()
+
+	pm.offsets = nil
+	scanner := bufio.NewScanner(f)
+	scanner.Buffer(make([]byte, 1024*1024), 10*1024*1024)
+
+	var pos int64
+	for scanner.Scan() {
+		pm.offsets = append(pm.offsets, pos)
+		pos += int64(len(scanner.Bytes())) + 1 // +1 for newline
+	}
+	if err := scanner.Err(); err != nil {
+		return fmt.Errorf("scan JSONL for offsets: %w", err)
+	}
+	return nil
 }
 
 // loadFromJSONL loads all passages from the JSONL file.

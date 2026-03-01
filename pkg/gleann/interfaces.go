@@ -100,3 +100,11 @@ type Scorer interface {
 	// AddDocuments adds documents to the scorer's index.
 	AddDocuments(passages []Passage)
 }
+
+// Reranker re-scores search results using a cross-encoder or similar model
+// for higher-quality ranking than bi-encoder embeddings alone.
+type Reranker interface {
+	// Rerank takes a query and candidate results, returns them re-scored.
+	// The returned results are sorted by the new score (descending).
+	Rerank(ctx context.Context, query string, results []SearchResult, topN int) ([]SearchResult, error)
+}

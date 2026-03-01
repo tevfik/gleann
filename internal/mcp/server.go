@@ -1,7 +1,7 @@
-// Package main implements an MCP (Model Context Protocol) server for gleann.
+// Package mcp implements an MCP (Model Context Protocol) server for gleann.
 // This enables Claude Code, VS Code Copilot, and other MCP clients to search
 // gleann indexes via JSON-RPC over stdio.
-package main
+package mcp
 
 import (
 	"bufio"
@@ -11,16 +11,12 @@ import (
 	"io"
 	"log"
 	"os"
-	"path/filepath"
 
 	"github.com/tevfik/gleann/internal/embedding"
 	"github.com/tevfik/gleann/pkg/gleann"
-
-	// Register HNSW backend.
-	_ "github.com/tevfik/gleann/internal/backend/hnsw"
 )
 
-const mcpVersion = "2024-11-05"
+const protocolVersion = "2024-11-05"
 
 // JSON-RPC types
 type jsonRPCRequest struct {
@@ -31,9 +27,9 @@ type jsonRPCRequest struct {
 }
 
 type jsonRPCResponse struct {
-	JSONRPC string `json:"jsonrpc"`
-	ID      any    `json:"id,omitempty"`
-	Result  any    `json:"result,omitempty"`
+	JSONRPC string       `json:"jsonrpc"`
+	ID      any          `json:"id,omitempty"`
+	Result  any          `json:"result,omitempty"`
 	Error   *jsonRPCError `json:"error,omitempty"`
 }
 
@@ -69,9 +65,9 @@ type toolDef struct {
 }
 
 type jsonSchema struct {
-	Type       string                `json:"type"`
-	Properties map[string]jsonProp   `json:"properties,omitempty"`
-	Required   []string              `json:"required,omitempty"`
+	Type       string              `json:"type"`
+	Properties map[string]jsonProp `json:"properties,omitempty"`
+	Required   []string            `json:"required,omitempty"`
 }
 
 type jsonProp struct {
@@ -94,48 +90,60 @@ type callToolResult struct {
 	IsError bool          `json:"isError,omitempty"`
 }
 
-// MCPServer handles MCP protocol over stdio.
-type MCPServer struct {
+// Config holds MCP server configuration.
+type Config struct {
+	IndexDir          string
+	EmbeddingProvider string
+	EmbeddingModel    string
+	OllamaHost        string
+	OpenAIAPIKey      string
+	OpenAIBaseURL     string
+	Version           string
+}
+
+// Server handles MCP protocol over stdio.
+type Server struct {
 	config    gleann.Config
 	embedder  gleann.EmbeddingComputer
 	searchers map[string]*gleann.LeannSearcher
+	version   string
 }
 
-func main() {
-	log.SetOutput(os.Stderr)
-	log.Println("gleann-mcp server starting...")
-
-	homeDir, _ := os.UserHomeDir()
-	config := gleann.DefaultConfig()
-	config.IndexDir = filepath.Join(homeDir, ".gleann", "indexes")
-
-	// Override from env.
-	if dir := os.Getenv("GLEANN_INDEX_DIR"); dir != "" {
-		config.IndexDir = dir
-	}
-	if model := os.Getenv("GLEANN_MODEL"); model != "" {
-		config.EmbeddingModel = model
-	}
-	if provider := os.Getenv("GLEANN_PROVIDER"); provider != "" {
-		config.EmbeddingProvider = provider
-	}
+// NewServer creates a new MCP server from the given config.
+func NewServer(cfg Config) *Server {
+	glCfg := gleann.DefaultConfig()
+	glCfg.IndexDir = cfg.IndexDir
+	glCfg.EmbeddingModel = cfg.EmbeddingModel
+	glCfg.EmbeddingProvider = cfg.EmbeddingProvider
+	glCfg.OllamaHost = cfg.OllamaHost
+	glCfg.OpenAIAPIKey = cfg.OpenAIAPIKey
+	glCfg.OpenAIBaseURL = cfg.OpenAIBaseURL
 
 	embedder := embedding.NewComputer(embedding.Options{
-		Provider: embedding.Provider(config.EmbeddingProvider),
-		Model:    config.EmbeddingModel,
-		BaseURL:  config.OllamaHost,
+		Provider: embedding.Provider(cfg.EmbeddingProvider),
+		Model:    cfg.EmbeddingModel,
+		BaseURL:  cfg.OllamaHost,
 	})
 
-	server := &MCPServer{
-		config:    config,
-		embedder:  embedder,
-		searchers: make(map[string]*gleann.LeannSearcher),
+	version := cfg.Version
+	if version == "" {
+		version = "dev"
 	}
 
-	server.run()
+	return &Server{
+		config:    glCfg,
+		embedder:  embedder,
+		searchers: make(map[string]*gleann.LeannSearcher),
+		version:   version,
+	}
 }
 
-func (s *MCPServer) run() {
+// Run starts the MCP server, reading from stdin and writing to stdout.
+// It blocks until stdin is closed or an error occurs.
+func (s *Server) Run() {
+	log.SetOutput(os.Stderr)
+	log.Println("gleann MCP server starting (stdio)...")
+
 	reader := bufio.NewReader(os.Stdin)
 	writer := os.Stdout
 
@@ -164,26 +172,26 @@ func (s *MCPServer) run() {
 	}
 }
 
-func (s *MCPServer) handleRequest(req jsonRPCRequest) *jsonRPCResponse {
+func (s *Server) handleRequest(req jsonRPCRequest) *jsonRPCResponse {
 	switch req.Method {
 	case "initialize":
 		return &jsonRPCResponse{
 			JSONRPC: "2.0",
 			ID:      req.ID,
 			Result: initializeResult{
-				ProtocolVersion: mcpVersion,
+				ProtocolVersion: protocolVersion,
 				Capabilities: mcpCaps{
 					Tools: &toolsCap{},
 				},
 				ServerInfo: serverInfo{
-					Name:    "gleann-mcp",
-					Version: "1.0.0",
+					Name:    "gleann",
+					Version: s.version,
 				},
 			},
 		}
 
 	case "notifications/initialized":
-		return nil // No response for notifications.
+		return nil
 
 	case "tools/list":
 		return &jsonRPCResponse{
@@ -211,10 +219,10 @@ func (s *MCPServer) handleRequest(req jsonRPCRequest) *jsonRPCResponse {
 	}
 }
 
-func (s *MCPServer) listTools() []toolDef {
+func (s *Server) listTools() []toolDef {
 	return []toolDef{
 		{
-			Name:        "leann_search",
+			Name:        "gleann_search",
 			Description: "Search a gleann index for relevant text passages using semantic search. Returns scored results with source metadata.",
 			InputSchema: jsonSchema{
 				Type: "object",
@@ -227,7 +235,7 @@ func (s *MCPServer) listTools() []toolDef {
 			},
 		},
 		{
-			Name:        "leann_list",
+			Name:        "gleann_list",
 			Description: "List all available gleann indexes with their metadata (name, backend, model, passage count).",
 			InputSchema: jsonSchema{
 				Type:       "object",
@@ -235,7 +243,7 @@ func (s *MCPServer) listTools() []toolDef {
 			},
 		},
 		{
-			Name:        "leann_ask",
+			Name:        "gleann_ask",
 			Description: "Ask a question about indexed data using RAG (Retrieval-Augmented Generation). Retrieves relevant context and generates an answer.",
 			InputSchema: jsonSchema{
 				Type: "object",
@@ -249,13 +257,13 @@ func (s *MCPServer) listTools() []toolDef {
 	}
 }
 
-func (s *MCPServer) callTool(params toolCallParams) callToolResult {
+func (s *Server) callTool(params toolCallParams) callToolResult {
 	switch params.Name {
-	case "leann_search":
+	case "gleann_search":
 		return s.toolSearch(params.Arguments)
-	case "leann_list":
+	case "gleann_list":
 		return s.toolList()
-	case "leann_ask":
+	case "gleann_ask":
 		return s.toolAsk(params.Arguments)
 	default:
 		return callToolResult{
@@ -265,7 +273,7 @@ func (s *MCPServer) callTool(params toolCallParams) callToolResult {
 	}
 }
 
-func (s *MCPServer) toolSearch(args map[string]any) callToolResult {
+func (s *Server) toolSearch(args map[string]any) callToolResult {
 	indexName, _ := args["index"].(string)
 	query, _ := args["query"].(string)
 	topK := 5
@@ -297,7 +305,6 @@ func (s *MCPServer) toolSearch(args map[string]any) callToolResult {
 		}
 	}
 
-	// Format results.
 	var text string
 	if len(results) == 0 {
 		text = "No results found."
@@ -316,7 +323,7 @@ func (s *MCPServer) toolSearch(args map[string]any) callToolResult {
 	}
 }
 
-func (s *MCPServer) toolList() callToolResult {
+func (s *Server) toolList() callToolResult {
 	indexes, err := gleann.ListIndexes(s.config.IndexDir)
 	if err != nil {
 		return callToolResult{
@@ -341,7 +348,7 @@ func (s *MCPServer) toolList() callToolResult {
 	}
 }
 
-func (s *MCPServer) toolAsk(args map[string]any) callToolResult {
+func (s *Server) toolAsk(args map[string]any) callToolResult {
 	indexName, _ := args["index"].(string)
 	question, _ := args["question"].(string)
 
@@ -377,7 +384,7 @@ func (s *MCPServer) toolAsk(args map[string]any) callToolResult {
 	}
 }
 
-func (s *MCPServer) getSearcher(name string) (*gleann.LeannSearcher, error) {
+func (s *Server) getSearcher(name string) (*gleann.LeannSearcher, error) {
 	if searcher, ok := s.searchers[name]; ok {
 		return searcher, nil
 	}
@@ -392,7 +399,7 @@ func (s *MCPServer) getSearcher(name string) (*gleann.LeannSearcher, error) {
 	return searcher, nil
 }
 
-func (s *MCPServer) errorResponse(id any, code int, msg string) *jsonRPCResponse {
+func (s *Server) errorResponse(id any, code int, msg string) *jsonRPCResponse {
 	return &jsonRPCResponse{
 		JSONRPC: "2.0",
 		ID:      id,

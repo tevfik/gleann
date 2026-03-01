@@ -2,27 +2,33 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"net"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
 
 	"github.com/tevfik/gleann/internal/chunking"
 	"github.com/tevfik/gleann/internal/embedding"
+	"github.com/tevfik/gleann/internal/mcp"
 	"github.com/tevfik/gleann/internal/server"
+	"github.com/tevfik/gleann/internal/tui"
 	"github.com/tevfik/gleann/pkg/gleann"
 
 	// Register HNSW backend.
 	_ "github.com/tevfik/gleann/internal/backend/hnsw"
 )
 
-const version = "1.0.0"
+// version is set at build time via -ldflags "-X main.version=..."
+var version = "dev"
 
 func main() {
 	if len(os.Args) < 2 {
@@ -50,6 +56,14 @@ func main() {
 		cmdServe(args)
 	case "info":
 		cmdInfo(args)
+	case "chat":
+		cmdChat(args)
+	case "mcp":
+		cmdMCP()
+	case "tui":
+		cmdTUI()
+	case "setup":
+		cmdSetup()
 	case "version":
 		fmt.Printf("gleann %s\n", version)
 	case "help", "--help", "-h":
@@ -68,36 +82,44 @@ Usage:
   gleann build  <name> --docs <dir>     Build index from documents
   gleann search <name> <query>          Search an index
   gleann ask    <name> <question>       Ask a question (RAG Q&A)
+  gleann chat   [name]                  Interactive chat TUI
   gleann watch  <name> --docs <dir>    Watch & auto-rebuild on changes
   gleann list                           List all indexes
   gleann remove <name>                  Remove an index
   gleann info   <name>                  Show index info
   gleann serve  [--addr :8080]          Start REST API server
+  gleann mcp                            Start MCP server (stdio, for AI editors)
+  gleann tui                            Launch interactive TUI
+  gleann setup                          Run configuration wizard
   gleann version                        Show version
 
 Options:
-  --model <model>       Embedding model (default: bge-m3)
-  --provider <provider> Embedding provider: ollama, openai (default: ollama)
-  --top-k <n>           Number of results (default: 10)
-  --index-dir <dir>     Index storage directory (default: ~/.gleann/indexes)
-  --metric <metric>     Distance metric: l2, cosine, ip (default: l2)
-  --json                Output as JSON
-  --interactive         Interactive chat mode (ask command)
-  --llm-model <model>   LLM model for ask (default: llama3.2)
-  --llm-provider <prov> LLM provider: ollama, openai, anthropic (default: ollama)
+  --model <model>         Embedding model (default: bge-m3)
+  --provider <provider>   Embedding provider: ollama, openai (default: ollama)
+  --top-k <n>             Number of results (default: 10)
+  --index-dir <dir>       Index storage directory (default: ~/.gleann/indexes)
+  --metric <metric>       Distance metric: l2, cosine, ip (default: l2)
+  --json                  Output as JSON
+  --interactive           Interactive chat mode (ask command)
+  --llm-model <model>     LLM model for ask (default: llama3.2)
+  --llm-provider <prov>   LLM provider: ollama, openai, anthropic (default: ollama)
+  --rerank                Enable two-stage reranking for higher accuracy
+  --rerank-model <model>  Reranker model (default: bge-reranker-v2-m3)
 
 Examples:
   gleann build my-docs --docs ./documents/
   gleann search my-docs "How does caching work?"
+  gleann search my-docs "How does caching work?" --rerank
   gleann ask my-docs "Explain the architecture" --interactive
+  gleann chat my-docs
+  gleann tui
   gleann serve --addr :8080`)
 }
 
 func getConfig(args []string) gleann.Config {
 	config := gleann.DefaultConfig()
 
-	homeDir, _ := os.UserHomeDir()
-	config.IndexDir = filepath.Join(homeDir, ".gleann", "indexes")
+	config.IndexDir = tui.DefaultIndexDir()
 
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
@@ -113,7 +135,7 @@ func getConfig(args []string) gleann.Config {
 			}
 		case "--index-dir":
 			if i+1 < len(args) {
-				config.IndexDir = args[i+1]
+				config.IndexDir = tui.ExpandPath(args[i+1])
 				i++
 			}
 		case "--top-k":
@@ -276,6 +298,21 @@ func cmdSearch(args []string) {
 
 	searcher := gleann.NewSearcher(config, embedder)
 
+	// Set up reranker if --rerank is specified.
+	if hasFlag(args, "--rerank") {
+		rerankModel := getFlag(args, "--rerank-model")
+		if rerankModel == "" {
+			rerankModel = "bge-reranker-v2-m3"
+		}
+		rerankerCfg := gleann.RerankerConfig{
+			Provider: gleann.RerankerProvider(config.EmbeddingProvider),
+			Model:    rerankModel,
+			BaseURL:  config.OllamaHost,
+		}
+		searcher.SetReranker(gleann.NewReranker(rerankerCfg))
+		config.SearchConfig.UseReranker = true
+	}
+
 	ctx := context.Background()
 	if err := searcher.Load(ctx, name); err != nil {
 		fmt.Fprintf(os.Stderr, "error loading index: %v\n", err)
@@ -284,7 +321,11 @@ func cmdSearch(args []string) {
 	defer searcher.Close()
 
 	start := time.Now()
-	results, err := searcher.Search(ctx, query)
+	var searchOpts []gleann.SearchOption
+	if config.SearchConfig.UseReranker {
+		searchOpts = append(searchOpts, gleann.WithReranker(true))
+	}
+	results, err := searcher.Search(ctx, query, searchOpts...)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error searching: %v\n", err)
 		os.Exit(1)
@@ -443,6 +484,22 @@ func cmdAsk(args []string) {
 	})
 
 	searcher := gleann.NewSearcher(config, embedder)
+
+	// Set up reranker if --rerank is specified.
+	if hasFlag(args, "--rerank") {
+		rerankModel := getFlag(args, "--rerank-model")
+		if rerankModel == "" {
+			rerankModel = "bge-reranker-v2-m3"
+		}
+		rerankerCfg := gleann.RerankerConfig{
+			Provider: gleann.RerankerProvider(config.EmbeddingProvider),
+			Model:    rerankModel,
+			BaseURL:  config.OllamaHost,
+		}
+		searcher.SetReranker(gleann.NewReranker(rerankerCfg))
+		config.SearchConfig.UseReranker = true
+	}
+
 	ctx := context.Background()
 	if err := searcher.Load(ctx, name); err != nil {
 		fmt.Fprintf(os.Stderr, "error loading index: %v\n", err)
@@ -616,9 +673,49 @@ func hashesChanged(old, new map[string][32]byte) bool {
 
 func cmdServe(args []string) {
 	config := getConfig(args)
+
+	// Load saved config from ~/.gleann/config.json (TUI setup).
+	// CLI flags take precedence over saved values.
+	savedCfg := tui.LoadSavedConfig()
+	if savedCfg != nil {
+		if !hasFlag(args, "--provider") && savedCfg.EmbeddingProvider != "" {
+			config.EmbeddingProvider = savedCfg.EmbeddingProvider
+		}
+		if !hasFlag(args, "--model") && savedCfg.EmbeddingModel != "" {
+			config.EmbeddingModel = savedCfg.EmbeddingModel
+		}
+		if savedCfg.OllamaHost != "" && config.OllamaHost == "" {
+			config.OllamaHost = savedCfg.OllamaHost
+		}
+		if savedCfg.OpenAIKey != "" && config.OpenAIAPIKey == "" {
+			config.OpenAIAPIKey = savedCfg.OpenAIKey
+		}
+		if savedCfg.OpenAIBaseURL != "" && config.OpenAIBaseURL == "" {
+			config.OpenAIBaseURL = savedCfg.OpenAIBaseURL
+		}
+		if !hasFlag(args, "--index-dir") && savedCfg.IndexDir != "" {
+			config.IndexDir = savedCfg.IndexDir
+		}
+	}
+
 	addr := getFlag(args, "--addr")
 	if addr == "" {
 		addr = ":8080"
+	}
+
+	// Validate port number.
+	_, portStr, err := net.SplitHostPort(addr)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: invalid address %q: %v\n", addr, err)
+		os.Exit(1)
+	}
+	port, err := strconv.Atoi(portStr)
+	if err != nil || port < 1 || port > 65535 {
+		fmt.Fprintf(os.Stderr, "error: invalid port number %q\n", portStr)
+		os.Exit(1)
+	}
+	if port < 1024 {
+		fmt.Fprintf(os.Stderr, "warning: port %d requires root privileges (did you mean :%d?)\n", port, port+8000)
 	}
 
 	srv := server.NewServer(config, addr)
@@ -638,6 +735,9 @@ func cmdServe(args []string) {
 	fmt.Printf("🚀 gleann server starting on %s\n", addr)
 	fmt.Printf("   Index dir: %s\n", config.IndexDir)
 	fmt.Printf("   Model:     %s (%s)\n", config.EmbeddingModel, config.EmbeddingProvider)
+	if config.OllamaHost != "" {
+		fmt.Printf("   Host:      %s\n", config.OllamaHost)
+	}
 	fmt.Println()
 	fmt.Println("Endpoints:")
 	fmt.Println("   GET  /health                    Health check")
@@ -652,6 +752,157 @@ func cmdServe(args []string) {
 		fmt.Fprintf(os.Stderr, "server error: %v\n", err)
 		os.Exit(1)
 	}
+}
+
+// --- MCP Server ---
+
+func cmdMCP() {
+	savedCfg := tui.LoadSavedConfig()
+
+	cfg := mcp.Config{
+		EmbeddingProvider: "ollama",
+		EmbeddingModel:    "bge-m3",
+		OllamaHost:        "http://localhost:11434",
+		Version:           version,
+	}
+
+	homeDir, _ := os.UserHomeDir()
+	cfg.IndexDir = filepath.Join(homeDir, ".gleann", "indexes")
+
+	if savedCfg != nil {
+		if savedCfg.EmbeddingProvider != "" {
+			cfg.EmbeddingProvider = savedCfg.EmbeddingProvider
+		}
+		if savedCfg.EmbeddingModel != "" {
+			cfg.EmbeddingModel = savedCfg.EmbeddingModel
+		}
+		if savedCfg.OllamaHost != "" {
+			cfg.OllamaHost = savedCfg.OllamaHost
+		}
+		if savedCfg.OpenAIKey != "" {
+			cfg.OpenAIAPIKey = savedCfg.OpenAIKey
+		}
+		if savedCfg.OpenAIBaseURL != "" {
+			cfg.OpenAIBaseURL = savedCfg.OpenAIBaseURL
+		}
+		if savedCfg.IndexDir != "" {
+			cfg.IndexDir = tui.ExpandPath(savedCfg.IndexDir)
+		}
+	}
+
+	server := mcp.NewServer(cfg)
+	server.Run()
+}
+
+// --- TUI Commands ---
+
+func cmdChat(args []string) {
+	var indexName string
+	if len(args) > 0 && !strings.HasPrefix(args[0], "--") {
+		indexName = args[0]
+	}
+
+	cfg := getConfig(args)
+	if cfg.IndexDir == "" {
+		cfg.IndexDir = tui.DefaultIndexDir()
+	}
+
+	// Load saved TUI config for LLM settings.
+	savedCfg := tui.LoadSavedConfig()
+	if savedCfg != nil {
+		if savedCfg.EmbeddingProvider != "" {
+			cfg.EmbeddingProvider = savedCfg.EmbeddingProvider
+		}
+		if savedCfg.EmbeddingModel != "" {
+			cfg.EmbeddingModel = savedCfg.EmbeddingModel
+		}
+		if savedCfg.OllamaHost != "" {
+			cfg.OllamaHost = savedCfg.OllamaHost
+		}
+	}
+
+	// If no index given, launch index picker.
+	if indexName == "" {
+		if err := tui.RunChatFlow(); err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
+
+	// Direct chat with given index.
+	embedder := embedding.NewComputer(embedding.Options{
+		Provider: embedding.Provider(cfg.EmbeddingProvider),
+		Model:    cfg.EmbeddingModel,
+		BaseURL:  cfg.OllamaHost,
+	})
+	searcher := gleann.NewSearcher(cfg, embedder)
+	ctx := context.Background()
+	fmt.Fprintf(os.Stderr, "Loading index %q...\n", indexName)
+	if err := searcher.Load(ctx, indexName); err != nil {
+		fmt.Fprintf(os.Stderr, "error loading index %q: %v\n", indexName, err)
+		os.Exit(1)
+	}
+	defer searcher.Close()
+
+	chatCfg := gleann.DefaultChatConfig()
+	if savedCfg != nil {
+		if savedCfg.LLMProvider != "" {
+			chatCfg.Provider = gleann.LLMProvider(savedCfg.LLMProvider)
+		}
+		if savedCfg.LLMModel != "" {
+			chatCfg.Model = savedCfg.LLMModel
+		}
+		if savedCfg.OllamaHost != "" {
+			chatCfg.BaseURL = savedCfg.OllamaHost
+		}
+	}
+	if chatCfg.Provider == gleann.LLMOllama && chatCfg.BaseURL == "" {
+		chatCfg.BaseURL = cfg.OllamaHost
+	}
+
+	// Override from CLI flags.
+	if llmModel := getFlag(args, "--llm-model"); llmModel != "" {
+		chatCfg.Model = llmModel
+	}
+	if llmProvider := getFlag(args, "--llm-provider"); llmProvider != "" {
+		chatCfg.Provider = gleann.LLMProvider(llmProvider)
+	}
+
+	chat := gleann.NewChat(searcher, chatCfg)
+
+	if err := tui.RunChat(chat, indexName, chatCfg.Model); err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(1)
+	}
+}
+
+func cmdTUI() {
+	if err := tui.Run(); err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(1)
+	}
+}
+
+func cmdSetup() {
+	result, err := tui.RunOnboard()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(1)
+	}
+	if result == nil {
+		fmt.Println("Setup cancelled.")
+		return
+	}
+	if result.Uninstall {
+		tui.RunInstall(result)
+		return
+	}
+	if err := tui.SaveConfig(*result); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: could not save config: %v\n", err)
+	}
+	fmt.Println("✅ Configuration saved to ~/.gleann/config.json")
+	tui.RunInstall(result)
 }
 
 // --- Helpers ---
@@ -676,9 +927,36 @@ func readDocuments(dir string, chunkSize, chunkOverlap int) ([]gleann.Item, erro
 			return nil
 		}
 
+		// Skip known binary / non-text extensions.
+		ext := strings.ToLower(filepath.Ext(path))
+		binaryExts := map[string]bool{
+			".pdf": true, ".zip": true, ".tar": true, ".gz": true, ".bz2": true, ".xz": true, ".7z": true, ".rar": true,
+			".exe": true, ".bin": true, ".dll": true, ".so": true, ".dylib": true, ".o": true, ".a": true,
+			".png": true, ".jpg": true, ".jpeg": true, ".gif": true, ".bmp": true, ".ico": true, ".svg": true, ".webp": true,
+			".mp3": true, ".mp4": true, ".avi": true, ".mov": true, ".mkv": true, ".flv": true, ".wav": true, ".flac": true, ".ogg": true,
+			".woff": true, ".woff2": true, ".ttf": true, ".otf": true, ".eot": true,
+			".db": true, ".sqlite": true, ".sqlite3": true,
+			".pyc": true, ".class": true, ".jar": true, ".war": true,
+			".iso": true, ".img": true, ".dmg": true, ".deb": true, ".rpm": true,
+			".doc": true, ".docx": true, ".xls": true, ".xlsx": true, ".ppt": true, ".pptx": true,
+		}
+		if binaryExts[ext] {
+			return nil
+		}
+
+		// Skip large files (>1MB likely binary or not useful).
+		if info.Size() > 1<<20 {
+			return nil
+		}
+
 		data, err := os.ReadFile(path)
 		if err != nil {
 			return nil // Skip unreadable files.
+		}
+
+		// Skip binary content (contains null bytes).
+		if bytes.ContainsRune(data[:min(len(data), 512)], 0) {
+			return nil
 		}
 
 		text := string(data)

@@ -50,7 +50,11 @@ type Options struct {
 // NewComputer creates a new embedding computer.
 func NewComputer(opts Options) *Computer {
 	if opts.BatchSize <= 0 {
-		opts.BatchSize = 32
+		if opts.Provider == ProviderOllama {
+			opts.BatchSize = 8 // smaller batches for local Ollama
+		} else {
+			opts.BatchSize = 32
+		}
 	}
 	if opts.Model == "" {
 		opts.Model = "bge-m3"
@@ -139,7 +143,29 @@ func (c *Computer) Compute(ctx context.Context, texts []string) ([][]float32, er
 		}
 
 		if err != nil {
-			return nil, fmt.Errorf("compute batch %d-%d: %w", i, end, err)
+			// Retry one-by-one if batch fails (e.g., one text too long).
+			if len(batch) > 1 {
+				for j, text := range batch {
+					var single [][]float32
+					var singleErr error
+					// Aggressively truncate on retry.
+					truncated := TruncateToTokenLimit(text, GetModelTokenLimit(c.model)/2)
+					switch c.provider {
+					case ProviderOllama:
+						single, singleErr = c.computeOllama(ctx, []string{truncated})
+					case ProviderOpenAI:
+						single, singleErr = c.computeOpenAI(ctx, []string{truncated})
+					case ProviderGemini:
+						single, singleErr = c.computeGemini(ctx, []string{truncated})
+					}
+					if singleErr != nil {
+						return nil, fmt.Errorf("compute text %d (retry): %w", i+j, singleErr)
+					}
+					embeddings = append(embeddings, single...)
+				}
+			} else {
+				return nil, fmt.Errorf("compute batch %d-%d: %w", i, end, err)
+			}
 		}
 
 		allEmbeddings = append(allEmbeddings, embeddings...)
@@ -214,13 +240,14 @@ func GetModelTokenLimit(model string) int {
 	return modelTokenLimits["default"]
 }
 
-// TruncateToTokenLimit approximates token count (~4 chars per token) and truncates if needed.
+// TruncateToTokenLimit approximates token count and truncates if needed.
 func TruncateToTokenLimit(text string, maxTokens int) string {
 	if maxTokens <= 0 {
 		return text
 	}
-	// Approximate: 1 token ≈ 4 characters for English text.
-	maxChars := maxTokens * 4
+	// Very conservative: assume 1 token per character (safe for CJK, code, URLs).
+	// Most tokenizers average ~3-4 chars/token for English, but edge cases can be 1:1.
+	maxChars := maxTokens
 	if len(text) <= maxChars {
 		return text
 	}
@@ -239,8 +266,9 @@ func TruncateToTokenLimit(text string, maxTokens int) string {
 // --- Ollama Provider ---
 
 type ollamaEmbedRequest struct {
-	Model string `json:"model"`
-	Input any    `json:"input"` // string or []string
+	Model    string `json:"model"`
+	Input    any    `json:"input"`    // string or []string
+	Truncate bool   `json:"truncate"` // let Ollama truncate if too long
 }
 
 type ollamaEmbedResponse struct {
@@ -250,14 +278,19 @@ type ollamaEmbedResponse struct {
 func (c *Computer) computeOllama(ctx context.Context, texts []string) ([][]float32, error) {
 	// Ollama /api/embed supports batch input.
 	reqBody := ollamaEmbedRequest{
-		Model: c.model,
-		Input: texts,
+		Model:    c.model,
+		Input:    texts,
+		Truncate: true,
 	}
 
-	body, err := json.Marshal(reqBody)
-	if err != nil {
+	// Use Encoder to avoid escaping <, >, & in HTML content.
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(reqBody); err != nil {
 		return nil, fmt.Errorf("marshal request: %w", err)
 	}
+	body := buf.Bytes()
 
 	url := c.baseURL + "/api/embed"
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))

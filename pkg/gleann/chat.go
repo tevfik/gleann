@@ -145,6 +145,36 @@ func (c *LeannChat) ClearHistory() {
 	c.history = nil
 }
 
+// Config returns a copy of the current chat config.
+func (c *LeannChat) Config() ChatConfig {
+	return c.config
+}
+
+// SetTemperature updates the temperature for subsequent requests.
+func (c *LeannChat) SetTemperature(t float64) {
+	c.config.Temperature = t
+}
+
+// SetMaxTokens updates the max tokens for subsequent requests.
+func (c *LeannChat) SetMaxTokens(n int) {
+	c.config.MaxTokens = n
+}
+
+// SetSystemPrompt updates the system prompt for subsequent requests.
+func (c *LeannChat) SetSystemPrompt(prompt string) {
+	c.config.SystemPrompt = prompt
+}
+
+// SetModel updates the model for subsequent requests.
+func (c *LeannChat) SetModel(model string) {
+	c.config.Model = model
+}
+
+// Searcher returns the underlying searcher instance.
+func (c *LeannChat) Searcher() *LeannSearcher {
+	return c.searcher
+}
+
 // chat sends messages to the LLM provider and returns the response.
 func (c *LeannChat) chat(ctx context.Context, messages []ChatMessage) (string, error) {
 	switch c.config.Provider {

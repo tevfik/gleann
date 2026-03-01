@@ -1,5 +1,8 @@
 # gleann-go
 
+[![CI](https://github.com/tevfik/gleann/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/tevfik/gleann/actions/workflows/ci.yml)
+[![Release](https://github.com/tevfik/gleann/actions/workflows/release.yml/badge.svg?event=push)](https://github.com/tevfik/gleann/actions/workflows/release.yml)
+
 Pure Go implementation of [LEANN](https://github.com/yichuan-w/LEANN) — a lightweight vector database achieving **up to 87% storage reduction** through graph-based selective recomputation.
 
 gleann-go provides semantic search across various data sources (documents, code, emails) on a single laptop without cloud dependencies or CGo.
@@ -12,22 +15,25 @@ gleann-go provides semantic search across various data sources (documents, code,
 - **CSR Compact Format** — Compressed Sparse Row storage with selective embedding pruning
 - **Hybrid Search** — Vector similarity + BM25 keyword scoring
 - **REST API** — HTTP server with CORS, health checks, index management
-- **CLI** — Build, search, list, remove, serve from the command line
+- **Interactive TUI** — Bubble Tea terminal UI with setup wizard, chat, index management
+- **CLI** — Build, search, list, remove, serve, mcp from the command line
+- **Setup Wizard** — `gleann setup` for guided configuration of all providers and features
 - **Embedding Providers** — Ollama, OpenAI, and Gemini APIs
 - **LLM Chat & ReAct** — Search + LLM answer with multi-turn reasoning
+- **Two-Stage Reranker** — Cross-encoder reranking pipeline for higher accuracy
 - **Metadata Filtering** — 12 operators (eq, gt, contains, regex, etc.) with AND/OR logic
 - **AST-aware Chunking** — Go native AST (default) + optional tree-sitter for 8 languages via `-tags treesitter`
-- **MCP Server** — JSON-RPC 2.0 stdio for Claude Code / VS Code integration
+- **MCP Server** — Built-in JSON-RPC 2.0 stdio for Claude Code / VS Code integration (`gleann mcp`)
 - **File Sync** — Incremental re-indexing with SHA-256 change detection
 
 ## Architecture
 
 ```
 ┌──────────────────────────────────────────────────────┐
-│                  CLI / REST API                       │
+│          TUI / CLI / REST API / MCP Server            │
 ├────────────────┬─────────────────────────────────────┤
 │  LeannBuilder  │         LeannSearcher               │
-│  (build index) │  (search + hybrid BM25)             │
+│  (build index) │  (search + hybrid BM25 + reranker)  │
 ├────────────────┴─────────────────────────────────────┤
 │              Backend Registry                         │
 ├──────────────┬───────────────────────────────────────┤
@@ -57,17 +63,21 @@ Instead of storing all embedding vectors, gleann-go stores only the HNSW graph s
 git clone https://github.com/tevfik/gleann.git
 cd gleann
 
-# Build CLI
+# Build CLI (includes TUI, REST server, MCP server)
 go build -o gleann ./cmd/gleann/
 
-# Build server
-go build -o gleann-server ./cmd/gleann-server/
+# Run setup wizard
+./gleann setup
 
 # Run tests
 go test ./...
 ```
 
-Requires Go 1.22+.
+Requires Go 1.24+.
+
+### Install to PATH
+
+The setup wizard (`gleann setup`) can install the binary to `~/.local/bin` or `/usr/local/bin` with shell completions (bash, zsh, fish). It can also configure MCP for Claude Code and Claude Desktop automatically.
 
 ## FAISS Backend (Optional)
 
@@ -268,11 +278,23 @@ results, _ := searcher.Search(ctx, "neural networks",
 ### CLI
 
 ```bash
+# Interactive setup wizard
+gleann setup
+
 # Build index from documents
 gleann build my-docs --docs ./documents/
 
 # Search
 gleann search my-docs "what is HNSW?"
+
+# Search with reranking
+gleann search my-docs "what is HNSW?" --rerank
+
+# Chat with an index
+gleann chat my-docs
+
+# Ask a question (single-shot)
+gleann ask my-docs "Explain the architecture" --interactive
 
 # List indexes
 gleann list
@@ -285,13 +307,22 @@ gleann remove my-docs
 
 # Start REST API server
 gleann serve --addr :8080
+
+# Start MCP server (for AI editors)
+gleann mcp
+
+# Launch TUI
+gleann tui
+
+# Show version
+gleann version
 ```
 
 ### REST API
 
 ```bash
 # Start server
-gleann-server -addr :8080
+gleann serve --addr :8080
 
 # Health check
 curl http://localhost:8080/health
@@ -454,43 +485,48 @@ Full 5-stage quality evaluation via `go test -v -run TestRecallReport ./benchmar
 
 ```
 gleann/
-├── cmd/
-│   ├── gleann/           # CLI binary
-│   │   └── main.go
-│   ├── gleann-mcp/       # MCP server (Claude Code / VS Code)
-│   │   └── main.go
-│   └── gleann-server/    # Standalone REST server
-│       └── main.go
-├── pkg/gleann/           # Public API
-│   ├── types.go          # Core types (Config, Item, SearchResult)
-│   ├── interfaces.go     # Interfaces (Backend, Embedder, Chunker, Scorer)
-│   ├── registry.go       # Backend registry (auto-discovery)
-│   ├── builder.go        # LeannBuilder (build indexes)
-│   ├── searcher.go       # LeannSearcher (search + hybrid)
-│   ├── passage.go        # PassageManager (JSONL + offset index)
-│   ├── bm25_adapter.go   # BM25 → Scorer interface adapter
-│   ├── chat.go           # LeannChat (search + LLM answer, 3 providers)
-│   ├── filter.go         # MetadataFilterEngine (12 operators, AND/OR)
-│   ├── react.go          # ReAct agent (Thought-Action-Observation)
-│   └── sync.go           # FileSynchronizer (SHA-256 change detection)
+├── cmd/gleann/            # Single CLI binary (TUI, REST, MCP, all commands)
+│   └── main.go
+├── pkg/gleann/            # Public API
+│   ├── types.go           # Core types (Config, Item, SearchResult)
+│   ├── interfaces.go      # Interfaces (Backend, Embedder, Chunker, Scorer)
+│   ├── registry.go        # Backend registry (auto-discovery)
+│   ├── builder.go         # LeannBuilder (build indexes)
+│   ├── searcher.go        # LeannSearcher (search + hybrid)
+│   ├── passage.go         # PassageManager (JSONL + offset index)
+│   ├── bm25_adapter.go    # BM25 → Scorer interface adapter
+│   ├── chat.go            # LeannChat (search + LLM answer, 3 providers)
+│   ├── filter.go          # MetadataFilterEngine (12 operators, AND/OR)
+│   ├── react.go           # ReAct agent (Thought-Action-Observation)
+│   ├── reranker.go        # Cross-encoder reranking pipeline
+│   └── sync.go            # FileSynchronizer (SHA-256 change detection)
 ├── internal/
-│   ├── backend/hnsw/     # HNSW implementation
-│   │   ├── hnsw.go       # Pure Go HNSW graph (~750 lines)
-│   │   ├── csr.go        # CSR format + pruning (~585 lines)
-│   │   └── backend.go    # Backend factory + builder/searcher
-│   ├── backend/faiss/    # FAISS backend (optional, CGo)
-│   │   ├── backend.go    # CGo FAISS HNSW via libfaiss C API
+│   ├── backend/hnsw/      # HNSW implementation
+│   │   ├── hnsw.go        # Pure Go HNSW graph (~750 lines)
+│   │   ├── csr.go         # CSR format + pruning (~585 lines)
+│   │   └── backend.go     # Backend factory + builder/searcher
+│   ├── backend/faiss/     # FAISS backend (optional, CGo)
+│   │   ├── backend.go     # CGo FAISS HNSW via libfaiss C API
 │   │   └── benchmark_test.go # FAISS vs Pure Go comparison
-│   ├── bm25/             # Okapi BM25 scorer
-│   ├── chunking/         # Text/code chunking
-│   │   ├── chunking.go   # Sentence/paragraph chunker
+│   ├── bm25/              # Okapi BM25 scorer
+│   ├── chunking/          # Text/code chunking
+│   │   ├── chunking.go    # Sentence/paragraph chunker
 │   │   ├── ast_chunker.go # AST-aware code chunker (8 languages)
 │   │   ├── treesitter.go  # Tree-sitter backend (optional, CGo)
 │   │   └── treesitter_stub.go # Stub when tree-sitter disabled
-│   ├── embedding/        # Ollama/OpenAI/Gemini compute + server
-│   └── server/           # REST API server
-├── benchmarks/           # Performance benchmarks & reports
-└── tests/                # Integration tests
+│   ├── embedding/         # Ollama/OpenAI/Gemini compute + server
+│   ├── mcp/               # MCP server (JSON-RPC 2.0 over stdio)
+│   ├── server/            # REST API server
+│   └── tui/               # Bubble Tea interactive TUI
+│       ├── onboard.go     # Setup wizard (13-step guided config)
+│       ├── home.go        # Home menu
+│       ├── chat.go        # Chat interface
+│       ├── indexlist.go   # Index browser
+│       ├── indexmanage.go # Index manager (build/delete)
+│       ├── install.go     # Install/uninstall + MCP config generation
+│       └── styles.go      # Shared TUI styles
+├── benchmarks/            # Performance benchmarks & reports
+└── tests/                 # Integration tests
 ```
 
 ## Design Decisions
@@ -541,36 +577,39 @@ gleann/
 | LLM Chat (`ask`) | Ollama, OpenAI, Anthropic, Gemini, HuggingFace | Ollama, OpenAI, Anthropic |
 | ReAct Agent | ✅ | ✅ |
 | AST-aware Chunking | tree-sitter | go/ast + optional tree-sitter |
-| MCP Server | ✅ | ✅ |
+| MCP Server | ✅ | ✅ (built-in) |
 | File Sync (incremental) | ✅ | ✅ |
 | Hybrid Search (BM25) | — | ✅ |
 | REST API Server | — | ✅ |
 | DiskANN Backend | ✅ | — |
 | IVF Backend | ✅ | — |
 | Local Embeddings (torch) | ✅ | — |
-| Interactive REPL | ✅ | — |
+| Interactive TUI | ✅ | ✅ (Bubble Tea) |
 
 ### Architecture Comparison
 
 | Dimension | Python LEANN | gleann-go |
 |-----------|-------------|-----------|
-| Language | Python 3.10+ | Go 1.22+ |
+| Language | Python 3.10+ | Go 1.24+ |
 | Deployment | `pip install` + system deps | Single binary (~2.5 MB) |
 | Embedding Server | ZMQ (external process) | Goroutine pool (in-process) |
 | Concurrency | asyncio / threading | Goroutines + channels |
 | AST Parser | tree-sitter (C bindings) | go/ast + optional tree-sitter |
 | Storage Format | Custom binary | CSR binary (`GLEN` magic) |
 | Backends | 3 (HNSW, DiskANN, IVF) | 2 (Pure Go HNSW, FAISS CGo) |
-| CLI Framework | Click | flag (stdlib) |
+| CLI Framework | Click | flag (stdlib) + Bubble Tea TUI |
 | External Dependencies | ~40 PyPI packages | 0 (pure Go default) |
 
 ## Roadmap
 
 | Feature | Status |
 |---------|--------|
+| Interactive TUI | ✅ Done |
+| Two-stage reranker | ✅ Done |
+| MCP server (embedded) | ✅ Done |
+| Setup wizard + install | ✅ Done |
 | DiskANN backend (100M+ vectors) | Planned |
 | IVF backend (PQ quantization) | Planned |
-| Interactive REPL mode | Planned |
 | Web search tool for ReAct agent | Planned |
 
 ## Testing

@@ -1,0 +1,164 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  test:
+    name: Test before release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+
+      - name: Test
+        run: go test -race $(go list ./... | grep -v /benchmarks)
+
+  # ── Pure Go builds (all platforms, no CGo) ──
+  release-pure:
+    name: Build Pure Go (${{ matrix.suffix }})
+    needs: test
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+            suffix: linux-amd64
+          - goos: linux
+            goarch: arm64
+            suffix: linux-arm64
+          - goos: darwin
+            goarch: amd64
+            suffix: darwin-amd64
+          - goos: darwin
+            goarch: arm64
+            suffix: darwin-arm64
+          - goos: windows
+            goarch: amd64
+            suffix: windows-amd64
+          - goos: windows
+            goarch: arm64
+            suffix: windows-arm64
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+
+      - name: Determine version
+        id: version
+        run: echo "version=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+
+      - name: Build gleann
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: "0"
+        run: |
+          EXT=""
+          if [ "${{ matrix.goos }}" = "windows" ]; then EXT=".exe"; fi
+          BINARY="gleann-${{ steps.version.outputs.version }}-${{ matrix.suffix }}${EXT}"
+          LDFLAGS="-s -w -X main.version=${{ steps.version.outputs.version }}"
+          go build -ldflags "$LDFLAGS" -o "$BINARY" ./cmd/gleann/
+
+      - name: Compress binaries
+        run: |
+          mkdir -p dist
+          for f in gleann-*${{ matrix.suffix }}*; do
+            if [ -f "$f" ]; then
+              if [ "${{ matrix.goos }}" = "windows" ]; then
+                zip "dist/${f%.*}.zip" "$f"
+              else
+                tar czf "dist/${f}.tar.gz" "$f"
+              fi
+            fi
+          done
+
+      - name: Upload release assets
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true
+
+  # ── FAISS + Tree-sitter build (Linux amd64 only, requires CGo) ──
+  release-faiss:
+    name: Build FAISS+TreeSitter (linux-amd64)
+    needs: test
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+
+      - name: Install FAISS and Tree-sitter dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake build-essential libopenblas-dev libomp-dev swig
+
+      - name: Build and install FAISS from source
+        run: |
+          git clone --depth 1 --branch v1.9.0 https://github.com/facebookresearch/faiss.git /tmp/faiss
+          cd /tmp/faiss
+          cmake -B build \
+            -DFAISS_ENABLE_GPU=OFF \
+            -DFAISS_ENABLE_PYTHON=OFF \
+            -DBUILD_SHARED_LIBS=ON \
+            -DBUILD_TESTING=OFF \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX=/usr/local
+          cmake --build build -j$(nproc)
+          sudo cmake --install build
+
+          # Build FAISS C API wrapper (not built by cmake)
+          cd /tmp/faiss
+          g++ -shared -fPIC -o libfaiss_c.so \
+            c_api/*.cpp \
+            -I. -I/usr/local/include \
+            -L/usr/local/lib -lfaiss \
+            -lstdc++ -lgomp -lopenblas
+          sudo cp libfaiss_c.so /usr/local/lib/
+          sudo mkdir -p /usr/local/include/faiss/c_api
+          sudo cp c_api/*.h /usr/local/include/faiss/c_api/
+          sudo ldconfig
+
+      - name: Determine version
+        id: version
+        run: echo "version=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+
+      - name: Build gleann-full (FAISS + Tree-sitter)
+        env:
+          CGO_ENABLED: "1"
+          LD_LIBRARY_PATH: "/usr/local/lib"
+        run: |
+          BINARY="gleann-full-${{ steps.version.outputs.version }}-linux-amd64"
+          LDFLAGS="-s -w -X main.version=${{ steps.version.outputs.version }}"
+          go build -tags "faiss treesitter" -ldflags "$LDFLAGS" -o "$BINARY" ./cmd/gleann/
+
+      - name: Compress binary
+        run: |
+          mkdir -p dist
+          tar czf "dist/gleann-full-${{ steps.version.outputs.version }}-linux-amd64.tar.gz" \
+            gleann-full-${{ steps.version.outputs.version }}-linux-amd64
+
+      - name: Upload release assets
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true

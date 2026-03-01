@@ -1,7 +1,7 @@
 # Binaries
-gleann
-gleann-server
-gleann-mcp
+/gleann
+/gleann-server
+/gleann-mcp
 *.exe
 
 # Build

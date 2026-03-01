@@ -142,6 +142,9 @@ type SearchConfig struct {
 	// UseReranker enables reranking of results.
 	UseReranker bool `json:"use_reranker"`
 
+	// RerankerConfig configures the reranker when UseReranker is true.
+	RerankerConfig RerankerConfig `json:"reranker_config,omitempty"`
+
 	// HybridAlpha is the weight for vector vs BM25 (0.0 = BM25 only, 1.0 = vector only).
 	HybridAlpha float32 `json:"hybrid_alpha"`
 
