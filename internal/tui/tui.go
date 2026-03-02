@@ -97,10 +97,22 @@ func runOnboard() error {
 	}
 
 	r := ob.Result()
+	if r.Uninstall {
+		RunInstall(&r)
+		fmt.Println("\nPress Enter to return to main menu...")
+		fmt.Scanln()
+		return nil
+	}
+
 	if r.Completed {
 		// Save config to ~/.gleann/config.json
 		if err := SaveConfig(r); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: could not save config: %v\n", err)
+		}
+		if r.InstallPath != "" {
+			RunInstall(&r)
+			fmt.Println("\nPress Enter to return to main menu...")
+			fmt.Scanln()
 		}
 	}
 	return nil
