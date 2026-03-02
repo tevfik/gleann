@@ -50,7 +50,7 @@ func (m *mockEmbeddingComputer) ComputeSingle(ctx context.Context, text string) 
 	return results[0], nil
 }
 
-func (m *mockEmbeddingComputer) Dimensions() int { return m.dim }
+func (m *mockEmbeddingComputer) Dimensions() int   { return m.dim }
 func (m *mockEmbeddingComputer) ModelName() string { return "mock" }
 
 func hashString(s string) int {
@@ -71,6 +71,7 @@ func TestBuildAndSearch(t *testing.T) {
 	config.IndexDir = dir
 	config.Backend = "hnsw"
 	config.EmbeddingModel = "mock"
+	config.HNSWConfig.UseMmap = false
 
 	embedder := &mockEmbeddingComputer{dim: 32}
 
@@ -159,6 +160,7 @@ func TestBuildFromTexts(t *testing.T) {
 	config := gleann.DefaultConfig()
 	config.IndexDir = dir
 	config.Backend = "hnsw"
+	config.HNSWConfig.UseMmap = false
 
 	embedder := &mockEmbeddingComputer{dim: 16}
 
@@ -241,6 +243,7 @@ func TestHybridSearchWithBM25(t *testing.T) {
 	config := gleann.DefaultConfig()
 	config.IndexDir = dir
 	config.Backend = "hnsw"
+	config.HNSWConfig.UseMmap = false
 
 	embedder := &mockEmbeddingComputer{dim: 16}
 
@@ -338,6 +341,7 @@ func TestEndToEndSearchQuality(t *testing.T) {
 	config := gleann.DefaultConfig()
 	config.IndexDir = dir
 	config.Backend = "hnsw"
+	config.HNSWConfig.UseMmap = false
 
 	embedder := &mockEmbeddingComputer{dim: 64}
 

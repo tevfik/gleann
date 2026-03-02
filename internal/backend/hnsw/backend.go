@@ -19,6 +19,9 @@ func (f *Factory) NewBuilder(config gleann.Config) gleann.BackendBuilder {
 }
 
 func (f *Factory) NewSearcher(config gleann.Config) gleann.BackendSearcher {
+	if config.HNSWConfig.UseMmap {
+		return &MmapSearcher{config: config}
+	}
 	return &Searcher{config: config}
 }
 

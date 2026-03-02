@@ -1,94 +1,16 @@
-// Package mcp implements an MCP (Model Context Protocol) server for gleann.
-// This enables Claude Code, VS Code Copilot, and other MCP clients to search
-// gleann indexes via JSON-RPC over stdio.
 package mcp
 
 import (
-	"bufio"
 	"context"
-	"encoding/json"
 	"fmt"
-	"io"
 	"log"
-	"os"
+	"strings"
 
+	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/mark3labs/mcp-go/server"
 	"github.com/tevfik/gleann/internal/embedding"
 	"github.com/tevfik/gleann/pkg/gleann"
 )
-
-const protocolVersion = "2024-11-05"
-
-// JSON-RPC types
-type jsonRPCRequest struct {
-	JSONRPC string          `json:"jsonrpc"`
-	ID      any             `json:"id,omitempty"`
-	Method  string          `json:"method"`
-	Params  json.RawMessage `json:"params,omitempty"`
-}
-
-type jsonRPCResponse struct {
-	JSONRPC string       `json:"jsonrpc"`
-	ID      any          `json:"id,omitempty"`
-	Result  any          `json:"result,omitempty"`
-	Error   *jsonRPCError `json:"error,omitempty"`
-}
-
-type jsonRPCError struct {
-	Code    int    `json:"code"`
-	Message string `json:"message"`
-}
-
-// MCP types
-type serverInfo struct {
-	Name    string `json:"name"`
-	Version string `json:"version"`
-}
-
-type initializeResult struct {
-	ProtocolVersion string     `json:"protocolVersion"`
-	Capabilities    mcpCaps    `json:"capabilities"`
-	ServerInfo      serverInfo `json:"serverInfo"`
-}
-
-type mcpCaps struct {
-	Tools *toolsCap `json:"tools,omitempty"`
-}
-
-type toolsCap struct {
-	ListChanged bool `json:"listChanged,omitempty"`
-}
-
-type toolDef struct {
-	Name        string     `json:"name"`
-	Description string     `json:"description"`
-	InputSchema jsonSchema `json:"inputSchema"`
-}
-
-type jsonSchema struct {
-	Type       string              `json:"type"`
-	Properties map[string]jsonProp `json:"properties,omitempty"`
-	Required   []string            `json:"required,omitempty"`
-}
-
-type jsonProp struct {
-	Type        string `json:"type"`
-	Description string `json:"description"`
-}
-
-type toolCallParams struct {
-	Name      string         `json:"name"`
-	Arguments map[string]any `json:"arguments,omitempty"`
-}
-
-type contentItem struct {
-	Type string `json:"type"`
-	Text string `json:"text"`
-}
-
-type callToolResult struct {
-	Content []contentItem `json:"content"`
-	IsError bool          `json:"isError,omitempty"`
-}
 
 // Config holds MCP server configuration.
 type Config struct {
@@ -101,16 +23,21 @@ type Config struct {
 	Version           string
 }
 
-// Server handles MCP protocol over stdio.
+// Server wraps the mark3labs MCP server.
 type Server struct {
-	config    gleann.Config
+	mcpServer *server.MCPServer
 	embedder  gleann.EmbeddingComputer
+	config    gleann.Config
 	searchers map[string]*gleann.LeannSearcher
-	version   string
 }
 
-// NewServer creates a new MCP server from the given config.
+// NewServer initializes a new MCP server that exposes Gleann capabilities using the SDK.
 func NewServer(cfg Config) *Server {
+	version := cfg.Version
+	if version == "" {
+		version = "dev"
+	}
+
 	glCfg := gleann.DefaultConfig()
 	glCfg.IndexDir = cfg.IndexDir
 	glCfg.EmbeddingModel = cfg.EmbeddingModel
@@ -125,262 +52,28 @@ func NewServer(cfg Config) *Server {
 		BaseURL:  cfg.OllamaHost,
 	})
 
-	version := cfg.Version
-	if version == "" {
-		version = "dev"
-	}
+	s := server.NewMCPServer("gleann-mcp", version)
 
-	return &Server{
+	srv := &Server{
+		mcpServer: s,
 		config:    glCfg,
 		embedder:  embedder,
 		searchers: make(map[string]*gleann.LeannSearcher),
-		version:   version,
 	}
+
+	// Register tools natively with the SDK
+	s.AddTool(srv.buildSearchTool(), srv.handleSearch)
+	s.AddTool(srv.buildListTool(), srv.handleList)
+	s.AddTool(srv.buildAskTool(), srv.handleAsk)
+
+	return srv
 }
 
-// Run starts the MCP server, reading from stdin and writing to stdout.
-// It blocks until stdin is closed or an error occurs.
 func (s *Server) Run() {
-	log.SetOutput(os.Stderr)
-	log.Println("gleann MCP server starting (stdio)...")
-
-	reader := bufio.NewReader(os.Stdin)
-	writer := os.Stdout
-
-	for {
-		line, err := reader.ReadBytes('\n')
-		if err != nil {
-			if err == io.EOF {
-				return
-			}
-			log.Printf("read error: %v", err)
-			return
-		}
-
-		var req jsonRPCRequest
-		if err := json.Unmarshal(line, &req); err != nil {
-			log.Printf("parse error: %v", err)
-			continue
-		}
-
-		resp := s.handleRequest(req)
-		if resp != nil {
-			data, _ := json.Marshal(resp)
-			data = append(data, '\n')
-			writer.Write(data)
-		}
-	}
-}
-
-func (s *Server) handleRequest(req jsonRPCRequest) *jsonRPCResponse {
-	switch req.Method {
-	case "initialize":
-		return &jsonRPCResponse{
-			JSONRPC: "2.0",
-			ID:      req.ID,
-			Result: initializeResult{
-				ProtocolVersion: protocolVersion,
-				Capabilities: mcpCaps{
-					Tools: &toolsCap{},
-				},
-				ServerInfo: serverInfo{
-					Name:    "gleann",
-					Version: s.version,
-				},
-			},
-		}
-
-	case "notifications/initialized":
-		return nil
-
-	case "tools/list":
-		return &jsonRPCResponse{
-			JSONRPC: "2.0",
-			ID:      req.ID,
-			Result: map[string]any{
-				"tools": s.listTools(),
-			},
-		}
-
-	case "tools/call":
-		var params toolCallParams
-		if err := json.Unmarshal(req.Params, &params); err != nil {
-			return s.errorResponse(req.ID, -32602, "invalid params: "+err.Error())
-		}
-		result := s.callTool(params)
-		return &jsonRPCResponse{
-			JSONRPC: "2.0",
-			ID:      req.ID,
-			Result:  result,
-		}
-
-	default:
-		return s.errorResponse(req.ID, -32601, "method not found: "+req.Method)
-	}
-}
-
-func (s *Server) listTools() []toolDef {
-	return []toolDef{
-		{
-			Name:        "gleann_search",
-			Description: "Search a gleann index for relevant text passages using semantic search. Returns scored results with source metadata.",
-			InputSchema: jsonSchema{
-				Type: "object",
-				Properties: map[string]jsonProp{
-					"index": {Type: "string", Description: "Name of the index to search"},
-					"query": {Type: "string", Description: "Search query text"},
-					"top_k": {Type: "number", Description: "Number of results to return (default: 5)"},
-				},
-				Required: []string{"index", "query"},
-			},
-		},
-		{
-			Name:        "gleann_list",
-			Description: "List all available gleann indexes with their metadata (name, backend, model, passage count).",
-			InputSchema: jsonSchema{
-				Type:       "object",
-				Properties: map[string]jsonProp{},
-			},
-		},
-		{
-			Name:        "gleann_ask",
-			Description: "Ask a question about indexed data using RAG (Retrieval-Augmented Generation). Retrieves relevant context and generates an answer.",
-			InputSchema: jsonSchema{
-				Type: "object",
-				Properties: map[string]jsonProp{
-					"index":    {Type: "string", Description: "Name of the index to query"},
-					"question": {Type: "string", Description: "Question to ask"},
-				},
-				Required: []string{"index", "question"},
-			},
-		},
-	}
-}
-
-func (s *Server) callTool(params toolCallParams) callToolResult {
-	switch params.Name {
-	case "gleann_search":
-		return s.toolSearch(params.Arguments)
-	case "gleann_list":
-		return s.toolList()
-	case "gleann_ask":
-		return s.toolAsk(params.Arguments)
-	default:
-		return callToolResult{
-			Content: []contentItem{{Type: "text", Text: "Unknown tool: " + params.Name}},
-			IsError: true,
-		}
-	}
-}
-
-func (s *Server) toolSearch(args map[string]any) callToolResult {
-	indexName, _ := args["index"].(string)
-	query, _ := args["query"].(string)
-	topK := 5
-	if k, ok := args["top_k"].(float64); ok {
-		topK = int(k)
-	}
-
-	if indexName == "" || query == "" {
-		return callToolResult{
-			Content: []contentItem{{Type: "text", Text: "index and query are required"}},
-			IsError: true,
-		}
-	}
-
-	searcher, err := s.getSearcher(indexName)
-	if err != nil {
-		return callToolResult{
-			Content: []contentItem{{Type: "text", Text: fmt.Sprintf("Error loading index %q: %v", indexName, err)}},
-			IsError: true,
-		}
-	}
-
-	ctx := context.Background()
-	results, err := searcher.Search(ctx, query, gleann.WithTopK(topK))
-	if err != nil {
-		return callToolResult{
-			Content: []contentItem{{Type: "text", Text: fmt.Sprintf("Search error: %v", err)}},
-			IsError: true,
-		}
-	}
-
-	var text string
-	if len(results) == 0 {
-		text = "No results found."
-	} else {
-		for i, r := range results {
-			source := ""
-			if s, ok := r.Metadata["source"]; ok {
-				source = fmt.Sprintf(" [%v]", s)
-			}
-			text += fmt.Sprintf("[%d]%s (score: %.4f)\n%s\n\n", i+1, source, r.Score, r.Text)
-		}
-	}
-
-	return callToolResult{
-		Content: []contentItem{{Type: "text", Text: text}},
-	}
-}
-
-func (s *Server) toolList() callToolResult {
-	indexes, err := gleann.ListIndexes(s.config.IndexDir)
-	if err != nil {
-		return callToolResult{
-			Content: []contentItem{{Type: "text", Text: fmt.Sprintf("Error: %v", err)}},
-			IsError: true,
-		}
-	}
-
-	if len(indexes) == 0 {
-		return callToolResult{
-			Content: []contentItem{{Type: "text", Text: "No indexes found."}},
-		}
-	}
-
-	var text string
-	for _, idx := range indexes {
-		text += fmt.Sprintf("- %s: %d passages, backend=%s, model=%s\n", idx.Name, idx.NumPassages, idx.Backend, idx.EmbeddingModel)
-	}
-
-	return callToolResult{
-		Content: []contentItem{{Type: "text", Text: text}},
-	}
-}
-
-func (s *Server) toolAsk(args map[string]any) callToolResult {
-	indexName, _ := args["index"].(string)
-	question, _ := args["question"].(string)
-
-	if indexName == "" || question == "" {
-		return callToolResult{
-			Content: []contentItem{{Type: "text", Text: "index and question are required"}},
-			IsError: true,
-		}
-	}
-
-	searcher, err := s.getSearcher(indexName)
-	if err != nil {
-		return callToolResult{
-			Content: []contentItem{{Type: "text", Text: fmt.Sprintf("Error loading index %q: %v", indexName, err)}},
-			IsError: true,
-		}
-	}
-
-	chatConfig := gleann.DefaultChatConfig()
-	chat := gleann.NewChat(searcher, chatConfig)
-
-	ctx := context.Background()
-	answer, err := chat.Ask(ctx, question)
-	if err != nil {
-		return callToolResult{
-			Content: []contentItem{{Type: "text", Text: fmt.Sprintf("Error: %v", err)}},
-			IsError: true,
-		}
-	}
-
-	return callToolResult{
-		Content: []contentItem{{Type: "text", Text: answer}},
+	log.Println("gleann MCP server starting with SDK (stdio)...")
+	// Start stdio transport
+	if err := server.ServeStdio(s.mcpServer); err != nil {
+		log.Fatalf("Server error: %v", err)
 	}
 }
 
@@ -399,10 +92,146 @@ func (s *Server) getSearcher(name string) (*gleann.LeannSearcher, error) {
 	return searcher, nil
 }
 
-func (s *Server) errorResponse(id any, code int, msg string) *jsonRPCResponse {
-	return &jsonRPCResponse{
-		JSONRPC: "2.0",
-		ID:      id,
-		Error:   &jsonRPCError{Code: code, Message: msg},
+// --- Search Tool ---
+
+func (s *Server) buildSearchTool() mcp.Tool {
+	return mcp.Tool{
+		Name:        "gleann_search",
+		Description: "Perform a semantic vector search across an indexed repository or memory graph. Use this to retrieve information.",
+		InputSchema: mcp.ToolInputSchema{
+			Type: "object",
+			Properties: map[string]interface{}{
+				"index": map[string]interface{}{
+					"type":        "string",
+					"description": "Name of the index to search",
+				},
+				"query": map[string]interface{}{
+					"type":        "string",
+					"description": "The search query, question, or context to find related material for.",
+				},
+				"top_k": map[string]interface{}{
+					"type":        "integer",
+					"description": "Maximum number of results to return (default 5).",
+				},
+			},
+			Required: []string{"index", "query"},
+		},
 	}
+}
+
+func (s *Server) handleSearch(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	args, ok := request.Params.Arguments.(map[string]interface{})
+	if !ok {
+		return mcp.NewToolResultError("invalid arguments format"), nil
+	}
+
+	indexName, _ := args["index"].(string)
+	query, _ := args["query"].(string)
+	topK := 5
+	if limit, ok := args["top_k"].(float64); ok {
+		topK = int(limit)
+	}
+
+	searcher, err := s.getSearcher(indexName)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("Error loading index %q: %v", indexName, err)), nil
+	}
+
+	results, err := searcher.Search(ctx, query, gleann.WithTopK(topK))
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("Error searching memory: %v", err)), nil
+	}
+
+	if len(results) == 0 {
+		return mcp.NewToolResultText("No relevant memory fragments found."), nil
+	}
+
+	var sb strings.Builder
+	for i, r := range results {
+		source := ""
+		if metaSource, ok := r.Metadata["source"]; ok {
+			source = fmt.Sprintf(" [%v]", metaSource)
+		}
+		sb.WriteString(fmt.Sprintf("---\nResult [%d]%s (Score: %.4f):\n%s\n", i+1, source, r.Score, r.Text))
+	}
+
+	return mcp.NewToolResultText(sb.String()), nil
+}
+
+// --- List Tool ---
+
+func (s *Server) buildListTool() mcp.Tool {
+	return mcp.Tool{
+		Name:        "gleann_list",
+		Description: "List all available gleann indexes with their metadata (name, backend, model, passage count).",
+		InputSchema: mcp.ToolInputSchema{
+			Type:       "object",
+			Properties: map[string]interface{}{},
+		},
+	}
+}
+
+func (s *Server) handleList(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	indexes, err := gleann.ListIndexes(s.config.IndexDir)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("Error listing indexes: %v", err)), nil
+	}
+
+	if len(indexes) == 0 {
+		return mcp.NewToolResultText("No indexes found."), nil
+	}
+
+	var sb strings.Builder
+	for _, idx := range indexes {
+		sb.WriteString(fmt.Sprintf("- %s: %d passages, backend=%s, model=%s\n", idx.Name, idx.NumPassages, idx.Backend, idx.EmbeddingModel))
+	}
+
+	return mcp.NewToolResultText(sb.String()), nil
+}
+
+// --- Ask Tool ---
+
+func (s *Server) buildAskTool() mcp.Tool {
+	return mcp.Tool{
+		Name:        "gleann_ask",
+		Description: "Ask a question about indexed data using RAG (Retrieval-Augmented Generation). Retrieves relevant context and generates an answer.",
+		InputSchema: mcp.ToolInputSchema{
+			Type: "object",
+			Properties: map[string]interface{}{
+				"index": map[string]interface{}{
+					"type":        "string",
+					"description": "Name of the index to query",
+				},
+				"question": map[string]interface{}{
+					"type":        "string",
+					"description": "Question to ask the LLM based on context.",
+				},
+			},
+			Required: []string{"index", "question"},
+		},
+	}
+}
+
+func (s *Server) handleAsk(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	indexName := request.GetString("index", "")
+	question := request.GetString("question", "")
+
+	if indexName == "" || question == "" {
+		return mcp.NewToolResultError("index and question are required"), nil
+	}
+
+	searcher, err := s.getSearcher(indexName)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("Error loading index %q: %v", indexName, err)), nil
+	}
+
+	chatConfig := gleann.DefaultChatConfig()
+	chat := gleann.NewChat(searcher, chatConfig)
+
+	answer, err := chat.Ask(ctx, question)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("Error asking question: %v", err)), nil
+	}
+
+	return mcp.NewToolResultText(answer), nil
 }

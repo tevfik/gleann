@@ -34,6 +34,15 @@ type BackendSearcher interface {
 	Close() error
 }
 
+// MmapBackendSearcher is an optional interface for searchers that support
+// zero-copy memory mapping directly from a file path.
+type MmapBackendSearcher interface {
+	BackendSearcher
+
+	// LoadFromFile memory maps the index file directly, avoiding loading bytes into RAM.
+	LoadFromFile(ctx context.Context, path string) error
+}
+
 // EmbeddingRecomputer is a function that recomputes embeddings for given passage IDs.
 // This is the core of LEANN's storage optimization — embeddings are not stored
 // but recomputed on-demand during search.

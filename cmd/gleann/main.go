@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"bytes"
 	"context"
-	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -16,14 +15,15 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/fsnotify/fsnotify"
 	"github.com/tevfik/gleann/internal/chunking"
 	"github.com/tevfik/gleann/internal/embedding"
 	"github.com/tevfik/gleann/internal/mcp"
 	"github.com/tevfik/gleann/internal/server"
 	"github.com/tevfik/gleann/internal/tui"
+	"github.com/tevfik/gleann/internal/vault"
 	"github.com/tevfik/gleann/pkg/gleann"
 
-	// Register HNSW backend.
 	_ "github.com/tevfik/gleann/internal/backend/hnsw"
 )
 
@@ -118,6 +118,10 @@ Examples:
 
 func getConfig(args []string) gleann.Config {
 	config := gleann.DefaultConfig()
+
+	if hasFlag(args, "--no-mmap") {
+		config.HNSWConfig.UseMmap = false
+	}
 
 	config.IndexDir = tui.DefaultIndexDir()
 
@@ -235,9 +239,17 @@ func cmdBuild(args []string) {
 		os.Exit(1)
 	}
 
+	// Initialize vault tracker
+	tracker, err := vault.NewTracker(vault.DefaultDBPath())
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "warning: could not initialize vault tracker: %v\n", err)
+	} else {
+		defer tracker.Close()
+	}
+
 	// Read documents from directory.
 	fmt.Printf("📂 Reading documents from %s...\n", docsDir)
-	items, err := readDocuments(docsDir, config.ChunkConfig.ChunkSize, config.ChunkConfig.ChunkOverlap)
+	items, err := readDocuments(docsDir, config.ChunkConfig.ChunkSize, config.ChunkConfig.ChunkOverlap, tracker)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error reading documents: %v\n", err)
 		os.Exit(1)
@@ -584,42 +596,72 @@ func cmdWatch(args []string) {
 		BaseURL:  config.OllamaHost,
 	})
 
-	fmt.Printf("👁️  Watching %s for changes (interval: %s)\n", docsDir, interval)
+	fmt.Printf("👁️  Watching %s for changes via fsnotify (debounce: %s)\n", docsDir, interval)
 	fmt.Printf("   Index: %s\n", name)
 	fmt.Println("   Press Ctrl+C to stop.")
-
-	// Track file hashes.
-	lastHashes := make(map[string][32]byte)
 
 	// Graceful shutdown.
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
 
+	// Initialize Vault Tracker & Watcher
+	tracker, err := vault.NewTracker(vault.DefaultDBPath())
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error initializing vault tracker: %v\n", err)
+		os.Exit(1)
+	}
+	defer tracker.Close()
+
+	watcher, err := vault.NewWatcher(tracker)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error initializing vault watcher: %v\n", err)
+		os.Exit(1)
+	}
+	defer watcher.Close()
+
 	// Initial build.
-	buildIndex(name, docsDir, config, embedder)
-	lastHashes = computeHashes(docsDir)
+	buildIndex(name, docsDir, config, embedder, tracker)
 
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
+	buildRequested := make(chan struct{}, 1)
+	watcher.OnChange = func(event fsnotify.Event) {
+		select {
+		case buildRequested <- struct{}{}:
+		default:
+		}
+	}
 
+	if err := watcher.AddDirectory(docsDir); err != nil {
+		fmt.Fprintf(os.Stderr, "error adding watch dir: %v\n", err)
+		os.Exit(1)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	watcher.Start(ctx)
+
+	// Rate-limited rebuilder loop
 	for {
 		select {
 		case <-stop:
 			fmt.Println("\nStopping watcher...")
 			return
-		case <-ticker.C:
-			currentHashes := computeHashes(docsDir)
-			if hashesChanged(lastHashes, currentHashes) {
-				fmt.Printf("🔄 Changes detected, rebuilding index %q...\n", name)
-				buildIndex(name, docsDir, config, embedder)
-				lastHashes = currentHashes
+		case <-buildRequested:
+			// Wait for debounce interval to coalese changes
+			time.Sleep(interval)
+			fmt.Printf("🔄 Changes detected by fsnotify, rebuilding index %q...\n", name)
+			buildIndex(name, docsDir, config, embedder, tracker)
+
+			// drain any queued up builds during sleep
+			select {
+			case <-buildRequested:
+			default:
 			}
 		}
 	}
 }
 
-func buildIndex(name, docsDir string, config gleann.Config, embedder gleann.EmbeddingComputer) {
-	items, err := readDocuments(docsDir, config.ChunkConfig.ChunkSize, config.ChunkConfig.ChunkOverlap)
+func buildIndex(name, docsDir string, config gleann.Config, embedder gleann.EmbeddingComputer, tracker *vault.Tracker) {
+	items, err := readDocuments(docsDir, config.ChunkConfig.ChunkSize, config.ChunkConfig.ChunkOverlap, tracker)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error reading documents: %v\n", err)
 		return
@@ -644,30 +686,12 @@ func buildIndex(name, docsDir string, config gleann.Config, embedder gleann.Embe
 }
 
 func computeHashes(dir string) map[string][32]byte {
-	hashes := make(map[string][32]byte)
-	filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
-		if err != nil || info.IsDir() || strings.HasPrefix(filepath.Base(path), ".") {
-			return nil
-		}
-		data, err := os.ReadFile(path)
-		if err != nil {
-			return nil
-		}
-		hashes[path] = sha256.Sum256(data)
-		return nil
-	})
-	return hashes
+	// Deprecated: Vault Tracker replaces manual hash tracking.
+	return nil
 }
 
 func hashesChanged(old, new map[string][32]byte) bool {
-	if len(old) != len(new) {
-		return true
-	}
-	for path, hash := range new {
-		if oldHash, ok := old[path]; !ok || oldHash != hash {
-			return true
-		}
-	}
+	// Deprecated: Vault Watcher replaces periodic polling.
 	return false
 }
 
@@ -907,7 +931,7 @@ func cmdSetup() {
 
 // --- Helpers ---
 
-func readDocuments(dir string, chunkSize, chunkOverlap int) ([]gleann.Item, error) {
+func readDocuments(dir string, chunkSize, chunkOverlap int, tracker *vault.Tracker) ([]gleann.Item, error) {
 	var items []gleann.Item
 
 	splitter := chunking.NewSentenceSplitter(chunkSize, chunkOverlap)
@@ -967,6 +991,14 @@ func readDocuments(dir string, chunkSize, chunkOverlap int) ([]gleann.Item, erro
 		relPath, _ := filepath.Rel(dir, path)
 		metadata := map[string]any{
 			"source": relPath,
+		}
+
+		// If a tracker is hooked up, compute the content hash and attach to metadata
+		if tracker != nil {
+			hash, err := tracker.UpsertFile(context.Background(), path)
+			if err == nil {
+				metadata["hash"] = hash
+			}
 		}
 
 		if chunking.IsCodeFile(path) {

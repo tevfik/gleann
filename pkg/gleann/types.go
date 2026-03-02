@@ -10,10 +10,10 @@ import (
 
 // SearchResult represents a single search result with score and metadata.
 type SearchResult struct {
-	ID       int64              `json:"id"`
-	Text     string             `json:"text"`
-	Score    float32            `json:"score"`
-	Metadata map[string]any     `json:"metadata,omitempty"`
+	ID       int64          `json:"id"`
+	Text     string         `json:"text"`
+	Score    float32        `json:"score"`
+	Metadata map[string]any `json:"metadata,omitempty"`
 }
 
 // Item represents a text item to be indexed.
@@ -117,6 +117,9 @@ type HNSWConfig struct {
 	// EfSearch is the size of the dynamic candidate list during search (default: 128).
 	EfSearch int `json:"ef_search"`
 
+	// UseMmap enables zero-copy memory-mapped search instead of loading the index into RAM (default: false).
+	UseMmap bool `json:"use_mmap,omitempty"`
+
 	// MaxLevel is the maximum level of the HNSW graph (auto-computed if 0).
 	MaxLevel int `json:"max_level,omitempty"`
 
@@ -165,11 +168,12 @@ func DefaultConfig() Config {
 		Backend:           "hnsw",
 		EmbeddingModel:    "bge-m3",
 		EmbeddingProvider: "ollama",
-		OllamaHost:       "http://localhost:11434",
+		OllamaHost:        "http://localhost:11434",
 		HNSWConfig: HNSWConfig{
 			M:                 32,
 			EfConstruction:    200,
 			EfSearch:          128,
+			UseMmap:           true,
 			UseHeuristic:      true,
 			PruneEmbeddings:   true,
 			PruneKeepFraction: 0.0,

@@ -64,6 +64,14 @@ func (s *LeannSearcher) Load(ctx context.Context, name string) error {
 		return fmt.Errorf("unmarshal metadata: %w", err)
 	}
 
+	// Schema version check for backwards compatibility
+	expectedVersion := "1.0.0"
+	if s.meta.Version != "" && s.meta.Version != expectedVersion {
+		log.Printf("⚠  WARNING: Index %q was built with version %q but current runtime expects %q. "+
+			"The system will attempt to read it, but if errors occur, please rebuild with: gleann build %s --docs <dir>",
+			name, s.meta.Version, expectedVersion, name)
+	}
+
 	// Warn if the current embedding model differs from what was used to build the index.
 	if s.config.EmbeddingModel != "" && s.meta.EmbeddingModel != "" &&
 		s.config.EmbeddingModel != s.meta.EmbeddingModel {
@@ -79,13 +87,6 @@ func (s *LeannSearcher) Load(ctx context.Context, name string) error {
 		return fmt.Errorf("load passages: %w", err)
 	}
 
-	// Load index.
-	indexPath := basePath + ".index"
-	indexData, err := os.ReadFile(indexPath)
-	if err != nil {
-		return fmt.Errorf("read index: %w", err)
-	}
-
 	// Get backend.
 	factory, err := GetBackend(s.meta.Backend)
 	if err != nil {
@@ -93,8 +94,22 @@ func (s *LeannSearcher) Load(ctx context.Context, name string) error {
 	}
 	s.backend = factory.NewSearcher(s.config)
 
-	if err := s.backend.Load(ctx, indexData, s.meta); err != nil {
-		return fmt.Errorf("load backend: %w", err)
+	// Attempt Zero-Copy Memory Mapping first, fallback to standard RAM loading
+	indexPath := basePath + ".index"
+	if mmapSearcher, ok := s.backend.(MmapBackendSearcher); ok {
+		// Native zero-copy mmap
+		if err := mmapSearcher.LoadFromFile(ctx, indexPath); err != nil {
+			return fmt.Errorf("load backend mmap: %w", err)
+		}
+	} else {
+		// Standard RAM load
+		indexData, err := os.ReadFile(indexPath)
+		if err != nil {
+			return fmt.Errorf("read index: %w", err)
+		}
+		if err := s.backend.Load(ctx, indexData, s.meta); err != nil {
+			return fmt.Errorf("load backend: %w", err)
+		}
 	}
 
 	// Build BM25 index if scorer is set (requires all passages in memory).
