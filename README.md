@@ -13,10 +13,12 @@ gleann-go provides semantic search across various data sources (documents, code,
 - **Optional FAISS Backend** — CGo-based FAISS integration for 15-34x faster builds and 3-28x faster search
 - **HNSW Index** — Hierarchical Navigable Small World graph with 98.8% recall@10
 - **CSR Compact Format** — Compressed Sparse Row storage with selective embedding pruning
-- **Hybrid Search** — Vector similarity + BM25 keyword scoring
-- **REST API** — HTTP server with CORS, health checks, index management
-- **Interactive TUI** — Bubble Tea terminal UI with setup wizard, chat, index management
-- **CLI** — Build, search, list, remove, serve, mcp from the command line
+- **Ollama Entegrasyonu:** `bge-m3`, `nomic-embed-text` gibi modellerle yerel embedding.
+- **Güçlü HNSW Arama:** Yüksek performanslı bellek içi (in-memory) Vektör Arama Motoru.
+- **Zero-Copy MMAP:** `.index` Graph dosyalarının devasa bellek kullanımını engellemek için `mmap` üzerinden 0 Garbage-Collection (GC) ile %100 Go native index okuması.
+- **Dosya İzleme (Watch):** `fsnotify` ve `SQLite` tabanlı Vault takipçisi ile `Create/Rename/Modify/Delete` klasör olaylarını anında algılama.
+- **Saf Go (Pure-Go) Mimarisi:** CGO bağımlılığı kullanmadan tek komut ile Linux, macOS, ve Windows üzerinde AMD64/ARM64 derlenebilme.
+- **Hibrit Reranking Arama** ve **Anında Sohbet (CLI Chat).** — Build, search, list, remove, serve, mcp from the command line
 - **Setup Wizard** — `gleann setup` for guided configuration of all providers and features
 - **Embedding Providers** — Ollama, OpenAI, and Gemini APIs
 - **LLM Chat & ReAct** — Search + LLM answer with multi-turn reasoning

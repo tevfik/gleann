@@ -5,8 +5,6 @@ import (
 	"fmt"
 	"math"
 	"os"
-
-	"golang.org/x/sys/unix"
 )
 
 // MmapGraph is a zero-copy, memory-mapped representation of the CSRGraph.
@@ -57,10 +55,10 @@ func OpenMmapGraph(path string) (*MmapGraph, error) {
 	size := info.Size()
 
 	// Memory map the file (Read Only)
-	data, err := unix.Mmap(int(f.Fd()), 0, int(size), unix.PROT_READ, unix.MAP_SHARED)
+	data, err := mmapFile(f.Fd(), size)
 	if err != nil {
 		f.Close()
-		return nil, fmt.Errorf("mmap error: %w", err)
+		return nil, err
 	}
 
 	mg := &MmapGraph{
@@ -160,7 +158,7 @@ func (mg *MmapGraph) parseHeaders() error {
 func (mg *MmapGraph) Close() error {
 	var err1, err2 error
 	if mg.data != nil {
-		err1 = unix.Munmap(mg.data)
+		err1 = munmapFile(mg.data)
 		mg.data = nil
 	}
 	if mg.file != nil {
