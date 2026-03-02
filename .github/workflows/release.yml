@@ -87,11 +87,12 @@ jobs:
             fi
           done
 
-      - name: Upload release assets
-        uses: softprops/action-gh-release@v2
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
         with:
-          files: dist/*
-          generate_release_notes: true
+          name: gleann-${{ matrix.suffix }}
+          path: dist/*
+          retention-days: 1
 
   # ── FAISS + Tree-sitter build (Linux amd64 only, requires CGo) ──
   release-faiss:
@@ -156,6 +157,24 @@ jobs:
           mkdir -p dist
           tar czf "dist/gleann-full-${{ steps.version.outputs.version }}-linux-amd64.tar.gz" \
             gleann-full-${{ steps.version.outputs.version }}-linux-amd64
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: gleann-full-linux-amd64
+          path: dist/*
+          retention-days: 1
+
+  publish-release:
+    name: Publish Release
+    needs: [release-pure, release-faiss]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
 
       - name: Upload release assets
         uses: softprops/action-gh-release@v2
