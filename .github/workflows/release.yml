@@ -152,11 +152,13 @@ jobs:
           LDFLAGS="-s -w -X main.version=${{ steps.version.outputs.version }}"
           go build -tags "faiss treesitter" -ldflags "$LDFLAGS" -o "$BINARY" ./cmd/gleann/
 
-      - name: Compress binary
+      - name: Compress binary and shared library
         run: |
           mkdir -p dist
+          cp /usr/local/lib/libfaiss_c.so .
+          cp /usr/local/lib/libfaiss.so . || true
           tar czf "dist/gleann-full-${{ steps.version.outputs.version }}-linux-amd64.tar.gz" \
-            gleann-full-${{ steps.version.outputs.version }}-linux-amd64
+            gleann-full-${{ steps.version.outputs.version }}-linux-amd64 libfaiss*
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
