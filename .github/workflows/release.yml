@@ -129,7 +129,7 @@ jobs:
 
           # Build FAISS C API wrapper (not built by cmake)
           cd /tmp/faiss
-          g++ -shared -fPIC -o libfaiss_c.so \
+          g++ -shared -fPIC -Wl,-rpath='$$ORIGIN' -o libfaiss_c.so \
             c_api/*.cpp \
             -I. -I/usr/local/include \
             -L/usr/local/lib -lfaiss \
@@ -150,6 +150,7 @@ jobs:
         run: |
           BINARY="gleann-full-${{ steps.version.outputs.version }}-linux-amd64"
           LDFLAGS="-s -w -X main.version=${{ steps.version.outputs.version }}"
+          export CGO_LDFLAGS="-Wl,-rpath=\$ORIGIN -L/usr/local/lib -lfaiss_c"
           go build -tags "faiss treesitter" -ldflags "$LDFLAGS" -o "$BINARY" ./cmd/gleann/
 
       - name: Compress binary and shared library

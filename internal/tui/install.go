@@ -33,8 +33,9 @@ func InstallBinary(targetDir string) error {
 		dst += ".exe"
 	}
 
-	// Don't copy onto itself.
+	// Don't copy onto itself, but STILL make sure shared libraries are copied!
 	if abs, _ := filepath.Abs(dst); abs == exe {
+		copySharedLibs(exe, targetDir)
 		return nil
 	}
 
@@ -53,7 +54,29 @@ func InstallBinary(targetDir string) error {
 	if _, err := io.Copy(out, src); err != nil {
 		return fmt.Errorf("copy binary: %w", err)
 	}
+
+	// Also copy bundled shared libraries (e.g. libfaiss_c.so for gleann-full) if they exist.
+	copySharedLibs(exe, targetDir)
+
 	return nil
+}
+
+func copySharedLibs(exe, targetDir string) {
+	// RPATH $ORIGIN requires them to be in the exact same directory as the executable.
+	exeDir := filepath.Dir(exe)
+	for _, lib := range []string{"libfaiss_c.so", "libfaiss.so"} {
+		libSrc := filepath.Join(exeDir, lib)
+		if _, err := os.Stat(libSrc); err == nil {
+			libDst := filepath.Join(targetDir, lib)
+			if s, err := os.Open(libSrc); err == nil {
+				if d, err := os.OpenFile(libDst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o755); err == nil {
+					_, _ = io.Copy(d, s)
+					d.Close()
+				}
+				s.Close()
+			}
+		}
+	}
 }
 
 // InstallCompletions writes shell completion scripts for bash, zsh, and fish.
@@ -130,6 +153,17 @@ func RunInstall(result *OnboardResult) {
 		chmodCmd.Stdout = os.Stdout
 		chmodCmd.Stderr = os.Stderr
 		_ = chmodCmd.Run()
+
+		// Copy shared libraries if they exist (requires sudo)
+		exeDir := filepath.Dir(exe)
+		for _, lib := range []string{"libfaiss_c.so", "libfaiss.so"} {
+			libSrc := filepath.Join(exeDir, lib)
+			if _, err := os.Stat(libSrc); err == nil {
+				libDst := filepath.Join(targetDir, lib)
+				copyLibCmd := exec.Command("sudo", "cp", libSrc, libDst)
+				_ = copyLibCmd.Run()
+			}
+		}
 	} else {
 		fmt.Printf("📦 Installing gleann to %s...\n", result.InstallPath)
 		if err := InstallBinary(result.InstallPath); err != nil {
@@ -204,24 +238,39 @@ func RunUninstall(removeData bool) {
 		}
 		if _, err := os.Stat(p); err == nil {
 			needsSudo := !isWritable(ExpandPath(dir))
+
+			// Uninstall binary and bundled shared libraries
+			filesToRemove := []string{p}
+			libFaissC := filepath.Join(ExpandPath(dir), "libfaiss_c.so")
+			libFaiss := filepath.Join(ExpandPath(dir), "libfaiss.so")
+			if _, err := os.Stat(libFaissC); err == nil {
+				filesToRemove = append(filesToRemove, libFaissC)
+			}
+			if _, err := os.Stat(libFaiss); err == nil {
+				filesToRemove = append(filesToRemove, libFaiss)
+			}
+
 			if needsSudo {
-				fmt.Printf("🗑  Removing %s (requires sudo)...\n", p)
-				cmd := exec.Command("sudo", "rm", "-f", p)
+				fmt.Printf("🗑  Removing gleann and dependencies (requires sudo)...\n")
+				args := append([]string{"rm", "-f"}, filesToRemove...)
+				cmd := exec.Command("sudo", args...)
 				cmd.Stdin = os.Stdin
 				cmd.Stdout = os.Stdout
 				cmd.Stderr = os.Stderr
 				if err := cmd.Run(); err != nil {
-					fmt.Fprintf(os.Stderr, "  ✗ Failed to remove %s: %v\n", p, err)
+					fmt.Fprintf(os.Stderr, "  ✗ Failed to remove: %v\n", err)
 				} else {
-					fmt.Printf("  ✓ Removed %s\n", p)
+					fmt.Printf("  ✓ Removed binaries\n")
 					removed = true
 				}
 			} else {
-				if err := os.Remove(p); err != nil {
-					fmt.Fprintf(os.Stderr, "  ✗ Failed to remove %s: %v\n", p, err)
-				} else {
-					fmt.Printf("  ✓ Removed %s\n", p)
-					removed = true
+				for _, ftr := range filesToRemove {
+					if err := os.Remove(ftr); err != nil {
+						fmt.Fprintf(os.Stderr, "  ✗ Failed to remove %s: %v\n", ftr, err)
+					} else {
+						fmt.Printf("  ✓ Removed %s\n", ftr)
+						removed = true
+					}
 				}
 			}
 		}
@@ -280,7 +329,6 @@ func RemoveCompletions() []string {
 	}
 	return removed
 }
-
 
 // ── Completion scripts ─────────────────────────────────────────
 

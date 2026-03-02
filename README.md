@@ -101,10 +101,15 @@ make -j$(nproc) faiss faiss_c
 
 # Install
 sudo cp -r c_api/libfaiss_c.a faiss/libfaiss.a /usr/local/lib/
+sudo cp -r c_api/libfaiss_c.so faiss/libfaiss.so /usr/local/lib/
 sudo mkdir -p /usr/local/include/faiss/c_api/impl
 sudo cp ../c_api/*.h /usr/local/include/faiss/c_api/
 sudo cp ../c_api/impl/*.h /usr/local/include/faiss/c_api/impl/
 ```
+
+> [!TIP]
+> **Pre-compiled Binary (gleann-full)**
+> If you download the `gleann-full` release `.tar.gz`, the shared libraries (`libfaiss_c.so`, `libfaiss.so`) are automatically bundled with the binary. Thanks to dynamic `$ORIGIN` linking, you just extract the archive and run `./gleann-full` immediately in place. No `sudo` or `/usr/local/lib` installation required!
 
 ### Building with FAISS
 
