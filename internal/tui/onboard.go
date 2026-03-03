@@ -339,11 +339,19 @@ func (m OnboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.fetchErr = "No reranker models found. Pull one with: ollama pull bge-reranker-v2-m3"
 				m.phase = phaseReranker
 			} else if msg.forLLM {
-				m.llmModels = []ModelInfo{{Name: "llama3.2"}, {Name: "gpt-4o"}, {Name: "claude-sonnet-4-20250514"}}
+				if m.llmProviders[m.llmProviderIdx] == "llamacpp" {
+					m.llmModels = []ModelInfo{{Name: "(Download .gguf model to ~/models)", Tag: "Example: Llama-3-8B.gguf"}}
+				} else {
+					m.llmModels = []ModelInfo{{Name: "llama3.2"}, {Name: "gpt-4o"}, {Name: "claude-sonnet-4-20250514"}}
+				}
 				m.llmAllModels = m.llmModels
 				m.phase = phaseLLMModel
 			} else {
-				m.embModels = []ModelInfo{{Name: "bge-m3"}, {Name: "nomic-embed-text"}, {Name: "text-embedding-3-small"}}
+				if m.embProviders[m.embProviderIdx] == "llamacpp" {
+					m.embModels = []ModelInfo{{Name: "(Download .gguf model to ~/models)", Tag: "Example: bge-m3.gguf"}}
+				} else {
+					m.embModels = []ModelInfo{{Name: "bge-m3"}, {Name: "nomic-embed-text"}, {Name: "text-embedding-3-small"}}
+				}
 				m.embAllModels = m.embModels
 				m.phase = phaseEmbModel
 			}
@@ -1432,7 +1440,7 @@ func (m OnboardModel) renderModelSelect(num, title string, models []ModelInfo, c
 	if m.fetchErr != "" {
 		errorMsg := "     ⚠ Could not reach service — showing defaults"
 		if strings.Contains(m.fetchErr, ".gguf") {
-			errorMsg = "     ⚠ No local .gguf models found — please download one"
+			errorMsg = "     ⚠ No local .gguf models found — please download one to ~/models"
 		}
 		b.WriteString(lipgloss.NewStyle().Foreground(ColorError).Italic(true).Render(errorMsg))
 		b.WriteString("\n")
