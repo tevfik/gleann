@@ -9,7 +9,7 @@ URL_LINUX="https://github.com/ggerganov/llama.cpp/releases/download/${LLAMA_VERS
 
 echo "Downloading Linux llama-server..."
 wget -q -O linux.zip $URL_LINUX
-unzip -q -j linux.zip "build/bin/llama-server" -d bin/
+unzip -q -j linux.zip "build/bin/llama-server" "build/bin/*.so" -d bin/
 mv bin/llama-server bin/llama-server-linux-amd64
 rm linux.zip
 
