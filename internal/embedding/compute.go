@@ -20,9 +20,10 @@ import (
 type Provider string
 
 const (
-	ProviderOllama Provider = "ollama"
-	ProviderOpenAI Provider = "openai"
-	ProviderGemini Provider = "gemini"
+	ProviderOllama   Provider = "ollama"
+	ProviderLlamaCPP Provider = "llamacpp"
+	ProviderOpenAI   Provider = "openai"
+	ProviderGemini   Provider = "gemini"
 )
 
 // Computer computes embeddings using a specified provider.
@@ -70,6 +71,8 @@ func NewComputer(opts Options) *Computer {
 		switch opts.Provider {
 		case ProviderOllama:
 			opts.BaseURL = resolveOllamaHost()
+		case ProviderLlamaCPP:
+			opts.BaseURL = "http://localhost:8080"
 		case ProviderOpenAI:
 			opts.BaseURL = resolveOpenAIBaseURL()
 		case ProviderGemini:
@@ -182,7 +185,7 @@ func (c *Computer) Compute(ctx context.Context, texts []string) ([][]float32, er
 			var err error
 
 			switch c.provider {
-			case ProviderOllama:
+			case ProviderOllama, ProviderLlamaCPP:
 				embeddings, err = c.computeOllama(ctx, batch)
 			case ProviderOpenAI:
 				embeddings, err = c.computeOpenAI(ctx, batch)
@@ -203,7 +206,7 @@ func (c *Computer) Compute(ctx context.Context, texts []string) ([][]float32, er
 						// Aggressively truncate on retry.
 						truncated := TruncateToTokenLimit(text, GetModelTokenLimit(c.model)/2)
 						switch c.provider {
-						case ProviderOllama:
+						case ProviderOllama, ProviderLlamaCPP:
 							single, singleErr = c.computeOllama(ctx, []string{truncated})
 						case ProviderOpenAI:
 							single, singleErr = c.computeOpenAI(ctx, []string{truncated})
