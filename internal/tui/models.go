@@ -249,7 +249,7 @@ func fetchLlamaCPPModels(host string) ([]ModelInfo, error) {
 	}
 
 	// host can be a specific directory for scanning models.
-	if host != "" {
+	if host != "" && !strings.Contains(host, "auto-scan") && !strings.HasPrefix(host, "http://") {
 		searchDirs = []string{host}
 	}
 
