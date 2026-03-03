@@ -84,8 +84,8 @@ type ChatModel struct {
 	systemPrompt   string
 
 	// LLM model selection in settings.
-	llmModels     []string
-	llmModelIdx   int
+	llmModels   []string
+	llmModelIdx int
 
 	// Reranker settings.
 	rerankEnabled  bool
@@ -145,17 +145,23 @@ func NewChatModel(chat *gleann.LeannChat, indexName, modelName string) ChatModel
 
 	// Build LLM model list from the current model name.
 	llmModels := []string{modelName}
-	// Add common defaults if not already present.
-	for _, common := range []string{"llama3.2", "llama3.2:3b-instruct-q4_K_M", "gpt-4o", "claude-sonnet-4-20250514"} {
-		found := false
-		for _, m := range llmModels {
-			if m == common {
-				found = true
-				break
+
+	// Fetch dynamic models from Ollama
+	allModels, err := fetchOllamaModels("http://localhost:11434")
+	if err == nil {
+		filteredLLMs := filterLLMModels(allModels)
+		for _, m := range filteredLLMs {
+			// Add if not already the current model
+			if m.Name != modelName {
+				llmModels = append(llmModels, m.Name)
 			}
 		}
-		if !found {
-			llmModels = append(llmModels, common)
+	} else {
+		// Fallback to minimal defaults if Ollama is unreachable
+		for _, common := range []string{"llama3.2", "llama3.2:3b-instruct-q4_K_M", "gpt-4o", "claude-sonnet-4-20250514"} {
+			if common != modelName {
+				llmModels = append(llmModels, common)
+			}
 		}
 	}
 
@@ -202,15 +208,22 @@ func NewChatModel(chat *gleann.LeannChat, indexName, modelName string) ChatModel
 	// Fetch available reranker models from Ollama.
 	rerankModels, rerankModelIdx := fetchRerankModelList(ollamaHost, savedCfg)
 
+	var initialMessages []chatMsg
+	for _, m := range chat.History() {
+		initialMessages = append(initialMessages, chatMsg{role: m.Role, content: m.Content})
+	}
+	initialMessages = append(initialMessages, chatMsg{
+		role:    "system",
+		content: fmt.Sprintf("Connected to index %q — model: %s", indexName, modelName),
+	})
+
 	m := ChatModel{
-		chat:      chat,
-		indexName: indexName,
-		modelName: modelName,
-		textarea:  ta,
-		spinner:   sp,
-		messages: []chatMsg{
-			{role: "system", content: fmt.Sprintf("Connected to index %q — model: %s", indexName, modelName)},
-		},
+		chat:              chat,
+		indexName:         indexName,
+		modelName:         modelName,
+		textarea:          ta,
+		spinner:           sp,
+		messages:          initialMessages,
 		temperature:       temperature,
 		maxTokens:         maxTokens,
 		topK:              topK,
@@ -263,8 +276,28 @@ func (m ChatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 
 		case "esc":
+			// If textarea has content, clear it first.
+			// Only quit on ESC when input is already empty.
+			if m.textarea.Value() != "" {
+				m.textarea.Reset()
+				return m, nil
+			}
 			m.quitting = true
 			return m, tea.Quit
+
+		case "ctrl+u":
+			// Clear current line (standard terminal shortcut).
+			m.textarea.Reset()
+			return m, nil
+
+		// ── Viewport scroll — intercepted before textarea eats them ──
+		case "pgup", "ctrl+b":
+			m.viewport.HalfViewUp()
+			return m, nil
+
+		case "pgdown", "ctrl+d":
+			m.viewport.HalfViewDown()
+			return m, nil
 
 		case "ctrl+s":
 			// Toggle settings panel.
@@ -305,7 +338,7 @@ func (m ChatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.messages = append(m.messages, chatMsg{
 					role: "system",
 					content: "Commands: /clear • /settings • /help • /quit\n" +
-						"Shortcuts: ctrl+s settings • esc back",
+						"Shortcuts: ctrl+s settings • pgup/pgdn scroll • esc clear/back",
 				})
 				m.textarea.Reset()
 				m.viewport.SetContent(m.renderMessages())
@@ -591,8 +624,14 @@ func (m ChatModel) relayout() ChatModel {
 
 	if !m.ready {
 		m.viewport = viewport.New(vpWidth, vpHeight)
-		// Disable viewport's own key bindings to prevent key stealing.
-		m.viewport.KeyMap = viewport.KeyMap{}
+		// Restore viewport scroll keybindings so ↑/↓/PgUp/PgDn scroll chat history.
+		// We use separate keys here to avoid stealing ↑/↓ from textarea.
+		m.viewport.KeyMap = viewport.KeyMap{
+			PageDown:     key.NewBinding(key.WithKeys("pgdown"), key.WithHelp("pgdown", "scroll down")),
+			PageUp:       key.NewBinding(key.WithKeys("pgup"), key.WithHelp("pgup", "scroll up")),
+			HalfPageUp:   key.NewBinding(key.WithKeys("ctrl+u"), key.WithHelp("ctrl+u", "½ page up")),
+			HalfPageDown: key.NewBinding(key.WithKeys("ctrl+d"), key.WithHelp("ctrl+d", "½ page down")),
+		}
 		m.viewport.SetContent(m.renderMessages())
 		m.ready = true
 	} else {
@@ -681,19 +720,76 @@ func (m ChatModel) View() string {
 	sep := lipgloss.NewStyle().Foreground(ColorMuted).Render(strings.Repeat("─", m.width-2))
 	b.WriteString(sep + "\n")
 
-	// Viewport.
-	b.WriteString(m.viewport.View())
-	b.WriteString("\n")
+	// Viewport with scrollbar.
+	vpContent := m.viewport.View()
+	scrollbar := m.renderScrollbar()
+	// Join viewport lines with scrollbar column.
+	vpLines := strings.Split(vpContent, "\n")
+	sbLines := strings.Split(scrollbar, "\n")
+	// Ensure equal line count.
+	for len(sbLines) < len(vpLines) {
+		sbLines = append(sbLines, "│")
+	}
+	for i, line := range vpLines {
+		sb := ""
+		if i < len(sbLines) {
+			sb = sbLines[i]
+		}
+		b.WriteString(line + " " + sb + "\n")
+	}
 
 	// Input area.
 	b.WriteString(m.textarea.View())
 	b.WriteString("\n")
 
 	// Help.
-	help := HelpStyle.Render("  enter send • ctrl+s settings • /help commands • esc back")
+	help := HelpStyle.Render("  enter send • pgup/pgdn scroll • ctrl+s settings • esc clear/back")
 	b.WriteString(help)
 
 	return b.String()
+}
+
+// renderScrollbar draws a minimal vertical scrollbar for the viewport.
+func (m ChatModel) renderScrollbar() string {
+	h := m.viewport.Height
+	if h <= 0 {
+		return ""
+	}
+
+	totalLines := m.viewport.TotalLineCount()
+	visibleLines := h
+
+	thumbStyle := lipgloss.NewStyle().Foreground(ColorPrimary)
+	trackStyle := lipgloss.NewStyle().Foreground(ColorMuted)
+
+	// If all content fits, show a full-height thumb.
+	if totalLines <= visibleLines {
+		lines := make([]string, h)
+		for i := range lines {
+			lines[i] = trackStyle.Render("│")
+		}
+		return strings.Join(lines, "\n")
+	}
+
+	// Calculate thumb size and position.
+	thumbSize := max(1, visibleLines*visibleLines/totalLines)
+	scrollOffset := m.viewport.ScrollPercent()
+	maxOffset := float64(totalLines - visibleLines)
+	thumbTop := 0
+	if maxOffset > 0 {
+		thumbTop = int(scrollOffset * float64(h-thumbSize))
+	}
+	thumbBottom := thumbTop + thumbSize
+
+	lines := make([]string, h)
+	for i := range lines {
+		if i >= thumbTop && i < thumbBottom {
+			lines[i] = thumbStyle.Render("▓")
+		} else {
+			lines[i] = trackStyle.Render("│")
+		}
+	}
+	return strings.Join(lines, "\n")
 }
 
 // ── Settings View ──────────────────────────────────────────────
