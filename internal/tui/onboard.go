@@ -945,7 +945,7 @@ func (m *OnboardModel) buildResult() {
 		AnthropicKey:       m.llmKeyInput.Value(),
 		LLMProvider:        m.llmProviders[m.llmProviderIdx],
 		LLMModel:           llmModel,
-		RerankEnabled:      m.rerankEnabled,
+		RerankEnabled:      m.rerankEnabled && m.embProviders[m.embProviderIdx] != "llamacpp",
 		RerankModel:        rerankModel,
 		IndexDir:           m.indexDirInput.Value(),
 		InstallPath:        m.installPath(),
@@ -1239,6 +1239,9 @@ func (m OnboardModel) settingsMenuValues() []string {
 
 	// Show host or masked API key depending on provider.
 	embHostOrKey := host
+	if strings.HasPrefix(embHostOrKey, "http://") && embProv == "llamacpp" {
+		embHostOrKey = ""
+	}
 	if embProv == "openai" {
 		k := m.embKeyInput.Value()
 		if len(k) > 8 {
@@ -1246,9 +1249,14 @@ func (m OnboardModel) settingsMenuValues() []string {
 		} else if k != "" {
 			embHostOrKey = "****"
 		}
+	} else if embProv == "llamacpp" && embHostOrKey == "" {
+		embHostOrKey = "(auto-scan default dirs)"
 	}
 
 	llmHostOrKey := m.llmHostInput.Value()
+	if strings.HasPrefix(llmHostOrKey, "http://") && llmProv == "llamacpp" {
+		llmHostOrKey = ""
+	}
 	if llmProv == "openai" || llmProv == "anthropic" {
 		k := m.llmKeyInput.Value()
 		if len(k) > 8 {
@@ -1256,26 +1264,36 @@ func (m OnboardModel) settingsMenuValues() []string {
 		} else if k != "" {
 			llmHostOrKey = "****"
 		}
+	} else if llmProv == "llamacpp" && llmHostOrKey == "" {
+		llmHostOrKey = "(auto-scan default dirs)"
 	}
 
 	reranker := "disabled"
 	if m.rerankEnabled {
-		reranker = "enabled"
-		if len(m.rerankModels) > 0 && m.rerankModelIdx < len(m.rerankModels) {
-			reranker = m.rerankModels[m.rerankModelIdx].Name
-		} else if cfg.RerankModel != "" {
-			reranker = cfg.RerankModel
+		if embProv == "llamacpp" {
+			reranker = "disabled (not supported with llamacpp)"
+		} else {
+			reranker = "enabled"
+			if len(m.rerankModels) > 0 && m.rerankModelIdx < len(m.rerankModels) {
+				reranker = m.rerankModels[m.rerankModelIdx].Name
+			} else if cfg.RerankModel != "" {
+				reranker = cfg.RerankModel
+			}
 		}
 	}
 
 	rerankModel := ""
 	if m.rerankEnabled {
-		if len(m.rerankModels) > 0 && m.rerankModelIdx < len(m.rerankModels) {
-			rerankModel = m.rerankModels[m.rerankModelIdx].Name
-		} else if cfg.RerankModel != "" {
-			rerankModel = cfg.RerankModel
+		if embProv == "llamacpp" {
+			rerankModel = "—"
 		} else {
-			rerankModel = "(select model)"
+			if len(m.rerankModels) > 0 && m.rerankModelIdx < len(m.rerankModels) {
+				rerankModel = m.rerankModels[m.rerankModelIdx].Name
+			} else if cfg.RerankModel != "" {
+				rerankModel = cfg.RerankModel
+			} else {
+				rerankModel = "(select model)"
+			}
 		}
 	} else {
 		rerankModel = "—"
