@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -162,11 +163,17 @@ func runChatFlow() error {
 		return nil // cancelled
 	}
 
+	// Clean dummy "auto-scan" host strings injected by UI
+	embHost := cfg.OllamaHost
+	if strings.Contains(embHost, "(auto-scan") {
+		embHost = ""
+	}
+
 	// Set up searcher.
 	embedder := embedding.NewComputer(embedding.Options{
 		Provider: embedding.Provider(cfg.EmbeddingProvider),
 		Model:    cfg.EmbeddingModel,
-		BaseURL:  cfg.OllamaHost,
+		BaseURL:  embHost,
 	})
 	searcher := gleann.NewSearcher(cfg, embedder)
 	ctx := context.Background()
@@ -186,7 +193,7 @@ func runChatFlow() error {
 		if savedCfg.LLMModel != "" {
 			chatCfg.Model = savedCfg.LLMModel
 		}
-		if savedCfg.OllamaHost != "" {
+		if savedCfg.OllamaHost != "" && !strings.Contains(savedCfg.OllamaHost, "(auto-scan") {
 			chatCfg.BaseURL = savedCfg.OllamaHost
 		}
 		if savedCfg.OpenAIKey != "" {
