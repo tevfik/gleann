@@ -2,6 +2,7 @@ package backends
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/tevfik/gleann/modules/hnsw"
 	"github.com/tevfik/gleann/pkg/gleann"
@@ -60,6 +61,18 @@ func (s *searcherAdapter) Load(ctx context.Context, indexData []byte, meta glean
 		Version:        meta.Version,
 	}
 	return s.inner.Load(ctx, indexData, hnswMeta)
+}
+
+// mmapInnerSearcher allows us to check if the inner HNSW module searcher supports memory mapping.
+type mmapInnerSearcher interface {
+	LoadFromFile(ctx context.Context, path string) error
+}
+
+func (s *searcherAdapter) LoadFromFile(ctx context.Context, path string) error {
+	if mmap, ok := s.inner.(mmapInnerSearcher); ok {
+		return mmap.LoadFromFile(ctx, path)
+	}
+	return fmt.Errorf("inner hnsw searcher does not support LoadFromFile")
 }
 
 func (s *searcherAdapter) Search(ctx context.Context, query []float32, topK int) ([]int64, []float32, error) {
