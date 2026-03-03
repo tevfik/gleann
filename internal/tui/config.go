@@ -16,6 +16,14 @@ func DefaultIndexDir() string {
 	return filepath.Join(home, ".gleann", "indexes")
 }
 
+// DefaultModelsDir returns the platform-appropriate default models directory.
+//   - Linux/Mac: /home/user/.gleann/models
+//   - Windows:   C:\Users\user\.gleann\models
+func DefaultModelsDir() string {
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, ".gleann", "models")
+}
+
 // ExpandPath expands ~ and ~/ prefixes to the user's home directory
 // and cleans the path using filepath.Clean for cross-platform correctness.
 // On Windows, forward slashes in the path are converted to backslashes.
