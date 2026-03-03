@@ -54,12 +54,13 @@ var extensionMap = map[string]Language{
 
 // CodeChunk represents a semantic code chunk with metadata.
 type CodeChunk struct {
-	Text      string         `json:"text"`
-	Metadata  map[string]any `json:"metadata"`
-	StartLine int            `json:"start_line"`
-	EndLine   int            `json:"end_line"`
-	NodeType  string         `json:"node_type"` // "function", "class", "method", "block", etc.
-	Name      string         `json:"name"`      // e.g. function/class name
+	Text          string         `json:"text"`
+	Metadata      map[string]any `json:"metadata"`
+	StartLine     int            `json:"start_line"`
+	EndLine       int            `json:"end_line"`
+	NodeType      string         `json:"node_type"` // "function", "class", "method", "block", etc.
+	Name          string         `json:"name"`      // e.g. function/class name
+	OutboundCalls []string       `json:"outbound_calls,omitempty"`
 }
 
 // ASTChunkerConfig holds configuration for the AST chunker.
@@ -623,6 +624,9 @@ func (c *ASTChunker) ChunkWithMetadata(text string, metadata map[string]any) []C
 		merged["node_type"] = ch.NodeType
 		if ch.Name != "" {
 			merged["name"] = ch.Name
+		}
+		if len(ch.OutboundCalls) > 0 {
+			merged["outbound_calls"] = ch.OutboundCalls
 		}
 		items[i] = Chunk{
 			Text:     ch.Text,
