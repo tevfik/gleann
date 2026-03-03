@@ -240,7 +240,8 @@ func treeSitterChunk(source, filename string, lang Language, config ASTChunkerCo
 		nodeType  string
 		name      string
 		text      string
-		parentCtx string // parent scope context for expansion
+		parentCtx string   // parent scope context for expansion
+		calls     []string // outbound function calls
 	}
 
 	var collected []astChunkInfo
@@ -273,10 +274,25 @@ func treeSitterChunk(source, filename string, lang Language, config ASTChunkerCo
 				}
 			}
 
+			// Handle export statements (JS/TS) to use inner chunk type
+			if nodeType == "export_statement" {
+				for i := 0; i < int(node.ChildCount()); i++ {
+					child := node.Child(i)
+					if ct, ok := targetTypes[child.Type()]; ok {
+						chunkType = ct
+						name = extractNodeName(child, child.Type(), sourceBytes)
+						break
+					}
+				}
+			}
+
 			// Build parent context header for chunk expansion.
 			scopeCtx := parentScope
 
 			text := joinLines(lines, startLine-1, endLine)
+
+			// Extract outgoing `call_expression` nodes within this scope
+			calls := extractCalls(node, sourceBytes)
 
 			collected = append(collected, astChunkInfo{
 				startLine: startLine,
@@ -285,6 +301,7 @@ func treeSitterChunk(source, filename string, lang Language, config ASTChunkerCo
 				name:      name,
 				text:      text,
 				parentCtx: scopeCtx,
+				calls:     calls,
 			})
 
 			// For class-like nodes, recurse to find nested methods/functions.
@@ -372,12 +389,13 @@ func treeSitterChunk(source, filename string, lang Language, config ASTChunkerCo
 		}
 
 		chunks = append(chunks, CodeChunk{
-			Text:      text,
-			StartLine: info.startLine,
-			EndLine:   info.endLine,
-			NodeType:  info.nodeType,
-			Name:      name,
-			Metadata:  meta,
+			Text:          text,
+			StartLine:     info.startLine,
+			EndLine:       info.endLine,
+			NodeType:      info.nodeType,
+			Name:          name,
+			Metadata:      meta,
+			OutboundCalls: info.calls,
 		})
 	}
 
@@ -543,4 +561,40 @@ func sortChunksByLine(chunks []CodeChunk) {
 		}
 		chunks[j+1] = key
 	}
+}
+
+// extractCalls recursively finds all function/method calls inside a node.
+func extractCalls(node *sitter.Node, source []byte) []string {
+	if node == nil {
+		return nil
+	}
+
+	var calls []string
+	seen := make(map[string]bool)
+
+	var walk func(n *sitter.Node)
+	walk = func(n *sitter.Node) {
+		if n == nil {
+			return
+		}
+
+		nodeType := n.Type()
+		// Most supported languages use "call_expression" or "call"
+		if nodeType == "call_expression" || nodeType == "call" {
+			// Usually the function being called is exposed as "function" field
+			funcNode := n.ChildByFieldName("function")
+			if funcNode != nil {
+				name := string(funcNode.Content(source))
+				if name != "" && !seen[name] {
+					seen[name] = true
+					calls = append(calls, name)
+				}
+			}
+		}
+		for i := 0; i < int(n.ChildCount()); i++ {
+			walk(n.Child(i))
+		}
+	}
+	walk(node)
+	return calls
 }
