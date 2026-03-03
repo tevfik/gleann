@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"sync"
 	"testing"
 )
 
@@ -183,9 +184,12 @@ func TestComputeSingle(t *testing.T) {
 }
 
 func TestComputeBatching(t *testing.T) {
+	var mu sync.Mutex
 	callCount := 0
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
 		callCount++
+		mu.Unlock()
 		var req ollamaEmbedRequest
 		json.NewDecoder(r.Body).Decode(&req)
 
@@ -220,8 +224,11 @@ func TestComputeBatching(t *testing.T) {
 	if len(results) != 5 {
 		t.Fatalf("expected 5 embeddings, got %d", len(results))
 	}
-	if callCount != 3 {
-		t.Errorf("expected 3 API calls, got %d", callCount)
+	mu.Lock()
+	got := callCount
+	mu.Unlock()
+	if got != 3 {
+		t.Errorf("expected 3 API calls, got %d", got)
 	}
 }
 

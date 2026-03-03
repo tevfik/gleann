@@ -42,6 +42,12 @@ func (f *hnswFactoryAdapter) NewBuilder(config gleann.Config) gleann.BackendBuil
 func (f *hnswFactoryAdapter) NewSearcher(config gleann.Config) gleann.BackendSearcher {
 	factory := &hnsw.Factory{}
 	inner := factory.NewSearcher(toHNSWConfig(config))
+	if config.HNSWConfig.UseMmap {
+		// Return the mmap-capable adapter so MmapBackendSearcher type assertion succeeds.
+		return &mmapSearcherAdapter{searcherAdapter{inner: inner}}
+	}
+	// Return a plain adapter that does NOT implement LoadFromFile,
+	// so searcher.go falls back to the standard RAM load path.
 	return &searcherAdapter{inner: inner}
 }
 
@@ -63,18 +69,6 @@ func (s *searcherAdapter) Load(ctx context.Context, indexData []byte, meta glean
 	return s.inner.Load(ctx, indexData, hnswMeta)
 }
 
-// mmapInnerSearcher allows us to check if the inner HNSW module searcher supports memory mapping.
-type mmapInnerSearcher interface {
-	LoadFromFile(ctx context.Context, path string) error
-}
-
-func (s *searcherAdapter) LoadFromFile(ctx context.Context, path string) error {
-	if mmap, ok := s.inner.(mmapInnerSearcher); ok {
-		return mmap.LoadFromFile(ctx, path)
-	}
-	return fmt.Errorf("inner hnsw searcher does not support LoadFromFile")
-}
-
 func (s *searcherAdapter) Search(ctx context.Context, query []float32, topK int) ([]int64, []float32, error) {
 	return s.inner.Search(ctx, query, topK)
 }
@@ -88,4 +82,22 @@ func (s *searcherAdapter) SearchWithRecompute(ctx context.Context, query []float
 
 func (s *searcherAdapter) Close() error {
 	return s.inner.Close()
+}
+
+// mmapInnerSearcher is satisfied by HNSW searchers that support memory-mapped loading.
+type mmapInnerSearcher interface {
+	LoadFromFile(ctx context.Context, path string) error
+}
+
+// mmapSearcherAdapter wraps searcherAdapter and adds LoadFromFile support for
+// mmap-capable inner searchers. Only returned when UseMmap=true.
+type mmapSearcherAdapter struct {
+	searcherAdapter
+}
+
+func (s *mmapSearcherAdapter) LoadFromFile(ctx context.Context, path string) error {
+	if mmap, ok := s.inner.(mmapInnerSearcher); ok {
+		return mmap.LoadFromFile(ctx, path)
+	}
+	return fmt.Errorf("inner hnsw searcher does not support LoadFromFile")
 }
