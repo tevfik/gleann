@@ -42,7 +42,6 @@ require (
 	github.com/rivo/uniseg v0.4.7 // indirect
 	github.com/shopspring/decimal v1.4.0 // indirect
 	github.com/spf13/cast v1.7.1 // indirect
-	github.com/tevfik/gleann-chunking v0.0.0-00010101000000-000000000000 // indirect
 	github.com/wk8/go-ordered-map/v2 v2.1.8 // indirect
 	github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e // indirect
 	github.com/yosida95/uritemplate/v3 v3.0.2 // indirect
@@ -55,5 +54,3 @@ require (
 	modernc.org/memory v1.11.0 // indirect
 	modernc.org/sqlite v1.46.1 // indirect
 )
-
-replace github.com/tevfik/gleann-chunking => /home/tevfik/WORKSPACE/gleann-chunking

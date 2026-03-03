@@ -11,7 +11,7 @@ import (
 	"github.com/smacker/go-tree-sitter/python"
 	"github.com/smacker/go-tree-sitter/rust"
 	"github.com/smacker/go-tree-sitter/typescript/typescript"
-	"github.com/tevfik/gleann-chunking"
+	"github.com/tevfik/gleann/modules/chunking"
 	"github.com/tevfik/gleann/internal/graph/kuzu"
 )
 

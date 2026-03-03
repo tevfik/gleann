@@ -10,9 +10,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tevfik/gleann-bm25"
-	"github.com/tevfik/gleann-chunking"
-	"github.com/tevfik/gleann-hnsw"
+	"github.com/tevfik/gleann/modules/bm25"
+	"github.com/tevfik/gleann/modules/chunking"
+	"github.com/tevfik/gleann/modules/hnsw"
 	"github.com/tevfik/gleann/pkg/gleann"
 )
 
