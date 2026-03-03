@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/tevfik/gleann-chunking"
+	"github.com/tevfik/gleann/modules/chunking"
 	"github.com/tevfik/gleann/internal/graph/kuzu"
 )
 

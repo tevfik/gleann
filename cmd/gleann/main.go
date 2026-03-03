@@ -19,7 +19,7 @@ import (
 	"time"
 
 	"github.com/fsnotify/fsnotify"
-	"github.com/tevfik/gleann-chunking"
+	"github.com/tevfik/gleann/modules/chunking"
 	"github.com/tevfik/gleann/internal/embedding"
 	"github.com/tevfik/gleann/internal/graph/indexer"
 	kgraph "github.com/tevfik/gleann/internal/graph/kuzu"

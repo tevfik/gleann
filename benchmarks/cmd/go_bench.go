@@ -9,7 +9,7 @@ import (
 	"runtime"
 	"time"
 
-	"github.com/tevfik/gleann-hnsw"
+	"github.com/tevfik/gleann/modules/hnsw"
 )
 
 type BenchResult struct {

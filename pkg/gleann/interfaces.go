@@ -3,7 +3,7 @@ package gleann
 import (
 	"context"
 
-	"github.com/tevfik/gleann-chunking"
+	"github.com/tevfik/gleann/modules/chunking"
 )
 
 // BackendBuilder is the interface that backend builders must implement.

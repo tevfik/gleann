@@ -1,7 +1,7 @@
 package gleann
 
 import (
-	"github.com/tevfik/gleann-bm25"
+	"github.com/tevfik/gleann/modules/bm25"
 )
 
 // BM25Adapter wraps the bm25.Scorer to implement the gleann.Scorer interface.

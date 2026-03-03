@@ -3,7 +3,7 @@ package backends
 import (
 	"context"
 
-	"github.com/tevfik/gleann-hnsw"
+	"github.com/tevfik/gleann/modules/hnsw"
 	"github.com/tevfik/gleann/pkg/gleann"
 )
 
