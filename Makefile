@@ -10,8 +10,9 @@
 #   make clean         — remove built binaries
 
 # ── Variables ──────────────────────────────────────────────────────────────
-BINARY      := gleann
-BINARY_FULL := gleann-full
+BUILD_DIR   := build
+BINARY      := $(BUILD_DIR)/gleann
+BINARY_FULL := $(BUILD_DIR)/gleann-full
 CMD         := ./cmd/gleann
 VERSION     ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 LDFLAGS     := -s -w -X main.version=$(VERSION)
@@ -21,14 +22,16 @@ INSTALL_DIR ?= /usr/local/bin
 FAISS_LIB_DIR ?= /usr/local/lib
 
 # ── Default target ──────────────────────────────────────────────────────────
-.PHONY: all
+.PHONY: all build
 all: $(BINARY)
+build: $(BINARY)
 
 # ── Pure Go build (no CGo) ──────────────────────────────────────────────────
 .PHONY: $(BINARY)
 $(BINARY):
-	CGO_ENABLED=0 go build -ldflags "$(LDFLAGS)" -o $(BINARY) $(CMD)
-	@echo "✅ Built $(BINARY) (pure Go, no CGo)"
+	@mkdir -p $(BUILD_DIR)
+	CGO_ENABLED=1 go build -tags "treesitter" -ldflags "$(LDFLAGS)" -o $(BINARY) $(CMD)
+	@echo "✅ Built $(BINARY) (with CGo and tree-sitter)"
 
 # ── FAISS + Tree-sitter build ──────────────────────────────────────────────
 .PHONY: full
@@ -36,6 +39,7 @@ full: $(BINARY_FULL)
 
 $(BINARY_FULL):
 	@echo "🔧 Building $(BINARY_FULL) with FAISS + tree-sitter..."
+	@mkdir -p $(BUILD_DIR)
 	CGO_ENABLED=1 \
 	CGO_LDFLAGS="-Wl,-rpath=\$$ORIGIN -L$(FAISS_LIB_DIR) -lfaiss_c -lfaiss" \
 	go build -tags "faiss treesitter" -ldflags "$(LDFLAGS)" -o $(BINARY_FULL) $(CMD)
@@ -44,12 +48,12 @@ $(BINARY_FULL):
 # ── Install ─────────────────────────────────────────────────────────────────
 .PHONY: install
 install: $(BINARY)
-	install -m 0755 $(BINARY) $(INSTALL_DIR)/$(BINARY)
-	@echo "✅ Installed $(BINARY) → $(INSTALL_DIR)/$(BINARY)"
+	install -m 0755 $(BINARY) $(INSTALL_DIR)/$$(basename $(BINARY))
+	@echo "✅ Installed $(BINARY) → $(INSTALL_DIR)/$$(basename $(BINARY))"
 
 .PHONY: install-full
 install-full: $(BINARY_FULL)
-	install -m 0755 $(BINARY_FULL) $(INSTALL_DIR)/$(BINARY_FULL)
+	install -m 0755 $(BINARY_FULL) $(INSTALL_DIR)/$$(basename $(BINARY_FULL))
 	@# Copy FAISS shared libs next to the binary so \$$ORIGIN rpath works.
 	@for lib in $(FAISS_LIB_DIR)/libfaiss*.so*; do \
 		if [ -f "$$lib" ]; then \
@@ -57,8 +61,8 @@ install-full: $(BINARY_FULL)
 			echo "  📦 Installed $$(basename $$lib) → $(INSTALL_DIR)/"; \
 		fi; \
 	done
-	@echo "✅ Installed $(BINARY_FULL) → $(INSTALL_DIR)/$(BINARY_FULL)"
-	@echo "   Run: $(INSTALL_DIR)/$(BINARY_FULL) setup"
+	@echo "✅ Installed $(BINARY_FULL) → $(INSTALL_DIR)/$$(basename $(BINARY_FULL))"
+	@echo "   Run: $(INSTALL_DIR)/$$(basename $(BINARY_FULL)) setup"
 
 # ── Tests ────────────────────────────────────────────────────────────────────
 .PHONY: test
@@ -75,7 +79,7 @@ test-treesitter:
 
 # ── Release (local dist/ directory) ─────────────────────────────────────────
 .PHONY: release
-release: dist/$(BINARY)-$(VERSION)-linux-amd64.tar.gz dist/$(BINARY_FULL)-$(VERSION)-linux-amd64.tar.gz
+release: dist/gleann-$(VERSION)-linux-amd64.tar.gz dist/gleann-full-$(VERSION)-linux-amd64.tar.gz
 	@echo "📦 Release artifacts in dist/"
 
 DIST_DIR := dist
@@ -83,29 +87,29 @@ DIST_DIR := dist
 $(DIST_DIR):
 	mkdir -p $(DIST_DIR)
 
-dist/$(BINARY)-$(VERSION)-linux-amd64.tar.gz: $(BINARY) | $(DIST_DIR)
-	tar czf $@ $(BINARY)
+dist/gleann-$(VERSION)-linux-amd64.tar.gz: $(BINARY) | $(DIST_DIR)
+	tar czf $@ -C $(BUILD_DIR) $$(basename $(BINARY))
 	@echo "  → $@"
 
-dist/$(BINARY_FULL)-$(VERSION)-linux-amd64.tar.gz: $(BINARY_FULL) | $(DIST_DIR)
+dist/gleann-full-$(VERSION)-linux-amd64.tar.gz: $(BINARY_FULL) | $(DIST_DIR)
 	@# Bundle the binary + FAISS shared libs in a single tarball.
-	cp $(FAISS_LIB_DIR)/libfaiss_c.so . 2>/dev/null || true
-	cp $(FAISS_LIB_DIR)/libfaiss.so   . 2>/dev/null || true
-	tar czf $@ $(BINARY_FULL) libfaiss*.so 2>/dev/null; true
-	rm -f libfaiss*.so
+	cp $(FAISS_LIB_DIR)/libfaiss_c.so $(BUILD_DIR)/ 2>/dev/null || true
+	cp $(FAISS_LIB_DIR)/libfaiss.so   $(BUILD_DIR)/ 2>/dev/null || true
+	cd $(BUILD_DIR) && tar czf ../$@ $$(basename $(BINARY_FULL)) libfaiss*.so 2>/dev/null; true
+	rm -f $(BUILD_DIR)/libfaiss*.so
 	@echo "  → $@"
 
 # ── Clean ────────────────────────────────────────────────────────────────────
 .PHONY: clean
 clean:
-	rm -f $(BINARY) $(BINARY_FULL) gleann-test gleann-test-faiss
-	rm -rf dist/
+	rm -rf $(BUILD_DIR) dist/ gleann-test gleann-test-faiss
 	@echo "🧹 Cleaned"
 
 # ── Quick dev targets ─────────────────────────────────────────────────────────
 .PHONY: dev
 dev:
-	CGO_ENABLED=0 go build -race -o $(BINARY) $(CMD)
+	@mkdir -p $(BUILD_DIR)
+	CGO_ENABLED=1 go build -tags "treesitter" -race -o $(BINARY) $(CMD)
 
 .PHONY: bench-faiss
 bench-faiss:

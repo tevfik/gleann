@@ -56,28 +56,31 @@ Bu belge, Gleann projesini tam bağımsız (embedded) ve modüler bir mimariye g
     - [x] `C, C++, Rust` gibi diller için tree-sitter ile CALLS edge yeteneklerinin `ts_calls.go` içine eklenmesi.
 - [x] **Model Yönetimi ve TUI:**
     - [x] `gleann setup` ve `tui` içeriklerinde local LLM indirme mantığının llama.cpp'ye göre düzenlenmesi ve test edilmesi.
+- [x] **Build Sistemi Standardizasyonu:**
+    - [x] `gleann` ve `gleann-sound` projelerinin Makefile yapıları `build/` dizini tabanlı olacak şekilde senkronize edildi.
+    - [x] `go.work` dosyasına plugin projeleri (`gleann-sound`) dahil edilerek workspace bütünlüğü sağlandı.
 
 ## Aşama 4: Modüler Refactor (`go.work` ile Tek-ya da Çok-Repo)
 
 > Not: Alt modüller aynı repo içinde `WORKSPACE/gleann-hnsw/` gibi dizinlerde de kalabilir. Ayrı Git repo'su zorunlu değil.
 
-- [ ] **`go.work` Kurulumu:**
-    - [ ] `WORKSPACE/go.work` dosyası oluştur ve mevcut `gleann/` modülünü ekle.
-    - [ ] Her yeni alt modül bu dosyaya `use` direktifi ile eklenir.
-- [ ] **`gleann-hnsw` çıkarılması (En kolay — sıfır dış bağımlılık):**
-    - [ ] `internal/backend/hnsw/` içeriğini `../gleann-hnsw/` dizinine taşı.
-    - [ ] `module github.com/tevfik/gleann-hnsw` ile yeni `go.mod` oluştur.
-    - [ ] Ana `gleann/` projesinde import path'leri güncelle.
-    - [ ] `go.work`'e `use ../gleann-hnsw` ekle.
-    - [ ] `go test ./...` ile tüm testlerin geçtiğini doğrula.
-- [ ] **`gleann-bm25` çıkarılması (Kolay — sıfır bağımlılık):**
-    - [ ] `internal/bm25/` → `../gleann-bm25/` dizinine taşı.
-    - [ ] `module github.com/tevfik/gleann-bm25` go.mod oluştur.
-    - [ ] `go.work`'e `use ../gleann-bm25` ekle.
-- [ ] **`gleann-chunking` çıkarılması (Orta — interface bağımlılığı var):**
-    - [ ] `gleann.Item` bağımlılığını `chunking.Chunk` lokal interface ile kır.
-    - [ ] `internal/chunking/` → `../gleann-chunking/` taşı.
-    - [ ] `module github.com/tevfik/gleann-chunking` go.mod oluştur.
+- [x] **`go.work` Kurulumu:**
+    - [x] `WORKSPACE/go.work` dosyası oluştur ve mevcut `gleann/` modülünü ekle.
+    - [x] Her yeni alt modül bu dosyaya `use` direktifi ile eklenir.
+- [x] **`gleann-hnsw` çıkarılması (En kolay — sıfır dış bağımlılık):**
+    - [x] `internal/backend/hnsw/` içeriğini `../gleann-hnsw/` dizinine taşı.
+    - [x] `module github.com/tevfik/gleann-hnsw` ile yeni `go.mod` oluştur.
+    - [x] Ana `gleann/` projesinde import path'leri güncelle.
+    - [x] `go.work`'e `use ../gleann-hnsw` ekle.
+    - [x] `go test ./...` ile tüm testlerin geçtiğini doğrula.
+- [x] **`gleann-bm25` çıkarılması (Kolay — sıfır bağımlılık):**
+    - [x] `internal/bm25/` → `../gleann-bm25/` dizinine taşı.
+    - [x] `module github.com/tevfik/gleann-bm25` go.mod oluştur.
+    - [x] `go.work`'e `use ../gleann-bm25` ekle.
+- [x] **`gleann-chunking` çıkarılması (Orta — interface bağımlılığı var):**
+    - [x] `gleann.Item` bağımlılığını `chunking.Chunk` lokal interface ile kır.
+    - [x] `internal/chunking/` → `../gleann-chunking/` taşı.
+    - [x] `module github.com/tevfik/gleann-chunking` go.mod oluştur.
 
 ---
 *Not: Bu belge (AGENT_TASKS.md), görevler tamamlandıkça Agent'lar tarafından `[x]` şeklinde güncellenmelidir.*
