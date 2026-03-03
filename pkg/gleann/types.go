@@ -69,6 +69,12 @@ type Config struct {
 	// EmbeddingProvider specifies the embedding provider ("ollama", "openai", "sentence-transformers").
 	EmbeddingProvider string `json:"embedding_provider"`
 
+	// BatchSize is the number of items to embed in a single request (0 = auto).
+	BatchSize int `json:"batch_size,omitempty"`
+
+	// Concurrency is the number of concurrent embedding requests (0 = auto).
+	Concurrency int `json:"concurrency,omitempty"`
+
 	// OllamaHost is the Ollama server address.
 	OllamaHost string `json:"ollama_host,omitempty"`
 

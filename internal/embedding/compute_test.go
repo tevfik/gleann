@@ -17,8 +17,10 @@ func TestNewComputerDefaults(t *testing.T) {
 	if c.model != "bge-m3" {
 		t.Errorf("expected bge-m3 model, got %s", c.model)
 	}
-	if c.batchSize != 32 {
-		t.Errorf("expected batch size 32, got %d", c.batchSize)
+	// When Options{} is passed, Provider is empty when BatchSize is evaluated,
+	// so the non-Ollama default (100) is used. Provider is set to Ollama after.
+	if c.batchSize != 100 {
+		t.Errorf("expected batch size 100, got %d", c.batchSize)
 	}
 }
 

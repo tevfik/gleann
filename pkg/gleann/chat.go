@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -24,13 +25,13 @@ const (
 
 // ChatConfig holds configuration for LLM chat.
 type ChatConfig struct {
-	Provider    LLMProvider `json:"provider"`
-	Model       string      `json:"model"`
-	BaseURL     string      `json:"base_url,omitempty"`
-	APIKey      string      `json:"api_key,omitempty"`
-	Temperature float64     `json:"temperature,omitempty"`
-	MaxTokens   int         `json:"max_tokens,omitempty"`
-	SystemPrompt string     `json:"system_prompt,omitempty"`
+	Provider     LLMProvider `json:"provider"`
+	Model        string      `json:"model"`
+	BaseURL      string      `json:"base_url,omitempty"`
+	APIKey       string      `json:"api_key,omitempty"`
+	Temperature  float64     `json:"temperature,omitempty"`
+	MaxTokens    int         `json:"max_tokens,omitempty"`
+	SystemPrompt string      `json:"system_prompt,omitempty"`
 }
 
 // DefaultChatConfig returns default chat configuration.
@@ -122,11 +123,19 @@ func (c *LeannChat) Ask(ctx context.Context, question string, opts ...SearchOpti
 	messages := []ChatMessage{
 		{Role: "system", Content: c.config.SystemPrompt},
 	}
-	// Add conversation history.
-	messages = append(messages, c.history...)
+
+	// Add conversation history (Sliding Window: Keep last N messages to prevent context overflow).
+	const historyLimit = 20 // 10 conversation turns (user + assistant)
+	startIdx := 0
+	if len(c.history) > historyLimit {
+		startIdx = len(c.history) - historyLimit
+	}
+	messages = append(messages, c.history[startIdx:]...)
+
 	messages = append(messages, ChatMessage{Role: "user", Content: userPrompt})
 
 	answer, err := c.chat(ctx, messages)
+
 	if err != nil {
 		return "", fmt.Errorf("chat: %w", err)
 	}
@@ -143,6 +152,43 @@ func (c *LeannChat) Ask(ctx context.Context, question string, opts ...SearchOpti
 // ClearHistory clears conversation history.
 func (c *LeannChat) ClearHistory() {
 	c.history = nil
+}
+
+// History returns the current chat history.
+func (c *LeannChat) History() []ChatMessage {
+	return c.history
+}
+
+// SaveSession saves the current chat history to a JSON file.
+// It creates the specified directory if it doesn't exist.
+func (c *LeannChat) SaveSession(dir, indexName string) (string, error) {
+	if len(c.history) == 0 {
+		return "", nil
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", fmt.Errorf("mkdir %s: %w", dir, err)
+	}
+	filename := fmt.Sprintf("%s_%s.json", indexName, time.Now().Format("20060102_150405"))
+	path := filepath.Join(dir, filename)
+	data, err := json.MarshalIndent(c.history, "", "  ")
+	if err != nil {
+		return "", err
+	}
+	return path, os.WriteFile(path, data, 0o644)
+}
+
+// LoadSession loads chat history from a JSON file.
+func (c *LeannChat) LoadSession(path string) error {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	var loadedHistory []ChatMessage
+	if err := json.Unmarshal(data, &loadedHistory); err != nil {
+		return err
+	}
+	c.history = loadedHistory
+	return nil
 }
 
 // Config returns a copy of the current chat config.
@@ -192,9 +238,9 @@ func (c *LeannChat) chat(ctx context.Context, messages []ChatMessage) (string, e
 // --- Ollama Chat ---
 
 type ollamaChatRequest struct {
-	Model    string        `json:"model"`
-	Messages []ChatMessage `json:"messages"`
-	Stream   bool          `json:"stream"`
+	Model    string         `json:"model"`
+	Messages []ChatMessage  `json:"messages"`
+	Stream   bool           `json:"stream"`
 	Options  map[string]any `json:"options,omitempty"`
 }
 

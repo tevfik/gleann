@@ -12,6 +12,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 
 	sitter "github.com/smacker/go-tree-sitter"
 	"github.com/smacker/go-tree-sitter/c"
@@ -26,6 +27,32 @@ import (
 
 // treeSitterAvailable reports whether tree-sitter support is compiled in.
 const treeSitterAvailable = true
+
+// parserPools keeps one sync.Pool per Language, lazily initialised.
+// Each pool creates a parser pre-configured for that language.
+var parserPools sync.Map // map[Language]*sync.Pool
+
+// getParser retrieves a *sitter.Parser from the pool for lang,
+// creating the pool on first use.
+func getParser(lang Language) *sitter.Parser {
+	tsLang := treeSitterLanguage(lang)
+	val, _ := parserPools.LoadOrStore(lang, &sync.Pool{
+		New: func() any {
+			p := sitter.NewParser()
+			p.SetLanguage(tsLang)
+			return p
+		},
+	})
+	return val.(*sync.Pool).Get().(*sitter.Parser)
+}
+
+// returnParser resets and returns the parser to the pool.
+func returnParser(lang Language, p *sitter.Parser) {
+	p.Reset()
+	if val, ok := parserPools.Load(lang); ok {
+		val.(*sync.Pool).Put(p)
+	}
+}
 
 // treeSitterLanguage returns the tree-sitter Language for a given Language enum.
 func treeSitterLanguage(lang Language) *sitter.Language {
@@ -135,11 +162,11 @@ var nameFieldByNodeType = map[string]string{
 	"decorated_definition": "", // handled specially
 
 	// JavaScript / TypeScript
-	"function_declaration":    "name",
-	"class_declaration":       "name",
-	"method_definition":       "name",
-	"interface_declaration":   "name",
-	"type_alias_declaration":  "name",
+	"function_declaration":   "name",
+	"class_declaration":      "name",
+	"method_definition":      "name",
+	"interface_declaration":  "name",
+	"type_alias_declaration": "name",
 
 	// Java / C#
 	"class_declaration_java":  "name",
@@ -151,9 +178,9 @@ var nameFieldByNodeType = map[string]string{
 	"property_declaration":    "name",
 
 	// C / C++
-	"struct_specifier":    "name",
-	"enum_specifier":      "name",
-	"class_specifier":     "name",
+	"struct_specifier":     "name",
+	"enum_specifier":       "name",
+	"class_specifier":      "name",
 	"namespace_definition": "name",
 
 	// Rust
@@ -179,9 +206,9 @@ func treeSitterChunk(source, filename string, lang Language, config ASTChunkerCo
 		return nil
 	}
 
-	// Parse with tree-sitter.
-	parser := sitter.NewParser()
-	parser.SetLanguage(tsLang)
+	// Get a pooled parser instead of allocating a new one per file.
+	parser := getParser(lang)
+	defer returnParser(lang, parser)
 
 	sourceBytes := []byte(source)
 	tree, err := parser.ParseCtx(context.Background(), nil, sourceBytes)

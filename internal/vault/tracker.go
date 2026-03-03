@@ -36,7 +36,8 @@ func DefaultDBPath() string {
 // NewTracker initializes a new SQLite hash tracker.
 func NewTracker(dbPath string) (*Tracker, error) {
 	// Add busy_timeout so concurrent writes queue up instead of throwing SQLITE_BUSY
-	dsn := dbPath + "?_pragma=busy_timeout(5000)"
+	// Use WAL and synchronous NORMAL for drastically faster inserts
+	dsn := dbPath + "?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)"
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, err
@@ -140,6 +141,20 @@ func (t *Tracker) UpsertFile(ctx context.Context, path string) (string, error) {
 	`
 	_, err = t.db.ExecContext(ctx, query, hash, path, info.ModTime().Unix(), info.Size())
 	return hash, err
+}
+
+// UpsertRecord directly upserts file metadata and hash without re-reading the file.
+func (t *Tracker) UpsertRecord(ctx context.Context, hash, path string, modTime, size int64) error {
+	query := `
+	INSERT INTO files (hash, path, last_modified, size)
+	VALUES (?, ?, ?, ?)
+	ON CONFLICT(hash) DO UPDATE SET
+		path = excluded.path,
+		last_modified = excluded.last_modified,
+		size = excluded.size;
+	`
+	_, err := t.db.ExecContext(ctx, query, hash, path, modTime, size)
+	return err
 }
 
 // GetPathByHash finds the current actual path of a file, enabling robust recomputations.

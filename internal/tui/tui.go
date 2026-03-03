@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -74,6 +75,16 @@ func RunChat(chat *gleann.LeannChat, indexName, modelName string) error {
 	m := NewChatModel(chat, indexName, modelName)
 	p := tea.NewProgram(m, tea.WithAltScreen())
 	_, err := p.Run()
+
+	home, _ := os.UserHomeDir()
+	sessionDir := filepath.Join(home, ".gleann", "chatsessions")
+	savedFile, saveErr := chat.SaveSession(sessionDir, indexName)
+	if saveErr != nil {
+		fmt.Fprintf(os.Stderr, "Warning: could not save chat session: %v\n", saveErr)
+	} else if savedFile != "" {
+		fmt.Printf("\nChat session saved to %s\n", savedFile)
+	}
+
 	return err
 }
 

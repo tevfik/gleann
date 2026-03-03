@@ -8,9 +8,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -31,6 +33,7 @@ type Computer struct {
 	apiKey         string
 	dimensions     int
 	batchSize      int
+	concurrency    int
 	promptTemplate string
 	client         *http.Client
 	mu             sync.Mutex
@@ -44,6 +47,7 @@ type Options struct {
 	BaseURL        string
 	APIKey         string
 	BatchSize      int
+	Concurrency    int    // Number of concurrent batches
 	PromptTemplate string // Prepended to text before embedding
 }
 
@@ -51,9 +55,9 @@ type Options struct {
 func NewComputer(opts Options) *Computer {
 	if opts.BatchSize <= 0 {
 		if opts.Provider == ProviderOllama {
-			opts.BatchSize = 8 // smaller batches for local Ollama
+			opts.BatchSize = 256 // Stable medium-large batch for Ollama
 		} else {
-			opts.BatchSize = 32
+			opts.BatchSize = 100 // External APIs handle larger batches
 		}
 	}
 	if opts.Model == "" {
@@ -83,6 +87,13 @@ func NewComputer(opts Options) *Computer {
 			}
 		}
 	}
+	if opts.Concurrency <= 0 {
+		if opts.Provider == ProviderOllama {
+			opts.Concurrency = 4 // Massive batches so lower concurrency
+		} else {
+			opts.Concurrency = 20 // External providers
+		}
+	}
 
 	return &Computer{
 		provider:       opts.Provider,
@@ -90,9 +101,24 @@ func NewComputer(opts Options) *Computer {
 		baseURL:        opts.BaseURL,
 		apiKey:         opts.APIKey,
 		batchSize:      opts.BatchSize,
+		concurrency:    opts.Concurrency,
 		promptTemplate: opts.PromptTemplate,
 		client: &http.Client{
-			Timeout: 120 * time.Second,
+			// Give 60 minutes for massive GPU batch processing.
+			Timeout: 60 * time.Minute,
+			Transport: &http.Transport{
+				Proxy: http.ProxyFromEnvironment,
+				DialContext: (&net.Dialer{
+					Timeout:   30 * time.Second,
+					KeepAlive: 60 * time.Minute,
+				}).DialContext,
+				ForceAttemptHTTP2:     true,
+				MaxIdleConns:          100,
+				IdleConnTimeout:       90 * time.Second,
+				TLSHandshakeTimeout:   10 * time.Second,
+				ExpectContinueTimeout: 1 * time.Second,
+				ResponseHeaderTimeout: 60 * time.Minute, // The crucial part: waiting for Ollama to process the batch
+			},
 		},
 	}
 }
@@ -118,57 +144,109 @@ func (c *Computer) Compute(ctx context.Context, texts []string) ([][]float32, er
 		processedTexts[i] = TruncateToTokenLimit(t, tokenLimit)
 	}
 
-	var allEmbeddings [][]float32
+	allEmbeddings := make([][]float32, len(processedTexts))
 
-	// Process in batches.
-	for i := 0; i < len(processedTexts); i += c.batchSize {
-		end := i + c.batchSize
+	sem := make(chan struct{}, c.concurrency)
+	var wg sync.WaitGroup
+	var errOnce sync.Once
+	var firstErr error
+
+	// Calculate number of batches to avoid math.Ceil overhead
+	numBatches := (len(processedTexts) + c.batchSize - 1) / c.batchSize
+	var processedBatches atomic.Int32
+
+	if len(processedTexts) > 50 {
+		fmt.Printf("🚀 Starting embedding computation for %d items over %d batches (concurrency: %d)\n", len(processedTexts), numBatches, c.concurrency)
+	}
+
+	for i := 0; i < numBatches; i++ {
+		start := i * c.batchSize
+		end := start + c.batchSize
 		if end > len(processedTexts) {
 			end = len(processedTexts)
 		}
-		batch := processedTexts[i:end]
 
-		var embeddings [][]float32
-		var err error
+		wg.Add(1)
+		sem <- struct{}{} // Acquire semaphore
 
-		switch c.provider {
-		case ProviderOllama:
-			embeddings, err = c.computeOllama(ctx, batch)
-		case ProviderOpenAI:
-			embeddings, err = c.computeOpenAI(ctx, batch)
-		case ProviderGemini:
-			embeddings, err = c.computeGemini(ctx, batch)
-		default:
-			return nil, fmt.Errorf("unsupported provider: %s", c.provider)
-		}
+		go func(startIdx, endIdx int, batch []string) {
+			defer wg.Done()
+			defer func() { <-sem }() // Release semaphore
 
-		if err != nil {
-			// Retry one-by-one if batch fails (e.g., one text too long).
-			if len(batch) > 1 {
-				for j, text := range batch {
-					var single [][]float32
-					var singleErr error
-					// Aggressively truncate on retry.
-					truncated := TruncateToTokenLimit(text, GetModelTokenLimit(c.model)/2)
-					switch c.provider {
-					case ProviderOllama:
-						single, singleErr = c.computeOllama(ctx, []string{truncated})
-					case ProviderOpenAI:
-						single, singleErr = c.computeOpenAI(ctx, []string{truncated})
-					case ProviderGemini:
-						single, singleErr = c.computeGemini(ctx, []string{truncated})
-					}
-					if singleErr != nil {
-						return nil, fmt.Errorf("compute text %d (retry): %w", i+j, singleErr)
-					}
-					embeddings = append(embeddings, single...)
-				}
-			} else {
-				return nil, fmt.Errorf("compute batch %d-%d: %w", i, end, err)
+			// Don't start new work if there's an error
+			if firstErr != nil {
+				return
 			}
-		}
 
-		allEmbeddings = append(allEmbeddings, embeddings...)
+			var embeddings [][]float32
+			var err error
+
+			switch c.provider {
+			case ProviderOllama:
+				embeddings, err = c.computeOllama(ctx, batch)
+			case ProviderOpenAI:
+				embeddings, err = c.computeOpenAI(ctx, batch)
+			case ProviderGemini:
+				embeddings, err = c.computeGemini(ctx, batch)
+			default:
+				err = fmt.Errorf("unsupported provider: %s", c.provider)
+			}
+
+			if err != nil {
+				// Retry one-by-one if batch fails (e.g., one text too long).
+				fmt.Printf("⚠️ Batch %d failed, retrying one-by-one: %v\n", startIdx, err)
+				if len(batch) > 1 {
+					var singleRetryEmbeddings [][]float32
+					for j, text := range batch {
+						var single [][]float32
+						var singleErr error
+						// Aggressively truncate on retry.
+						truncated := TruncateToTokenLimit(text, GetModelTokenLimit(c.model)/2)
+						switch c.provider {
+						case ProviderOllama:
+							single, singleErr = c.computeOllama(ctx, []string{truncated})
+						case ProviderOpenAI:
+							single, singleErr = c.computeOpenAI(ctx, []string{truncated})
+						case ProviderGemini:
+							single, singleErr = c.computeGemini(ctx, []string{truncated})
+						}
+
+						if singleErr != nil {
+							errOnce.Do(func() {
+								firstErr = fmt.Errorf("compute text %d (retry): %w", startIdx+j, singleErr)
+							})
+							return
+						}
+						singleRetryEmbeddings = append(singleRetryEmbeddings, single...)
+					}
+					embeddings = singleRetryEmbeddings
+				} else {
+					errOnce.Do(func() {
+						firstErr = fmt.Errorf("compute batch %d-%d: %w", startIdx, endIdx, err)
+					})
+					return
+				}
+			}
+
+			// Wait until embeddings are ready, then copy to master array thread-safe
+			for i, emb := range embeddings {
+				allEmbeddings[startIdx+i] = emb
+			}
+
+			// Atomic progress tracking — no mutex needed
+			current := processedBatches.Add(1)
+			if len(processedTexts) > 50 {
+				if current%50 == 0 || current == int32(numBatches) {
+					fmt.Printf("⏳ Embeddings progress: %d / %d batches complete...\n", current, numBatches)
+				}
+			}
+		}(start, end, processedTexts[start:end])
+	}
+
+	wg.Wait()
+
+	if firstErr != nil {
+		return nil, firstErr
 	}
 
 	// Cache dimensions from first result.
@@ -215,11 +293,11 @@ func (c *Computer) SetPromptTemplate(template string) {
 // modelTokenLimits maps model names to their maximum token limits.
 var modelTokenLimits = map[string]int{
 	// OpenAI
-	"text-embedding-3-small":  8191,
-	"text-embedding-3-large":  8191,
-	"text-embedding-ada-002":  8191,
+	"text-embedding-3-small": 8191,
+	"text-embedding-3-large": 8191,
+	"text-embedding-ada-002": 8191,
 	// Ollama / open-source
-	"bge-m3":                  8192,
+	"bge-m3":                 8192,
 	"bge-large-en-v1.5":      512,
 	"bge-small-en-v1.5":      512,
 	"nomic-embed-text":       8192,
@@ -227,9 +305,9 @@ var modelTokenLimits = map[string]int{
 	"all-minilm":             256,
 	"snowflake-arctic-embed": 512,
 	// Gemini
-	"text-embedding-004":     2048,
+	"text-embedding-004": 2048,
 	// Default fallback
-	"default":                512,
+	"default": 512,
 }
 
 // GetModelTokenLimit returns the token limit for a model.
@@ -411,8 +489,8 @@ type geminiEmbedRequest struct {
 }
 
 type geminiEmbedPart struct {
-	Model   string          `json:"model"`
-	Content geminiContent   `json:"content"`
+	Model   string        `json:"model"`
+	Content geminiContent `json:"content"`
 }
 
 type geminiContent struct {

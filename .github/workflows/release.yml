@@ -67,25 +67,23 @@ jobs:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: "0"
-        run: |
-          EXT=""
-          if [ "${{ matrix.goos }}" = "windows" ]; then EXT=".exe"; fi
-          BINARY="gleann-${{ steps.version.outputs.version }}-${{ matrix.suffix }}${EXT}"
-          LDFLAGS="-s -w -X main.version=${{ steps.version.outputs.version }}"
-          go build -ldflags "$LDFLAGS" -o "$BINARY" ./cmd/gleann/
+          VERSION: ${{ steps.version.outputs.version }}
+        run: make
 
-      - name: Compress binaries
+      - name: Compress binary
         run: |
           mkdir -p dist
-          for f in gleann-*${{ matrix.suffix }}*; do
-            if [ -f "$f" ]; then
-              if [ "${{ matrix.goos }}" = "windows" ]; then
-                zip "dist/${f%.*}.zip" "$f"
-              else
-                tar czf "dist/${f}.tar.gz" "$f"
-              fi
-            fi
-          done
+          BINARY="gleann"
+          if [ "${{ matrix.goos }}" = "windows" ]; then
+            mv gleann gleann.exe 2>/dev/null || true
+            BINARY="gleann.exe"
+          fi
+          SUFFIX="gleann-${{ steps.version.outputs.version }}-${{ matrix.suffix }}"
+          if [ "${{ matrix.goos }}" = "windows" ]; then
+            zip "dist/${SUFFIX}.zip" "${BINARY}"
+          else
+            tar czf "dist/${SUFFIX}.tar.gz" "${BINARY}"
+          fi
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
@@ -147,19 +145,18 @@ jobs:
         env:
           CGO_ENABLED: "1"
           LD_LIBRARY_PATH: "/usr/local/lib"
-        run: |
-          BINARY="gleann-full-${{ steps.version.outputs.version }}-linux-amd64"
-          LDFLAGS="-s -w -X main.version=${{ steps.version.outputs.version }}"
-          export CGO_LDFLAGS="-Wl,-rpath=\$ORIGIN -L/usr/local/lib -lfaiss_c"
-          go build -tags "faiss treesitter" -ldflags "$LDFLAGS" -o "$BINARY" ./cmd/gleann/
+          VERSION: ${{ steps.version.outputs.version }}
+          FAISS_LIB_DIR: "/usr/local/lib"
+        run: make full
 
-      - name: Compress binary and shared library
+      - name: Rename and compress binary with shared libraries
         run: |
           mkdir -p dist
-          cp /usr/local/lib/libfaiss_c.so .
-          cp /usr/local/lib/libfaiss.so . || true
-          tar czf "dist/gleann-full-${{ steps.version.outputs.version }}-linux-amd64.tar.gz" \
-            gleann-full-${{ steps.version.outputs.version }}-linux-amd64 libfaiss*
+          SUFFIX="gleann-full-${{ steps.version.outputs.version }}-linux-amd64"
+          mv gleann-full "${SUFFIX}"
+          cp /usr/local/lib/libfaiss_c.so . 2>/dev/null || true
+          cp /usr/local/lib/libfaiss.so   . 2>/dev/null || true
+          tar czf "dist/${SUFFIX}.tar.gz" "${SUFFIX}" libfaiss*.so 2>/dev/null; true
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4

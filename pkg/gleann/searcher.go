@@ -162,10 +162,27 @@ func (s *LeannSearcher) Search(ctx context.Context, query string, opts ...Search
 	var distances []float32
 
 	if s.embServer != nil && s.embServer.IsRunning() {
-		// Use recomputation-based search (LEANN's core optimization).
+		// Use dedicated recomputation server if available
 		ids, distances, err = s.backend.SearchWithRecompute(ctx, queryEmb, retrieveK, s.embServer.ComputeEmbeddings)
+	} else if _, isMmap := s.backend.(MmapBackendSearcher); isMmap {
+		// If using Mmap Searcher but no dedicated embServer, create an ad-hoc recomputer
+		// so that the graph can traverse locally.
+		adHocRecompute := func(ctx context.Context, targetIDs []int64) ([][]float32, error) {
+			texts := make([]string, 0, len(targetIDs))
+			for _, id := range targetIDs {
+				passage, pErr := s.passages.Get(id)
+				if pErr == nil {
+					texts = append(texts, passage.Text)
+				} else {
+					texts = append(texts, "")
+				}
+			}
+			return s.embedder.Compute(ctx, texts)
+		}
+		// HNSW/mmap passes context natively if we wrapper it or we just ignore the inner errors.
+		ids, distances, err = s.backend.SearchWithRecompute(ctx, queryEmb, retrieveK, adHocRecompute)
 	} else {
-		// Standard search with stored embeddings.
+		// Standard RAM search with stored embeddings.
 		ids, distances, err = s.backend.Search(ctx, queryEmb, retrieveK)
 	}
 	if err != nil {
@@ -193,7 +210,17 @@ func (s *LeannSearcher) Search(ctx context.Context, query string, opts ...Search
 	finalScores := make(map[int64]float32)
 
 	if s.scorer != nil && alpha < 1.0 {
-		bm25Scores := s.scorer.Score(query, s.passages.All())
+		// Score only the FAISS candidates instead of the entire corpus.
+		// BM25Adapter.Score maps by p.ID, so using a subset is correct and
+		// reduces complexity from O(n_total) to O(retrieveK).
+		candidatePassages := make([]Passage, 0, len(ids))
+		for _, id := range ids {
+			if p, err := s.passages.Get(id); err == nil {
+				candidatePassages = append(candidatePassages, p)
+			}
+		}
+		bm25Scores := s.scorer.Score(query, candidatePassages)
+
 		// Normalize BM25 scores.
 		maxBM25 := float32(0)
 		for _, score := range bm25Scores {
@@ -202,26 +229,18 @@ func (s *LeannSearcher) Search(ctx context.Context, query string, opts ...Search
 			}
 		}
 
-		// Merge all candidate IDs.
-		allIDs := make(map[int64]bool)
-		for _, id := range ids {
-			allIDs[id] = true
-		}
-		for i := range bm25Scores {
-			if bm25Scores[i] > 0 {
-				allIDs[s.passages.All()[i].ID] = true
+		// Build score map indexed by passage ID.
+		bm25ByID := make(map[int64]float32, len(candidatePassages))
+		for i, p := range candidatePassages {
+			if maxBM25 > 0 {
+				bm25ByID[p.ID] = bm25Scores[i] / maxBM25
 			}
 		}
 
-		for id := range allIDs {
+		// Merge vector scores and BM25 scores for all candidates.
+		for _, id := range ids {
 			vs := vectorScores[id]
-			bs := float32(0)
-			if int(id) < len(bm25Scores) {
-				bs = bm25Scores[id]
-				if maxBM25 > 0 {
-					bs /= maxBM25
-				}
-			}
+			bs := bm25ByID[id] // 0 if not found
 			finalScores[id] = alpha*vs + (1-alpha)*bs
 		}
 	} else {

@@ -13,13 +13,12 @@ package faiss
 #include <faiss/c_api/AutoTune_c.h>
 #include <faiss/c_api/index_factory_c.h>
 #include <faiss/c_api/index_io_c.h>
+#include "faiss_io.h"
 */
 import "C"
 import (
 	"context"
 	"fmt"
-	"os"
-	"path/filepath"
 	"sync"
 	"unsafe"
 
@@ -88,28 +87,8 @@ func (b *Builder) Build(ctx context.Context, embeddings [][]float32) ([]byte, er
 		return nil, fmt.Errorf("faiss_Index_add failed: rc=%d", rc)
 	}
 
-	// Serialize to a temp file and read back.
-	tmpDir, err := os.MkdirTemp("", "faiss-*")
-	if err != nil {
-		return nil, fmt.Errorf("create temp dir: %w", err)
-	}
-	defer os.RemoveAll(tmpDir)
-
-	tmpFile := filepath.Join(tmpDir, "index.faiss")
-	cPath := C.CString(tmpFile)
-	defer C.free(unsafe.Pointer(cPath))
-
-	rc = C.faiss_write_index_fname(index, cPath)
-	if rc != 0 {
-		return nil, fmt.Errorf("faiss_write_index failed: rc=%d", rc)
-	}
-
-	data, err := os.ReadFile(tmpFile)
-	if err != nil {
-		return nil, fmt.Errorf("read index file: %w", err)
-	}
-
-	return data, nil
+	// Serialize to memory — no temp files.
+	return serializeIndex(index)
 }
 
 func (b *Builder) AddVectors(ctx context.Context, indexData []byte, embeddings [][]float32, startID int64) ([]byte, error) {
@@ -140,48 +119,35 @@ func (b *Builder) RemoveVectors(ctx context.Context, indexData []byte, ids []int
 
 // Searcher searches FAISS HNSW indexes via CGo.
 type Searcher struct {
-	config  gleann.Config
-	index   *C.FaissIndex
-	tmpDir  string
-	mu      sync.RWMutex
+	config gleann.Config
+	index  *C.FaissIndex
+	mu     sync.RWMutex
 }
 
 func (s *Searcher) Load(ctx context.Context, indexData []byte, meta gleann.IndexMeta) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	// Write index data to temp file (FAISS needs file path).
-	tmpDir, err := os.MkdirTemp("", "faiss-search-*")
-	if err != nil {
-		return fmt.Errorf("create temp dir: %w", err)
+	if len(indexData) == 0 {
+		return fmt.Errorf("empty index data")
 	}
 
-	tmpFile := filepath.Join(tmpDir, "index.faiss")
-	if err := os.WriteFile(tmpFile, indexData, 0644); err != nil {
-		os.RemoveAll(tmpDir)
-		return fmt.Errorf("write index file: %w", err)
-	}
-
-	cPath := C.CString(tmpFile)
-	defer C.free(unsafe.Pointer(cPath))
-
-	var index *C.FaissIndex
-	rc := C.faiss_read_index_fname(cPath, 0, &index)
+	// In-memory load — no temp files.
+	var newIndex *C.FaissIndex
+	rc := C.gleann_faiss_read_buf(
+		(*C.uint8_t)(unsafe.Pointer(&indexData[0])),
+		C.size_t(len(indexData)),
+		&newIndex,
+	)
 	if rc != 0 {
-		os.RemoveAll(tmpDir)
-		return fmt.Errorf("faiss_read_index failed: rc=%d", rc)
+		return fmt.Errorf("gleann_faiss_read_buf failed: rc=%d", rc)
 	}
 
-	// Clean up previous index if any.
+	// Free previous index if any.
 	if s.index != nil {
 		C.faiss_Index_free(s.index)
 	}
-	if s.tmpDir != "" {
-		os.RemoveAll(s.tmpDir)
-	}
-
-	s.index = index
-	s.tmpDir = tmpDir
+	s.index = newIndex
 
 	// Set efSearch via ParameterSpace (FAISS default is 16, which gives poor recall).
 	efSearch := s.config.HNSWConfig.EfSearch
@@ -250,10 +216,6 @@ func (s *Searcher) Close() error {
 		C.faiss_Index_free(s.index)
 		s.index = nil
 	}
-	if s.tmpDir != "" {
-		os.RemoveAll(s.tmpDir)
-		s.tmpDir = ""
-	}
 	return nil
 }
 
@@ -272,59 +234,39 @@ func flattenVectors(vecs [][]float32) []float32 {
 	return flat
 }
 
-// loadFromBytes loads a FAISS index from byte slice via temp file.
+// loadFromBytes loads a FAISS index from byte slice via in-memory I/O.
 func loadFromBytes(data []byte) (*C.FaissIndex, func(), error) {
-	tmpDir, err := os.MkdirTemp("", "faiss-load-*")
-	if err != nil {
-		return nil, nil, fmt.Errorf("create temp dir: %w", err)
+	if len(data) == 0 {
+		return nil, nil, fmt.Errorf("empty index data")
 	}
-
-	tmpFile := filepath.Join(tmpDir, "index.faiss")
-	if err := os.WriteFile(tmpFile, data, 0644); err != nil {
-		os.RemoveAll(tmpDir)
-		return nil, nil, fmt.Errorf("write index file: %w", err)
-	}
-
-	cPath := C.CString(tmpFile)
-	defer C.free(unsafe.Pointer(cPath))
-
 	var index *C.FaissIndex
-	rc := C.faiss_read_index_fname(cPath, 0, &index)
+	rc := C.gleann_faiss_read_buf(
+		(*C.uint8_t)(unsafe.Pointer(&data[0])),
+		C.size_t(len(data)),
+		&index,
+	)
 	if rc != 0 {
-		os.RemoveAll(tmpDir)
-		return nil, nil, fmt.Errorf("faiss_read_index failed: rc=%d", rc)
+		return nil, nil, fmt.Errorf("gleann_faiss_read_buf failed: rc=%d", rc)
 	}
-
 	cleanup := func() {
 		C.faiss_Index_free(index)
-		os.RemoveAll(tmpDir)
 	}
-
 	return index, cleanup, nil
 }
 
-// serializeIndex saves a FAISS index to bytes.
+// serializeIndex saves a FAISS index to bytes via in-memory I/O.
 func serializeIndex(index *C.FaissIndex) ([]byte, error) {
-	tmpDir, err := os.MkdirTemp("", "faiss-save-*")
-	if err != nil {
-		return nil, fmt.Errorf("create temp dir: %w", err)
-	}
-	defer os.RemoveAll(tmpDir)
+	var outBuf *C.uint8_t
+	var outSize C.size_t
 
-	tmpFile := filepath.Join(tmpDir, "index.faiss")
-	cPath := C.CString(tmpFile)
-	defer C.free(unsafe.Pointer(cPath))
-
-	rc := C.faiss_write_index_fname(index, cPath)
+	rc := C.gleann_faiss_write_buf(index, &outBuf, &outSize)
 	if rc != 0 {
-		return nil, fmt.Errorf("faiss_write_index failed: rc=%d", rc)
+		return nil, fmt.Errorf("gleann_faiss_write_buf failed: rc=%d", rc)
 	}
+	defer C.free(unsafe.Pointer(outBuf))
 
-	data, err := os.ReadFile(tmpFile)
-	if err != nil {
-		return nil, fmt.Errorf("read index file: %w", err)
-	}
-
+	// Copy C-owned memory into a Go slice.
+	data := C.GoBytes(unsafe.Pointer(outBuf), C.int(outSize))
 	return data, nil
 }
 
