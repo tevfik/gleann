@@ -25,6 +25,7 @@ gleann-go provides semantic search across various data sources (documents, code,
 - **Two-Stage Reranker** — Cross-encoder reranking pipeline for higher accuracy
 - **Metadata Filtering** — 12 operators (eq, gt, contains, regex, etc.) with AND/OR logic
 - **AST-aware Chunking** — Go native AST (default) + optional tree-sitter for 8 languages via `-tags treesitter`
+- **AST Graph Indexer** — KuzuDB-backed symbol graph with `CALLS`, `DECLARES` relationships across 8 languages (`gleann build --graph`)
 - **MCP Server** — Built-in JSON-RPC 2.0 stdio for Claude Code / VS Code integration (`gleann mcp`)
 - **File Sync** — Incremental re-indexing with SHA-256 change detection
 
@@ -218,6 +219,56 @@ def add(self, a, b):
 
 **Accurate boundaries** — Tree-sitter knows exactly where a function/class ends (matching braces, indentation), while regex guesses from the next boundary pattern.
 
+## AST Graph Indexer
+
+gleann can build a property graph of your codebase **in parallel** with the vector embedding index, using KuzuDB as the storage engine and tree-sitter (or `go/ast`) as the parser.
+
+```bash
+# Build the vector index AND the call graph at the same time
+gleann build my-code --docs ./src --graph
+
+# Query direct and transitive dependencies (outgoing CALLS)
+gleann graph deps "github.com/tevfik/gleann/pkg/gleann.MyFunc" --index my-code
+
+# Query callers (incoming CALLS)
+gleann graph callers "github.com/tevfik/gleann/pkg/gleann.MyFunc" --index my-code
+```
+
+### Graph Schema
+
+| Node | Properties |
+|------|------------|
+| `CodeFile` | `path`, `lang` |
+| `Symbol` | `fqn`, `name`, `kind`, `file`, `line` |
+
+| Edge | From → To | Meaning |
+|------|----------|---------|
+| `DECLARES` | `CodeFile → Symbol` | File contains symbol |
+| `CALLS` | `Symbol → Symbol` | Function calls another |
+| `IMPLEMENTS` | `Symbol → Symbol` | Struct implements interface |
+
+### MCP Integration (Yaver / Cursor / Claude Code)
+
+When `gleann mcp` is running, AI editors can call two new tools:
+
+- **`gleann_graph_deps`** — returns what a given symbol depends on  
+- **`gleann_graph_callers`** — returns who calls a given symbol
+
+The AI can autonomously trace code execution paths without leaving the editor.
+
+### Supported Languages
+
+| Language | Declaration | Call Extraction |
+|----------|-------------|------------------|
+| Go | `go/ast` native | `go/ast` call expressions |
+| Python | tree-sitter `function_definition`, `class_definition` | `call` nodes |
+| JS / TS | tree-sitter `function_declaration`, `class_declaration` | `call_expression` nodes |
+| C / C++ | tree-sitter `function_definition`, `class_specifier` | `call_expression` nodes |
+| Rust | tree-sitter `function_item`, `impl_item`, `struct_item` | `call_expression` nodes |
+| Java / C# | tree-sitter `method_declaration`, `class_declaration` | `call_expression` nodes |
+
+> **Incremental sync:** The graph indexer uses the same SHA-256 file-hash tracking as the vector index. Only changed files are re-parsed and re-inserted.
+
 ## Generic Plugin Architecture
 
 Gleann is lightweight and purely binary, but it supports external **Plugins** for parsing complex files or adding capabilities (like Voice, Images, etc.) via local HTTP APIs.
@@ -338,6 +389,15 @@ gleann mcp
 
 # Launch TUI
 gleann tui
+
+# Build vector index + AST call graph simultaneously
+gleann build my-code --docs ./src --graph
+
+# Query: what does MyFunc depend on?
+gleann graph deps "github.com/tevfik/gleann/pkg/gleann.MyFunc" --index my-code
+
+# Query: who calls MyFunc?
+gleann graph callers "github.com/tevfik/gleann/pkg/gleann.MyFunc" --index my-code
 
 # Show version
 gleann version
@@ -633,6 +693,7 @@ gleann/
 | Two-stage reranker | ✅ Done |
 | MCP server (embedded) | ✅ Done |
 | Setup wizard + install | ✅ Done |
+| AST Graph Indexer (KuzuDB) | ✅ Done |
 | DiskANN backend (100M+ vectors) | Planned |
 | IVF backend (PQ quantization) | Planned |
 | Web search tool for ReAct agent | Planned |
