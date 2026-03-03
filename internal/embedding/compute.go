@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -78,7 +79,11 @@ func NewComputer(opts Options) *Computer {
 		case ProviderGemini:
 			opts.BaseURL = "https://generativelanguage.googleapis.com"
 		}
+	} else if opts.Provider == ProviderLlamaCPP && (strings.Contains(opts.BaseURL, "11434") || strings.Contains(opts.BaseURL, "(auto-scan")) {
+		// Prevent cross-contamination from shared Config.OllamaHost defaults in callers
+		opts.BaseURL = "http://localhost:8080"
 	}
+
 	if opts.APIKey == "" {
 		switch opts.Provider {
 		case ProviderOpenAI:
