@@ -10,6 +10,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/tevfik/gleann/internal/backend/llamacpp"
 	"github.com/tevfik/gleann/internal/embedding"
 	"github.com/tevfik/gleann/pkg/gleann"
 
@@ -169,6 +170,21 @@ func runChatFlow() error {
 		embHost = ""
 	}
 
+	// Start embedded servers if needed.
+	if cfg.EmbeddingProvider == "llamacpp" {
+		fmt.Printf("🚀 Starting embedded llama.cpp server for embedding model %s\n", cfg.EmbeddingModel)
+		embedRunner := llamacpp.NewRunner(cfg.EmbeddingModel)
+		if err := embedRunner.Start(context.Background()); err != nil {
+			return fmt.Errorf("failed to start embedded llama-server: %w", err)
+		}
+		defer embedRunner.Stop()
+
+		cfg.EmbeddingProvider = "openai"
+		embHost = embedRunner.BaseURL()
+		cfg.OpenAIAPIKey = "gleann-embedded"
+		fmt.Printf("✅ Embedded llama-server is ready at %s\n", embHost)
+	}
+
 	// Set up searcher.
 	embedder := embedding.NewComputer(embedding.Options{
 		Provider: embedding.Provider(cfg.EmbeddingProvider),
@@ -198,6 +214,20 @@ func runChatFlow() error {
 		}
 		if savedCfg.OpenAIKey != "" {
 			chatCfg.APIKey = savedCfg.OpenAIKey
+		}
+
+		if savedCfg.LLMProvider == "llamacpp" {
+			fmt.Printf("🚀 Starting embedded llama.cpp server for chat model %s\n", chatCfg.Model)
+			llmRunner := llamacpp.NewRunner(chatCfg.Model)
+			if err := llmRunner.Start(context.Background()); err != nil {
+				return fmt.Errorf("failed to start embedded llama-server for chat: %w", err)
+			}
+			defer llmRunner.Stop()
+
+			chatCfg.Provider = gleann.LLMOpenAI
+			chatCfg.BaseURL = llmRunner.BaseURL()
+			chatCfg.APIKey = "gleann-embedded"
+			fmt.Printf("✅ Embedded chat llama-server is ready at %s\n", chatCfg.BaseURL)
 		}
 	}
 	// Ensure BaseURL for Ollama.
