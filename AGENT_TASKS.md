@@ -39,13 +39,45 @@ Bu belge, Gleann projesini tam bağımsız (embedded) ve modüler bir mimariye g
 - [x] **Proof of Concept (PoC):** `internal/graph/kuzu` paketi oluşturuldu (`db.go`, `writer.go`, `query.go`). `TestKuzuPoc` testi başarıyla geçti: UpsertFile, UpsertSymbol, AddDeclares, AddCalls, Callees ve SymbolsInFile metodları doğrulandı.
 - [ ] KuzuDB'yi `internal/vault` (veya yeni bir modül) içerisine entegre ederek uygulamanın bir parçası yap.
 
-## Aşama 4: Modüler Refactor (Go Workspace - `go.work`)
-- [ ] Projeyi `WORKSPACE` altında bir `go.work` alanına (Multi-Module Workspace) dönüştür.
-- [ ] Aşağıdaki gibi bağımsız bileşenleri ayırarak kendi `go.mod` dosyalarını oluştur:
-    - `gleann-hnsw` (veya benchmark sonucuna göre vektor DB modülü)
-    - `gleann-chunking` (Doküman ve AST metin parçalama)
-    - `gleann-core` (Ana CLI, uygulama mantığı)
-- [ ] İç içe (circular) bağımlılıkları temizle ve modüller arası interface'leri netleştir.
+## Aşama 3b: AST Graph Indexer (`internal/graph/indexer`)
+
+> Mevcut `internal/chunking` paketi AST parse ediyor. Bu aşamada parse edilen sembolleri KuzuDB'ye yazan bir köprü katmanı oluşturulacak.
+
+- [x] **`internal/graph/indexer` paketi oluştur:**
+    - [x] `indexer.go` → `Indexer` struct, `New(db, module)`, `IndexFile(path, source)`, `IndexDir(root)` fonksiyonları.
+    - [x] `go_calls.go` → Go dosyaları için `go/ast` + `ast.Inspect` kullanarak `*ast.CallExpr` çağrı ilişkilerini çıkart. Her çağrı hedefi için `module + pkg + funcName` FQN oluştur ve `AddCalls` ile KuzuDB'ye yaz.
+    - [x] `indexer_test.go` → `TestIndexerGoFile` testi geçti: 4 sembol (function/method/struct), Greet→format CALLS ilişkisi doğrulandı.
+- [x] **Multidil desteği (tree-sitter):** Python, JS/TS için tree-sitter `call_expression` node tipi ile çağrı ilişkileri.
+- [x] **CLI Entegrasyonu:**
+    - [x] `gleann build --graph` flag'i ekle: embedding index oluştururken paralelde graph da doldurulsun.
+    - [x] `gleann graph deps <symbol>` komutu: bir sembolün bağımlılık ağacını göster.
+    - [x] `gleann graph callers <symbol>` komutu: bir fonksiyonu kimin çağırdığını listele.
+- [x] **Genişletilmiş Multidil Desteği:**
+    - [x] `C, C++, Rust` gibi diller için tree-sitter ile CALLS edge yeteneklerinin `ts_calls.go` içine eklenmesi.
+- [x] **Model Yönetimi ve TUI:**
+    - [x] `gleann setup` ve `tui` içeriklerinde local LLM indirme mantığının llama.cpp'ye göre düzenlenmesi ve test edilmesi.
+
+## Aşama 4: Modüler Refactor (`go.work` ile Tek-ya da Çok-Repo)
+
+> Not: Alt modüller aynı repo içinde `WORKSPACE/gleann-hnsw/` gibi dizinlerde de kalabilir. Ayrı Git repo'su zorunlu değil.
+
+- [ ] **`go.work` Kurulumu:**
+    - [ ] `WORKSPACE/go.work` dosyası oluştur ve mevcut `gleann/` modülünü ekle.
+    - [ ] Her yeni alt modül bu dosyaya `use` direktifi ile eklenir.
+- [ ] **`gleann-hnsw` çıkarılması (En kolay — sıfır dış bağımlılık):**
+    - [ ] `internal/backend/hnsw/` içeriğini `../gleann-hnsw/` dizinine taşı.
+    - [ ] `module github.com/tevfik/gleann-hnsw` ile yeni `go.mod` oluştur.
+    - [ ] Ana `gleann/` projesinde import path'leri güncelle.
+    - [ ] `go.work`'e `use ../gleann-hnsw` ekle.
+    - [ ] `go test ./...` ile tüm testlerin geçtiğini doğrula.
+- [ ] **`gleann-bm25` çıkarılması (Kolay — sıfır bağımlılık):**
+    - [ ] `internal/bm25/` → `../gleann-bm25/` dizinine taşı.
+    - [ ] `module github.com/tevfik/gleann-bm25` go.mod oluştur.
+    - [ ] `go.work`'e `use ../gleann-bm25` ekle.
+- [ ] **`gleann-chunking` çıkarılması (Orta — interface bağımlılığı var):**
+    - [ ] `gleann.Item` bağımlılığını `chunking.Chunk` lokal interface ile kır.
+    - [ ] `internal/chunking/` → `../gleann-chunking/` taşı.
+    - [ ] `module github.com/tevfik/gleann-chunking` go.mod oluştur.
 
 ---
 *Not: Bu belge (AGENT_TASKS.md), görevler tamamlandıkça Agent'lar tarafından `[x]` şeklinde güncellenmelidir.*

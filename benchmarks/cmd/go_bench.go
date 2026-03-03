@@ -9,19 +9,19 @@ import (
 	"runtime"
 	"time"
 
-	"github.com/tevfik/gleann/internal/backend/hnsw"
+	"github.com/tevfik/gleann-hnsw"
 )
 
 type BenchResult struct {
-	BuildTimeS          float64 `json:"build_time_s"`
-	BuildMemMB          float64 `json:"build_mem_mb"`
-	SearchTotalS        float64 `json:"search_total_s"`
-	SearchPerQueryUS    float64 `json:"search_per_query_us"`
-	QPS                 float64 `json:"qps"`
-	RecallAt10          float64 `json:"recall_at_10"`
-	BruteForceTotalS    float64 `json:"brute_force_total_s"`
+	BuildTimeS           float64 `json:"build_time_s"`
+	BuildMemMB           float64 `json:"build_mem_mb"`
+	SearchTotalS         float64 `json:"search_total_s"`
+	SearchPerQueryUS     float64 `json:"search_per_query_us"`
+	QPS                  float64 `json:"qps"`
+	RecallAt10           float64 `json:"recall_at_10"`
+	BruteForceTotalS     float64 `json:"brute_force_total_s"`
 	BruteForcePerQueryUS float64 `json:"brute_force_per_query_us"`
-	SpeedupVsBrute      float64 `json:"speedup_vs_brute"`
+	SpeedupVsBrute       float64 `json:"speedup_vs_brute"`
 }
 
 func randomVector(rng *rand.Rand, dim int) []float32 {

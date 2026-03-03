@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	hnsw "github.com/tevfik/gleann/internal/backend/hnsw"
+	hnsw "github.com/tevfik/gleann-hnsw"
 	"github.com/tevfik/gleann/pkg/gleann"
 )
 

@@ -13,7 +13,7 @@ import (
 	"github.com/tevfik/gleann/pkg/gleann"
 
 	// Register HNSW backend.
-	_ "github.com/tevfik/gleann/internal/backend/hnsw"
+	_ "github.com/tevfik/gleann/pkg/backends"
 )
 
 // Run starts the interactive TUI application loop.

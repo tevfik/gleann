@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -25,6 +26,8 @@ func fetchModels(provider, host, apiKey string) ([]ModelInfo, error) {
 		return fetchOllamaModels(host)
 	case "openai":
 		return fetchOpenAIModels(host, apiKey)
+	case "llamacpp":
+		return fetchLlamaCPPModels(host)
 	default:
 		return nil, fmt.Errorf("unsupported provider: %s", provider)
 	}
@@ -228,4 +231,56 @@ func formatModelSize(bytes int64) string {
 	default:
 		return ""
 	}
+}
+
+// --- llama.cpp: local .gguf scanning ---
+
+func fetchLlamaCPPModels(host string) ([]ModelInfo, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return nil, err
+	}
+
+	searchDirs := []string{
+		filepath.Join(home, "models"),
+		filepath.Join(home, ".cache", "lm-studio", "models"),
+		filepath.Join(home, ".cache", "huggingface", "hub"),
+	}
+
+	// host can be a specific directory for scanning models.
+	if host != "" {
+		searchDirs = []string{host}
+	}
+
+	var models []ModelInfo
+
+	for _, dir := range searchDirs {
+		if _, err := os.Stat(dir); err != nil {
+			continue // skip missing dirs
+		}
+
+		filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
+			if err != nil {
+				return nil
+			}
+			if !info.IsDir() && strings.HasSuffix(strings.ToLower(info.Name()), ".gguf") {
+				models = append(models, ModelInfo{
+					Name: info.Name(),
+					Size: formatModelSize(info.Size()),
+					Tag:  path, // Store full path in Tag for later loading
+				})
+			}
+			return nil
+		})
+	}
+
+	if len(models) == 0 {
+		return nil, fmt.Errorf("no .gguf models found in %v", searchDirs)
+	}
+
+	sort.Slice(models, func(i, j int) bool {
+		return models[i].Name < models[j].Name
+	})
+
+	return models, nil
 }

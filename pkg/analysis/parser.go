@@ -14,7 +14,7 @@
 package analysis
 
 import (
-	"github.com/tevfik/gleann/internal/chunking"
+	"github.com/tevfik/gleann-chunking"
 )
 
 // Language represents a supported programming language.

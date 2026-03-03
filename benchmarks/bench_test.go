@@ -10,9 +10,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tevfik/gleann/internal/backend/hnsw"
-	"github.com/tevfik/gleann/internal/bm25"
-	"github.com/tevfik/gleann/internal/chunking"
+	"github.com/tevfik/gleann-bm25"
+	"github.com/tevfik/gleann-chunking"
+	"github.com/tevfik/gleann-hnsw"
 	"github.com/tevfik/gleann/pkg/gleann"
 )
 
@@ -582,7 +582,7 @@ func (m *mockEmbeddingComputer) ComputeSingle(ctx context.Context, text string) 
 	return results[0], nil
 }
 
-func (m *mockEmbeddingComputer) Dimensions() int  { return m.dim }
+func (m *mockEmbeddingComputer) Dimensions() int   { return m.dim }
 func (m *mockEmbeddingComputer) ModelName() string { return "mock" }
 
 func hashStr(s string) int {

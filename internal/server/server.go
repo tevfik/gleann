@@ -16,7 +16,7 @@ import (
 	"github.com/tevfik/gleann/pkg/gleann"
 
 	// Register HNSW backend.
-	_ "github.com/tevfik/gleann/internal/backend/hnsw"
+	_ "github.com/tevfik/gleann/pkg/backends"
 )
 
 // Server is the REST API server for gleann.
@@ -115,16 +115,16 @@ func (s *Server) handleGetIndex(w http.ResponseWriter, r *http.Request) {
 }
 
 type searchRequest struct {
-	Query              string                 `json:"query"`
-	TopK               int                    `json:"top_k,omitempty"`
-	HybridAlpha        float32                `json:"hybrid_alpha,omitempty"`
-	MinScore           float32                `json:"min_score,omitempty"`
-	EfSearch           int                    `json:"ef_search,omitempty"`
-	RecomputeEmbeddings bool                  `json:"recompute_embeddings,omitempty"`
-	Rerank             bool                   `json:"rerank,omitempty"`
-	RerankModel        string                 `json:"rerank_model,omitempty"`
-	MetadataFilters    []gleann.MetadataFilter `json:"metadata_filters,omitempty"`
-	FilterLogic        string                `json:"filter_logic,omitempty"`
+	Query               string                  `json:"query"`
+	TopK                int                     `json:"top_k,omitempty"`
+	HybridAlpha         float32                 `json:"hybrid_alpha,omitempty"`
+	MinScore            float32                 `json:"min_score,omitempty"`
+	EfSearch            int                     `json:"ef_search,omitempty"`
+	RecomputeEmbeddings bool                    `json:"recompute_embeddings,omitempty"`
+	Rerank              bool                    `json:"rerank,omitempty"`
+	RerankModel         string                  `json:"rerank_model,omitempty"`
+	MetadataFilters     []gleann.MetadataFilter `json:"metadata_filters,omitempty"`
+	FilterLogic         string                  `json:"filter_logic,omitempty"`
 }
 
 type searchResponse struct {
@@ -210,10 +210,10 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 }
 
 type askRequest struct {
-	Question    string  `json:"question"`
-	TopK        int     `json:"top_k,omitempty"`
-	LLMModel    string  `json:"llm_model,omitempty"`
-	LLMProvider string  `json:"llm_provider,omitempty"`
+	Question    string `json:"question"`
+	TopK        int    `json:"top_k,omitempty"`
+	LLMModel    string `json:"llm_model,omitempty"`
+	LLMProvider string `json:"llm_provider,omitempty"`
 }
 
 type askResponse struct {
@@ -280,9 +280,9 @@ func (s *Server) handleAsk(w http.ResponseWriter, r *http.Request) {
 }
 
 type buildRequest struct {
-	Texts    []string           `json:"texts"`
-	Items    []gleann.Item      `json:"items,omitempty"`
-	Metadata map[string]any     `json:"metadata,omitempty"`
+	Texts    []string       `json:"texts"`
+	Items    []gleann.Item  `json:"items,omitempty"`
+	Metadata map[string]any `json:"metadata,omitempty"`
 }
 
 func (s *Server) handleBuild(w http.ResponseWriter, r *http.Request) {

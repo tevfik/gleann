@@ -19,8 +19,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tevfik/gleann/internal/backend/hnsw"
-	"github.com/tevfik/gleann/pkg/gleann"
+	"github.com/tevfik/gleann-hnsw"
 )
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -391,8 +390,8 @@ func TestRecallAfterCSRRoundtrip(t *testing.T) {
 	// Round-trip through backend Build → Load.
 	ctx := context.Background()
 	factory := &hnsw.Factory{}
-	config := gleann.Config{
-		HNSWConfig: gleann.HNSWConfig{
+	config := hnsw.Config{
+		HNSWConfig: hnsw.HNSWConfig{
 			M:                 32,
 			EfConstruction:    200,
 			EfSearch:          128,
@@ -407,7 +406,7 @@ func TestRecallAfterCSRRoundtrip(t *testing.T) {
 	}
 
 	searcher := factory.NewSearcher(config)
-	if err := searcher.Load(ctx, indexData, gleann.IndexMeta{}); err != nil {
+	if err := searcher.Load(ctx, indexData, hnsw.IndexMeta{}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -654,8 +653,8 @@ func TestRecallReport(t *testing.T) {
 	ctx := context.Background()
 	factory := &hnsw.Factory{}
 
-	configFull := gleann.Config{
-		HNSWConfig: gleann.HNSWConfig{
+	configFull := hnsw.Config{
+		HNSWConfig: hnsw.HNSWConfig{
 			M:                 32,
 			EfConstruction:    200,
 			EfSearch:          128,
@@ -669,8 +668,8 @@ func TestRecallReport(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	configCompact := gleann.Config{
-		HNSWConfig: gleann.HNSWConfig{
+	configCompact := hnsw.Config{
+		HNSWConfig: hnsw.HNSWConfig{
 			M:                 32,
 			EfConstruction:    200,
 			EfSearch:          128,

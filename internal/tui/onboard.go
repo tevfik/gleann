@@ -15,8 +15,8 @@ import (
 type wizardPhase int
 
 const (
-	phaseMenu          wizardPhase = -1        // settings menu (existing config)
-	phaseEmbProvider   wizardPhase = iota // select: ollama / openai
+	phaseMenu           wizardPhase = -1   // settings menu (existing config)
+	phaseEmbProvider    wizardPhase = iota // select: ollama / openai
 	phaseEmbHost                           // text input: host URL
 	phaseEmbAPIKey                         // text input: API key (openai only)
 	phaseEmbFetching                       // spinner: fetching models
@@ -56,8 +56,8 @@ type OnboardResult struct {
 	EmbeddingProvider string `json:"embedding_provider"`
 	EmbeddingModel    string `json:"embedding_model"`
 	OllamaHost        string `json:"ollama_host,omitempty"`
-	OpenAIKey          string `json:"openai_api_key,omitempty"`
-	OpenAIBaseURL      string `json:"openai_base_url,omitempty"`
+	OpenAIKey         string `json:"openai_api_key,omitempty"`
+	OpenAIBaseURL     string `json:"openai_base_url,omitempty"`
 	AnthropicKey      string `json:"anthropic_api_key,omitempty"`
 	LLMProvider       string `json:"llm_provider"`
 	LLMModel          string `json:"llm_model"`
@@ -99,62 +99,62 @@ type OnboardModel struct {
 	done      bool
 
 	// Menu mode (existing config).
-	menuMode     bool
-	menuItems    []settingsItem
-	menuCursor   int
-	returnPhase  wizardPhase // phase to return to after editing (-1 = menu)
-	existingCfg  *OnboardResult
+	menuMode    bool
+	menuItems   []settingsItem
+	menuCursor  int
+	returnPhase wizardPhase // phase to return to after editing (-1 = menu)
+	existingCfg *OnboardResult
 
 	// Provider selects.
-	embProviders    []string
-	embProviderIdx  int
-	llmProviders    []string
-	llmProviderIdx  int
+	embProviders   []string
+	embProviderIdx int
+	llmProviders   []string
+	llmProviderIdx int
 
 	// Text inputs.
-	embHostInput   textinput.Model
-	embKeyInput    textinput.Model
-	llmHostInput   textinput.Model
-	llmKeyInput    textinput.Model
-	indexDirInput  textinput.Model
+	embHostInput  textinput.Model
+	embKeyInput   textinput.Model
+	llmHostInput  textinput.Model
+	llmKeyInput   textinput.Model
+	indexDirInput textinput.Model
 
 	// Model lists (fetched dynamically).
-	embModels     []ModelInfo
-	embModelIdx   int
-	embAllModels  []ModelInfo // unfiltered
-	embShowAll    bool
-	llmModels     []ModelInfo
-	llmModelIdx   int
-	llmAllModels  []ModelInfo
-	llmShowAll    bool
+	embModels    []ModelInfo
+	embModelIdx  int
+	embAllModels []ModelInfo // unfiltered
+	embShowAll   bool
+	llmModels    []ModelInfo
+	llmModelIdx  int
+	llmAllModels []ModelInfo
+	llmShowAll   bool
 
 	// Loading.
 	spinner  spinner.Model
 	fetchErr string
 
 	// Reranker.
-	rerankEnabled    bool
-	rerankOptions    []string // reranker on/off labels
-	rerankOptionIdx  int
-	rerankModels     []ModelInfo
-	rerankAllModels  []ModelInfo
-	rerankModelIdx   int
-	rerankShowAll    bool
+	rerankEnabled   bool
+	rerankOptions   []string // reranker on/off labels
+	rerankOptionIdx int
+	rerankModels    []ModelInfo
+	rerankAllModels []ModelInfo
+	rerankModelIdx  int
+	rerankShowAll   bool
 
 	// Install.
 	installOptions   []string
 	installOptionIdx int
 
 	// MCP.
-	mcpEnabled    bool
-	mcpOptions    []string // MCP on/off labels
-	mcpOptionIdx  int
+	mcpEnabled   bool
+	mcpOptions   []string // MCP on/off labels
+	mcpOptionIdx int
 
 	// REST API server.
-	serverEnabled    bool
-	serverOptions    []string
-	serverOptionIdx  int
-	serverAddrInput  textinput.Model
+	serverEnabled   bool
+	serverOptions   []string
+	serverOptionIdx int
+	serverAddrInput textinput.Model
 
 	// Final result.
 	result OnboardResult
@@ -235,19 +235,19 @@ func NewOnboardModel() OnboardModel {
 	serverAddr.Width = 24
 
 	return OnboardModel{
-		phase:        phaseEmbProvider,
-		embProviders: []string{"ollama", "openai"},
-		llmProviders: []string{"ollama", "openai", "anthropic"},
-		embHostInput:  embHost,
-		embKeyInput:   embKey,
-		llmHostInput:  llmHost,
-		llmKeyInput:   llmKey,
-		indexDirInput: indexDir,
-		rerankOptions: []string{"Skip (no reranking)", "Enable reranker"},
+		phase:           phaseEmbProvider,
+		embProviders:    []string{"ollama", "openai", "llamacpp"},
+		llmProviders:    []string{"ollama", "openai", "anthropic", "llamacpp"},
+		embHostInput:    embHost,
+		embKeyInput:     embKey,
+		llmHostInput:    llmHost,
+		llmKeyInput:     llmKey,
+		indexDirInput:   indexDir,
+		rerankOptions:   []string{"Skip (no reranking)", "Enable reranker"},
 		rerankOptionIdx: 0,
-		mcpOptions: []string{"Disable MCP server", "Enable MCP server"},
-		mcpOptionIdx: 0,
-		serverOptions: []string{"Disable REST API server", "Enable REST API server"},
+		mcpOptions:      []string{"Disable MCP server", "Enable MCP server"},
+		mcpOptionIdx:    0,
+		serverOptions:   []string{"Disable REST API server", "Enable REST API server"},
 		serverOptionIdx: 0,
 		serverAddrInput: serverAddr,
 		installOptions: []string{
@@ -258,7 +258,7 @@ func NewOnboardModel() OnboardModel {
 			"Uninstall — remove binary, completions & all data",
 		},
 		installOptionIdx: 0,
-		spinner:       sp,
+		spinner:          sp,
 	}
 }
 
@@ -497,6 +497,12 @@ func (m OnboardModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.embHostInput.Focus()
 				m.phase = phaseEmbHost
 				return m, textinput.Blink
+			} else if prov == "llamacpp" {
+				m.embHostInput.SetValue("")
+				m.embHostInput.Placeholder = "Optional: Custom search path"
+				m.embHostInput.Focus()
+				m.phase = phaseEmbHost
+				return m, textinput.Blink
 			}
 			m.embKeyInput.Focus()
 			m.phase = phaseEmbAPIKey
@@ -529,6 +535,12 @@ func (m OnboardModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 			if prov == "ollama" {
 				m.llmHostInput.SetValue("http://localhost:11434")
+				m.llmHostInput.Focus()
+				m.phase = phaseLLMHost
+				return m, textinput.Blink
+			} else if prov == "llamacpp" {
+				m.llmHostInput.SetValue("")
+				m.llmHostInput.Placeholder = "Optional: Custom search path"
 				m.llmHostInput.Focus()
 				m.phase = phaseLLMHost
 				return m, textinput.Blink
@@ -827,21 +839,21 @@ func (m *OnboardModel) focusActiveInput() {
 
 func (m OnboardModel) prevPhase() int {
 	prev := map[wizardPhase]wizardPhase{
-		phaseEmbHost:     phaseEmbProvider,
-		phaseEmbAPIKey:   phaseEmbProvider,
-		phaseEmbModel:    phaseEmbHost,
-		phaseLLMProvider: phaseEmbModel,
-		phaseLLMHost:     phaseLLMProvider,
-		phaseLLMAPIKey:   phaseLLMProvider,
-		phaseLLMModel:    phaseLLMProvider,
+		phaseEmbHost:        phaseEmbProvider,
+		phaseEmbAPIKey:      phaseEmbProvider,
+		phaseEmbModel:       phaseEmbHost,
+		phaseLLMProvider:    phaseEmbModel,
+		phaseLLMHost:        phaseLLMProvider,
+		phaseLLMAPIKey:      phaseLLMProvider,
+		phaseLLMModel:       phaseLLMProvider,
 		phaseReranker:       phaseLLMModel,
 		phaseRerankFetching: phaseReranker,
 		phaseRerankModel:    phaseReranker,
-		phaseIndexDir:    phaseReranker,
-		phaseMCP:         phaseIndexDir,
-		phaseServer:      phaseMCP,
-		phaseSummary:     phaseServer,
-		phaseInstall:     phaseSummary,
+		phaseIndexDir:       phaseReranker,
+		phaseMCP:            phaseIndexDir,
+		phaseServer:         phaseMCP,
+		phaseSummary:        phaseServer,
+		phaseInstall:        phaseSummary,
 	}
 	if p, ok := prev[m.phase]; ok {
 		return int(p)
@@ -899,13 +911,21 @@ func (m OnboardModel) fetchRerankModels() tea.Cmd {
 func (m *OnboardModel) buildResult() {
 	embModel := "bge-m3"
 	if len(m.embModels) > 0 && m.embModelIdx < len(m.embModels) {
-		embModel = m.embModels[m.embModelIdx].Name
+		if m.embProviders[m.embProviderIdx] == "llamacpp" {
+			embModel = m.embModels[m.embModelIdx].Tag
+		} else {
+			embModel = m.embModels[m.embModelIdx].Name
+		}
 	} else if m.existingCfg != nil && m.existingCfg.EmbeddingModel != "" {
 		embModel = m.existingCfg.EmbeddingModel
 	}
 	llmModel := "llama3.2"
 	if len(m.llmModels) > 0 && m.llmModelIdx < len(m.llmModels) {
-		llmModel = m.llmModels[m.llmModelIdx].Name
+		if m.llmProviders[m.llmProviderIdx] == "llamacpp" {
+			llmModel = m.llmModels[m.llmModelIdx].Tag
+		} else {
+			llmModel = m.llmModels[m.llmModelIdx].Name
+		}
 	} else if m.existingCfg != nil && m.existingCfg.LLMModel != "" {
 		llmModel = m.existingCfg.LLMModel
 	}
@@ -917,24 +937,33 @@ func (m *OnboardModel) buildResult() {
 	}
 
 	m.result = OnboardResult{
-		EmbeddingProvider: m.embProviders[m.embProviderIdx],
-		EmbeddingModel:    embModel,
-		OllamaHost:        m.embHostInput.Value(),
+		EmbeddingProvider:  m.embProviders[m.embProviderIdx],
+		EmbeddingModel:     embModel,
+		OllamaHost:         m.embHostInput.Value(),
 		OpenAIKey:          m.embKeyInput.Value(),
 		OpenAIBaseURL:      m.openAIBaseURL(),
-		LLMProvider:       m.llmProviders[m.llmProviderIdx],
-		LLMModel:          llmModel,
-		RerankEnabled:     m.rerankEnabled,
-		RerankModel:       rerankModel,
-		IndexDir:          m.indexDirInput.Value(),
-		InstallPath:       m.installPath(),
+		AnthropicKey:       m.llmKeyInput.Value(),
+		LLMProvider:        m.llmProviders[m.llmProviderIdx],
+		LLMModel:           llmModel,
+		RerankEnabled:      m.rerankEnabled,
+		RerankModel:        rerankModel,
+		IndexDir:           m.indexDirInput.Value(),
+		InstallPath:        m.installPath(),
 		InstallCompletions: m.installOptionIdx >= 1 && m.installOptionIdx <= 2,
-		MCPEnabled:        m.mcpEnabled,
-		ServerEnabled:     m.serverEnabled,
-		ServerAddr:        m.serverAddrInput.Value(),
-		Uninstall:         m.installOptionIdx == 3 || m.installOptionIdx == 4,
-		UninstallData:     m.installOptionIdx == 4,
-		Completed:         true,
+		MCPEnabled:         m.mcpEnabled,
+		ServerEnabled:      m.serverEnabled,
+		ServerAddr:         m.serverAddrInput.Value(),
+		Uninstall:          m.installOptionIdx == 3 || m.installOptionIdx == 4,
+		UninstallData:      m.installOptionIdx == 4,
+		Completed:          true,
+	}
+
+	// Clean up fields if it was repurposed for llamacpp.
+	if m.result.EmbeddingProvider == "llamacpp" {
+		m.result.OllamaHost = ""
+	}
+	if m.result.LLMProvider == "llamacpp" {
+		// Nothing to clean up since LLMHost is just transient
 	}
 
 	// Preserve chat settings from existing config.
@@ -1011,12 +1040,19 @@ func (m OnboardModel) View() string {
 			[]string{
 				"Local models via Ollama (free, private)",
 				"OpenAI embedding API (cloud)",
+				"Embedded llama.cpp server (local, isolated)",
 			}))
 
 	case phaseEmbHost:
-		b.WriteString(m.renderInput("2", "Ollama URL",
-			"Enter the Ollama server address — models will be fetched automatically",
-			&m.embHostInput))
+		if m.embProviders[m.embProviderIdx] == "llamacpp" {
+			b.WriteString(m.renderInput("2", "Embed Model Search Path",
+				"Optional: Provide an absolute folder to scan for .gguf files, or leave blank to search default dirs.",
+				&m.embHostInput))
+		} else {
+			b.WriteString(m.renderInput("2", "Ollama URL",
+				"Enter the Ollama server address — models will be fetched automatically",
+				&m.embHostInput))
+		}
 
 	case phaseEmbAPIKey:
 		b.WriteString(m.renderInput("2", "OpenAI API Key",
@@ -1039,13 +1075,20 @@ func (m OnboardModel) View() string {
 				"Local models via Ollama (free, private)",
 				"OpenAI GPT models (cloud)",
 				"Anthropic Claude models (cloud)",
+				"Embedded llama.cpp server (local, isolated)",
 			}))
 
 	case phaseLLMHost:
 		prov := m.llmProviders[m.llmProviderIdx]
-		b.WriteString(m.renderInput("5", capitalize(prov)+" URL",
-			"Enter the service address — models will be fetched automatically",
-			&m.llmHostInput))
+		if prov == "llamacpp" {
+			b.WriteString(m.renderInput("5", "LLM Model Search Path",
+				"Optional: Provide an absolute folder to scan for .gguf files, or leave blank to search default dirs.",
+				&m.llmHostInput))
+		} else {
+			b.WriteString(m.renderInput("5", capitalize(prov)+" URL",
+				"Enter the service address — models will be fetched automatically",
+				&m.llmHostInput))
+		}
 
 	case phaseLLMAPIKey:
 		prov := m.llmProviders[m.llmProviderIdx]
@@ -1251,19 +1294,19 @@ func (m OnboardModel) settingsMenuValues() []string {
 	}
 
 	return []string{
-		embProv,                // Embedding Provider
-		embHostOrKey,           // Embedding Host / API Key
-		embModel,               // Embedding Model
-		llmProv,                // LLM Provider
-		llmHostOrKey,           // LLM Host / API Key
-		llmModel,               // LLM Model
-		reranker,               // Reranker
-		rerankModel,            // Reranker Model
-		indexDir,               // Index Directory
-		mcpStatus,              // MCP Server
-		serverStatus,           // REST API Server
-		"",                     // Install / Uninstall (no current value)
-		"",                     // Save & Exit
+		embProv,      // Embedding Provider
+		embHostOrKey, // Embedding Host / API Key
+		embModel,     // Embedding Model
+		llmProv,      // LLM Provider
+		llmHostOrKey, // LLM Host / API Key
+		llmModel,     // LLM Model
+		reranker,     // Reranker
+		rerankModel,  // Reranker Model
+		indexDir,     // Index Directory
+		mcpStatus,    // MCP Server
+		serverStatus, // REST API Server
+		"",           // Install / Uninstall (no current value)
+		"",           // Save & Exit
 	}
 }
 

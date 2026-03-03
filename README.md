@@ -232,7 +232,9 @@ Instead of hardcoding features or pulling massive dependencies (like Python libr
 
 ### Official Plugins
 
-* **[gleann-docs](https://github.com/tevfik/gleann-pluggin/tree/main/gleann-docs)**: A Python FastAPI plugin wrapping Microsoft's `MarkItDown`. It adds support for `.pdf`, `.docx`, `.xlsx`, `.pptx`, `.csv`, `.jpg`, and more. Simply run `python main.py --install` in that repo to register it, and Gleann will automatically start extracting text from your office documents!
+* **[gleann-plugin-docs](https://github.com/tevfik/gleann-pluggin/tree/main/gleann-plugin-docs)**: A Python FastAPI plugin wrapping Microsoft's `MarkItDown`. It adds support for `.pdf`, `.docx`, `.xlsx`, `.pptx`, `.csv`, `.jpg`, and more. Simply run `python main.py --install` in that repo to register it, and Gleann will automatically start extracting text from your office documents!
+
+* **[gleann-plugin-sound](https://github.com/tevfik/gleann-pluggin/tree/main/gleann-plugin-sound)**: A Go companion that transcribes audio/video files using local [whisper.cpp](https://github.com/ggerganov/whisper.cpp) or [ONNX Runtime](https://onnxruntime.ai/) inference. Supports `.mp3`, `.wav`, `.m4a`, `.flac`, `.ogg`, `.webm`, `.mp4`, `.mkv`, `.avi`. Run `gleann-plugin-sound install` to register it, and Gleann will automatically transcribe and index your audio files during `gleann build`!
 
 ## Usage
 
