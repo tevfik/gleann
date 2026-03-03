@@ -146,8 +146,26 @@ func NewChatModel(chat *gleann.LeannChat, indexName, modelName string) ChatModel
 	// Build LLM model list from the current model name.
 	llmModels := []string{modelName}
 
-	// Fetch dynamic models from Ollama
-	allModels, err := fetchOllamaModels("http://localhost:11434")
+	// Load saved settings.
+	savedCfg := LoadSavedConfig()
+
+	// Fetch dynamic models based on provider.
+	var allModels []ModelInfo
+	var err error
+	if savedCfg != nil && savedCfg.LLMProvider != "" {
+		host := savedCfg.OllamaHost
+		key := savedCfg.OpenAIKey
+		if savedCfg.LLMProvider == "openai" {
+			host = savedCfg.OpenAIBaseURL
+		} else if savedCfg.LLMProvider == "anthropic" {
+			key = savedCfg.AnthropicKey
+		}
+		allModels, err = fetchModels(savedCfg.LLMProvider, host, key)
+	} else {
+		// Fallback to local ollama default.
+		allModels, err = fetchModels("ollama", "http://localhost:11434", "")
+	}
+
 	if err == nil {
 		filteredLLMs := filterLLMModels(allModels)
 		for _, m := range filteredLLMs {
@@ -157,20 +175,16 @@ func NewChatModel(chat *gleann.LeannChat, indexName, modelName string) ChatModel
 			}
 		}
 	} else {
-		// Fallback to minimal defaults if Ollama is unreachable
-		for _, common := range []string{"llama3.2", "llama3.2:3b-instruct-q4_K_M", "gpt-4o", "claude-sonnet-4-20250514"} {
+		// Fallback to minimal defaults if unreachable
+		for _, common := range []string{"llama3.2", "gpt-4o", "claude-sonnet-4-20250514"} {
 			if common != modelName {
 				llmModels = append(llmModels, common)
 			}
 		}
 	}
-
-	// Load saved settings.
-	savedCfg := LoadSavedConfig()
 	rerankEnabled := false
 	embModel := ""
 	embProvider := ""
-	ollamaHost := "http://localhost:11434"
 
 	// Start with defaults from the chat config provided by caller.
 	temperature := cfg.Temperature
@@ -182,9 +196,6 @@ func NewChatModel(chat *gleann.LeannChat, indexName, modelName string) ChatModel
 		rerankEnabled = savedCfg.RerankEnabled
 		embModel = savedCfg.EmbeddingModel
 		embProvider = savedCfg.EmbeddingProvider
-		if savedCfg.OllamaHost != "" {
-			ollamaHost = savedCfg.OllamaHost
-		}
 		// Restore persisted chat settings (override defaults only if set).
 		if savedCfg.SystemPrompt != "" {
 			systemPrompt = savedCfg.SystemPrompt
@@ -205,8 +216,8 @@ func NewChatModel(chat *gleann.LeannChat, indexName, modelName string) ChatModel
 	chat.SetMaxTokens(maxTokens)
 	chat.SetSystemPrompt(systemPrompt)
 
-	// Fetch available reranker models from Ollama.
-	rerankModels, rerankModelIdx := fetchRerankModelList(ollamaHost, savedCfg)
+	// Fetch available reranker models using the embedding provider from `savedCfg`.
+	rerankModels, rerankModelIdx := fetchRerankModelList(savedCfg)
 
 	var initialMessages []chatMsg
 	for _, m := range chat.History() {
@@ -1052,10 +1063,22 @@ func intAbs(x int) int {
 	return x
 }
 
-// fetchRerankModelList fetches models from Ollama and filters for reranker-capable ones.
+// fetchRerankModelList fetches models from the embedding provider and filters for reranker-capable ones.
 // Returns the model name list and the index of the previously-selected model (or 0).
-func fetchRerankModelList(ollamaHost string, savedCfg *OnboardResult) ([]string, int) {
-	allModels, err := fetchOllamaModels(ollamaHost)
+func fetchRerankModelList(savedCfg *OnboardResult) ([]string, int) {
+	var allModels []ModelInfo
+	var err error
+	if savedCfg != nil && savedCfg.EmbeddingProvider != "" {
+		host := savedCfg.OllamaHost
+		key := savedCfg.OpenAIKey
+		if savedCfg.EmbeddingProvider == "openai" {
+			host = savedCfg.OpenAIBaseURL
+		}
+		allModels, err = fetchModels(savedCfg.EmbeddingProvider, host, key)
+	} else {
+		// Fallback
+		allModels, err = fetchModels("ollama", "http://localhost:11434", "")
+	}
 	if err != nil || len(allModels) == 0 {
 		// Fallback: if saved config has a model, use that.
 		if savedCfg != nil && savedCfg.RerankModel != "" {
