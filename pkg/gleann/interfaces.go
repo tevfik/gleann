@@ -1,6 +1,10 @@
 package gleann
 
-import "context"
+import (
+	"context"
+
+	"github.com/tevfik/gleann-chunking"
+)
 
 // BackendBuilder is the interface that backend builders must implement.
 // It mirrors Python LEANN's BackendBuilder ABC.
@@ -97,8 +101,7 @@ type Chunker interface {
 	// Chunk splits the given text into chunks.
 	Chunk(text string) []string
 
-	// ChunkWithMetadata splits text and preserves source metadata.
-	ChunkWithMetadata(text string, metadata map[string]any) []Item
+	ChunkWithMetadata(text string, metadata map[string]any) []chunking.Chunk
 }
 
 // Scorer provides scoring for search results (e.g., BM25).

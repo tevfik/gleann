@@ -19,21 +19,24 @@ import (
 	"time"
 
 	"github.com/fsnotify/fsnotify"
-	"github.com/tevfik/gleann/internal/chunking"
+	"github.com/tevfik/gleann-chunking"
 	"github.com/tevfik/gleann/internal/embedding"
+	"github.com/tevfik/gleann/internal/graph/indexer"
+	kgraph "github.com/tevfik/gleann/internal/graph/kuzu"
 	"github.com/tevfik/gleann/internal/mcp"
 	"github.com/tevfik/gleann/internal/server"
 	"github.com/tevfik/gleann/internal/tui"
 	"github.com/tevfik/gleann/internal/vault"
 	"github.com/tevfik/gleann/pkg/gleann"
 
-	_ "github.com/tevfik/gleann/internal/backend/hnsw"
+	_ "github.com/tevfik/gleann/pkg/backends"
 )
 
 // version is set at build time via -ldflags "-X main.version=..."
 var version = "dev"
 
 func main() {
+	defer cleanupLlamaCPP()
 	if len(os.Args) < 2 {
 		printUsage()
 		os.Exit(1)
@@ -59,6 +62,8 @@ func main() {
 		cmdServe(args)
 	case "info":
 		cmdInfo(args)
+	case "graph":
+		cmdGraph(args)
 	case "chat":
 		cmdChat(args)
 	case "mcp":
@@ -90,6 +95,7 @@ Usage:
   gleann list                           List all indexes
   gleann remove <name>                  Remove an index
   gleann info   <name>                  Show index info
+  gleann graph  <deps|callers> <sym>    Query AST Graph in KuzuDB
   gleann serve  [--addr :8080]          Start REST API server
   gleann mcp                            Start MCP server (stdio, for AI editors)
   gleann tui                            Launch interactive TUI
@@ -239,6 +245,7 @@ func cmdBuild(args []string) {
 		fmt.Fprintln(os.Stderr, "error: --docs flag required")
 		os.Exit(1)
 	}
+	buildGraph := hasFlag(args, "--graph")
 
 	config := getConfig(args)
 
@@ -264,6 +271,11 @@ func cmdBuild(args []string) {
 		if !hasFlag(args, "--index-dir") && savedCfg.IndexDir != "" {
 			config.IndexDir = savedCfg.IndexDir
 		}
+	}
+
+	if err := initLlamaCPP(context.Background(), &config); err != nil {
+		fmt.Fprintf(os.Stderr, "error initializing llamacpp: %v\n", err)
+		os.Exit(1)
 	}
 
 	embedder := embedding.NewComputer(embedding.Options{
@@ -312,7 +324,26 @@ func cmdBuild(args []string) {
 	}
 
 	elapsed := time.Since(start)
-	fmt.Printf("✅ Index %q built: %d passages in %s\n", name, len(items), elapsed.Round(time.Millisecond))
+	fmt.Printf("✅ Vector Index %q built: %d passages in %s\n", name, len(items), elapsed.Round(time.Millisecond))
+
+	if buildGraph {
+		fmt.Printf("🕸️  Building API Graph Index from %s...\n", docsDir)
+		graphStart := time.Now()
+
+		dbPath := filepath.Join(config.IndexDir, name+"_graph")
+		db, err := kgraph.Open(dbPath)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "warning: could not initialize kuzu graph db: %v\n", err)
+		} else {
+			defer db.Close()
+			idx := indexer.New(db, "github.com/tevfik/gleann", docsDir)
+			if err := idx.IndexDir(docsDir); err != nil {
+				fmt.Fprintf(os.Stderr, "warning: graph indexing failed: %v\n", err)
+			} else {
+				fmt.Printf("✅ Graph Index built in %s\n", time.Since(graphStart).Round(time.Millisecond))
+			}
+		}
+	}
 }
 
 func cmdSearch(args []string) {
@@ -342,6 +373,11 @@ func cmdSearch(args []string) {
 
 	config := getConfig(args)
 	asJSON := hasFlag(args, "--json")
+
+	if err := initLlamaCPP(context.Background(), &config); err != nil {
+		fmt.Fprintf(os.Stderr, "error initializing llamacpp: %v\n", err)
+		os.Exit(1)
+	}
 
 	embedder := embedding.NewComputer(embedding.Options{
 		Provider:    embedding.Provider(config.EmbeddingProvider),
@@ -429,6 +465,60 @@ func cmdList(args []string) {
 	for _, idx := range indexes {
 		fmt.Printf("  %-20s  %d passages  backend=%s  model=%s\n",
 			idx.Name, idx.NumPassages, idx.Backend, idx.EmbeddingModel)
+	}
+}
+
+func cmdGraph(args []string) {
+	if len(args) < 2 {
+		fmt.Fprintln(os.Stderr, "usage: gleann graph <deps|callers> <symbol_fqn>")
+		os.Exit(1)
+	}
+
+	subCmd := args[0]
+	symbol := args[1]
+	config := getConfig(args)
+
+	// Since index-dir is not directly known without knowing the index name,
+	// we assume the user provides the specific graph DB path or we search the index dir.
+	// For simplicity in CLI, we'll mandate an --index flag, or default to checking the first graph db found.
+	indexName := getFlag(args, "--index")
+	if indexName == "" {
+		fmt.Fprintln(os.Stderr, "error: --index flag required for graph queries")
+		os.Exit(1)
+	}
+
+	dbPath := filepath.Join(config.IndexDir, indexName+"_graph")
+	db, err := kgraph.Open(dbPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error opening graph db %s: %v\n", dbPath, err)
+		os.Exit(1)
+	}
+	defer db.Close()
+
+	switch subCmd {
+	case "deps":
+		callees, err := db.Callees(symbol)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("🕸️  Dependencies for %s (%d):\n", symbol, len(callees))
+		for _, c := range callees {
+			fmt.Printf("  → [%s] %s\n", c.Kind, c.FQN)
+		}
+	case "callers":
+		callers, err := db.Callers(symbol)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("🕸️  Callers of %s (%d):\n", symbol, len(callers))
+		for _, c := range callers {
+			fmt.Printf("  ← [%s] %s\n", c.Kind, c.FQN)
+		}
+	default:
+		fmt.Fprintf(os.Stderr, "unknown graph command: %s (use deps or callers)\n", subCmd)
+		os.Exit(1)
 	}
 }
 
@@ -532,6 +622,11 @@ func cmdAsk(args []string) {
 	config := getConfig(args)
 	interactive := hasFlag(args, "--interactive")
 
+	if err := initLlamaCPP(context.Background(), &config); err != nil {
+		fmt.Fprintf(os.Stderr, "error initializing llamacpp: %v\n", err)
+		os.Exit(1)
+	}
+
 	embedder := embedding.NewComputer(embedding.Options{
 		Provider:    embedding.Provider(config.EmbeddingProvider),
 		Model:       config.EmbeddingModel,
@@ -572,6 +667,7 @@ func cmdAsk(args []string) {
 		chatConfig.Provider = gleann.LLMProvider(llmProvider)
 	}
 
+	applyLlamaChatOverride(&chatConfig)
 	chat := gleann.NewChat(searcher, chatConfig)
 
 	if interactive {
@@ -634,6 +730,11 @@ func cmdWatch(args []string) {
 	}
 
 	config := getConfig(args)
+
+	if err := initLlamaCPP(context.Background(), &config); err != nil {
+		fmt.Fprintf(os.Stderr, "error initializing llamacpp: %v\n", err)
+		os.Exit(1)
+	}
 
 	embedder := embedding.NewComputer(embedding.Options{
 		Provider:    embedding.Provider(config.EmbeddingProvider),
@@ -789,6 +890,11 @@ func cmdServe(args []string) {
 		fmt.Fprintf(os.Stderr, "warning: port %d requires root privileges (did you mean :%d?)\n", port, port+8000)
 	}
 
+	if err := initLlamaCPP(context.Background(), &config); err != nil {
+		fmt.Fprintf(os.Stderr, "error initializing llamacpp: %v\n", err)
+		os.Exit(1)
+	}
+
 	srv := server.NewServer(config, addr)
 
 	// Graceful shutdown.
@@ -902,6 +1008,11 @@ func cmdChat(args []string) {
 	}
 
 	// Direct chat with given index.
+	if err := initLlamaCPP(context.Background(), &cfg); err != nil {
+		fmt.Fprintf(os.Stderr, "error initializing llamacpp: %v\n", err)
+		os.Exit(1)
+	}
+
 	embedder := embedding.NewComputer(embedding.Options{
 		Provider:    embedding.Provider(cfg.EmbeddingProvider),
 		Model:       cfg.EmbeddingModel,
@@ -942,6 +1053,7 @@ func cmdChat(args []string) {
 		chatCfg.Provider = gleann.LLMProvider(llmProvider)
 	}
 
+	applyLlamaChatOverride(&chatCfg)
 	chat := gleann.NewChat(searcher, chatCfg)
 
 	if sessionFile := getFlag(args, "--session"); sessionFile != "" {
@@ -1137,11 +1249,19 @@ func readDocuments(dir string, chunkSize, chunkOverlap int, tracker *vault.Track
 					}
 				}
 
-				var chunks []gleann.Item
+				var rawChunks []chunking.Chunk
 				if chunking.IsCodeFile(fe.path) {
-					chunks = codeSplitter.ChunkWithMetadata(text, metadata)
+					rawChunks = codeSplitter.ChunkWithMetadata(text, metadata)
 				} else {
-					chunks = splitter.ChunkWithMetadata(text, metadata)
+					rawChunks = splitter.ChunkWithMetadata(text, metadata)
+				}
+
+				var chunks []gleann.Item
+				for _, rc := range rawChunks {
+					chunks = append(chunks, gleann.Item{
+						Text:     rc.Text,
+						Metadata: rc.Metadata,
+					})
 				}
 				resCh <- result{items: chunks}
 			}

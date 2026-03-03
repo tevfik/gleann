@@ -9,8 +9,9 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/tevfik/gleann/internal/backend/hnsw"
-	"github.com/tevfik/gleann/internal/bm25"
+	"github.com/tevfik/gleann-bm25"
+	"github.com/tevfik/gleann-hnsw"
+	_ "github.com/tevfik/gleann/pkg/backends"
 	"github.com/tevfik/gleann/pkg/gleann"
 )
 
