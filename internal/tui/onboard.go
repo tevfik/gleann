@@ -336,8 +336,8 @@ func (m OnboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if msg.forReranker {
 				m.rerankEnabled = false
 				if m.embProviders[m.embProviderIdx] == "llamacpp" {
-					m.fetchErr = "No local .gguf models found for reranking. Download one to ~/models"
-					m.rerankAllModels = []ModelInfo{{Name: "(Download .gguf model to ~/models)", Tag: "Example: bge-reranker-v2-m3.gguf"}}
+					m.fetchErr = "No local .gguf models found for reranking. Download one to ~/.gleann/models"
+					m.rerankAllModels = []ModelInfo{{Name: "(Download .gguf model to ~/.gleann/models)", Tag: "Example: bge-reranker-v2-m3.gguf"}}
 					m.rerankModels = m.rerankAllModels
 					m.phase = phaseRerankModel
 				} else {
@@ -346,7 +346,7 @@ func (m OnboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			} else if msg.forLLM {
 				if m.llmProviders[m.llmProviderIdx] == "llamacpp" {
-					m.llmModels = []ModelInfo{{Name: "(Download .gguf model to ~/models)", Tag: "Example: Llama-3-8B.gguf"}}
+					m.llmModels = []ModelInfo{{Name: "(Download .gguf model to ~/.gleann/models)", Tag: "Example: Llama-3-8B.gguf"}}
 				} else {
 					m.llmModels = []ModelInfo{{Name: "llama3.2"}, {Name: "gpt-4o"}, {Name: "claude-sonnet-4-20250514"}}
 				}
@@ -354,7 +354,7 @@ func (m OnboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.phase = phaseLLMModel
 			} else {
 				if m.embProviders[m.embProviderIdx] == "llamacpp" {
-					m.embModels = []ModelInfo{{Name: "(Download .gguf model to ~/models)", Tag: "Example: bge-m3.gguf"}}
+					m.embModels = []ModelInfo{{Name: "(Download .gguf model to ~/.gleann/models)", Tag: "Example: bge-m3.gguf"}}
 				} else {
 					m.embModels = []ModelInfo{{Name: "bge-m3"}, {Name: "nomic-embed-text"}, {Name: "text-embedding-3-small"}}
 				}
@@ -371,7 +371,7 @@ func (m OnboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.rerankEnabled = false
 				m.rerankOptionIdx = 0
 				if m.embProviders[m.embProviderIdx] == "llamacpp" {
-					m.fetchErr = "No local .gguf models found for reranking. Download one to ~/models"
+					m.fetchErr = "No local .gguf models found for reranking. Download one to ~/.gleann/models"
 				} else {
 					m.fetchErr = "No reranker models found. Pull one first: ollama pull bge-reranker-v2-m3"
 				}
@@ -1436,7 +1436,7 @@ func (m OnboardModel) renderModelSelect(num, title string, models []ModelInfo, c
 	if m.fetchErr != "" {
 		errorMsg := "     ⚠ Could not reach service — showing defaults"
 		if strings.Contains(m.fetchErr, ".gguf") {
-			errorMsg = "     ⚠ No local .gguf models found — please download one to ~/models"
+			errorMsg = "     ⚠ No local .gguf models found — please download one to ~/.gleann/models"
 		}
 		b.WriteString(lipgloss.NewStyle().Foreground(ColorError).Italic(true).Render(errorMsg))
 		b.WriteString("\n")

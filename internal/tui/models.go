@@ -242,7 +242,8 @@ func fetchLlamaCPPModels(host string) ([]ModelInfo, error) {
 	}
 
 	searchDirs := []string{
-		filepath.Join(home, "models"),
+		DefaultModelsDir(),
+		filepath.Join(home, "models"), // legacy/fallback
 		filepath.Join(home, ".cache", "lm-studio", "models"),
 		filepath.Join(home, ".cache", "huggingface", "hub"),
 	}
