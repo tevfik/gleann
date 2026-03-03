@@ -498,11 +498,8 @@ func (m OnboardModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.phase = phaseEmbHost
 				return m, textinput.Blink
 			} else if prov == "llamacpp" {
-				m.embHostInput.SetValue("")
-				m.embHostInput.Placeholder = "Optional: Custom search path"
-				m.embHostInput.Focus()
-				m.phase = phaseEmbHost
-				return m, textinput.Blink
+				m.phase = phaseEmbFetching
+				return m, m.fetchEmbModels()
 			}
 			m.embKeyInput.Focus()
 			m.phase = phaseEmbAPIKey
@@ -539,11 +536,8 @@ func (m OnboardModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.phase = phaseLLMHost
 				return m, textinput.Blink
 			} else if prov == "llamacpp" {
-				m.llmHostInput.SetValue("")
-				m.llmHostInput.Placeholder = "Optional: Custom search path"
-				m.llmHostInput.Focus()
-				m.phase = phaseLLMHost
-				return m, textinput.Blink
+				m.phase = phaseLLMFetching
+				return m, m.fetchLLMModels()
 			}
 			m.llmKeyInput.Focus()
 			m.phase = phaseLLMAPIKey
@@ -641,6 +635,12 @@ func (m OnboardModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if m.menuMode {
 				m.phase = phaseMenu
 			} else {
+				if m.embProviders[m.embProviderIdx] == "llamacpp" {
+					m.rerankEnabled = false
+					m.phase = phaseIndexDir
+					m.indexDirInput.Focus()
+					return m, textinput.Blink
+				}
 				m.phase = phaseReranker
 			}
 		}
@@ -1412,8 +1412,11 @@ func (m OnboardModel) renderModelSelect(num, title string, models []ModelInfo, c
 	b.WriteString("\n")
 
 	if m.fetchErr != "" {
-		b.WriteString(lipgloss.NewStyle().Foreground(ColorError).Italic(true).Render(
-			"     ⚠ Could not reach service — showing defaults"))
+		errorMsg := "     ⚠ Could not reach service — showing defaults"
+		if strings.Contains(m.fetchErr, ".gguf") {
+			errorMsg = "     ⚠ No local .gguf models found — please download one"
+		}
+		b.WriteString(lipgloss.NewStyle().Foreground(ColorError).Italic(true).Render(errorMsg))
 		b.WriteString("\n")
 	} else {
 		count := fmt.Sprintf("     %d models found", len(models))
