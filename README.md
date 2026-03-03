@@ -218,6 +218,22 @@ def add(self, a, b):
 
 **Accurate boundaries** — Tree-sitter knows exactly where a function/class ends (matching braces, indentation), while regex guesses from the next boundary pattern.
 
+## Generic Plugin Architecture
+
+Gleann is lightweight and purely binary, but it supports external **Plugins** for parsing complex files or adding capabilities (like Voice, Images, etc.) via local HTTP APIs.
+
+Instead of hardcoding features or pulling massive dependencies (like Python libraries or headless browsers), Gleann uses a generic plugin registry located at `~/.gleann/plugins.json`.
+
+### How it works:
+1. When you run `gleann build` over a directory, Gleann scans the files.
+2. If it finds a binary or unsupported file (e.g. `report.pdf` or `data.xlsx`), it checks `~/.gleann/plugins.json` for any plugin with the **`document-extraction`** capability that supports that extension.
+3. If a match is found, Gleann seamlessly `POST`s the file to the plugin's REST API and receives raw Markdown text in return.
+4. This Markdown is then chunked and embedded identically to native `.md` files!
+
+### Official Plugins
+
+* **[gleann-docs](https://github.com/tevfik/gleann-pluggin/tree/main/gleann-docs)**: A Python FastAPI plugin wrapping Microsoft's `MarkItDown`. It adds support for `.pdf`, `.docx`, `.xlsx`, `.pptx`, `.csv`, `.jpg`, and more. Simply run `python main.py --install` in that repo to register it, and Gleann will automatically start extracting text from your office documents!
+
 ## Usage
 
 ### As a Go Library

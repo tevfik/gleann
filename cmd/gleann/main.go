@@ -4,12 +4,15 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
@@ -105,6 +108,8 @@ Options:
   --llm-provider <prov>   LLM provider: ollama, openai, anthropic (default: ollama)
   --rerank                Enable two-stage reranking for higher accuracy
   --rerank-model <model>  Reranker model (default: bge-reranker-v2-m3)
+  --batch-size <n>        Embedding batch size (default: auto based on provider)
+  --concurrency <n>       Max concurrent embedding batches (default: auto based on provider)
 
 Examples:
   gleann build my-docs --docs ./documents/
@@ -168,6 +173,16 @@ func getConfig(args []string) gleann.Config {
 				config.ChunkConfig.ChunkOverlap = co
 				i++
 			}
+		case "--batch-size":
+			if i+1 < len(args) {
+				fmt.Sscanf(args[i+1], "%d", &config.BatchSize)
+				i++
+			}
+		case "--concurrency":
+			if i+1 < len(args) {
+				fmt.Sscanf(args[i+1], "%d", &config.Concurrency)
+				i++
+			}
 		case "--hybrid":
 			if i+1 < len(args) {
 				var alpha float32
@@ -227,10 +242,36 @@ func cmdBuild(args []string) {
 
 	config := getConfig(args)
 
+	// Load saved config from ~/.gleann/config.json (TUI setup).
+	// CLI flags take precedence over saved values.
+	savedCfg := tui.LoadSavedConfig()
+	if savedCfg != nil {
+		if !hasFlag(args, "--provider") && savedCfg.EmbeddingProvider != "" {
+			config.EmbeddingProvider = savedCfg.EmbeddingProvider
+		}
+		if !hasFlag(args, "--model") && savedCfg.EmbeddingModel != "" {
+			config.EmbeddingModel = savedCfg.EmbeddingModel
+		}
+		if savedCfg.OllamaHost != "" && config.OllamaHost == "" {
+			config.OllamaHost = savedCfg.OllamaHost
+		}
+		if savedCfg.OpenAIKey != "" && config.OpenAIAPIKey == "" {
+			config.OpenAIAPIKey = savedCfg.OpenAIKey
+		}
+		if savedCfg.OpenAIBaseURL != "" && config.OpenAIBaseURL == "" {
+			config.OpenAIBaseURL = savedCfg.OpenAIBaseURL
+		}
+		if !hasFlag(args, "--index-dir") && savedCfg.IndexDir != "" {
+			config.IndexDir = savedCfg.IndexDir
+		}
+	}
+
 	embedder := embedding.NewComputer(embedding.Options{
-		Provider: embedding.Provider(config.EmbeddingProvider),
-		Model:    config.EmbeddingModel,
-		BaseURL:  config.OllamaHost,
+		Provider:    embedding.Provider(config.EmbeddingProvider),
+		Model:       config.EmbeddingModel,
+		BaseURL:     config.OllamaHost,
+		BatchSize:   config.BatchSize,
+		Concurrency: config.Concurrency,
 	})
 
 	builder, err := gleann.NewBuilder(config, embedder)
@@ -303,9 +344,11 @@ func cmdSearch(args []string) {
 	asJSON := hasFlag(args, "--json")
 
 	embedder := embedding.NewComputer(embedding.Options{
-		Provider: embedding.Provider(config.EmbeddingProvider),
-		Model:    config.EmbeddingModel,
-		BaseURL:  config.OllamaHost,
+		Provider:    embedding.Provider(config.EmbeddingProvider),
+		Model:       config.EmbeddingModel,
+		BaseURL:     config.OllamaHost,
+		BatchSize:   config.BatchSize,
+		Concurrency: config.Concurrency,
 	})
 
 	searcher := gleann.NewSearcher(config, embedder)
@@ -490,9 +533,11 @@ func cmdAsk(args []string) {
 	interactive := hasFlag(args, "--interactive")
 
 	embedder := embedding.NewComputer(embedding.Options{
-		Provider: embedding.Provider(config.EmbeddingProvider),
-		Model:    config.EmbeddingModel,
-		BaseURL:  config.OllamaHost,
+		Provider:    embedding.Provider(config.EmbeddingProvider),
+		Model:       config.EmbeddingModel,
+		BaseURL:     config.OllamaHost,
+		BatchSize:   config.BatchSize,
+		Concurrency: config.Concurrency,
 	})
 
 	searcher := gleann.NewSearcher(config, embedder)
@@ -591,9 +636,11 @@ func cmdWatch(args []string) {
 	config := getConfig(args)
 
 	embedder := embedding.NewComputer(embedding.Options{
-		Provider: embedding.Provider(config.EmbeddingProvider),
-		Model:    config.EmbeddingModel,
-		BaseURL:  config.OllamaHost,
+		Provider:    embedding.Provider(config.EmbeddingProvider),
+		Model:       config.EmbeddingModel,
+		BaseURL:     config.OllamaHost,
+		BatchSize:   config.BatchSize,
+		Concurrency: config.Concurrency,
 	})
 
 	fmt.Printf("👁️  Watching %s for changes via fsnotify (debounce: %s)\n", docsDir, interval)
@@ -856,9 +903,11 @@ func cmdChat(args []string) {
 
 	// Direct chat with given index.
 	embedder := embedding.NewComputer(embedding.Options{
-		Provider: embedding.Provider(cfg.EmbeddingProvider),
-		Model:    cfg.EmbeddingModel,
-		BaseURL:  cfg.OllamaHost,
+		Provider:    embedding.Provider(cfg.EmbeddingProvider),
+		Model:       cfg.EmbeddingModel,
+		BaseURL:     cfg.OllamaHost,
+		BatchSize:   cfg.BatchSize,
+		Concurrency: cfg.Concurrency,
 	})
 	searcher := gleann.NewSearcher(cfg, embedder)
 	ctx := context.Background()
@@ -894,6 +943,14 @@ func cmdChat(args []string) {
 	}
 
 	chat := gleann.NewChat(searcher, chatCfg)
+
+	if sessionFile := getFlag(args, "--session"); sessionFile != "" {
+		fmt.Fprintf(os.Stderr, "Loading session from %s...\n", sessionFile)
+		if err := chat.LoadSession(sessionFile); err != nil {
+			fmt.Fprintf(os.Stderr, "error loading session: %v\n", err)
+			os.Exit(1)
+		}
+	}
 
 	if err := tui.RunChat(chat, indexName, chatCfg.Model); err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
@@ -932,87 +989,179 @@ func cmdSetup() {
 // --- Helpers ---
 
 func readDocuments(dir string, chunkSize, chunkOverlap int, tracker *vault.Tracker) ([]gleann.Item, error) {
-	var items []gleann.Item
+	type fileEntry struct {
+		path string
+		info os.FileInfo
+	}
 
-	splitter := chunking.NewSentenceSplitter(chunkSize, chunkOverlap)
-	codeSplitter := chunking.NewCodeChunker(chunkSize, chunkOverlap)
+	binaryExts := map[string]bool{
+		".pdf": true, ".zip": true, ".tar": true, ".gz": true, ".bz2": true, ".xz": true, ".7z": true, ".rar": true,
+		".exe": true, ".bin": true, ".dll": true, ".so": true, ".dylib": true, ".o": true, ".a": true,
+		".png": true, ".jpg": true, ".jpeg": true, ".gif": true, ".bmp": true, ".ico": true, ".svg": true, ".webp": true,
+		".mp3": true, ".mp4": true, ".avi": true, ".mov": true, ".mkv": true, ".flv": true, ".wav": true, ".flac": true, ".ogg": true,
+		".woff": true, ".woff2": true, ".ttf": true, ".otf": true, ".eot": true,
+		".db": true, ".sqlite": true, ".sqlite3": true,
+		".pyc": true, ".class": true, ".jar": true, ".war": true,
+		".iso": true, ".img": true, ".dmg": true, ".deb": true, ".rpm": true,
+		".doc": true, ".docx": true, ".xls": true, ".xlsx": true, ".ppt": true, ".pptx": true,
+	}
 
-	err := filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
+	// Load plugins once and manage their lifecycles
+	pluginManager, _ := gleann.NewPluginManager()
+	if pluginManager != nil {
+		defer pluginManager.Close()
+	}
+
+	// Phase 1: collect eligible file paths (serial walk is fast — just syscalls).
+	var files []fileEntry
+	walkErr := filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
 		}
+		base := filepath.Base(path)
+
 		if info.IsDir() {
+			if strings.HasPrefix(base, ".") && path != dir {
+				return filepath.SkipDir
+			}
+			if base == "node_modules" || base == "vendor" || base == "dist" || base == "build" || base == ".next" {
+				return filepath.SkipDir
+			}
 			return nil
 		}
 
-		// Skip hidden and binary files.
-		base := filepath.Base(path)
 		if strings.HasPrefix(base, ".") {
 			return nil
 		}
-
-		// Skip known binary / non-text extensions.
 		ext := strings.ToLower(filepath.Ext(path))
-		binaryExts := map[string]bool{
-			".pdf": true, ".zip": true, ".tar": true, ".gz": true, ".bz2": true, ".xz": true, ".7z": true, ".rar": true,
-			".exe": true, ".bin": true, ".dll": true, ".so": true, ".dylib": true, ".o": true, ".a": true,
-			".png": true, ".jpg": true, ".jpeg": true, ".gif": true, ".bmp": true, ".ico": true, ".svg": true, ".webp": true,
-			".mp3": true, ".mp4": true, ".avi": true, ".mov": true, ".mkv": true, ".flv": true, ".wav": true, ".flac": true, ".ogg": true,
-			".woff": true, ".woff2": true, ".ttf": true, ".otf": true, ".eot": true,
-			".db": true, ".sqlite": true, ".sqlite3": true,
-			".pyc": true, ".class": true, ".jar": true, ".war": true,
-			".iso": true, ".img": true, ".dmg": true, ".deb": true, ".rpm": true,
-			".doc": true, ".docx": true, ".xls": true, ".xlsx": true, ".ppt": true, ".pptx": true,
+
+		// Check if a plugin can extract this document.
+		hasPlugin := false
+		if pluginManager != nil && pluginManager.FindDocumentExtractor(ext) != nil {
+			hasPlugin = true
 		}
-		if binaryExts[ext] {
+
+		if !hasPlugin && binaryExts[ext] {
+			return nil
+		}
+		if !hasPlugin && info.Size() > 1<<20 { // >1MB (plugins can bypass this if they want to handle big docs)
 			return nil
 		}
 
-		// Skip large files (>1MB likely binary or not useful).
-		if info.Size() > 1<<20 {
-			return nil
-		}
-
-		data, err := os.ReadFile(path)
-		if err != nil {
-			return nil // Skip unreadable files.
-		}
-
-		// Skip binary content (contains null bytes).
-		if bytes.ContainsRune(data[:min(len(data), 512)], 0) {
-			return nil
-		}
-
-		text := string(data)
-		if len(strings.TrimSpace(text)) == 0 {
-			return nil
-		}
-
-		relPath, _ := filepath.Rel(dir, path)
-		metadata := map[string]any{
-			"source": relPath,
-		}
-
-		// If a tracker is hooked up, compute the content hash and attach to metadata
-		if tracker != nil {
-			hash, err := tracker.UpsertFile(context.Background(), path)
-			if err == nil {
-				metadata["hash"] = hash
-			}
-		}
-
-		if chunking.IsCodeFile(path) {
-			chunks := codeSplitter.ChunkWithMetadata(text, metadata)
-			items = append(items, chunks...)
-		} else {
-			chunks := splitter.ChunkWithMetadata(text, metadata)
-			items = append(items, chunks...)
-		}
-
+		files = append(files, fileEntry{path: path, info: info})
 		return nil
 	})
+	if walkErr != nil {
+		return nil, walkErr
+	}
 
-	return items, err
+	if len(files) == 0 {
+		return nil, nil
+	}
+
+	// Phase 2: parallel read + chunk.
+	// Use min(nCPU, 16) workers to avoid overwhelming Ollama with too many
+	// simultaneous requests from the pass-through (chunking is CPU-bound).
+	nWorkers := runtime.NumCPU()
+	if nWorkers > 16 {
+		nWorkers = 16
+	}
+	if nWorkers < 1 {
+		nWorkers = 1
+	}
+
+	type result struct {
+		items []gleann.Item
+		err   error
+	}
+
+	jobCh := make(chan fileEntry, len(files))
+	resCh := make(chan result, len(files))
+
+	for i := 0; i < nWorkers; i++ {
+		go func() {
+			// Each worker gets its own splitter instances (they are not thread-safe).
+			splitter := chunking.NewSentenceSplitter(chunkSize, chunkOverlap)
+			codeSplitter := chunking.NewCodeChunker(chunkSize, chunkOverlap)
+
+			for fe := range jobCh {
+				ext := strings.ToLower(filepath.Ext(fe.path))
+				var data []byte
+				var err error
+
+				// If a plugin handles this extension, let it do the extraction.
+				if pluginManager != nil {
+					if plugin := pluginManager.FindDocumentExtractor(ext); plugin != nil {
+						mdText, perr := pluginManager.Process(plugin, fe.path)
+						if perr != nil {
+							fmt.Fprintf(os.Stderr, "Warning: plugin %s failed to extract %s: %v\n", plugin.Name, filepath.Base(fe.path), perr)
+							resCh <- result{err: nil}
+							continue
+						}
+						data = []byte(mdText)
+					}
+				}
+
+				if data == nil {
+					data, err = os.ReadFile(fe.path)
+					if err != nil {
+						resCh <- result{err: nil} // skip unreadable
+						continue
+					}
+				}
+
+				// Skip binary content (null bytes).
+				check := data
+				if len(check) > 512 {
+					check = check[:512]
+				}
+				if bytes.ContainsRune(check, 0) {
+					resCh <- result{}
+					continue
+				}
+
+				text := string(data)
+				if len(strings.TrimSpace(text)) == 0 {
+					resCh <- result{}
+					continue
+				}
+
+				relPath, _ := filepath.Rel(dir, fe.path)
+				metadata := map[string]any{"source": relPath}
+
+				if tracker != nil {
+					h := sha256.Sum256(data)
+					hash := hex.EncodeToString(h[:])
+					if err := tracker.UpsertRecord(context.Background(), hash, fe.path, fe.info.ModTime().Unix(), fe.info.Size()); err == nil {
+						metadata["hash"] = hash
+					}
+				}
+
+				var chunks []gleann.Item
+				if chunking.IsCodeFile(fe.path) {
+					chunks = codeSplitter.ChunkWithMetadata(text, metadata)
+				} else {
+					chunks = splitter.ChunkWithMetadata(text, metadata)
+				}
+				resCh <- result{items: chunks}
+			}
+		}()
+	}
+
+	// Send all files to workers.
+	for _, f := range files {
+		jobCh <- f
+	}
+	close(jobCh)
+
+	// Collect results.
+	var allItems []gleann.Item
+	for range files {
+		r := <-resCh
+		allItems = append(allItems, r.items...)
+	}
+
+	return allItems, nil
 }
 
 func formatSize(bytes int64) string {
