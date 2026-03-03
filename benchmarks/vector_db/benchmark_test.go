@@ -1,3 +1,5 @@
+//go:build faiss
+
 package vector_db
 
 import (
@@ -6,8 +8,8 @@ import (
 	"os"
 	"testing"
 
-	"github.com/tevfik/gleann/modules/hnsw"
 	"github.com/tevfik/gleann/internal/backend/faiss"
+	"github.com/tevfik/gleann/modules/hnsw"
 	"github.com/tevfik/gleann/pkg/gleann"
 )
 
