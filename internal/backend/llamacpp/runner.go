@@ -41,10 +41,10 @@ func (r *Runner) Start(ctx context.Context) error {
 		return fmt.Errorf("unsupported OS for embedded llama-server: %s", runtime.GOOS)
 	}
 
-	// 2. Extract binary
-	exePath, err := extractBinary(binName)
+	// 2. Extract binaries and libraries
+	exePath, err := extractAllBinaries(binName)
 	if err != nil {
-		return fmt.Errorf("failed to extract embedded runner: %w", err)
+		return fmt.Errorf("failed to extract embedded runner and libraries: %w", err)
 	}
 
 	// 3. Find open port
@@ -62,6 +62,10 @@ func (r *Runner) Start(ctx context.Context) error {
 		"--mlock",       // Optional: prevent swapping
 		"--log-disable", // Keep stdout clean
 	)
+
+	// Inject LD_LIBRARY_PATH so dynamic linker finds .so libraries in ~/.gleann/bin
+	destDir := filepath.Dir(exePath)
+	r.cmd.Env = append(os.Environ(), "LD_LIBRARY_PATH="+destDir)
 
 	// We can bind stdout/stderr here for debugging if needed
 	r.cmd.Stdout = os.Stdout
@@ -113,7 +117,7 @@ func (r *Runner) waitForReady(ctx context.Context) error {
 	return fmt.Errorf("timeout waiting for llama-server to start on %s", addr)
 }
 
-func extractBinary(filename string) (string, error) {
+func extractAllBinaries(mainBinName string) (string, error) {
 	// Destination extraction path (e.g. ~/.gleann/bin/)
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -124,33 +128,43 @@ func extractBinary(filename string) (string, error) {
 		return "", err
 	}
 
-	destPath := filepath.Join(destDir, filename)
-
-	// Check if already extracted and skip to save time (Optional: can add hash check)
-	if info, err := os.Stat(destPath); err == nil && info.Size() > 0 {
-		return destPath, nil
-	}
-
-	// Read from embed.FS
-	embedPath := "bin/" + filename
-	fileData, err := embeddedBinaries.Open(embedPath)
+	entries, err := embeddedBinaries.ReadDir("bin")
 	if err != nil {
-		return "", fmt.Errorf("binary %s not found in embedded assets: %w", filename, err)
-	}
-	defer fileData.Close()
-
-	// Write to disk
-	out, err := os.OpenFile(destPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0755)
-	if err != nil {
-		return "", err
-	}
-	defer out.Close()
-
-	if _, err := io.Copy(out, fileData); err != nil {
-		return "", err
+		return "", fmt.Errorf("failed to read embedded bin directory: %w", err)
 	}
 
-	return destPath, nil
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+
+		destPath := filepath.Join(destDir, entry.Name())
+
+		// Check if already extracted
+		if info, err := os.Stat(destPath); err == nil && info.Size() > 0 {
+			continue
+		}
+
+		fileData, err := embeddedBinaries.Open("bin/" + entry.Name())
+		if err != nil {
+			return "", fmt.Errorf("failed to open embedded asset %s: %w", entry.Name(), err)
+		}
+
+		out, err := os.OpenFile(destPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0755)
+		if err != nil {
+			fileData.Close()
+			return "", err
+		}
+
+		_, err = io.Copy(out, fileData)
+		fileData.Close()
+		out.Close()
+		if err != nil {
+			return "", err
+		}
+	}
+
+	return filepath.Join(destDir, mainBinName), nil
 }
 
 func getFreePort() (int, error) {
