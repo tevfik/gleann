@@ -334,10 +334,16 @@ func (m OnboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.fetchErr = msg.err.Error()
 			// Allow retry or manual entry, advance with fallback defaults.
 			if msg.forReranker {
-				// No reranker models found — skip to index dir.
 				m.rerankEnabled = false
-				m.fetchErr = "No reranker models found. Pull one with: ollama pull bge-reranker-v2-m3"
-				m.phase = phaseReranker
+				if m.embProviders[m.embProviderIdx] == "llamacpp" {
+					m.fetchErr = "No local .gguf models found for reranking. Download one to ~/models"
+					m.rerankAllModels = []ModelInfo{{Name: "(Download .gguf model to ~/models)", Tag: "Example: bge-reranker-v2-m3.gguf"}}
+					m.rerankModels = m.rerankAllModels
+					m.phase = phaseRerankModel
+				} else {
+					m.fetchErr = "No reranker models found. Pull one with: ollama pull bge-reranker-v2-m3"
+					m.phase = phaseReranker
+				}
 			} else if msg.forLLM {
 				if m.llmProviders[m.llmProviderIdx] == "llamacpp" {
 					m.llmModels = []ModelInfo{{Name: "(Download .gguf model to ~/models)", Tag: "Example: Llama-3-8B.gguf"}}
@@ -362,10 +368,13 @@ func (m OnboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.rerankAllModels = msg.models
 			m.rerankModels = filterRerankerModels(msg.models)
 			if len(m.rerankModels) == 0 {
-				// No reranker models installed — go back to toggle with hint.
 				m.rerankEnabled = false
 				m.rerankOptionIdx = 0
-				m.fetchErr = "No reranker models found. Pull one first: ollama pull bge-reranker-v2-m3"
+				if m.embProviders[m.embProviderIdx] == "llamacpp" {
+					m.fetchErr = "No local .gguf models found for reranking. Download one to ~/models"
+				} else {
+					m.fetchErr = "No reranker models found. Pull one first: ollama pull bge-reranker-v2-m3"
+				}
 				m.phase = phaseReranker
 			} else {
 				m.rerankModelIdx = 0
@@ -643,12 +652,6 @@ func (m OnboardModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if m.menuMode {
 				m.phase = phaseMenu
 			} else {
-				if m.embProviders[m.embProviderIdx] == "llamacpp" {
-					m.rerankEnabled = false
-					m.phase = phaseIndexDir
-					m.indexDirInput.Focus()
-					return m, textinput.Blink
-				}
 				m.phase = phaseReranker
 			}
 		}
@@ -906,10 +909,11 @@ func (m OnboardModel) fetchLLMModels() tea.Cmd {
 }
 
 func (m OnboardModel) fetchRerankModels() tea.Cmd {
-	// Reranker runs on the embedding host (Ollama's /api/embed).
+	prov := m.embProviders[m.embProviderIdx]
 	host := m.embHostInput.Value()
+	key := m.embKeyInput.Value()
 	return func() tea.Msg {
-		models, err := fetchOllamaModels(host)
+		models, err := fetchModels(prov, host, key)
 		return modelsFetchedMsg{models: models, err: err, forReranker: true}
 	}
 }
@@ -953,7 +957,7 @@ func (m *OnboardModel) buildResult() {
 		AnthropicKey:       m.llmKeyInput.Value(),
 		LLMProvider:        m.llmProviders[m.llmProviderIdx],
 		LLMModel:           llmModel,
-		RerankEnabled:      m.rerankEnabled && m.embProviders[m.embProviderIdx] != "llamacpp",
+		RerankEnabled:      m.rerankEnabled,
 		RerankModel:        rerankModel,
 		IndexDir:           m.indexDirInput.Value(),
 		InstallPath:        m.installPath(),
@@ -1278,30 +1282,22 @@ func (m OnboardModel) settingsMenuValues() []string {
 
 	reranker := "disabled"
 	if m.rerankEnabled {
-		if embProv == "llamacpp" {
-			reranker = "disabled (not supported with llamacpp)"
-		} else {
-			reranker = "enabled"
-			if len(m.rerankModels) > 0 && m.rerankModelIdx < len(m.rerankModels) {
-				reranker = m.rerankModels[m.rerankModelIdx].Name
-			} else if cfg.RerankModel != "" {
-				reranker = cfg.RerankModel
-			}
+		reranker = "enabled"
+		if len(m.rerankModels) > 0 && m.rerankModelIdx < len(m.rerankModels) {
+			reranker = m.rerankModels[m.rerankModelIdx].Name
+		} else if cfg.RerankModel != "" {
+			reranker = cfg.RerankModel
 		}
 	}
 
 	rerankModel := ""
 	if m.rerankEnabled {
-		if embProv == "llamacpp" {
-			rerankModel = "—"
+		if len(m.rerankModels) > 0 && m.rerankModelIdx < len(m.rerankModels) {
+			rerankModel = m.rerankModels[m.rerankModelIdx].Name
+		} else if cfg.RerankModel != "" {
+			rerankModel = cfg.RerankModel
 		} else {
-			if len(m.rerankModels) > 0 && m.rerankModelIdx < len(m.rerankModels) {
-				rerankModel = m.rerankModels[m.rerankModelIdx].Name
-			} else if cfg.RerankModel != "" {
-				rerankModel = cfg.RerankModel
-			} else {
-				rerankModel = "(select model)"
-			}
+			rerankModel = "(select model)"
 		}
 	} else {
 		rerankModel = "—"

@@ -30,6 +30,9 @@ const (
 
 	// RerankerVoyage uses Voyage AI's reranking API.
 	RerankerVoyage RerankerProvider = "voyage"
+
+	// RerankerLlamacpp uses standard llama.cpp /api/embed functionality
+	RerankerLlamacpp RerankerProvider = "llamacpp"
 )
 
 // RerankerConfig configures the reranker.
@@ -38,10 +41,10 @@ type RerankerConfig struct {
 	Provider RerankerProvider `json:"provider"`
 
 	// Model is the reranking model name.
-	//   - ollama:  e.g. "bge-reranker-v2-m3" (run as embedding model)
-	//   - jina:    e.g. "jina-reranker-v2-base-multilingual"
-	//   - cohere:  e.g. "rerank-v3.5"
-	//   - voyage:  e.g. "rerank-2"
+	//   - ollama/llamacpp:  e.g. "bge-reranker-v2-m3" or "bge-reranker-v2-gemma-Q4_K_M-GGUF"
+	//   - jina:             e.g. "jina-reranker-v2-base-multilingual"
+	//   - cohere:           e.g. "rerank-v3.5"
+	//   - voyage:           e.g. "rerank-2"
 	Model string `json:"model"`
 
 	// BaseURL is the API base URL (required for ollama, optional for others).
@@ -83,6 +86,8 @@ func NewReranker(cfg RerankerConfig) *CrossEncoderReranker {
 			} else {
 				cfg.BaseURL = "http://localhost:11434"
 			}
+		case RerankerLlamacpp:
+			cfg.BaseURL = "http://localhost:8080"
 		case RerankerJina:
 			cfg.BaseURL = "https://api.jina.ai"
 		case RerankerCohere:
@@ -126,7 +131,7 @@ func (r *CrossEncoderReranker) Rerank(ctx context.Context, query string, results
 	}
 
 	switch r.config.Provider {
-	case RerankerOllama:
+	case RerankerOllama, RerankerLlamacpp:
 		return r.rerankOllama(ctx, query, results, topN)
 	case RerankerJina:
 		return r.rerankJina(ctx, query, results, topN)
@@ -225,10 +230,10 @@ func (r *CrossEncoderReranker) ollamaEmbed(ctx context.Context, texts []string) 
 // ── Jina Reranker API ──────────────────────────────────────────
 
 type jinaRerankRequest struct {
-	Model     string          `json:"model"`
-	Query     string          `json:"query"`
-	TopN      int             `json:"top_n,omitempty"`
-	Documents []jinaDocument  `json:"documents"`
+	Model     string         `json:"model"`
+	Query     string         `json:"query"`
+	TopN      int            `json:"top_n,omitempty"`
+	Documents []jinaDocument `json:"documents"`
 }
 
 type jinaDocument struct {
