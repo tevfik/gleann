@@ -94,7 +94,7 @@ func (r *Runner) Stop() error {
 
 // BaseURL returns the URL to access the OpenAI compatible API.
 func (r *Runner) BaseURL() string {
-	return fmt.Sprintf("http://127.0.0.1:%d/v1", r.port)
+	return fmt.Sprintf("http://127.0.0.1:%d", r.port)
 }
 
 func (r *Runner) waitForReady(ctx context.Context) error {
