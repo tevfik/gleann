@@ -15,7 +15,9 @@ func TestExtractBinary(t *testing.T) {
 		t.Skipf("Skipping test: embedded binary %s not found. Did you run download_binaries.sh?", binName)
 	}
 
-	extractedPath, err := extractBinary(binName)
+	// extractAllBinaries extracts the main binary and any co-located .so libraries.
+	// It returns the path to the main executable.
+	extractedPath, err := extractAllBinaries(binName)
 	if err != nil {
 		t.Fatalf("Failed to extract binary: %v", err)
 	}
