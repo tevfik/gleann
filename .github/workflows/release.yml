@@ -73,16 +73,18 @@ jobs:
       - name: Compress binary
         run: |
           mkdir -p dist
-          BINARY="gleann"
+          BINARY="build/gleann"
+          OUTNAME="gleann"
           if [ "${{ matrix.goos }}" = "windows" ]; then
-            mv gleann gleann.exe 2>/dev/null || true
-            BINARY="gleann.exe"
+            BINARY="build/gleann.exe"
+            OUTNAME="gleann.exe"
           fi
           SUFFIX="gleann-${{ steps.version.outputs.version }}-${{ matrix.suffix }}"
+          cp "${BINARY}" "${OUTNAME}"
           if [ "${{ matrix.goos }}" = "windows" ]; then
-            zip "dist/${SUFFIX}.zip" "${BINARY}"
+            zip "dist/${SUFFIX}.zip" "${OUTNAME}"
           else
-            tar czf "dist/${SUFFIX}.tar.gz" "${BINARY}"
+            tar czf "dist/${SUFFIX}.tar.gz" "${OUTNAME}"
           fi
 
       - name: Upload artifacts
@@ -133,8 +135,10 @@ jobs:
             -L/usr/local/lib -lfaiss \
             -lstdc++ -lgomp -lopenblas
           sudo cp libfaiss_c.so /usr/local/lib/
-          sudo mkdir -p /usr/local/include/faiss/c_api
+          # Install C API headers including impl/ subdirectory
+          sudo mkdir -p /usr/local/include/faiss/c_api/impl
           sudo cp c_api/*.h /usr/local/include/faiss/c_api/
+          sudo cp c_api/impl/*.h /usr/local/include/faiss/c_api/impl/
           sudo ldconfig
 
       - name: Determine version
@@ -153,7 +157,7 @@ jobs:
         run: |
           mkdir -p dist
           SUFFIX="gleann-full-${{ steps.version.outputs.version }}-linux-amd64"
-          mv gleann-full "${SUFFIX}"
+          cp build/gleann-full "${SUFFIX}"
           cp /usr/local/lib/libfaiss_c.so . 2>/dev/null || true
           cp /usr/local/lib/libfaiss.so   . 2>/dev/null || true
           tar czf "dist/${SUFFIX}.tar.gz" "${SUFFIX}" libfaiss*.so 2>/dev/null; true
