@@ -19,7 +19,6 @@ import (
 	"time"
 
 	"github.com/fsnotify/fsnotify"
-	"github.com/tevfik/gleann/modules/chunking"
 	"github.com/tevfik/gleann/internal/embedding"
 	"github.com/tevfik/gleann/internal/graph/indexer"
 	kgraph "github.com/tevfik/gleann/internal/graph/kuzu"
@@ -27,6 +26,7 @@ import (
 	"github.com/tevfik/gleann/internal/server"
 	"github.com/tevfik/gleann/internal/tui"
 	"github.com/tevfik/gleann/internal/vault"
+	"github.com/tevfik/gleann/modules/chunking"
 	"github.com/tevfik/gleann/pkg/gleann"
 
 	_ "github.com/tevfik/gleann/pkg/backends"
@@ -253,13 +253,13 @@ func cmdBuild(args []string) {
 	// CLI flags take precedence over saved values.
 	savedCfg := tui.LoadSavedConfig()
 	if savedCfg != nil {
-		if !hasFlag(args, "--provider") && savedCfg.EmbeddingProvider != "" {
+		if getFlag(args, "--provider") == "" && savedCfg.EmbeddingProvider != "" {
 			config.EmbeddingProvider = savedCfg.EmbeddingProvider
 		}
-		if !hasFlag(args, "--model") && savedCfg.EmbeddingModel != "" {
+		if getFlag(args, "--model") == "" && savedCfg.EmbeddingModel != "" {
 			config.EmbeddingModel = savedCfg.EmbeddingModel
 		}
-		if savedCfg.OllamaHost != "" && config.OllamaHost == "" {
+		if getFlag(args, "--host") == "" && savedCfg.OllamaHost != "" {
 			config.OllamaHost = savedCfg.OllamaHost
 		}
 		if savedCfg.OpenAIKey != "" && config.OpenAIAPIKey == "" {
@@ -268,7 +268,7 @@ func cmdBuild(args []string) {
 		if savedCfg.OpenAIBaseURL != "" && config.OpenAIBaseURL == "" {
 			config.OpenAIBaseURL = savedCfg.OpenAIBaseURL
 		}
-		if !hasFlag(args, "--index-dir") && savedCfg.IndexDir != "" {
+		if getFlag(args, "--index-dir") == "" && savedCfg.IndexDir != "" {
 			config.IndexDir = savedCfg.IndexDir
 		}
 	}
@@ -373,6 +373,30 @@ func cmdSearch(args []string) {
 
 	config := getConfig(args)
 	asJSON := hasFlag(args, "--json")
+
+	// Load saved config from ~/.gleann/config.json (TUI setup).
+	// CLI flags take precedence over saved values.
+	savedCfg := tui.LoadSavedConfig()
+	if savedCfg != nil {
+		if getFlag(args, "--provider") == "" && savedCfg.EmbeddingProvider != "" {
+			config.EmbeddingProvider = savedCfg.EmbeddingProvider
+		}
+		if getFlag(args, "--model") == "" && savedCfg.EmbeddingModel != "" {
+			config.EmbeddingModel = savedCfg.EmbeddingModel
+		}
+		if getFlag(args, "--host") == "" && savedCfg.OllamaHost != "" {
+			config.OllamaHost = savedCfg.OllamaHost
+		}
+		if savedCfg.OpenAIKey != "" && config.OpenAIAPIKey == "" {
+			config.OpenAIAPIKey = savedCfg.OpenAIKey
+		}
+		if savedCfg.OpenAIBaseURL != "" && config.OpenAIBaseURL == "" {
+			config.OpenAIBaseURL = savedCfg.OpenAIBaseURL
+		}
+		if getFlag(args, "--index-dir") == "" && savedCfg.IndexDir != "" {
+			config.IndexDir = savedCfg.IndexDir
+		}
+	}
 
 	if err := initLlamaCPP(context.Background(), &config); err != nil {
 		fmt.Fprintf(os.Stderr, "error initializing llamacpp: %v\n", err)
@@ -622,6 +646,30 @@ func cmdAsk(args []string) {
 	config := getConfig(args)
 	interactive := hasFlag(args, "--interactive")
 
+	// Load saved config from ~/.gleann/config.json (TUI setup).
+	// CLI flags take precedence over saved values.
+	savedCfg := tui.LoadSavedConfig()
+	if savedCfg != nil {
+		if getFlag(args, "--provider") == "" && savedCfg.EmbeddingProvider != "" {
+			config.EmbeddingProvider = savedCfg.EmbeddingProvider
+		}
+		if getFlag(args, "--model") == "" && savedCfg.EmbeddingModel != "" {
+			config.EmbeddingModel = savedCfg.EmbeddingModel
+		}
+		if getFlag(args, "--host") == "" && savedCfg.OllamaHost != "" {
+			config.OllamaHost = savedCfg.OllamaHost
+		}
+		if savedCfg.OpenAIKey != "" && config.OpenAIAPIKey == "" {
+			config.OpenAIAPIKey = savedCfg.OpenAIKey
+		}
+		if savedCfg.OpenAIBaseURL != "" && config.OpenAIBaseURL == "" {
+			config.OpenAIBaseURL = savedCfg.OpenAIBaseURL
+		}
+		if getFlag(args, "--index-dir") == "" && savedCfg.IndexDir != "" {
+			config.IndexDir = savedCfg.IndexDir
+		}
+	}
+
 	if err := initLlamaCPP(context.Background(), &config); err != nil {
 		fmt.Fprintf(os.Stderr, "error initializing llamacpp: %v\n", err)
 		os.Exit(1)
@@ -730,6 +778,30 @@ func cmdWatch(args []string) {
 	}
 
 	config := getConfig(args)
+
+	// Load saved config from ~/.gleann/config.json (TUI setup).
+	// CLI flags take precedence over saved values.
+	savedCfg := tui.LoadSavedConfig()
+	if savedCfg != nil {
+		if getFlag(args, "--provider") == "" && savedCfg.EmbeddingProvider != "" {
+			config.EmbeddingProvider = savedCfg.EmbeddingProvider
+		}
+		if getFlag(args, "--model") == "" && savedCfg.EmbeddingModel != "" {
+			config.EmbeddingModel = savedCfg.EmbeddingModel
+		}
+		if getFlag(args, "--host") == "" && savedCfg.OllamaHost != "" {
+			config.OllamaHost = savedCfg.OllamaHost
+		}
+		if savedCfg.OpenAIKey != "" && config.OpenAIAPIKey == "" {
+			config.OpenAIAPIKey = savedCfg.OpenAIKey
+		}
+		if savedCfg.OpenAIBaseURL != "" && config.OpenAIBaseURL == "" {
+			config.OpenAIBaseURL = savedCfg.OpenAIBaseURL
+		}
+		if getFlag(args, "--index-dir") == "" && savedCfg.IndexDir != "" {
+			config.IndexDir = savedCfg.IndexDir
+		}
+	}
 
 	if err := initLlamaCPP(context.Background(), &config); err != nil {
 		fmt.Fprintf(os.Stderr, "error initializing llamacpp: %v\n", err)

@@ -16,10 +16,34 @@ import (
 	kuzu "github.com/kuzudb/go-kuzu"
 )
 
-// DB wraps a KuzuDB database and connection pair.
+// DB wraps a KuzuDB database and a primary connection.
+// For concurrent use, call NewConn() to get an independent connection
+// per goroutine — KuzuDB connections are NOT goroutine-safe.
 type DB struct {
 	db   *kuzu.Database
 	conn *kuzu.Connection
+}
+
+// NewConn creates and returns a new separate connection.
+// IMPORTANT: KuzuDB CGo connections are NOT goroutine-safe. If multiple
+// goroutines need to query the DB concurrently, each MUST have its own Conn.
+func (g *DB) NewConn() (*kuzu.Connection, error) {
+	return kuzu.OpenConnection(g.db)
+}
+
+// Conn returns the primary database connection.
+func (g *DB) Conn() *kuzu.Connection {
+	return g.conn
+}
+
+// ExecOn runs a Cypher query on an arbitrary connection and discards the result.
+func ExecOn(conn *kuzu.Connection, cypher string) error {
+	res, err := conn.Query(cypher)
+	if err != nil {
+		return err
+	}
+	defer res.Close()
+	return nil
 }
 
 // Open opens (or creates) a KuzuDB database at the given directory path.

@@ -57,7 +57,7 @@ type Options struct {
 func NewComputer(opts Options) *Computer {
 	if opts.BatchSize <= 0 {
 		if opts.Provider == ProviderOllama {
-			opts.BatchSize = 256 // Stable medium-large batch for Ollama
+			opts.BatchSize = 1024 // Increased from 256 for GPU saturation
 		} else {
 			opts.BatchSize = 100 // External APIs handle larger batches
 		}
@@ -97,7 +97,7 @@ func NewComputer(opts Options) *Computer {
 	}
 	if opts.Concurrency <= 0 {
 		if opts.Provider == ProviderOllama {
-			opts.Concurrency = 4 // Massive batches so lower concurrency
+			opts.Concurrency = 8 // Increased from 4 for GPU saturation
 		} else {
 			opts.Concurrency = 20 // External providers
 		}
@@ -304,18 +304,18 @@ var modelTokenLimits = map[string]int{
 	"text-embedding-3-small": 8191,
 	"text-embedding-3-large": 8191,
 	"text-embedding-ada-002": 8191,
-	// Ollama / open-source
-	"bge-m3":                 8192,
+	// Ollama / open-source (Using safer constraints to avoid 400 errors)
+	"bge-m3":                 2048,
 	"bge-large-en-v1.5":      512,
 	"bge-small-en-v1.5":      512,
-	"nomic-embed-text":       8192,
+	"nomic-embed-text":       2048,
 	"mxbai-embed-large":      512,
 	"all-minilm":             256,
 	"snowflake-arctic-embed": 512,
 	// Gemini
 	"text-embedding-004": 2048,
 	// Default fallback
-	"default": 512,
+	"default": 384,
 }
 
 // GetModelTokenLimit returns the token limit for a model.
@@ -331,9 +331,17 @@ func TruncateToTokenLimit(text string, maxTokens int) string {
 	if maxTokens <= 0 {
 		return text
 	}
-	// Very conservative: assume 1 token per character (safe for CJK, code, URLs).
-	// Most tokenizers average ~3-4 chars/token for English, but edge cases can be 1:1.
-	maxChars := maxTokens
+
+	// Aggressive truncation for very long files causing LLM context crash
+	// Safety margin for Ollama context window overhead
+	maxTokens = maxTokens - 64
+	if maxTokens < 128 {
+		maxTokens = 128
+	}
+
+	// 1 token approx = 2.5 chars average (for code, symbols take more tokens).
+	maxChars := int(float64(maxTokens) * 2.5)
+
 	if len(text) <= maxChars {
 		return text
 	}
@@ -384,6 +392,7 @@ func (c *Computer) computeOllama(ctx context.Context, texts []string) ([][]float
 		return nil, fmt.Errorf("create request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Connection", "keep-alive")
 
 	resp, err := c.client.Do(req)
 	if err != nil {

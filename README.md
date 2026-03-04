@@ -80,7 +80,26 @@ Requires Go 1.24+.
 
 ### Install to PATH
 
-The setup wizard (`gleann setup`) can install the binary to `~/.local/bin` or `/usr/local/bin` with shell completions (bash, zsh, fish). It can also configure MCP for Claude Code and Claude Desktop automatically.
+The setup wizard (`gleann setup` / `gleann tui` → Setup) installs the binary to `~/.local/bin` or `/usr/local/bin` with shell completions (bash, zsh, fish). It can also configure MCP for Claude Code and Claude Desktop automatically.
+
+You can also install via Makefile:
+
+```bash
+# Install gleann-full (FAISS + tree-sitter) to ~/.local/bin/gleann (recommended)
+make install-user
+
+# Install plain gleann (no FAISS, just tree-sitter) to ~/.local/bin/gleann
+make install-user-lite
+
+# Install gleann to /usr/local/bin (system-wide, needs sudo)
+sudo make install
+
+# Install gleann-full to /usr/local/bin (system-wide, needs sudo)
+sudo make install-full
+```
+
+> [!TIP]
+> After `make install-user`, add `export PATH="$HOME/.local/bin:$PATH"` to your shell rc if it's not already there.
 
 ## FAISS Backend (Optional)
 
@@ -266,8 +285,20 @@ The AI can autonomously trace code execution paths without leaving the editor.
 | C / C++ | tree-sitter `function_definition`, `class_specifier` | `call_expression` nodes |
 | Rust | tree-sitter `function_item`, `impl_item`, `struct_item` | `call_expression` nodes |
 | Java / C# | tree-sitter `method_declaration`, `class_declaration` | `call_expression` nodes |
+| Ruby | tree-sitter `method`, `class` | `call` nodes |
+| PHP | tree-sitter `function_definition`, `class_declaration` | `function_call_expression` nodes |
 
-> **Incremental sync:** The graph indexer uses the same SHA-256 file-hash tracking as the vector index. Only changed files are re-parsed and re-inserted.
+### Graph Index Performance
+
+Graph indexing was optimized using **KuzuDB CSV Bulk Load** (`COPY FROM`) instead of individual Cypher statements:
+
+| Method | 1500-file Go repo | Notes |
+|--------|------------------|---------|
+| Single statements (MERGE) | 8 min 31 sec | One transaction per symbol |
+| Batch statements (tx) | ~2 min | Chunked transactions |
+| **CSV Bulk Load (COPY FROM)** | **84 ms** | Current approach |
+
+FK integrity is enforced by filtering CALLS edges — only symbol-to-symbol references within the indexed codebase are stored (cross-package / stdlib calls are discarded).
 
 ## Generic Plugin Architecture
 
@@ -694,6 +725,9 @@ gleann/
 | MCP server (embedded) | ✅ Done |
 | Setup wizard + install | ✅ Done |
 | AST Graph Indexer (KuzuDB) | ✅ Done |
+| Graph CSV Bulk Load (84ms for 1500 files) | ✅ Done |
+| PHP + Ruby AST support | ✅ Done |
+| Embedding GPU saturation (batch 1024, concurrency 8) | ✅ Done |
 | DiskANN backend (100M+ vectors) | Planned |
 | IVF backend (PQ quantization) | Planned |
 | Web search tool for ReAct agent | Planned |

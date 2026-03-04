@@ -5,25 +5,34 @@
 //
 // It reuses the existing internal/chunking AST parser for symbol extraction.
 // For Go files it additionally extracts CALLS relationships using go/ast.
+// All writes for a single file are committed in a single KuzuDB transaction.
 package indexer
 
 import (
+	"context"
 	"fmt"
 	"io/fs"
+	"log"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
+	"sync"
+	"time"
 
-	"github.com/tevfik/gleann/modules/chunking"
+	"golang.org/x/sync/errgroup"
+
 	"github.com/tevfik/gleann/internal/graph/kuzu"
+	"github.com/tevfik/gleann/modules/chunking"
 )
 
 // Indexer walks a codebase and populates a KuzuDB graph with AST relationships.
 type Indexer struct {
 	db      *kuzu.DB
 	chunker *chunking.ASTChunker
-	module  string // Go module prefix, e.g. "github.com/tevfik/gleann"
-	root    string // absolute root path used to derive relative package paths
+	module  string     // Go module prefix, e.g. "github.com/tevfik/gleann"
+	root    string     // absolute root path used to derive relative package paths
+	writeMu sync.Mutex // Ensures only one KuzuDB write transaction occurs at a time
 }
 
 // New creates a new Indexer.
@@ -41,22 +50,103 @@ func New(db *kuzu.DB, module, root string) *Indexer {
 	}
 }
 
-// IndexFile parses one source file and writes its symbols and edges into KuzuDB.
-//
-// Steps:
-//  1. Detect language from filename.
-//  2. Extract semantic chunks via ASTChunker (each chunk ≈ one symbol).
-//  3. UpsertFile + UpsertSymbol for every chunk.
-//  4. AddDeclares for every chunk.
-//  5. For Go files: extract CALLS relationships with go/ast.
+// IndexFile parses one source file and writes its symbols and edges into KuzuDB
+// using a single transaction.
 func (idx *Indexer) IndexFile(absPath, source string) error {
+	f, syms, decls, calls, err := idx.indexFileOnConn(absPath, source)
+	if err != nil {
+		return err
+	}
+
+	uniqueSymbols := make([]kuzu.SymbolNode, 0, len(syms))
+	seenSymbols := make(map[string]bool)
+	for _, sym := range syms {
+		if !seenSymbols[sym.FQN] {
+			seenSymbols[sym.FQN] = true
+			uniqueSymbols = append(uniqueSymbols, sym)
+		}
+	}
+	syms = uniqueSymbols
+
+	uniqueDeclares := make([]kuzu.EdgeDeclares, 0, len(decls))
+	seenDeclares := make(map[string]bool)
+	for _, d := range decls {
+		key := d.FilePath + "->" + d.SymbolFQN
+		if !seenDeclares[key] {
+			seenDeclares[key] = true
+			uniqueDeclares = append(uniqueDeclares, d)
+		}
+	}
+	decls = uniqueDeclares
+
+	uniqueCalls := make([]kuzu.EdgeCalls, 0, len(calls))
+	seenCalls := make(map[string]bool)
+	for _, c := range calls {
+		key := c.CallerFQN + "->" + c.CalleeFQN
+		if !seenCalls[key] {
+			seenCalls[key] = true
+			uniqueCalls = append(uniqueCalls, c)
+		}
+	}
+	calls = uniqueCalls
+
+	idx.writeMu.Lock()
+	defer idx.writeMu.Unlock()
+
+	// 1. Delete old symbols for this file
+	if err := kuzu.ExecTxOn(idx.db.Conn(), []string{kuzu.DeleteFileSymbolsQuery(f.Path)}); err != nil {
+		return fmt.Errorf("delete old: %w", err)
+	}
+
+	doCopy := func(tableName string, writeFunc func(p string) error) error {
+		tmp, err := os.CreateTemp("", "kuzu_"+tableName+"_*.csv")
+		if err != nil {
+			return err
+		}
+		csvPath := tmp.Name()
+		tmp.Close()
+		defer os.Remove(csvPath)
+
+		if err := writeFunc(csvPath); err != nil {
+			return fmt.Errorf("write %s: %w", tableName, err)
+		}
+		if err := kuzu.ExecCopyCSV(idx.db.Conn(), tableName, csvPath); err != nil {
+			return fmt.Errorf("copy %s: %w", tableName, err)
+		}
+		return nil
+	}
+
+	if f != nil {
+		if err := doCopy("CodeFile", func(p string) error { return kuzu.WriteFileNodesCSV(p, []kuzu.FileNode{*f}) }); err != nil {
+			return err
+		}
+	}
+	if len(syms) > 0 {
+		if err := doCopy("Symbol", func(p string) error { return kuzu.WriteSymbolNodesCSV(p, syms) }); err != nil {
+			return err
+		}
+	}
+	if len(decls) > 0 {
+		if err := doCopy("DECLARES", func(p string) error { return kuzu.WriteDeclaresCSV(p, decls) }); err != nil {
+			return err
+		}
+	}
+	if len(calls) > 0 {
+		if err := doCopy("CALLS", func(p string) error { return kuzu.WriteCallsCSV(p, calls) }); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// indexFileOnConn is the core implementation for parallel parsing.
+// It extracts all File, Symbol, Declares and Calls structs and returns them.
+func (idx *Indexer) indexFileOnConn(absPath, source string) (file *kuzu.FileNode, symbols []kuzu.SymbolNode, declares []kuzu.EdgeDeclares, calls []kuzu.EdgeCalls, err error) {
 	lang := string(chunking.DetectLanguage(absPath))
 	relPath := idx.relPath(absPath)
 
-	// Upsert the file node.
-	if err := idx.db.UpsertFile(relPath, lang); err != nil {
-		return fmt.Errorf("upsert file %s: %w", relPath, err)
-	}
+	fileNode := &kuzu.FileNode{Path: relPath, Lang: lang}
 
 	// Chunk to get symbols.
 	chunks := idx.chunker.ChunkCode(source, absPath)
@@ -64,9 +154,7 @@ func (idx *Indexer) IndexFile(absPath, source string) error {
 		if ch.Name == "" || ch.NodeType == "preamble" {
 			continue
 		}
-
 		fqn := idx.buildFQN(relPath, ch.Name)
-
 		sym := kuzu.SymbolNode{
 			FQN:  fqn,
 			Kind: ch.NodeType,
@@ -74,53 +162,233 @@ func (idx *Indexer) IndexFile(absPath, source string) error {
 			Line: int64(ch.StartLine),
 			Name: ch.Name,
 		}
-		if err := idx.db.UpsertSymbol(sym); err != nil {
-			return fmt.Errorf("upsert symbol %s: %w", fqn, err)
-		}
-		if err := idx.db.AddDeclares(relPath, fqn); err != nil {
-			return fmt.Errorf("add declares %s: %w", fqn, err)
-		}
+		symbols = append(symbols, sym)
+		declares = append(declares, kuzu.EdgeDeclares{FilePath: relPath, SymbolFQN: fqn})
 	}
 
-	// Extract CALLS relationships for Go files.
+	// Collect CALLS queries.
 	if strings.HasSuffix(absPath, ".go") {
-		if err := extractGoCallEdges(idx, relPath, source, chunks); err != nil {
-			// Non-fatal: log and continue.
-			fmt.Fprintf(os.Stderr, "warn: call extraction failed for %s: %v\n", relPath, err)
+		nodes, edges, nodeErr := collectGoCallQueries(idx, relPath, source, chunks)
+		if nodeErr != nil {
+			fmt.Fprintf(os.Stderr, "warn: call extraction failed for %s: %v\n", relPath, nodeErr)
+		} else {
+			symbols = append(symbols, nodes...)
+			calls = append(calls, edges...)
 		}
 	} else {
-		if err := extractTSCallEdges(idx, absPath, relPath, source, chunks); err != nil {
-			fmt.Fprintf(os.Stderr, "warn: ts call extraction failed for %s: %v\n", relPath, err)
+		nodes, edges, nodeErr := collectTSCallQueries(idx, absPath, relPath, source, chunks)
+		if nodeErr != nil {
+			fmt.Fprintf(os.Stderr, "warn: ts call extraction failed for %s: %v\n", relPath, nodeErr)
+		} else {
+			symbols = append(symbols, nodes...)
+			calls = append(calls, edges...)
 		}
 	}
 
-	return nil
+	return fileNode, symbols, declares, calls, nil
 }
 
 // IndexDir recursively indexes all supported source files under root.
+// It processes files concurrently using a worker pool of runtime.NumCPU() goroutines.
+// AST Parsing is highly parallelized, but database write execution is done together in one massive transaction at the end.
 func (idx *Indexer) IndexDir(root string) error {
-	return filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+	type job struct{ path, src string }
+	jobs := make(chan job, 64)
+	type docResult struct {
+		file     *kuzu.FileNode
+		symbols  []kuzu.SymbolNode
+		declares []kuzu.EdgeDeclares
+		calls    []kuzu.EdgeCalls
+	}
+	docChan := make(chan docResult, 64)
+
+	g, ctx := errgroup.WithContext(context.Background())
+
+	for range runtime.NumCPU() {
+		g.Go(func() error {
+			for j := range jobs {
+				select {
+				case <-ctx.Done():
+					return ctx.Err()
+				default:
+					f, syms, decls, calls, err := idx.indexFileOnConn(j.path, j.src)
+					if err != nil {
+						return err
+					}
+					select {
+					case docChan <- docResult{f, syms, decls, calls}:
+					case <-ctx.Done():
+						return ctx.Err()
+					}
+				}
+			}
+			return nil
+		})
+	}
+
+	// Goroutine to collect all generated nodes and edges.
+	var allFiles []kuzu.FileNode
+	var allSymbols []kuzu.SymbolNode
+	var allDeclares []kuzu.EdgeDeclares
+	var allCalls []kuzu.EdgeCalls
+	docDone := make(chan struct{})
+
+	go func() {
+		for res := range docChan {
+			if res.file != nil {
+				allFiles = append(allFiles, *res.file)
+			}
+			allSymbols = append(allSymbols, res.symbols...)
+			allDeclares = append(allDeclares, res.declares...)
+			allCalls = append(allCalls, res.calls...)
+		}
+		close(docDone)
+	}()
+
+	g.Go(func() error {
+		defer close(jobs)
+		return filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			if d.IsDir() {
+				name := d.Name()
+				if strings.HasPrefix(name, ".") || name == "vendor" || name == "node_modules" {
+					return filepath.SkipDir
+				}
+				return nil
+			}
+			if !chunking.IsCodeSourceFile(path) {
+				return nil
+			}
+			src, err := os.ReadFile(path)
+			if err != nil {
+				return fmt.Errorf("read %s: %w", path, err)
+			}
+			select {
+			case jobs <- job{path, string(src)}:
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+			return nil
+		})
+	})
+
+	if err := g.Wait(); err != nil {
+		return err
+	}
+	close(docChan)
+	<-docDone
+
+	// --- Deduplicate Data to Prevent KuzuDB "primary key / relationship exists" constraints ---
+	uniqueFiles := make([]kuzu.FileNode, 0, len(allFiles))
+	seenFiles := make(map[string]bool)
+	for _, f := range allFiles {
+		if !seenFiles[f.Path] {
+			seenFiles[f.Path] = true
+			uniqueFiles = append(uniqueFiles, f)
+		}
+	}
+	allFiles = uniqueFiles
+
+	uniqueSymbols := make([]kuzu.SymbolNode, 0, len(allSymbols))
+	seenSymbols := make(map[string]bool)
+	for _, sym := range allSymbols {
+		if !seenSymbols[sym.FQN] {
+			seenSymbols[sym.FQN] = true
+			uniqueSymbols = append(uniqueSymbols, sym)
+		}
+	}
+	allSymbols = uniqueSymbols
+
+	uniqueDeclares := make([]kuzu.EdgeDeclares, 0, len(allDeclares))
+	seenDeclares := make(map[string]bool)
+	for _, d := range allDeclares {
+		key := d.FilePath + "->" + d.SymbolFQN
+		if !seenDeclares[key] {
+			seenDeclares[key] = true
+			uniqueDeclares = append(uniqueDeclares, d)
+		}
+	}
+	allDeclares = uniqueDeclares
+
+	uniqueCalls := make([]kuzu.EdgeCalls, 0, len(allCalls))
+	seenCalls := make(map[string]bool)
+	for _, c := range allCalls {
+		key := c.CallerFQN + "->" + c.CalleeFQN
+		// Only keep calls where BOTH endpoints exist in our symbol table.
+		// Cross-package / stdlib calls would violate the FK constraint.
+		if !seenCalls[key] && seenSymbols[c.CallerFQN] && seenSymbols[c.CalleeFQN] {
+			seenCalls[key] = true
+			uniqueCalls = append(uniqueCalls, c)
+		}
+	}
+	allCalls = uniqueCalls
+
+	log.Printf("[INFO] AST Indexing extracted uniquely: %d files, %d symbols, %d declares, %d calls", len(allFiles), len(allSymbols), len(allDeclares), len(allCalls))
+
+	// Serialize writes via mutex to prevent KuzuDB concurrent transaction errors
+	idx.writeMu.Lock()
+	defer idx.writeMu.Unlock()
+	startTx := time.Now()
+
+	// 1. Delete all prior file data
+	var deleteQueries []string
+	for _, f := range allFiles {
+		deleteQueries = append(deleteQueries, kuzu.DeleteFileSymbolsQuery(f.Path))
+	}
+	if err := kuzu.ExecTxOn(idx.db.Conn(), deleteQueries); err != nil {
+		return fmt.Errorf("delete old symbols: %w", err)
+	}
+
+	// Helper to create a temp file, write data, copy to KuzuDB, and delete.
+	doCopy := func(tableName string, writeFunc func(p string) error) error {
+		tmp, err := os.CreateTemp("", "kuzu_"+tableName+"_*.csv")
 		if err != nil {
 			return err
 		}
-		if d.IsDir() {
-			// Skip hidden and vendor directories.
-			name := d.Name()
-			if strings.HasPrefix(name, ".") || name == "vendor" || name == "node_modules" {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		if !chunking.IsCodeSourceFile(path) {
-			return nil
-		}
+		csvPath := tmp.Name()
+		tmp.Close()
+		defer os.Remove(csvPath)
 
-		src, err := os.ReadFile(path)
-		if err != nil {
-			return fmt.Errorf("read %s: %w", path, err)
+		if err := writeFunc(csvPath); err != nil {
+			return fmt.Errorf("write %s: %w", tableName, err)
 		}
-		return idx.IndexFile(path, string(src))
-	})
+		if err := kuzu.ExecCopyCSV(idx.db.Conn(), tableName, csvPath); err != nil {
+			return fmt.Errorf("copy %s: %w", tableName, err)
+		}
+		return nil
+	}
+
+	// 2. COPY Nodes
+	if len(allFiles) > 0 {
+		if err := doCopy("CodeFile", func(p string) error { return kuzu.WriteFileNodesCSV(p, allFiles) }); err != nil {
+			return err
+		}
+	}
+	if len(allSymbols) > 0 {
+		if err := doCopy("Symbol", func(p string) error { return kuzu.WriteSymbolNodesCSV(p, allSymbols) }); err != nil {
+			return err
+		}
+	}
+
+	// 3. COPY Edges
+	if len(allDeclares) > 0 {
+		if err := doCopy("DECLARES", func(p string) error { return kuzu.WriteDeclaresCSV(p, allDeclares) }); err != nil {
+			return err
+		}
+	}
+	if len(allCalls) > 0 {
+		if err := doCopy("CALLS", func(p string) error { return kuzu.WriteCallsCSV(p, allCalls) }); err != nil {
+			return err
+		}
+	}
+
+	txDuration := time.Since(startTx)
+	if txDuration > 100*time.Millisecond {
+		log.Printf("[SLOW] IndexDir batched db write, tx_duration=%v", txDuration)
+	}
+	return nil
 }
 
 // relPath converts an absolute path to a path relative to idx.root.
@@ -134,9 +402,7 @@ func (idx *Indexer) relPath(absPath string) string {
 
 // buildFQN constructs a Fully Qualified Name for a symbol.
 // Format: <module>/<package>.<SymbolName>
-// e.g. "github.com/tevfik/gleann/internal/vault.Store.Put"
 func (idx *Indexer) buildFQN(relPath, symbolName string) string {
-	// Remove the filename to get the package path segment.
 	pkg := filepath.Dir(relPath)
 	pkg = strings.ReplaceAll(pkg, string(filepath.Separator), "/")
 	if pkg == "." {
