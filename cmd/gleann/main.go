@@ -20,8 +20,6 @@ import (
 
 	"github.com/fsnotify/fsnotify"
 	"github.com/tevfik/gleann/internal/embedding"
-	"github.com/tevfik/gleann/internal/graph/indexer"
-	kgraph "github.com/tevfik/gleann/internal/graph/kuzu"
 	"github.com/tevfik/gleann/internal/mcp"
 	"github.com/tevfik/gleann/internal/server"
 	"github.com/tevfik/gleann/internal/tui"
@@ -327,22 +325,7 @@ func cmdBuild(args []string) {
 	fmt.Printf("✅ Vector Index %q built: %d passages in %s\n", name, len(items), elapsed.Round(time.Millisecond))
 
 	if buildGraph {
-		fmt.Printf("🕸️  Building API Graph Index from %s...\n", docsDir)
-		graphStart := time.Now()
-
-		dbPath := filepath.Join(config.IndexDir, name+"_graph")
-		db, err := kgraph.Open(dbPath)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "warning: could not initialize kuzu graph db: %v\n", err)
-		} else {
-			defer db.Close()
-			idx := indexer.New(db, "github.com/tevfik/gleann", docsDir)
-			if err := idx.IndexDir(docsDir); err != nil {
-				fmt.Fprintf(os.Stderr, "warning: graph indexing failed: %v\n", err)
-			} else {
-				fmt.Printf("✅ Graph Index built in %s\n", time.Since(graphStart).Round(time.Millisecond))
-			}
-		}
+		buildGraphIndex(name, docsDir, config.IndexDir)
 	}
 }
 
@@ -489,60 +472,6 @@ func cmdList(args []string) {
 	for _, idx := range indexes {
 		fmt.Printf("  %-20s  %d passages  backend=%s  model=%s\n",
 			idx.Name, idx.NumPassages, idx.Backend, idx.EmbeddingModel)
-	}
-}
-
-func cmdGraph(args []string) {
-	if len(args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: gleann graph <deps|callers> <symbol_fqn>")
-		os.Exit(1)
-	}
-
-	subCmd := args[0]
-	symbol := args[1]
-	config := getConfig(args)
-
-	// Since index-dir is not directly known without knowing the index name,
-	// we assume the user provides the specific graph DB path or we search the index dir.
-	// For simplicity in CLI, we'll mandate an --index flag, or default to checking the first graph db found.
-	indexName := getFlag(args, "--index")
-	if indexName == "" {
-		fmt.Fprintln(os.Stderr, "error: --index flag required for graph queries")
-		os.Exit(1)
-	}
-
-	dbPath := filepath.Join(config.IndexDir, indexName+"_graph")
-	db, err := kgraph.Open(dbPath)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "error opening graph db %s: %v\n", dbPath, err)
-		os.Exit(1)
-	}
-	defer db.Close()
-
-	switch subCmd {
-	case "deps":
-		callees, err := db.Callees(symbol)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "error: %v\n", err)
-			os.Exit(1)
-		}
-		fmt.Printf("🕸️  Dependencies for %s (%d):\n", symbol, len(callees))
-		for _, c := range callees {
-			fmt.Printf("  → [%s] %s\n", c.Kind, c.FQN)
-		}
-	case "callers":
-		callers, err := db.Callers(symbol)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "error: %v\n", err)
-			os.Exit(1)
-		}
-		fmt.Printf("🕸️  Callers of %s (%d):\n", symbol, len(callers))
-		for _, c := range callers {
-			fmt.Printf("  ← [%s] %s\n", c.Kind, c.FQN)
-		}
-	default:
-		fmt.Fprintf(os.Stderr, "unknown graph command: %s (use deps or callers)\n", subCmd)
-		os.Exit(1)
 	}
 }
 
