@@ -26,9 +26,18 @@ FAISS_LIB_DIR ?= /usr/local/lib
 all: $(BINARY)
 build: $(BINARY)
 
-# ── Pure Go build (no CGo) ──────────────────────────────────────────────────
+# ── Pure Go build (respects CGO_ENABLED env var for cross-compilation) ─────────
 .PHONY: $(BINARY)
 $(BINARY):
+	@mkdir -p $(BUILD_DIR)
+	go build -ldflags "$(LDFLAGS)" -o $(BINARY) $(CMD)
+	@echo "✅ Built $(BINARY)"
+
+# build-cgo — local dev build with CGo + tree-sitter
+.PHONY: build-cgo
+build-cgo: $(BUILD_DIR)/gleann-cgo
+
+$(BUILD_DIR)/gleann-cgo:
 	@mkdir -p $(BUILD_DIR)
 	CGO_ENABLED=1 go build -tags "treesitter" -ldflags "$(LDFLAGS)" -o $(BINARY) $(CMD)
 	@echo "✅ Built $(BINARY) (with CGo and tree-sitter)"
