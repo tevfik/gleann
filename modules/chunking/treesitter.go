@@ -20,7 +20,9 @@ import (
 	csharp "github.com/smacker/go-tree-sitter/csharp"
 	"github.com/smacker/go-tree-sitter/java"
 	"github.com/smacker/go-tree-sitter/javascript"
+	"github.com/smacker/go-tree-sitter/php"
 	"github.com/smacker/go-tree-sitter/python"
+	"github.com/smacker/go-tree-sitter/ruby"
 	"github.com/smacker/go-tree-sitter/rust"
 	"github.com/smacker/go-tree-sitter/typescript/typescript"
 )
@@ -45,6 +47,12 @@ func getParser(lang Language) *sitter.Parser {
 	})
 	return val.(*sync.Pool).Get().(*sitter.Parser)
 }
+
+// GetParser retrieves a *sitter.Parser from the pool for lang.
+func GetParser(lang Language) *sitter.Parser { return getParser(lang) }
+
+// ReturnParser resets and returns the parser to the pool.
+func ReturnParser(lang Language, p *sitter.Parser) { returnParser(lang, p) }
 
 // returnParser resets and returns the parser to the pool.
 func returnParser(lang Language, p *sitter.Parser) {
@@ -73,6 +81,10 @@ func treeSitterLanguage(lang Language) *sitter.Language {
 		return rust.GetLanguage()
 	case LangCSharp:
 		return csharp.GetLanguage()
+	case LangRuby:
+		return ruby.GetLanguage()
+	case LangPHP:
+		return php.GetLanguage()
 	default:
 		return nil
 	}
@@ -147,6 +159,19 @@ var nodeTypeRules = map[Language][]nodeRule{
 		{Type: "namespace_declaration", ChunkType: "namespace"},
 		{Type: "property_declaration", ChunkType: "property"},
 	},
+	LangRuby: {
+		{Type: "method", ChunkType: "method"},
+		{Type: "class", ChunkType: "class"},
+		{Type: "module", ChunkType: "module"},
+		{Type: "singleton_method", ChunkType: "method"},
+	},
+	LangPHP: {
+		{Type: "function_definition", ChunkType: "function"},
+		{Type: "class_declaration", ChunkType: "class"},
+		{Type: "method_declaration", ChunkType: "method"},
+		{Type: "interface_declaration", ChunkType: "interface"},
+		{Type: "trait_declaration", ChunkType: "trait"},
+	},
 }
 
 // nodeRule maps a tree-sitter node type to a chunk type.
@@ -194,6 +219,17 @@ var nameFieldByNodeType = map[string]string{
 	"trait_item":    "name",
 	"mod_item":      "name",
 	"type_item":     "name",
+
+	// Ruby
+	"method":           "name",
+	"singleton_method": "name",
+	"class":            "name",
+	"module":           "name",
+
+	// PHP
+	// PHP functions/methods share the same types as C++ but are handled
+	// gracefully by the same extractor pattern. trait_declaration etc.
+	"trait_declaration": "name",
 }
 
 // treeSitterChunk parses source code using tree-sitter and returns semantic chunks.

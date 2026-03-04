@@ -30,6 +30,8 @@ const (
 	LangCPP        Language = "cpp"
 	LangRust       Language = "rust"
 	LangCSharp     Language = "csharp"
+	LangRuby       Language = "ruby"
+	LangPHP        Language = "php"
 	LangUnknown    Language = "unknown"
 )
 
@@ -50,6 +52,8 @@ var extensionMap = map[string]Language{
 	".hpp":  LangCPP,
 	".rs":   LangRust,
 	".cs":   LangCSharp,
+	".rb":   LangRuby,
+	".php":  LangPHP,
 }
 
 // CodeChunk represents a semantic code chunk with metadata.
@@ -134,7 +138,7 @@ func (c *ASTChunker) ChunkCode(source, filename string) []CodeChunk {
 	case LangGo:
 		// Go always uses native go/ast (no tree-sitter needed).
 		chunks = c.chunkGo(source, filename)
-	case LangPython, LangJavaScript, LangTypeScript, LangJava, LangCSharp, LangC, LangCPP, LangRust:
+	case LangPython, LangJavaScript, LangTypeScript, LangJava, LangCSharp, LangC, LangCPP, LangRust, LangRuby, LangPHP:
 		// Try tree-sitter first (if compiled with -tags treesitter).
 		chunks = treeSitterChunk(source, filename, lang, c.config)
 		if chunks == nil {

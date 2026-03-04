@@ -46,6 +46,24 @@ $(BINARY_FULL):
 	@echo "✅ Built $(BINARY_FULL)"
 
 # ── Install ─────────────────────────────────────────────────────────────────
+USER_BIN_DIR ?= $(HOME)/.local/bin
+
+# install-user — build gleann-full (FAISS) and install to ~/.local/bin/gleann
+.PHONY: install-user
+install-user: $(BINARY_FULL)
+	@mkdir -p $(USER_BIN_DIR)
+	install -m 0755 $(BINARY_FULL) $(USER_BIN_DIR)/gleann
+	@echo "✅ Installed gleann-full → $(USER_BIN_DIR)/gleann"
+	@echo "   Make sure $(USER_BIN_DIR) is in your PATH."
+
+# install-user-lite — build plain gleann (no FAISS) and install to ~/.local/bin/gleann
+.PHONY: install-user-lite
+install-user-lite: $(BINARY)
+	@mkdir -p $(USER_BIN_DIR)
+	install -m 0755 $(BINARY) $(USER_BIN_DIR)/gleann
+	@echo "✅ Installed gleann → $(USER_BIN_DIR)/gleann"
+
+# install — install to /usr/local/bin (system-wide, needs sudo)
 .PHONY: install
 install: $(BINARY)
 	install -m 0755 $(BINARY) $(INSTALL_DIR)/$$(basename $(BINARY))

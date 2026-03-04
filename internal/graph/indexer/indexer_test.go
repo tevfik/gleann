@@ -278,3 +278,202 @@ func TestIndexerCPPFile(t *testing.T) {
 		t.Logf("  greet → %s", c.FQN)
 	}
 }
+
+const sampleJavaSource = `
+public class Greeter {
+    public static void greet(String name) {
+        String msg = formatName(name);
+        System.out.println(msg);
+    }
+
+    private static String formatName(String name) {
+        return "Hello, " + name;
+    }
+}
+`
+
+func TestIndexerJavaFile(t *testing.T) {
+	db, err := kgraph.Open("")
+	if err != nil {
+		t.Fatalf("open kuzu: %v", err)
+	}
+	defer db.Close()
+
+	idx := indexer.New(db, "myproject", "/fake/root")
+	if err := idx.IndexFile("/fake/root/src/Greeter.java", sampleJavaSource); err != nil {
+		t.Fatalf("IndexFile: %v", err)
+	}
+
+	symbols, err := db.SymbolsInFile("src/Greeter.java")
+	if err != nil {
+		t.Fatalf("SymbolsInFile: %v", err)
+	}
+	t.Logf("Java symbols: %d", len(symbols))
+	for _, s := range symbols {
+		t.Logf("  [%s] %s", s.Kind, s.FQN)
+	}
+	if len(symbols) < 1 {
+		t.Errorf("expected ≥1 Java symbol, got %d", len(symbols))
+	}
+
+	// Check CALLS: greet → formatName
+	greetFQN := "myproject/src.Greeter.greet"
+	callees, err := db.Callees(greetFQN)
+	if err != nil {
+		t.Fatalf("Callees: %v", err)
+	}
+	t.Logf("Java greet() callees: %d", len(callees))
+	for _, c := range callees {
+		t.Logf("  → %s", c.FQN)
+	}
+}
+
+const sampleCSharpSource = `
+using System;
+
+class Greeter {
+    public static void Greet(string name) {
+        string msg = FormatName(name);
+        Console.WriteLine(msg);
+    }
+
+    private static string FormatName(string name) {
+        return $"Hello, {name}";
+    }
+}
+`
+
+func TestIndexerCSharpFile(t *testing.T) {
+	db, err := kgraph.Open("")
+	if err != nil {
+		t.Fatalf("open kuzu: %v", err)
+	}
+	defer db.Close()
+
+	idx := indexer.New(db, "myproject", "/fake/root")
+	if err := idx.IndexFile("/fake/root/src/Greeter.cs", sampleCSharpSource); err != nil {
+		t.Fatalf("IndexFile: %v", err)
+	}
+
+	symbols, err := db.SymbolsInFile("src/Greeter.cs")
+	if err != nil {
+		t.Fatalf("SymbolsInFile: %v", err)
+	}
+	t.Logf("C# symbols: %d", len(symbols))
+	for _, s := range symbols {
+		t.Logf("  [%s] %s", s.Kind, s.FQN)
+	}
+	if len(symbols) < 1 {
+		t.Errorf("expected ≥1 C# symbol, got %d", len(symbols))
+	}
+
+	greetFQN := "myproject/src.Greeter.Greet"
+	callees, err := db.Callees(greetFQN)
+	if err != nil {
+		t.Fatalf("Callees: %v", err)
+	}
+	t.Logf("C# Greet() callees: %d", len(callees))
+	for _, c := range callees {
+		t.Logf("  → %s", c.FQN)
+	}
+}
+
+const sampleRubySource = `
+module MyProject
+  class Greeter
+    def greet(name)
+      msg = format_name(name)
+      puts msg
+    end
+    
+    def format_name(name)
+      "Hello, #{name}"
+    end
+  end
+end
+`
+
+func TestIndexerRubyFile(t *testing.T) {
+	db, err := kgraph.Open("")
+	if err != nil {
+		t.Fatalf("open kuzu: %v", err)
+	}
+	defer db.Close()
+
+	idx := indexer.New(db, "myproject", "/fake/root")
+	if err := idx.IndexFile("/fake/root/src/greeter.rb", sampleRubySource); err != nil {
+		t.Fatalf("IndexFile: %v", err)
+	}
+
+	symbols, err := db.SymbolsInFile("src/greeter.rb")
+	if err != nil {
+		t.Fatalf("SymbolsInFile: %v", err)
+	}
+	t.Logf("Ruby symbols: %d", len(symbols))
+	for _, s := range symbols {
+		t.Logf("  [%s] %s", s.Kind, s.FQN)
+	}
+	if len(symbols) < 1 {
+		t.Errorf("expected ≥1 Ruby symbol, got %d", len(symbols))
+	}
+
+	greetFQN := "myproject/src.Greeter.greet"
+	callees, err := db.Callees(greetFQN)
+	if err != nil {
+		t.Fatalf("Callees: %v", err)
+	}
+	t.Logf("Ruby greet() callees: %d", len(callees))
+	for _, c := range callees {
+		t.Logf("  → %s", c.FQN)
+	}
+}
+
+const samplePHPSource = `<?php
+namespace MyProject;
+
+class Greeter {
+    public function greet($name) {
+        $msg = $this->formatName($name);
+        echo $msg;
+    }
+
+    private function formatName($name) {
+        return "Hello, " . $name;
+    }
+}
+`
+
+func TestIndexerPHPFile(t *testing.T) {
+	db, err := kgraph.Open("")
+	if err != nil {
+		t.Fatalf("open kuzu: %v", err)
+	}
+	defer db.Close()
+
+	idx := indexer.New(db, "myproject", "/fake/root")
+	if err := idx.IndexFile("/fake/root/src/Greeter.php", samplePHPSource); err != nil {
+		t.Fatalf("IndexFile: %v", err)
+	}
+
+	symbols, err := db.SymbolsInFile("src/Greeter.php")
+	if err != nil {
+		t.Fatalf("SymbolsInFile: %v", err)
+	}
+	t.Logf("PHP symbols: %d", len(symbols))
+	for _, s := range symbols {
+		t.Logf("  [%s] %s", s.Kind, s.FQN)
+	}
+	if len(symbols) < 1 {
+		t.Errorf("expected ≥1 PHP symbol, got %d", len(symbols))
+	}
+
+	greetFQN := "myproject/src.Greeter.greet"
+	callees, err := db.Callees(greetFQN)
+	if err != nil {
+		t.Fatalf("Callees: %v", err)
+	}
+	t.Logf("PHP greet() callees: %d", len(callees))
+	for _, c := range callees {
+		t.Logf("  → %s", c.FQN)
+	}
+}
