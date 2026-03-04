@@ -73,14 +73,15 @@ jobs:
       - name: Compress binary
         run: |
           mkdir -p dist
-          BINARY="build/gleann"
+          # Go cross-compiler always outputs 'build/gleann' regardless of GOOS.
+          # Rename to .exe only for Windows targets.
+          SRC="build/gleann"
           OUTNAME="gleann"
           if [ "${{ matrix.goos }}" = "windows" ]; then
-            BINARY="build/gleann.exe"
             OUTNAME="gleann.exe"
           fi
+          cp "${SRC}" "${OUTNAME}"
           SUFFIX="gleann-${{ steps.version.outputs.version }}-${{ matrix.suffix }}"
-          cp "${BINARY}" "${OUTNAME}"
           if [ "${{ matrix.goos }}" = "windows" ]; then
             zip "dist/${SUFFIX}.zip" "${OUTNAME}"
           else
@@ -120,11 +121,12 @@ jobs:
           cmake -B build \
             -DFAISS_ENABLE_GPU=OFF \
             -DFAISS_ENABLE_PYTHON=OFF \
+            -DFAISS_ENABLE_C_API=ON \
             -DBUILD_SHARED_LIBS=ON \
             -DBUILD_TESTING=OFF \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_INSTALL_PREFIX=/usr/local
-          cmake --build build -j$(nproc)
+          cmake --build build -j$(nproc) -- faiss faiss_c
           sudo cmake --install build
 
           # Build FAISS C API wrapper (not built by cmake)

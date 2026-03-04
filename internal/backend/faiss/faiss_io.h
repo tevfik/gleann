@@ -11,7 +11,6 @@
 #include <faiss/c_api/faiss_c.h>
 #include <faiss/c_api/Index_c.h>
 #include <faiss/c_api/index_io_c.h>
-#include <faiss/c_api/impl/io_c.h>
 
 #ifdef __cplusplus
 extern "C" {
