@@ -12,9 +12,10 @@ import (
 	kgraph "github.com/tevfik/gleann/internal/graph/kuzu"
 )
 
-// buildGraphIndex builds the AST graph index for the given directory.
+// buildGraphIndex builds the AST graph index for the given directory
+// and writes document graph nodes/edges for plugin-extracted documents.
 // Only available when built with -tags treesitter (requires CGo + KuzuDB).
-func buildGraphIndex(name, docsDir, indexDir string) {
+func buildGraphIndex(name, docsDir, indexDir string, pluginDocs []*PluginDoc) {
 	fmt.Printf("🕸️  Building API Graph Index from %s...\n", docsDir)
 	graphStart := time.Now()
 
@@ -26,11 +27,27 @@ func buildGraphIndex(name, docsDir, indexDir string) {
 	}
 	defer db.Close()
 
+	// 1. AST code indexing (existing pipeline).
 	idx := indexer.New(db, "github.com/tevfik/gleann", docsDir)
 	if err := idx.IndexDir(docsDir); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: graph indexing failed: %v\n", err)
 	} else {
-		fmt.Printf("✅ Graph Index built in %s\n", time.Since(graphStart).Round(time.Millisecond))
+		fmt.Printf("✅ Code Graph Index built in %s\n", time.Since(graphStart).Round(time.Millisecond))
+	}
+
+	// 2. Document graph indexing (plugin-extracted documents).
+	if len(pluginDocs) > 0 {
+		docStart := time.Now()
+		docIdx := indexer.NewDocIndexer(db, 512, 64)
+		var docErrors int
+		for _, pd := range pluginDocs {
+			if err := docIdx.WriteGraph(pd.Result, pd.SourcePath); err != nil {
+				fmt.Fprintf(os.Stderr, "warning: doc graph indexing failed for %s: %v\n", pd.SourcePath, err)
+				docErrors++
+			}
+		}
+		indexed := len(pluginDocs) - docErrors
+		fmt.Printf("📄 Document Graph: %d documents indexed in %s\n", indexed, time.Since(docStart).Round(time.Millisecond))
 	}
 }
 

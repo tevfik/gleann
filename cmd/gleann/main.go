@@ -15,6 +15,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -300,7 +301,7 @@ func cmdBuild(args []string) {
 
 	// Read documents from directory.
 	fmt.Printf("📂 Reading documents from %s...\n", docsDir)
-	items, err := readDocuments(docsDir, config.ChunkConfig.ChunkSize, config.ChunkConfig.ChunkOverlap, tracker)
+	items, pluginDocs, err := readDocuments(docsDir, config.ChunkConfig.ChunkSize, config.ChunkConfig.ChunkOverlap, tracker)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error reading documents: %v\n", err)
 		os.Exit(1)
@@ -325,7 +326,7 @@ func cmdBuild(args []string) {
 	fmt.Printf("✅ Vector Index %q built: %d passages in %s\n", name, len(items), elapsed.Round(time.Millisecond))
 
 	if buildGraph {
-		buildGraphIndex(name, docsDir, config.IndexDir)
+		buildGraphIndex(name, docsDir, config.IndexDir, pluginDocs)
 	}
 }
 
@@ -810,7 +811,7 @@ func cmdWatch(args []string) {
 }
 
 func buildIndex(name, docsDir string, config gleann.Config, embedder gleann.EmbeddingComputer, tracker *vault.Tracker) {
-	items, err := readDocuments(docsDir, config.ChunkConfig.ChunkSize, config.ChunkConfig.ChunkOverlap, tracker)
+	items, _, err := readDocuments(docsDir, config.ChunkConfig.ChunkSize, config.ChunkConfig.ChunkOverlap, tracker)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error reading documents: %v\n", err)
 		return
@@ -1083,29 +1084,103 @@ func cmdTUI() {
 }
 
 func cmdSetup() {
-	result, err := tui.RunOnboard()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		os.Exit(1)
-	}
-	if result == nil {
-		fmt.Println("Setup cancelled.")
-		return
-	}
-	if result.Uninstall {
+	for {
+		result, openPlugins, err := tui.RunOnboardWithPlugins()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			os.Exit(1)
+		}
+		if result == nil {
+			fmt.Println("Setup cancelled.")
+			return
+		}
+		if openPlugins {
+			// Save config so far, then open plugin manager.
+			if result.Completed {
+				_ = tui.SaveConfig(*result)
+			}
+			tui.RunPlugins()
+			continue // return to setup after plugins
+		}
+		if result.Uninstall {
+			tui.RunInstall(result)
+			return
+		}
+		if err := tui.SaveConfig(*result); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: could not save config: %v\n", err)
+		}
+		fmt.Println("✅ Configuration saved to ~/.gleann/config.json")
 		tui.RunInstall(result)
 		return
 	}
-	if err := tui.SaveConfig(*result); err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: could not save config: %v\n", err)
-	}
-	fmt.Println("✅ Configuration saved to ~/.gleann/config.json")
-	tui.RunInstall(result)
 }
 
 // --- Helpers ---
 
-func readDocuments(dir string, chunkSize, chunkOverlap int, tracker *vault.Tracker) ([]gleann.Item, error) {
+// PluginDoc holds a plugin result for deferred graph indexing.
+// readDocuments collects these during chunking; buildGraphIndex writes them to KuzuDB.
+type PluginDoc struct {
+	Result     *gleann.PluginResult
+	SourcePath string
+}
+
+// pluginResultToDoc converts a PluginResult to a StructuredDocument for chunking.
+// This is a pure-Go conversion (no CGo/KuzuDB dependency) — the chunking package
+// handles all markdown splitting while preserving section hierarchy.
+func pluginResultToDoc(result *gleann.PluginResult) *chunking.StructuredDocument {
+	var doc chunking.DocumentMeta
+	var sections []chunking.MarkdownSection
+
+	for _, node := range result.Nodes {
+		switch node.Type {
+		case "Document":
+			doc.Title, _ = node.Data["title"].(string)
+			doc.Format, _ = node.Data["format"].(string)
+			doc.Summary, _ = node.Data["summary"].(string)
+			if wc, ok := node.Data["word_count"].(float64); ok {
+				doc.WordCount = int(wc)
+			}
+			if pc, ok := node.Data["page_count"].(float64); ok {
+				v := int(pc)
+				doc.PageCount = &v
+			}
+		case "Section":
+			sec := chunking.MarkdownSection{
+				Heading: strVal(node.Data, "heading"),
+				Content: strVal(node.Data, "content"),
+				Summary: strVal(node.Data, "summary"),
+			}
+			sec.ID, _ = node.Data["id"].(string)
+			if l, ok := node.Data["level"].(float64); ok {
+				sec.Level = int(l)
+			}
+			sections = append(sections, sec)
+		}
+	}
+
+	// Resolve ParentID from HAS_SUBSECTION edges.
+	for _, edge := range result.Edges {
+		if edge.Type == "HAS_SUBSECTION" {
+			for i := range sections {
+				if sections[i].ID == edge.To {
+					sections[i].ParentID = edge.From
+				}
+			}
+		}
+	}
+
+	return &chunking.StructuredDocument{Document: doc, Sections: sections}
+}
+
+// strVal extracts a string value from a map with a zero-value fallback.
+func strVal(m map[string]any, key string) string {
+	if v, ok := m[key].(string); ok {
+		return v
+	}
+	return ""
+}
+
+func readDocuments(dir string, chunkSize, chunkOverlap int, tracker *vault.Tracker) ([]gleann.Item, []*PluginDoc, error) {
 	type fileEntry struct {
 		path string
 		info os.FileInfo
@@ -1169,11 +1244,11 @@ func readDocuments(dir string, chunkSize, chunkOverlap int, tracker *vault.Track
 		return nil
 	})
 	if walkErr != nil {
-		return nil, walkErr
+		return nil, nil, walkErr
 	}
 
 	if len(files) == 0 {
-		return nil, nil
+		return nil, nil, nil
 	}
 
 	// Phase 2: parallel read + chunk.
@@ -1195,27 +1270,56 @@ func readDocuments(dir string, chunkSize, chunkOverlap int, tracker *vault.Track
 	jobCh := make(chan fileEntry, len(files))
 	resCh := make(chan result, len(files))
 
+	// Collected plugin results for deferred graph indexing.
+	var pluginDocs []*PluginDoc
+	var pluginDocsMu sync.Mutex
+
 	for i := 0; i < nWorkers; i++ {
 		go func() {
 			// Each worker gets its own splitter instances (they are not thread-safe).
 			splitter := chunking.NewSentenceSplitter(chunkSize, chunkOverlap)
 			codeSplitter := chunking.NewCodeChunker(chunkSize, chunkOverlap)
+			mdChunker := chunking.NewMarkdownChunker(chunkSize, chunkOverlap)
 
 			for fe := range jobCh {
 				ext := strings.ToLower(filepath.Ext(fe.path))
 				var data []byte
 				var err error
 
-				// If a plugin handles this extension, let it do the extraction.
+				// If a plugin handles this extension, use structured extraction.
 				if pluginManager != nil {
 					if plugin := pluginManager.FindDocumentExtractor(ext); plugin != nil {
-						mdText, perr := pluginManager.Process(plugin, fe.path)
+						pResult, perr := pluginManager.ProcessStructured(plugin, fe.path)
 						if perr != nil {
 							fmt.Fprintf(os.Stderr, "Warning: plugin %s failed to extract %s: %v\n", plugin.Name, filepath.Base(fe.path), perr)
 							resCh <- result{err: nil}
 							continue
 						}
-						data = []byte(mdText)
+
+						relPath, _ := filepath.Rel(dir, fe.path)
+
+						// Convert plugin result → StructuredDocument → context-aware chunks.
+						doc := pluginResultToDoc(pResult)
+						mdChunks := mdChunker.ChunkDocument(doc)
+						var items []gleann.Item
+						for _, ch := range mdChunks {
+							ch.Metadata["source"] = relPath
+							items = append(items, gleann.Item{
+								Text:     ch.Text,
+								Metadata: ch.Metadata,
+							})
+						}
+
+						// Save plugin result for graph indexing (if --graph is active).
+						pluginDocsMu.Lock()
+						pluginDocs = append(pluginDocs, &PluginDoc{
+							Result:     pResult,
+							SourcePath: relPath,
+						})
+						pluginDocsMu.Unlock()
+
+						resCh <- result{items: items}
+						continue
 					}
 				}
 
@@ -1286,7 +1390,7 @@ func readDocuments(dir string, chunkSize, chunkOverlap int, tracker *vault.Track
 		allItems = append(allItems, r.items...)
 	}
 
-	return allItems, nil
+	return allItems, pluginDocs, nil
 }
 
 func formatSize(bytes int64) string {

@@ -47,6 +47,10 @@ func Run() error {
 			if err := runIndexManage(); err != nil {
 				return err
 			}
+		case ScreenPlugins:
+			if err := runPlugins(); err != nil {
+				return err
+			}
 		}
 	}
 }
@@ -70,6 +74,33 @@ func RunOnboard() (*OnboardResult, error) {
 	}
 	r := ob.Result()
 	return &r, nil
+}
+
+// RunOnboardWithPlugins runs the onboarding wizard and also returns whether
+// the user chose "Manage Plugins" from the settings menu.
+func RunOnboardWithPlugins() (*OnboardResult, bool, error) {
+	var m OnboardModel
+	if cfg := LoadSavedConfig(); cfg != nil && cfg.Completed {
+		m = NewOnboardModelWithConfig(cfg)
+	} else {
+		m = NewOnboardModel()
+	}
+	p := tea.NewProgram(m, tea.WithAltScreen())
+	result, err := p.Run()
+	if err != nil {
+		return nil, false, fmt.Errorf("onboard: %w", err)
+	}
+	ob := result.(OnboardModel)
+	if ob.Cancelled() {
+		return nil, false, nil
+	}
+	r := ob.Result()
+	return &r, ob.OpenPlugins(), nil
+}
+
+// RunPlugins launches the plugin management screen standalone.
+func RunPlugins() error {
+	return runPlugins()
 }
 
 // RunChat runs the chat TUI standalone for a given index.
@@ -109,6 +140,15 @@ func runOnboard() error {
 		return nil // go back to home
 	}
 
+	// If the user chose "Manage Plugins", launch the plugin screen.
+	if ob.OpenPlugins() {
+		r := ob.Result()
+		if r.Completed {
+			_ = SaveConfig(r)
+		}
+		return runPlugins()
+	}
+
 	r := ob.Result()
 	if r.Uninstall {
 		RunInstall(&r)
@@ -143,6 +183,16 @@ func runIndexManage() error {
 	_, err := p.Run()
 	if err != nil {
 		return fmt.Errorf("index manager: %w", err)
+	}
+	return nil
+}
+
+func runPlugins() error {
+	m := NewPluginModel()
+	p := tea.NewProgram(m, tea.WithAltScreen())
+	_, err := p.Run()
+	if err != nil {
+		return fmt.Errorf("plugins: %w", err)
 	}
 	return nil
 }

@@ -100,7 +100,7 @@ func (g *DB) exec(cypher string) error {
 // initSchema creates node/relationship tables if they don't already exist.
 func (g *DB) initSchema() error {
 	ddls := []string{
-		// ── Node tables ────────────────────────────────────────
+		// ── Code Node tables ───────────────────────────────────
 		`CREATE NODE TABLE IF NOT EXISTS CodeFile(
 			path   STRING,
 			lang   STRING,
@@ -115,7 +115,36 @@ func (g *DB) initSchema() error {
 			doc    STRING,
 			PRIMARY KEY (fqn)
 		)`,
-		// ── Relationship tables ─────────────────────────────────
+
+		// ── Document Node tables ───────────────────────────────
+		`CREATE NODE TABLE IF NOT EXISTS Document(
+			path        STRING,
+			title       STRING,
+			format      STRING,
+			summary     STRING,
+			word_count  INT64,
+			page_count  INT64,
+			PRIMARY KEY (path)
+		)`,
+		`CREATE NODE TABLE IF NOT EXISTS Section(
+			id          STRING,
+			heading     STRING,
+			level       INT64,
+			content     STRING,
+			summary     STRING,
+			doc_path    STRING,
+			PRIMARY KEY (id)
+		)`,
+		`CREATE NODE TABLE IF NOT EXISTS DocChunk(
+			id          STRING,
+			text        STRING,
+			chunk_index INT64,
+			section_id  STRING,
+			passage_id  INT64,
+			PRIMARY KEY (id)
+		)`,
+
+		// ── Code Relationship tables ───────────────────────────
 		// CodeFile → Symbol  (a file declares a symbol)
 		`CREATE REL TABLE IF NOT EXISTS DECLARES(
 			FROM CodeFile TO Symbol,
@@ -134,6 +163,28 @@ func (g *DB) initSchema() error {
 		// Symbol → Symbol  (a symbol references another — e.g. uses a type)
 		`CREATE REL TABLE IF NOT EXISTS REFERENCES(
 			FROM Symbol TO Symbol,
+			MANY_MANY
+		)`,
+
+		// ── Document Relationship tables ───────────────────────
+		// Document → Section  (document has top-level sections)
+		`CREATE REL TABLE IF NOT EXISTS HAS_SECTION(
+			FROM Document TO Section,
+			MANY_MANY
+		)`,
+		// Section → Section  (section contains subsections)
+		`CREATE REL TABLE IF NOT EXISTS HAS_SUBSECTION(
+			FROM Section TO Section,
+			MANY_MANY
+		)`,
+		// Section → DocChunk  (section contains chunks)
+		`CREATE REL TABLE IF NOT EXISTS HAS_CHUNK(
+			FROM Section TO DocChunk,
+			MANY_MANY
+		)`,
+		// DocChunk → Symbol  (a chunk explains/references a code symbol)
+		`CREATE REL TABLE IF NOT EXISTS EXPLAINS(
+			FROM DocChunk TO Symbol,
 			MANY_MANY
 		)`,
 	}
