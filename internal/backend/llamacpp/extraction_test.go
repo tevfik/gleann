@@ -2,6 +2,7 @@ package llamacpp
 
 import (
 	"os"
+	"runtime"
 	"testing"
 )
 
@@ -32,9 +33,11 @@ func TestExtractBinary(t *testing.T) {
 		t.Errorf("Extracted file %s is empty", extractedPath)
 	}
 
-	// Check if executable bit is set (0111)
-	if info.Mode()&0111 == 0 {
-		t.Errorf("Extracted file %s is not executable, mode: %v", extractedPath, info.Mode())
+	// Check if executable bit is set (0111) - skip on Windows
+	if runtime.GOOS != "windows" {
+		if info.Mode()&0111 == 0 {
+			t.Errorf("Extracted file %s is not executable, mode: %v", extractedPath, info.Mode())
+		}
 	}
 
 	t.Logf("Successfully extracted binary to %s (size: %d bytes)", extractedPath, info.Size())
