@@ -173,14 +173,142 @@ func (m *PluginManager) EnsurePluginRunning(p *Plugin) error {
 }
 
 // Process sends a file to a plugin's /convert endpoint and returns the markdown result.
+// DEPRECATED: Use ProcessStructured for graph-ready plugin responses.
 func (m *PluginManager) Process(plugin *Plugin, filePath string) (string, error) {
+	result, err := m.processRaw(plugin, filePath)
+	if err != nil {
+		return "", err
+	}
+
+	// Try to extract markdown from legacy or structured response.
+	if md, ok := result["markdown"].(string); ok {
+		return md, nil
+	}
+
+	// If the response only has nodes/edges (new format), concatenate Section content.
+	if nodes, ok := result["nodes"].([]any); ok {
+		var sb strings.Builder
+		for _, n := range nodes {
+			node, ok := n.(map[string]any)
+			if !ok {
+				continue
+			}
+			if node["_type"] == "Section" {
+				if content, ok := node["content"].(string); ok {
+					if sb.Len() > 0 {
+						sb.WriteString("\n\n")
+					}
+					if heading, ok := node["heading"].(string); ok {
+						level := 1
+						if l, ok := node["level"].(float64); ok {
+							level = int(l)
+						}
+						sb.WriteString(strings.Repeat("#", level))
+						sb.WriteString(" ")
+						sb.WriteString(heading)
+						sb.WriteString("\n\n")
+					}
+					sb.WriteString(content)
+				}
+			}
+		}
+		if sb.Len() > 0 {
+			return sb.String(), nil
+		}
+	}
+
+	if errMsg, ok := result["error"].(string); ok && errMsg != "" {
+		return "", fmt.Errorf("plugin logic error: %s", errMsg)
+	}
+
+	return "", fmt.Errorf("plugin returned no usable content")
+}
+
+// PluginNode represents a graph node returned by a structured plugin.
+type PluginNode struct {
+	Type string         `json:"_type"` // "Document" or "Section"
+	Data map[string]any `json:"-"`     // all other fields
+}
+
+// PluginEdge represents a graph edge returned by a structured plugin.
+type PluginEdge struct {
+	Type string `json:"_type"` // "HAS_SECTION", "HAS_SUBSECTION"
+	From string `json:"from"`
+	To   string `json:"to"`
+}
+
+// PluginResult holds the graph-ready response from a structured plugin.
+type PluginResult struct {
+	Nodes []PluginNode `json:"nodes"`
+	Edges []PluginEdge `json:"edges"`
+}
+
+// ProcessStructured sends a file to a plugin's /convert endpoint and returns
+// graph-ready nodes and edges, following the same pattern as the AST code indexer.
+func (m *PluginManager) ProcessStructured(plugin *Plugin, filePath string) (*PluginResult, error) {
+	raw, err := m.processRaw(plugin, filePath)
+	if err != nil {
+		return nil, err
+	}
+
+	if errMsg, ok := raw["error"].(string); ok && errMsg != "" {
+		return nil, fmt.Errorf("plugin logic error: %s", errMsg)
+	}
+
+	result := &PluginResult{}
+
+	// Parse nodes
+	if rawNodes, ok := raw["nodes"].([]any); ok {
+		for _, rn := range rawNodes {
+			nodeMap, ok := rn.(map[string]any)
+			if !ok {
+				continue
+			}
+			nodeType, _ := nodeMap["_type"].(string)
+			if nodeType == "" {
+				continue
+			}
+			node := PluginNode{
+				Type: nodeType,
+				Data: nodeMap,
+			}
+			result.Nodes = append(result.Nodes, node)
+		}
+	}
+
+	// Parse edges
+	if rawEdges, ok := raw["edges"].([]any); ok {
+		for _, re := range rawEdges {
+			edgeMap, ok := re.(map[string]any)
+			if !ok {
+				continue
+			}
+			edgeType, _ := edgeMap["_type"].(string)
+			from, _ := edgeMap["from"].(string)
+			to, _ := edgeMap["to"].(string)
+			if edgeType == "" || from == "" || to == "" {
+				continue
+			}
+			result.Edges = append(result.Edges, PluginEdge{
+				Type: edgeType,
+				From: from,
+				To:   to,
+			})
+		}
+	}
+
+	return result, nil
+}
+
+// processRaw is the shared HTTP logic for both Process and ProcessStructured.
+func (m *PluginManager) processRaw(plugin *Plugin, filePath string) (map[string]any, error) {
 	if err := m.EnsurePluginRunning(plugin); err != nil {
-		return "", fmt.Errorf("ensure plugin %s running: %w", plugin.Name, err)
+		return nil, fmt.Errorf("ensure plugin %s running: %w", plugin.Name, err)
 	}
 
 	file, err := os.Open(filePath)
 	if err != nil {
-		return "", fmt.Errorf("open file for plugin: %w", err)
+		return nil, fmt.Errorf("open file for plugin: %w", err)
 	}
 	defer file.Close()
 
@@ -189,13 +317,13 @@ func (m *PluginManager) Process(plugin *Plugin, filePath string) (string, error)
 
 	part, err := writer.CreateFormFile("file", filepath.Base(filePath))
 	if err != nil {
-		return "", fmt.Errorf("create form file: %w", err)
+		return nil, fmt.Errorf("create form file: %w", err)
 	}
 	if _, err := io.Copy(part, file); err != nil {
-		return "", fmt.Errorf("copy file to form: %w", err)
+		return nil, fmt.Errorf("copy file to form: %w", err)
 	}
 	if err := writer.Close(); err != nil {
-		return "", fmt.Errorf("close multipart writer: %w", err)
+		return nil, fmt.Errorf("close multipart writer: %w", err)
 	}
 
 	endpoint := plugin.URL
@@ -206,7 +334,7 @@ func (m *PluginManager) Process(plugin *Plugin, filePath string) (string, error)
 
 	req, err := http.NewRequest("POST", endpoint, body)
 	if err != nil {
-		return "", fmt.Errorf("new http request: %w", err)
+		return nil, fmt.Errorf("new http request: %w", err)
 	}
 	req.Header.Set("Content-Type", writer.FormDataContentType())
 
@@ -214,26 +342,19 @@ func (m *PluginManager) Process(plugin *Plugin, filePath string) (string, error)
 	client := &http.Client{Timeout: 30 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("plugin request failed: %w", err)
+		return nil, fmt.Errorf("plugin request failed: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)
-		return "", fmt.Errorf("plugin returned status %d: %s", resp.StatusCode, string(respBody))
+		return nil, fmt.Errorf("plugin returned status %d: %s", resp.StatusCode, string(respBody))
 	}
 
-	var result struct {
-		Markdown string `json:"markdown"`
-		Error    string `json:"error"`
-	}
+	var result map[string]any
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return "", fmt.Errorf("decode plugin response: %w", err)
+		return nil, fmt.Errorf("decode plugin response: %w", err)
 	}
 
-	if result.Error != "" {
-		return "", fmt.Errorf("plugin logic error: %s", result.Error)
-	}
-
-	return result.Markdown, nil
+	return result, nil
 }

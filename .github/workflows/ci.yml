@@ -10,11 +10,15 @@ permissions:
   contents: read
 
 jobs:
+  # ── Cross-Platform Build & Test ──────────────────────────────
   test:
-    name: Test (Go ${{ matrix.go-version }})
-    runs-on: ubuntu-latest
+    name: Test (${{ matrix.os }} / Go ${{ matrix.go-version }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
     strategy:
+      fail-fast: false
       matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
         go-version: ["1.24"]
 
     steps:
@@ -31,19 +35,33 @@ jobs:
       - name: Vet
         run: go vet ./...
 
-      - name: Test
-        run: go test -v -race -coverprofile=coverage.out $(go list ./... | grep -v /benchmarks)
+      - name: Test (unit + integration)
+        timeout-minutes: 10
+        run: go test -v -race -timeout 8m -coverprofile=coverage.out $(go list ./... | grep -v /benchmarks)
+        shell: bash
 
       - name: Upload coverage
-        if: matrix.go-version == '1.24'
+        if: matrix.os == 'ubuntu-latest'
         uses: actions/upload-artifact@v4
         with:
-          name: coverage
+          name: coverage-${{ matrix.os }}
           path: coverage.out
 
+  # ── Build Verification (all platforms, both tags) ────────────
   build-check:
-    name: Build Check
-    runs-on: ubuntu-latest
+    name: Build (${{ matrix.os }} / ${{ matrix.tags }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        tags: ["", "treesitter"]
+        exclude:
+          # treesitter (CGo) requires C toolchain — skip on Windows for now
+          - os: windows-latest
+            tags: treesitter
+
     steps:
       - uses: actions/checkout@v4
 
@@ -52,5 +70,44 @@ jobs:
         with:
           go-version: "1.24"
 
-      - name: Build (pure Go)
-        run: go build -o /dev/null ./cmd/gleann/
+      - name: Build
+        run: |
+          if [ -n "${{ matrix.tags }}" ]; then
+            go build -tags ${{ matrix.tags }} -o /dev/null ./cmd/gleann/
+          else
+            go build -o /dev/null ./cmd/gleann/
+          fi
+        shell: bash
+
+  # ── E2E Plugin Tests (Linux only — needs pipx) ──────────────
+  e2e:
+    name: E2E Plugin Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: [test, build-check]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install pipx & markitdown
+        run: |
+          pip install --user pipx
+          pipx install markitdown
+
+      - name: Run Go E2E tests
+        timeout-minutes: 10
+        run: go test ./tests/ -run TestE2E -v -count=1 -timeout 8m
+
+      - name: Run E2E bash script
+        timeout-minutes: 10
+        run: bash scripts/e2e_plugin_test.sh

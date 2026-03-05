@@ -34,6 +34,7 @@ const (
 	phaseServer                            // toggle: enable REST API server?
 	phaseSummary                           // summary & confirm
 	phaseInstall                           // select: system install option
+	phasePlugins                           // navigate to plugin manager
 )
 
 // totalVisibleSteps for the progress bar (skip fetching phases).
@@ -95,8 +96,9 @@ type OnboardModel struct {
 	phase     wizardPhase
 	width     int
 	height    int
-	cancelled bool
-	done      bool
+	cancelled   bool
+	done        bool
+	openPlugins bool
 
 	// Menu mode (existing config).
 	menuMode    bool
@@ -181,6 +183,7 @@ func settingsMenuItems() []settingsItem {
 		{"MCP Server", phaseMCP},
 		{"REST API Server", phaseServer},
 		{"Install / Uninstall", phaseInstall},
+		{"Manage Plugins", phasePlugins},
 		{"Save & Exit", phaseSummary},
 	}
 }
@@ -452,6 +455,13 @@ func (m OnboardModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if item.phase == phaseSummary {
 				// "Save & Exit" — build result and quit.
 				m.buildResult()
+				m.done = true
+				return m, tea.Quit
+			}
+			if item.phase == phasePlugins {
+				// "Manage Plugins" — exit wizard and open plugin manager.
+				m.buildResult()
+				m.openPlugins = true
 				m.done = true
 				return m, tea.Quit
 			}
@@ -1002,6 +1012,11 @@ func (m OnboardModel) Cancelled() bool {
 	return m.cancelled
 }
 
+// OpenPlugins returns whether the user wants to open the plugin manager.
+func (m OnboardModel) OpenPlugins() bool {
+	return m.openPlugins
+}
+
 // ── View ───────────────────────────────────────────────────────
 
 func (m OnboardModel) View() string {
@@ -1328,6 +1343,7 @@ func (m OnboardModel) settingsMenuValues() []string {
 		mcpStatus,    // MCP Server
 		serverStatus, // REST API Server
 		"",           // Install / Uninstall (no current value)
+		"🔌",         // Manage Plugins
 		"",           // Save & Exit
 	}
 }

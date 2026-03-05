@@ -16,6 +16,7 @@ const (
 	ScreenOnboard
 	ScreenChat
 	ScreenIndexes
+	ScreenPlugins
 )
 
 // menuItem defines a main-menu option.
@@ -29,6 +30,7 @@ var menuItems = []menuItem{
 	{title: "Setup", desc: "Configure providers, models & paths", icon: "⚙ "},
 	{title: "Chat", desc: "Interactive RAG-powered Q&A", icon: "💬"},
 	{title: "Indexes", desc: "List & manage your indexes", icon: "📚"},
+	{title: "Plugins", desc: "Install & manage plugins", icon: "🔌"},
 	{title: "Quit", desc: "Exit gleann", icon: "👋"},
 }
 
@@ -85,7 +87,10 @@ func (m HomeModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case 2: // Indexes
 				m.chosen = ScreenIndexes
 				return m, tea.Quit
-			case 3: // Quit
+			case 3: // Plugins
+				m.chosen = ScreenPlugins
+				return m, tea.Quit
+			case 4: // Quit
 				m.quitting = true
 				return m, tea.Quit
 			}
