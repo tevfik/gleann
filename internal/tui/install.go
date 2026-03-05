@@ -45,14 +45,25 @@ func InstallBinary(targetDir string) error {
 	}
 	defer src.Close()
 
-	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o755)
+	// Write to temp file first to avoid "text file busy" error on running binary.
+	tmp := dst + ".tmp"
+	out, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o755)
 	if err != nil {
-		return fmt.Errorf("create destination: %w", err)
+		return fmt.Errorf("create temp file: %w", err)
 	}
 	defer out.Close()
 
 	if _, err := io.Copy(out, src); err != nil {
+		os.Remove(tmp) // Clean up temp file on copy error
 		return fmt.Errorf("copy binary: %w", err)
+	}
+	
+	out.Close() // Close before rename
+	
+	// Atomic rename (works even if dst is currently running).
+	if err := os.Rename(tmp, dst); err != nil {
+		os.Remove(tmp) // Clean up temp file on rename error
+		return fmt.Errorf("install binary: %w", err)
 	}
 
 	// Also copy bundled shared libraries (e.g. libfaiss_c.so for gleann-full) if they exist.
@@ -64,18 +75,45 @@ func InstallBinary(targetDir string) error {
 func copySharedLibs(exe, targetDir string) {
 	// RPATH $ORIGIN requires them to be in the exact same directory as the executable.
 	exeDir := filepath.Dir(exe)
-	for _, lib := range []string{"libfaiss_c.so", "libfaiss.so"} {
+	for _, lib := range sharedLibNames() {
 		libSrc := filepath.Join(exeDir, lib)
 		if _, err := os.Stat(libSrc); err == nil {
 			libDst := filepath.Join(targetDir, lib)
+			libTmp := libDst + ".tmp"
+			
 			if s, err := os.Open(libSrc); err == nil {
-				if d, err := os.OpenFile(libDst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o755); err == nil {
+				if d, err := os.OpenFile(libTmp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o755); err == nil {
 					_, _ = io.Copy(d, s)
 					d.Close()
+					// Atomic rename to avoid "text file busy"
+					_ = os.Rename(libTmp, libDst)
 				}
 				s.Close()
 			}
 		}
+	}
+}
+
+// sharedLibNames returns the platform-specific FAISS shared library file names.
+func sharedLibNames() []string {
+	switch runtime.GOOS {
+	case "darwin":
+		return []string{"libfaiss_c.dylib", "libfaiss.dylib"}
+	case "windows":
+		return []string{"faiss_c.dll", "faiss.dll"}
+	default: // linux, freebsd, ...
+		return []string{"libfaiss_c.so", "libfaiss.so"}
+	}
+}
+
+// installDirs returns the platform-specific candidate installation directories.
+func installDirs() []string {
+	switch runtime.GOOS {
+	case "windows":
+		home, _ := os.UserHomeDir()
+		return []string{filepath.Join(home, ".local", "bin")}
+	default: // linux, darwin, freebsd
+		return []string{"~/.local/bin", "/usr/local/bin"}
 	}
 }
 
@@ -130,7 +168,7 @@ func RunInstall(result *OnboardResult) {
 	needsSudo := !isWritable(targetDir)
 
 	fmt.Println()
-	if needsSudo {
+	if needsSudo && runtime.GOOS != "windows" {
 		fmt.Printf("📦 Installing gleann to %s (requires sudo)...\n", result.InstallPath)
 		exe, err := os.Executable()
 		if err != nil {
@@ -156,7 +194,7 @@ func RunInstall(result *OnboardResult) {
 
 		// Copy shared libraries if they exist (requires sudo)
 		exeDir := filepath.Dir(exe)
-		for _, lib := range []string{"libfaiss_c.so", "libfaiss.so"} {
+		for _, lib := range sharedLibNames() {
 			libSrc := filepath.Join(exeDir, lib)
 			if _, err := os.Stat(libSrc); err == nil {
 				libDst := filepath.Join(targetDir, lib)
@@ -231,7 +269,7 @@ func RunUninstall(removeData bool) {
 
 	// Remove binary from known install locations.
 	removed := false
-	for _, dir := range []string{"~/.local/bin", "/usr/local/bin"} {
+	for _, dir := range installDirs() {
 		p := filepath.Join(ExpandPath(dir), "gleann")
 		if runtime.GOOS == "windows" {
 			p += ".exe"
@@ -241,16 +279,14 @@ func RunUninstall(removeData bool) {
 
 			// Uninstall binary and bundled shared libraries
 			filesToRemove := []string{p}
-			libFaissC := filepath.Join(ExpandPath(dir), "libfaiss_c.so")
-			libFaiss := filepath.Join(ExpandPath(dir), "libfaiss.so")
-			if _, err := os.Stat(libFaissC); err == nil {
-				filesToRemove = append(filesToRemove, libFaissC)
-			}
-			if _, err := os.Stat(libFaiss); err == nil {
-				filesToRemove = append(filesToRemove, libFaiss)
+			for _, lib := range sharedLibNames() {
+				libPath := filepath.Join(ExpandPath(dir), lib)
+				if _, err := os.Stat(libPath); err == nil {
+					filesToRemove = append(filesToRemove, libPath)
+				}
 			}
 
-			if needsSudo {
+			if needsSudo && runtime.GOOS != "windows" {
 				fmt.Printf("🗑  Removing gleann and dependencies (requires sudo)...\n")
 				args := append([]string{"rm", "-f"}, filesToRemove...)
 				cmd := exec.Command("sudo", args...)
