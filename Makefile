@@ -21,6 +21,16 @@ INSTALL_DIR ?= /usr/local/bin
 # FAISS shared lib locations (set from environment or default)
 FAISS_LIB_DIR ?= /usr/local/lib
 
+# Platform detection
+UNAME_S := $(shell uname -s)
+ifeq ($(UNAME_S),Darwin)
+    RPATH_FLAGS := -Wl,-rpath,@loader_path
+    SO_EXT      := dylib
+else
+    RPATH_FLAGS := -Wl,-rpath,\$$ORIGIN
+    SO_EXT      := so
+endif
+
 # ── Default target ──────────────────────────────────────────────────────────
 .PHONY: all build
 all: $(BINARY)
@@ -50,7 +60,7 @@ $(BINARY_FULL):
 	@echo "🔧 Building $(BINARY_FULL) with FAISS + tree-sitter..."
 	@mkdir -p $(BUILD_DIR)
 	CGO_ENABLED=1 \
-	CGO_LDFLAGS="-Wl,-rpath=\$$ORIGIN -L$(FAISS_LIB_DIR) -lfaiss_c -lfaiss" \
+	CGO_LDFLAGS="$(RPATH_FLAGS) -L$(FAISS_LIB_DIR) -lfaiss_c -lfaiss" \
 	go build -tags "faiss treesitter" -ldflags "$(LDFLAGS)" -o $(BINARY_FULL) $(CMD)
 	@echo "✅ Built $(BINARY_FULL)"
 
@@ -81,8 +91,8 @@ install: $(BINARY)
 .PHONY: install-full
 install-full: $(BINARY_FULL)
 	install -m 0755 $(BINARY_FULL) $(INSTALL_DIR)/$$(basename $(BINARY_FULL))
-	@# Copy FAISS shared libs next to the binary so \$$ORIGIN rpath works.
-	@for lib in $(FAISS_LIB_DIR)/libfaiss*.so*; do \
+	@# Copy FAISS shared libs next to the binary so rpath works.
+	@for lib in $(FAISS_LIB_DIR)/libfaiss*.$(SO_EXT)*; do \
 		if [ -f "$$lib" ]; then \
 			install -m 0755 "$$lib" $(INSTALL_DIR)/; \
 			echo "  📦 Installed $$(basename $$lib) → $(INSTALL_DIR)/"; \
@@ -120,10 +130,10 @@ dist/gleann-$(VERSION)-linux-amd64.tar.gz: $(BINARY) | $(DIST_DIR)
 
 dist/gleann-full-$(VERSION)-linux-amd64.tar.gz: $(BINARY_FULL) | $(DIST_DIR)
 	@# Bundle the binary + FAISS shared libs in a single tarball.
-	cp $(FAISS_LIB_DIR)/libfaiss_c.so $(BUILD_DIR)/ 2>/dev/null || true
-	cp $(FAISS_LIB_DIR)/libfaiss.so   $(BUILD_DIR)/ 2>/dev/null || true
-	cd $(BUILD_DIR) && tar czf ../$@ $$(basename $(BINARY_FULL)) libfaiss*.so 2>/dev/null; true
-	rm -f $(BUILD_DIR)/libfaiss*.so
+	cp $(FAISS_LIB_DIR)/libfaiss_c.$(SO_EXT) $(BUILD_DIR)/ 2>/dev/null || true
+	cp $(FAISS_LIB_DIR)/libfaiss.$(SO_EXT)   $(BUILD_DIR)/ 2>/dev/null || true
+	cd $(BUILD_DIR) && tar czf ../$@ $$(basename $(BINARY_FULL)) libfaiss*.$(SO_EXT) 2>/dev/null; true
+	rm -f $(BUILD_DIR)/libfaiss*.$(SO_EXT)
 	@echo "  → $@"
 
 # ── Clean ────────────────────────────────────────────────────────────────────
