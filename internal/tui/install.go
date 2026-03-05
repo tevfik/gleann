@@ -222,16 +222,13 @@ func RunInstall(result *OnboardResult) {
 		}
 	}
 
-	// MCP server configuration for AI editors.
+	// MCP server configuration hint (don't auto-configure editors).
 	if result.MCPEnabled {
-		fmt.Println("🔌 Configuring MCP server for AI editors...")
-		installed := installMCPConfigs(result)
-		for _, s := range installed {
-			fmt.Printf("  ✓ %s\n", s)
-		}
-		if len(installed) == 0 {
-			fmt.Println("  (no MCP configs installed)")
-		}
+		fmt.Println("🔌 MCP Server enabled")
+		fmt.Println("  ℹ️  To configure AI editors manually:")
+		fmt.Println("     Claude Code: Add to ~/.claude.json")
+		fmt.Println("     VS Code: Add to workspace .vscode/mcp.json")
+		fmt.Println("     Run 'gleann mcp' to start server")
 	}
 
 	fmt.Println()
