@@ -137,8 +137,10 @@ jobs:
         run: |
           if [ "$RUNNER_OS" == "Linux" ]; then
             sudo apt-get update
+            # Added libomp-dev for Linux just in case
             sudo apt-get install -y cmake build-essential libopenblas-dev libomp-dev swig
           elif [ "$RUNNER_OS" == "macOS" ]; then
+            # llvm libomp openblas swig added for macOS CXX OpenMP compatibility (AppleClang missing it by default)
             brew install cmake llvm libomp openblas swig
           fi
 
@@ -147,6 +149,16 @@ jobs:
         run: |
           git clone --depth 1 --branch v1.9.0 https://github.com/facebookresearch/faiss.git /tmp/faiss
           cd /tmp/faiss
+
+          # macOS AppleClang doesn't bundle OpenMP. Tell CMake to use Homebrew's LLVM.
+          EXTRA_CMAKE_ARGS=""
+          if [ "$RUNNER_OS" == "macOS" ]; then
+            export CC=$(brew --prefix llvm)/bin/clang
+            export CXX=$(brew --prefix llvm)/bin/clang++
+            export LDFLAGS="-L$(brew --prefix llvm)/lib -L$(brew --prefix libomp)/lib"
+            export CPPFLAGS="-I$(brew --prefix llvm)/include -I$(brew --prefix libomp)/include"
+          fi
+
           cmake -B build \
             -DFAISS_ENABLE_GPU=OFF \
             -DFAISS_ENABLE_PYTHON=OFF \
@@ -154,7 +166,8 @@ jobs:
             -DBUILD_SHARED_LIBS=ON \
             -DBUILD_TESTING=OFF \
             -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_INSTALL_PREFIX=/usr/local
+            -DCMAKE_INSTALL_PREFIX=/usr/local \
+            ${EXTRA_CMAKE_ARGS}
           
           NCORES=2
           if [ "$RUNNER_OS" == "Linux" ]; then
