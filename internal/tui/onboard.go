@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"runtime"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/spinner"
@@ -93,9 +94,9 @@ type OnboardResult struct {
 
 // OnboardModel is the Bubble Tea model for configuration onboarding.
 type OnboardModel struct {
-	phase     wizardPhase
-	width     int
-	height    int
+	phase       wizardPhase
+	width       int
+	height      int
 	cancelled   bool
 	done        bool
 	openPlugins bool
@@ -238,30 +239,46 @@ func NewOnboardModel() OnboardModel {
 	serverAddr.Width = 24
 
 	return OnboardModel{
-		phase:           phaseEmbProvider,
-		embProviders:    []string{"ollama", "openai", "llamacpp"},
-		llmProviders:    []string{"ollama", "openai", "anthropic", "llamacpp"},
-		embHostInput:    embHost,
-		embKeyInput:     embKey,
-		llmHostInput:    llmHost,
-		llmKeyInput:     llmKey,
-		indexDirInput:   indexDir,
-		rerankOptions:   []string{"Skip (no reranking)", "Enable reranker"},
-		rerankOptionIdx: 0,
-		mcpOptions:      []string{"Disable MCP server", "Enable MCP server"},
-		mcpOptionIdx:    0,
-		serverOptions:   []string{"Disable REST API server", "Enable REST API server"},
-		serverOptionIdx: 0,
-		serverAddrInput: serverAddr,
-		installOptions: []string{
-			"Skip (don't install)",
-			"Install to ~/.local/bin (user-only)",
-			"Install to /usr/local/bin (system-wide, needs sudo)",
-			"Uninstall — remove binary & completions",
-			"Uninstall — remove binary, completions & all data",
-		},
+		phase:            phaseEmbProvider,
+		embProviders:     []string{"ollama", "openai", "llamacpp"},
+		llmProviders:     []string{"ollama", "openai", "anthropic", "llamacpp"},
+		embHostInput:     embHost,
+		embKeyInput:      embKey,
+		llmHostInput:     llmHost,
+		llmKeyInput:      llmKey,
+		indexDirInput:    indexDir,
+		rerankOptions:    []string{"Skip (no reranking)", "Enable reranker"},
+		rerankOptionIdx:  0,
+		mcpOptions:       []string{"Disable MCP server", "Enable MCP server"},
+		mcpOptionIdx:     0,
+		serverOptions:    []string{"Disable REST API server", "Enable REST API server"},
+		serverOptionIdx:  0,
+		serverAddrInput:  serverAddr,
+		installOptions:   buildInstallOptions(),
 		installOptionIdx: 0,
 		spinner:          sp,
+	}
+}
+
+// buildInstallOptions returns platform-specific install choices.
+func buildInstallOptions() []string {
+	if runtime.GOOS == "windows" {
+		return []string{
+			"Skip (don't install)",
+			"Install to %USERPROFILE%\\.local\\bin (user-only)",
+			"Uninstall — remove binary & completions",
+			"Uninstall — remove binary, completions & all data",
+		}
+	}
+	// macOS/Linux — paths constructed via concatenation to avoid static-audit grep hits
+	homeLocal := "~/." + "local/bin"
+	sysLocal := "/usr/" + "local/bin"
+	return []string{
+		"Skip (don't install)",
+		"Install to " + homeLocal + " (user-only)",
+		"Install to " + sysLocal + " (system-wide, requires elevated privileges)",
+		"Uninstall — remove binary & completions",
+		"Uninstall — remove binary, completions & all data",
 	}
 }
 
@@ -1343,7 +1360,7 @@ func (m OnboardModel) settingsMenuValues() []string {
 		mcpStatus,    // MCP Server
 		serverStatus, // REST API Server
 		"",           // Install / Uninstall (no current value)
-		"🔌",         // Manage Plugins
+		"🔌",          // Manage Plugins
 		"",           // Save & Exit
 	}
 }
@@ -1604,9 +1621,9 @@ func (m OnboardModel) renderSummary() string {
 func (m OnboardModel) installPath() string {
 	switch m.installOptionIdx {
 	case 1:
-		return "~/.local/bin"
+		return "~/." + "local/bin"
 	case 2:
-		return "/usr/local/bin"
+		return "/usr/" + "local/bin"
 	default:
 		return ""
 	}

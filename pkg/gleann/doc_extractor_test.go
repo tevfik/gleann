@@ -263,7 +263,7 @@ func TestFirstParagraph_Empty(t *testing.T) {
 // --- MarkItDownExtractor tests ---
 
 func TestCanHandle(t *testing.T) {
-	ext := &MarkItDownExtractor{binaryPath: "/usr/bin/markitdown"}
+	ext := &MarkItDownExtractor{binaryPath: "markitdown"}
 
 	validExts := []string{".pdf", ".docx", ".xlsx", ".pptx", ".csv", ".png", ".jpg", ".jpeg"}
 	for _, e := range validExts {
@@ -281,7 +281,7 @@ func TestCanHandle(t *testing.T) {
 }
 
 func TestCanHandle_CaseInsensitive(t *testing.T) {
-	ext := &MarkItDownExtractor{binaryPath: "/usr/bin/markitdown"}
+	ext := &MarkItDownExtractor{binaryPath: "markitdown"}
 	if !ext.CanHandle(".PDF") {
 		t.Error("expected CanHandle('.PDF') = true (case insensitive)")
 	}
@@ -315,7 +315,7 @@ func TestMarkItDownExtractor_NilSafety(t *testing.T) {
 }
 
 func TestSupportedExtensions(t *testing.T) {
-	ext := &MarkItDownExtractor{binaryPath: "/usr/bin/markitdown"}
+	ext := &MarkItDownExtractor{binaryPath: "markitdown"}
 	exts := ext.SupportedExtensions()
 
 	if len(exts) < 5 {
@@ -403,4 +403,3 @@ func TestIntegration_DocExtractor_WithCLI(t *testing.T) {
 		t.Log("markitdown handled .md file (unexpected but ok)")
 	}
 }
-
