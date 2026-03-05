@@ -27,6 +27,7 @@ type Server struct {
 	mu        sync.RWMutex
 	addr      string
 	server    *http.Server
+	graphPool *graphDBPool
 }
 
 // NewServer creates a new REST API server.
@@ -43,6 +44,7 @@ func NewServer(config gleann.Config, addr string) *Server {
 		embedder:  embedder,
 		searchers: make(map[string]*gleann.LeannSearcher),
 		addr:      addr,
+		graphPool: newGraphDBPool(config.IndexDir),
 	}
 }
 
@@ -59,6 +61,11 @@ func (s *Server) Start() error {
 	mux.HandleFunc("POST /api/indexes/{name}/build", s.handleBuild)
 	mux.HandleFunc("DELETE /api/indexes/{name}", s.handleDeleteIndex)
 
+	// Graph API endpoints (KuzuDB-backed code graph).
+	mux.HandleFunc("GET /api/graph/{name}", s.handleGraphStats)
+	mux.HandleFunc("POST /api/graph/{name}/query", s.handleGraphQuery)
+	mux.HandleFunc("POST /api/graph/{name}/index", s.handleGraphIndex)
+
 	s.server = &http.Server{
 		Addr:         s.addr,
 		Handler:      withMiddleware(mux),
@@ -73,6 +80,9 @@ func (s *Server) Start() error {
 
 // Stop gracefully shuts down the server.
 func (s *Server) Stop(ctx context.Context) error {
+	if s.graphPool != nil {
+		s.graphPool.closeAll()
+	}
 	return s.server.Shutdown(ctx)
 }
 
