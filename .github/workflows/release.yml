@@ -193,12 +193,12 @@ jobs:
             sudo cp c_api/impl/*.h /usr/local/include/faiss/c_api/impl/
             sudo ldconfig
           elif [ "$RUNNER_OS" == "macOS" ]; then
-            # Added -lopenblas for macOS C API build
+            # Use Accelerate framework as detected by FAISS build
             clang++ -shared -fPIC -Wl,-rpath,@loader_path -o libfaiss_c.dylib \
               c_api/*.cpp \
               -I. -I/usr/local/include \
               -L/usr/local/lib -lfaiss \
-              -lc++ -lopenblas
+              -lc++ -framework Accelerate
             sudo cp libfaiss_c.dylib /usr/local/lib/
             sudo mkdir -p /usr/local/include/faiss/c_api/impl
             sudo cp c_api/*.h /usr/local/include/faiss/c_api/
