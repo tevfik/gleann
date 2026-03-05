@@ -140,13 +140,17 @@ jobs:
             # Added libomp-dev for Linux just in case
             sudo apt-get install -y cmake build-essential libopenblas-dev libomp-dev swig
           elif [ "$RUNNER_OS" == "macOS" ]; then
-            # llvm libomp openblas swig added for macOS CXX OpenMP compatibility (AppleClang missing it by default)
-            brew install cmake llvm libomp openblas swig
+            # libomp openblas swig added for macOS CXX OpenMP compatibility (AppleClang missing it by default)
+            brew install cmake libomp openblas swig
           fi
 
       - name: Build and install FAISS from source
         shell: bash
         run: |
+          if [ "$RUNNER_OS" == "macOS" ]; then
+            export CC=/usr/bin/clang
+            export CXX=/usr/bin/clang++
+          fi
           git clone --depth 1 --branch v1.9.0 https://github.com/facebookresearch/faiss.git /tmp/faiss
           cd /tmp/faiss
 
