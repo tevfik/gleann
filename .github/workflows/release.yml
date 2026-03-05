@@ -119,7 +119,7 @@ jobs:
             goos: darwin
             goarch: arm64
             suffix: darwin-arm64
-          - os: macos-12
+          - os: macos-13
             goos: darwin
             goarch: amd64
             suffix: darwin-amd64
@@ -150,13 +150,10 @@ jobs:
           git clone --depth 1 --branch v1.9.0 https://github.com/facebookresearch/faiss.git /tmp/faiss
           cd /tmp/faiss
 
-          # macOS AppleClang doesn't bundle OpenMP. Tell CMake to use Homebrew's LLVM.
+          # macOS AppleClang doesn't bundle OpenMP. Tell CMake where libomp is.
           EXTRA_CMAKE_ARGS=""
           if [ "$RUNNER_OS" == "macOS" ]; then
-            export CC=$(brew --prefix llvm)/bin/clang
-            export CXX=$(brew --prefix llvm)/bin/clang++
-            export LDFLAGS="-L$(brew --prefix llvm)/lib -L$(brew --prefix libomp)/lib"
-            export CPPFLAGS="-I$(brew --prefix llvm)/include -I$(brew --prefix libomp)/include"
+            EXTRA_CMAKE_ARGS="-DOpenMP_ROOT=$(brew --prefix libomp)"
           fi
 
           cmake -B build \
@@ -193,11 +190,13 @@ jobs:
             sudo cp c_api/impl/*.h /usr/local/include/faiss/c_api/impl/
             sudo ldconfig
           elif [ "$RUNNER_OS" == "macOS" ]; then
-            # Use Accelerate framework as detected by FAISS build
+            # Using Accelerate framework + libomp for OpenMP support
             clang++ -shared -fPIC -Wl,-rpath,@loader_path -o libfaiss_c.dylib \
               c_api/*.cpp \
               -I. -I/usr/local/include \
+              -Xpreprocessor -fopenmp -I$(brew --prefix libomp)/include \
               -L/usr/local/lib -lfaiss \
+              -L$(brew --prefix libomp)/lib -lomp \
               -lc++ -framework Accelerate
             sudo cp libfaiss_c.dylib /usr/local/lib/
             sudo mkdir -p /usr/local/include/faiss/c_api/impl
