@@ -4,7 +4,9 @@ package faiss
 
 /*
 #cgo CFLAGS: -I/usr/local/include
-#cgo LDFLAGS: -L/usr/local/lib -lfaiss_c -lfaiss -lstdc++ -lgomp -lopenblas -lm
+#cgo LDFLAGS: -L/usr/local/lib -lfaiss_c -lfaiss
+#cgo linux LDFLAGS: -lstdc++ -lgomp -lopenblas -lm
+#cgo darwin LDFLAGS: -lc++ -framework Accelerate
 
 #include <stdlib.h>
 #include <faiss/c_api/faiss_c.h>
