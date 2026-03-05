@@ -1,3 +1,5 @@
+//go:build !windows
+
 package kuzu_test
 
 import (

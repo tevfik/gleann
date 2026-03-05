@@ -1,9 +1,11 @@
-name: Release
+name: CI/CD
 
 on:
   push:
-    tags:
-      - "v*"
+    branches: [ "main" ]
+    tags: [ "v*" ]
+  pull_request:
+    branches: [ "main" ]
 
 permissions:
   contents: write
@@ -60,7 +62,13 @@ jobs:
 
       - name: Determine version
         id: version
-        run: echo "version=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+        # Use short commit hash if not a tag
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+            echo "version=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Build gleann
         env:
@@ -73,8 +81,6 @@ jobs:
       - name: Compress binary
         run: |
           mkdir -p dist
-          # Go cross-compiler always outputs 'build/gleann' regardless of GOOS.
-          # Rename to .exe only for Windows targets.
           SRC="build/gleann"
           OUTNAME="gleann"
           if [ "${{ matrix.goos }}" = "windows" ]; then
@@ -95,11 +101,28 @@ jobs:
           path: dist/*
           retention-days: 1
 
-  # ── FAISS + Tree-sitter build (Linux amd64 only, requires CGo) ──
+
+  # ── FAISS + Tree-sitter build (Linux & macOS, requires CGo) ──
   release-faiss:
-    name: Build FAISS+TreeSitter (linux-amd64)
+    name: Build FAISS (${{ matrix.suffix }})
     needs: test
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            goos: linux
+            goarch: amd64
+            suffix: linux-amd64
+          - os: macos-latest
+            goos: darwin
+            goarch: arm64
+            suffix: darwin-arm64
+          - os: macos-13
+            goos: darwin
+            goarch: amd64
+            suffix: darwin-amd64
 
     steps:
       - uses: actions/checkout@v4
@@ -109,12 +132,18 @@ jobs:
         with:
           go-version: "1.24"
 
-      - name: Install FAISS and Tree-sitter dependencies
+      - name: Install FAISS Dependencies
+        shell: bash
         run: |
-          sudo apt-get update
-          sudo apt-get install -y cmake build-essential libopenblas-dev libomp-dev swig
+          if [ "$RUNNER_OS" == "Linux" ]; then
+            sudo apt-get update
+            sudo apt-get install -y cmake build-essential libopenblas-dev libomp-dev swig
+          elif [ "$RUNNER_OS" == "macOS" ]; then
+            brew install cmake llvm libomp openblas swig
+          fi
 
       - name: Build and install FAISS from source
+        shell: bash
         run: |
           git clone --depth 1 --branch v1.9.0 https://github.com/facebookresearch/faiss.git /tmp/faiss
           cd /tmp/faiss
@@ -126,54 +155,84 @@ jobs:
             -DBUILD_TESTING=OFF \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_INSTALL_PREFIX=/usr/local
-          cmake --build build -j$(nproc) -- faiss faiss_c
+          
+          NCORES=2
+          if [ "$RUNNER_OS" == "Linux" ]; then
+            NCORES=$(nproc)
+          elif [ "$RUNNER_OS" == "macOS" ]; then
+            NCORES=$(sysctl -n hw.logicalcpu)
+          fi
+          
+          cmake --build build -j$NCORES -- faiss faiss_c
           sudo cmake --install build
 
           # Build FAISS C API wrapper (not built by cmake)
           cd /tmp/faiss
-          g++ -shared -fPIC -Wl,-rpath='$$ORIGIN' -o libfaiss_c.so \
-            c_api/*.cpp \
-            -I. -I/usr/local/include \
-            -L/usr/local/lib -lfaiss \
-            -lstdc++ -lgomp -lopenblas
-          sudo cp libfaiss_c.so /usr/local/lib/
-          # Install C API headers including impl/ subdirectory
-          sudo mkdir -p /usr/local/include/faiss/c_api/impl
-          sudo cp c_api/*.h /usr/local/include/faiss/c_api/
-          sudo cp c_api/impl/*.h /usr/local/include/faiss/c_api/impl/
-          sudo ldconfig
+          if [ "$RUNNER_OS" == "Linux" ]; then
+            g++ -shared -fPIC -Wl,-rpath='$$ORIGIN' -o libfaiss_c.so \
+              c_api/*.cpp \
+              -I. -I/usr/local/include \
+              -L/usr/local/lib -lfaiss \
+              -lstdc++ -lgomp -lopenblas
+            sudo cp libfaiss_c.so /usr/local/lib/
+            sudo mkdir -p /usr/local/include/faiss/c_api/impl
+            sudo cp c_api/*.h /usr/local/include/faiss/c_api/
+            sudo cp c_api/impl/*.h /usr/local/include/faiss/c_api/impl/
+            sudo ldconfig
+          elif [ "$RUNNER_OS" == "macOS" ]; then
+            clang++ -shared -fPIC -Wl,-rpath,@loader_path -o libfaiss_c.dylib \
+              c_api/*.cpp \
+              -I. -I/usr/local/include \
+              -L/usr/local/lib -lfaiss \
+              -lc++
+            sudo cp libfaiss_c.dylib /usr/local/lib/
+            sudo mkdir -p /usr/local/include/faiss/c_api/impl
+            sudo cp c_api/*.h /usr/local/include/faiss/c_api/
+            sudo cp c_api/impl/*.h /usr/local/include/faiss/c_api/impl/
+          fi
 
       - name: Determine version
         id: version
-        run: echo "version=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+        shell: bash
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+            echo "version=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Build gleann-full (FAISS + Tree-sitter)
         env:
           CGO_ENABLED: "1"
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
           LD_LIBRARY_PATH: "/usr/local/lib"
           VERSION: ${{ steps.version.outputs.version }}
           FAISS_LIB_DIR: "/usr/local/lib"
         run: make full
 
       - name: Rename and compress binary with shared libraries
+        shell: bash
         run: |
           mkdir -p dist
-          SUFFIX="gleann-full-${{ steps.version.outputs.version }}-linux-amd64"
+          SUFFIX="gleann-full-${{ steps.version.outputs.version }}-${{ matrix.suffix }}"
           cp build/gleann-full "${SUFFIX}"
-          cp /usr/local/lib/libfaiss_c.so . 2>/dev/null || true
-          cp /usr/local/lib/libfaiss.so   . 2>/dev/null || true
-          tar czf "dist/${SUFFIX}.tar.gz" "${SUFFIX}" libfaiss*.so 2>/dev/null; true
+          cp /usr/local/lib/libfaiss_c.* . 2>/dev/null || true
+          cp /usr/local/lib/libfaiss.*   . 2>/dev/null || true
+          tar czf "dist/${SUFFIX}.tar.gz" "${SUFFIX}" libfaiss*.so libfaiss*.dylib 2>/dev/null || true
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: gleann-full-linux-amd64
+          name: gleann-full-${{ matrix.suffix }}
           path: dist/*
           retention-days: 1
 
+  # ── Only publish to GitHub Releases for tags ──
   publish-release:
     name: Publish Release
     needs: [release-pure, release-faiss]
+    if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:
       - name: Download all artifacts

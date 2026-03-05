@@ -1,3 +1,5 @@
+//go:build !windows
+
 package indexer_test
 
 import (
