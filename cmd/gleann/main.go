@@ -925,6 +925,10 @@ func cmdServe(args []string) {
 	fmt.Println("   POST /api/indexes/{name}/build  Build index")
 	fmt.Println("   DELETE /api/indexes/{name}       Delete index")
 	fmt.Println()
+	fmt.Println("   GET  /api/graph/{name}          Graph stats")
+	fmt.Println("   POST /api/graph/{name}/query    Graph query (callees, callers, symbols_in_file)")
+	fmt.Println("   POST /api/graph/{name}/index    Trigger AST graph indexing")
+	fmt.Println()
 
 	if err := srv.Start(); err != nil {
 		fmt.Fprintf(os.Stderr, "server error: %v\n", err)
