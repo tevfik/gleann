@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	hnsw "github.com/tevfik/gleann/modules/hnsw"
+	_ "github.com/tevfik/gleann/pkg/backends"
 	"github.com/tevfik/gleann/pkg/gleann"
 )
 
@@ -78,8 +78,9 @@ func TestFAISSvsPureGo(t *testing.T) {
 			goConfig.HNSWConfig.M = 32
 			goConfig.HNSWConfig.EfConstruction = 200
 			goConfig.HNSWConfig.PruneEmbeddings = false
+			goConfig.HNSWConfig.UseMmap = false
 
-			goFactory := &hnsw.Factory{}
+			goFactory := gleann.MustGetBackend("hnsw")
 			goBuilder := goFactory.NewBuilder(goConfig)
 			goStart := time.Now()
 			goData, err := goBuilder.Build(ctx, embeddings)

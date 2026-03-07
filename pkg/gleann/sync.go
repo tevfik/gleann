@@ -23,11 +23,11 @@ type FileState struct {
 
 // SyncState tracks file→passage mapping for incremental index updates.
 type SyncState struct {
-	Files       map[string]*FileState `json:"files"`
-	IndexName   string                `json:"index_name"`
-	LastSync    time.Time             `json:"last_sync"`
-	NextID      int64                 `json:"next_id"` // Next available passage ID.
-	TotalFiles  int                   `json:"total_files"`
+	Files      map[string]*FileState `json:"files"`
+	IndexName  string                `json:"index_name"`
+	LastSync   time.Time             `json:"last_sync"`
+	NextID     int64                 `json:"next_id"` // Next available passage ID.
+	TotalFiles int                   `json:"total_files"`
 }
 
 // SyncResult describes changes detected during synchronization.

@@ -154,16 +154,16 @@ fn main() {
 
 func TestDetectLanguage(t *testing.T) {
 	tests := map[string]Language{
-		"main.go":     LangGo,
-		"app.py":      LangPython,
-		"index.js":    LangJavaScript,
-		"server.ts":   LangTypeScript,
-		"Main.java":   LangJava,
-		"parser.c":    LangC,
-		"engine.cpp":  LangCPP,
-		"lib.rs":      LangRust,
-		"Program.cs":  LangCSharp,
-		"readme.md":   LangUnknown,
+		"main.go":    LangGo,
+		"app.py":     LangPython,
+		"index.js":   LangJavaScript,
+		"server.ts":  LangTypeScript,
+		"Main.java":  LangJava,
+		"parser.c":   LangC,
+		"engine.cpp": LangCPP,
+		"lib.rs":     LangRust,
+		"Program.cs": LangCSharp,
+		"readme.md":  LangUnknown,
 	}
 	for file, want := range tests {
 		got := DetectLanguage(file)

@@ -9,8 +9,6 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-
-	"github.com/tevfik/gleann/internal/graph/kuzu"
 )
 
 // LeannSearcher performs search on built indexes.
@@ -24,7 +22,7 @@ type LeannSearcher struct {
 	scorer    Scorer
 	reranker  Reranker
 	embServer EmbeddingServer
-	graphDB   *kuzu.DB
+	graphDB   GraphDB
 
 	loaded bool
 }
@@ -118,10 +116,14 @@ func (s *LeannSearcher) Load(ctx context.Context, name string) error {
 	// Attempt to load Graph DB if it exists
 	graphDir := filepath.Join(basePath, ".kuzu")
 	if _, err := os.Stat(graphDir); err == nil {
-		if db, openErr := kuzu.Open(graphDir); openErr == nil {
-			s.graphDB = db
+		if GraphDBOpener != nil {
+			if db, openErr := GraphDBOpener(graphDir); openErr == nil {
+				s.graphDB = db
+			} else {
+				log.Printf("⚠  WARNING: Found graph database at %s but failed to open: %v", graphDir, openErr)
+			}
 		} else {
-			log.Printf("⚠  WARNING: Found graph database at %s but failed to open: %v", graphDir, openErr)
+			log.Printf("ℹ️  Graph database found at %s but gleann was not built with graph support (Cgo/treesitter disabled)", graphDir)
 		}
 	}
 
@@ -339,8 +341,8 @@ func (s *LeannSearcher) Meta() IndexMeta {
 	return s.meta
 }
 
-// GraphDB returns the underlying Kuzu Graph DB connection, or nil if none exists.
-func (s *LeannSearcher) GraphDB() *kuzu.DB {
+// GraphDB returns the underlying Graph DB connection, or nil if none exists.
+func (s *LeannSearcher) GraphDB() GraphDB {
 	return s.graphDB
 }
 

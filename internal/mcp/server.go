@@ -543,45 +543,18 @@ func (s *Server) handleDocumentLinks(ctx context.Context, request mcp.CallToolRe
 		return mcp.NewToolResultError(fmt.Sprintf("Graph database not found or not initialized for index %q", indexName)), nil
 	}
 
-	// We use the raw connection to run a custom query for Document -> Section -> Chunk -> Symbol EXPLAINS
-	// KuzuDB connection is not goroutine safe, so we get a new connection.
-	conn, err := db.NewConn()
-	if err != nil {
-		return mcp.NewToolResultError(fmt.Sprintf("Error opening graph connection: %v", err)), nil
-	}
-	defer conn.Close()
-
-	cypher := fmt.Sprintf(`
-		MATCH (d:Document {path: "%s"})-[:HAS_SECTION]->(sec:Section)-[:HAS_CHUNK]->(c:DocChunk)-[:EXPLAINS]->(sym:Symbol)
-		RETURN sym.fqn AS fqn, sym.kind AS kind, sym.file AS file, sym.name AS name
-	`, docPath)
-
-	res, err := conn.Query(cypher)
+	// We use the gleann.GraphDB interface to query document explanation links.
+	symbols, err := db.DocumentSymbols(docPath)
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("Error executing graph query: %v", err)), nil
 	}
-	defer res.Close()
 
 	var sb strings.Builder
 	sb.WriteString(fmt.Sprintf("Symbols explained by document %s:\n\n", docPath))
 
 	found := false
-	for res.HasNext() {
-		row, err := res.Next()
-		if err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("Error reading graph result: %v", err)), nil
-		}
-
-		m, err := row.GetAsMap()
-		if err != nil {
-			continue
-		}
-
-		fqn := fmt.Sprint(m["fqn"])
-		kind := fmt.Sprint(m["kind"])
-		file := fmt.Sprint(m["file"])
-
-		sb.WriteString(fmt.Sprintf("- %s (%s) [File: %s]\n", fqn, kind, file))
+	for _, sym := range symbols {
+		sb.WriteString(fmt.Sprintf("- %s (%s) [File: %s]\n", sym.FQN, sym.Kind, sym.File))
 		found = true
 	}
 

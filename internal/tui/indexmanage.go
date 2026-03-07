@@ -16,8 +16,8 @@ type indexManageState int
 
 const (
 	imList    indexManageState = iota // browsing indexes
-	imDetail                         // viewing one index's details
-	imConfirm                        // delete confirmation
+	imDetail                          // viewing one index's details
+	imConfirm                         // delete confirmation
 )
 
 // deleteResultMsg is sent after an async delete completes.

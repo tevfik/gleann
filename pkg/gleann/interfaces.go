@@ -120,3 +120,27 @@ type Reranker interface {
 	// The returned results are sorted by the new score (descending).
 	Rerank(ctx context.Context, query string, results []SearchResult, topN int) ([]SearchResult, error)
 }
+
+// Callee holds a single symbol FQN returned from a graph traversal.
+type Callee struct {
+	FQN  string
+	Name string
+	Kind string
+}
+
+// SymbolInfo holds detailed information for a symbol.
+type SymbolInfo struct {
+	FQN  string
+	Kind string
+	File string
+	Name string
+}
+
+// GraphDB represents a graph database backend capable of querying AST and document relationships.
+type GraphDB interface {
+	Callees(callerFQN string) ([]Callee, error)
+	Callers(calleeFQN string) ([]Callee, error)
+	SymbolsInFile(filePath string) ([]Callee, error)
+	DocumentSymbols(docPath string) ([]SymbolInfo, error)
+	Close()
+}
