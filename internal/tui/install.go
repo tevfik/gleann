@@ -376,23 +376,25 @@ func RemoveCompletions() []string {
 func bashCompletion() string {
 	return `# gleann bash completion
 _gleann() {
-    local cur prev commands
+    local cur prev commands cmd
     COMPREPLY=()
     cur="${COMP_WORDS[COMP_CWORD]}"
     prev="${COMP_WORDS[COMP_CWORD-1]}"
-    commands="index search chat setup serve version help"
+    commands="build search ask chat watch list remove info graph serve mcp tui setup version help"
 
-    case "$prev" in
-        gleann)
-            COMPREPLY=( $(compgen -W "$commands" -- "$cur") )
+    if [ "${COMP_CWORD}" -eq 1 ]; then
+        COMPREPLY=( $(compgen -W "$commands" -- "$cur") )
+        return 0
+    fi
+
+    cmd="${COMP_WORDS[1]}"
+    case "$cmd" in
+        build|search|ask|chat|watch)
+            COMPREPLY=( $(compgen -W "--docs --model --provider --top-k --rerank --rerank-model --llm-model --llm-provider --interactive --index-dir --metric --json --batch-size --concurrency" -- "$cur") )
             return 0
             ;;
-        index)
-            COMPREPLY=( $(compgen -W "list" -- "$cur") )
-            return 0
-            ;;
-        search|chat)
-            COMPREPLY=( $(compgen -W "--index --top-k --reranker --rerank-model --rerank-top-n" -- "$cur") )
+        remove|info|graph)
+            COMPREPLY=( $(compgen -W "--index --index-dir" -- "$cur") )
             return 0
             ;;
     esac
@@ -408,11 +410,19 @@ func zshCompletion() string {
 _gleann() {
     local -a commands
     commands=(
-        'index:Build a search index'
+        'build:Build a search index'
         'search:Search an index'
-        'chat:Interactive chat with RAG'
-        'setup:Run configuration wizard'
+        'ask:Ask a question (RAG Q&A)'
+        'chat:Interactive chat TUI'
+        'watch:Watch & auto-rebuild on changes'
+        'list:List all indexes'
+        'remove:Remove an index'
+        'info:Show index info'
+        'graph:Query AST Graph in KuzuDB'
         'serve:Start HTTP server'
+        'mcp:Start MCP server (stdio)'
+        'tui:Launch interactive TUI'
+        'setup:Run configuration wizard'
         'version:Show version'
         'help:Show help'
     )
@@ -426,17 +436,29 @@ _gleann() {
             _describe 'command' commands
             ;;
         args)
+            local common_args
+            common_args=(
+                '--docs[Documents directory]:directory:_files -/'
+                '--model[Embedding model]:model:'
+                '--provider[Embedding provider]:provider:(ollama openai)'
+                '--top-k[Number of results]:number:'
+                '--rerank[Enable reranking]'
+                '--rerank-model[Reranker model]:model:'
+                '--llm-model[LLM model]:model:'
+                '--llm-provider[LLM provider]:provider:(ollama openai anthropic)'
+                '--interactive[Interactive mode]'
+                '--index-dir[Index storage directory]:directory:_files -/'
+                '--metric[Distance metric]:metric:(l2 cosine ip)'
+                '--json[Output as JSON]'
+            )
             case "$words[1]" in
-                search|chat)
+                build|search|chat|ask|watch)
+                    _arguments $common_args
+                    ;;
+                remove|info|graph)
                     _arguments \
                         '--index[Index name]:index:' \
-                        '--top-k[Number of results]:number:' \
-                        '--reranker[Reranker provider]:provider:(ollama jina cohere voyage)' \
-                        '--rerank-model[Reranker model]:model:' \
-                        '--rerank-top-n[Rerank top N]:number:'
-                    ;;
-                index)
-                    _arguments '1:subcommand:(list)'
+                        '--index-dir[Index storage directory]:directory:_files -/'
                     ;;
             esac
             ;;
@@ -452,23 +474,34 @@ func fishCompletion() string {
 complete -c gleann -f
 
 # Commands
-complete -c gleann -n '__fish_use_subcommand' -a 'index' -d 'Build a search index'
+complete -c gleann -n '__fish_use_subcommand' -a 'build' -d 'Build a search index'
 complete -c gleann -n '__fish_use_subcommand' -a 'search' -d 'Search an index'
-complete -c gleann -n '__fish_use_subcommand' -a 'chat' -d 'Interactive chat with RAG'
-complete -c gleann -n '__fish_use_subcommand' -a 'setup' -d 'Run configuration wizard'
+complete -c gleann -n '__fish_use_subcommand' -a 'ask' -d 'Ask a question (RAG Q&A)'
+complete -c gleann -n '__fish_use_subcommand' -a 'chat' -d 'Interactive chat TUI'
+complete -c gleann -n '__fish_use_subcommand' -a 'watch' -d 'Watch & auto-rebuild on changes'
+complete -c gleann -n '__fish_use_subcommand' -a 'list' -d 'List all indexes'
+complete -c gleann -n '__fish_use_subcommand' -a 'remove' -d 'Remove an index'
+complete -c gleann -n '__fish_use_subcommand' -a 'info' -d 'Show index info'
+complete -c gleann -n '__fish_use_subcommand' -a 'graph' -d 'Query AST Graph in KuzuDB'
 complete -c gleann -n '__fish_use_subcommand' -a 'serve' -d 'Start HTTP server'
+complete -c gleann -n '__fish_use_subcommand' -a 'mcp' -d 'Start MCP server (stdio)'
+complete -c gleann -n '__fish_use_subcommand' -a 'tui' -d 'Launch interactive TUI'
+complete -c gleann -n '__fish_use_subcommand' -a 'setup' -d 'Run configuration wizard'
 complete -c gleann -n '__fish_use_subcommand' -a 'version' -d 'Show version'
 complete -c gleann -n '__fish_use_subcommand' -a 'help' -d 'Show help'
 
-# index subcommands
-complete -c gleann -n '__fish_seen_subcommand_from index' -a 'list' -d 'List indexes'
-
-# search/chat flags
-complete -c gleann -n '__fish_seen_subcommand_from search chat' -l index -d 'Index name'
-complete -c gleann -n '__fish_seen_subcommand_from search chat' -l top-k -d 'Number of results'
-complete -c gleann -n '__fish_seen_subcommand_from search chat' -l reranker -d 'Reranker provider'
-complete -c gleann -n '__fish_seen_subcommand_from search chat' -l rerank-model -d 'Reranker model'
-complete -c gleann -n '__fish_seen_subcommand_from search chat' -l rerank-top-n -d 'Rerank top N'
+# common flags
+for cmd in build search ask chat watch
+    complete -c gleann -n "__fish_seen_subcommand_from $cmd" -l docs -d 'Documents directory'
+    complete -c gleann -n "__fish_seen_subcommand_from $cmd" -l model -d 'Embedding model'
+    complete -c gleann -n "__fish_seen_subcommand_from $cmd" -l provider -d 'Embedding provider'
+    complete -c gleann -n "__fish_seen_subcommand_from $cmd" -l top-k -d 'Number of results'
+    complete -c gleann -n "__fish_seen_subcommand_from $cmd" -l rerank -d 'Enable reranking'
+    complete -c gleann -n "__fish_seen_subcommand_from $cmd" -l rerank-model -d 'Reranker model'
+    complete -c gleann -n "__fish_seen_subcommand_from $cmd" -l llm-model -d 'LLM model'
+    complete -c gleann -n "__fish_seen_subcommand_from $cmd" -l llm-provider -d 'LLM provider'
+    complete -c gleann -n "__fish_seen_subcommand_from $cmd" -l interactive -d 'Interactive mode'
+end
 `
 }
 

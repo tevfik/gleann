@@ -112,7 +112,7 @@ test-faiss:
 
 .PHONY: test-treesitter
 test-treesitter:
-	go test -tags "cgo treesitter" -count=1 -timeout 60s ./internal/chunking/...
+	go test -tags "cgo treesitter" -count=1 -timeout 60s ./modules/chunking/...
 
 # ── Release (local dist/ directory) ─────────────────────────────────────────
 .PHONY: release
