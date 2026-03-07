@@ -113,10 +113,62 @@ func (s *Server) buildSearchTool() mcp.Tool {
 					"type":        "integer",
 					"description": "Maximum number of results to return (default 5).",
 				},
+				"filters": map[string]interface{}{
+					"type":        "array",
+					"description": "Optional list of metadata filters to narrow down the search. Example: [{'field': 'ext', 'operator': 'eq', 'value': '.go'}, {'field': 'type', 'operator': 'in', 'value': ['function', 'class']}]",
+					"items": map[string]interface{}{
+						"type": "object",
+						"properties": map[string]interface{}{
+							"field":    map[string]interface{}{"type": "string", "description": "The metadata field to filter on (e.g. ext, type, source)"},
+							"operator": map[string]interface{}{"type": "string", "description": "Operator (eq, ne, gt, gte, lt, lte, in, nin, contains, startswith, endswith, exists)"},
+							"value":    map[string]interface{}{"description": "The value to filter against"},
+						},
+						"required": []string{"field", "operator", "value"},
+					},
+				},
+				"filter_logic": map[string]interface{}{
+					"type":        "string",
+					"description": "Logic to combine filters ('and' or 'or'). Default is 'and'.",
+					"enum":        []string{"and", "or"},
+				},
 			},
 			Required: []string{"index", "query"},
 		},
 	}
+}
+
+// parseFilters extracts metadata filters from MCP tool arguments
+func parseFilters(args map[string]interface{}) ([]gleann.MetadataFilter, string) {
+	var filters []gleann.MetadataFilter
+	logic := "and"
+
+	if l, ok := args["filter_logic"].(string); ok && (l == "and" || l == "or") {
+		logic = l
+	}
+
+	rawFilters, ok := args["filters"].([]interface{})
+	if !ok {
+		return nil, logic
+	}
+
+	for _, rf := range rawFilters {
+		fMap, ok := rf.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		field, okF := fMap["field"].(string)
+		opStr, okO := fMap["operator"].(string)
+		val, okV := fMap["value"]
+
+		if okF && okO && okV {
+			filters = append(filters, gleann.MetadataFilter{
+				Field:    field,
+				Operator: gleann.FilterOperator(opStr),
+				Value:    val,
+			})
+		}
+	}
+	return filters, logic
 }
 
 func (s *Server) handleSearch(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -137,7 +189,13 @@ func (s *Server) handleSearch(ctx context.Context, request mcp.CallToolRequest) 
 		return mcp.NewToolResultError(fmt.Sprintf("Error loading index %q: %v", indexName, err)), nil
 	}
 
-	results, err := searcher.Search(ctx, query, gleann.WithTopK(topK))
+	searchOpts := []gleann.SearchOption{gleann.WithTopK(topK)}
+	if filters, logic := parseFilters(args); len(filters) > 0 {
+		searchOpts = append(searchOpts, gleann.WithMetadataFilter(filters...))
+		searchOpts = append(searchOpts, gleann.WithFilterLogic(logic))
+	}
+
+	results, err := searcher.Search(ctx, query, searchOpts...)
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("Error searching memory: %v", err)), nil
 	}
@@ -206,6 +264,24 @@ func (s *Server) buildAskTool() mcp.Tool {
 					"type":        "string",
 					"description": "Question to ask the LLM based on context.",
 				},
+				"filters": map[string]interface{}{
+					"type":        "array",
+					"description": "Optional list of metadata filters to narrow down the retrieved context. Example: [{'field': 'ext', 'operator': 'eq', 'value': '.go'}]",
+					"items": map[string]interface{}{
+						"type": "object",
+						"properties": map[string]interface{}{
+							"field":    map[string]interface{}{"type": "string", "description": "The metadata field to filter on"},
+							"operator": map[string]interface{}{"type": "string", "description": "Operator (eq, ne, gt, lt, in, contains, etc.)"},
+							"value":    map[string]interface{}{"description": "The value to filter against"},
+						},
+						"required": []string{"field", "operator", "value"},
+					},
+				},
+				"filter_logic": map[string]interface{}{
+					"type":        "string",
+					"description": "Logic to combine filters ('and' or 'or'). Default is 'and'.",
+					"enum":        []string{"and", "or"},
+				},
 			},
 			Required: []string{"index", "question"},
 		},
@@ -213,8 +289,13 @@ func (s *Server) buildAskTool() mcp.Tool {
 }
 
 func (s *Server) handleAsk(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	indexName := request.GetString("index", "")
-	question := request.GetString("question", "")
+	args, ok := request.Params.Arguments.(map[string]interface{})
+	if !ok {
+		return mcp.NewToolResultError("invalid arguments format"), nil
+	}
+
+	indexName, _ := args["index"].(string)
+	question, _ := args["question"].(string)
 
 	if indexName == "" || question == "" {
 		return mcp.NewToolResultError("index and question are required"), nil
@@ -228,7 +309,13 @@ func (s *Server) handleAsk(ctx context.Context, request mcp.CallToolRequest) (*m
 	chatConfig := gleann.DefaultChatConfig()
 	chat := gleann.NewChat(searcher, chatConfig)
 
-	answer, err := chat.Ask(ctx, question)
+	var searchOpts []gleann.SearchOption
+	if filters, logic := parseFilters(args); len(filters) > 0 {
+		searchOpts = append(searchOpts, gleann.WithMetadataFilter(filters...))
+		searchOpts = append(searchOpts, gleann.WithFilterLogic(logic))
+	}
+
+	answer, err := chat.Ask(ctx, question, searchOpts...)
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("Error asking question: %v", err)), nil
 	}
