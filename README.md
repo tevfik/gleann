@@ -1,63 +1,44 @@
-# gleann-go
+# gleann
 
 [![CI](https://github.com/tevfik/gleann/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/tevfik/gleann/actions/workflows/ci.yml)
 [![Release](https://github.com/tevfik/gleann/actions/workflows/release.yml/badge.svg?event=push)](https://github.com/tevfik/gleann/actions/workflows/release.yml)
 
-Pure Go implementation of [LEANN](https://github.com/yichuan-w/LEANN) — a lightweight vector database achieving **up to 87% storage reduction** through graph-based selective recomputation.
+**A lightweight, brutally fast, and highly flexible AI/RAG workspace and autonomous agent framework built with Go. Inspired by the academic excellence of the Leann RAG backend, engineered for daily terminal use.**
 
-gleann-go provides semantic search across various data sources (documents, code, emails) on a single laptop without cloud dependencies or CGo.
+---
+
+## The Story and Inspiration (Why Gleann?)
+
+Gleann was born out of a personal need to automate daily engineering workflows and power smooth analysis of massive codebases and personal documents—all from the comfort of the terminal.
+
+The core motivation for this project is the visionary [Leann](https://github.com/yichuan-w/LEANN) project. Leann is a remarkable academic work that introduced a high-performance RAG backend architecture designed for efficient indexing and retrieval. We owe a great debt to the original Leann authors for their groundbreaking approach to selective recomputation and vector retrieval.
+
+While Leann provides a powerful RAG engine, it is primarily an academic backend. Deploying it typically requires a substantial Python/Node environment (taking up roughly 8.5 GB of space) and a complex set of dependencies. As an engineer who lives in the shell, I needed something more self-contained: an end-to-end assistant where the LLM, plugin system, and RAG storage operate as a single, zero-dependency unit.
+
+Gleann was built as a lightweight, Go-native tribute to Leann’s vision.
+
+By leveraging Go’s compiled, concurrent speed, I rebuilt the core RAG concepts into a compact architecture. On top of that foundation, I added an agent layer based on ReAct (Reasoning and Acting) logic and direct LLM integration.
+
+The result is a highly portable system that boots in milliseconds, respects your RAM, and manages your entire AI workload from a single, lightweight binary.
 
 ## Key Features
 
-- **Pure Go** — No CGo, no FAISS, no external dependencies (default)
-- **Optional FAISS Backend** — CGo-based FAISS integration for 15-34x faster builds and 3-28x faster search
-- **HNSW Index** — Hierarchical Navigable Small World graph with 98.8% recall@10
-- **CSR Compact Format** — Compressed Sparse Row storage with selective embedding pruning
-- **Ollama Entegrasyonu:** `bge-m3`, `nomic-embed-text` gibi modellerle yerel embedding.
-- **Güçlü HNSW Arama:** Yüksek performanslı bellek içi (in-memory) Vektör Arama Motoru.
-- **Zero-Copy MMAP:** `.index` Graph dosyalarının devasa bellek kullanımını engellemek için `mmap` üzerinden 0 Garbage-Collection (GC) ile %100 Go native index okuması.
-- **Dosya İzleme (Watch):** `fsnotify` ve `SQLite` tabanlı Vault takipçisi ile `Create/Rename/Modify/Delete` klasör olaylarını anında algılama.
-- **Saf Go (Pure-Go) Mimarisi:** CGO bağımlılığı kullanmadan tek komut ile Linux, macOS, ve Windows üzerinde AMD64/ARM64 derlenebilme.
-- **Hibrit Reranking Arama** ve **Anında Sohbet (CLI Chat).** — Build, search, list, remove, serve, mcp from the command line
-- **Setup Wizard** — `gleann setup` for guided configuration of all providers and features
-- **Embedding Providers** — Ollama, OpenAI, and Gemini APIs
-- **LLM Chat & ReAct** — Search + LLM answer with multi-turn reasoning
-- **Two-Stage Reranker** — Cross-encoder reranking pipeline for higher accuracy
-- **Metadata Filtering** — 12 operators (eq, gt, contains, regex, etc.) with AND/OR logic
-- **AST-aware Chunking** — Go native AST (default) + optional tree-sitter for 8 languages via `-tags treesitter`
-- **AST Graph Indexer** — KuzuDB-backed symbol graph with `CALLS`, `DECLARES` relationships across 8 languages (`gleann build --graph`)
-- **MCP Server** — Built-in JSON-RPC 2.0 stdio for Claude Code / VS Code integration (`gleann mcp`)
-- **File Sync** — Incremental re-indexing with SHA-256 change detection
+- **Academic Vision, Full-Fledged Agent**: Built on the shoulders of Leann's RAG architecture to create an autonomous assistant where LLM, vector/graph DBs, and plugins unite in one Go app.
+- **Flexible Intelligence (Local or Cloud)**: Run LLMs 100% locally via llama.cpp for total privacy, or connect to any OpenAI-compatible API for high-reasoning tasks.
+- **Advanced RAG (Faiss / HNSW & Kuzu Graph DB)**: Indexes documents and code semantically (vector) and relationally (graph), not just via simple keyword matching.
+- **Smart Chunking (Tree-sitter)**: Intelligent AST-aware partitioning preserves the structural integrity of your code functions and classes.
+- **Model Context Protocol (MCP) Server**: A background service that bridges the gap between your local context and AI tools like Cursor or Claude Desktop.
+- **Sleek and Fast Terminal Interface (TUI)**: A keyboard-centric, fluid interface that brings your documents and code to life directly in your shell.
 
-## Architecture
+## Documentation
 
-```
-┌──────────────────────────────────────────────────────┐
-│          TUI / CLI / REST API / MCP Server            │
-├────────────────┬─────────────────────────────────────┤
-│  LeannBuilder  │         LeannSearcher               │
-│  (build index) │  (search + hybrid BM25 + reranker)  │
-├────────────────┴─────────────────────────────────────┤
-│              Backend Registry                         │
-├──────────────┬───────────────────────────────────────┤
-│  Pure Go     │  FAISS (optional, CGo)                │
-│  HNSW Graph  │  HNSW via libfaiss C API              │
-│  CSR Format  │  AVX2/SIMD, OpenMP                    │
-├──────────────┴───────────────────────────────────────┤
-│  Passage Manager  │  BM25 Scorer  │  Chunking        │
-│  (JSONL + idx)    │  (Okapi BM25) │  (sentence/code) │
-├───────────────────┴───────────────┴──────────────────┤
-│  Embedding Server  (goroutine pool)                   │
-└──────────────────────────────────────────────────────┘
-```
+Detailed technical documentation and guides:
 
-### Storage Optimization: Selective Recomputation
-
-Instead of storing all embedding vectors, gleann-go stores only the HNSW graph structure (CSR format) and recomputes embeddings on-demand during search. This is the core LEANN innovation:
-
-1. **Build time**: Insert all vectors into HNSW graph, convert to CSR, prune embeddings
-2. **Search time**: Traverse graph structure, recompute embeddings only for visited nodes
-3. **Result**: Up to 87% storage reduction with 98.8% recall
+- [Architecture & Design](docs/architecture.md)
+- [FAISS Backend (Optional)](docs/faiss.md)
+- [Tree-sitter Backend (Optional)](docs/treesitter.md)
+- [AST Graph Indexer](docs/graph.md)
+- [Benchmarks & Performance](docs/benchmarks.md)
 
 ## Installation
 
@@ -71,16 +52,13 @@ go build -o gleann ./cmd/gleann/
 
 # Run setup wizard
 ./gleann setup
-
-# Run tests
-go test ./...
 ```
 
 Requires Go 1.24+.
 
 ### Install to PATH
 
-The setup wizard (`gleann setup` / `gleann tui` → Setup) installs the binary to `~/.local/bin` or `/usr/local/bin` with shell completions (bash, zsh, fish). It can also configure MCP for Claude Code and Claude Desktop automatically.
+The setup wizard (`gleann setup` / `gleann tui` → Setup) installs the binary to `~/.local/bin` or `/usr/local/bin` with shell completions (bash, zsh, fish).
 
 You can also install via Makefile:
 
@@ -93,294 +71,9 @@ make install-user-lite
 
 # Install gleann to /usr/local/bin (system-wide, needs sudo)
 sudo make install
-
-# Install gleann-full to /usr/local/bin (system-wide, needs sudo)
-sudo make install-full
 ```
-
-> [!TIP]
-> After `make install-user`, add `export PATH="$HOME/.local/bin:$PATH"` to your shell rc if it's not already there.
-
-## FAISS Backend (Optional)
-
-gleann-go includes an optional FAISS backend via CGo for significantly faster HNSW operations. The FAISS backend uses the same `BackendFactory` interface — just change `config.Backend = "faiss"`.
-
-### Prerequisites
-
-```bash
-# Ubuntu/Debian
-sudo apt-get install cmake g++ libopenblas-dev libomp-dev swig
-
-# Build FAISS from source with C API
-git clone --branch v1.13.2 --depth 1 https://github.com/facebookresearch/faiss.git /tmp/faiss-src
-cd /tmp/faiss-src && mkdir build && cd build
-cmake .. -DFAISS_ENABLE_C_API=ON -DFAISS_ENABLE_GPU=OFF \
-         -DBUILD_TESTING=OFF -DFAISS_ENABLE_PYTHON=OFF \
-         -DCMAKE_BUILD_TYPE=Release
-make -j$(nproc) faiss faiss_c
-
-# Install
-sudo cp -r c_api/libfaiss_c.a faiss/libfaiss.a /usr/local/lib/
-sudo cp -r c_api/libfaiss_c.so faiss/libfaiss.so /usr/local/lib/
-sudo mkdir -p /usr/local/include/faiss/c_api/impl
-sudo cp ../c_api/*.h /usr/local/include/faiss/c_api/
-sudo cp ../c_api/impl/*.h /usr/local/include/faiss/c_api/impl/
-```
-
-> [!TIP]
-> **Pre-compiled Binary (gleann-full)**
-> If you download the `gleann-full` release `.tar.gz`, the shared libraries (`libfaiss_c.so`, `libfaiss.so`) are automatically bundled with the binary. Thanks to dynamic `$ORIGIN` linking, you just extract the archive and run `./gleann-full` immediately in place. No `sudo` or `/usr/local/lib` installation required!
-
-### Building with FAISS
-
-```bash
-# Build with FAISS support
-go build -tags faiss -o gleann ./cmd/gleann/
-
-# Run tests including FAISS
-go test -tags faiss ./internal/backend/faiss/ -v
-
-# Run FAISS vs Pure Go comparison
-go test -tags faiss -run TestFAISSvsPureGo -timeout 300s ./internal/backend/faiss/ -v
-
-# Standard benchmarks
-go test -tags faiss -bench=BenchmarkFAISS -benchmem ./internal/backend/faiss/
-```
-
-Without `-tags faiss`, the FAISS backend is excluded and gleann builds as pure Go with zero C dependencies.
-
-### FAISS vs Pure Go Performance
-
-All benchmarks on Intel i9-13900H (20 threads), Linux. Both backends use M=32, efSearch=128.
-
-| Config | Metric | FAISS (CGo) | Pure Go | Speedup |
-|--------|--------|-------------|---------|---------|
-| **1K×64d** | Build | 17ms | 314ms | **18.4x** |
-| | Search/query | 292µs | 284µs | ~1x |
-| | QPS | 3,424 | 3,522 | |
-| | Recall@10 | 100% | 100% | |
-| **1K×128d** | Build | 20ms | 332ms | **16.9x** |
-| | Search/query | 86µs | 356µs | **4.1x** |
-| | QPS | 11,590 | 2,812 | |
-| | Recall@10 | 100% | 100% | |
-| **5K×128d** | Build | 107ms | 4.9s | **45.3x** |
-| | Search/query | 227µs | 1.5ms | **6.5x** |
-| | QPS | 4,400 | 678 | |
-| | Recall@10 | 98.8% | 99.0% | |
-| **5K×384d** | Build | 436ms | 9.4s | **21.5x** |
-| | Search/query | 279µs | 2.5ms | **9.0x** |
-| | QPS | 3,588 | 398 | |
-| | Recall@10 | 96.8% | 98.2% | |
-
-### When to Use Each Backend
-
-| | Pure Go (`hnsw`) | FAISS (`faiss`) |
-|---|---|---|
-| **Best for** | Simplicity, portability | Maximum throughput |
-| **Dependencies** | None | libfaiss, OpenBLAS, libomp |
-| **Cross-compile** | Yes | No (needs C toolchain) |
-| **Binary size** | ~2.5 MB | ~15 MB |
-| **Build speed** | Instant | Requires FAISS from source |
-| **SIMD** | No | AVX2/SSE (auto-detected) |
-| **Recall@10** | 98.8% (ef=128) | Tunable via efSearch |
-| **Vector removal** | Supported | Not supported (rebuild needed) |
-
-## Tree-sitter Backend (Optional)
-
-gleann-go includes an optional tree-sitter backend for precise AST-aware code chunking across all supported languages. Without this tag, non-Go languages use regex-based boundary detection.
-
-### Default (Regex) vs Tree-sitter
-
-| | Default (regex) | Tree-sitter (`-tags treesitter`) |
-|---|---|---|
-| **Go** | `go/ast` native (full AST) | `go/ast` native (unchanged) |
-| **Python** | Regex: top-level + 1 indent | Full AST: nested classes, decorators |
-| **JS/TS** | Regex: function/class/const | Full AST: arrow functions, exports |
-| **Java/C#** | Regex: class/method | Full AST: inner classes, annotations |
-| **C/C++** | Regex: function/struct | Full AST: templates, namespaces |
-| **Rust** | Regex: fn/struct/impl | Full AST: generics, macros |
-| **Dependencies** | None | CGo + tree-sitter grammars |
-| **Chunk Expansion** | — | Parent scope context headers |
-
-### Building with Tree-sitter
-
-```bash
-# Build with tree-sitter support
-go build -tags treesitter -o gleann ./cmd/gleann/
-
-# Run tree-sitter tests
-go test -tags treesitter ./internal/chunking/ -v -run TestTreeSitter
-
-# Both FAISS and tree-sitter
-go build -tags "faiss treesitter" -o gleann ./cmd/gleann/
-```
-
-Without `-tags treesitter`, all non-Go languages use regex patterns and the binary remains pure Go.
-
-### What Tree-sitter Improves
-
-**Nested structures** — Regex `^    def` only matches 1 indent level. Tree-sitter correctly parses:
-
-```python
-class Outer:
-    class Inner:          # ← regex misses this
-        def deep_method(self):  # ← regex misses this
-            pass
-```
-
-**Chunk expansion** — Each chunk gets a parent scope header for better embedding quality:
-
-```python
-# File: calc.py | Scope: Calculator
-def add(self, a, b):
-    return a + b
-```
-
-**Accurate boundaries** — Tree-sitter knows exactly where a function/class ends (matching braces, indentation), while regex guesses from the next boundary pattern.
-
-## AST Graph Indexer
-
-gleann can build a property graph of your codebase **in parallel** with the vector embedding index, using KuzuDB as the storage engine and tree-sitter (or `go/ast`) as the parser.
-
-```bash
-# Build the vector index AND the call graph at the same time
-gleann build my-code --docs ./src --graph
-
-# Query direct and transitive dependencies (outgoing CALLS)
-gleann graph deps "github.com/tevfik/gleann/pkg/gleann.MyFunc" --index my-code
-
-# Query callers (incoming CALLS)
-gleann graph callers "github.com/tevfik/gleann/pkg/gleann.MyFunc" --index my-code
-```
-
-### Graph Schema
-
-| Node | Properties |
-|------|------------|
-| `CodeFile` | `path`, `lang` |
-| `Symbol` | `fqn`, `name`, `kind`, `file`, `line` |
-
-| Edge | From → To | Meaning |
-|------|----------|---------|
-| `DECLARES` | `CodeFile → Symbol` | File contains symbol |
-| `CALLS` | `Symbol → Symbol` | Function calls another |
-| `IMPLEMENTS` | `Symbol → Symbol` | Struct implements interface |
-
-### MCP Integration (Yaver / Cursor / Claude Code)
-
-When `gleann mcp` is running, AI editors can call two new tools:
-
-- **`gleann_graph_deps`** — returns what a given symbol depends on  
-- **`gleann_graph_callers`** — returns who calls a given symbol
-
-The AI can autonomously trace code execution paths without leaving the editor.
-
-### Supported Languages
-
-| Language | Declaration | Call Extraction |
-|----------|-------------|------------------|
-| Go | `go/ast` native | `go/ast` call expressions |
-| Python | tree-sitter `function_definition`, `class_definition` | `call` nodes |
-| JS / TS | tree-sitter `function_declaration`, `class_declaration` | `call_expression` nodes |
-| C / C++ | tree-sitter `function_definition`, `class_specifier` | `call_expression` nodes |
-| Rust | tree-sitter `function_item`, `impl_item`, `struct_item` | `call_expression` nodes |
-| Java / C# | tree-sitter `method_declaration`, `class_declaration` | `call_expression` nodes |
-| Ruby | tree-sitter `method`, `class` | `call` nodes |
-| PHP | tree-sitter `function_definition`, `class_declaration` | `function_call_expression` nodes |
-
-### Graph Index Performance
-
-Graph indexing was optimized using **KuzuDB CSV Bulk Load** (`COPY FROM`) instead of individual Cypher statements:
-
-| Method | 1500-file Go repo | Notes |
-|--------|------------------|---------|
-| Single statements (MERGE) | 8 min 31 sec | One transaction per symbol |
-| Batch statements (tx) | ~2 min | Chunked transactions |
-| **CSV Bulk Load (COPY FROM)** | **84 ms** | Current approach |
-
-FK integrity is enforced by filtering CALLS edges — only symbol-to-symbol references within the indexed codebase are stored (cross-package / stdlib calls are discarded).
-
-## Generic Plugin Architecture
-
-Gleann is lightweight and purely binary, but it supports external **Plugins** for parsing complex files or adding capabilities (like Voice, Images, etc.) via local HTTP APIs.
-
-Instead of hardcoding features or pulling massive dependencies (like Python libraries or headless browsers), Gleann uses a generic plugin registry located at `~/.gleann/plugins.json`.
-
-### How it works:
-1. When you run `gleann build` over a directory, Gleann scans the files.
-2. If it finds a binary or unsupported file (e.g. `report.pdf` or `data.xlsx`), it checks `~/.gleann/plugins.json` for any plugin with the **`document-extraction`** capability that supports that extension.
-3. If a match is found, Gleann seamlessly `POST`s the file to the plugin's REST API and receives raw Markdown text in return.
-4. This Markdown is then chunked and embedded identically to native `.md` files!
-
-### Official Plugins
-
-* **[gleann-plugin-docs](https://github.com/tevfik/gleann-pluggin/tree/main/gleann-plugin-docs)**: A Python FastAPI plugin wrapping Microsoft's `MarkItDown`. It adds support for `.pdf`, `.docx`, `.xlsx`, `.pptx`, `.csv`, `.jpg`, and more. Simply run `python main.py --install` in that repo to register it, and Gleann will automatically start extracting text from your office documents!
-
-* **[gleann-plugin-sound](https://github.com/tevfik/gleann-pluggin/tree/main/gleann-plugin-sound)**: A Go companion that transcribes audio/video files using local [whisper.cpp](https://github.com/ggerganov/whisper.cpp) or [ONNX Runtime](https://onnxruntime.ai/) inference. Supports `.mp3`, `.wav`, `.m4a`, `.flac`, `.ogg`, `.webm`, `.mp4`, `.mkv`, `.avi`. Run `gleann-plugin-sound install` to register it, and Gleann will automatically transcribe and index your audio files during `gleann build`!
 
 ## Usage
-
-### As a Go Library
-
-```go
-package main
-
-import (
-    "context"
-    "fmt"
-
-    "github.com/tevfik/gleann/pkg/gleann"
-    "github.com/tevfik/gleann/internal/embedding"
-)
-
-func main() {
-    ctx := context.Background()
-
-    // Create embedding computer (Ollama).
-    embedder := embedding.NewComputer("nomic-embed-text", "ollama", 768)
-
-    // Configure.
-    config := gleann.DefaultConfig()
-    config.IndexDir = "./indexes"
-
-    // Build index.
-    builder, _ := gleann.NewBuilder(config, embedder)
-    builder.Build(ctx, "my-docs", []gleann.Item{
-        {Text: "Go is a statically typed language"},
-        {Text: "Python is dynamically typed"},
-        {Text: "Rust has zero-cost abstractions"},
-    })
-
-    // Search.
-    searcher := gleann.NewSearcher(config, embedder)
-    searcher.Load(ctx, "my-docs")
-    defer searcher.Close()
-
-    results, _ := searcher.Search(ctx, "compiled languages",
-        gleann.WithTopK(3),
-        gleann.WithMinScore(0.5),
-    )
-
-    for _, r := range results {
-        fmt.Printf("%.4f: %s\n", r.Score, r.Text)
-    }
-}
-```
-
-### Hybrid Search (Vector + BM25)
-
-```go
-import "github.com/tevfik/gleann/internal/bm25"
-
-scorer := bm25.NewScorer()
-adapter := gleann.NewBM25Adapter(scorer)
-searcher.SetScorer(adapter)
-
-results, _ := searcher.Search(ctx, "neural networks",
-    gleann.WithTopK(10),
-    gleann.WithHybridAlpha(0.7), // 70% vector, 30% BM25
-)
-```
 
 ### CLI
 
@@ -406,369 +99,30 @@ gleann ask my-docs "Explain the architecture" --interactive
 # List indexes
 gleann list
 
-# Get index info
-gleann info my-docs
-
-# Remove index
-gleann remove my-docs
-
-# Start REST API server
-gleann serve --addr :8080
-
-# Start MCP server (for AI editors)
-gleann mcp
-
 # Launch TUI
 gleann tui
 
 # Build vector index + AST call graph simultaneously
 gleann build my-code --docs ./src --graph
 
-# Query: what does MyFunc depend on?
-gleann graph deps "github.com/tevfik/gleann/pkg/gleann.MyFunc" --index my-code
-
-# Query: who calls MyFunc?
-gleann graph callers "github.com/tevfik/gleann/pkg/gleann.MyFunc" --index my-code
-
-# Show version
-gleann version
+# Start MCP server (for AI editors)
+gleann mcp
 ```
 
-### REST API
+### Generic Plugin Architecture
 
-```bash
-# Start server
-gleann serve --addr :8080
+Gleann supports external **Plugins** for parsing complex files via local HTTP APIs. Registry: `~/.gleann/plugins.json`.
 
-# Health check
-curl http://localhost:8080/health
-
-# List indexes
-curl http://localhost:8080/api/indexes
-
-# Search
-curl -X POST http://localhost:8080/api/indexes/my-docs/search \
-  -H "Content-Type: application/json" \
-  -d '{"query": "what is HNSW?", "top_k": 5}'
-
-# Build index
-curl -X POST http://localhost:8080/api/indexes/new-index/build \
-  -H "Content-Type: application/json" \
-  -d '{"texts": ["doc1 text", "doc2 text"]}'
-
-# Delete index
-curl -X DELETE http://localhost:8080/api/indexes/my-docs
-```
-
-## Configuration
-
-```go
-config := gleann.Config{
-    IndexDir: "~/.gleann/indexes",
-    Backend:  "hnsw",
-    HNSWConfig: gleann.HNSWConfig{
-        M:                32,   // Max connections per node
-        EfConstruction:   200,  // Build-time beam width
-        EfSearch:         128,  // Search-time beam width
-        PruneEmbeddings:  true, // Enable storage optimization
-        PruneKeepFraction: 0.0, // Keep only entry point (max savings)
-    },
-    ChunkConfig: gleann.ChunkConfig{
-        MaxChunkSize: 512,
-        Overlap:      50,
-    },
-}
-```
-
-### Environment Variables
-
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `OLLAMA_HOST` | Ollama server URL | `http://localhost:11434` |
-| `OPENAI_BASE_URL` | OpenAI-compatible API URL | `https://api.openai.com` |
-| `OPENAI_API_KEY` | OpenAI API key | — |
-
-## Benchmarks
-
-All benchmarks on Intel i9-13900H (20 threads), Go 1.22, Linux.
-
-### HNSW Search Performance
-
-| Dataset Size | ef | Latency | QPS | Recall@10 |
-|-------------|-----|---------|-----|-----------|
-| 1,000 | 32 | 325µs | 3,078 | 79.8% |
-| 1,000 | 64 | 586µs | 1,707 | 92.5% |
-| 1,000 | 128 | 717µs | 1,394 | 98.8% |
-| 1,000 | 256 | 1.08ms | 930 | 99.9% |
-| 5,000 | 32 | 657µs | 1,522 | — |
-| 5,000 | 128 | 1.48ms | 675 | — |
-| 10,000 | 128 | 2.91ms | 344 | — |
-
-### Storage Reduction (CSR + Pruning)
-
-| Embedding Dim | Vectors | Full Size | Pruned Size | **Savings** |
-|--------------|---------|-----------|-------------|-------------|
-| 128 | 1,000 | 927 KB | 427 KB | **53.9%** |
-| 384 | 1,000 | 1,928 KB | 429 KB | **77.7%** |
-| 768 | 1,000 | 3,428 KB | 431 KB | **87.4%** |
-| 768 | 5,000 | 17,156 KB | 2,159 KB | **87.4%** |
-
-### Memory Savings (In-Memory Graph → CSR)
-
-| Dim | Vectors | Graph | CSR (pruned) | Savings |
-|-----|---------|-------|-------------|---------|
-| 128 | 1,000 | 1.06 MB | 0.42 MB | 60.4% |
-| 384 | 5,000 | 10.35 MB | 2.13 MB | 79.5% |
-| 768 | 5,000 | 17.68 MB | 2.13 MB | **88.0%** |
-
-### Build Throughput
-
-| Operation | N=100 | N=1,000 | N=10,000 |
-|-----------|-------|---------|----------|
-| HNSW Insert | 13ms | 787ms | 34.8s |
-| CSR Convert | 102µs | 1.37ms | 18.0ms |
-| End-to-End Pipeline | 28ms | 856ms | — |
-
-### BM25 Performance
-
-| Operation | Corpus | Latency |
-|-----------|--------|---------|
-| Score (1K docs) | 1,000 | 787µs |
-| TopK (5K docs) | 5,000 | 59ms |
-
-### HNSW vs Brute Force (5K vectors, 128-dim)
-
-| Method | Latency/query | Recall@10 |
-|--------|---------------|-----------|
-| Brute Force | 43.8ms | 100% |
-| HNSW (ef=128) | 41.5ms | 98.8% |
-| HNSW (ef=256) | — | 99.9% |
-
-> At 5K vectors, HNSW's advantage is modest (1.1x). The sub-linear advantage grows significantly with larger datasets (50K+).
-
-### Retrieval Quality Report (5K vectors, 128-dim, 30 clusters, 500 queries)
-
-Full 5-stage quality evaluation via `go test -v -run TestRecallReport ./benchmarks/`.
-
-**Stage 1: Index Build**
-| Mode | Build Time | Pruned Embeddings |
-|------|-----------|-------------------|
-| Full | 11.0s | — |
-| Compact | 11.5s | 4999/5000 (100%) |
-
-**Stage 2: Recall@K (Full Graph vs Flat)**
-| K | Recall@K |
-|---|---------|
-| 1 | 96.60% |
-| 3 | 96.73% |
-| 5 | 96.80% |
-| 10 | 96.72% |
-| 20 | 96.66% |
-| 50 | 96.50% |
-
-**Stage 3: EfSearch Complexity Sweep**
-| efSearch | Recall@10 | Latency/query |
-|---------|-----------|---------------|
-| 16 | 91.88% | 329µs |
-| 32 | **95.98%** | 475µs |
-| 64 | 96.50% | 688µs |
-| 128 | 96.72% | 1.25ms |
-| 256 | 97.76% | 2.10ms |
-| 512 | 97.90% | 4.33ms |
-
-> **Minimum efSearch for ≥95% recall:** 32
-
-**Stage 4: Compact (Recompute) vs Full Index**
-| Mode | Recall@10 | Latency/query | Size |
-|------|-----------|---------------|------|
-| Full | 96.72% | 521µs | 4.54 MB |
-| Compact + Recompute | 96.72% | 576µs | 2.06 MB |
-
-> **Storage saving: 54.7%** with only 1.1x latency overhead and **zero recall loss**.
-
-**Stage 5: M Parameter Trade-offs**
-| M | Recall@10 | Build Time | Search/query |
-|---|-----------|-----------|-------------|
-| 8 | 75.88% | 1.3s | 222µs |
-| 16 | 86.14% | 2.4s | 279µs |
-| 32 | 96.72% | 5.6s | 464µs |
-| 48 | **98.80%** | 8.4s | 595µs |
-| 64 | 98.62% | 10.0s | 772µs |
-
-> **M=32** is the default — best balance of recall (96.7%) vs build/search cost. M=48 peaks at 98.8% recall.
-
-## Project Structure
-
-```
-gleann/
-├── cmd/gleann/            # Single CLI binary (TUI, REST, MCP, all commands)
-│   └── main.go
-├── pkg/gleann/            # Public API
-│   ├── types.go           # Core types (Config, Item, SearchResult)
-│   ├── interfaces.go      # Interfaces (Backend, Embedder, Chunker, Scorer)
-│   ├── registry.go        # Backend registry (auto-discovery)
-│   ├── builder.go         # LeannBuilder (build indexes)
-│   ├── searcher.go        # LeannSearcher (search + hybrid)
-│   ├── passage.go         # PassageManager (JSONL + offset index)
-│   ├── bm25_adapter.go    # BM25 → Scorer interface adapter
-│   ├── chat.go            # LeannChat (search + LLM answer, 3 providers)
-│   ├── filter.go          # MetadataFilterEngine (12 operators, AND/OR)
-│   ├── react.go           # ReAct agent (Thought-Action-Observation)
-│   ├── reranker.go        # Cross-encoder reranking pipeline
-│   └── sync.go            # FileSynchronizer (SHA-256 change detection)
-├── internal/
-│   ├── backend/hnsw/      # HNSW implementation
-│   │   ├── hnsw.go        # Pure Go HNSW graph (~750 lines)
-│   │   ├── csr.go         # CSR format + pruning (~585 lines)
-│   │   └── backend.go     # Backend factory + builder/searcher
-│   ├── backend/faiss/     # FAISS backend (optional, CGo)
-│   │   ├── backend.go     # CGo FAISS HNSW via libfaiss C API
-│   │   └── benchmark_test.go # FAISS vs Pure Go comparison
-│   ├── bm25/              # Okapi BM25 scorer
-│   ├── chunking/          # Text/code chunking
-│   │   ├── chunking.go    # Sentence/paragraph chunker
-│   │   ├── ast_chunker.go # AST-aware code chunker (8 languages)
-│   │   ├── treesitter.go  # Tree-sitter backend (optional, CGo)
-│   │   └── treesitter_stub.go # Stub when tree-sitter disabled
-│   ├── embedding/         # Ollama/OpenAI/Gemini compute + server
-│   ├── mcp/               # MCP server (JSON-RPC 2.0 over stdio)
-│   ├── server/            # REST API server
-│   └── tui/               # Bubble Tea interactive TUI
-│       ├── onboard.go     # Setup wizard (13-step guided config)
-│       ├── home.go        # Home menu
-│       ├── chat.go        # Chat interface
-│       ├── indexlist.go   # Index browser
-│       ├── indexmanage.go # Index manager (build/delete)
-│       ├── install.go     # Install/uninstall + MCP config generation
-│       └── styles.go      # Shared TUI styles
-├── benchmarks/            # Performance benchmarks & reports
-└── tests/                 # Integration tests
-```
-
-## Design Decisions
-
-### Pure Go HNSW (default, no FAISS/CGo)
-
-- Zero external C dependencies → easy cross-compilation
-- Single binary deployment (~2.5 MB)
-- 98.8% recall@10 matches production HNSW quality
-
-### Optional FAISS Backend (CGo)
-
-- 15-34x faster builds, 3-28x faster search via AVX2 SIMD + OpenMP
-- Same `BackendFactory` interface — just change backend name
-- Enabled via `-tags faiss` build flag — excluded by default
-
-### Goroutine Embedding Server (no ZMQ)
-
-- Python LEANN uses ZMQ for embedding server communication
-- gleann-go uses goroutine workers + channels (idiomatic Go)
-- No external process needed — embeddings computed in-process
-
-### CSR Graph Format
-
-- Binary format with magic `0x474C454E` ("GLEN"), version 1
-- Per-level CSR adjacency + per-node level tracking
-- Selective embedding storage with entry-point preservation
-- O(1) node lookup by position
-
-### JSONL + Offset Index
-
-- Passages stored as newline-delimited JSON
-- Binary offset index (`.passages.idx`) for O(1) random access
-- Append-only for incremental indexing
-
-## Comparison with Python LEANN
-
-### Feature Parity
-
-| Feature | Python LEANN | gleann-go |
-|---------|:---:|:---:|
-| HNSW Vector Index | ✅ FAISS | ✅ Pure Go + optional FAISS |
-| CSR / Graph Pruning | ✅ | ✅ |
-| Embedding Providers | Ollama, OpenAI, Gemini, MLX, SentenceTransformers | Ollama, OpenAI, Gemini |
-| Prompt Templates | ✅ | ✅ |
-| Token Limit Detection | ✅ | ✅ |
-| Metadata Filtering | ✅ | ✅ |
-| LLM Chat (`ask`) | Ollama, OpenAI, Anthropic, Gemini, HuggingFace | Ollama, OpenAI, Anthropic |
-| ReAct Agent | ✅ | ✅ |
-| AST-aware Chunking | tree-sitter | go/ast + optional tree-sitter |
-| MCP Server | ✅ | ✅ (built-in) |
-| File Sync (incremental) | ✅ | ✅ |
-| Hybrid Search (BM25) | — | ✅ |
-| REST API Server | — | ✅ |
-| DiskANN Backend | ✅ | — |
-| IVF Backend | ✅ | — |
-| Local Embeddings (torch) | ✅ | — |
-| Interactive TUI | ✅ | ✅ (Bubble Tea) |
-
-### Architecture Comparison
-
-| Dimension | Python LEANN | gleann-go |
-|-----------|-------------|-----------|
-| Language | Python 3.10+ | Go 1.24+ |
-| Deployment | `pip install` + system deps | Single binary (~2.5 MB) |
-| Embedding Server | ZMQ (external process) | Goroutine pool (in-process) |
-| Concurrency | asyncio / threading | Goroutines + channels |
-| AST Parser | tree-sitter (C bindings) | go/ast + optional tree-sitter |
-| Storage Format | Custom binary | CSR binary (`GLEN` magic) |
-| Backends | 3 (HNSW, DiskANN, IVF) | 2 (Pure Go HNSW, FAISS CGo) |
-| CLI Framework | Click | flag (stdlib) + Bubble Tea TUI |
-| External Dependencies | ~40 PyPI packages | 0 (pure Go default) |
+* **[gleann-plugin-docs](https://github.com/tevfik/gleann-pluggin/tree/main/gleann-plugin-docs)**: PDF, Docx, Xlsx extraction via MarkItDown.
+* **[gleann-plugin-sound](https://github.com/tevfik/gleann-pluggin/tree/main/gleann-plugin-sound)**: Audio/Video transcription via whisper.cpp.
 
 ## Roadmap
 
-| Feature | Status |
-|---------|--------|
-| Interactive TUI | ✅ Done |
-| Two-stage reranker | ✅ Done |
-| MCP server (embedded) | ✅ Done |
-| Setup wizard + install | ✅ Done |
-| AST Graph Indexer (KuzuDB) | ✅ Done |
-| Graph CSV Bulk Load (84ms for 1500 files) | ✅ Done |
-| PHP + Ruby AST support | ✅ Done |
-| Embedding GPU saturation (batch 1024, concurrency 8) | ✅ Done |
-| DiskANN backend (100M+ vectors) | Planned |
-| IVF backend (PQ quantization) | Planned |
-| Web search tool for ReAct agent | Planned |
-
-## Testing
-
-```bash
-# All tests
-go test ./...
-
-# Include FAISS backend tests (requires libfaiss)
-go test -tags faiss ./...
-
-# Verbose
-go test ./... -v
-
-# Specific package
-go test ./internal/backend/hnsw/ -v
-
-# FAISS backend tests
-go test -tags faiss ./internal/backend/faiss/ -v
-
-# FAISS vs Pure Go comparison
-go test -tags faiss -run TestFAISSvsPureGo -timeout 300s ./internal/backend/faiss/ -v
-
-# Recall quality benchmarks
-go test -v -run "TestRecallBasic|TestRecallHighDim|TestRecallAtMultipleK" ./benchmarks/
-go test -v -run "TestRecallWithRecompute|TestRecallComplexitySweep|TestRecallAfterCSRRoundtrip" ./benchmarks/
-
-# Full 5-stage retrieval quality report
-go test -v -run TestRecallReport ./benchmarks/ -timeout 300s
-
-# Performance benchmarks
-go test ./benchmarks/ -bench=. -benchmem -run=^$
-
-# FAISS benchmarks
-go test -tags faiss -bench=BenchmarkFAISS -benchmem ./internal/backend/faiss/
-
-# Performance reports
-go test ./benchmarks/ -run="Report|Comparison" -v
-```
+- [x] Interactive TUI
+- [x] Two-stage reranker
+- [x] MCP server (embedded)
+- [x] Setup wizard + install
+- [x] AST Graph Indexer (KuzuDB)
 
 ## License
 

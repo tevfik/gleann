@@ -412,10 +412,27 @@ func ListIndexes(indexDir string) ([]IndexMeta, error) {
 	return indexes, nil
 }
 
-// RemoveIndex removes an index and all its files.
+// RemoveIndex removes an index and all its associated files (vector index, graph database, sync state).
 func RemoveIndex(indexDir, name string) error {
+	// 1. Remove the main index directory (contains .index, .passages.jsonl, .meta.json, etc.)
 	indexPath := filepath.Join(indexDir, name)
-	return os.RemoveAll(indexPath)
+	if err := os.RemoveAll(indexPath); err != nil {
+		return fmt.Errorf("remove index directory: %w", err)
+	}
+
+	// 2. Remove the graph database associated with the index (Cgo/KuzuDB path)
+	graphPath := filepath.Join(indexDir, name+"_graph")
+	if err := os.RemoveAll(graphPath); err != nil {
+		return fmt.Errorf("remove graph database: %w", err)
+	}
+
+	// 3. Remove the sync state file if it exists
+	syncPath := filepath.Join(indexDir, name+".sync.json")
+	if err := os.Remove(syncPath); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("remove sync state: %w", err)
+	}
+
+	return nil
 }
 
 // cosineSimilarity computes cosine similarity between two vectors.
