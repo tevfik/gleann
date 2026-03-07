@@ -1,6 +1,5 @@
 # gleann
 
-[![CI](https://github.com/tevfik/gleann/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/tevfik/gleann/actions/workflows/ci.yml)
 [![Release](https://github.com/tevfik/gleann/actions/workflows/release.yml/badge.svg?event=push)](https://github.com/tevfik/gleann/actions/workflows/release.yml)
 
 **A lightweight, brutally fast, and highly flexible AI/RAG workspace and autonomous agent framework built with Go. Inspired by the academic excellence of the Leann RAG backend, engineered for daily terminal use.**
@@ -113,8 +112,8 @@ gleann mcp
 
 Gleann supports external **Plugins** for parsing complex files via local HTTP APIs. Registry: `~/.gleann/plugins.json`.
 
-* **[gleann-plugin-docs](https://github.com/tevfik/gleann-pluggin/tree/main/gleann-plugin-docs)**: PDF, Docx, Xlsx extraction via MarkItDown.
-* **[gleann-plugin-sound](https://github.com/tevfik/gleann-pluggin/tree/main/gleann-plugin-sound)**: Audio/Video transcription via whisper.cpp.
+* **[gleann-plugin-docs](https://github.com/tevfik/gleann-pluggin-docs)**: PDF, Docx, Xlsx extraction via MarkItDown.
+* **[gleann-plugin-sound](https://github.com/tevfik/gleann-plugin-sound)**: Audio/Video transcription via whisper.cpp.
 
 ## Roadmap
 
