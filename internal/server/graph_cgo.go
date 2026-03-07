@@ -7,6 +7,7 @@ import (
 
 	"github.com/tevfik/gleann/internal/graph/indexer"
 	kgraph "github.com/tevfik/gleann/internal/graph/kuzu"
+	"github.com/tevfik/gleann/pkg/gleann"
 )
 
 // kuzuHandle wraps kuzu.DB to satisfy graphDBHandle interface.
@@ -94,7 +95,7 @@ func (h *kuzuHandle) Close() {
 	h.db.Close()
 }
 
-func toGraphNodes(callees []kgraph.Callee) []GraphNode {
+func toGraphNodes(callees []gleann.Callee) []GraphNode {
 	nodes := make([]GraphNode, len(callees))
 	for i, c := range callees {
 		nodes[i] = GraphNode{FQN: c.FQN, Name: c.Name, Kind: c.Kind}

@@ -17,9 +17,9 @@ type GraphQueryRequest struct {
 	// Query is one of the predefined query types:
 	//   "callees", "callers", "symbols_in_file", "cypher"
 	Query  string `json:"query"`
-	Symbol string `json:"symbol,omitempty"`     // FQN for callees/callers
-	File   string `json:"file,omitempty"`        // file path for symbols_in_file
-	Cypher string `json:"cypher,omitempty"`       // raw Cypher for advanced queries
+	Symbol string `json:"symbol,omitempty"` // FQN for callees/callers
+	File   string `json:"file,omitempty"`   // file path for symbols_in_file
+	Cypher string `json:"cypher,omitempty"` // raw Cypher for advanced queries
 }
 
 // GraphQueryResponse is the response for graph queries.
@@ -44,20 +44,20 @@ type GraphIndexRequest struct {
 
 // GraphStatsResponse is returned by GET /api/graph/{name}.
 type GraphStatsResponse struct {
-	Name       string `json:"name"`
-	DBPath     string `json:"db_path"`
-	Available  bool   `json:"available"`
-	FileCount  int    `json:"file_count,omitempty"`
-	SymCount   int    `json:"symbol_count,omitempty"`
+	Name      string `json:"name"`
+	DBPath    string `json:"db_path"`
+	Available bool   `json:"available"`
+	FileCount int    `json:"file_count,omitempty"`
+	SymCount  int    `json:"symbol_count,omitempty"`
 }
 
 // graphDBPool caches open KuzuDB connections per index name.
 // KuzuDB is an embedded database — only one process can open a given
 // directory at a time. The pool ensures we reuse connections.
 type graphDBPool struct {
-	mu   sync.RWMutex
-	dbs  map[string]graphDBHandle
-	dir  string // base index directory
+	mu  sync.RWMutex
+	dbs map[string]graphDBHandle
+	dir string // base index directory
 }
 
 // graphDBHandle holds a cached graph database reference.
@@ -262,9 +262,9 @@ func (s *Server) handleGraphIndex(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
-		"status":  "ok",
-		"name":    name,
+		"status":   "ok",
+		"name":     name,
 		"docs_dir": req.DocsDir,
-		"buildMs": time.Since(start).Milliseconds(),
+		"buildMs":  time.Since(start).Milliseconds(),
 	})
 }

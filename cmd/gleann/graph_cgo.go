@@ -10,7 +10,14 @@ import (
 
 	"github.com/tevfik/gleann/internal/graph/indexer"
 	kgraph "github.com/tevfik/gleann/internal/graph/kuzu"
+	"github.com/tevfik/gleann/pkg/gleann"
 )
+
+func init() {
+	gleann.GraphDBOpener = func(dir string) (gleann.GraphDB, error) {
+		return kgraph.Open(dir)
+	}
+}
 
 // buildGraphIndex builds the AST graph index for the given directory
 // and writes document graph nodes/edges for plugin-extracted documents.

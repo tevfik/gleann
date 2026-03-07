@@ -130,7 +130,7 @@ func TestMatchExtensions(t *testing.T) {
 		{"main.go", []string{".go"}, true},
 		{"main.go", []string{"go"}, true}, // Without dot.
 		{"main.py", []string{".go"}, false},
-		{"main.go", nil, true},    // Empty = match all.
+		{"main.go", nil, true}, // Empty = match all.
 		{"main.go", []string{}, true},
 	}
 
