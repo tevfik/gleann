@@ -119,10 +119,6 @@ jobs:
             goos: darwin
             goarch: arm64
             suffix: darwin-arm64
-          - os: macos-13
-            goos: darwin
-            goarch: amd64
-            suffix: darwin-amd64
 
     steps:
       - uses: actions/checkout@v4
