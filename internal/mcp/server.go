@@ -65,6 +65,24 @@ func NewServer(cfg Config) *Server {
 	s.AddTool(srv.buildSearchTool(), srv.handleSearch)
 	s.AddTool(srv.buildListTool(), srv.handleList)
 	s.AddTool(srv.buildAskTool(), srv.handleAsk)
+	s.AddTool(srv.buildGraphNeighborsTool(), srv.handleGraphNeighbors)
+	s.AddTool(srv.buildDocumentLinksTool(), srv.handleDocumentLinks)
+
+	// Register generic index list resource
+	s.AddResource(mcp.Resource{
+		URI:         "gleann://indexes",
+		Name:        "Gleann Indexes List",
+		Description: "List of all initialized Gleann indexes in the system",
+		MIMEType:    "text/plain",
+	}, srv.handleIndexListResource)
+
+	// Register specific file read template
+	s.AddResourceTemplate(mcp.NewResourceTemplate(
+		"gleann://{index}/{file_path}",
+		"Read File Content",
+		mcp.WithTemplateDescription("Read the full extracted content of a source code file or document in a specific Gleann index"),
+		mcp.WithTemplateMIMEType("text/plain"),
+	), srv.handleReadResource)
 
 	return srv
 }
@@ -90,6 +108,84 @@ func (s *Server) getSearcher(name string) (*gleann.LeannSearcher, error) {
 
 	s.searchers[name] = searcher
 	return searcher, nil
+}
+
+// --- Resource Handlers ---
+
+func (s *Server) handleIndexListResource(ctx context.Context, request mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
+	indexes, err := gleann.ListIndexes(s.config.IndexDir)
+	if err != nil {
+		return nil, fmt.Errorf("error listing indexes: %v", err)
+	}
+
+	var sb strings.Builder
+	sb.WriteString("Available Gleann Indexes:\n")
+	for _, idx := range indexes {
+		sb.WriteString(fmt.Sprintf("- %s: %d passages, backend=%s, model=%s\n", idx.Name, idx.NumPassages, idx.Backend, idx.EmbeddingModel))
+	}
+
+	res := mcp.TextResourceContents{
+		URI:      request.Params.URI,
+		MIMEType: "text/plain",
+		Text:     sb.String(),
+	}
+	return []mcp.ResourceContents{res}, nil
+}
+
+func (s *Server) handleReadResource(ctx context.Context, request mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
+	// Format expected: gleann://{index}/{file_path}
+	uri := request.Params.URI
+	prefix := "gleann://"
+	if !strings.HasPrefix(uri, prefix) {
+		return nil, fmt.Errorf("invalid URI scheme, expected gleann://")
+	}
+
+	trimmed := strings.TrimPrefix(uri, prefix)
+	parts := strings.SplitN(trimmed, "/", 2)
+	if len(parts) != 2 {
+		return nil, fmt.Errorf("invalid URI format. Expected gleann://{index}/{file_path}")
+	}
+	indexName := parts[0]
+	filePath := parts[1]
+
+	searcher, err := s.getSearcher(indexName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load index %q: %v", indexName, err)
+	}
+
+	// Because we want an exact metadata match (not a vector search),
+	// we use a dummy empty query. However, searchers normally require a semantic vector.
+	// As a workaround, we can query just the passage manager directly for all texts matching source.
+	// The passage manager provides `.All()`.
+	allPassages := searcher.PassageManager().All()
+	var fileChunks []gleann.Passage
+
+	for _, p := range allPassages {
+		if source, ok := p.Metadata["source"].(string); ok && source == filePath {
+			fileChunks = append(fileChunks, p)
+		}
+	}
+
+	if len(fileChunks) == 0 {
+		return nil, fmt.Errorf("file %q not found in index %q", filePath, indexName)
+	}
+
+	// Sort chunks sequentially by passage ID assuming they were indexed in order
+	// In production, adding an explicit chunk_index to metadata is better, but sorting by ID works generally.
+	// For better robustness later you can rely on the doc_chunk graph.
+	var sb strings.Builder
+	for _, chunk := range fileChunks {
+		sb.WriteString(chunk.Text)
+		sb.WriteString("\n")
+	}
+
+	res := mcp.TextResourceContents{
+		URI:      uri,
+		MIMEType: "text/plain",
+		Text:     sb.String(),
+	}
+
+	return []mcp.ResourceContents{res}, nil
 }
 
 // --- Search Tool ---
@@ -321,4 +417,177 @@ func (s *Server) handleAsk(ctx context.Context, request mcp.CallToolRequest) (*m
 	}
 
 	return mcp.NewToolResultText(answer), nil
+}
+
+// --- Graph Tools ---
+
+func (s *Server) buildGraphNeighborsTool() mcp.Tool {
+	return mcp.Tool{
+		Name:        "gleann_graph_neighbors",
+		Description: "Query the code graph to find caller/callee relationships for a given node. Use this to understand code architecture and dependencies without semantic searching.",
+		InputSchema: mcp.ToolInputSchema{
+			Type: "object",
+			Properties: map[string]interface{}{
+				"index": map[string]interface{}{
+					"type":        "string",
+					"description": "Name of the index to query",
+				},
+				"node_fqn": map[string]interface{}{
+					"type":        "string",
+					"description": "The Fully Qualified Name of the symbol to query (e.g. 'pkg.MyStruct.MyMethod')",
+				},
+			},
+			Required: []string{"index", "node_fqn"},
+		},
+	}
+}
+
+func (s *Server) handleGraphNeighbors(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	args, ok := request.Params.Arguments.(map[string]interface{})
+	if !ok {
+		return mcp.NewToolResultError("invalid arguments format"), nil
+	}
+
+	indexName, _ := args["index"].(string)
+	nodeFqn, _ := args["node_fqn"].(string)
+
+	if indexName == "" || nodeFqn == "" {
+		return mcp.NewToolResultError("index and node_fqn are required"), nil
+	}
+
+	searcher, err := s.getSearcher(indexName)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("Error loading index %q: %v", indexName, err)), nil
+	}
+
+	db := searcher.GraphDB()
+	if db == nil {
+		return mcp.NewToolResultError(fmt.Sprintf("Graph database not found or not initialized for index %q", indexName)), nil
+	}
+
+	callees, err := db.Callees(nodeFqn)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("Error querying callees: %v", err)), nil
+	}
+
+	callers, err := db.Callers(nodeFqn)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("Error querying callers: %v", err)), nil
+	}
+
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("Graph Neighbors for %s:\n\n", nodeFqn))
+
+	sb.WriteString("=== Callers (Symbols that call this node) ===\n")
+	if len(callers) == 0 {
+		sb.WriteString("None found.\n")
+	} else {
+		for _, c := range callers {
+			sb.WriteString(fmt.Sprintf("- %s (%s)\n", c.FQN, c.Kind))
+		}
+	}
+
+	sb.WriteString("\n=== Callees (Symbols this node calls) ===\n")
+	if len(callees) == 0 {
+		sb.WriteString("None found.\n")
+	} else {
+		for _, c := range callees {
+			sb.WriteString(fmt.Sprintf("- %s (%s)\n", c.FQN, c.Kind))
+		}
+	}
+
+	return mcp.NewToolResultText(sb.String()), nil
+}
+
+func (s *Server) buildDocumentLinksTool() mcp.Tool {
+	return mcp.Tool{
+		Name:        "gleann_document_links",
+		Description: "Query the code graph to find code symbols directly explained, referenced, or linked by a specific Markdown document. Useful for tying notes to implementation.",
+		InputSchema: mcp.ToolInputSchema{
+			Type: "object",
+			Properties: map[string]interface{}{
+				"index": map[string]interface{}{
+					"type":        "string",
+					"description": "Name of the index to query",
+				},
+				"doc_path": map[string]interface{}{
+					"type":        "string",
+					"description": "The exact document file path (e.g. 'docs/architecture.md')",
+				},
+			},
+			Required: []string{"index", "doc_path"},
+		},
+	}
+}
+
+func (s *Server) handleDocumentLinks(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	args, ok := request.Params.Arguments.(map[string]interface{})
+	if !ok {
+		return mcp.NewToolResultError("invalid arguments format"), nil
+	}
+
+	indexName, _ := args["index"].(string)
+	docPath, _ := args["doc_path"].(string)
+
+	if indexName == "" || docPath == "" {
+		return mcp.NewToolResultError("index and doc_path are required"), nil
+	}
+
+	searcher, err := s.getSearcher(indexName)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("Error loading index %q: %v", indexName, err)), nil
+	}
+
+	db := searcher.GraphDB()
+	if db == nil {
+		return mcp.NewToolResultError(fmt.Sprintf("Graph database not found or not initialized for index %q", indexName)), nil
+	}
+
+	// We use the raw connection to run a custom query for Document -> Section -> Chunk -> Symbol EXPLAINS
+	// KuzuDB connection is not goroutine safe, so we get a new connection.
+	conn, err := db.NewConn()
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("Error opening graph connection: %v", err)), nil
+	}
+	defer conn.Close()
+
+	cypher := fmt.Sprintf(`
+		MATCH (d:Document {path: "%s"})-[:HAS_SECTION]->(sec:Section)-[:HAS_CHUNK]->(c:DocChunk)-[:EXPLAINS]->(sym:Symbol)
+		RETURN sym.fqn AS fqn, sym.kind AS kind, sym.file AS file, sym.name AS name
+	`, docPath)
+
+	res, err := conn.Query(cypher)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("Error executing graph query: %v", err)), nil
+	}
+	defer res.Close()
+
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("Symbols explained by document %s:\n\n", docPath))
+
+	found := false
+	for res.HasNext() {
+		row, err := res.Next()
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("Error reading graph result: %v", err)), nil
+		}
+
+		m, err := row.GetAsMap()
+		if err != nil {
+			continue
+		}
+
+		fqn := fmt.Sprint(m["fqn"])
+		kind := fmt.Sprint(m["kind"])
+		file := fmt.Sprint(m["file"])
+
+		sb.WriteString(fmt.Sprintf("- %s (%s) [File: %s]\n", fqn, kind, file))
+		found = true
+	}
+
+	if !found {
+		sb.WriteString("No symbols explicitly explained by this document in the graph.\n")
+	}
+
+	return mcp.NewToolResultText(sb.String()), nil
 }

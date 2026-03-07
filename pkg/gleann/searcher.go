@@ -9,6 +9,8 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+
+	"github.com/tevfik/gleann/internal/graph/kuzu"
 )
 
 // LeannSearcher performs search on built indexes.
@@ -22,6 +24,7 @@ type LeannSearcher struct {
 	scorer    Scorer
 	reranker  Reranker
 	embServer EmbeddingServer
+	graphDB   *kuzu.DB
 
 	loaded bool
 }
@@ -109,6 +112,16 @@ func (s *LeannSearcher) Load(ctx context.Context, name string) error {
 		}
 		if err := s.backend.Load(ctx, indexData, s.meta); err != nil {
 			return fmt.Errorf("load backend: %w", err)
+		}
+	}
+
+	// Attempt to load Graph DB if it exists
+	graphDir := filepath.Join(basePath, ".kuzu")
+	if _, err := os.Stat(graphDir); err == nil {
+		if db, openErr := kuzu.Open(graphDir); openErr == nil {
+			s.graphDB = db
+		} else {
+			log.Printf("⚠  WARNING: Found graph database at %s but failed to open: %v", graphDir, openErr)
 		}
 	}
 
@@ -306,8 +319,17 @@ func (s *LeannSearcher) Search(ctx context.Context, query string, opts ...Search
 
 // Close releases resources.
 func (s *LeannSearcher) Close() error {
+	var errs []error
 	if s.backend != nil {
-		return s.backend.Close()
+		if err := s.backend.Close(); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	if s.graphDB != nil {
+		s.graphDB.Close()
+	}
+	if len(errs) > 0 {
+		return fmt.Errorf("close errors: %v", errs)
 	}
 	return nil
 }
@@ -315,6 +337,16 @@ func (s *LeannSearcher) Close() error {
 // Meta returns the index metadata.
 func (s *LeannSearcher) Meta() IndexMeta {
 	return s.meta
+}
+
+// GraphDB returns the underlying Kuzu Graph DB connection, or nil if none exists.
+func (s *LeannSearcher) GraphDB() *kuzu.DB {
+	return s.graphDB
+}
+
+// PassageManager returns the internal passage manager containing all indexed chunks.
+func (s *LeannSearcher) PassageManager() *PassageManager {
+	return s.passages
 }
 
 // SearchOption modifies search parameters.
