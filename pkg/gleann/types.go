@@ -8,6 +8,13 @@ import (
 	"time"
 )
 
+// Default host/address constants used across the codebase.
+const (
+	DefaultOllamaHost   = "http://localhost:11434"
+	DefaultServerAddr   = ":8080"
+	DefaultLlamaCPPHost = "http://localhost:8787"
+)
+
 // SearchResult represents a single search result with score and metadata.
 type SearchResult struct {
 	ID       int64          `json:"id"`
@@ -174,7 +181,7 @@ func DefaultConfig() Config {
 		Backend:           "hnsw",
 		EmbeddingModel:    "bge-m3",
 		EmbeddingProvider: "ollama",
-		OllamaHost:        "http://localhost:11434",
+		OllamaHost:        DefaultOllamaHost,
 		HNSWConfig: HNSWConfig{
 			M:                 32,
 			EfConstruction:    200,

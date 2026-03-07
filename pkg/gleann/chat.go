@@ -39,7 +39,7 @@ func DefaultChatConfig() ChatConfig {
 	return ChatConfig{
 		Provider:    LLMOllama,
 		Model:       "llama3.2",
-		BaseURL:     "http://localhost:11434",
+		BaseURL:     DefaultOllamaHost,
 		Temperature: 0.7,
 		MaxTokens:   2048,
 		SystemPrompt: "You are a helpful assistant. Answer questions based on the provided context. " +
@@ -69,7 +69,7 @@ func NewChat(searcher *LeannSearcher, config ChatConfig) *LeannChat {
 			if host := os.Getenv("OLLAMA_HOST"); host != "" {
 				config.BaseURL = host
 			} else {
-				config.BaseURL = "http://localhost:11434"
+				config.BaseURL = DefaultOllamaHost
 			}
 		case LLMOpenAI:
 			if url := os.Getenv("OPENAI_BASE_URL"); url != "" {

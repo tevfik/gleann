@@ -10,6 +10,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/tevfik/gleann/pkg/gleann"
 )
 
 // ModelInfo holds info about a model fetched from a provider.
@@ -54,7 +56,7 @@ type ollamaModelDetail struct {
 
 func fetchOllamaModels(host string) ([]ModelInfo, error) {
 	if host == "" {
-		host = "http://localhost:11434"
+		host = gleann.DefaultOllamaHost
 	}
 
 	client := &http.Client{Timeout: 10 * time.Second}

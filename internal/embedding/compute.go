@@ -15,6 +15,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	gleann "github.com/tevfik/gleann/pkg/gleann"
 )
 
 // Provider is the embedding computation provider type.
@@ -73,7 +75,7 @@ func NewComputer(opts Options) *Computer {
 		case ProviderOllama:
 			opts.BaseURL = resolveOllamaHost()
 		case ProviderLlamaCPP:
-			opts.BaseURL = "http://localhost:8080"
+			opts.BaseURL = gleann.DefaultLlamaCPPHost
 		case ProviderOpenAI:
 			opts.BaseURL = resolveOpenAIBaseURL()
 		case ProviderGemini:
@@ -81,7 +83,7 @@ func NewComputer(opts Options) *Computer {
 		}
 	} else if opts.Provider == ProviderLlamaCPP && (strings.Contains(opts.BaseURL, "11434") || strings.Contains(opts.BaseURL, "(auto-scan")) {
 		// Prevent cross-contamination from shared Config.OllamaHost defaults in callers
-		opts.BaseURL = "http://localhost:8080"
+		opts.BaseURL = gleann.DefaultLlamaCPPHost
 	}
 
 	if opts.APIKey == "" {
@@ -489,7 +491,7 @@ func resolveOllamaHost() string {
 	if host := os.Getenv("OLLAMA_HOST"); host != "" {
 		return host
 	}
-	return "http://localhost:11434"
+	return gleann.DefaultOllamaHost
 }
 
 func resolveOpenAIBaseURL() string {

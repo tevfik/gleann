@@ -163,7 +163,7 @@ func NewChatModel(chat *gleann.LeannChat, indexName, modelName string) ChatModel
 		allModels, err = fetchModels(savedCfg.LLMProvider, host, key)
 	} else {
 		// Fallback to local ollama default.
-		allModels, err = fetchModels("ollama", "http://localhost:11434", "")
+		allModels, err = fetchModels("ollama", gleann.DefaultOllamaHost, "")
 	}
 
 	if err == nil {
@@ -1077,7 +1077,7 @@ func fetchRerankModelList(savedCfg *OnboardResult) ([]string, int) {
 		allModels, err = fetchModels(savedCfg.EmbeddingProvider, host, key)
 	} else {
 		// Fallback
-		allModels, err = fetchModels("ollama", "http://localhost:11434", "")
+		allModels, err = fetchModels("ollama", gleann.DefaultOllamaHost, "")
 	}
 	if err != nil || len(allModels) == 0 {
 		// Fallback: if saved config has a model, use that.

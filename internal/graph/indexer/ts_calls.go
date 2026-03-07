@@ -139,7 +139,7 @@ var compiledQueries = func() map[chunking.Language]*sitter.Query {
 	for lang, tsq := range callQueries {
 		q, err := sitter.NewQuery([]byte(tsq.Query), tsq.Lang)
 		if err != nil {
-			panic(fmt.Sprintf("bad call query for lang %v: %v", lang, err))
+			panic(fmt.Sprintf("gleann bug: bad tree-sitter query for %v: %v (please report)", lang, err))
 		}
 		m[lang] = q
 	}

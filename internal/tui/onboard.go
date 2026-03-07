@@ -5,6 +5,8 @@ import (
 	"runtime"
 	"strings"
 
+	"github.com/tevfik/gleann/pkg/gleann"
+
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
@@ -193,8 +195,8 @@ func settingsMenuItems() []settingsItem {
 func NewOnboardModel() OnboardModel {
 	// Embedding host.
 	embHost := textinput.New()
-	embHost.Placeholder = "http://localhost:11434"
-	embHost.SetValue("http://localhost:11434")
+	embHost.Placeholder = gleann.DefaultOllamaHost
+	embHost.SetValue(gleann.DefaultOllamaHost)
 	embHost.CharLimit = 256
 	embHost.Width = 44
 
@@ -207,8 +209,8 @@ func NewOnboardModel() OnboardModel {
 
 	// LLM host.
 	llmHost := textinput.New()
-	llmHost.Placeholder = "http://localhost:11434"
-	llmHost.SetValue("http://localhost:11434")
+	llmHost.Placeholder = gleann.DefaultOllamaHost
+	llmHost.SetValue(gleann.DefaultOllamaHost)
 	llmHost.CharLimit = 256
 	llmHost.Width = 44
 
@@ -233,8 +235,8 @@ func NewOnboardModel() OnboardModel {
 
 	// Server address input.
 	serverAddr := textinput.New()
-	serverAddr.Placeholder = ":8080"
-	serverAddr.SetValue(":8080")
+	serverAddr.Placeholder = gleann.DefaultServerAddr
+	serverAddr.SetValue(gleann.DefaultServerAddr)
 	serverAddr.CharLimit = 64
 	serverAddr.Width = 24
 
@@ -537,7 +539,7 @@ func (m OnboardModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 			prov := m.embProviders[m.embProviderIdx]
 			if prov == "ollama" {
-				m.embHostInput.SetValue("http://localhost:11434")
+				m.embHostInput.SetValue(gleann.DefaultOllamaHost)
 				m.embHostInput.Focus()
 				m.phase = phaseEmbHost
 				return m, textinput.Blink
@@ -575,7 +577,7 @@ func (m OnboardModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				return m, m.fetchLLMModels()
 			}
 			if prov == "ollama" {
-				m.llmHostInput.SetValue("http://localhost:11434")
+				m.llmHostInput.SetValue(gleann.DefaultOllamaHost)
 				m.llmHostInput.Focus()
 				m.phase = phaseLLMHost
 				return m, textinput.Blink
