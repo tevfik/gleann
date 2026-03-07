@@ -112,7 +112,7 @@ gleann mcp
 
 Gleann supports external **Plugins** for parsing complex files via local HTTP APIs. Registry: `~/.gleann/plugins.json`.
 
-* **[gleann-plugin-docs](https://github.com/tevfik/gleann-pluggin-docs)**: PDF, Docx, Xlsx extraction via MarkItDown.
+* **[gleann-plugin-docs](https://github.com/tevfik/gleann-plugin-docs)**: PDF, Docx, Xlsx extraction via MarkItDown.
 * **[gleann-plugin-sound](https://github.com/tevfik/gleann-plugin-sound)**: Audio/Video transcription via whisper.cpp.
 
 ## Roadmap
