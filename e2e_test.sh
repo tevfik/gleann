@@ -11,7 +11,7 @@ rm -vf gleann-test
 rm -rf ~/.gleann/indexes/${INDEX_NAME}*
 
 echo "2. Building test binary..."
-CGO_ENABLED=1 go build -o gleann-test ./cmd/gleann
+CGO_ENABLED=1 go build -tags treesitter -o gleann-test ./cmd/gleann
 
 echo "3. Building index with graph (--graph)..."
 ./gleann-test build ${INDEX_NAME} --docs pkg/gleann/ --graph --model ${TEST_MODE} --no-mmap
