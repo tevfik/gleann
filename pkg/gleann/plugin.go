@@ -15,6 +15,9 @@ import (
 	"time"
 )
 
+// DefaultPluginTimeout is the default HTTP timeout for plugin requests in seconds.
+const DefaultPluginTimeout = 120
+
 // Plugin defines a registered Gleann plugin
 type Plugin struct {
 	Name         string   `json:"name"`
@@ -22,6 +25,7 @@ type Plugin struct {
 	Command      []string `json:"command"` // Command to run if the plugin is not running
 	Capabilities []string `json:"capabilities"`
 	Extensions   []string `json:"extensions"`
+	Timeout      int      `json:"timeout,omitempty"` // HTTP timeout in seconds (0 = DefaultPluginTimeout)
 }
 
 // PluginRegistry holds the currently discovered plugins
@@ -79,8 +83,9 @@ func (m *PluginManager) Close() {
 	defer m.mu.Unlock()
 	for _, cmd := range m.activeCmds {
 		if cmd.Process != nil {
-			cmd.Process.Signal(os.Interrupt)
-			time.AfterFunc(2*time.Second, func() { cmd.Process.Kill() })
+			proc := cmd.Process // capture by value to avoid closure race
+			_ = proc.Signal(os.Interrupt)
+			time.AfterFunc(2*time.Second, func() { _ = proc.Kill() })
 		}
 	}
 	m.activeCmds = make(map[string]*exec.Cmd)
@@ -338,8 +343,11 @@ func (m *PluginManager) processRaw(plugin *Plugin, filePath string) (map[string]
 	}
 	req.Header.Set("Content-Type", writer.FormDataContentType())
 
-	// 30 second strict timeout for plugin parsing
-	client := &http.Client{Timeout: 30 * time.Second}
+	timeout := DefaultPluginTimeout
+	if plugin.Timeout > 0 {
+		timeout = plugin.Timeout
+	}
+	client := &http.Client{Timeout: time.Duration(timeout) * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("plugin request failed: %w", err)

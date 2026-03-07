@@ -62,7 +62,7 @@ func DefaultRerankerConfig() RerankerConfig {
 	return RerankerConfig{
 		Provider: RerankerOllama,
 		Model:    "bge-reranker-v2-m3",
-		BaseURL:  "http://localhost:11434",
+		BaseURL:  DefaultOllamaHost,
 		TopN:     0,
 	}
 }
@@ -84,10 +84,10 @@ func NewReranker(cfg RerankerConfig) *CrossEncoderReranker {
 			if host := os.Getenv("OLLAMA_HOST"); host != "" {
 				cfg.BaseURL = host
 			} else {
-				cfg.BaseURL = "http://localhost:11434"
+				cfg.BaseURL = DefaultOllamaHost
 			}
 		case RerankerLlamacpp:
-			cfg.BaseURL = "http://localhost:8080"
+			cfg.BaseURL = DefaultLlamaCPPHost
 		case RerankerJina:
 			cfg.BaseURL = "https://api.jina.ai"
 		case RerankerCohere:

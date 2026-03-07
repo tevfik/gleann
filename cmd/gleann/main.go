@@ -874,7 +874,7 @@ func cmdServe(args []string) {
 
 	addr := getFlag(args, "--addr")
 	if addr == "" {
-		addr = ":8080"
+		addr = gleann.DefaultServerAddr
 	}
 
 	// Validate port number.
@@ -945,7 +945,7 @@ func cmdMCP() {
 	cfg := mcp.Config{
 		EmbeddingProvider: "ollama",
 		EmbeddingModel:    "bge-m3",
-		OllamaHost:        "http://localhost:11434",
+		OllamaHost:        gleann.DefaultOllamaHost,
 		Version:           version,
 	}
 
