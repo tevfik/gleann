@@ -91,6 +91,50 @@ func (h *kuzuHandle) SymbolCount() (int, error) {
 	return 0, nil
 }
 
+func (h *kuzuHandle) EdgeCount(relType string) (int, error) {
+	cypher := fmt.Sprintf("MATCH ()-[r:%s]->() RETURN count(r) AS cnt", relType)
+	res, err := h.db.Conn().Query(cypher)
+	if err != nil {
+		return 0, err
+	}
+	defer res.Close()
+	if res.HasNext() {
+		row, err := res.Next()
+		if err != nil {
+			return 0, err
+		}
+		m, err := row.GetAsMap()
+		if err != nil {
+			return 0, err
+		}
+		if v, ok := m["cnt"].(int64); ok {
+			return int(v), nil
+		}
+	}
+	return 0, nil
+}
+
+func (h *kuzuHandle) RawCypher(cypher string) ([]map[string]any, error) {
+	res, err := h.db.Conn().Query(cypher)
+	if err != nil {
+		return nil, err
+	}
+	defer res.Close()
+	var rows []map[string]any
+	for res.HasNext() {
+		row, err := res.Next()
+		if err != nil {
+			return rows, err
+		}
+		m, err := row.GetAsMap()
+		if err != nil {
+			continue
+		}
+		rows = append(rows, m)
+	}
+	return rows, nil
+}
+
 func (h *kuzuHandle) Close() {
 	h.db.Close()
 }

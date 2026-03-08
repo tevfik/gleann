@@ -29,6 +29,20 @@ func collectGoCallQueries(idx *Indexer, relPath, source string, chunks []chunkin
 		}
 	}
 
+	// Build a secondary map for chunker-split functions (e.g. "Agent.Run" → "Agent.Run_part1").
+	// When the chunker splits a large function into parts, the Go AST still sees
+	// the original declaration name. Map the original name to the _part1 FQN so
+	// CALLS edges reference a Symbol that actually exists.
+	splitFQN := make(map[string]string)
+	for name, fqn := range localFQN {
+		if strings.HasSuffix(name, "_part1") {
+			origName := strings.TrimSuffix(name, "_part1")
+			if _, exists := localFQN[origName]; !exists {
+				splitFQN[origName] = fqn
+			}
+		}
+	}
+
 	pkgDir := filepath.Dir(relPath)
 	pkgDir = strings.ReplaceAll(pkgDir, string(filepath.Separator), "/")
 	pkgPrefix := idx.module
@@ -64,7 +78,17 @@ func collectGoCallQueries(idx *Indexer, relPath, source string, chunks []chunkin
 			recvType := exprTypeName(funcDecl.Recv.List[0].Type)
 			callerName = recvType + "." + callerName
 		}
-		callerFQN := pkgPrefix + "." + callerName
+
+		// Resolve caller FQN: prefer localFQN (exact match), then splitFQN
+		// (chunker-split _part1), then fall back to pkgPrefix.
+		var callerFQN string
+		if fqn, ok := localFQN[callerName]; ok {
+			callerFQN = fqn
+		} else if fqn, ok := splitFQN[callerName]; ok {
+			callerFQN = fqn
+		} else {
+			callerFQN = pkgPrefix + "." + callerName
+		}
 
 		ast.Inspect(funcDecl.Body, func(n ast.Node) bool {
 			call, ok := n.(*ast.CallExpr)
@@ -90,6 +114,8 @@ func collectGoCallQueries(idx *Indexer, relPath, source string, chunks []chunkin
 }
 
 // resolveCallFQN attempts to convert a call expression function node into a FQN.
+// Returns "" for calls that cannot be resolved statically (receiver methods,
+// chained field access, etc.).
 func resolveCallFQN(fun ast.Expr, imports map[string]string, local map[string]string, pkgPrefix string) string {
 	switch f := fun.(type) {
 	case *ast.Ident:
@@ -97,18 +123,32 @@ func resolveCallFQN(fun ast.Expr, imports map[string]string, local map[string]st
 		if fqn, ok := local[name]; ok {
 			return fqn
 		}
+		// Builtins or same-package functions without a chunk entry.
 		return pkgPrefix + "." + name
 
 	case *ast.SelectorExpr:
-		pkgAlias := ""
-		if ident, ok := f.X.(*ast.Ident); ok {
-			pkgAlias = ident.Name
+		ident, ok := f.X.(*ast.Ident)
+		if !ok {
+			// Chained calls like a.field.Method() — can't resolve statically.
+			return ""
 		}
+		pkgAlias := ident.Name
 		funcName := f.Sel.Name
+
+		// Known import: forge.NewClient() → github.com/tevfik/.../forge.NewClient
 		if importPath, ok := imports[pkgAlias]; ok {
 			return importPath + "." + funcName
 		}
-		return pkgPrefix + "." + pkgAlias + "." + funcName
+
+		// Local type method: Agent.Run() — check localFQN for "Agent.Run"
+		combined := pkgAlias + "." + funcName
+		if fqn, ok := local[combined]; ok {
+			return fqn
+		}
+
+		// Unknown receiver variable (a.Run(), ctx.Done()) — skip.
+		// Without type information we'd create bogus FQNs like pkg.a.Run.
+		return ""
 
 	case *ast.IndexExpr:
 		return resolveCallFQN(f.X, imports, local, pkgPrefix)
