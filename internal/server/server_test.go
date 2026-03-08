@@ -14,6 +14,7 @@ func TestHandleHealth(t *testing.T) {
 	s := &Server{
 		config:    gleann.DefaultConfig(),
 		searchers: make(map[string]*gleann.LeannSearcher),
+		version:   "test-1.2.3",
 	}
 
 	req := httptest.NewRequest(http.MethodGet, "/health", nil)
@@ -32,6 +33,9 @@ func TestHandleHealth(t *testing.T) {
 	}
 	if resp["engine"] != "gleann-go" {
 		t.Errorf("expected engine gleann-go, got %v", resp["engine"])
+	}
+	if resp["version"] != "test-1.2.3" {
+		t.Errorf("expected version test-1.2.3, got %v", resp["version"])
 	}
 }
 
