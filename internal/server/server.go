@@ -26,12 +26,14 @@ type Server struct {
 	searchers map[string]*gleann.LeannSearcher
 	mu        sync.RWMutex
 	addr      string
+	version   string
 	server    *http.Server
 	graphPool *graphDBPool
 }
 
 // NewServer creates a new REST API server.
-func NewServer(config gleann.Config, addr string) *Server {
+// version is the build-time version string (injected via -ldflags).
+func NewServer(config gleann.Config, addr, version string) *Server {
 	embedder := embedding.NewComputer(embedding.Options{
 		Provider: embedding.Provider(config.EmbeddingProvider),
 		Model:    config.EmbeddingModel,
@@ -39,11 +41,16 @@ func NewServer(config gleann.Config, addr string) *Server {
 		APIKey:   config.OpenAIAPIKey,
 	})
 
+	if version == "" {
+		version = "dev"
+	}
+
 	return &Server{
 		config:    config,
 		embedder:  embedder,
 		searchers: make(map[string]*gleann.LeannSearcher),
 		addr:      addr,
+		version:   version,
 		graphPool: newGraphDBPool(config.IndexDir),
 	}
 }
@@ -91,7 +98,7 @@ func (s *Server) Stop(ctx context.Context) error {
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"status":  "ok",
-		"version": "1.0.0",
+		"version": s.version,
 		"engine":  "gleann-go",
 	})
 }

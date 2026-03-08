@@ -956,7 +956,7 @@ func cmdServe(args []string) {
 		os.Exit(1)
 	}
 
-	srv := server.NewServer(config, addr)
+	srv := server.NewServer(config, addr, version)
 
 	// Graceful shutdown.
 	stop := make(chan os.Signal, 1)
