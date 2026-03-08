@@ -177,58 +177,6 @@ func (m *PluginManager) EnsurePluginRunning(p *Plugin) error {
 	return fmt.Errorf("plugin %s did not become healthy after 10s. Check logs at %s", p.Name, filepath.Join(logDir, p.Name+".log"))
 }
 
-// Process sends a file to a plugin's /convert endpoint and returns the markdown result.
-// DEPRECATED: Use ProcessStructured for graph-ready plugin responses.
-func (m *PluginManager) Process(plugin *Plugin, filePath string) (string, error) {
-	result, err := m.processRaw(plugin, filePath)
-	if err != nil {
-		return "", err
-	}
-
-	// Try to extract markdown from legacy or structured response.
-	if md, ok := result["markdown"].(string); ok {
-		return md, nil
-	}
-
-	// If the response only has nodes/edges (new format), concatenate Section content.
-	if nodes, ok := result["nodes"].([]any); ok {
-		var sb strings.Builder
-		for _, n := range nodes {
-			node, ok := n.(map[string]any)
-			if !ok {
-				continue
-			}
-			if node["_type"] == "Section" {
-				if content, ok := node["content"].(string); ok {
-					if sb.Len() > 0 {
-						sb.WriteString("\n\n")
-					}
-					if heading, ok := node["heading"].(string); ok {
-						level := 1
-						if l, ok := node["level"].(float64); ok {
-							level = int(l)
-						}
-						sb.WriteString(strings.Repeat("#", level))
-						sb.WriteString(" ")
-						sb.WriteString(heading)
-						sb.WriteString("\n\n")
-					}
-					sb.WriteString(content)
-				}
-			}
-		}
-		if sb.Len() > 0 {
-			return sb.String(), nil
-		}
-	}
-
-	if errMsg, ok := result["error"].(string); ok && errMsg != "" {
-		return "", fmt.Errorf("plugin logic error: %s", errMsg)
-	}
-
-	return "", fmt.Errorf("plugin returned no usable content")
-}
-
 // PluginNode represents a graph node returned by a structured plugin.
 type PluginNode struct {
 	Type string         `json:"_type"` // "Document" or "Section"
@@ -305,7 +253,7 @@ func (m *PluginManager) ProcessStructured(plugin *Plugin, filePath string) (*Plu
 	return result, nil
 }
 
-// processRaw is the shared HTTP logic for both Process and ProcessStructured.
+// processRaw is the internal HTTP logic for ProcessStructured.
 func (m *PluginManager) processRaw(plugin *Plugin, filePath string) (map[string]any, error) {
 	if err := m.EnsurePluginRunning(plugin); err != nil {
 		return nil, fmt.Errorf("ensure plugin %s running: %w", plugin.Name, err)
