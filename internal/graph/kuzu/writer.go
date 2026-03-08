@@ -104,9 +104,29 @@ func UpsertFileQuery(path, lang string) string {
 
 // DeleteFileSymbolsQuery returns a Cypher string that deletes all existing
 // symbols (and their edges such as CALLS) that belong to the given file.
-// This ensures true "update" behavior (no ghost symbols left behind).
+// Use DeleteFileQueries for a full re-index (also removes the CodeFile node).
 func DeleteFileSymbolsQuery(path string) string {
 	return fmt.Sprintf(`MATCH (s:Symbol {file: %q}) DETACH DELETE s`, path)
+}
+
+// DeleteFileQueries returns Cypher queries that delete both the symbols
+// and the CodeFile node for the given file path. This ensures clean
+// re-indexing without duplicate primary key violations.
+func DeleteFileQueries(path string) []string {
+	return []string{
+		fmt.Sprintf(`MATCH (s:Symbol {file: %q}) DETACH DELETE s`, path),
+		fmt.Sprintf(`MATCH (f:CodeFile {path: %q}) DETACH DELETE f`, path),
+	}
+}
+
+// DeleteAllCodeData returns queries that wipe ALL CodeFile nodes, Symbol nodes,
+// and their edges (DECLARES, CALLS). Use this before a full IndexDir re-index
+// to avoid stale callee-stub symbols causing duplicate PK violations.
+func DeleteAllCodeData() []string {
+	return []string{
+		`MATCH (s:Symbol) DETACH DELETE s`,
+		`MATCH (f:CodeFile) DETACH DELETE f`,
+	}
 }
 
 // UpsertSymbolQuery returns a Cypher string that upserts a Symbol node.
