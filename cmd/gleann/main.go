@@ -90,7 +90,7 @@ Usage:
   gleann search <name> <query>          Search an index
   gleann ask    <name> <question>       Ask a question (RAG Q&A)
   gleann chat   [name]                  Interactive chat TUI
-  gleann watch  <name> --docs <dir>    Watch & auto-rebuild on changes
+  gleann watch  <name> --docs <dir>     Watch & auto-rebuild on changes
   gleann list                           List all indexes
   gleann remove <name>                  Remove an index
   gleann info   <name>                  Show index info
@@ -101,27 +101,47 @@ Usage:
   gleann setup                          Run configuration wizard
   gleann version                        Show version
 
-Options:
+Embedding Options:
   --model <model>         Embedding model (default: bge-m3)
   --provider <provider>   Embedding provider: ollama, openai (default: ollama)
-  --top-k <n>             Number of results (default: 10)
-  --index-dir <dir>       Index storage directory (default: ~/.gleann/indexes)
-  --metric <metric>       Distance metric: l2, cosine, ip (default: l2)
-  --json                  Output as JSON
-  --interactive           Interactive chat mode (ask command)
-  --llm-model <model>     LLM model for ask (default: llama3.2)
-  --llm-provider <prov>   LLM provider: ollama, openai, anthropic (default: ollama)
-  --rerank                Enable two-stage reranking for higher accuracy
-  --rerank-model <model>  Reranker model (default: bge-reranker-v2-m3)
+  --host <url>            Ollama host URL (default: http://localhost:11434)
   --batch-size <n>        Embedding batch size (default: auto based on provider)
   --concurrency <n>       Max concurrent embedding batches (default: auto based on provider)
 
+Search Options:
+  --top-k <n>             Number of results (default: 10)
+  --metric <metric>       Distance metric: l2, cosine, ip (default: l2)
+  --json                  Output as JSON
+  --rerank                Enable two-stage reranking for higher accuracy
+  --rerank-model <model>  Reranker model (default: bge-reranker-v2-m3)
+  --hybrid                Use hybrid search (vector + BM25)
+  --ef-search <n>         HNSW ef_search parameter (higher = more accurate, slower)
+
+Build Options:
+  --index-dir <dir>       Index storage directory (default: ~/.gleann/indexes)
+  --chunk-size <n>        Chunk size in tokens (default: 512)
+  --chunk-overlap <n>     Chunk overlap in tokens (default: 50)
+  --graph                 Build AST-based code graph (requires treesitter build tag)
+  --prune                 Prune unchanged files during incremental builds
+  --no-mmap               Disable memory-mapped file access
+
+LLM Options:
+  --llm-model <model>     LLM model for ask/chat (default: llama3.2)
+  --llm-provider <prov>   LLM provider: ollama, openai, anthropic (default: ollama)
+  --interactive           Interactive chat mode (ask command)
+  --session <file>        Resume chat from a session file
+
+Graph Options:
+  --index <name>          Index name for graph queries (required for graph command)
+
 Examples:
   gleann build my-docs --docs ./documents/
+  gleann build my-code --docs ./src/ --graph
   gleann search my-docs "How does caching work?"
   gleann search my-docs "How does caching work?" --rerank
   gleann ask my-docs "Explain the architecture" --interactive
   gleann chat my-docs
+  gleann graph deps main.handleRequest --index my-code
   gleann tui
   gleann serve --addr :8080`)
 }
@@ -894,16 +914,6 @@ func buildIndex(name, docsDir string, config gleann.Config, embedder gleann.Embe
 	fmt.Printf("✅ Rebuilt %q: %d passages in %s\n", name, len(items), time.Since(start).Round(time.Millisecond))
 }
 
-func computeHashes(dir string) map[string][32]byte {
-	// Deprecated: Vault Tracker replaces manual hash tracking.
-	return nil
-}
-
-func hashesChanged(old, new map[string][32]byte) bool {
-	// Deprecated: Vault Watcher replaces periodic polling.
-	return false
-}
-
 func cmdServe(args []string) {
 	config := getConfig(args)
 
@@ -983,7 +993,7 @@ func cmdServe(args []string) {
 	fmt.Println("   GET  /api/indexes/{name}        Index info")
 	fmt.Println("   POST /api/indexes/{name}/search Search")
 	fmt.Println("   POST /api/indexes/{name}/build  Build index")
-	fmt.Println("   DELETE /api/indexes/{name}       Delete index")
+	fmt.Println("   DELETE /api/indexes/{name}      Delete index")
 	fmt.Println()
 	fmt.Println("   GET  /api/graph/{name}          Graph stats")
 	fmt.Println("   POST /api/graph/{name}/query    Graph query (callees, callers, symbols_in_file)")
@@ -1002,8 +1012,8 @@ func cmdMCP() {
 	savedCfg := tui.LoadSavedConfig()
 
 	cfg := mcp.Config{
-		EmbeddingProvider: "ollama",
-		EmbeddingModel:    "bge-m3",
+		EmbeddingProvider: DefaultProvider,
+		EmbeddingModel:    DefaultEmbeddingModel,
 		OllamaHost:        gleann.DefaultOllamaHost,
 		Version:           version,
 	}
