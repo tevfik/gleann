@@ -24,6 +24,18 @@ import (
 
 // --- Plugin catalog (known plugins) ---
 
+// defaultPluginOwner is the default GitHub/Gitea owner for gleann plugins.
+// Can be overridden via GLEANN_PLUGIN_OWNER environment variable.
+const defaultPluginOwner = "tevfik"
+
+// pluginOwner returns the plugin repository owner, checking env override first.
+func pluginOwner() string {
+	if v := os.Getenv("GLEANN_PLUGIN_OWNER"); v != "" {
+		return v
+	}
+	return defaultPluginOwner
+}
+
 // pluginInfo describes a known plugin.
 type pluginInfo struct {
 	Name        string
@@ -573,12 +585,12 @@ func setupGoPluginWithProgress(pluginDir, name string, progress chan<- string) (
 	// Try to extract owner/repo from common patterns.
 	var owner, repo string
 	if repoName != "" {
-		// Heuristic: gleann-plugin-sound -> tevfik/gleann-plugin-sound
-		owner = "tevfik" // Known owner for gleann plugins
+		// Heuristic: gleann-plugin-sound -> owner/gleann-plugin-sound
+		owner = pluginOwner()
 		repo = repoName
 	} else {
 		// Fallback: assume it's in the plugin name.
-		owner = "tevfik"
+		owner = pluginOwner()
 		// If name already has "gleann-plugin-" prefix, don't add it again.
 		if strings.HasPrefix(name, "gleann-plugin-") {
 			repo = name
@@ -1141,7 +1153,7 @@ func setupGoPlugin(pluginDir, name string) (string, error) {
 		}
 	}
 
-	owner := "tevfik"
+	owner := pluginOwner()
 	repo := repoName
 	if repo == "" {
 		repo = "gleann-plugin-" + name
