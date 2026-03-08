@@ -44,11 +44,13 @@ type GraphIndexRequest struct {
 
 // GraphStatsResponse is returned by GET /api/graph/{name}.
 type GraphStatsResponse struct {
-	Name      string `json:"name"`
-	DBPath    string `json:"db_path"`
-	Available bool   `json:"available"`
-	FileCount int    `json:"file_count,omitempty"`
-	SymCount  int    `json:"symbol_count,omitempty"`
+	Name       string `json:"name"`
+	DBPath     string `json:"db_path"`
+	Available  bool   `json:"available"`
+	FileCount  int    `json:"file_count,omitempty"`
+	SymCount   int    `json:"symbol_count,omitempty"`
+	CallsCount int    `json:"calls_count,omitempty"`
+	DeclCount  int    `json:"declares_count,omitempty"`
 }
 
 // graphDBPool caches open KuzuDB connections per index name.
@@ -67,8 +69,10 @@ type graphDBHandle interface {
 	Callees(fqn string) ([]GraphNode, error)
 	Callers(fqn string) ([]GraphNode, error)
 	SymbolsInFile(path string) ([]GraphNode, error)
+	RawCypher(cypher string) ([]map[string]any, error)
 	FileCount() (int, error)
 	SymbolCount() (int, error)
+	EdgeCount(relType string) (int, error)
 	Close()
 }
 
@@ -174,6 +178,23 @@ func (s *Server) handleGraphQuery(w http.ResponseWriter, r *http.Request) {
 		}
 		results, err = db.SymbolsInFile(req.File)
 
+	case "cypher":
+		if req.Cypher == "" {
+			writeError(w, http.StatusBadRequest, "cypher field is required for cypher query")
+			return
+		}
+		rows, qErr := db.RawCypher(req.Cypher)
+		if qErr != nil {
+			writeError(w, http.StatusInternalServerError, "cypher failed: "+qErr.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"rows":     rows,
+			"count":    len(rows),
+			"query_ms": time.Since(start).Milliseconds(),
+		})
+		return
+
 	default:
 		writeError(w, http.StatusBadRequest, fmt.Sprintf("unknown query type %q (use callees, callers, symbols_in_file)", req.Query))
 		return
@@ -219,13 +240,17 @@ func (s *Server) handleGraphStats(w http.ResponseWriter, r *http.Request) {
 
 	fc, _ := db.FileCount()
 	sc, _ := db.SymbolCount()
+	cc, _ := db.EdgeCount("CALLS")
+	dc, _ := db.EdgeCount("DECLARES")
 
 	writeJSON(w, http.StatusOK, GraphStatsResponse{
-		Name:      name,
-		DBPath:    filepath.Join(s.config.IndexDir, name+"_graph"),
-		Available: true,
-		FileCount: fc,
-		SymCount:  sc,
+		Name:       name,
+		DBPath:     filepath.Join(s.config.IndexDir, name+"_graph"),
+		Available:  true,
+		FileCount:  fc,
+		SymCount:   sc,
+		CallsCount: cc,
+		DeclCount:  dc,
 	})
 }
 
