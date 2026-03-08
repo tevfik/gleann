@@ -3,11 +3,9 @@
 package main
 
 import (
-	"bufio"
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/tevfik/gleann/internal/graph/indexer"
@@ -43,7 +41,7 @@ func buildGraphIndex(name, docsDir, indexDir string, pluginDocs []*PluginDoc) {
 	defer db.Close()
 
 	// Detect Go module name from go.mod in the docs directory.
-	module := detectGoModule(absDocsDir)
+	module := indexer.DetectGoModule(absDocsDir)
 
 	// 1. AST code indexing (existing pipeline).
 	idx := indexer.New(db, module, absDocsDir)
@@ -120,24 +118,4 @@ func cmdGraph(args []string) {
 		fmt.Fprintf(os.Stderr, "unknown graph command: %s (use deps or callers)\n", subCmd)
 		os.Exit(1)
 	}
-}
-
-// detectGoModule reads go.mod in dir and returns the module name.
-// Falls back to the directory base name if go.mod is not found or unreadable.
-func detectGoModule(dir string) string {
-	goModPath := filepath.Join(dir, "go.mod")
-	f, err := os.Open(goModPath)
-	if err != nil {
-		return filepath.Base(dir)
-	}
-	defer f.Close()
-
-	scanner := bufio.NewScanner(f)
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if strings.HasPrefix(line, "module ") {
-			return strings.TrimSpace(strings.TrimPrefix(line, "module "))
-		}
-	}
-	return filepath.Base(dir)
 }

@@ -9,6 +9,7 @@
 package indexer
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"io/fs"
@@ -93,8 +94,8 @@ func (idx *Indexer) IndexFile(absPath, source string) error {
 	idx.writeMu.Lock()
 	defer idx.writeMu.Unlock()
 
-	// 1. Delete old symbols for this file
-	if err := kuzu.ExecTxOn(idx.db.Conn(), []string{kuzu.DeleteFileSymbolsQuery(f.Path)}); err != nil {
+	// 1. Delete old file node + symbols for this file
+	if err := kuzu.ExecTxOn(idx.db.Conn(), kuzu.DeleteFileQueries(f.Path)); err != nil {
 		return fmt.Errorf("delete old: %w", err)
 	}
 
@@ -332,13 +333,10 @@ func (idx *Indexer) IndexDir(root string) error {
 	defer idx.writeMu.Unlock()
 	startTx := time.Now()
 
-	// 1. Delete all prior file data
-	var deleteQueries []string
-	for _, f := range allFiles {
-		deleteQueries = append(deleteQueries, kuzu.DeleteFileSymbolsQuery(f.Path))
-	}
-	if err := kuzu.ExecTxOn(idx.db.Conn(), deleteQueries); err != nil {
-		return fmt.Errorf("delete old symbols: %w", err)
+	// 1. Delete ALL prior code data (CodeFile + Symbol nodes and edges).
+	// Full re-index: wipe everything to avoid stale callee-stub duplicates.
+	if err := kuzu.ExecTxOn(idx.db.Conn(), kuzu.DeleteAllCodeData()); err != nil {
+		return fmt.Errorf("delete old data: %w", err)
 	}
 
 	// Helper to create a temp file, write data, copy to KuzuDB, and delete.
@@ -424,4 +422,24 @@ func (idx *Indexer) buildFQN(relPath, symbolName string) string {
 		return symbolName
 	}
 	return prefix + "." + symbolName
+}
+
+// DetectGoModule reads the module name from go.mod in the given directory.
+// Falls back to filepath.Base(dir) if go.mod is absent or unreadable.
+func DetectGoModule(dir string) string {
+	goModPath := filepath.Join(dir, "go.mod")
+	f, err := os.Open(goModPath)
+	if err != nil {
+		return filepath.Base(dir)
+	}
+	defer f.Close()
+
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if strings.HasPrefix(line, "module ") {
+			return strings.TrimSpace(strings.TrimPrefix(line, "module "))
+		}
+	}
+	return filepath.Base(dir)
 }

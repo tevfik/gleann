@@ -113,7 +113,7 @@ func runGraphIndex(name, docsDir, indexDir, module string) error {
 	defer db.Close()
 
 	if module == "" {
-		module = name
+		module = indexer.DetectGoModule(docsDir)
 	}
 
 	idx := indexer.New(db, module, docsDir)
