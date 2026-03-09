@@ -192,8 +192,9 @@ type PluginEdge struct {
 
 // PluginResult holds the graph-ready response from a structured plugin.
 type PluginResult struct {
-	Nodes []PluginNode `json:"nodes"`
-	Edges []PluginEdge `json:"edges"`
+	Nodes    []PluginNode `json:"nodes"`
+	Edges    []PluginEdge `json:"edges"`
+	Markdown string       `json:"markdown,omitempty"` // Raw markdown fallback (e.g. from markitdown)
 }
 
 // ProcessStructured sends a file to a plugin's /convert endpoint and returns
@@ -209,6 +210,11 @@ func (m *PluginManager) ProcessStructured(plugin *Plugin, filePath string) (*Plu
 	}
 
 	result := &PluginResult{}
+
+	// Capture raw markdown if present (markitdown backend).
+	if md, ok := raw["markdown"].(string); ok {
+		result.Markdown = md
+	}
 
 	// Parse nodes
 	if rawNodes, ok := raw["nodes"].([]any); ok {
