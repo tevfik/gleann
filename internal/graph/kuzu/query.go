@@ -115,3 +115,89 @@ func (g *DB) DocumentSymbols(docPath string) ([]gleann.SymbolInfo, error) {
 	}
 	return out, nil
 }
+
+// Impact performs a transitive caller analysis for the given symbol FQN.
+// It traverses the CALLS graph backwards up to maxDepth hops to find all
+// symbols and files that would be affected by a change to the given symbol.
+func (g *DB) Impact(fqn string, maxDepth int) (*gleann.ImpactResult, error) {
+	if maxDepth <= 0 || maxDepth > 10 {
+		maxDepth = 5
+	}
+
+	result := &gleann.ImpactResult{
+		Symbol: fqn,
+		Depth:  maxDepth,
+	}
+
+	// Step 1: Direct callers.
+	directCallers, err := g.Callers(fqn)
+	if err != nil {
+		return nil, fmt.Errorf("direct callers query: %w", err)
+	}
+	for _, c := range directCallers {
+		result.DirectCallers = append(result.DirectCallers, c.FQN)
+	}
+
+	// Step 2: Transitive callers via BFS.
+	visited := make(map[string]bool)
+	visited[fqn] = true
+	queue := make([]string, 0, len(directCallers))
+	for _, c := range directCallers {
+		if !visited[c.FQN] {
+			visited[c.FQN] = true
+			queue = append(queue, c.FQN)
+		}
+	}
+
+	for depth := 1; depth < maxDepth && len(queue) > 0; depth++ {
+		nextQueue := []string{}
+		for _, sym := range queue {
+			callers, err := g.Callers(sym)
+			if err != nil {
+				continue // graceful degradation
+			}
+			for _, c := range callers {
+				if !visited[c.FQN] {
+					visited[c.FQN] = true
+					nextQueue = append(nextQueue, c.FQN)
+					result.TransitiveCallers = append(result.TransitiveCallers, c.FQN)
+				}
+			}
+		}
+		queue = nextQueue
+	}
+
+	// Step 3: Collect affected files from all affected symbols.
+	fileSet := make(map[string]bool)
+	allAffected := append(result.DirectCallers, result.TransitiveCallers...)
+	for _, sym := range allAffected {
+		cypher := fmt.Sprintf(
+			`MATCH (f:CodeFile)-[:DECLARES]->(s:Symbol {fqn: %q}) RETURN f.path AS path`,
+			sym,
+		)
+		res, err := g.conn.Query(cypher)
+		if err != nil {
+			continue
+		}
+		for res.HasNext() {
+			row, err := res.Next()
+			if err != nil {
+				break
+			}
+			m, err := row.GetAsMap()
+			if err != nil {
+				break
+			}
+			if path, ok := m["path"].(string); ok {
+				fileSet[path] = true
+			}
+		}
+		res.Close()
+	}
+
+	for f := range fileSet {
+		result.AffectedFiles = append(result.AffectedFiles, f)
+	}
+
+	return result, nil
+}
