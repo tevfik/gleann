@@ -1370,6 +1370,14 @@ func readDocuments(dir string, chunkSize, chunkOverlap int, tracker *vault.Track
 						// Convert plugin result → StructuredDocument → context-aware chunks.
 						doc := pluginResultToDoc(pResult)
 						mdChunks := mdChunker.ChunkDocument(doc)
+
+						// Fallback: if structured extraction produced no sections but
+						// raw markdown is available (e.g. markitdown backend), use
+						// the markdown chunker's heading-based parser instead.
+						if len(mdChunks) == 0 && pResult.Markdown != "" {
+							mdChunks = mdChunker.ChunkMarkdown(pResult.Markdown, relPath)
+						}
+
 						var items []gleann.Item
 						for _, ch := range mdChunks {
 							ch.Metadata["source"] = relPath

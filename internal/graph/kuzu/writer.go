@@ -223,8 +223,9 @@ func ExecTxOn(conn *gokuzu.Connection, queries []string) error {
 // ─── CSV Bulk Load Helpers ───────────────────────────────────────────────────
 
 // ExecCopyCSV executes a COPY statement to load bulk data from a CSV file.
+// Uses PARALLEL=FALSE to support quoted newlines in content fields.
 func ExecCopyCSV(conn *gokuzu.Connection, tableName, csvPath string) error {
-	cypher := fmt.Sprintf(`COPY %s FROM %q (HEADER=true)`, tableName, csvPath)
+	cypher := fmt.Sprintf(`COPY %s FROM %q (HEADER=true, PARALLEL=false)`, tableName, csvPath)
 	return ExecOn(conn, cypher)
 }
 
