@@ -281,3 +281,234 @@ func TestBuildContextHeader(t *testing.T) {
 		}
 	}
 }
+
+// --- Robust parser tests ---
+
+func TestParseMarkdownHeadings_SkipsFencedCodeBlocks(t *testing.T) {
+	md := "# Real Title\n\nSome text.\n\n```python\n# this is a comment not a heading\ndef foo():\n    pass\n```\n\n## Real Section\n\nMore text."
+	sections := ParseMarkdownHeadings(md)
+
+	if len(sections) != 2 {
+		t.Fatalf("expected 2 sections (skipping fenced code), got %d", len(sections))
+	}
+	if sections[0].Heading != "Real Title" {
+		t.Errorf("expected 'Real Title', got %q", sections[0].Heading)
+	}
+	if sections[1].Heading != "Real Section" {
+		t.Errorf("expected 'Real Section', got %q", sections[1].Heading)
+	}
+}
+
+func TestParseMarkdownHeadings_SkipsTildeFence(t *testing.T) {
+	md := "# Title\n\n~~~bash\n# comment\necho hello\n~~~\n\n## Next\n\nText."
+	sections := ParseMarkdownHeadings(md)
+
+	if len(sections) != 2 {
+		t.Fatalf("expected 2 sections, got %d", len(sections))
+	}
+}
+
+func TestParseMarkdownHeadings_SkipsYAMLFrontMatter(t *testing.T) {
+	md := "---\ntitle: My Doc\nauthor: Test\n---\n\n# Introduction\n\nHello world."
+	sections := ParseMarkdownHeadings(md)
+
+	if len(sections) != 1 {
+		t.Fatalf("expected 1 section, got %d", len(sections))
+	}
+	if sections[0].Heading != "Introduction" {
+		t.Errorf("expected 'Introduction', got %q", sections[0].Heading)
+	}
+}
+
+func TestParseMarkdownHeadings_SkipsHTMLComments(t *testing.T) {
+	md := "# Title\n\n<!-- # Hidden Heading -->\n\nSome text.\n\n## Visible\n\nMore text."
+	sections := ParseMarkdownHeadings(md)
+
+	if len(sections) != 2 {
+		t.Fatalf("expected 2 sections (comment skipped), got %d", len(sections))
+	}
+	if sections[1].Heading != "Visible" {
+		t.Errorf("expected 'Visible', got %q", sections[1].Heading)
+	}
+}
+
+func TestParseMarkdownHeadings_SkipsMultilineHTMLComments(t *testing.T) {
+	md := "# Title\n\n<!--\n# Not a heading\nSome comment text\n-->\n\n## Real\n\nContent."
+	sections := ParseMarkdownHeadings(md)
+
+	if len(sections) != 2 {
+		t.Fatalf("expected 2 sections, got %d", len(sections))
+	}
+}
+
+func TestParseMarkdownHeadings_SetextH1(t *testing.T) {
+	md := "Title Here\n==========\n\nIntro paragraph.\n\nSubtitle\n--------\n\nSub text."
+	sections := ParseMarkdownHeadings(md)
+
+	if len(sections) != 2 {
+		t.Fatalf("expected 2 sections (setext), got %d", len(sections))
+	}
+	if sections[0].Heading != "Title Here" || sections[0].Level != 1 {
+		t.Errorf("expected setext H1 'Title Here', got %q level %d", sections[0].Heading, sections[0].Level)
+	}
+	if sections[1].Heading != "Subtitle" || sections[1].Level != 2 {
+		t.Errorf("expected setext H2 'Subtitle', got %q level %d", sections[1].Heading, sections[1].Level)
+	}
+	if sections[1].ParentID != sections[0].ID {
+		t.Errorf("setext H2 should be child of H1")
+	}
+}
+
+func TestParseMarkdownHeadings_StripsAnchorTags(t *testing.T) {
+	md := "# Introduction {#intro}\n\nText.\n\n## Details {#details}\n\nMore."
+	sections := ParseMarkdownHeadings(md)
+
+	if len(sections) != 2 {
+		t.Fatalf("expected 2 sections, got %d", len(sections))
+	}
+	if sections[0].Heading != "Introduction" {
+		t.Errorf("expected anchor stripped 'Introduction', got %q", sections[0].Heading)
+	}
+	if sections[1].Heading != "Details" {
+		t.Errorf("expected anchor stripped 'Details', got %q", sections[1].Heading)
+	}
+}
+
+func TestParseMarkdownHeadings_StripsTrailingHashes(t *testing.T) {
+	md := "# Title ##\n\nText.\n\n## Section ###\n\nMore."
+	sections := ParseMarkdownHeadings(md)
+
+	if len(sections) != 2 {
+		t.Fatalf("expected 2 sections, got %d", len(sections))
+	}
+	if sections[0].Heading != "Title" {
+		t.Errorf("expected trailing hashes stripped 'Title', got %q", sections[0].Heading)
+	}
+	if sections[1].Heading != "Section" {
+		t.Errorf("expected trailing hashes stripped 'Section', got %q", sections[1].Heading)
+	}
+}
+
+func TestParseMarkdownHeadings_RequiresSpaceAfterHash(t *testing.T) {
+	md := "# Real Title\n\n#notaheading\n\nSome text."
+	sections := ParseMarkdownHeadings(md)
+
+	if len(sections) != 1 {
+		t.Fatalf("expected 1 section (#notaheading should be skipped), got %d", len(sections))
+	}
+}
+
+func TestParseMarkdownHeadings_EmptyDocument(t *testing.T) {
+	sections := ParseMarkdownHeadings("")
+	if sections != nil {
+		t.Errorf("expected nil for empty doc, got %d sections", len(sections))
+	}
+}
+
+func TestParseMarkdownHeadings_NoHeadings(t *testing.T) {
+	sections := ParseMarkdownHeadings("Just some plain text.\n\nNo headings here.")
+	if sections != nil {
+		t.Errorf("expected nil for no headings, got %d sections", len(sections))
+	}
+}
+
+func TestParseMarkdownHeadings_ComplexDocument(t *testing.T) {
+	md := `---
+title: Complex Doc
+---
+
+# Main Title
+
+Introduction text.
+
+` + "```go" + `
+# not a heading
+func main() {}
+` + "```" + `
+
+## Section 1
+
+Content.
+
+### Subsection 1.1
+
+Details.
+
+<!-- # hidden heading -->
+
+## Section 2
+
+More content.
+
+### Subsection 2.1 {#s2-1}
+
+Even more.`
+
+	sections := ParseMarkdownHeadings(md)
+
+	// Should get: Main Title, Section 1, Subsection 1.1, Section 2, Subsection 2.1
+	if len(sections) != 5 {
+		t.Fatalf("expected 5 sections from complex doc, got %d", len(sections))
+	}
+
+	expected := []struct {
+		heading string
+		level   int
+	}{
+		{"Main Title", 1},
+		{"Section 1", 2},
+		{"Subsection 1.1", 3},
+		{"Section 2", 2},
+		{"Subsection 2.1", 3},
+	}
+	for i, exp := range expected {
+		if sections[i].Heading != exp.heading {
+			t.Errorf("section %d: expected heading %q, got %q", i, exp.heading, sections[i].Heading)
+		}
+		if sections[i].Level != exp.level {
+			t.Errorf("section %d: expected level %d, got %d", i, exp.level, sections[i].Level)
+		}
+	}
+
+	// Hierarchy: Section 1 and Section 2 are children of Main Title
+	if sections[1].ParentID != sections[0].ID {
+		t.Errorf("Section 1 should be child of Main Title")
+	}
+	if sections[3].ParentID != sections[0].ID {
+		t.Errorf("Section 2 should be child of Main Title")
+	}
+	// Subsection 1.1 → Section 1, Subsection 2.1 → Section 2
+	if sections[2].ParentID != sections[1].ID {
+		t.Errorf("Subsection 1.1 should be child of Section 1")
+	}
+	if sections[4].ParentID != sections[3].ID {
+		t.Errorf("Subsection 2.1 should be child of Section 2")
+	}
+	// Anchor tag should be stripped
+	if sections[4].Heading != "Subsection 2.1" {
+		t.Errorf("anchor tag not stripped: %q", sections[4].Heading)
+	}
+}
+
+func TestIsMarkdownFile(t *testing.T) {
+	tests := []struct {
+		file string
+		want bool
+	}{
+		{"README.md", true},
+		{"notes.markdown", true},
+		{"doc.mdx", true},
+		{"guide.mdown", true},
+		{"main.go", false},
+		{"data.json", false},
+		{"style.css", false},
+		{"report.txt", false},
+		{"path/to/README.md", true},
+	}
+	for _, tt := range tests {
+		got := IsMarkdownFile(tt.file)
+		if got != tt.want {
+			t.Errorf("IsMarkdownFile(%q) = %v, want %v", tt.file, got, tt.want)
+		}
+	}
+}

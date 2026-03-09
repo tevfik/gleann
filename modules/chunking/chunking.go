@@ -243,7 +243,7 @@ func IsCodeFile(filename string) bool {
 		".lua": true, ".sh": true, ".bash": true, ".zsh": true,
 		".sql": true, ".html": true, ".css": true, ".scss": true,
 		".yaml": true, ".yml": true, ".toml": true, ".json": true,
-		".xml": true, ".md": true, ".rst": true, ".tex": true,
+		".xml": true, ".rst": true, ".tex": true,
 	}
 
 	for ext := range codeExts {

@@ -115,7 +115,7 @@ func TestIsCodeFile(t *testing.T) {
 		"main.go":      true,
 		"app.py":       true,
 		"index.ts":     true,
-		"readme.md":    true,
+		"readme.md":    false, // markdown files are handled by MarkdownChunker, not CodeChunker
 		"photo.jpg":    false,
 		"data.csv":     false,
 		"Program.java": true,
@@ -133,12 +133,12 @@ func TestIsCodeFile(t *testing.T) {
 
 func TestIsCodeBoundary(t *testing.T) {
 	tests := map[string]bool{
-		"func main() {":           true,
-		"def hello():":            true,
-		"class MyClass:":          true,
-		"    x = 1":               false,
-		"type Config struct {":    true,
-		"    fmt.Println()":       false,
+		"func main() {":          true,
+		"def hello():":           true,
+		"class MyClass:":         true,
+		"    x = 1":              false,
+		"type Config struct {":   true,
+		"    fmt.Println()":      false,
 		"public void method() {": true,
 	}
 
