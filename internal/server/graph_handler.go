@@ -15,11 +15,12 @@ import (
 // GraphQueryRequest is the request body for POST /api/graph/{name}/query.
 type GraphQueryRequest struct {
 	// Query is one of the predefined query types:
-	//   "callees", "callers", "symbols_in_file", "cypher"
-	Query  string `json:"query"`
-	Symbol string `json:"symbol,omitempty"` // FQN for callees/callers
-	File   string `json:"file,omitempty"`   // file path for symbols_in_file
-	Cypher string `json:"cypher,omitempty"` // raw Cypher for advanced queries
+	//   "callees", "callers", "symbols_in_file", "impact", "cypher"
+	Query    string `json:"query"`
+	Symbol   string `json:"symbol,omitempty"`    // FQN for callees/callers/impact
+	File     string `json:"file,omitempty"`      // file path for symbols_in_file
+	Cypher   string `json:"cypher,omitempty"`    // raw Cypher for advanced queries
+	MaxDepth int    `json:"max_depth,omitempty"` // max traversal depth for impact (default 5)
 }
 
 // GraphQueryResponse is the response for graph queries.
@@ -53,6 +54,17 @@ type GraphStatsResponse struct {
 	DeclCount  int    `json:"declares_count,omitempty"`
 }
 
+// ImpactResponse is the response for impact analysis queries.
+type ImpactResponse struct {
+	Symbol            string   `json:"symbol"`
+	DirectCallers     []string `json:"direct_callers"`
+	TransitiveCallers []string `json:"transitive_callers"`
+	AffectedFiles     []string `json:"affected_files"`
+	Depth             int      `json:"depth"`
+	TotalAffected     int      `json:"total_affected"`
+	QueryMs           int64    `json:"query_ms"`
+}
+
 // graphDBPool caches open KuzuDB connections per index name.
 // KuzuDB is an embedded database — only one process can open a given
 // directory at a time. The pool ensures we reuse connections.
@@ -69,6 +81,7 @@ type graphDBHandle interface {
 	Callees(fqn string) ([]GraphNode, error)
 	Callers(fqn string) ([]GraphNode, error)
 	SymbolsInFile(path string) ([]GraphNode, error)
+	Impact(fqn string, maxDepth int) (*ImpactResponse, error)
 	RawCypher(cypher string) ([]map[string]any, error)
 	FileCount() (int, error)
 	SymbolCount() (int, error)
@@ -177,6 +190,31 @@ func (s *Server) handleGraphQuery(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		results, err = db.SymbolsInFile(req.File)
+
+	case "impact":
+		if req.Symbol == "" {
+			writeError(w, http.StatusBadRequest, "symbol is required for impact query")
+			return
+		}
+		maxDepth := req.MaxDepth
+		if maxDepth <= 0 {
+			maxDepth = 5
+		}
+		impact, impactErr := db.Impact(req.Symbol, maxDepth)
+		if impactErr != nil {
+			writeError(w, http.StatusInternalServerError, "impact analysis failed: "+impactErr.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, ImpactResponse{
+			Symbol:            impact.Symbol,
+			DirectCallers:     impact.DirectCallers,
+			TransitiveCallers: impact.TransitiveCallers,
+			AffectedFiles:     impact.AffectedFiles,
+			Depth:             impact.Depth,
+			TotalAffected:     len(impact.DirectCallers) + len(impact.TransitiveCallers),
+			QueryMs:           time.Since(start).Milliseconds(),
+		})
+		return
 
 	case "cypher":
 		if req.Cypher == "" {

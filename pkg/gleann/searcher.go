@@ -316,7 +316,85 @@ func (s *LeannSearcher) Search(ctx context.Context, query string, opts ...Search
 		}
 	}
 
+	// Graph-augmented search: enrich results with caller/callee context.
+	if searchOpts.UseGraphContext && s.graphDB != nil {
+		s.enrichWithGraphContext(results)
+	}
+
 	return results, nil
+}
+
+// enrichWithGraphContext enriches search results with graph-derived context.
+// For each result that has a "source" metadata field, it looks up symbols
+// declared in that file and fetches their callers/callees from the graph.
+// This adds structural code intelligence to vector search results.
+func (s *LeannSearcher) enrichWithGraphContext(results []SearchResult) {
+	if s.graphDB == nil {
+		return
+	}
+
+	// Cache file→symbols lookups to avoid duplicate queries.
+	fileSymbolCache := make(map[string][]Callee)
+
+	for i := range results {
+		source, _ := results[i].Metadata["source"].(string)
+		if source == "" {
+			continue
+		}
+
+		// Look up symbols declared in this file.
+		symbols, ok := fileSymbolCache[source]
+		if !ok {
+			var err error
+			symbols, err = s.graphDB.SymbolsInFile(source)
+			if err != nil {
+				symbols = nil // graceful degradation
+			}
+			fileSymbolCache[source] = symbols
+		}
+
+		if len(symbols) == 0 {
+			continue
+		}
+
+		// For each symbol, fetch callers and callees (cap at 5 symbols to limit cost).
+		maxSymbols := 5
+		if len(symbols) < maxSymbols {
+			maxSymbols = len(symbols)
+		}
+
+		graphCtx := &GraphContextInfo{
+			Symbols: make([]SymbolNeighbors, 0, maxSymbols),
+		}
+
+		for _, sym := range symbols[:maxSymbols] {
+			sn := SymbolNeighbors{
+				FQN:  sym.FQN,
+				Kind: sym.Kind,
+			}
+
+			if callees, err := s.graphDB.Callees(sym.FQN); err == nil {
+				for _, c := range callees {
+					sn.Callees = append(sn.Callees, c.FQN)
+				}
+			}
+
+			if callers, err := s.graphDB.Callers(sym.FQN); err == nil {
+				for _, c := range callers {
+					sn.Callers = append(sn.Callers, c.FQN)
+				}
+			}
+
+			// Only include symbols that have at least one relationship.
+			if len(sn.Callers) > 0 || len(sn.Callees) > 0 {
+				graphCtx.Symbols = append(graphCtx.Symbols, sn)
+			}
+		}
+
+		if len(graphCtx.Symbols) > 0 {
+			results[i].GraphContext = graphCtx
+		}
+	}
 }
 
 // Close releases resources.
@@ -379,6 +457,15 @@ func WithMinScore(score float32) SearchOption {
 func WithReranker(enabled bool) SearchOption {
 	return func(c *SearchConfig) {
 		c.UseReranker = enabled
+	}
+}
+
+// WithGraphContext enables graph-augmented search.
+// Each result is enriched with symbols from the same source file
+// and their caller/callee relationships from the code graph.
+func WithGraphContext(enabled bool) SearchOption {
+	return func(c *SearchConfig) {
+		c.UseGraphContext = enabled
 	}
 }
 

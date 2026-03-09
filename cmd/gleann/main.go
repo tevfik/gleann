@@ -57,6 +57,8 @@ func main() {
 		cmdList(args)
 	case "remove":
 		cmdRemove(args)
+	case "rebuild":
+		cmdRebuild(args)
 	case "serve":
 		cmdServe(args)
 	case "info":
@@ -93,6 +95,7 @@ Usage:
   gleann watch  <name> --docs <dir>     Watch & auto-rebuild on changes
   gleann list                           List all indexes
   gleann remove <name>                  Remove an index
+  gleann rebuild <name> --docs <dir>    Remove & rebuild index from scratch
   gleann info   <name>                  Show index info
   gleann graph  <deps|callers> <sym>    Query AST Graph in KuzuDB
   gleann serve  [--addr :8080]          Start REST API server
@@ -115,6 +118,7 @@ Search Options:
   --rerank                Enable two-stage reranking for higher accuracy
   --rerank-model <model>  Reranker model (default: bge-reranker-v2-m3)
   --hybrid                Use hybrid search (vector + BM25)
+  --graph                 Enrich results with graph context (callers/callees)
   --ef-search <n>         HNSW ef_search parameter (higher = more accurate, slower)
 
 Build Options:
@@ -444,6 +448,9 @@ func cmdSearch(args []string) {
 	if config.SearchConfig.UseReranker {
 		searchOpts = append(searchOpts, gleann.WithReranker(true))
 	}
+	if hasFlag(args, "--graph") {
+		searchOpts = append(searchOpts, gleann.WithGraphContext(true))
+	}
 	results, err := searcher.Search(ctx, query, searchOpts...)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error searching: %v\n", err)
@@ -465,6 +472,21 @@ func cmdSearch(args []string) {
 		}
 		fmt.Printf("[%d] Score: %.4f\n", i+1, result.Score)
 		fmt.Printf("    %s\n\n", strings.ReplaceAll(text, "\n", "\n    "))
+
+		// Show graph context if available.
+		if result.GraphContext != nil && len(result.GraphContext.Symbols) > 0 {
+			fmt.Printf("    📊 Graph Context:\n")
+			for _, sym := range result.GraphContext.Symbols {
+				fmt.Printf("      • %s (%s)\n", sym.FQN, sym.Kind)
+				if len(sym.Callers) > 0 {
+					fmt.Printf("        ← callers: %s\n", strings.Join(sym.Callers, ", "))
+				}
+				if len(sym.Callees) > 0 {
+					fmt.Printf("        → callees: %s\n", strings.Join(sym.Callees, ", "))
+				}
+			}
+			fmt.Println()
+		}
 	}
 }
 
@@ -570,6 +592,36 @@ func cmdRemove(args []string) {
 	if successCount > 1 {
 		fmt.Printf("✅ Successfully removed %d indexes.\n", successCount)
 	}
+}
+
+// cmdRebuild removes an existing index and rebuilds it from scratch.
+// Convenience wrapper: gleann rebuild <name> --docs <dir> [build flags]
+func cmdRebuild(args []string) {
+	if len(args) < 1 {
+		fmt.Fprintln(os.Stderr, "usage: gleann rebuild <name> --docs <dir>")
+		os.Exit(1)
+	}
+
+	name := args[0]
+	docsDir := getFlag(args, "--docs")
+	if docsDir == "" {
+		fmt.Fprintln(os.Stderr, "error: --docs flag required")
+		os.Exit(1)
+	}
+
+	config := getConfig(args)
+
+	// Step 1: Remove existing index (ignore error if it doesn't exist)
+	fmt.Printf("🗑️  Removing existing index %q...\n", name)
+	if err := gleann.RemoveIndex(config.IndexDir, name); err != nil {
+		fmt.Printf("   (no existing index to remove: %v)\n", err)
+	} else {
+		fmt.Printf("   ✅ Removed.\n")
+	}
+
+	// Step 2: Build fresh
+	fmt.Printf("🔨 Rebuilding index %q from %s...\n", name, docsDir)
+	cmdBuild(args)
 }
 
 func cmdInfo(args []string) {
