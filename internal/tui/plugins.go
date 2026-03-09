@@ -730,12 +730,15 @@ func downloadBinaryFromGitHub(owner, repo, destPath string, progress chan<- stri
 	progress <- "   Extracting binary..."
 
 	// Extract based on file extension.
+	// Use repo name as the binary search pattern inside the archive,
+	// since the build system names binaries after the repo (e.g. "gleann-plugin-sound"),
+	// not the short plugin name (e.g. "gleann-sound").
 	if strings.HasSuffix(assetName, ".tar.gz") {
-		if err := extractBinaryFromTarGz(resp.Body, destPath, filepath.Base(destPath)); err != nil {
+		if err := extractBinaryFromTarGz(resp.Body, destPath, repo); err != nil {
 			return fmt.Errorf("failed to extract tar.gz: %w", err)
 		}
 	} else if strings.HasSuffix(assetName, ".zip") {
-		if err := extractBinaryFromZip(resp.Body, destPath, filepath.Base(destPath)); err != nil {
+		if err := extractBinaryFromZip(resp.Body, destPath, repo); err != nil {
 			return fmt.Errorf("failed to extract zip: %w", err)
 		}
 	} else {
