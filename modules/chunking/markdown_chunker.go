@@ -203,9 +203,29 @@ func buildContextHeader(path []string) string {
 	return strings.Join(parts, " > ")
 }
 
+// IsMarkdownFile checks if a filename is a markdown file.
+func IsMarkdownFile(filename string) bool {
+	ext := strings.ToLower(filename)
+	if idx := strings.LastIndex(ext, "."); idx >= 0 {
+		ext = ext[idx:]
+	}
+	switch ext {
+	case ".md", ".markdown", ".mdx", ".mdown", ".mkd", ".mkdn":
+		return true
+	}
+	return false
+}
+
 // ParseMarkdownHeadings extracts heading structure from raw markdown text.
-// This is the Go-side fallback for when structured JSON is not available
-// (e.g. indexing a local .md file directly).
+// This is the Go-side parser for when structured JSON is not available
+// (e.g. indexing a local .md file directly or parsing markitdown output).
+//
+// Handles edge cases:
+//   - Skips headings inside fenced code blocks (``` or ~~~)
+//   - Skips YAML front matter (--- delimited at file start)
+//   - Skips headings inside HTML comments (<!-- ... -->)
+//   - Strips heading anchor tags ({#id}) and trailing hashes
+//   - Supports setext-style headings (Title\n==== or Title\n----)
 func ParseMarkdownHeadings(markdown string) []MarkdownSection {
 	lines := strings.Split(markdown, "\n")
 
@@ -216,8 +236,73 @@ func ParseMarkdownHeadings(markdown string) []MarkdownSection {
 	}
 
 	var headings []heading
+	inFence := false
+	inHTMLComment := false
+	inFrontMatter := false
+	frontMatterChecked := false
+
 	for i, line := range lines {
 		trimmed := strings.TrimSpace(line)
+
+		// --- YAML front matter (must be at very start of file) ---
+		if !frontMatterChecked {
+			frontMatterChecked = true
+			if trimmed == "---" {
+				inFrontMatter = true
+				continue
+			}
+		}
+		if inFrontMatter {
+			if trimmed == "---" || trimmed == "..." {
+				inFrontMatter = false
+			}
+			continue
+		}
+
+		// --- Fenced code blocks (``` or ~~~) ---
+		if strings.HasPrefix(trimmed, "```") || strings.HasPrefix(trimmed, "~~~") {
+			inFence = !inFence
+			continue
+		}
+		if inFence {
+			continue
+		}
+
+		// --- HTML comments (single-line and multi-line) ---
+		if strings.Contains(trimmed, "<!--") {
+			if !strings.Contains(trimmed, "-->") {
+				inHTMLComment = true
+			}
+			continue
+		}
+		if inHTMLComment {
+			if strings.Contains(trimmed, "-->") {
+				inHTMLComment = false
+			}
+			continue
+		}
+
+		// --- Setext-style headings: Title\n==== or Title\n---- ---
+		if i > 0 && len(trimmed) >= 2 {
+			if allSameChar(trimmed, '=') {
+				prevTitle := strings.TrimSpace(lines[i-1])
+				if prevTitle != "" && !strings.HasPrefix(prevTitle, "#") {
+					headings = append(headings, heading{lineIdx: i - 1, level: 1, title: cleanHeading(prevTitle)})
+				}
+				continue
+			}
+			if allSameChar(trimmed, '-') {
+				// Setext H2 requires a non-blank preceding line.
+				// A standalone "---" with blank line before is a horizontal rule, not a heading.
+				prevTitle := strings.TrimSpace(lines[i-1])
+				if prevTitle != "" && prevTitle != "---" && !strings.HasPrefix(prevTitle, "#") {
+					headings = append(headings, heading{lineIdx: i - 1, level: 2, title: cleanHeading(prevTitle)})
+				}
+				continue
+			}
+		}
+
+		// --- ATX-style headings: # Title ---
 		if !strings.HasPrefix(trimmed, "#") {
 			continue
 		}
@@ -233,11 +318,16 @@ func ParseMarkdownHeadings(markdown string) []MarkdownSection {
 		if hashes < 1 || hashes > 6 {
 			continue
 		}
-		rest := strings.TrimSpace(trimmed[hashes:])
-		if rest == "" {
+		// Must be followed by a space or end of string (commonmark spec).
+		rest := trimmed[hashes:]
+		if len(rest) > 0 && rest[0] != ' ' && rest[0] != '\t' {
 			continue
 		}
-		headings = append(headings, heading{lineIdx: i, level: hashes, title: rest})
+		title := cleanHeading(strings.TrimSpace(rest))
+		if title == "" {
+			continue
+		}
+		headings = append(headings, heading{lineIdx: i, level: hashes, title: title})
 	}
 
 	if len(headings) == 0 {
@@ -253,13 +343,20 @@ func ParseMarkdownHeadings(markdown string) []MarkdownSection {
 
 	for idx, h := range headings {
 		contentStart := h.lineIdx + 1
+		// For setext headings, content starts after the underline.
+		if contentStart < len(lines) {
+			nextLine := strings.TrimSpace(lines[contentStart])
+			if allSameChar(nextLine, '=') || allSameChar(nextLine, '-') {
+				contentStart++
+			}
+		}
 		contentEnd := len(lines)
 		if idx+1 < len(headings) {
 			contentEnd = headings[idx+1].lineIdx
 		}
 		content := strings.TrimSpace(strings.Join(lines[contentStart:contentEnd], "\n"))
 
-		// Find parent.
+		// Find parent by walking the stack.
 		for len(parentStack) > 0 && parentStack[len(parentStack)-1].level >= h.level {
 			parentStack = parentStack[:len(parentStack)-1]
 		}
@@ -305,6 +402,30 @@ func ParseMarkdownHeadings(markdown string) []MarkdownSection {
 	}
 
 	return sections
+}
+
+// cleanHeading strips trailing hashes, anchor tags {#id}, and extra whitespace.
+func cleanHeading(s string) string {
+	// Strip trailing hashes: "## Title ##" → "Title"
+	s = strings.TrimRight(s, "# ")
+	// Strip anchor tags: "Title {#my-id}" → "Title"
+	if idx := strings.LastIndex(s, " {#"); idx >= 0 && strings.HasSuffix(s, "}") {
+		s = s[:idx]
+	}
+	return strings.TrimSpace(s)
+}
+
+// allSameChar returns true if the string has length ≥ 2 and every rune is ch.
+func allSameChar(s string, ch rune) bool {
+	if len(s) < 2 {
+		return false
+	}
+	for _, r := range s {
+		if r != ch {
+			return false
+		}
+	}
+	return true
 }
 
 // inferTitle picks the first H1 heading, or the first heading.

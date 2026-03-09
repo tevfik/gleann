@@ -1249,6 +1249,75 @@ func strVal(m map[string]any, key string) string {
 	return ""
 }
 
+// markdownToPluginResult converts parsed MarkdownSections into a PluginResult
+// suitable for graph indexing (Document + Section nodes, HAS_SECTION + HAS_SUBSECTION edges).
+// This allows native .md files to produce the same graph structure as plugin-extracted documents.
+func markdownToPluginResult(sections []chunking.MarkdownSection, sourcePath string, wordCount int) *gleann.PluginResult {
+	result := &gleann.PluginResult{}
+
+	// Document node.
+	title := "Untitled"
+	for _, s := range sections {
+		if s.Level == 1 {
+			title = s.Heading
+			break
+		}
+	}
+	if title == "Untitled" && len(sections) > 0 {
+		title = sections[0].Heading
+	}
+
+	result.Nodes = append(result.Nodes, gleann.PluginNode{
+		Type: "Document",
+		Data: map[string]any{
+			"path":       sourcePath,
+			"title":      title,
+			"format":     "md",
+			"summary":    "",
+			"word_count": float64(wordCount),
+			"page_count": float64(0),
+		},
+	})
+
+	// Section nodes.
+	for _, sec := range sections {
+		result.Nodes = append(result.Nodes, gleann.PluginNode{
+			Type: "Section",
+			Data: map[string]any{
+				"id":       "doc:" + sourcePath + ":" + sec.ID,
+				"heading":  sec.Heading,
+				"level":    float64(sec.Level),
+				"content":  sec.Content,
+				"summary":  sec.Summary,
+				"doc_path": sourcePath,
+			},
+		})
+	}
+
+	// Edges.
+	for _, sec := range sections {
+		fullID := "doc:" + sourcePath + ":" + sec.ID
+		if sec.ParentID == "" {
+			// Top-level section: Document → HAS_SECTION → Section
+			result.Edges = append(result.Edges, gleann.PluginEdge{
+				Type: "HAS_SECTION",
+				From: sourcePath,
+				To:   fullID,
+			})
+		} else {
+			// Child section: Parent → HAS_SUBSECTION → Child
+			parentFullID := "doc:" + sourcePath + ":" + sec.ParentID
+			result.Edges = append(result.Edges, gleann.PluginEdge{
+				Type: "HAS_SUBSECTION",
+				From: parentFullID,
+				To:   fullID,
+			})
+		}
+	}
+
+	return result
+}
+
 func readDocuments(dir string, chunkSize, chunkOverlap int, tracker *vault.Tracker) ([]gleann.Item, []*PluginDoc, error) {
 	type fileEntry struct {
 		path string
@@ -1436,6 +1505,38 @@ func readDocuments(dir string, chunkSize, chunkOverlap int, tracker *vault.Track
 				}
 
 				var rawChunks []chunking.Chunk
+
+				// Markdown files get heading-aware chunking + graph structure.
+				if chunking.IsMarkdownFile(fe.path) {
+					mdChunks := mdChunker.ChunkMarkdown(text, relPath)
+					if len(mdChunks) > 0 {
+						var items []gleann.Item
+						for _, ch := range mdChunks {
+							items = append(items, gleann.Item{
+								Text:     ch.Text,
+								Metadata: ch.Metadata,
+							})
+						}
+
+						// Also produce graph-ready PluginResult for KuzuDB.
+						sections := chunking.ParseMarkdownHeadings(text)
+						if len(sections) > 0 {
+							wordCount := len(strings.Fields(text))
+							pResult := markdownToPluginResult(sections, relPath, wordCount)
+							pluginDocsMu.Lock()
+							pluginDocs = append(pluginDocs, &PluginDoc{
+								Result:     pResult,
+								SourcePath: relPath,
+							})
+							pluginDocsMu.Unlock()
+						}
+
+						resCh <- result{items: items}
+						continue
+					}
+					// No headings found — fall through to code/sentence chunking.
+				}
+
 				if chunking.IsCodeFile(fe.path) {
 					rawChunks = codeSplitter.ChunkWithMetadata(text, metadata)
 				} else {
