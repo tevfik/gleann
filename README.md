@@ -26,6 +26,8 @@ The result is a highly portable system that boots in milliseconds, respects your
 - **Flexible Intelligence (Local or Cloud)**: Run LLMs 100% locally via llama.cpp for total privacy, or connect to any OpenAI-compatible API for high-reasoning tasks.
 - **Advanced RAG (Faiss / HNSW & Kuzu Graph DB)**: Indexes documents and code semantically (vector) and relationally (graph), not just via simple keyword matching.
 - **Smart Chunking (Tree-sitter)**: Intelligent AST-aware partitioning preserves the structural integrity of your code functions and classes.
+- **Graph-Augmented Search**: Search results are enriched with callers/callees from the AST graph, giving LLMs structural code context alongside semantic matches.
+- **Impact Analysis**: Blast radius analysis via BFS traversal — find all direct and transitive callers of any symbol and the files they belong to.
 - **Model Context Protocol (MCP) Server**: A background service that bridges the gap between your local context and AI tools like Cursor or Claude Desktop.
 - **Sleek and Fast Terminal Interface (TUI)**: A keyboard-centric, fluid interface that brings your documents and code to life directly in your shell.
 
@@ -89,6 +91,12 @@ gleann search my-docs "what is HNSW?"
 # Search with reranking
 gleann search my-docs "what is HNSW?" --rerank
 
+# Search with graph context (callers/callees enrichment)
+gleann search my-code "handleSearch" --graph
+
+# Rebuild an index from scratch (remove + build)
+gleann rebuild my-code --docs ./src --graph
+
 # Chat with an index
 gleann chat my-docs
 
@@ -122,6 +130,9 @@ Gleann supports external **Plugins** for parsing complex files via local HTTP AP
 - [x] MCP server (embedded)
 - [x] Setup wizard + install
 - [x] AST Graph Indexer (KuzuDB)
+- [x] Graph-Augmented Search (callers/callees in search results)
+- [x] Impact Analysis endpoint (BFS blast radius)
+- [x] Rebuild command (convenience remove + build)
 
 ## License
 

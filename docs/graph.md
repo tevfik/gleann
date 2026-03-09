@@ -8,11 +8,17 @@ gleann can build a property graph of your codebase **in parallel** with the vect
 # Build the vector index AND the call graph at the same time
 gleann build my-code --docs ./src --graph
 
+# Rebuild from scratch (remove + build)
+gleann rebuild my-code --docs ./src --graph
+
 # Query direct and transitive dependencies (outgoing CALLS)
 gleann graph deps "github.com/tevfik/gleann/pkg/gleann.MyFunc" --index my-code
 
 # Query callers (incoming CALLS)
 gleann graph callers "github.com/tevfik/gleann/pkg/gleann.MyFunc" --index my-code
+
+# Search with graph context (callers/callees enrichment in results)
+gleann search my-code "handleSearch" --graph
 ```
 
 ## Graph Schema
@@ -30,12 +36,60 @@ gleann graph callers "github.com/tevfik/gleann/pkg/gleann.MyFunc" --index my-cod
 
 ## MCP Integration (Yaver / Cursor / Claude Code)
 
-When `gleann mcp` is running, AI editors can call two new tools:
+When `gleann mcp` is running, AI editors can call these graph tools:
 
 - **`gleann_graph_deps`** — returns what a given symbol depends on  
 - **`gleann_graph_callers`** — returns who calls a given symbol
+- **`gleann_impact`** — blast radius analysis: direct callers, transitive callers, affected files
 
 The AI can autonomously trace code execution paths without leaving the editor.
+
+## Graph-Augmented Search
+
+When searching with `--graph` (CLI) or `graph_context: true` (API/MCP), each search result is enriched with structural context from the AST graph:
+
+- **Symbols in the same file**: Declarations found in the matched file
+- **Callers**: Functions/methods that call each symbol
+- **Callees**: Functions/methods called by each symbol
+
+This gives LLMs both semantic (vector) and structural (graph) context in a single query. Only symbols with at least one relationship are included (max 5 per file).
+
+### API Usage
+
+```bash
+# REST API
+curl -X POST http://localhost:8080/search -d '{
+  "index": "my-code",
+  "query": "handleSearch",
+  "graph_context": true
+}'
+
+# MCP tool call
+{"tool": "gleann_search", "arguments": {"index": "my-code", "query": "handleSearch", "graph_context": true}}
+```
+
+## Impact Analysis
+
+Find the blast radius of changing any symbol — all direct callers, transitive callers (via BFS), and affected files.
+
+```bash
+# REST API
+curl -X POST http://localhost:8080/graph -d '{
+  "index": "my-code",
+  "query_type": "impact",
+  "symbol": "github.com/tevfik/gleann/pkg/gleann.Search",
+  "max_depth": 5
+}'
+
+# MCP tool call
+{"tool": "gleann_impact", "arguments": {"index": "my-code", "symbol": "...", "max_depth": 5}}
+```
+
+Response includes:
+- **Direct Callers**: Functions that directly call the target symbol
+- **Transitive Callers**: All callers up to N hops away (BFS traversal)
+- **Affected Files**: Files containing any of the callers
+- **Depth**: Maximum traversal depth used
 
 ## Supported Languages
 

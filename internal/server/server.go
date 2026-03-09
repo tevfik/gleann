@@ -142,6 +142,7 @@ type searchRequest struct {
 	RerankModel         string                  `json:"rerank_model,omitempty"`
 	MetadataFilters     []gleann.MetadataFilter `json:"metadata_filters,omitempty"`
 	FilterLogic         string                  `json:"filter_logic,omitempty"`
+	GraphContext        bool                    `json:"graph_context,omitempty"`
 }
 
 type searchResponse struct {
@@ -191,6 +192,9 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.FilterLogic != "" {
 		opts = append(opts, gleann.WithFilterLogic(req.FilterLogic))
+	}
+	if req.GraphContext {
+		opts = append(opts, gleann.WithGraphContext(true))
 	}
 
 	// Set up per-request reranker if requested.

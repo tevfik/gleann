@@ -136,11 +136,23 @@ type SymbolInfo struct {
 	Name string
 }
 
+// ImpactResult holds the blast radius analysis for a symbol change.
+type ImpactResult struct {
+	Symbol            string   `json:"symbol"`             // The symbol being changed
+	DirectCallers     []string `json:"direct_callers"`     // Symbols that directly call this
+	TransitiveCallers []string `json:"transitive_callers"` // Symbols reachable via transitive callers
+	AffectedFiles     []string `json:"affected_files"`     // Files containing affected symbols
+	Depth             int      `json:"depth"`              // Max traversal depth used
+}
+
 // GraphDB represents a graph database backend capable of querying AST and document relationships.
 type GraphDB interface {
 	Callees(callerFQN string) ([]Callee, error)
 	Callers(calleeFQN string) ([]Callee, error)
 	SymbolsInFile(filePath string) ([]Callee, error)
 	DocumentSymbols(docPath string) ([]SymbolInfo, error)
+	// Impact performs a transitive caller analysis (blast radius) for the given FQN.
+	// maxDepth controls how many hops to traverse (0 = unlimited, capped at 10).
+	Impact(fqn string, maxDepth int) (*ImpactResult, error)
 	Close()
 }

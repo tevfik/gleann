@@ -139,6 +139,21 @@ func (h *kuzuHandle) Close() {
 	h.db.Close()
 }
 
+func (h *kuzuHandle) Impact(fqn string, maxDepth int) (*ImpactResponse, error) {
+	result, err := h.db.Impact(fqn, maxDepth)
+	if err != nil {
+		return nil, err
+	}
+	return &ImpactResponse{
+		Symbol:            result.Symbol,
+		DirectCallers:     result.DirectCallers,
+		TransitiveCallers: result.TransitiveCallers,
+		AffectedFiles:     result.AffectedFiles,
+		Depth:             result.Depth,
+		TotalAffected:     len(result.DirectCallers) + len(result.TransitiveCallers),
+	}, nil
+}
+
 func toGraphNodes(callees []gleann.Callee) []GraphNode {
 	nodes := make([]GraphNode, len(callees))
 	for i, c := range callees {

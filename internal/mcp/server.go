@@ -67,6 +67,7 @@ func NewServer(cfg Config) *Server {
 	s.AddTool(srv.buildAskTool(), srv.handleAsk)
 	s.AddTool(srv.buildGraphNeighborsTool(), srv.handleGraphNeighbors)
 	s.AddTool(srv.buildDocumentLinksTool(), srv.handleDocumentLinks)
+	s.AddTool(srv.buildImpactTool(), srv.handleImpact)
 
 	// Register generic index list resource
 	s.AddResource(mcp.Resource{
@@ -290,6 +291,9 @@ func (s *Server) handleSearch(ctx context.Context, request mcp.CallToolRequest) 
 		searchOpts = append(searchOpts, gleann.WithMetadataFilter(filters...))
 		searchOpts = append(searchOpts, gleann.WithFilterLogic(logic))
 	}
+	if gc, ok := args["graph_context"].(bool); ok && gc {
+		searchOpts = append(searchOpts, gleann.WithGraphContext(true))
+	}
 
 	results, err := searcher.Search(ctx, query, searchOpts...)
 	if err != nil {
@@ -307,6 +311,20 @@ func (s *Server) handleSearch(ctx context.Context, request mcp.CallToolRequest) 
 			source = fmt.Sprintf(" [%v]", metaSource)
 		}
 		sb.WriteString(fmt.Sprintf("---\nResult [%d]%s (Score: %.4f):\n%s\n", i+1, source, r.Score, r.Text))
+
+		// Append graph context if available.
+		if r.GraphContext != nil && len(r.GraphContext.Symbols) > 0 {
+			sb.WriteString("Graph Context:\n")
+			for _, sym := range r.GraphContext.Symbols {
+				sb.WriteString(fmt.Sprintf("  • %s (%s)\n", sym.FQN, sym.Kind))
+				if len(sym.Callers) > 0 {
+					sb.WriteString(fmt.Sprintf("    ← callers: %s\n", strings.Join(sym.Callers, ", ")))
+				}
+				if len(sym.Callees) > 0 {
+					sb.WriteString(fmt.Sprintf("    → callees: %s\n", strings.Join(sym.Callees, ", ")))
+				}
+			}
+		}
 	}
 
 	return mcp.NewToolResultText(sb.String()), nil
@@ -377,8 +395,10 @@ func (s *Server) buildAskTool() mcp.Tool {
 					"type":        "string",
 					"description": "Logic to combine filters ('and' or 'or'). Default is 'and'.",
 					"enum":        []string{"and", "or"},
-				},
-			},
+				}, "graph_context": map[string]interface{}{
+					"type":        "boolean",
+					"description": "When true, enrich each result with graph-derived context: symbols in the same file and their caller/callee relationships. Requires a graph index to exist.",
+				}},
 			Required: []string{"index", "question"},
 		},
 	}
@@ -561,6 +581,101 @@ func (s *Server) handleDocumentLinks(ctx context.Context, request mcp.CallToolRe
 	if !found {
 		sb.WriteString("No symbols explicitly explained by this document in the graph.\n")
 	}
+
+	return mcp.NewToolResultText(sb.String()), nil
+}
+
+// --- Impact Analysis Tool ---
+
+func (s *Server) buildImpactTool() mcp.Tool {
+	return mcp.Tool{
+		Name:        "gleann_impact",
+		Description: "Analyze the blast radius of changing a symbol. Returns all direct and transitive callers plus affected files. Use this before making code changes to understand the impact.",
+		InputSchema: mcp.ToolInputSchema{
+			Type: "object",
+			Properties: map[string]interface{}{
+				"index": map[string]interface{}{
+					"type":        "string",
+					"description": "Name of the index to query",
+				},
+				"symbol": map[string]interface{}{
+					"type":        "string",
+					"description": "The Fully Qualified Name of the symbol to analyze (e.g. 'pkg.MyStruct.MyMethod')",
+				},
+				"max_depth": map[string]interface{}{
+					"type":        "integer",
+					"description": "Maximum traversal depth for transitive callers (default 5, max 10)",
+				},
+			},
+			Required: []string{"index", "symbol"},
+		},
+	}
+}
+
+func (s *Server) handleImpact(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	args, ok := request.Params.Arguments.(map[string]interface{})
+	if !ok {
+		return mcp.NewToolResultError("invalid arguments format"), nil
+	}
+
+	indexName, _ := args["index"].(string)
+	symbol, _ := args["symbol"].(string)
+	maxDepth := 5
+	if d, ok := args["max_depth"].(float64); ok && d > 0 {
+		maxDepth = int(d)
+	}
+
+	if indexName == "" || symbol == "" {
+		return mcp.NewToolResultError("index and symbol are required"), nil
+	}
+
+	searcher, err := s.getSearcher(indexName)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("Error loading index %q: %v", indexName, err)), nil
+	}
+
+	db := searcher.GraphDB()
+	if db == nil {
+		return mcp.NewToolResultError(fmt.Sprintf("Graph database not found or not initialized for index %q", indexName)), nil
+	}
+
+	impact, err := db.Impact(symbol, maxDepth)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("Impact analysis failed: %v", err)), nil
+	}
+
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("Impact Analysis for %s (depth: %d):\n\n", symbol, impact.Depth))
+
+	sb.WriteString("=== Direct Callers ===\n")
+	if len(impact.DirectCallers) == 0 {
+		sb.WriteString("None found.\n")
+	} else {
+		for _, c := range impact.DirectCallers {
+			sb.WriteString(fmt.Sprintf("- %s\n", c))
+		}
+	}
+
+	sb.WriteString("\n=== Transitive Callers ===\n")
+	if len(impact.TransitiveCallers) == 0 {
+		sb.WriteString("None found.\n")
+	} else {
+		for _, c := range impact.TransitiveCallers {
+			sb.WriteString(fmt.Sprintf("- %s\n", c))
+		}
+	}
+
+	sb.WriteString("\n=== Affected Files ===\n")
+	if len(impact.AffectedFiles) == 0 {
+		sb.WriteString("None found.\n")
+	} else {
+		for _, f := range impact.AffectedFiles {
+			sb.WriteString(fmt.Sprintf("- %s\n", f))
+		}
+	}
+
+	total := len(impact.DirectCallers) + len(impact.TransitiveCallers)
+	sb.WriteString(fmt.Sprintf("\nTotal: %d affected symbols, %d affected files\n", total, len(impact.AffectedFiles)))
 
 	return mcp.NewToolResultText(sb.String()), nil
 }

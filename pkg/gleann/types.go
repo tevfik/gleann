@@ -15,12 +15,29 @@ const (
 	DefaultLlamaCPPHost = "http://localhost:8787"
 )
 
+// GraphContextInfo holds graph-derived context for a search result.
+// When graph-augmented search is enabled, each result is enriched with
+// symbols declared in the same file and their caller/callee relationships.
+type GraphContextInfo struct {
+	// Symbols declared in the same source file as the search result.
+	Symbols []SymbolNeighbors `json:"symbols,omitempty"`
+}
+
+// SymbolNeighbors holds a symbol and its direct callers/callees from the code graph.
+type SymbolNeighbors struct {
+	FQN     string   `json:"fqn"`
+	Kind    string   `json:"kind"`
+	Callers []string `json:"callers,omitempty"`
+	Callees []string `json:"callees,omitempty"`
+}
+
 // SearchResult represents a single search result with score and metadata.
 type SearchResult struct {
-	ID       int64          `json:"id"`
-	Text     string         `json:"text"`
-	Score    float32        `json:"score"`
-	Metadata map[string]any `json:"metadata,omitempty"`
+	ID           int64             `json:"id"`
+	Text         string            `json:"text"`
+	Score        float32           `json:"score"`
+	Metadata     map[string]any    `json:"metadata,omitempty"`
+	GraphContext *GraphContextInfo `json:"graph_context,omitempty"`
 }
 
 // Item represents a text item to be indexed.
@@ -172,6 +189,10 @@ type SearchConfig struct {
 
 	// FilterLogic is "and" or "or" for combining filters (default: "and").
 	FilterLogic string `json:"filter_logic,omitempty"`
+
+	// UseGraphContext enables graph-augmented search: each result is enriched
+	// with symbols from the same file and their caller/callee relationships.
+	UseGraphContext bool `json:"use_graph_context,omitempty"`
 }
 
 // DefaultConfig returns a Config with sensible defaults.
