@@ -55,15 +55,19 @@ func buildGraphIndex(name, docsDir, indexDir string, pluginDocs []*PluginDoc) {
 	if len(pluginDocs) > 0 {
 		docStart := time.Now()
 		docIdx := indexer.NewDocIndexer(db, 512, 64)
-		var docErrors int
-		for _, pd := range pluginDocs {
-			if err := docIdx.WriteGraph(pd.Result, pd.SourcePath); err != nil {
-				fmt.Fprintf(os.Stderr, "warning: doc graph indexing failed for %s: %v\n", pd.SourcePath, err)
-				docErrors++
+
+		// Batch all documents into a single DB transaction for performance.
+		inputs := make([]*indexer.DocGraphInput, len(pluginDocs))
+		for i, pd := range pluginDocs {
+			inputs[i] = &indexer.DocGraphInput{
+				Result:     pd.Result,
+				SourcePath: pd.SourcePath,
 			}
 		}
-		indexed := len(pluginDocs) - docErrors
-		fmt.Printf("📄 Document Graph: %d documents indexed in %s\n", indexed, time.Since(docStart).Round(time.Millisecond))
+		if err := docIdx.WriteGraphBatch(inputs); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: doc graph batch indexing failed: %v\n", err)
+		}
+		fmt.Printf("📄 Document Graph: %d documents indexed in %s\n", len(pluginDocs), time.Since(docStart).Round(time.Millisecond))
 	}
 }
 

@@ -233,6 +233,117 @@ func (di *DocIndexer) WriteGraph(result *gleann.PluginResult, sourcePath string)
 	return nil
 }
 
+// WriteGraphBatch writes multiple documents to KuzuDB in a single batch.
+// Instead of per-document CSV writes and transactions (~200ms each),
+// this collects all nodes/edges across documents and does:
+//   - 1 CSV COPY for all Document nodes
+//   - 1 CSV COPY for all Section nodes
+//   - 1 transaction for all edges
+//
+// This reduces 42 × ~200ms = 8.4s down to ~1-2s.
+func (di *DocIndexer) WriteGraphBatch(docs []*DocGraphInput) error {
+	if len(docs) == 0 {
+		return nil
+	}
+
+	di.writeMu.Lock()
+	defer di.writeMu.Unlock()
+
+	start := time.Now()
+
+	// Phase 1: Collect all typed data and delete queries.
+	var allDocs []kuzu.DocumentNode
+	var allSections []kuzu.SectionNode
+	var deleteQueries []string
+	var edgeQueries []string
+
+	for _, d := range docs {
+		docNodes, sections, hasSectionEdges, hasSubsectionEdges := di.extractFromPlugin(d.Result, d.SourcePath)
+		if len(docNodes) == 0 {
+			log.Printf("[WARN] DocIndexer.WriteGraphBatch: no Document node for %s, skipping", d.SourcePath)
+			continue
+		}
+
+		// Collect delete queries for idempotent re-index.
+		deleteQueries = append(deleteQueries,
+			kuzu.DeleteDocumentChunksQuery(d.SourcePath),
+			kuzu.DeleteDocumentSectionsQuery(d.SourcePath),
+			kuzu.DeleteDocumentQuery(d.SourcePath),
+		)
+
+		allDocs = append(allDocs, docNodes...)
+		allSections = append(allSections, sections...)
+
+		for _, e := range hasSectionEdges {
+			edgeQueries = append(edgeQueries, fmt.Sprintf(
+				`MATCH (d:Document {path: %q}), (s:Section {id: %q}) MERGE (d)-[:HAS_SECTION]->(s)`,
+				e.DocPath, e.SectionID,
+			))
+		}
+		for _, e := range hasSubsectionEdges {
+			edgeQueries = append(edgeQueries, fmt.Sprintf(
+				`MATCH (p:Section {id: %q}), (c:Section {id: %q}) MERGE (p)-[:HAS_SUBSECTION]->(c)`,
+				e.ParentID, e.ChildID,
+			))
+		}
+	}
+
+	// Phase 2: Delete old data in one transaction.
+	if len(deleteQueries) > 0 {
+		if err := kuzu.ExecTxOn(di.db.Conn(), deleteQueries); err != nil {
+			log.Printf("[WARN] DocIndexer.WriteGraphBatch: delete old data: %v", err)
+		}
+	}
+
+	// Phase 3: CSV bulk load all nodes in one shot.
+	doCopy := func(tableName string, writeFunc func(p string) error) error {
+		tmp, err := os.CreateTemp("", "kuzu_doc_batch_"+tableName+"_*.csv")
+		if err != nil {
+			return err
+		}
+		csvPath := tmp.Name()
+		tmp.Close()
+		defer os.Remove(csvPath)
+
+		if err := writeFunc(csvPath); err != nil {
+			return fmt.Errorf("write %s: %w", tableName, err)
+		}
+		if err := kuzu.ExecCopyCSV(di.db.Conn(), tableName, csvPath); err != nil {
+			return fmt.Errorf("copy %s: %w", tableName, err)
+		}
+		return nil
+	}
+
+	if len(allDocs) > 0 {
+		if err := doCopy("Document", func(p string) error { return kuzu.WriteDocumentNodesCSV(p, allDocs) }); err != nil {
+			return fmt.Errorf("batch Document copy: %w", err)
+		}
+	}
+	if len(allSections) > 0 {
+		if err := doCopy("Section", func(p string) error { return kuzu.WriteSectionNodesCSV(p, allSections) }); err != nil {
+			return fmt.Errorf("batch Section copy: %w", err)
+		}
+	}
+
+	// Phase 4: Create all edges in one transaction.
+	if len(edgeQueries) > 0 {
+		if err := kuzu.ExecTxOn(di.db.Conn(), edgeQueries); err != nil {
+			return fmt.Errorf("batch doc edges: %w", err)
+		}
+	}
+
+	elapsed := time.Since(start)
+	log.Printf("[INFO] DocIndexer.WriteGraphBatch: %d documents, %d sections in %v",
+		len(allDocs), len(allSections), elapsed)
+	return nil
+}
+
+// DocGraphInput holds a single document's plugin result for batch writing.
+type DocGraphInput struct {
+	Result     *gleann.PluginResult
+	SourcePath string
+}
+
 // extractFromPlugin converts the generic PluginResult into typed KuzuDB structs.
 func (di *DocIndexer) extractFromPlugin(result *gleann.PluginResult, sourcePath string) (
 	docs []kuzu.DocumentNode,
