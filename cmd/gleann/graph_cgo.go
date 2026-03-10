@@ -22,7 +22,10 @@ func init() {
 // buildGraphIndex builds the AST graph index for the given directory
 // and writes document graph nodes/edges for plugin-extracted documents.
 // Only available when built with -tags treesitter (requires CGo + KuzuDB).
-func buildGraphIndex(name, docsDir, indexDir string, pluginDocs []*PluginDoc) {
+//
+// If changedFiles is non-empty, only those files are re-indexed (incremental mode).
+// If changedFiles is nil or empty, a full re-index of the directory is performed.
+func buildGraphIndex(name, docsDir, indexDir string, pluginDocs []*PluginDoc, changedFiles []string) {
 	// Resolve docsDir to absolute path to avoid cwd-dependent issues.
 	absDocsDir, err := filepath.Abs(docsDir)
 	if err != nil {
@@ -43,12 +46,23 @@ func buildGraphIndex(name, docsDir, indexDir string, pluginDocs []*PluginDoc) {
 	// Detect Go module name from go.mod in the docs directory.
 	module := indexer.DetectGoModule(absDocsDir)
 
-	// 1. AST code indexing (existing pipeline).
+	// 1. AST code indexing.
 	idx := indexer.New(db, module, absDocsDir)
-	if err := idx.IndexDir(absDocsDir); err != nil {
-		fmt.Fprintf(os.Stderr, "warning: graph indexing failed: %v\n", err)
+	if len(changedFiles) > 0 {
+		// Incremental mode: only re-index changed files.
+		fmt.Printf("🔄 Incremental graph update: %d changed files\n", len(changedFiles))
+		if err := idx.IndexFiles(changedFiles); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: incremental graph indexing failed: %v\n", err)
+		} else {
+			fmt.Printf("✅ Incremental Graph Index updated in %s\n", time.Since(graphStart).Round(time.Millisecond))
+		}
 	} else {
-		fmt.Printf("✅ Code Graph Index built in %s\n", time.Since(graphStart).Round(time.Millisecond))
+		// Full re-index.
+		if err := idx.IndexDir(absDocsDir); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: graph indexing failed: %v\n", err)
+		} else {
+			fmt.Printf("✅ Code Graph Index built in %s\n", time.Since(graphStart).Round(time.Millisecond))
+		}
 	}
 
 	// 2. Document graph indexing (plugin-extracted documents).

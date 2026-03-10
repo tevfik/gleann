@@ -1,0 +1,51 @@
+# ── Stage 1: Build (CGo enabled for tree-sitter + KuzuDB) ────────────────────
+FROM golang:1.24-bookworm AS builder
+
+# Install tree-sitter and KuzuDB build dependencies.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    cmake \
+    git \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /src
+
+# Cache module downloads.
+COPY go.mod go.sum ./
+COPY modules/hnsw/go.mod    modules/hnsw/go.sum    modules/hnsw/
+COPY modules/bm25/go.mod    modules/bm25/go.sum    modules/bm25/
+COPY modules/chunking/go.mod modules/chunking/go.sum modules/chunking/
+
+RUN go mod download
+
+# Copy full source.
+COPY . .
+
+# Build full binary with tree-sitter support.
+ARG VERSION=dev
+RUN CGO_ENABLED=1 GOOS=linux GOARCH=amd64 \
+    go build -tags "treesitter" \
+    -ldflags "-s -w -X main.version=${VERSION}" \
+    -o /out/gleann-full ./cmd/gleann
+
+# ── Stage 2: Runtime ─────────────────────────────────────────────────────────
+FROM debian:bookworm-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN groupadd -r gleann && useradd -r -g gleann gleann
+
+COPY --from=builder /out/gleann-full /usr/local/bin/gleann
+
+# Default index directory — mount a volume here for persistence.
+ENV GLEANN_INDEX_DIR=/data/indexes
+RUN mkdir -p /data/indexes && chown gleann:gleann /data/indexes
+
+USER gleann
+
+EXPOSE 8080
+
+ENTRYPOINT ["gleann"]
+CMD ["serve", "--port", "8080"]

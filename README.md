@@ -33,13 +33,18 @@ The result is a highly portable system that boots in milliseconds, respects your
 
 ## Documentation
 
-Detailed technical documentation and guides:
+Detailed guides:
 
-- [Architecture & Design](docs/architecture.md)
-- [FAISS Backend (Optional)](docs/faiss.md)
-- [Tree-sitter Backend (Optional)](docs/treesitter.md)
-- [AST Graph Indexer](docs/graph.md)
-- [Benchmarks & Performance](docs/benchmarks.md)
+- [Architecture & Design](docs/architecture.md) — Internals, module structure, data flow
+- [Configuration](docs/configuration.md) — Config file, CLI flags, recommended models
+- [REST API Reference](docs/api.md) — Endpoint docs, curl examples, OpenAPI/Swagger UI
+- [MCP Server](docs/mcp.md) — Setup for Cursor, Claude Desktop, and other AI editors
+- [Plugin System](docs/plugins.md) — External plugins for PDF, audio, and more
+- [AST Graph Indexer](docs/graph.md) — KuzuDB-based code graph
+- [FAISS Backend](docs/faiss.md) — Optional FAISS vector backend
+- [Tree-sitter](docs/treesitter.md) — AST-aware code chunking
+- [Benchmarks](docs/benchmarks.md) — Performance measurements
+- [Roadmap](docs/roadmap.md) — Feature roadmap and status
 
 ## Installation
 
@@ -56,6 +61,26 @@ go build -o gleann ./cmd/gleann/
 ```
 
 Requires Go 1.24+.
+
+### Docker
+
+```bash
+# Pure-Go image (~10MB, no tree-sitter/FAISS)
+docker build -t gleann .
+docker run -p 8080:8080 -v gleann-data:/data/indexes gleann serve
+
+# Full image with tree-sitter AST support (CGo)
+docker build -f Dockerfile.full -t gleann-full .
+docker run -p 8080:8080 -v gleann-data:/data/indexes gleann-full serve
+
+# docker-compose (gleann + Ollama sidecar)
+docker-compose up -d
+
+# Or via Makefile
+make docker          # Build pure-Go image
+make docker-full     # Build CGo + tree-sitter image
+make docker-run      # Run with docker-compose
+```
 
 ### Install to PATH
 
@@ -114,6 +139,12 @@ gleann build my-code --docs ./src --graph
 
 # Start MCP server (for AI editors)
 gleann mcp
+
+# Start REST API server
+gleann serve --port 8080
+
+# Open interactive API docs (Swagger UI)
+open http://localhost:8080/api/docs
 ```
 
 ### Generic Plugin Architecture
@@ -133,6 +164,21 @@ Gleann supports external **Plugins** for parsing complex files via local HTTP AP
 - [x] Graph-Augmented Search (callers/callees in search results)
 - [x] Impact Analysis endpoint (BFS blast radius)
 - [x] Rebuild command (convenience remove + build)
+- [x] Streaming chat responses (SSE)
+- [x] OpenAPI/Swagger spec for REST API
+- [x] Docker image
+- [x] Incremental Graph Update
+- [x] Multi-index search (cross-project queries)
+- [x] OpenTelemetry metrics
+- [x] Webhook notifications
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup and guidelines.
+
+## Security
+
+See [SECURITY.md](SECURITY.md) for security policy and reporting vulnerabilities.
 
 ## License
 

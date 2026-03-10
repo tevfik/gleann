@@ -1,0 +1,48 @@
+# Gleann Docker Compose — example with Ollama sidecar
+#
+# Usage:
+#   docker compose up -d
+#
+# This starts gleann in server mode with a local Ollama instance
+# for embedding computation.
+
+services:
+  gleann:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        VERSION: ${VERSION:-dev}
+    ports:
+      - "8080:8080"
+    volumes:
+      - gleann-data:/data/indexes
+    environment:
+      GLEANN_INDEX_DIR: /data/indexes
+      OLLAMA_HOST: http://ollama:11434
+      EMBEDDING_MODEL: bge-m3:latest
+      EMBEDDING_PROVIDER: ollama
+    depends_on:
+      ollama:
+        condition: service_started
+    restart: unless-stopped
+
+  ollama:
+    image: ollama/ollama:latest
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama-data:/root/.ollama
+    restart: unless-stopped
+    # Uncomment the following for GPU support:
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu]
+
+volumes:
+  gleann-data:
+  ollama-data:

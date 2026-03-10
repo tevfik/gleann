@@ -55,11 +55,11 @@ func TestNewServer_ToolNames(t *testing.T) {
 
 	// Build tools directly to verify their structure
 	builtTools := map[string]bool{
-		srv.buildSearchTool().Name:          true,
-		srv.buildListTool().Name:            true,
-		srv.buildAskTool().Name:             true,
-		srv.buildGraphNeighborsTool().Name:  true,
-		srv.buildDocumentLinksTool().Name:   true,
+		srv.buildSearchTool().Name:         true,
+		srv.buildListTool().Name:           true,
+		srv.buildAskTool().Name:            true,
+		srv.buildGraphNeighborsTool().Name: true,
+		srv.buildDocumentLinksTool().Name:  true,
 	}
 
 	for _, tt := range tools {
@@ -71,10 +71,10 @@ func TestNewServer_ToolNames(t *testing.T) {
 
 func TestParseFilters(t *testing.T) {
 	tests := []struct {
-		name          string
-		args          map[string]interface{}
-		wantCount     int
-		wantLogic     string
+		name      string
+		args      map[string]interface{}
+		wantCount int
+		wantLogic string
 	}{
 		{
 			name:      "no filters",
@@ -229,5 +229,67 @@ func TestBuildSearchTool_Schema(t *testing.T) {
 	}
 	if !required["index"] || !required["query"] {
 		t.Error("search tool should require 'index' and 'query'")
+	}
+
+	// Verify graph_context property is present in schema
+	props := tool.InputSchema.Properties
+	if _, ok := props["graph_context"]; !ok {
+		t.Error("search tool schema should include 'graph_context' property")
+	} else {
+		gcProp := props["graph_context"].(map[string]interface{})
+		if gcProp["type"] != "boolean" {
+			t.Errorf("graph_context type = %v, want boolean", gcProp["type"])
+		}
+	}
+}
+
+func TestLRUEviction(t *testing.T) {
+	tmpDir := t.TempDir()
+	srv := NewServer(Config{
+		IndexDir:          tmpDir,
+		EmbeddingProvider: "ollama",
+		EmbeddingModel:    "bge-m3",
+		OllamaHost:        gleann.DefaultOllamaHost,
+		Version:           "test",
+	})
+
+	// touchLRU should handle empty list gracefully
+	srv.touchLRU("nonexistent")
+	if len(srv.searcherLRU) != 0 {
+		t.Errorf("touchLRU on empty list should not add entries, got %d", len(srv.searcherLRU))
+	}
+
+	// evictOldest on empty should not panic
+	srv.evictOldest()
+	if len(srv.searchers) != 0 {
+		t.Error("evictOldest on empty should leave searchers empty")
+	}
+
+	// Simulate adding entries to searcherLRU and searchers
+	for i := 0; i < 3; i++ {
+		name := "idx-" + string(rune('a'+i))
+		srv.searchers[name] = nil // placeholder, Close() won't be called on nil
+		srv.searcherLRU = append(srv.searcherLRU, name)
+	}
+
+	// Touch middle entry — should move to end
+	srv.touchLRU("idx-b")
+	if srv.searcherLRU[len(srv.searcherLRU)-1] != "idx-b" {
+		t.Errorf("touchLRU should move 'idx-b' to end, got %v", srv.searcherLRU)
+	}
+
+	// Evict oldest
+	srv.evictOldest()
+	if _, ok := srv.searchers["idx-a"]; ok {
+		t.Error("evictOldest should have removed 'idx-a'")
+	}
+	if len(srv.searcherLRU) != 2 {
+		t.Errorf("after eviction LRU len = %d, want 2", len(srv.searcherLRU))
+	}
+}
+
+func TestMaxCachedSearchers(t *testing.T) {
+	if maxCachedSearchers < 1 {
+		t.Error("maxCachedSearchers should be at least 1")
 	}
 }

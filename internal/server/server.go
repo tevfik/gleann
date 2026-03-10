@@ -68,10 +68,25 @@ func (s *Server) Start() error {
 	mux.HandleFunc("POST /api/indexes/{name}/build", s.handleBuild)
 	mux.HandleFunc("DELETE /api/indexes/{name}", s.handleDeleteIndex)
 
+	// Multi-index search.
+	mux.HandleFunc("POST /api/search", s.handleMultiSearch)
+
+	// Webhook configuration.
+	mux.HandleFunc("GET /api/webhooks", s.handleListWebhooks)
+	mux.HandleFunc("POST /api/webhooks", s.handleRegisterWebhook)
+	mux.HandleFunc("DELETE /api/webhooks", s.handleDeleteWebhook)
+
+	// Metrics (Prometheus/OpenTelemetry).
+	mux.HandleFunc("GET /metrics", s.handleMetrics)
+
 	// Graph API endpoints (KuzuDB-backed code graph).
 	mux.HandleFunc("GET /api/graph/{name}", s.handleGraphStats)
 	mux.HandleFunc("POST /api/graph/{name}/query", s.handleGraphQuery)
 	mux.HandleFunc("POST /api/graph/{name}/index", s.handleGraphIndex)
+
+	// OpenAPI / Swagger documentation.
+	mux.HandleFunc("GET /api/openapi.json", s.handleOpenAPISpec)
+	mux.HandleFunc("GET /api/docs", s.handleSwaggerUI)
 
 	s.server = &http.Server{
 		Addr:         s.addr,
@@ -219,9 +234,12 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 
 	results, err := searcher.Search(r.Context(), req.Query, opts...)
 	if err != nil {
+		serverMetrics.RecordSearch(time.Since(start), true)
 		writeError(w, http.StatusInternalServerError, "search failed: "+err.Error())
 		return
 	}
+
+	serverMetrics.RecordSearch(time.Since(start), false)
 
 	writeJSON(w, http.StatusOK, searchResponse{
 		Results: results,
@@ -235,6 +253,7 @@ type askRequest struct {
 	TopK        int    `json:"top_k,omitempty"`
 	LLMModel    string `json:"llm_model,omitempty"`
 	LLMProvider string `json:"llm_provider,omitempty"`
+	Stream      bool   `json:"stream,omitempty"`
 }
 
 type askResponse struct {
@@ -261,6 +280,11 @@ func (s *Server) handleAsk(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Also support ?stream=true query param.
+	if r.URL.Query().Get("stream") == "true" {
+		req.Stream = true
+	}
+
 	searcher, err := s.getSearcher(r.Context(), name)
 	if err != nil {
 		writeError(w, http.StatusNotFound, fmt.Sprintf("index %q not found: %v", name, err))
@@ -277,12 +301,19 @@ func (s *Server) handleAsk(w http.ResponseWriter, r *http.Request) {
 
 	chat := gleann.NewChat(searcher, chatConfig)
 
-	start := time.Now()
-
 	var opts []gleann.SearchOption
 	if req.TopK > 0 {
 		opts = append(opts, gleann.WithTopK(req.TopK))
 	}
+
+	serverMetrics.RecordAsk()
+
+	if req.Stream {
+		s.handleAskStream(w, r, chat, req.Question, opts)
+		return
+	}
+
+	start := time.Now()
 
 	answer, err := chat.Ask(r.Context(), req.Question, opts...)
 	if err != nil {
@@ -298,6 +329,42 @@ func (s *Server) handleAsk(w http.ResponseWriter, r *http.Request) {
 		Sources: sources,
 		QueryMs: time.Since(start).Milliseconds(),
 	})
+}
+
+// handleAskStream streams LLM tokens via Server-Sent Events (SSE).
+// Event format:
+//
+//	data: {"token": "partial text"}\n\n     (for each token)
+//	data: [DONE]\n\n                         (final event)
+func (s *Server) handleAskStream(w http.ResponseWriter, r *http.Request, chat *gleann.LeannChat, question string, opts []gleann.SearchOption) {
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		writeError(w, http.StatusInternalServerError, "streaming not supported")
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("X-Accel-Buffering", "no") // Disable nginx buffering.
+	w.WriteHeader(http.StatusOK)
+	flusher.Flush()
+
+	callback := func(token string) {
+		data, _ := json.Marshal(map[string]string{"token": token})
+		fmt.Fprintf(w, "data: %s\n\n", data)
+		flusher.Flush()
+	}
+
+	err := chat.AskStream(r.Context(), question, callback, opts...)
+	if err != nil {
+		errData, _ := json.Marshal(map[string]string{"error": err.Error()})
+		fmt.Fprintf(w, "data: %s\n\n", errData)
+		flusher.Flush()
+	}
+
+	fmt.Fprint(w, "data: [DONE]\n\n")
+	flusher.Flush()
 }
 
 type buildRequest struct {
@@ -341,20 +408,30 @@ func (s *Server) handleBuild(w http.ResponseWriter, r *http.Request) {
 
 	start := time.Now()
 	if err := builder.Build(r.Context(), name, items); err != nil {
+		serverMetrics.RecordBuild(time.Since(start), true)
 		writeError(w, http.StatusInternalServerError, "build failed: "+err.Error())
 		return
 	}
+	buildDuration := time.Since(start)
+	serverMetrics.RecordBuild(buildDuration, false)
 
 	// Clear cached searcher.
 	s.mu.Lock()
 	delete(s.searchers, name)
 	s.mu.Unlock()
 
+	// Notify webhooks.
+	notifyWebhooks("build_complete", map[string]any{
+		"index":   name,
+		"count":   len(items),
+		"buildMs": buildDuration.Milliseconds(),
+	})
+
 	writeJSON(w, http.StatusOK, map[string]any{
 		"status":  "ok",
 		"name":    name,
 		"count":   len(items),
-		"buildMs": time.Since(start).Milliseconds(),
+		"buildMs": buildDuration.Milliseconds(),
 	})
 }
 
@@ -377,6 +454,13 @@ func (s *Server) handleDeleteIndex(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "delete failed: "+err.Error())
 		return
 	}
+
+	serverMetrics.RecordDelete()
+
+	// Notify webhooks.
+	notifyWebhooks("index_deleted", map[string]any{
+		"index": name,
+	})
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"status": "deleted",

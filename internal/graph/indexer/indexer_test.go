@@ -3,6 +3,7 @@
 package indexer_test
 
 import (
+	"os"
 	"testing"
 
 	"github.com/tevfik/gleann/internal/graph/indexer"
@@ -478,4 +479,157 @@ func TestIndexerPHPFile(t *testing.T) {
 	for _, c := range callees {
 		t.Logf("  → %s", c.FQN)
 	}
+}
+
+// ── IndexFiles (incremental) tests ──────────────────────────────
+
+func TestIndexFilesIncrementalAddsNewFile(t *testing.T) {
+	db, err := kgraph.Open("")
+	if err != nil {
+		t.Fatalf("open kuzu: %v", err)
+	}
+	defer db.Close()
+
+	idx := indexer.New(db, "github.com/test", "/fake/root")
+
+	// Index first file normally.
+	if err := idx.IndexFile("/fake/root/pkg/a.go", sampleGoSource); err != nil {
+		t.Fatalf("IndexFile a.go: %v", err)
+	}
+
+	// Verify first file symbols exist.
+	syms, err := db.SymbolsInFile("pkg/a.go")
+	if err != nil {
+		t.Fatalf("SymbolsInFile a.go: %v", err)
+	}
+	if len(syms) < 3 {
+		t.Fatalf("expected ≥3 symbols in a.go, got %d", len(syms))
+	}
+
+	// Now create a temp file for incremental indexing.
+	tmpDir := t.TempDir()
+	bPath := tmpDir + "/b.go"
+	bSource := `package testpkg
+
+func Add(a, b int) int {
+	return a + b
+}
+
+func Subtract(a, b int) int {
+	return a - b
+}
+`
+	if err := writeTestFile(bPath, bSource); err != nil {
+		t.Fatalf("write b.go: %v", err)
+	}
+
+	// Create a new indexer with the tmpDir as root so relPath works.
+	idx2 := indexer.New(db, "github.com/test", tmpDir)
+	if err := idx2.IndexFiles([]string{bPath}); err != nil {
+		t.Fatalf("IndexFiles: %v", err)
+	}
+
+	// Verify new symbols exist.
+	syms2, err := db.SymbolsInFile("b.go")
+	if err != nil {
+		t.Fatalf("SymbolsInFile b.go: %v", err)
+	}
+	if len(syms2) < 2 {
+		t.Errorf("expected ≥2 symbols in b.go, got %d", len(syms2))
+	}
+
+	// Verify old symbols still exist.
+	symsA, err := db.SymbolsInFile("pkg/a.go")
+	if err != nil {
+		t.Fatalf("SymbolsInFile a.go after incremental: %v", err)
+	}
+	if len(symsA) < 3 {
+		t.Errorf("expected a.go symbols to still exist (≥3), got %d", len(symsA))
+	}
+}
+
+func TestIndexFilesReplacesOldSymbols(t *testing.T) {
+	db, err := kgraph.Open("")
+	if err != nil {
+		t.Fatalf("open kuzu: %v", err)
+	}
+	defer db.Close()
+
+	tmpDir := t.TempDir()
+	fPath := tmpDir + "/code.go"
+
+	// Version 1.
+	v1 := `package mypkg
+
+func OldFunc() {}
+func KeepFunc() {}
+`
+	if err := writeTestFile(fPath, v1); err != nil {
+		t.Fatalf("write v1: %v", err)
+	}
+
+	idx := indexer.New(db, "testmod", tmpDir)
+	if err := idx.IndexFile(fPath, v1); err != nil {
+		t.Fatalf("IndexFile v1: %v", err)
+	}
+
+	syms, _ := db.SymbolsInFile("code.go")
+	t.Logf("v1 symbols: %d", len(syms))
+	if len(syms) < 2 {
+		t.Fatalf("expected ≥2 v1 symbols, got %d", len(syms))
+	}
+
+	// Version 2: remove OldFunc, add NewFunc.
+	v2 := `package mypkg
+
+func NewFunc() {}
+func KeepFunc() {}
+`
+	if err := writeTestFile(fPath, v2); err != nil {
+		t.Fatalf("write v2: %v", err)
+	}
+
+	if err := idx.IndexFiles([]string{fPath}); err != nil {
+		t.Fatalf("IndexFiles v2: %v", err)
+	}
+
+	syms2, _ := db.SymbolsInFile("code.go")
+	t.Logf("v2 symbols: %d", len(syms2))
+
+	hasNew, hasOld := false, false
+	for _, s := range syms2 {
+		t.Logf("  [%s] %s", s.Kind, s.FQN)
+		if s.Name == "NewFunc" {
+			hasNew = true
+		}
+		if s.Name == "OldFunc" {
+			hasOld = true
+		}
+	}
+	if !hasNew {
+		t.Error("expected NewFunc to be present after update")
+	}
+	if hasOld {
+		t.Error("expected OldFunc to be removed after update")
+	}
+}
+
+func TestIndexFilesEmptySliceIsNoop(t *testing.T) {
+	db, err := kgraph.Open("")
+	if err != nil {
+		t.Fatalf("open kuzu: %v", err)
+	}
+	defer db.Close()
+
+	idx := indexer.New(db, "test", "/fake/root")
+	if err := idx.IndexFiles(nil); err != nil {
+		t.Errorf("IndexFiles(nil) should not error, got: %v", err)
+	}
+	if err := idx.IndexFiles([]string{}); err != nil {
+		t.Errorf("IndexFiles([]) should not error, got: %v", err)
+	}
+}
+
+func writeTestFile(path, content string) error {
+	return os.WriteFile(path, []byte(content), 0o644)
 }

@@ -23,12 +23,17 @@ type Config struct {
 	Version           string
 }
 
+// maxCachedSearchers is the maximum number of searchers to keep in memory.
+// When exceeded, the least recently used searcher is evicted.
+const maxCachedSearchers = 16
+
 // Server wraps the mark3labs MCP server.
 type Server struct {
-	mcpServer *server.MCPServer
-	embedder  gleann.EmbeddingComputer
-	config    gleann.Config
-	searchers map[string]*gleann.LeannSearcher
+	mcpServer   *server.MCPServer
+	embedder    gleann.EmbeddingComputer
+	config      gleann.Config
+	searchers   map[string]*gleann.LeannSearcher
+	searcherLRU []string // tracks access order: most recent at end
 }
 
 // NewServer initializes a new MCP server that exposes Gleann capabilities using the SDK.
@@ -63,6 +68,7 @@ func NewServer(cfg Config) *Server {
 
 	// Register tools natively with the SDK
 	s.AddTool(srv.buildSearchTool(), srv.handleSearch)
+	s.AddTool(srv.buildSearchMultiTool(), srv.handleSearchMulti)
 	s.AddTool(srv.buildListTool(), srv.handleList)
 	s.AddTool(srv.buildAskTool(), srv.handleAsk)
 	s.AddTool(srv.buildGraphNeighborsTool(), srv.handleGraphNeighbors)
@@ -98,6 +104,7 @@ func (s *Server) Run() {
 
 func (s *Server) getSearcher(name string) (*gleann.LeannSearcher, error) {
 	if searcher, ok := s.searchers[name]; ok {
+		s.touchLRU(name)
 		return searcher, nil
 	}
 
@@ -107,8 +114,40 @@ func (s *Server) getSearcher(name string) (*gleann.LeannSearcher, error) {
 		return nil, err
 	}
 
+	// Evict oldest if at capacity.
+	if len(s.searchers) >= maxCachedSearchers {
+		s.evictOldest()
+	}
+
 	s.searchers[name] = searcher
+	s.searcherLRU = append(s.searcherLRU, name)
 	return searcher, nil
+}
+
+// touchLRU moves name to the end of the LRU list (most recently used).
+func (s *Server) touchLRU(name string) {
+	for i, n := range s.searcherLRU {
+		if n == name {
+			s.searcherLRU = append(s.searcherLRU[:i], s.searcherLRU[i+1:]...)
+			s.searcherLRU = append(s.searcherLRU, name)
+			return
+		}
+	}
+}
+
+// evictOldest removes the least recently used searcher from the cache.
+func (s *Server) evictOldest() {
+	if len(s.searcherLRU) == 0 {
+		return
+	}
+	oldest := s.searcherLRU[0]
+	s.searcherLRU = s.searcherLRU[1:]
+	if searcher, ok := s.searchers[oldest]; ok {
+		if searcher != nil {
+			searcher.Close()
+		}
+		delete(s.searchers, oldest)
+	}
 }
 
 // --- Resource Handlers ---
@@ -227,6 +266,10 @@ func (s *Server) buildSearchTool() mcp.Tool {
 					"type":        "string",
 					"description": "Logic to combine filters ('and' or 'or'). Default is 'and'.",
 					"enum":        []string{"and", "or"},
+				},
+				"graph_context": map[string]interface{}{
+					"type":        "boolean",
+					"description": "If true, enrich results with graph context (callers/callees from the AST-based code graph).",
 				},
 			},
 			Required: []string{"index", "query"},
