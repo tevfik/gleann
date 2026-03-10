@@ -389,6 +389,164 @@ func (idx *Indexer) IndexDir(root string) error {
 	return nil
 }
 
+// IndexFiles incrementally re-indexes only the given files. For each file it:
+//  1. Deletes the old CodeFile + Symbol nodes (and their edges) from KuzuDB
+//  2. Re-parses the file's AST and writes fresh nodes + edges
+//
+// This is much faster than IndexDir for large codebases where only a few files changed.
+// The caller is responsible for determining which files changed (e.g. via vault tracker hashes).
+func (idx *Indexer) IndexFiles(files []string) error {
+	if len(files) == 0 {
+		return nil
+	}
+
+	type docResult struct {
+		file     *kuzu.FileNode
+		symbols  []kuzu.SymbolNode
+		declares []kuzu.EdgeDeclares
+		calls    []kuzu.EdgeCalls
+	}
+
+	// Parse all files concurrently.
+	results := make([]docResult, len(files))
+	g, ctx := errgroup.WithContext(context.Background())
+	g.SetLimit(runtime.NumCPU())
+
+	for i, absPath := range files {
+		i, absPath := i, absPath
+		g.Go(func() error {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			default:
+			}
+			src, err := os.ReadFile(absPath)
+			if err != nil {
+				return fmt.Errorf("read %s: %w", absPath, err)
+			}
+			f, syms, decls, calls, err := idx.indexFileOnConn(absPath, string(src))
+			if err != nil {
+				return err
+			}
+			results[i] = docResult{f, syms, decls, calls}
+			return nil
+		})
+	}
+	if err := g.Wait(); err != nil {
+		return err
+	}
+
+	// Merge and deduplicate.
+	var allFiles []kuzu.FileNode
+	var allSymbols []kuzu.SymbolNode
+	var allDeclares []kuzu.EdgeDeclares
+	var allCalls []kuzu.EdgeCalls
+	for _, res := range results {
+		if res.file != nil {
+			allFiles = append(allFiles, *res.file)
+		}
+		allSymbols = append(allSymbols, res.symbols...)
+		allDeclares = append(allDeclares, res.declares...)
+		allCalls = append(allCalls, res.calls...)
+	}
+
+	// Deduplicate symbols.
+	seenSymbols := make(map[string]bool, len(allSymbols))
+	uniqueSymbols := make([]kuzu.SymbolNode, 0, len(allSymbols))
+	for _, sym := range allSymbols {
+		if !seenSymbols[sym.FQN] {
+			seenSymbols[sym.FQN] = true
+			uniqueSymbols = append(uniqueSymbols, sym)
+		}
+	}
+	allSymbols = uniqueSymbols
+
+	// Deduplicate declares.
+	seenDeclares := make(map[string]bool, len(allDeclares))
+	uniqueDeclares := make([]kuzu.EdgeDeclares, 0, len(allDeclares))
+	for _, d := range allDeclares {
+		key := d.FilePath + "->" + d.SymbolFQN
+		if !seenDeclares[key] {
+			seenDeclares[key] = true
+			uniqueDeclares = append(uniqueDeclares, d)
+		}
+	}
+	allDeclares = uniqueDeclares
+
+	// Deduplicate calls — only keep calls where BOTH endpoints exist.
+	seenCalls := make(map[string]bool, len(allCalls))
+	uniqueCalls := make([]kuzu.EdgeCalls, 0, len(allCalls))
+	for _, c := range allCalls {
+		key := c.CallerFQN + "->" + c.CalleeFQN
+		if !seenCalls[key] && seenSymbols[c.CallerFQN] && seenSymbols[c.CalleeFQN] {
+			seenCalls[key] = true
+			uniqueCalls = append(uniqueCalls, c)
+		}
+	}
+	allCalls = uniqueCalls
+
+	log.Printf("[INFO] Incremental graph: re-indexing %d files (%d symbols, %d declares, %d calls)",
+		len(allFiles), len(allSymbols), len(allDeclares), len(allCalls))
+
+	// Write to KuzuDB: delete old data per file, then insert new.
+	idx.writeMu.Lock()
+	defer idx.writeMu.Unlock()
+	startTx := time.Now()
+
+	// 1. Delete old data for each changed file.
+	var deleteQueries []string
+	for _, f := range allFiles {
+		deleteQueries = append(deleteQueries, kuzu.DeleteFileQueries(f.Path)...)
+	}
+	if err := kuzu.ExecTxOn(idx.db.Conn(), deleteQueries); err != nil {
+		return fmt.Errorf("delete old file data: %w", err)
+	}
+
+	// 2. COPY new data.
+	doCopy := func(tableName string, writeFunc func(p string) error) error {
+		tmp, err := os.CreateTemp("", "kuzu_"+tableName+"_*.csv")
+		if err != nil {
+			return err
+		}
+		csvPath := tmp.Name()
+		tmp.Close()
+		defer os.Remove(csvPath)
+
+		if err := writeFunc(csvPath); err != nil {
+			return fmt.Errorf("write %s: %w", tableName, err)
+		}
+		if err := kuzu.ExecCopyCSV(idx.db.Conn(), tableName, csvPath); err != nil {
+			return fmt.Errorf("copy %s: %w", tableName, err)
+		}
+		return nil
+	}
+
+	if len(allFiles) > 0 {
+		if err := doCopy("CodeFile", func(p string) error { return kuzu.WriteFileNodesCSV(p, allFiles) }); err != nil {
+			return err
+		}
+	}
+	if len(allSymbols) > 0 {
+		if err := doCopy("Symbol", func(p string) error { return kuzu.WriteSymbolNodesCSV(p, allSymbols) }); err != nil {
+			return err
+		}
+	}
+	if len(allDeclares) > 0 {
+		if err := doCopy("DECLARES", func(p string) error { return kuzu.WriteDeclaresCSV(p, allDeclares) }); err != nil {
+			return err
+		}
+	}
+	if len(allCalls) > 0 {
+		if err := doCopy("CALLS", func(p string) error { return kuzu.WriteCallsCSV(p, allCalls) }); err != nil {
+			return err
+		}
+	}
+
+	txDuration := time.Since(startTx)
+	log.Printf("[INFO] Incremental graph write complete: %d files in %v", len(allFiles), txDuration)
+	return nil
+}
+
 // relPath converts an absolute path to a path relative to idx.root.
 func (idx *Indexer) relPath(absPath string) string {
 	rel, err := filepath.Rel(idx.root, absPath)

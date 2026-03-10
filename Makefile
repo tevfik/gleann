@@ -114,6 +114,24 @@ test-faiss:
 test-treesitter:
 	go test -tags "cgo treesitter" -count=1 -timeout 60s ./modules/chunking/...
 
+# test-e2e — run E2E plugin tests locally (before commit). Requires Ollama running.
+.PHONY: test-e2e
+test-e2e: $(BINARY)
+	@echo "🧪 Running E2E tests (requires Ollama + markitdown)..."
+	go test ./tests/ -run TestE2E -v -count=1 -timeout 8m
+	@echo "✅ E2E tests passed"
+
+.PHONY: test-e2e-plugins
+test-e2e-plugins: $(BINARY)
+	@echo "🧪 Running E2E plugin bash tests..."
+	bash scripts/e2e_plugin_test.sh
+	@echo "✅ E2E plugin tests passed"
+
+# pre-commit — run all checks locally before committing
+.PHONY: pre-commit
+pre-commit: vet test test-e2e
+	@echo "✅ All pre-commit checks passed"
+
 # ── Release (local dist/ directory) ─────────────────────────────────────────
 .PHONY: release
 release: dist/gleann-$(VERSION)-linux-amd64.tar.gz dist/gleann-full-$(VERSION)-linux-amd64.tar.gz
@@ -141,6 +159,24 @@ dist/gleann-full-$(VERSION)-linux-amd64.tar.gz: $(BINARY_FULL) | $(DIST_DIR)
 clean:
 	rm -rf $(BUILD_DIR) dist/ gleann-test gleann-test-faiss
 	@echo "🧹 Cleaned"
+
+# ── Docker ──────────────────────────────────────────────────────────────────
+DOCKER_IMAGE   ?= gleann
+DOCKER_TAG     ?= $(VERSION)
+
+.PHONY: docker
+docker:
+	docker build -t $(DOCKER_IMAGE):$(DOCKER_TAG) --build-arg VERSION=$(VERSION) .
+	@echo "✅ Built $(DOCKER_IMAGE):$(DOCKER_TAG)"
+
+.PHONY: docker-full
+docker-full:
+	docker build -t $(DOCKER_IMAGE)-full:$(DOCKER_TAG) --build-arg VERSION=$(VERSION) -f Dockerfile.full .
+	@echo "✅ Built $(DOCKER_IMAGE)-full:$(DOCKER_TAG)"
+
+.PHONY: docker-run
+docker-run:
+	docker run --rm -p 8080:8080 -v gleann-data:/data/indexes $(DOCKER_IMAGE):$(DOCKER_TAG)
 
 # ── Quick dev targets ─────────────────────────────────────────────────────────
 .PHONY: dev
