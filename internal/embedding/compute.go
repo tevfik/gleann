@@ -114,20 +114,20 @@ func NewComputer(opts Options) *Computer {
 		concurrency:    opts.Concurrency,
 		promptTemplate: opts.PromptTemplate,
 		client: &http.Client{
-			// Give 60 minutes for massive GPU batch processing.
-			Timeout: 60 * time.Minute,
+			// Per-batch timeout: 5 minutes covers even large batches on modest GPUs.
+			Timeout: 5 * time.Minute,
 			Transport: &http.Transport{
 				Proxy: http.ProxyFromEnvironment,
 				DialContext: (&net.Dialer{
 					Timeout:   30 * time.Second,
-					KeepAlive: 60 * time.Minute,
+					KeepAlive: 5 * time.Minute,
 				}).DialContext,
 				ForceAttemptHTTP2:     true,
 				MaxIdleConns:          100,
 				IdleConnTimeout:       90 * time.Second,
 				TLSHandshakeTimeout:   10 * time.Second,
 				ExpectContinueTimeout: 1 * time.Second,
-				ResponseHeaderTimeout: 60 * time.Minute, // The crucial part: waiting for Ollama to process the batch
+				ResponseHeaderTimeout: 5 * time.Minute, // Waiting for Ollama to process the batch
 			},
 		},
 	}

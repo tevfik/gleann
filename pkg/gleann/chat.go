@@ -2,6 +2,7 @@
 package gleann
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -147,6 +148,82 @@ func (c *LeannChat) Ask(ctx context.Context, question string, opts ...SearchOpti
 	)
 
 	return answer, nil
+}
+
+// StreamCallback is called for each token received from the LLM.
+// Implementations must not block — the streaming goroutine waits for each call to return.
+type StreamCallback func(token string)
+
+// AskStream performs RAG: retrieves relevant context and streams the LLM answer
+// token-by-token through the callback. It behaves like Ask but delivers partial
+// results as they become available from the LLM provider.
+// The full assembled answer is also appended to conversation history.
+func (c *LeannChat) AskStream(ctx context.Context, question string, callback StreamCallback, opts ...SearchOption) error {
+	// Step 1: Retrieve relevant context.
+	results, err := c.searcher.Search(ctx, question, opts...)
+	if err != nil {
+		return fmt.Errorf("search: %w", err)
+	}
+
+	// Step 2: Build context from results.
+	var contextParts []string
+	for i, r := range results {
+		source := ""
+		if s, ok := r.Metadata["source"]; ok {
+			source = fmt.Sprintf(" (source: %v)", s)
+		}
+		contextParts = append(contextParts, fmt.Sprintf("[%d]%s %s", i+1, source, r.Text))
+	}
+	contextText := strings.Join(contextParts, "\n\n")
+
+	// Step 3: Build prompt.
+	userPrompt := fmt.Sprintf("Context:\n%s\n\nQuestion: %s\n\nAnswer based on the context above:", contextText, question)
+
+	// Step 4: Build messages.
+	messages := []ChatMessage{
+		{Role: "system", Content: c.config.SystemPrompt},
+	}
+
+	const historyLimit = 20
+	startIdx := 0
+	if len(c.history) > historyLimit {
+		startIdx = len(c.history) - historyLimit
+	}
+	messages = append(messages, c.history[startIdx:]...)
+	messages = append(messages, ChatMessage{Role: "user", Content: userPrompt})
+
+	// Step 5: Stream the answer, collecting the full text.
+	var fullAnswer strings.Builder
+	wrappedCB := func(token string) {
+		fullAnswer.WriteString(token)
+		callback(token)
+	}
+
+	if err := c.chatStream(ctx, messages, wrappedCB); err != nil {
+		return fmt.Errorf("chat stream: %w", err)
+	}
+
+	// Save to history.
+	c.history = append(c.history,
+		ChatMessage{Role: "user", Content: question},
+		ChatMessage{Role: "assistant", Content: fullAnswer.String()},
+	)
+
+	return nil
+}
+
+// chatStream sends messages to the LLM provider and streams tokens via callback.
+func (c *LeannChat) chatStream(ctx context.Context, messages []ChatMessage, callback StreamCallback) error {
+	switch c.config.Provider {
+	case LLMOllama:
+		return c.chatOllamaStream(ctx, messages, callback)
+	case LLMOpenAI:
+		return c.chatOpenAIStream(ctx, messages, callback)
+	case LLMAnthropic:
+		return c.chatAnthropicStream(ctx, messages, callback)
+	default:
+		return fmt.Errorf("unsupported LLM provider for streaming: %s", c.config.Provider)
+	}
 }
 
 // ClearHistory clears conversation history.
@@ -434,4 +511,256 @@ func (c *LeannChat) chatAnthropic(ctx context.Context, messages []ChatMessage) (
 		parts = append(parts, c.Text)
 	}
 	return strings.Join(parts, ""), nil
+}
+
+// --- Ollama Streaming ---
+
+// ollamaStreamChunk is a single NDJSON line from Ollama streaming response.
+type ollamaStreamChunk struct {
+	Message ChatMessage `json:"message"`
+	Done    bool        `json:"done"`
+}
+
+func (c *LeannChat) chatOllamaStream(ctx context.Context, messages []ChatMessage, callback StreamCallback) error {
+	reqBody := ollamaChatRequest{
+		Model:    c.config.Model,
+		Messages: messages,
+		Stream:   true,
+		Options: map[string]any{
+			"temperature": c.config.Temperature,
+		},
+	}
+	if c.config.MaxTokens > 0 {
+		reqBody.Options["num_predict"] = c.config.MaxTokens
+	}
+
+	body, err := json.Marshal(reqBody)
+	if err != nil {
+		return fmt.Errorf("marshal request: %w", err)
+	}
+
+	url := c.config.BaseURL + "/api/chat"
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	// Use a client without timeout for streaming (context handles cancellation).
+	streamClient := &http.Client{}
+	resp, err := streamClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("POST %s: %w", url, err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("POST %s returned %d: %s", url, resp.StatusCode, string(respBody))
+	}
+
+	// Ollama streams NDJSON: one JSON object per line.
+	scanner := bufio.NewScanner(resp.Body)
+	// Increase buffer for large JSON lines.
+	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+
+	for scanner.Scan() {
+		line := scanner.Bytes()
+		if len(line) == 0 {
+			continue
+		}
+
+		var chunk ollamaStreamChunk
+		if err := json.Unmarshal(line, &chunk); err != nil {
+			continue // Skip malformed lines.
+		}
+
+		if chunk.Message.Content != "" {
+			callback(chunk.Message.Content)
+		}
+
+		if chunk.Done {
+			break
+		}
+	}
+
+	return scanner.Err()
+}
+
+// --- OpenAI Streaming ---
+
+// openAIStreamChunk is a single SSE data line from OpenAI streaming response.
+type openAIStreamChunk struct {
+	Choices []struct {
+		Delta struct {
+			Content string `json:"content"`
+		} `json:"delta"`
+		FinishReason *string `json:"finish_reason"`
+	} `json:"choices"`
+}
+
+func (c *LeannChat) chatOpenAIStream(ctx context.Context, messages []ChatMessage, callback StreamCallback) error {
+	reqBody := map[string]any{
+		"model":       c.config.Model,
+		"messages":    messages,
+		"temperature": c.config.Temperature,
+		"stream":      true,
+	}
+	if c.config.MaxTokens > 0 {
+		reqBody["max_tokens"] = c.config.MaxTokens
+	}
+
+	body, err := json.Marshal(reqBody)
+	if err != nil {
+		return fmt.Errorf("marshal request: %w", err)
+	}
+
+	url := c.config.BaseURL + "/v1/chat/completions"
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if c.config.APIKey != "" {
+		req.Header.Set("Authorization", "Bearer "+c.config.APIKey)
+	}
+
+	streamClient := &http.Client{}
+	resp, err := streamClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("POST %s: %w", url, err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("POST %s returned %d: %s", url, resp.StatusCode, string(respBody))
+	}
+
+	// OpenAI sends SSE: "data: {json}\n\n" lines, ending with "data: [DONE]".
+	scanner := bufio.NewScanner(resp.Body)
+	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+
+	for scanner.Scan() {
+		line := scanner.Text()
+
+		if !strings.HasPrefix(line, "data: ") {
+			continue
+		}
+
+		data := strings.TrimPrefix(line, "data: ")
+		if data == "[DONE]" {
+			break
+		}
+
+		var chunk openAIStreamChunk
+		if err := json.Unmarshal([]byte(data), &chunk); err != nil {
+			continue
+		}
+
+		for _, choice := range chunk.Choices {
+			if choice.Delta.Content != "" {
+				callback(choice.Delta.Content)
+			}
+		}
+	}
+
+	return scanner.Err()
+}
+
+// --- Anthropic Streaming ---
+
+// anthropicStreamEvent represents a streaming event from the Anthropic API.
+type anthropicStreamEvent struct {
+	Type  string `json:"type"`
+	Delta struct {
+		Type string `json:"type"`
+		Text string `json:"text"`
+	} `json:"delta"`
+}
+
+func (c *LeannChat) chatAnthropicStream(ctx context.Context, messages []ChatMessage, callback StreamCallback) error {
+	var system string
+	var userMessages []ChatMessage
+	for _, m := range messages {
+		if m.Role == "system" {
+			system = m.Content
+		} else {
+			userMessages = append(userMessages, m)
+		}
+	}
+
+	maxTokens := c.config.MaxTokens
+	if maxTokens <= 0 {
+		maxTokens = 2048
+	}
+
+	reqBody := map[string]any{
+		"model":       c.config.Model,
+		"max_tokens":  maxTokens,
+		"messages":    userMessages,
+		"temperature": c.config.Temperature,
+		"stream":      true,
+	}
+	if system != "" {
+		reqBody["system"] = system
+	}
+
+	body, err := json.Marshal(reqBody)
+	if err != nil {
+		return fmt.Errorf("marshal request: %w", err)
+	}
+
+	url := c.config.BaseURL + "/v1/messages"
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("anthropic-version", "2023-06-01")
+	if c.config.APIKey != "" {
+		req.Header.Set("x-api-key", c.config.APIKey)
+	}
+
+	streamClient := &http.Client{}
+	resp, err := streamClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("POST %s: %w", url, err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("POST %s returned %d: %s", url, resp.StatusCode, string(respBody))
+	}
+
+	// Anthropic sends SSE: "event: content_block_delta\ndata: {...}\n\n".
+	scanner := bufio.NewScanner(resp.Body)
+	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+
+	for scanner.Scan() {
+		line := scanner.Text()
+
+		if !strings.HasPrefix(line, "data: ") {
+			continue
+		}
+
+		data := strings.TrimPrefix(line, "data: ")
+
+		var event anthropicStreamEvent
+		if err := json.Unmarshal([]byte(data), &event); err != nil {
+			continue
+		}
+
+		switch event.Type {
+		case "content_block_delta":
+			if event.Delta.Text != "" {
+				callback(event.Delta.Text)
+			}
+		case "message_stop":
+			return nil
+		}
+	}
+
+	return scanner.Err()
 }

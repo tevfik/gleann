@@ -1,0 +1,30 @@
+# Build artifacts
+build/
+dist/
+
+# Test data & cache
+*.test
+*_test.go
+tests/
+benchmarks/
+scripts/
+testdata/
+
+# Git
+.git
+.gitignore
+.github
+
+# Documentation (not needed in image)
+docs/
+*.md
+!README.md
+LICENSE
+
+# IDE & OS
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
