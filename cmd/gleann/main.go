@@ -1,67 +1,67 @@
 package main
 
 import (
-"fmt"
-"os"
+	"fmt"
+	"os"
 
-_ "github.com/tevfik/gleann/pkg/backends"
+	_ "github.com/tevfik/gleann/pkg/backends"
 )
 
 // version is set at build time via -ldflags "-X main.version=..."
 var version = "dev"
 
 func main() {
-defer cleanupLlamaCPP()
-if len(os.Args) < 2 {
-printUsage()
-os.Exit(1)
-}
+	defer cleanupLlamaCPP()
+	if len(os.Args) < 2 {
+		printUsage()
+		os.Exit(1)
+	}
 
-cmd := os.Args[1]
-args := os.Args[2:]
+	cmd := os.Args[1]
+	args := os.Args[2:]
 
-switch cmd {
-case "build":
-cmdBuild(args)
-case "search":
-cmdSearch(args)
-case "ask":
-cmdAsk(args)
-case "watch":
-cmdWatch(args)
-case "list":
-cmdList(args)
-case "remove":
-cmdRemove(args)
-case "rebuild":
-cmdRebuild(args)
-case "serve":
-cmdServe(args)
-case "info":
-cmdInfo(args)
-case "graph":
-cmdGraph(args)
-case "chat":
-cmdChat(args)
-case "mcp":
-cmdMCP()
-case "tui":
-cmdTUI()
-case "setup":
-cmdSetup()
-case "version":
-fmt.Printf("gleann %s\n", version)
-case "help", "--help", "-h":
-printUsage()
-default:
-fmt.Fprintf(os.Stderr, "unknown command: %s\n", cmd)
-printUsage()
-os.Exit(1)
-}
+	switch cmd {
+	case "build":
+		cmdBuild(args)
+	case "search":
+		cmdSearch(args)
+	case "ask":
+		cmdAsk(args)
+	case "watch":
+		cmdWatch(args)
+	case "list":
+		cmdList(args)
+	case "remove":
+		cmdRemove(args)
+	case "rebuild":
+		cmdRebuild(args)
+	case "serve":
+		cmdServe(args)
+	case "info":
+		cmdInfo(args)
+	case "graph":
+		cmdGraph(args)
+	case "chat":
+		cmdChat(args)
+	case "mcp":
+		cmdMCP()
+	case "tui":
+		cmdTUI()
+	case "setup":
+		cmdSetup()
+	case "version":
+		fmt.Printf("gleann %s\n", version)
+	case "help", "--help", "-h":
+		printUsage()
+	default:
+		fmt.Fprintf(os.Stderr, "unknown command: %s\n", cmd)
+		printUsage()
+		os.Exit(1)
+	}
 }
 
 func printUsage() {
-fmt.Println(`gleann — Lightweight Vector Database with Graph-Based Recomputation
+	fmt.Println(`gleann — Lightweight Vector Database with Graph-Based Recomputation
 
 Usage:
   gleann build  <name> --docs <dir>     Build index from documents
