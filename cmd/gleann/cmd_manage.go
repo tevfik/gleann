@@ -94,6 +94,27 @@ func cmdTUI() {
 }
 
 func cmdSetup() {
+	args := os.Args[2:]
+
+	// gleann setup --check
+	if hasFlag(args, "--check") {
+		if tui.CheckSetup() {
+			os.Exit(0)
+		}
+		os.Exit(1)
+	}
+
+	// gleann setup --bootstrap [--host URL]
+	if hasFlag(args, "--bootstrap") {
+		host := getFlag(args, "--host")
+		if _, err := tui.Bootstrap(host); err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
+
+	// Interactive TUI wizard (default).
 	for {
 		result, openPlugins, err := tui.RunOnboardWithPlugins()
 		if err != nil {

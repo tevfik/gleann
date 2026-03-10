@@ -123,5 +123,10 @@ Examples:
   gleann chat my-docs
   gleann graph deps main.handleRequest --index my-code
   gleann tui
-  gleann serve --addr :8080`)
+  gleann serve --addr :8080
+
+Setup Options:
+  --bootstrap             Quick setup with auto-detected defaults (no TUI)
+  --check                 Check if gleann is configured
+  --host <url>            Ollama host for bootstrap mode (default: http://localhost:11434)`)
 }
