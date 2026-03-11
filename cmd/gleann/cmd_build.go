@@ -20,6 +20,7 @@ import (
 	"github.com/tevfik/gleann/internal/vault"
 	"github.com/tevfik/gleann/modules/chunking"
 	"github.com/tevfik/gleann/pkg/gleann"
+	"github.com/tevfik/gleann/pkg/gleannignore"
 )
 
 func cmdBuild(args []string) {
@@ -29,6 +30,10 @@ func cmdBuild(args []string) {
 	}
 
 	name := args[0]
+	if strings.HasPrefix(name, "-") {
+		fmt.Fprintf(os.Stderr, "error: index name %q looks like a flag\nusage: gleann index build <name> --docs <dir>\n", name)
+		os.Exit(1)
+	}
 	docsDir := getFlag(args, "--docs")
 	if docsDir == "" {
 		fmt.Fprintln(os.Stderr, "error: --docs flag required")
@@ -52,7 +57,10 @@ func cmdBuild(args []string) {
 		Concurrency: config.Concurrency,
 	})
 
-	builder, err := gleann.NewBuilder(config, embedder)
+	// Wrap with embedding cache for rebuild efficiency.
+	cachedEmbedder := embedding.NewCachedComputer(embedder, embedding.CacheOptions{})
+
+	builder, err := gleann.NewBuilder(config, cachedEmbedder)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
@@ -92,6 +100,11 @@ func cmdBuild(args []string) {
 	elapsed := time.Since(start)
 	fmt.Printf("✅ Vector Index %q built: %d passages in %s\n", name, len(items), elapsed.Round(time.Millisecond))
 
+	// Report embedding cache stats.
+	if hits, total := cachedEmbedder.Stats(); total > 0 {
+		fmt.Printf("💾 Embedding cache: %d/%d hits (%.0f%%)\n", hits, total, cachedEmbedder.HitRate())
+	}
+
 	if buildGraph {
 		buildGraphIndex(name, docsDir, config.IndexDir, pluginDocs, nil)
 	}
@@ -126,29 +139,30 @@ func cmdRebuild(args []string) {
 	cmdBuild(args)
 }
 
-func buildIndex(name, docsDir string, config gleann.Config, embedder gleann.EmbeddingComputer, tracker *vault.Tracker) {
-	items, _, err := readDocuments(docsDir, config.ChunkConfig.ChunkSize, config.ChunkConfig.ChunkOverlap, tracker)
+func buildIndex(name, docsDir string, config gleann.Config, embedder gleann.EmbeddingComputer, tracker *vault.Tracker) []*PluginDoc {
+	items, pluginDocs, err := readDocuments(docsDir, config.ChunkConfig.ChunkSize, config.ChunkConfig.ChunkOverlap, tracker)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error reading documents: %v\n", err)
-		return
+		return nil
 	}
 	if len(items) == 0 {
-		return
+		return pluginDocs
 	}
 
 	builder, err := gleann.NewBuilder(config, embedder)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		return
+		return nil
 	}
 
 	start := time.Now()
 	ctx := context.Background()
 	if err := builder.Build(ctx, name, items); err != nil {
 		fmt.Fprintf(os.Stderr, "error building: %v\n", err)
-		return
+		return nil
 	}
 	fmt.Printf("✅ Rebuilt %q: %d passages in %s\n", name, len(items), time.Since(start).Round(time.Millisecond))
+	return pluginDocs
 }
 
 func readDocuments(dir string, chunkSize, chunkOverlap int, tracker *vault.Tracker) ([]gleann.Item, []*PluginDoc, error) {
@@ -175,6 +189,9 @@ func readDocuments(dir string, chunkSize, chunkOverlap int, tracker *vault.Track
 		defer pluginManager.Close()
 	}
 
+	// Load .gleannignore patterns (empty matcher if no file).
+	ignoreMatcher := gleannignore.Load(dir)
+
 	// Phase 1: collect eligible file paths (serial walk is fast — just syscalls).
 	var files []fileEntry
 	walkErr := filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
@@ -183,6 +200,9 @@ func readDocuments(dir string, chunkSize, chunkOverlap int, tracker *vault.Track
 		}
 		base := filepath.Base(path)
 
+		// Compute path relative to root dir for .gleannignore matching.
+		relPath, _ := filepath.Rel(dir, path)
+
 		if info.IsDir() {
 			if strings.HasPrefix(base, ".") && path != dir {
 				return filepath.SkipDir
@@ -190,10 +210,19 @@ func readDocuments(dir string, chunkSize, chunkOverlap int, tracker *vault.Track
 			if base == "node_modules" || base == "vendor" || base == "dist" || base == "build" || base == ".next" {
 				return filepath.SkipDir
 			}
+			// Check .gleannignore for directories.
+			if relPath != "." && ignoreMatcher.Match(relPath, true) {
+				return filepath.SkipDir
+			}
 			return nil
 		}
 
 		if strings.HasPrefix(base, ".") {
+			return nil
+		}
+
+		// Check .gleannignore for files.
+		if ignoreMatcher.Match(relPath, false) {
 			return nil
 		}
 		ext := strings.ToLower(filepath.Ext(path))
@@ -404,16 +433,22 @@ func readDocuments(dir string, chunkSize, chunkOverlap int, tracker *vault.Track
 
 func cmdWatch(args []string) {
 	if len(args) < 1 {
-		fmt.Fprintln(os.Stderr, "usage: gleann watch <name> --docs <dir> [--interval 5]")
+		fmt.Fprintln(os.Stderr, "usage: gleann index watch <name> --docs <dir> [--graph] [--interval 5]")
 		os.Exit(1)
 	}
 
 	name := args[0]
+	if strings.HasPrefix(name, "-") {
+		fmt.Fprintf(os.Stderr, "error: index name %q looks like a flag\nusage: gleann index watch <name> --docs <dir>\n", name)
+		os.Exit(1)
+	}
 	docsDir := getFlag(args, "--docs")
 	if docsDir == "" {
 		fmt.Fprintln(os.Stderr, "error: --docs flag required")
 		os.Exit(1)
 	}
+
+	buildGraph := hasFlag(args, "--graph")
 
 	intervalStr := getFlag(args, "--interval")
 	interval := 5 * time.Second
@@ -441,6 +476,9 @@ func cmdWatch(args []string) {
 		Concurrency: config.Concurrency,
 	})
 
+	// Wrap with embedding cache for rebuild efficiency.
+	cachedEmbedder := embedding.NewCachedComputer(embedder, embedding.CacheOptions{})
+
 	fmt.Printf("👁️  Watching %s for changes via fsnotify (debounce: %s)\n", docsDir, interval)
 	fmt.Printf("   Index: %s\n", name)
 	fmt.Println("   Press Ctrl+C to stop.")
@@ -465,10 +503,21 @@ func cmdWatch(args []string) {
 	defer watcher.Close()
 
 	// Initial build.
-	buildIndex(name, docsDir, config, embedder, tracker)
+	pluginDocs := buildIndex(name, docsDir, config, cachedEmbedder, tracker)
+
+	if buildGraph {
+		buildGraphIndex(name, docsDir, config.IndexDir, pluginDocs, nil)
+	}
+
+	// Accumulate changed file paths from fsnotify events.
+	var changedMu sync.Mutex
+	changedFiles := make(map[string]bool)
 
 	buildRequested := make(chan struct{}, 1)
 	watcher.OnChange = func(event fsnotify.Event) {
+		changedMu.Lock()
+		changedFiles[event.Name] = true
+		changedMu.Unlock()
 		select {
 		case buildRequested <- struct{}{}:
 		default:
@@ -493,8 +542,22 @@ func cmdWatch(args []string) {
 		case <-buildRequested:
 			// Wait for debounce interval to coalesce changes
 			time.Sleep(interval)
-			fmt.Printf("🔄 Changes detected by fsnotify, rebuilding index %q...\n", name)
-			buildIndex(name, docsDir, config, embedder, tracker)
+
+			// Collect changed files accumulated during debounce window.
+			changedMu.Lock()
+			files := make([]string, 0, len(changedFiles))
+			for f := range changedFiles {
+				files = append(files, f)
+			}
+			changedFiles = make(map[string]bool) // reset
+			changedMu.Unlock()
+
+			fmt.Printf("🔄 %d file(s) changed, rebuilding index %q...\n", len(files), name)
+			pDocs := buildIndex(name, docsDir, config, cachedEmbedder, tracker)
+
+			if buildGraph {
+				buildGraphIndex(name, docsDir, config.IndexDir, pDocs, files)
+			}
 
 			// drain any queued up builds during sleep
 			select {

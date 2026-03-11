@@ -11,9 +11,12 @@ import (
 	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/glamour"
 	"github.com/charmbracelet/lipgloss"
 
+	"github.com/tevfik/gleann/pkg/conversations"
 	"github.com/tevfik/gleann/pkg/gleann"
+	"github.com/tevfik/gleann/pkg/roles"
 )
 
 // ── Messages ───────────────────────────────────────────────────
@@ -24,10 +27,28 @@ type chatMsg struct {
 	content string
 }
 
-// answerMsg is sent when the LLM responds.
+// answerMsg is sent when the LLM responds (non-streaming fallback).
 type answerMsg struct {
 	content string
 	err     error
+}
+
+// streamStartMsg signals the start of streaming with the token channel.
+type streamStartMsg struct {
+	tokenChan <-chan string
+}
+
+// streamTokenMsg is sent for each token during streaming.
+type streamTokenMsg struct {
+	token string
+}
+
+// streamDoneMsg is sent when streaming completes.
+type streamDoneMsg struct{}
+
+// streamErrorMsg is sent when streaming fails.
+type streamErrorMsg struct {
+	err error
 }
 
 // ── Settings constants ─────────────────────────────────────────
@@ -41,6 +62,7 @@ const (
 	fieldLLMModel
 	fieldRerankToggle
 	fieldRerankModel
+	fieldRole
 	fieldSystemPrompt
 	fieldCount // sentinel
 )
@@ -64,16 +86,18 @@ type ChatModel struct {
 	indexName string
 	modelName string
 
-	messages []chatMsg
-	viewport viewport.Model
-	textarea textarea.Model
-	spinner  spinner.Model
-	waiting  bool
-	err      error
-	width    int
-	height   int
-	ready    bool
-	quitting bool
+	messages        []chatMsg
+	viewport        viewport.Model
+	textarea        textarea.Model
+	spinner         spinner.Model
+	waiting         bool
+	streamingAnswer *strings.Builder // accumulates streaming tokens (pointer to avoid copy panic)
+	streamChan      <-chan string    // channel for streaming tokens
+	err             error
+	width           int
+	height          int
+	ready           bool
+	quitting        bool
 
 	// Settings panel.
 	showSettings   bool
@@ -92,6 +116,10 @@ type ChatModel struct {
 	rerankModels   []string
 	rerankModelIdx int
 
+	// Role selector.
+	roleNames []string // available role names (includes "(none)")
+	roleIdx   int      // currently selected role index
+
 	// Embedding info (read-only display).
 	embeddingModel    string
 	embeddingProvider string
@@ -99,6 +127,11 @@ type ChatModel struct {
 	// Settings edit mode for system prompt.
 	editingPrompt bool
 	promptInput   textarea.Model
+
+	// History browser.
+	showHistory   bool
+	historyItems  []conversations.Conversation
+	historyCursor int
 }
 
 // NewChatModel creates a new chat TUI model.
@@ -219,6 +252,28 @@ func NewChatModel(chat *gleann.LeannChat, indexName, modelName string) ChatModel
 	// Fetch available reranker models using the embedding provider from `savedCfg`.
 	rerankModels, rerankModelIdx := fetchRerankModelList(savedCfg)
 
+	// Build role list from built-in registry + config roles.
+	roleNames := []string{"(none)"}
+	reg := roles.DefaultRegistry()
+	for _, name := range reg.List() {
+		roleNames = append(roleNames, name)
+	}
+	if savedCfg != nil && savedCfg.Roles != nil {
+		for name := range savedCfg.Roles {
+			// Avoid duplicates.
+			found := false
+			for _, existing := range roleNames {
+				if existing == name {
+					found = true
+					break
+				}
+			}
+			if !found {
+				roleNames = append(roleNames, name)
+			}
+		}
+	}
+
 	var initialMessages []chatMsg
 	for _, m := range chat.History() {
 		initialMessages = append(initialMessages, chatMsg{role: m.Role, content: m.Content})
@@ -232,6 +287,7 @@ func NewChatModel(chat *gleann.LeannChat, indexName, modelName string) ChatModel
 		chat:              chat,
 		indexName:         indexName,
 		modelName:         modelName,
+		streamingAnswer:   &strings.Builder{},
 		textarea:          ta,
 		spinner:           sp,
 		messages:          initialMessages,
@@ -244,6 +300,8 @@ func NewChatModel(chat *gleann.LeannChat, indexName, modelName string) ChatModel
 		rerankEnabled:     rerankEnabled,
 		rerankModels:      rerankModels,
 		rerankModelIdx:    rerankModelIdx,
+		roleNames:         roleNames,
+		roleIdx:           0, // "(none)" by default
 		embeddingModel:    embModel,
 		embeddingProvider: embProvider,
 		promptInput:       pi,
@@ -265,6 +323,11 @@ func (m ChatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// ── Settings overlay routes ──
 	if m.showSettings {
 		return m.updateSettings(msg)
+	}
+
+	// ── History overlay routes ──
+	if m.showHistory {
+		return m.updateHistory(msg)
 	}
 
 	var (
@@ -348,28 +411,101 @@ func (m ChatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case input == "/help":
 				m.messages = append(m.messages, chatMsg{
 					role: "system",
-					content: "Commands: /clear • /settings • /help • /quit\n" +
-						"Shortcuts: ctrl+s settings • pgup/pgdn scroll • esc clear/back",
+					content: "Commands: /clear • /settings • /history • /help • /quit\n" +
+						"Shortcuts: ctrl+s settings • pgup/pgdn scroll • esc clear/back\n" +
+						"CLI: --role <name> • --format <fmt> • --continue • --continue-last • --title <t>\n" +
+						"Pipe: cat file | gleann ask <index> \"question\" • --raw • --quiet",
 				})
 				m.textarea.Reset()
 				m.viewport.SetContent(m.renderMessages())
 				m.viewport.GotoBottom()
 				return m, nil
+
+			case input == "/history":
+				store := conversations.DefaultStore()
+				items, err := store.List()
+				if err != nil || len(items) == 0 {
+					m.messages = append(m.messages, chatMsg{
+						role:    "system",
+						content: "No saved conversations found.",
+					})
+					m.textarea.Reset()
+					m.viewport.SetContent(m.renderMessages())
+					m.viewport.GotoBottom()
+					return m, nil
+				}
+				m.historyItems = items
+				m.historyCursor = 0
+				m.showHistory = true
+				m.textarea.Reset()
+				m.textarea.Blur()
+				return m, nil
 			}
 
-			// Send message to LLM.
+			// Send message to LLM with streaming.
 			m.messages = append(m.messages, chatMsg{role: "user", content: input})
 			m.textarea.Reset()
 			m.textarea.Blur()
 			m.waiting = true
+			m.streamingAnswer.Reset()
+
+			// Add placeholder assistant message for streaming tokens.
+			m.messages = append(m.messages, chatMsg{role: "assistant", content: ""})
 
 			m.viewport.SetContent(m.renderMessages())
 			m.viewport.GotoBottom()
 
-			return m, tea.Batch(m.spinner.Tick, m.askLLM(input))
+			return m, tea.Batch(m.spinner.Tick, m.askLLMStream(input))
 		}
 
+	case streamStartMsg:
+		// Initialize streaming: store channel and wait for first token.
+		m.streamChan = msg.tokenChan
+		return m, waitForToken(m.streamChan)
+
+	case streamTokenMsg:
+		if m.waiting {
+			// Accumulate token and update last message (assistant).
+			m.streamingAnswer.WriteString(msg.token)
+			if len(m.messages) > 0 && m.messages[len(m.messages)-1].role == "assistant" {
+				m.messages[len(m.messages)-1].content = m.streamingAnswer.String()
+			}
+			m.viewport.SetContent(m.renderMessages())
+			m.viewport.GotoBottom()
+
+			// Wait for next token from the same channel.
+			return m, waitForToken(m.streamChan)
+		}
+		return m, nil
+
+	case streamDoneMsg:
+		m.waiting = false
+		m.streamChan = nil
+		m.viewport.SetContent(m.renderMessages())
+		m.viewport.GotoBottom()
+		// Reset textarea to clear any ANSI escape codes that may have leaked.
+		m.textarea.Reset()
+		focusCmd := m.textarea.Focus()
+		return m, focusCmd
+
+	case streamErrorMsg:
+		m.waiting = false
+		m.streamChan = nil
+		// Remove incomplete assistant message.
+		if len(m.messages) > 0 && m.messages[len(m.messages)-1].role == "assistant" {
+			m.messages = m.messages[:len(m.messages)-1]
+		}
+		m.messages = append(m.messages, chatMsg{
+			role:    "system",
+			content: "⚠ Error: " + msg.err.Error(),
+		})
+		m.viewport.SetContent(m.renderMessages())
+		m.viewport.GotoBottom()
+		focusCmd := m.textarea.Focus()
+		return m, focusCmd
+
 	case answerMsg:
+		// Fallback for non-streaming mode (shouldn't happen anymore).
 		m.waiting = false
 		if msg.err != nil {
 			m.err = msg.err
@@ -385,7 +521,6 @@ func (m ChatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.viewport.SetContent(m.renderMessages())
 		m.viewport.GotoBottom()
-		// Re-focus textarea and restart blink.
 		focusCmd := m.textarea.Focus()
 		return m, focusCmd
 
@@ -488,6 +623,172 @@ func (m ChatModel) updatePromptEdit(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
+// ── History Browser ────────────────────────────────────────────
+
+func (m ChatModel) updateHistory(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.WindowSizeMsg:
+		m.width = msg.Width
+		m.height = msg.Height
+		return m, nil
+
+	case tea.KeyMsg:
+		switch msg.String() {
+		case "ctrl+c":
+			m.quitting = true
+			return m, tea.Quit
+
+		case "esc", "q":
+			m.showHistory = false
+			focusCmd := m.textarea.Focus()
+			return m, focusCmd
+
+		case "up", "k":
+			if m.historyCursor > 0 {
+				m.historyCursor--
+			}
+
+		case "down", "j":
+			if m.historyCursor < len(m.historyItems)-1 {
+				m.historyCursor++
+			}
+
+		case "enter":
+			// Load selected conversation into chat.
+			if m.historyCursor < len(m.historyItems) {
+				conv := m.historyItems[m.historyCursor]
+				store := conversations.DefaultStore()
+				full, err := store.Load(conv.ID)
+				if err != nil {
+					m.messages = append(m.messages, chatMsg{
+						role:    "system",
+						content: "⚠ Error loading conversation: " + err.Error(),
+					})
+				} else {
+					m.messages = m.messages[:0]
+					// Restore messages from conversation.
+					for _, msg := range full.Messages {
+						if msg.Role == "system" && msg.Content != "" {
+							m.systemPrompt = msg.Content
+							continue
+						}
+						m.messages = append(m.messages, chatMsg{
+							role:    msg.Role,
+							content: msg.Content,
+						})
+					}
+					m.chat.ClearHistory()
+					// Replay into LLM history.
+					for _, msg := range full.Messages {
+						m.chat.AppendHistory(gleann.ChatMessage{
+							Role:    msg.Role,
+							Content: msg.Content,
+						})
+					}
+					m.messages = append(m.messages, chatMsg{
+						role:    "system",
+						content: fmt.Sprintf("Loaded conversation: %s (%d messages)", full.Title, len(full.Messages)),
+					})
+				}
+				m.showHistory = false
+				m.viewport.SetContent(m.renderMessages())
+				m.viewport.GotoBottom()
+				focusCmd := m.textarea.Focus()
+				return m, focusCmd
+			}
+
+		case "d", "delete":
+			// Delete selected conversation.
+			if m.historyCursor < len(m.historyItems) {
+				conv := m.historyItems[m.historyCursor]
+				store := conversations.DefaultStore()
+				_ = store.Delete(conv.ID)
+				// Refresh list.
+				items, _ := store.List()
+				m.historyItems = items
+				if m.historyCursor >= len(m.historyItems) && m.historyCursor > 0 {
+					m.historyCursor--
+				}
+				if len(m.historyItems) == 0 {
+					m.showHistory = false
+					m.messages = append(m.messages, chatMsg{
+						role:    "system",
+						content: "All conversations deleted.",
+					})
+					m.viewport.SetContent(m.renderMessages())
+					m.viewport.GotoBottom()
+					focusCmd := m.textarea.Focus()
+					return m, focusCmd
+				}
+			}
+		}
+	}
+	return m, nil
+}
+
+func (m ChatModel) viewHistory() string {
+	var b strings.Builder
+
+	b.WriteString("\n")
+	b.WriteString(TitleStyle.Render(" 📂 Conversation History "))
+	b.WriteString("\n\n")
+
+	panelW := 70
+	if m.width > 10 && m.width-10 < panelW {
+		panelW = m.width - 10
+	}
+
+	if len(m.historyItems) == 0 {
+		b.WriteString("  No saved conversations.\n")
+	} else {
+		for i, conv := range m.historyItems {
+			active := i == m.historyCursor
+			shortID := conv.ID
+			if len(shortID) > 8 {
+				shortID = shortID[:8]
+			}
+			title := conv.Title
+			if len(title) > 40 {
+				title = title[:37] + "..."
+			}
+
+			idStyle := lipgloss.NewStyle().Foreground(ColorMuted)
+			titleStyle := lipgloss.NewStyle().Foreground(ColorPrimary)
+			metaStyle := lipgloss.NewStyle().Foreground(ColorDimFg)
+			if active {
+				titleStyle = titleStyle.Bold(true).Foreground(ColorAccent)
+			}
+
+			prefix := "  "
+			if active {
+				prefix = "▸ "
+			}
+
+			msgCount := len(conv.Messages)
+			age := conv.UpdatedAt.Format("Jan 02 15:04")
+			indexLabel := conv.IndexLabel()
+			if indexLabel == "" {
+				indexLabel = "—"
+			}
+
+			line := fmt.Sprintf("%s%s %s  %s  %s  %d msgs",
+				prefix,
+				idStyle.Render(shortID),
+				titleStyle.Render(title),
+				metaStyle.Render(indexLabel),
+				metaStyle.Render(age),
+				msgCount,
+			)
+			b.WriteString(line + "\n")
+		}
+	}
+
+	b.WriteString("\n")
+	hintStyle := lipgloss.NewStyle().Foreground(ColorDimFg).PaddingLeft(2)
+	b.WriteString(hintStyle.Render("↑↓ navigate • enter load • d delete • esc back") + "\n")
+	return b.String()
+}
+
 func (m *ChatModel) adjustSetting(dir int) {
 	switch m.settingsCursor {
 	case fieldTemperature:
@@ -546,6 +847,17 @@ func (m *ChatModel) adjustSetting(dir int) {
 				m.rerankModelIdx = len(m.rerankModels) - 1
 			}
 		}
+
+	case fieldRole:
+		if len(m.roleNames) > 0 {
+			m.roleIdx += dir
+			if m.roleIdx < 0 {
+				m.roleIdx = 0
+			}
+			if m.roleIdx >= len(m.roleNames) {
+				m.roleIdx = len(m.roleNames) - 1
+			}
+		}
 	}
 }
 
@@ -570,9 +882,21 @@ func (m *ChatModel) applySettings() {
 			Provider: gleann.RerankerOllama,
 			Model:    selectedRerankModel,
 		})
-		m.chat.Searcher().SetReranker(reranker)
+		m.chat.SetReranker(reranker)
 	} else {
-		m.chat.Searcher().SetReranker(nil)
+		m.chat.SetReranker(nil)
+	}
+
+	// Apply role.
+	selectedRole := "(none)"
+	if len(m.roleNames) > 0 && m.roleIdx > 0 && m.roleIdx < len(m.roleNames) {
+		selectedRole = m.roleNames[m.roleIdx]
+		// Resolve role to system prompt via registry.
+		reg := roles.DefaultRegistry()
+		if prompts, err := reg.Get(selectedRole); err == nil && len(prompts) > 0 {
+			m.systemPrompt = prompts[0]
+			m.chat.SetSystemPrompt(m.systemPrompt)
+		}
 	}
 
 	// Build notification.
@@ -580,10 +904,14 @@ func (m *ChatModel) applySettings() {
 	if m.rerankEnabled && selectedRerankModel != "" {
 		rerankStatus = selectedRerankModel
 	}
+	roleInfo := ""
+	if selectedRole != "(none)" {
+		roleInfo = fmt.Sprintf(" • role: %s", selectedRole)
+	}
 	m.messages = append(m.messages, chatMsg{
 		role: "system",
-		content: fmt.Sprintf("Settings updated — model: %s • temp: %.1f • max tokens: %d • top-k: %d • reranker: %s",
-			m.modelName, m.temperature, m.maxTokens, m.topK, rerankStatus),
+		content: fmt.Sprintf("Settings updated — model: %s • temp: %.1f • max tokens: %d • top-k: %d • reranker: %s%s",
+			m.modelName, m.temperature, m.maxTokens, m.topK, rerankStatus, roleInfo),
 	})
 	if m.ready {
 		m.viewport.SetContent(m.renderMessages())
@@ -615,6 +943,51 @@ func (m ChatModel) askLLM(question string) tea.Cmd {
 			gleann.WithTopK(topK),
 			gleann.WithReranker(rerank))
 		return answerMsg{content: answer, err: err}
+	}
+}
+
+// askLLMStream performs RAG with streaming token delivery.
+func (m ChatModel) askLLMStream(question string) tea.Cmd {
+	chat := m.chat
+	topK := m.topK
+	rerank := m.rerankEnabled
+
+	return func() tea.Msg {
+		// Create a channel for streaming communication.
+		tokenChan := make(chan string, 100)
+
+		// Start streaming goroutine.
+		go func() {
+			defer close(tokenChan)
+			err := chat.AskStream(context.Background(), question,
+				func(token string) {
+					tokenChan <- token
+				},
+				gleann.WithTopK(topK),
+				gleann.WithReranker(rerank))
+			if err != nil {
+				// Send error as a special token.
+				tokenChan <- "\x00ERROR:" + err.Error()
+			}
+		}()
+
+		// Return start message with the token channel.
+		return streamStartMsg{tokenChan: tokenChan}
+	}
+}
+
+// waitForToken waits for the next token from the channel.
+func waitForToken(ch <-chan string) tea.Cmd {
+	return func() tea.Msg {
+		token, ok := <-ch
+		if !ok {
+			// Channel closed, streaming done.
+			return streamDoneMsg{}
+		}
+		if strings.HasPrefix(token, "\x00ERROR:") {
+			return streamErrorMsg{err: fmt.Errorf("%s", token[7:])}
+		}
+		return streamTokenMsg{token: token}
 	}
 }
 
@@ -662,7 +1035,7 @@ func (m ChatModel) renderMessages() string {
 		maxW = 60
 	}
 
-	for _, msg := range m.messages {
+	for i, msg := range m.messages {
 		switch msg.role {
 		case "system":
 			sys := lipgloss.NewStyle().
@@ -685,7 +1058,15 @@ func (m ChatModel) renderMessages() string {
 				Foreground(ColorSecondary).
 				Bold(true).
 				Render("  ⚡ gleann")
-			bubble := AssistantBubbleStyle.Width(maxW).Render(msg.content)
+			// During streaming, skip expensive glamour rendering for the active message.
+			isStreamingMsg := m.waiting && i == len(m.messages)-1
+			var rendered string
+			if isStreamingMsg {
+				rendered = msg.content // plain text while streaming
+			} else {
+				rendered = renderMarkdownContent(msg.content, maxW)
+			}
+			bubble := AssistantBubbleStyle.Width(maxW).Render(rendered)
 			b.WriteString(label + "\n" + bubble + "\n\n")
 		}
 	}
@@ -708,6 +1089,11 @@ func (m ChatModel) View() string {
 	// Settings overlay.
 	if m.showSettings {
 		return m.viewSettings()
+	}
+
+	// History overlay.
+	if m.showHistory {
+		return m.viewHistory()
 	}
 
 	var b strings.Builder
@@ -921,6 +1307,37 @@ func (m ChatModel) viewSettings() string {
 		b.WriteString("\n")
 	}
 
+	// Role selector.
+	{
+		active := m.settingsCursor == fieldRole
+		var labelStr string
+		if active {
+			labelStr = ActiveItemStyle.Render("▸ Role")
+		} else {
+			labelStr = NormalItemStyle.Render("  Role")
+		}
+		currentRole := "(none)"
+		if len(m.roleNames) > 0 && m.roleIdx < len(m.roleNames) {
+			currentRole = m.roleNames[m.roleIdx]
+		}
+		valStyle := lipgloss.NewStyle().Foreground(ColorAccent).Bold(true)
+		labelStr += "  " + valStyle.Render(currentRole)
+		b.WriteString(labelStr + "\n")
+		if active {
+			total := len(m.roleNames)
+			if total == 0 {
+				hint := lipgloss.NewStyle().Foreground(ColorDimFg).PaddingLeft(6).
+					Render("no roles configured")
+				b.WriteString(hint + "\n")
+			} else {
+				hint := lipgloss.NewStyle().Foreground(ColorDimFg).PaddingLeft(6).
+					Render(fmt.Sprintf("← → to switch (%d/%d)", m.roleIdx+1, total))
+				b.WriteString(hint + "\n")
+			}
+		}
+		b.WriteString("\n")
+	}
+
 	// System Prompt.
 	if m.editingPrompt {
 		label := LabelStyle.Render("  System Prompt")
@@ -1104,4 +1521,24 @@ func fetchRerankModelList(savedCfg *OnboardResult) ([]string, int) {
 		}
 	}
 	return names, selectedIdx
+}
+
+// renderMarkdownContent renders markdown text using glamour for rich terminal display.
+// Falls back to plain text if rendering fails.
+func renderMarkdownContent(content string, width int) string {
+	if width < 20 {
+		width = 80
+	}
+	r, err := glamour.NewTermRenderer(
+		glamour.WithStylePath("dark"), // Use fixed style instead of auto to avoid OSC codes
+		glamour.WithWordWrap(width-4), // leave some padding
+	)
+	if err != nil {
+		return content
+	}
+	rendered, err := r.Render(content)
+	if err != nil {
+		return content
+	}
+	return strings.TrimSpace(rendered)
 }
