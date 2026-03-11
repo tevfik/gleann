@@ -84,6 +84,10 @@ func cmdServe(args []string) {
 	fmt.Println("   POST /api/graph/{name}/query    Graph query (callees, callers, symbols_in_file)")
 	fmt.Println("   POST /api/graph/{name}/index    Trigger AST graph indexing")
 	fmt.Println()
+	fmt.Println("   OpenAI-Compatible Proxy:")
+	fmt.Println("   GET  /v1/models                 List indexes as OpenAI models")
+	fmt.Printf("   POST /v1/chat/completions       RAG proxy  (model: \"gleann/<index>\")\n")
+	fmt.Println()
 
 	if err := srv.Start(); err != nil {
 		fmt.Fprintf(os.Stderr, "server error: %v\n", err)
