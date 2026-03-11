@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"bufio"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -8,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 )
 
 // InstallBinary copies the current executable into targetDir.
@@ -121,39 +123,77 @@ func installDirs() []string {
 }
 
 // InstallCompletions writes shell completion scripts for bash, zsh, and fish.
+// Also ensures .bashrc/.zshrc sources the completion file (needed when
+// _python_argcomplete_global overrides bash-completion's dynamic loader).
+// Skips installation on Windows (incompatible with PowerShell).
 func InstallCompletions() []string {
 	var installed []string
 
+	// Skip on Windows - PowerShell uses different completion system
+	if runtime.GOOS == "windows" {
+		return installed
+	}
+
 	home, _ := os.UserHomeDir()
 
-	// Bash
+	// Bash (Linux, macOS, BSD)
 	bashDir := filepath.Join(home, ".local", "share", "bash-completion", "completions")
 	if err := os.MkdirAll(bashDir, 0o755); err == nil {
 		path := filepath.Join(bashDir, "gleann")
-		if err := os.WriteFile(path, []byte(bashCompletion()), 0o644); err == nil {
+		if err := os.WriteFile(path, []byte(BashCompletion()), 0o644); err == nil {
 			installed = append(installed, "bash → "+path)
+			// Ensure .bashrc sources the completion (in case dynamic loading is overridden)
+			ensureSourceLine(filepath.Join(home, ".bashrc"), path)
 		}
 	}
 
-	// Zsh
+	// Zsh (Linux, macOS, BSD)
 	zshDir := filepath.Join(home, ".local", "share", "zsh", "site-functions")
 	if err := os.MkdirAll(zshDir, 0o755); err == nil {
 		path := filepath.Join(zshDir, "_gleann")
-		if err := os.WriteFile(path, []byte(zshCompletion()), 0o644); err == nil {
+		if err := os.WriteFile(path, []byte(ZshCompletion()), 0o644); err == nil {
 			installed = append(installed, "zsh  → "+path)
 		}
 	}
 
-	// Fish
+	// Fish (Linux, macOS, BSD)
 	fishDir := filepath.Join(home, ".config", "fish", "completions")
 	if err := os.MkdirAll(fishDir, 0o755); err == nil {
 		path := filepath.Join(fishDir, "gleann.fish")
-		if err := os.WriteFile(path, []byte(fishCompletion()), 0o644); err == nil {
+		if err := os.WriteFile(path, []byte(FishCompletion()), 0o644); err == nil {
 			installed = append(installed, "fish → "+path)
 		}
 	}
 
 	return installed
+}
+
+// ensureSourceLine appends a 'source <file>' line to rcFile if not already present.
+// This is needed because _python_argcomplete_global can override bash-completion's
+// dynamic loader, preventing automatic loading from ~/.local/share/bash-completion/.
+func ensureSourceLine(rcFile, completionPath string) {
+	sourceLine := "source " + completionPath + " # gleann completion"
+
+	// Check if line already exists.
+	if f, err := os.Open(rcFile); err == nil {
+		scanner := bufio.NewScanner(f)
+		for scanner.Scan() {
+			line := strings.TrimSpace(scanner.Text())
+			if strings.Contains(line, completionPath) || strings.Contains(line, "gleann completion bash") {
+				f.Close()
+				return // Already present
+			}
+		}
+		f.Close()
+	}
+
+	// Append source line.
+	f, err := os.OpenFile(rcFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	fmt.Fprintf(f, "\n# gleann shell completion\n%s\n", sourceLine)
 }
 
 // RunInstall performs the install/uninstall steps selected during onboarding.
@@ -373,37 +413,201 @@ func RemoveCompletions() []string {
 
 // ── Completion scripts ─────────────────────────────────────────
 
-func bashCompletion() string {
+// BashCompletion returns the bash completion script content.
+func BashCompletion() string {
 	return `# gleann bash completion
-_gleann() {
-    local cur prev commands cmd
-    COMPREPLY=()
-    cur="${COMP_WORDS[COMP_CWORD]}"
-    prev="${COMP_WORDS[COMP_CWORD-1]}"
-    commands="build search ask chat watch list remove info graph serve mcp tui setup version help"
+# Install: source <(gleann completion bash)
+# Or: copy to ~/.local/share/bash-completion/completions/gleann
 
-    if [ "${COMP_CWORD}" -eq 1 ]; then
-        COMPREPLY=( $(compgen -W "$commands" -- "$cur") )
-        return 0
+_gleann_indexes() {
+    local index_dir="${GLEANN_INDEX_DIR:-$HOME/.gleann/indexes}"
+    if [[ -d "$index_dir" ]]; then
+        find "$index_dir" -maxdepth 1 -type d -exec basename {} \; 2>/dev/null | grep -v "^indexes$" | grep -v "^-"
+    fi
+}
+
+_gleann() {
+    local cur prev words cword
+    if type _init_completion &>/dev/null; then
+        _init_completion || return
+    else
+        COMPREPLY=()
+        cur="${COMP_WORDS[COMP_CWORD]}"
+        prev="${COMP_WORDS[COMP_CWORD-1]}"
+        words=("${COMP_WORDS[@]}")
+        cword=$COMP_CWORD
     fi
 
-    cmd="${COMP_WORDS[1]}"
+    local commands="index search ask serve graph chat mcp tui setup config completion version help"
+    
+    # Command-specific flags
+    local index_flags="--path --model --provider --backend --batch-size --concurrency --chunk-size --chunk-overlap --extensions --ignore --ollama-host --anthropic-api-key --openai-api-key --json"
+    local search_flags="--top-k --metric --docs --rerank --rerank-model --no-cache --no-limit --json"
+    local ask_flags="--interactive --continue --continue-last --title --role --format --raw --quiet --word-wrap --no-cache --no-limit --rerank --rerank-model --llm-model --llm-provider"
+    local chat_flags="--list --pick --show --show-last --delete --delete-older-than --continue --continue-last --title --role --format --raw --quiet --word-wrap --no-cache --no-limit --interactive --llm-model --llm-provider --rerank --rerank-model"
+    local serve_flags="--port --host"
+    local graph_flags="--show --stats --export --format"
+    local config_flags="--get --set --unset --list"
+
+    # Complete commands
+    if [[ $cword -eq 1 ]]; then
+        COMPREPLY=($(compgen -W "$commands" -- "$cur"))
+        return
+    fi
+
+    local cmd="${words[1]}"
+
     case "$cmd" in
-        build|search|ask|chat|watch)
-            COMPREPLY=( $(compgen -W "--docs --model --provider --top-k --rerank --rerank-model --llm-model --llm-provider --interactive --index-dir --metric --json --batch-size --concurrency" -- "$cur") )
-            return 0
+        index)
+            case "$prev" in
+                --path)
+                    _filedir -d
+                    return
+                    ;;
+                --backend)
+                    COMPREPLY=($(compgen -W "hnsw faiss" -- "$cur"))
+                    return
+                    ;;
+                --provider)
+                    COMPREPLY=($(compgen -W "ollama openai anthropic llamacpp" -- "$cur"))
+                    return
+                    ;;
+                --extensions)
+                    COMPREPLY=($(compgen -W ".py .js .go .rs .java .cpp .c .ts .tsx .jsx" -- "$cur"))
+                    return
+                    ;;
+                *)
+                    if [[ "$cur" == -* ]]; then
+                        COMPREPLY=($(compgen -W "$index_flags" -- "$cur"))
+                    fi
+                    ;;
+            esac
             ;;
-        remove|info|graph)
-            COMPREPLY=( $(compgen -W "--index --index-dir" -- "$cur") )
-            return 0
+        search)
+            case "$prev" in
+                --metric)
+                    COMPREPLY=($(compgen -W "cosine dot ip l2" -- "$cur"))
+                    return
+                    ;;
+                *)
+                    if [[ "$cur" == -* ]]; then
+                        COMPREPLY=($(compgen -W "$search_flags" -- "$cur"))
+                    elif [[ $cword -eq 2 ]]; then
+                        COMPREPLY=($(compgen -W "$(_gleann_indexes)" -- "$cur"))
+                    fi
+                    ;;
+            esac
+            ;;
+        ask)
+            case "$prev" in
+                --role)
+                    COMPREPLY=($(compgen -W "code shell explain architect debug test document" -- "$cur"))
+                    return
+                    ;;
+                --format)
+                    COMPREPLY=($(compgen -W "json markdown raw" -- "$cur"))
+                    return
+                    ;;
+                --llm-provider)
+                    COMPREPLY=($(compgen -W "ollama openai anthropic llamacpp" -- "$cur"))
+                    return
+                    ;;
+                --continue)
+                    return
+                    ;;
+                *)
+                    if [[ "$cur" == -* ]]; then
+                        COMPREPLY=($(compgen -W "$ask_flags" -- "$cur"))
+                    elif [[ $cword -eq 2 ]]; then
+                        # Show both indexes and flags
+                        COMPREPLY=($(compgen -W "$(_gleann_indexes) $ask_flags" -- "$cur"))
+                    else
+                        COMPREPLY=($(compgen -W "$ask_flags" -- "$cur"))
+                    fi
+                    ;;
+            esac
+            ;;
+        chat)
+            case "$prev" in
+                --llm-provider)
+                    COMPREPLY=($(compgen -W "ollama openai anthropic llamacpp" -- "$cur"))
+                    return
+                    ;;
+                --role)
+                    COMPREPLY=($(compgen -W "code shell explain architect debug test document" -- "$cur"))
+                    return
+                    ;;
+                --format)
+                    COMPREPLY=($(compgen -W "json markdown raw" -- "$cur"))
+                    return
+                    ;;
+                --continue|--show)
+                    # conversation ID completion — leave empty (user types manually)
+                    return
+                    ;;
+                *)
+                    if [[ "$cur" == -* ]]; then
+                        COMPREPLY=($(compgen -W "$chat_flags" -- "$cur"))
+                    elif [[ $cword -eq 2 ]]; then
+                        COMPREPLY=($(compgen -W "$(_gleann_indexes) $chat_flags" -- "$cur"))
+                    else
+                        COMPREPLY=($(compgen -W "$chat_flags" -- "$cur"))
+                    fi
+                    ;;
+            esac
+            ;;
+        serve)
+            if [[ "$cur" == -* ]]; then
+                COMPREPLY=($(compgen -W "$serve_flags" -- "$cur"))
+            fi
+            ;;
+        graph)
+            case "$prev" in
+                --format)
+                    COMPREPLY=($(compgen -W "dot json" -- "$cur"))
+                    return
+                    ;;
+                *)
+                    if [[ "$cur" == -* ]]; then
+                        COMPREPLY=($(compgen -W "$graph_flags" -- "$cur"))
+                    elif [[ $cword -eq 2 ]]; then
+                        COMPREPLY=($(compgen -W "$(_gleann_indexes)" -- "$cur"))
+                    fi
+                    ;;
+            esac
+            ;;
+        config)
+            case "$prev" in
+                --get|--set|--unset)
+                    COMPREPLY=($(compgen -W "embedding.provider embedding.model llm.provider llm.model ollama.host" -- "$cur"))
+                    return
+                    ;;
+                *)
+                    if [[ "$cur" == -* ]]; then
+                        COMPREPLY=($(compgen -W "$config_flags" -- "$cur"))
+                    fi
+                    ;;
+            esac
+            ;;
+        info|delete)
+            if [[ $cword -eq 2 ]]; then
+                COMPREPLY=($(compgen -W "$(_gleann_indexes)" -- "$cur"))
+            fi
+            ;;
+        completion)
+            if [[ $cword -eq 2 ]]; then
+                COMPREPLY=($(compgen -W "bash zsh fish" -- "$cur"))
+            fi
             ;;
     esac
 }
+
 complete -F _gleann gleann
 `
 }
 
-func zshCompletion() string {
+// ZshCompletion returns the zsh completion script content.
+func ZshCompletion() string {
 	return `#compdef gleann
 # gleann zsh completion
 
@@ -452,8 +656,26 @@ _gleann() {
                 '--json[Output as JSON]'
             )
             case "$words[1]" in
-                build|search|chat|ask|watch)
+                build|search|ask|watch)
                     _arguments $common_args
+                    ;;
+                chat)
+                    _arguments $common_args \
+                        '--list[List saved conversations]' \
+                        '--pick[Interactively pick a conversation]' \
+                        '--show[Show a specific conversation]:id:' \
+                        '--show-last[Show the most recent conversation]' \
+                        '--continue[Continue a previous conversation]:id:' \
+                        '--continue-last[Continue the most recent conversation]' \
+                        '--delete[Delete a conversation]:id:' \
+                        '--delete-older-than[Delete conversations older than duration]:duration:' \
+                        '--title[Set conversation title]:title:' \
+                        '--role[Use a named role]:role:(code shell explain architect debug test document)' \
+                        '--format[Output format]:format:(json markdown raw)' \
+                        '--raw[Output raw text]' \
+                        '--quiet[Suppress status messages]' \
+                        '--no-cache[Do not save conversation]' \
+                        '--interactive[Interactive mode]'
                     ;;
                 remove|info|graph)
                     _arguments \
@@ -469,7 +691,8 @@ _gleann "$@"
 `
 }
 
-func fishCompletion() string {
+// FishCompletion returns the fish completion script content.
+func FishCompletion() string {
 	return `# gleann fish completion
 complete -c gleann -f
 
@@ -491,7 +714,7 @@ complete -c gleann -n '__fish_use_subcommand' -a 'version' -d 'Show version'
 complete -c gleann -n '__fish_use_subcommand' -a 'help' -d 'Show help'
 
 # common flags
-for cmd in build search ask chat watch
+for cmd in build search ask watch
     complete -c gleann -n "__fish_seen_subcommand_from $cmd" -l docs -d 'Documents directory'
     complete -c gleann -n "__fish_seen_subcommand_from $cmd" -l model -d 'Embedding model'
     complete -c gleann -n "__fish_seen_subcommand_from $cmd" -l provider -d 'Embedding provider'
@@ -502,6 +725,27 @@ for cmd in build search ask chat watch
     complete -c gleann -n "__fish_seen_subcommand_from $cmd" -l llm-provider -d 'LLM provider'
     complete -c gleann -n "__fish_seen_subcommand_from $cmd" -l interactive -d 'Interactive mode'
 end
+
+# chat flags
+complete -c gleann -n '__fish_seen_subcommand_from chat' -l list -d 'List saved conversations'
+complete -c gleann -n '__fish_seen_subcommand_from chat' -l pick -d 'Interactively pick a conversation'
+complete -c gleann -n '__fish_seen_subcommand_from chat' -l show -d 'Show a specific conversation'
+complete -c gleann -n '__fish_seen_subcommand_from chat' -l show-last -d 'Show the most recent conversation'
+complete -c gleann -n '__fish_seen_subcommand_from chat' -l continue -d 'Continue a previous conversation'
+complete -c gleann -n '__fish_seen_subcommand_from chat' -l continue-last -d 'Continue the most recent conversation'
+complete -c gleann -n '__fish_seen_subcommand_from chat' -l delete -d 'Delete a conversation'
+complete -c gleann -n '__fish_seen_subcommand_from chat' -l delete-older-than -d 'Delete conversations older than duration'
+complete -c gleann -n '__fish_seen_subcommand_from chat' -l title -d 'Set conversation title'
+complete -c gleann -n '__fish_seen_subcommand_from chat' -l role -d 'Use a named role'
+complete -c gleann -n '__fish_seen_subcommand_from chat' -l format -d 'Output format'
+complete -c gleann -n '__fish_seen_subcommand_from chat' -l raw -d 'Output raw text'
+complete -c gleann -n '__fish_seen_subcommand_from chat' -l quiet -d 'Suppress status messages'
+complete -c gleann -n '__fish_seen_subcommand_from chat' -l no-cache -d 'Do not save conversation'
+complete -c gleann -n '__fish_seen_subcommand_from chat' -l interactive -d 'Interactive mode'
+complete -c gleann -n '__fish_seen_subcommand_from chat' -l llm-model -d 'LLM model'
+complete -c gleann -n '__fish_seen_subcommand_from chat' -l llm-provider -d 'LLM provider'
+complete -c gleann -n '__fish_seen_subcommand_from chat' -l rerank -d 'Enable reranking'
+complete -c gleann -n '__fish_seen_subcommand_from chat' -l rerank-model -d 'Reranker model'
 `
 }
 
