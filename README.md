@@ -28,6 +28,17 @@ The result is a highly portable system that boots in milliseconds, respects your
 - **Smart Chunking (Tree-sitter)**: Intelligent AST-aware partitioning preserves the structural integrity of your code functions and classes.
 - **Graph-Augmented Search**: Search results are enriched with callers/callees from the AST graph, giving LLMs structural code context alongside semantic matches.
 - **Impact Analysis**: Blast radius analysis via BFS traversal — find all direct and transitive callers of any symbol and the files they belong to.
+- **Multi-Index Chat**: Ask questions across multiple indexes simultaneously with `gleann ask docs,code "question"`. Results are merged by relevance score.
+- **Conversations**: Persistent conversation history with `--continue`, `--continue-last`, `--title`. Manage via `gleann chat --list / --show / --delete`.
+- **Roles & Format Control**: Named system prompt roles (`--role code`, `--role shell`) and output format control (`--format json`, `--format markdown`). Custom roles in config.
+- **Markdown Rendering**: Beautiful terminal markdown output via glamour. Disable with `--raw`.
+- **Word-wrap**: Terminal-aware word wrapping with `--word-wrap N` for streaming output.
+- **LLM Title Summarization**: Auto-generated conversation titles via LLM when no title is provided.
+- **Embedding Cache**: Content-hash keyed cache avoids recomputing embeddings for unchanged chunks during rebuilds.
+- **Pipe-Friendly**: Full stdin/pipe support (`cat file | gleann ask index "review"`), auto-raw mode when stdout is piped, `--quiet` for scripting.
+- **No-Cache / No-Limit**: `--no-cache` skips conversation save, `--no-limit` removes token cap for unlimited output.
+- **`.gleannignore`**: Gitignore-style patterns to exclude files during index builds.
+- **Config Management**: `gleann config show/path/edit/validate` for easy configuration.
 - **Model Context Protocol (MCP) Server**: A background service that bridges the gap between your local context and AI tools like Cursor or Claude Desktop.
 - **Sleek and Fast Terminal Interface (TUI)**: A keyboard-centric, fluid interface that brings your documents and code to life directly in your shell.
 
@@ -108,7 +119,10 @@ sudo make install
 gleann setup
 
 # Build index from documents
-gleann build my-docs --docs ./documents/
+gleann index build my-docs --docs ./documents/
+
+# Build with AST code graph
+gleann index build my-code --docs ./src --graph
 
 # Search
 gleann search my-docs "what is HNSW?"
@@ -119,23 +133,53 @@ gleann search my-docs "what is HNSW?" --rerank
 # Search with graph context (callers/callees enrichment)
 gleann search my-code "handleSearch" --graph
 
-# Rebuild an index from scratch (remove + build)
-gleann rebuild my-code --docs ./src --graph
+# Index management
+gleann index list
+gleann index info my-docs
+gleann index remove my-docs
+gleann index rebuild my-code --docs ./src --graph
+gleann index watch my-code --docs ./src --graph
 
-# Chat with an index
+# Chat with an index (interactive TUI mode)
 gleann chat my-docs
 
 # Ask a question (single-shot)
+gleann ask my-docs "Explain the architecture"
 gleann ask my-docs "Explain the architecture" --interactive
 
-# List indexes
-gleann list
+# Multi-index ask (comma-separated)
+gleann ask docs,code "How does auth work?"
+
+# Pipe input
+cat main.go | gleann ask my-code "Review this code"
+
+# Continue a conversation
+gleann ask my-docs --continue-last "What about error handling?"
+
+# Use a role and output format
+gleann ask my-docs "List the API endpoints" --role summarize --format json
+
+# Unlimited output, skip conversation save
+gleann ask my-docs "Give me everything" --no-limit --no-cache
+
+# Word-wrap streaming output at 80 columns
+gleann ask my-docs "Explain architecture" --word-wrap 80
+
+# Raw output (no markdown rendering, for scripts)
+gleann ask my-docs "List endpoints" --raw
+
+# Manage conversations
+gleann chat --list
+gleann chat --show-last
+gleann chat --delete-older-than 30d
+
+# Configuration management
+gleann config show
+gleann config edit
+gleann config validate
 
 # Launch TUI
 gleann tui
-
-# Build vector index + AST call graph simultaneously
-gleann build my-code --docs ./src --graph
 
 # Start MCP server (for AI editors)
 gleann mcp
@@ -171,6 +215,27 @@ Gleann supports external **Plugins** for parsing complex files via local HTTP AP
 - [x] Multi-index search (cross-project queries)
 - [x] OpenTelemetry metrics
 - [x] Webhook notifications
+- [x] Multi-index chat (`gleann ask idx1,idx2 "question"`)
+- [x] Conversation persistence & management (`gleann conversations`)
+- [x] Named roles (`--role code`, `--role shell`, custom in config)
+- [x] Stdin/pipe support (`cat file | gleann ask ...`)
+- [x] Output format control (`--format json/markdown/raw`)
+- [x] Raw & quiet modes (`--raw`, `--quiet`, auto-raw when piped)
+- [x] `.gleannignore` (gitignore-style build exclusions)
+- [x] Config-driven roles & format-text (`~/.gleann/config.json`)
+- [x] Word-wrap control (`--word-wrap N`)
+- [x] LLM auto-summarization for conversation titles
+- [x] REST API: role & conversation_id fields, conversation endpoints
+- [x] TUI: role selector in settings, conversation browser (`/history`)
+- [x] Embedding cache (content-hash keyed disk cache)
+- [x] CLI restructure: `gleann index list/build/remove/...` subcommands
+- [x] CLI: conversations merged into `gleann chat --list/--show/--delete`
+- [x] Markdown rendering (glamour) in CLI ask and TUI chat
+- [x] `--no-cache` flag (skip conversation save)
+- [x] `--no-limit` flag (unlimited token output)
+- [x] `gleann config` subcommand (show/path/edit/validate)
+- [x] Backward compat aliases removed (clean `gleann index *` only)
+- [x] Graph+vector watch sync (incremental graph updates with changed files)
 
 ## Contributing
 

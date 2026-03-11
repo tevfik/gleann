@@ -6,7 +6,7 @@ const (
 	DefaultEmbeddingModel = "bge-m3"
 
 	// DefaultLLMModel is the default LLM model for ask/chat commands.
-	DefaultLLMModel = "llama3.2"
+	DefaultLLMModel = "llama3.2:3b-instruct-q4_K_M"
 
 	// DefaultProvider is the default embedding provider.
 	DefaultProvider = "ollama"

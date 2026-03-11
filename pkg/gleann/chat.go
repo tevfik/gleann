@@ -39,7 +39,7 @@ type ChatConfig struct {
 func DefaultChatConfig() ChatConfig {
 	return ChatConfig{
 		Provider:    LLMOllama,
-		Model:       "llama3.2",
+		Model:       "llama3.2:3b-instruct-q4_K_M",
 		BaseURL:     DefaultOllamaHost,
 		Temperature: 0.7,
 		MaxTokens:   2048,
@@ -55,15 +55,18 @@ type ChatMessage struct {
 }
 
 // LeannChat provides RAG-based Q&A over indexed data.
+// The searcher field accepts the Searcher interface, so LeannChat works
+// transparently with a single LeannSearcher or a MultiSearcher.
 type LeannChat struct {
-	searcher *LeannSearcher
+	searcher Searcher
 	config   ChatConfig
 	history  []ChatMessage
 	client   *http.Client
 }
 
 // NewChat creates a new LeannChat instance.
-func NewChat(searcher *LeannSearcher, config ChatConfig) *LeannChat {
+// The searcher can be a *LeannSearcher (single index) or a *MultiSearcher (multi-index).
+func NewChat(searcher Searcher, config ChatConfig) *LeannChat {
 	if config.BaseURL == "" {
 		switch config.Provider {
 		case LLMOllama:
@@ -236,6 +239,12 @@ func (c *LeannChat) History() []ChatMessage {
 	return c.history
 }
 
+// AppendHistory adds a message to the conversation history without
+// triggering a search or LLM call. Used to restore saved conversations.
+func (c *LeannChat) AppendHistory(msg ChatMessage) {
+	c.history = append(c.history, msg)
+}
+
 // SaveSession saves the current chat history to a JSON file.
 // It creates the specified directory if it doesn't exist.
 func (c *LeannChat) SaveSession(dir, indexName string) (string, error) {
@@ -293,9 +302,23 @@ func (c *LeannChat) SetModel(model string) {
 	c.config.Model = model
 }
 
-// Searcher returns the underlying searcher instance.
-func (c *LeannChat) Searcher() *LeannSearcher {
+// GetSearcher returns the underlying searcher instance.
+func (c *LeannChat) GetSearcher() Searcher {
 	return c.searcher
+}
+
+// SetReranker configures reranking on the underlying searcher(s).
+// For a single LeannSearcher it sets the reranker directly.
+// For a MultiSearcher it sets the reranker on every sub-searcher.
+func (c *LeannChat) SetReranker(r Reranker) {
+	switch s := c.searcher.(type) {
+	case *LeannSearcher:
+		s.SetReranker(r)
+	case *MultiSearcher:
+		for _, sub := range s.searchers {
+			sub.SetReranker(r)
+		}
+	}
 }
 
 // chat sends messages to the LLM provider and returns the response.

@@ -2,10 +2,25 @@ package main
 
 import (
 	"fmt"
+	"os"
 
+	"github.com/mattn/go-isatty"
 	"github.com/tevfik/gleann/internal/tui"
 	"github.com/tevfik/gleann/pkg/gleann"
 )
+
+// isOutputTTY returns true if stdout is connected to a terminal.
+func isOutputTTY() bool {
+	return isatty.IsTerminal(os.Stdout.Fd()) || isatty.IsCygwinTerminal(os.Stdout.Fd())
+}
+
+// stderrf prints to stderr unless --quiet is set.
+func stderrf(args []string, format string, a ...any) {
+	if hasFlag(args, "--quiet") {
+		return
+	}
+	fmt.Fprintf(os.Stderr, format, a...)
+}
 
 // getConfig parses CLI flags into a gleann.Config.
 func getConfig(args []string) gleann.Config {

@@ -199,7 +199,7 @@ type SearchConfig struct {
 func DefaultConfig() Config {
 	return Config{
 		IndexDir:          ".",
-		Backend:           "hnsw",
+		Backend:           defaultBackend(),
 		EmbeddingModel:    "bge-m3",
 		EmbeddingProvider: "ollama",
 		OllamaHost:        DefaultOllamaHost,

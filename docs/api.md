@@ -69,6 +69,14 @@ When the server is running, interactive Swagger UI documentation is available at
 |--------|------|-------------|
 | GET | `/metrics` | Prometheus-compatible metrics |
 
+### Conversations
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/conversations` | List saved conversations |
+| GET | `/api/conversations/{id}` | Get conversation by ID |
+| DELETE | `/api/conversations/{id}` | Delete a conversation |
+
 ## Examples
 
 ### Search
@@ -94,6 +102,19 @@ curl -X POST http://localhost:8080/api/indexes/my-code/ask \
     "top_k": 10
   }'
 ```
+
+**Ask request fields**:
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `question` | string | *(required)* | Question to answer using RAG |
+| `top_k` | integer | 10 | Number of context passages to retrieve |
+| `llm_model` | string | — | LLM model name |
+| `llm_provider` | string | — | LLM provider (`ollama`, `openai`, `anthropic`) |
+| `system_prompt` | string | — | Custom system prompt for the LLM |
+| `role` | string | — | Named role (e.g. `code`, `shell`). Resolves to a system prompt from the role registry. |
+| `conversation_id` | string | — | Continue an existing conversation by ID. Restores message history. |
+| `stream` | boolean | false | Enable SSE streaming |
 
 ### Ask with SSE Streaming
 
@@ -247,6 +268,22 @@ gleann search backend-code,frontend-code "authentication"
 gleann search --all dummy "authentication"
 ```
 
+**CLI multi-index ask** (conversations work across multiple indexes):
+
+```bash
+# Ask across multiple indexes
+gleann ask docs,backend-code "How does authentication work?"
+
+# Pipe input with multi-index
+cat auth.go | gleann ask backend,frontend "Review this auth handler"
+
+# Continue a multi-index conversation
+gleann ask docs,code --continue-last "What about the error handling?"
+
+# Use a role
+gleann ask my-code "Explain this module" --role explain --format markdown
+```
+
 ### Webhooks
 
 Register a webhook to receive POST notifications for events:
@@ -321,6 +358,31 @@ gleann_cached_searchers 3
 **Available metrics**: `gleann_up`, `gleann_uptime_seconds`, `gleann_search_requests_total`, `gleann_search_errors_total`, `gleann_search_latency_avg_ms`, `gleann_multi_search_requests_total`, `gleann_build_requests_total`, `gleann_build_errors_total`, `gleann_build_latency_avg_ms`, `gleann_ask_requests_total`, `gleann_delete_requests_total`, `gleann_webhooks_fired_total`, `gleann_cached_searchers`.
 
 **Grafana / Prometheus integration**: Point your Prometheus scraper at `http://<host>:8080/metrics`.
+
+### Conversations
+
+Manage saved conversation history:
+
+```bash
+# List all conversations
+curl http://localhost:8080/api/conversations
+
+# Get a specific conversation by ID (full or prefix)
+curl http://localhost:8080/api/conversations/a1b2c3d4
+
+# Delete a conversation
+curl -X DELETE http://localhost:8080/api/conversations/a1b2c3d4
+
+# Ask with a role
+curl -X POST http://localhost:8080/api/indexes/my-code/ask \
+  -H 'Content-Type: application/json' \
+  -d '{"question": "Review this code", "role": "code"}'
+
+# Continue an existing conversation
+curl -X POST http://localhost:8080/api/indexes/my-code/ask \
+  -H 'Content-Type: application/json' \
+  -d '{"question": "What about error handling?", "conversation_id": "a1b2c3d4..."}'
+```
 
 ## CORS
 
