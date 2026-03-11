@@ -91,6 +91,10 @@ func (s *Server) Start() error {
 	mux.HandleFunc("POST /api/graph/{name}/query", s.handleGraphQuery)
 	mux.HandleFunc("POST /api/graph/{name}/index", s.handleGraphIndex)
 
+	// OpenAI-compatible proxy endpoints.
+	mux.HandleFunc("GET /v1/models", s.handleListModels)
+	mux.HandleFunc("POST /v1/chat/completions", s.handleChatCompletions)
+
 	// OpenAPI / Swagger documentation.
 	mux.HandleFunc("GET /api/openapi.json", s.handleOpenAPISpec)
 	mux.HandleFunc("GET /api/docs", s.handleSwaggerUI)

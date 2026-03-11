@@ -32,6 +32,7 @@ func (s *Server) openAPISpec() map[string]any {
 			{"name": "graph", "description": "KuzuDB code graph queries"},
 			{"name": "webhooks", "description": "Webhook notification management"},
 			{"name": "metrics", "description": "Prometheus-compatible metrics"},
+			{"name": "proxy", "description": "OpenAI-compatible RAG proxy (model: \"gleann/<index>\")"},
 		},
 		"paths": map[string]any{
 			"/health": map[string]any{
@@ -458,6 +459,51 @@ func (s *Server) openAPISpec() map[string]any {
 					},
 				},
 			},
+			"/v1/models": map[string]any{
+				"get": map[string]any{
+					"tags":        []string{"proxy"},
+					"summary":     "List available models (indexes)",
+					"description": "Returns gleann indexes as OpenAI-compatible model objects. Use gleann/<index> as the model in chat completions.",
+					"operationId": "listModels",
+					"responses": map[string]any{
+						"200": map[string]any{
+							"description": "Model list",
+							"content": map[string]any{
+								"application/json": map[string]any{
+									"schema": refSchema("ModelList"),
+								},
+							},
+						},
+					},
+				},
+			},
+			"/v1/chat/completions": map[string]any{
+				"post": map[string]any{
+					"tags":        []string{"proxy"},
+					"summary":     "OpenAI-compatible RAG chat completions",
+					"description": "Drop-in for OpenAI chat completions. Set model to gleann/<index> to enable RAG. Multi-index: gleann/a,b. Pure LLM: gleann/.\n\nOptional override headers:\n- X-Gleann-Top-K: number of RAG results (default: config top_k)\n- X-Gleann-Min-Score: minimum similarity score",
+					"operationId": "chatCompletions",
+					"requestBody": map[string]any{
+						"required": true,
+						"content": map[string]any{
+							"application/json": map[string]any{
+								"schema": refSchema("ChatCompletionRequest"),
+							},
+						},
+					},
+					"responses": map[string]any{
+						"200": map[string]any{
+							"description": "Chat completion (or SSE stream when stream=true)",
+							"content": map[string]any{
+								"application/json":  map[string]any{"schema": refSchema("ChatCompletionResponse")},
+								"text/event-stream": map[string]any{"schema": map[string]any{"type": "string"}},
+							},
+						},
+						"400": map[string]any{"description": "Invalid request"},
+						"500": map[string]any{"description": "LLM or RAG error"},
+					},
+				},
+			},
 		},
 		"components": map[string]any{
 			"schemas": map[string]any{
@@ -681,6 +727,61 @@ func (s *Server) openAPISpec() map[string]any {
 						"url":    map[string]any{"type": "string", "description": "Endpoint URL to receive POST notifications"},
 						"events": map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Event types to subscribe to: build_complete, index_deleted, *"},
 						"secret": map[string]any{"type": "string", "description": "Optional secret for HMAC-SHA256 payload signing (X-Gleann-Signature header)"},
+					},
+				},
+				"ChatCompletionRequest": map[string]any{
+					"type":     "object",
+					"required": []string{"model", "messages"},
+					"properties": map[string]any{
+						"model":       map[string]any{"type": "string", "example": "gleann/my-docs", "description": "gleann/<index> for RAG, gleann/ for pure LLM"},
+						"messages":    map[string]any{"type": "array", "items": refSchema("ChatMessage"), "description": "Conversation history + latest user message"},
+						"stream":      map[string]any{"type": "boolean", "default": false, "description": "Enable SSE streaming"},
+						"temperature": map[string]any{"type": "number", "format": "float"},
+						"max_tokens":  map[string]any{"type": "integer"},
+					},
+				},
+				"ChatMessage": map[string]any{
+					"type":     "object",
+					"required": []string{"role", "content"},
+					"properties": map[string]any{
+						"role":    map[string]any{"type": "string", "enum": []string{"system", "user", "assistant"}},
+						"content": map[string]any{"type": "string"},
+					},
+				},
+				"ChatCompletionResponse": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"id":      map[string]any{"type": "string"},
+						"object":  map[string]any{"type": "string", "example": "chat.completion"},
+						"created": map[string]any{"type": "integer"},
+						"model":   map[string]any{"type": "string"},
+						"choices": map[string]any{
+							"type": "array",
+							"items": map[string]any{
+								"type": "object",
+								"properties": map[string]any{
+									"index":         map[string]any{"type": "integer"},
+									"message":       refSchema("ChatMessage"),
+									"finish_reason": map[string]any{"type": "string"},
+								},
+							},
+						},
+					},
+				},
+				"ModelObject": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"id":       map[string]any{"type": "string", "example": "gleann/my-docs"},
+						"object":   map[string]any{"type": "string", "example": "model"},
+						"created":  map[string]any{"type": "integer"},
+						"owned_by": map[string]any{"type": "string", "example": "gleann"},
+					},
+				},
+				"ModelList": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"object": map[string]any{"type": "string", "example": "list"},
+						"data":   map[string]any{"type": "array", "items": refSchema("ModelObject")},
 					},
 				},
 			},
