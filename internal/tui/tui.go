@@ -209,48 +209,15 @@ func runChatFlow() error {
 		return fmt.Errorf("index list: %w", err)
 	}
 	il := result.(IndexListModel)
+	if il.Quitting() {
+		return nil // esc/q → go back
+	}
+
 	indexName := il.Selected()
-	if indexName == "" {
-		return nil // cancelled
-	}
+	skipped := il.Skipped()
 
-	// Clean dummy "auto-scan" host strings injected by UI
-	embHost := cfg.OllamaHost
-	if strings.Contains(embHost, "(auto-scan") {
-		embHost = ""
-	}
-
-	// Start embedded servers if needed.
-	if cfg.EmbeddingProvider == "llamacpp" {
-		fmt.Printf("🚀 Starting embedded llama.cpp server for embedding model %s\n", cfg.EmbeddingModel)
-		embedRunner := llamacpp.NewRunner(cfg.EmbeddingModel)
-		if err := embedRunner.Start(context.Background()); err != nil {
-			return fmt.Errorf("failed to start embedded llama-server: %w", err)
-		}
-		defer embedRunner.Stop()
-
-		cfg.EmbeddingProvider = "openai"
-		embHost = embedRunner.BaseURL()
-		cfg.OpenAIAPIKey = "gleann-embedded"
-		fmt.Printf("✅ Embedded llama-server is ready at %s\n", embHost)
-	}
-
-	// Set up searcher.
-	embedder := embedding.NewComputer(embedding.Options{
-		Provider: embedding.Provider(cfg.EmbeddingProvider),
-		Model:    cfg.EmbeddingModel,
-		BaseURL:  embHost,
-	})
-	searcher := gleann.NewSearcher(cfg, embedder)
-	ctx := context.Background()
-	if err := searcher.Load(ctx, indexName); err != nil {
-		return fmt.Errorf("load index %q: %w", indexName, err)
-	}
-	defer searcher.Close()
-
-	// Set up chat.
+	// Set up LLM config (shared for both RAG and pure LLM mode).
 	chatCfg := gleann.DefaultChatConfig()
-	// Use saved LLM settings if available.
 	savedCfg := LoadSavedConfig()
 	if savedCfg != nil {
 		if savedCfg.LLMProvider != "" {
@@ -280,13 +247,50 @@ func runChatFlow() error {
 			fmt.Printf("✅ Embedded chat llama-server is ready at %s\n", chatCfg.BaseURL)
 		}
 	}
-	// Ensure BaseURL for Ollama.
 	if chatCfg.Provider == gleann.LLMOllama && chatCfg.BaseURL == "" {
 		chatCfg.BaseURL = cfg.OllamaHost
 	}
 
-	chat := gleann.NewChat(searcher, chatCfg)
+	// Pure LLM mode — no index selected.
+	if skipped || indexName == "" {
+		searcher := gleann.NullSearcher{}
+		chat := gleann.NewChat(searcher, chatCfg)
+		return RunChat(chat, "(no index)", chatCfg.Model)
+	}
 
+	// RAG mode — load the selected index.
+	embHost := cfg.OllamaHost
+	if strings.Contains(embHost, "(auto-scan") {
+		embHost = ""
+	}
+
+	if cfg.EmbeddingProvider == "llamacpp" {
+		fmt.Printf("🚀 Starting embedded llama.cpp server for embedding model %s\n", cfg.EmbeddingModel)
+		embedRunner := llamacpp.NewRunner(cfg.EmbeddingModel)
+		if err := embedRunner.Start(context.Background()); err != nil {
+			return fmt.Errorf("failed to start embedded llama-server: %w", err)
+		}
+		defer embedRunner.Stop()
+
+		cfg.EmbeddingProvider = "openai"
+		embHost = embedRunner.BaseURL()
+		cfg.OpenAIAPIKey = "gleann-embedded"
+		fmt.Printf("✅ Embedded llama-server is ready at %s\n", embHost)
+	}
+
+	embedder := embedding.NewComputer(embedding.Options{
+		Provider: embedding.Provider(cfg.EmbeddingProvider),
+		Model:    cfg.EmbeddingModel,
+		BaseURL:  embHost,
+	})
+	searcher := gleann.NewSearcher(cfg, embedder)
+	ctx := context.Background()
+	if err := searcher.Load(ctx, indexName); err != nil {
+		return fmt.Errorf("load index %q: %w", indexName, err)
+	}
+	defer searcher.Close()
+
+	chat := gleann.NewChat(searcher, chatCfg)
 	return RunChat(chat, indexName, chatCfg.Model)
 }
 

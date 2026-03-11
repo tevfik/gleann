@@ -18,6 +18,7 @@ type IndexListModel struct {
 	height   int
 	selected string
 	quitting bool
+	skipped  bool // user chose "no index" (pure LLM mode)
 	err      error
 }
 
@@ -49,26 +50,43 @@ func (m IndexListModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.cursor > 0 {
 				m.cursor--
 			}
-		case "down", "j":
-			if m.cursor < len(m.indexes)-1 {
-				m.cursor++
-			}
-		case "enter":
-			if len(m.indexes) > 0 {
+		case "enter", " ":
+			// Cursor past all real indexes → "no index" option.
+			if m.cursor >= len(m.indexes) {
+				m.skipped = true
+			} else if len(m.indexes) > 0 {
 				m.selected = m.indexes[m.cursor].Name
+			} else {
+				// no indexes at all, Enter also skips to LLM mode
+				m.skipped = true
 			}
 			return m, tea.Quit
+		case "down", "j":
+			// +1 for the "no index" row
+			if m.cursor < len(m.indexes) {
+				m.cursor++
+			}
 		}
 	}
 	return m, nil
 }
 
-// Selected returns the chosen index name (empty if cancelled).
+// Selected returns the chosen index name (empty if cancelled or skipped).
 func (m IndexListModel) Selected() string {
 	if m.quitting {
 		return ""
 	}
 	return m.selected
+}
+
+// Quitting returns true when the user pressed esc/q/ctrl+c to cancel.
+func (m IndexListModel) Quitting() bool {
+	return m.quitting
+}
+
+// Skipped returns true when the user chose "Continue without index" (pure LLM).
+func (m IndexListModel) Skipped() bool {
+	return m.skipped
 }
 
 func (m IndexListModel) View() string {
@@ -85,12 +103,17 @@ func (m IndexListModel) View() string {
 	}
 
 	if len(m.indexes) == 0 {
-		b.WriteString(lipgloss.NewStyle().Foreground(ColorMuted).Render("  No indexes found. Run  gleann build  first."))
+		b.WriteString(lipgloss.NewStyle().Foreground(ColorMuted).Render("  No indexes found."))
+		b.WriteString("\n")
+		noIdxStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#7C9EFF"))
+		b.WriteString(ActiveItemStyle.Render("▸ ") + noIdxStyle.Render("Continue without index (pure LLM)"))
 		b.WriteString("\n\n")
-		b.WriteString(HelpStyle.Render("  esc back"))
+		b.WriteString(HelpStyle.Render("  enter continue • esc back"))
 		return b.String()
 	}
 
+	// Show the "no index" option at the bottom.
+	noIdxRow := len(m.indexes)
 	for i, idx := range m.indexes {
 		cursor := "  "
 		nameStyle := NormalItemStyle
@@ -98,18 +121,24 @@ func (m IndexListModel) View() string {
 			cursor = ActiveItemStyle.Render("▸ ")
 			nameStyle = ActiveItemStyle
 		}
-
 		name := nameStyle.Render(idx.Name)
 		info := lipgloss.NewStyle().Foreground(ColorDimFg).Render(
 			fmt.Sprintf("  %d passages • %s • %s", idx.NumPassages, idx.Backend, idx.EmbeddingModel),
 		)
-
 		b.WriteString(cursor + name + info + "\n")
+	}
+
+	// "No index" row.
+	b.WriteString("\n")
+	noIdxStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#7C9EFF"))
+	if m.cursor == noIdxRow {
+		b.WriteString(ActiveItemStyle.Render("▸ ") + noIdxStyle.Render("Continue without index (pure LLM)") + "\n")
+	} else {
+		b.WriteString("   " + noIdxStyle.Render("Continue without index (pure LLM)") + "\n")
 	}
 
 	b.WriteString("\n")
 	b.WriteString(HelpStyle.Render("  ↑/↓ navigate • enter select • esc back"))
 	b.WriteString("\n")
-
 	return b.String()
 }
