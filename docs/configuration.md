@@ -31,7 +31,17 @@ Location: `~/.gleann/config.json`
   "ollama_host": "http://localhost:11434",
   "index_dir": "~/.gleann/indexes",
   "llm_provider": "ollama",
-  "llm_model": "llama3.2"
+  "llm_model": "llama3.2",
+  "quiet": false,
+  "word_wrap": 0,
+  "roles": {
+    "devops": ["You are a DevOps expert. Focus on CI/CD, containerization, and infrastructure."],
+    "security": ["You are a security auditor. Identify vulnerabilities and suggest fixes."]
+  },
+  "format_text": {
+    "json": "Respond ONLY with valid JSON. No markdown, no explanation.",
+    "csv": "Respond with CSV data. Use commas as separators, include a header row."
+  }
 }
 ```
 
@@ -47,6 +57,10 @@ Location: `~/.gleann/config.json`
 | `index_dir` | `~/.gleann/indexes` | Where indexes are stored |
 | `llm_provider` | `ollama` | Provider for ask/chat: `ollama`, `openai`, `anthropic` |
 | `llm_model` | `llama3.2` | LLM model for ask/chat commands |
+| `quiet` | `false` | Suppress status messages globally |
+| `word_wrap` | `0` | Wrap output at N columns (0 = terminal width) |
+| `roles` | — | Custom named roles (map of name → system prompt lines) |
+| `format_text` | — | Custom format instructions (map of format name → instruction) |
 
 ## CLI Flags
 
@@ -84,6 +98,30 @@ CLI flags override both defaults and config file values.
 --graph                 # Build AST code graph
 --prune                 # Prune unchanged files
 --no-mmap               # Disable memory-mapped access
+```
+
+### Ask & Chat Options
+
+```bash
+--interactive           # Interactive multi-turn chat mode
+--continue <id>         # Continue a previous conversation
+--continue-last         # Continue the most recent conversation
+--title <title>         # Set conversation title
+--role <role>            # Use a named role (code, shell, explain, summarize, or custom)
+--format <fmt>           # Output format: json, markdown, raw
+--raw                    # Output raw text (no formatting); auto-enabled when piped
+--quiet                  # Suppress status messages (for scripting)
+--word-wrap <n>          # Wrap output at N columns (default: terminal width)
+```
+
+### Conversation Management
+
+```bash
+gleann conversations --list                # List all saved conversations
+gleann conversations --show <id>           # Show a specific conversation
+gleann conversations --show-last           # Show the most recent conversation
+gleann conversations --delete <id> [id...] # Delete specific conversations
+gleann conversations --delete-older-than 30d  # Delete old conversations
 ```
 
 ## Recommended Models

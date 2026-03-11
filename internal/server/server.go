@@ -13,7 +13,9 @@ import (
 	"time"
 
 	"github.com/tevfik/gleann/internal/embedding"
+	"github.com/tevfik/gleann/pkg/conversations"
 	"github.com/tevfik/gleann/pkg/gleann"
+	"github.com/tevfik/gleann/pkg/roles"
 
 	// Register HNSW backend.
 	_ "github.com/tevfik/gleann/pkg/backends"
@@ -78,6 +80,11 @@ func (s *Server) Start() error {
 
 	// Metrics (Prometheus/OpenTelemetry).
 	mux.HandleFunc("GET /metrics", s.handleMetrics)
+
+	// Conversation management.
+	mux.HandleFunc("GET /api/conversations", s.handleListConversations)
+	mux.HandleFunc("GET /api/conversations/{id}", s.handleGetConversation)
+	mux.HandleFunc("DELETE /api/conversations/{id}", s.handleDeleteConversation)
 
 	// Graph API endpoints (KuzuDB-backed code graph).
 	mux.HandleFunc("GET /api/graph/{name}", s.handleGraphStats)
@@ -249,11 +256,14 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 }
 
 type askRequest struct {
-	Question    string `json:"question"`
-	TopK        int    `json:"top_k,omitempty"`
-	LLMModel    string `json:"llm_model,omitempty"`
-	LLMProvider string `json:"llm_provider,omitempty"`
-	Stream      bool   `json:"stream,omitempty"`
+	Question       string `json:"question"`
+	TopK           int    `json:"top_k,omitempty"`
+	LLMModel       string `json:"llm_model,omitempty"`
+	LLMProvider    string `json:"llm_provider,omitempty"`
+	SystemPrompt   string `json:"system_prompt,omitempty"`
+	Role           string `json:"role,omitempty"`
+	ConversationID string `json:"conversation_id,omitempty"`
+	Stream         bool   `json:"stream,omitempty"`
 }
 
 type askResponse struct {
@@ -298,8 +308,30 @@ func (s *Server) handleAsk(w http.ResponseWriter, r *http.Request) {
 	if req.LLMProvider != "" {
 		chatConfig.Provider = gleann.LLMProvider(req.LLMProvider)
 	}
+	if req.SystemPrompt != "" {
+		chatConfig.SystemPrompt = req.SystemPrompt
+	}
+
+	// Resolve named role to system prompt.
+	if req.Role != "" && req.SystemPrompt == "" {
+		reg := roles.DefaultRegistry()
+		if prompt, err := reg.SystemPrompt(req.Role); err == nil {
+			chatConfig.SystemPrompt = prompt
+		}
+	}
 
 	chat := gleann.NewChat(searcher, chatConfig)
+
+	// Restore conversation history if continuing.
+	if req.ConversationID != "" {
+		convStore := conversations.DefaultStore()
+		conv, err := convStore.Load(req.ConversationID)
+		if err == nil {
+			for _, m := range conv.Messages {
+				chat.AppendHistory(gleann.ChatMessage{Role: m.Role, Content: m.Content})
+			}
+		}
+	}
 
 	var opts []gleann.SearchOption
 	if req.TopK > 0 {
@@ -465,6 +497,83 @@ func (s *Server) handleDeleteIndex(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"status": "deleted",
 		"name":   name,
+	})
+}
+
+// --- Conversation Handlers ---
+
+func (s *Server) handleListConversations(w http.ResponseWriter, r *http.Request) {
+	store := conversations.DefaultStore()
+	convs, err := store.List()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to list conversations: "+err.Error())
+		return
+	}
+
+	type convSummary struct {
+		ID        string `json:"id"`
+		ShortID   string `json:"short_id"`
+		Title     string `json:"title"`
+		Model     string `json:"model"`
+		Indexes   string `json:"indexes"`
+		Messages  int    `json:"message_count"`
+		CreatedAt string `json:"created_at"`
+		UpdatedAt string `json:"updated_at"`
+	}
+
+	var items []convSummary
+	for _, c := range convs {
+		items = append(items, convSummary{
+			ID:        c.ID,
+			ShortID:   conversations.ShortID(c.ID),
+			Title:     c.Title,
+			Model:     c.Model,
+			Indexes:   c.IndexLabel(),
+			Messages:  c.MessageCount(),
+			CreatedAt: c.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
+			UpdatedAt: c.UpdatedAt.Format("2006-01-02T15:04:05Z07:00"),
+		})
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"conversations": items,
+		"count":         len(items),
+	})
+}
+
+func (s *Server) handleGetConversation(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if id == "" {
+		writeError(w, http.StatusBadRequest, "conversation ID required")
+		return
+	}
+
+	store := conversations.DefaultStore()
+	conv, err := store.Load(id)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "conversation not found: "+err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, conv)
+}
+
+func (s *Server) handleDeleteConversation(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if id == "" {
+		writeError(w, http.StatusBadRequest, "conversation ID required")
+		return
+	}
+
+	store := conversations.DefaultStore()
+	if err := store.Delete(id); err != nil {
+		writeError(w, http.StatusNotFound, "conversation not found: "+err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]string{
+		"status": "deleted",
+		"id":     id,
 	})
 }
 

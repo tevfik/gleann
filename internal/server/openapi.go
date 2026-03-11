@@ -403,6 +403,61 @@ func (s *Server) openAPISpec() map[string]any {
 					},
 				},
 			},
+			"/api/conversations": map[string]any{
+				"get": map[string]any{
+					"tags":        []string{"conversations"},
+					"summary":     "List saved conversations",
+					"description": "Returns summaries of all saved conversations, sorted by most recently updated.",
+					"operationId": "listConversations",
+					"responses": map[string]any{
+						"200": map[string]any{
+							"description": "List of conversation summaries",
+							"content": map[string]any{
+								"application/json": map[string]any{
+									"schema": map[string]any{
+										"type": "object",
+										"properties": map[string]any{
+											"conversations": map[string]any{
+												"type":  "array",
+												"items": refSchema("ConversationSummary"),
+											},
+											"count": map[string]any{"type": "integer"},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			"/api/conversations/{id}": map[string]any{
+				"get": map[string]any{
+					"tags":        []string{"conversations"},
+					"summary":     "Get conversation by ID",
+					"description": "Returns the full conversation including all messages.",
+					"operationId": "getConversation",
+					"parameters": []map[string]any{
+						{"name": "id", "in": "path", "required": true, "schema": map[string]any{"type": "string"}, "description": "Conversation ID or prefix"},
+					},
+					"responses": map[string]any{
+						"200": map[string]any{"description": "Full conversation with messages"},
+						"404": map[string]any{"description": "Conversation not found"},
+					},
+				},
+				"delete": map[string]any{
+					"tags":        []string{"conversations"},
+					"summary":     "Delete a conversation",
+					"description": "Permanently deletes a saved conversation.",
+					"operationId": "deleteConversation",
+					"parameters": []map[string]any{
+						{"name": "id", "in": "path", "required": true, "schema": map[string]any{"type": "string"}, "description": "Conversation ID or prefix"},
+					},
+					"responses": map[string]any{
+						"200": map[string]any{"description": "Conversation deleted"},
+						"404": map[string]any{"description": "Conversation not found"},
+					},
+				},
+			},
 		},
 		"components": map[string]any{
 			"schemas": map[string]any{
@@ -458,11 +513,14 @@ func (s *Server) openAPISpec() map[string]any {
 					"type":     "object",
 					"required": []string{"question"},
 					"properties": map[string]any{
-						"question":     map[string]any{"type": "string", "description": "Question to answer using RAG"},
-						"top_k":        map[string]any{"type": "integer", "default": 10},
-						"llm_model":    map[string]any{"type": "string", "description": "LLM model name for answer generation"},
-						"llm_provider": map[string]any{"type": "string", "description": "LLM provider (ollama, openai, anthropic)"},
-						"stream":       map[string]any{"type": "boolean", "default": false, "description": "Enable SSE streaming. When true, response is text/event-stream with `data: {\"token\": \"...\"}` events, ending with `data: [DONE]`"},
+						"question":        map[string]any{"type": "string", "description": "Question to answer using RAG"},
+						"top_k":           map[string]any{"type": "integer", "default": 10},
+						"llm_model":       map[string]any{"type": "string", "description": "LLM model name for answer generation"},
+						"llm_provider":    map[string]any{"type": "string", "description": "LLM provider (ollama, openai, anthropic)"},
+						"system_prompt":   map[string]any{"type": "string", "description": "Custom system prompt for the LLM (overrides default). Use to set a role or behavior."},
+						"role":            map[string]any{"type": "string", "description": "Named role (e.g. 'code', 'shell', 'explain'). Resolves to a system prompt from the role registry."},
+						"conversation_id": map[string]any{"type": "string", "description": "Continue an existing conversation by ID. Restores message history."},
+						"stream":          map[string]any{"type": "boolean", "default": false, "description": "Enable SSE streaming. When true, response is text/event-stream with `data: {\"token\": \"...\"}` events, ending with `data: [DONE]`"},
 					},
 				},
 				"AskResponse": map[string]any{
@@ -557,6 +615,19 @@ func (s *Server) openAPISpec() map[string]any {
 					"type": "object",
 					"properties": map[string]any{
 						"error": map[string]any{"type": "string"},
+					},
+				},
+				"ConversationSummary": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"id":            map[string]any{"type": "string", "description": "Full conversation ID (SHA-1)"},
+						"short_id":      map[string]any{"type": "string", "description": "First 8 chars of the ID"},
+						"title":         map[string]any{"type": "string", "description": "Conversation title"},
+						"model":         map[string]any{"type": "string", "description": "LLM model used"},
+						"indexes":       map[string]any{"type": "string", "description": "Comma-separated index names"},
+						"message_count": map[string]any{"type": "integer", "description": "Total number of messages"},
+						"created_at":    map[string]any{"type": "string", "format": "date-time"},
+						"updated_at":    map[string]any{"type": "string", "format": "date-time"},
 					},
 				},
 				"MultiSearchRequest": map[string]any{

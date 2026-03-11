@@ -87,6 +87,16 @@ type OnboardResult struct {
 	ServerEnabled bool   `json:"server_enabled,omitempty"`
 	ServerAddr    string `json:"server_addr,omitempty"`
 
+	// CLI behavior.
+	Quiet    bool `json:"quiet,omitempty"`     // Suppress status messages.
+	WordWrap int  `json:"word_wrap,omitempty"` // Wrap output at N columns (0 = terminal width).
+
+	// Custom roles: name → []system-prompt-lines.
+	Roles map[string][]string `json:"roles,omitempty"`
+
+	// Format instructions per output format (json, markdown, text, etc.).
+	FormatText map[string]string `json:"format_text,omitempty"`
+
 	// Uninstall (transient, not persisted).
 	Uninstall     bool `json:"-"`
 	UninstallData bool `json:"-"`

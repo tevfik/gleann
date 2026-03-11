@@ -6,8 +6,12 @@
 ┌──────────────────────────────────────────────────────┐
 │          TUI / CLI / REST API / MCP Server           │
 ├────────────────┬─────────────────────────────────────┤
-│  LeannBuilder  │         LeannSearcher               │
-│  (build index) │  (search + hybrid BM25 + reranker)  │
+│  LeannBuilder  │  Searcher Interface                 │
+│  (build index) │  ├── LeannSearcher (single index)   │
+│  .gleannignore │  └── MultiSearcher (fan-out merge)  │
+├────────────────┤                                     │
+│  LeannChat     │  Conversations / Roles / Format     │
+│  (LLM Q&A)    │  Stdin · Pipe · Raw · Quiet          │
 ├────────────────┴─────────────────────────────────────┤
 │              Backend Registry                        │
 ├──────────────┬───────────────────────────────────────┤
@@ -76,6 +80,11 @@ Instead of storing all embedding vectors, gleann stores only the HNSW graph stru
 | Token Limit Detection | ✅ | ✅ |
 | Metadata Filtering | ✅ | ✅ |
 | LLM Chat (`ask`) | Ollama, OpenAI, Anthropic, Gemini, HuggingFace | Ollama, OpenAI, Anthropic |
+| Multi-Index Chat | — | ✅ (comma-separated indexes) |
+| Conversations | — | ✅ (persist, continue, manage) |
+| Named Roles | — | ✅ (built-in + custom in config) |
+| Stdin/Pipe Support | — | ✅ (auto-raw when piped) |
+| `.gleannignore` | — | ✅ (gitignore-style exclusions) |
 | ReAct Agent | ✅ | ✅ |
 | AST-aware Chunking | tree-sitter | go/ast + optional tree-sitter |
 | MCP Server | ✅ | ✅ (built-in) |
