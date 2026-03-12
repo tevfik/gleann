@@ -116,31 +116,31 @@ func (g *DB) initSchema() error {
 			PRIMARY KEY (fqn)
 		)`,
 
-		// ── Document Node tables ───────────────────────────────
-		`CREATE NODE TABLE IF NOT EXISTS Document(
-			path        STRING,
-			title       STRING,
-			format      STRING,
-			summary     STRING,
-			word_count  INT64,
-			page_count  INT64,
-			PRIMARY KEY (path)
+		// ── Hierarchical Context Node tables ───────────────────────────────
+		`CREATE NODE TABLE IF NOT EXISTS Folder(
+			vpath  STRING,
+			name   STRING,
+			PRIMARY KEY (vpath)
 		)`,
-		`CREATE NODE TABLE IF NOT EXISTS Section(
-			id          STRING,
-			heading     STRING,
-			level       INT64,
-			content     STRING,
-			summary     STRING,
-			doc_path    STRING,
+		`CREATE NODE TABLE IF NOT EXISTS Document(
+			vpath      STRING,
+			rpath      STRING,
+			name       STRING,
+			hash       STRING,
+			summary    STRING,
+			PRIMARY KEY (vpath)
+		)`,
+		`CREATE NODE TABLE IF NOT EXISTS Heading(
+			id         STRING,
+			name       STRING,
+			level      INT64,
 			PRIMARY KEY (id)
 		)`,
-		`CREATE NODE TABLE IF NOT EXISTS DocChunk(
-			id          STRING,
-			text        STRING,
-			chunk_index INT64,
-			section_id  STRING,
-			passage_id  INT64,
+		`CREATE NODE TABLE IF NOT EXISTS Chunk(
+			id         STRING,
+			text       STRING,
+			start_char INT64,
+			end_char   INT64,
 			PRIMARY KEY (id)
 		)`,
 
@@ -166,25 +166,34 @@ func (g *DB) initSchema() error {
 			MANY_MANY
 		)`,
 
-		// ── Document Relationship tables ───────────────────────
-		// Document → Section  (document has top-level sections)
-		`CREATE REL TABLE IF NOT EXISTS HAS_SECTION(
-			FROM Document TO Section,
+		// ── Hierarchical Context Relationship tables ───────────────────────
+		// Folder → Document
+		`CREATE REL TABLE IF NOT EXISTS CONTAINS_DOC(
+			FROM Folder TO Document,
 			MANY_MANY
 		)`,
-		// Section → Section  (section contains subsections)
-		`CREATE REL TABLE IF NOT EXISTS HAS_SUBSECTION(
-			FROM Section TO Section,
+		// Document → Heading
+		`CREATE REL TABLE IF NOT EXISTS HAS_HEADING(
+			FROM Document TO Heading,
 			MANY_MANY
 		)`,
-		// Section → DocChunk  (section contains chunks)
-		`CREATE REL TABLE IF NOT EXISTS HAS_CHUNK(
-			FROM Section TO DocChunk,
+		// Heading → Heading (H1 -> H2)
+		`CREATE REL TABLE IF NOT EXISTS CHILD_HEADING(
+			FROM Heading TO Heading,
 			MANY_MANY
 		)`,
-		// DocChunk → Symbol  (a chunk explains/references a code symbol)
+		// Heading → Chunk OR Document → Chunk
+		`CREATE REL TABLE IF NOT EXISTS HAS_CHUNK_HEADING(
+			FROM Heading TO Chunk,
+			MANY_MANY
+		)`,
+		`CREATE REL TABLE IF NOT EXISTS HAS_CHUNK_DOC(
+			FROM Document TO Chunk,
+			MANY_MANY
+		)`,
+		// Chunk → Symbol (Optional code link)
 		`CREATE REL TABLE IF NOT EXISTS EXPLAINS(
-			FROM DocChunk TO Symbol,
+			FROM Chunk TO Symbol,
 			MANY_MANY
 		)`,
 	}

@@ -170,3 +170,34 @@ func parseReActStep(response string) ReActStep {
 
 	return step
 }
+
+// NewReadDocumentTool creates a ReActTool that fetches the entire contents of a document by vpath.
+func NewReadDocumentTool(searcher *LeannSearcher) ReActTool {
+	return ReActTool{
+		Name:        "read_full_document",
+		Description: "Fetch the complete text of a document given its virtual path (vpath). Input: exactly the vpath string.",
+		Execute: func(ctx context.Context, input string) (string, error) {
+			input = strings.TrimSpace(input)
+			if input == "" {
+				return "Error: vpath cannot be empty.", nil
+			}
+
+			db := searcher.GraphDB()
+			if db == nil {
+				return "Error: GraphDatabase is not enabled for this index.", nil
+			}
+
+			docText, err := db.FullDocument(input)
+			if err != nil {
+				return fmt.Sprintf("Error retrieving document '%s': %v", input, err), nil
+			}
+
+			// Add a token limit safety so we don't blow up the ReAct agent context window
+			if len(docText) > 16000 {
+				docText = docText[:16000] + "\n...[Document truncated due to length]..."
+			}
+
+			return docText, nil
+		},
+	}
+}

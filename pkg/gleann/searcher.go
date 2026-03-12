@@ -113,8 +113,14 @@ func (s *LeannSearcher) Load(ctx context.Context, name string) error {
 		}
 	}
 
-	// Attempt to load Graph DB if it exists
-	graphDir := filepath.Join(basePath, ".kuzu")
+	// Attempt to load Graph DB if it exists.
+	// Primary path: {indexDir}/{name}_graph (written by buildGraphIndex).
+	// Fallback: {basePath}/.kuzu (legacy location).
+	graphDir := filepath.Join(s.config.IndexDir, name+"_graph")
+	if _, err := os.Stat(graphDir); err != nil {
+		// Try legacy path
+		graphDir = filepath.Join(basePath, ".kuzu")
+	}
 	if _, err := os.Stat(graphDir); err == nil {
 		if GraphDBOpener != nil {
 			if db, openErr := GraphDBOpener(graphDir); openErr == nil {
@@ -327,14 +333,15 @@ func (s *LeannSearcher) Search(ctx context.Context, query string, opts ...Search
 // enrichWithGraphContext enriches search results with graph-derived context.
 // For each result that has a "source" metadata field, it looks up symbols
 // declared in that file and fetches their callers/callees from the graph.
-// This adds structural code intelligence to vector search results.
+// It also fetches the hierarchical document summary and folder name.
 func (s *LeannSearcher) enrichWithGraphContext(results []SearchResult) {
 	if s.graphDB == nil {
 		return
 	}
 
-	// Cache file→symbols lookups to avoid duplicate queries.
+	// Cache lookups to avoid duplicate queries.
 	fileSymbolCache := make(map[string][]Callee)
+	docContextCache := make(map[string]*DocumentContextData)
 
 	for i := range results {
 		source, _ := results[i].Metadata["source"].(string)
@@ -342,7 +349,26 @@ func (s *LeannSearcher) enrichWithGraphContext(results []SearchResult) {
 			continue
 		}
 
-		// Look up symbols declared in this file.
+		graphCtx := &GraphContextInfo{}
+		hasContext := false
+
+		// 1. Fetch Document Hierarchy Context
+		docCtx, ok := docContextCache[source]
+		if !ok {
+			var err error
+			docCtx, err = s.graphDB.DocumentContext(source)
+			if err != nil {
+				docCtx = nil // graceful degradation
+			}
+			docContextCache[source] = docCtx
+		}
+
+		if docCtx != nil {
+			graphCtx.DocumentContext = docCtx
+			hasContext = true
+		}
+
+		// 2. Fetch Symbol/Code Context
 		symbols, ok := fileSymbolCache[source]
 		if !ok {
 			var err error
@@ -353,45 +379,43 @@ func (s *LeannSearcher) enrichWithGraphContext(results []SearchResult) {
 			fileSymbolCache[source] = symbols
 		}
 
-		if len(symbols) == 0 {
-			continue
-		}
-
-		// For each symbol, fetch callers and callees (cap at 5 symbols to limit cost).
-		maxSymbols := 5
-		if len(symbols) < maxSymbols {
-			maxSymbols = len(symbols)
-		}
-
-		graphCtx := &GraphContextInfo{
-			Symbols: make([]SymbolNeighbors, 0, maxSymbols),
-		}
-
-		for _, sym := range symbols[:maxSymbols] {
-			sn := SymbolNeighbors{
-				FQN:  sym.FQN,
-				Kind: sym.Kind,
+		if len(symbols) > 0 {
+			maxSymbols := 5
+			if len(symbols) < maxSymbols {
+				maxSymbols = len(symbols)
 			}
 
-			if callees, err := s.graphDB.Callees(sym.FQN); err == nil {
-				for _, c := range callees {
-					sn.Callees = append(sn.Callees, c.FQN)
+			graphCtx.Symbols = make([]SymbolNeighbors, 0, maxSymbols)
+
+			for _, sym := range symbols[:maxSymbols] {
+				sn := SymbolNeighbors{
+					FQN:  sym.FQN,
+					Kind: sym.Kind,
+				}
+
+				if callees, err := s.graphDB.Callees(sym.FQN); err == nil {
+					for _, c := range callees {
+						sn.Callees = append(sn.Callees, c.FQN)
+					}
+				}
+
+				if callers, err := s.graphDB.Callers(sym.FQN); err == nil {
+					for _, c := range callers {
+						sn.Callers = append(sn.Callers, c.FQN)
+					}
+				}
+
+				if len(sn.Callers) > 0 || len(sn.Callees) > 0 {
+					graphCtx.Symbols = append(graphCtx.Symbols, sn)
 				}
 			}
 
-			if callers, err := s.graphDB.Callers(sym.FQN); err == nil {
-				for _, c := range callers {
-					sn.Callers = append(sn.Callers, c.FQN)
-				}
-			}
-
-			// Only include symbols that have at least one relationship.
-			if len(sn.Callers) > 0 || len(sn.Callees) > 0 {
-				graphCtx.Symbols = append(graphCtx.Symbols, sn)
+			if len(graphCtx.Symbols) > 0 {
+				hasContext = true
 			}
 		}
 
-		if len(graphCtx.Symbols) > 0 {
+		if hasContext {
 			results[i].GraphContext = graphCtx
 		}
 	}

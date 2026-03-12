@@ -25,6 +25,12 @@ func (m *mockGraphDB) SymbolsInFile(path string) ([]Callee, error) {
 func (m *mockGraphDB) DocumentSymbols(path string) ([]SymbolInfo, error) {
 	return m.documentSymbols[path], nil
 }
+func (m *mockGraphDB) DocumentContext(_ string) (*DocumentContextData, error) {
+	return nil, nil // not needed in tests
+}
+func (m *mockGraphDB) FullDocument(_ string) (string, error) {
+	return "", nil // not needed in tests
+}
 func (m *mockGraphDB) Impact(fqn string, maxDepth int) (*ImpactResult, error) {
 	// Simple mock: use callers as direct callers
 	result := &ImpactResult{Symbol: fqn, Depth: maxDepth}
@@ -274,6 +280,14 @@ func (c *countingGraphDB) Callers(fqn string) ([]Callee, error) {
 
 func (c *countingGraphDB) DocumentSymbols(path string) ([]SymbolInfo, error) {
 	return c.GraphDB.DocumentSymbols(path)
+}
+
+func (c *countingGraphDB) DocumentContext(vpath string) (*DocumentContextData, error) {
+	return c.GraphDB.DocumentContext(vpath)
+}
+
+func (c *countingGraphDB) FullDocument(vpath string) (string, error) {
+	return c.GraphDB.FullDocument(vpath)
 }
 
 func (c *countingGraphDB) Impact(fqn string, maxDepth int) (*ImpactResult, error) {

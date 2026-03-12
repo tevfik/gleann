@@ -112,11 +112,7 @@ func (c *LeannChat) Ask(ctx context.Context, question string, opts ...SearchOpti
 	// Step 2: Build context from results.
 	var contextParts []string
 	for i, r := range results {
-		source := ""
-		if s, ok := r.Metadata["source"]; ok {
-			source = fmt.Sprintf(" (source: %v)", s)
-		}
-		contextParts = append(contextParts, fmt.Sprintf("[%d]%s %s", i+1, source, r.Text))
+		contextParts = append(contextParts, formatResult(r, i+1))
 	}
 	context_text := strings.Join(contextParts, "\n\n")
 
@@ -171,11 +167,7 @@ func (c *LeannChat) AskStream(ctx context.Context, question string, callback Str
 	// Step 2: Build context from results.
 	var contextParts []string
 	for i, r := range results {
-		source := ""
-		if s, ok := r.Metadata["source"]; ok {
-			source = fmt.Sprintf(" (source: %v)", s)
-		}
-		contextParts = append(contextParts, fmt.Sprintf("[%d]%s %s", i+1, source, r.Text))
+		contextParts = append(contextParts, formatResult(r, i+1))
 	}
 	contextText := strings.Join(contextParts, "\n\n")
 
@@ -786,4 +778,37 @@ func (c *LeannChat) chatAnthropicStream(ctx context.Context, messages []ChatMess
 	}
 
 	return scanner.Err()
+}
+
+// formatResult formats a single SearchResult into a text string for the LLM context.
+func formatResult(r SearchResult, idx int) string {
+	var sb strings.Builder
+	source := ""
+	if s, ok := r.Metadata["source"]; ok {
+		source = fmt.Sprintf(" (source: %v)", s)
+	}
+	sb.WriteString(fmt.Sprintf("[%d]%s\n", idx, source))
+
+	if r.GraphContext != nil {
+		if dc := r.GraphContext.DocumentContext; dc != nil {
+			sb.WriteString(fmt.Sprintf("Document: %s | Folder: %s\nSummary: %s\n", dc.Name, dc.FolderName, dc.Summary))
+		}
+
+		if len(r.GraphContext.Symbols) > 0 {
+			sb.WriteString("Code Context:\n")
+			for _, sym := range r.GraphContext.Symbols {
+				sb.WriteString(fmt.Sprintf("- Symbol: %s (%s)\n", sym.FQN, sym.Kind))
+				if len(sym.Callers) > 0 {
+					sb.WriteString(fmt.Sprintf("  Callers: %s\n", strings.Join(sym.Callers, ", ")))
+				}
+				if len(sym.Callees) > 0 {
+					sb.WriteString(fmt.Sprintf("  Callees: %s\n", strings.Join(sym.Callees, ", ")))
+				}
+			}
+		}
+	}
+
+	sb.WriteString("Content:\n")
+	sb.WriteString(r.Text)
+	return sb.String()
 }

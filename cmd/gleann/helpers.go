@@ -74,7 +74,7 @@ func strVal(m map[string]any, key string) string {
 // markdownToPluginResult converts parsed MarkdownSections into a PluginResult
 // suitable for graph indexing (Document + Section nodes, HAS_SECTION + HAS_SUBSECTION edges).
 // This allows native .md files to produce the same graph structure as plugin-extracted documents.
-func markdownToPluginResult(sections []chunking.MarkdownSection, sourcePath string, wordCount int) *gleann.PluginResult {
+func markdownToPluginResult(sections []chunking.MarkdownSection, sourcePath string, wordCount int, rawMarkdown string) *gleann.PluginResult {
 	result := &gleann.PluginResult{}
 
 	// Document node.
@@ -89,13 +89,16 @@ func markdownToPluginResult(sections []chunking.MarkdownSection, sourcePath stri
 		title = sections[0].Heading
 	}
 
+	// Extract summary using the zero-config extractive summarizer.
+	summaryStr := gleann.ExtractSummary(rawMarkdown)
+
 	result.Nodes = append(result.Nodes, gleann.PluginNode{
 		Type: "Document",
 		Data: map[string]any{
 			"path":       sourcePath,
 			"title":      title,
 			"format":     "md",
-			"summary":    "",
+			"summary":    summaryStr,
 			"word_count": float64(wordCount),
 			"page_count": float64(0),
 		},

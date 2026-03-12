@@ -315,53 +315,93 @@ func WriteCallsCSV(path string, edges []EdgeCalls) error {
 	return w.Error()
 }
 
-// ─── Document Graph Types ────────────────────────────────────────────────────
+// ─── Hierarchical Graph Types ────────────────────────────────────────────────────
+
+// FolderNode represents a structural folder.
+type FolderNode struct {
+	VPath string
+	Name  string
+}
 
 // DocumentNode represents a document in the graph.
 type DocumentNode struct {
-	Path      string
-	Title     string
-	Format    string
-	Summary   string
-	WordCount int64
-	PageCount int64
-}
-
-// SectionNode represents a heading-delimited section in the graph.
-type SectionNode struct {
-	ID      string
-	Heading string
-	Level   int64
-	Content string
+	VPath   string
+	RPath   string
+	Name    string
+	Hash    string
 	Summary string
-	DocPath string
 }
 
-// DocChunkNode represents a chunk that links the vector index to the graph.
-type DocChunkNode struct {
-	ID         string
-	Text       string
-	ChunkIndex int64
-	SectionID  string
-	PassageID  int64
+// HeadingNode represents a markdown heading section.
+type HeadingNode struct {
+	ID    string
+	Name  string
+	Level int64
 }
 
-// EdgeHasSection represents a HAS_SECTION edge (Document→Section).
-type EdgeHasSection struct {
-	DocPath   string
-	SectionID string
+// ChunkNode represents a chunk that links the vector index to the graph.
+type ChunkNode struct {
+	ID        string
+	Text      string
+	StartChar int64
+	EndChar   int64
 }
 
-// EdgeHasSubsection represents a HAS_SUBSECTION edge (Section→Section).
-type EdgeHasSubsection struct {
+// EdgeContainsDoc represents CONTAINS_DOC (Folder→Document).
+type EdgeContainsDoc struct {
+	FolderVPath string
+	DocVPath    string
+}
+
+// EdgeHasHeading represents HAS_HEADING (Document→Heading).
+type EdgeHasHeading struct {
+	DocVPath  string
+	HeadingID string
+}
+
+// EdgeChildHeading represents CHILD_HEADING (Heading→Heading).
+type EdgeChildHeading struct {
 	ParentID string
 	ChildID  string
 }
 
-// EdgeHasChunk represents a HAS_CHUNK edge (Section→DocChunk).
-type EdgeHasChunk struct {
-	SectionID string
+// EdgeHasChunkHeading represents HAS_CHUNK_HEADING (Heading→Chunk).
+type EdgeHasChunkHeading struct {
+	HeadingID string
 	ChunkID   string
+}
+
+// EdgeHasChunkDoc represents HAS_CHUNK_DOC (Document→Chunk).
+type EdgeHasChunkDoc struct {
+	DocVPath string
+	ChunkID  string
+}
+
+// EdgeExplains represents EXPLAINS (Chunk→Symbol).
+type EdgeExplains struct {
+	ChunkID   string
+	SymbolFQN string
+}
+
+// WriteFolderNodesCSV writes Folder nodes to a CSV file.
+func WriteFolderNodesCSV(path string, folders []FolderNode) error {
+	f, err := os.Create(path)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	w := csv.NewWriter(f)
+	if err := w.Write([]string{"vpath", "name"}); err != nil {
+		return err
+	}
+	for _, f := range folders {
+		if err := w.Write([]string{f.VPath, f.Name}); err != nil {
+			return err
+		}
+	}
+	w.Flush()
+	return w.Error()
 }
 
 // WriteDocumentNodesCSV writes Document nodes to a CSV file.
@@ -373,14 +413,33 @@ func WriteDocumentNodesCSV(path string, docs []DocumentNode) error {
 	defer f.Close()
 
 	w := csv.NewWriter(f)
-	if err := w.Write([]string{"path", "title", "format", "summary", "word_count", "page_count"}); err != nil {
+	if err := w.Write([]string{"vpath", "rpath", "name", "hash", "summary"}); err != nil {
 		return err
 	}
 	for _, d := range docs {
+		if err := w.Write([]string{d.VPath, d.RPath, d.Name, d.Hash, d.Summary}); err != nil {
+			return err
+		}
+	}
+	w.Flush()
+	return w.Error()
+}
+
+// WriteHeadingNodesCSV writes Heading nodes to a CSV file.
+func WriteHeadingNodesCSV(path string, headings []HeadingNode) error {
+	f, err := os.Create(path)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	w := csv.NewWriter(f)
+	if err := w.Write([]string{"id", "name", "level"}); err != nil {
+		return err
+	}
+	for _, h := range headings {
 		if err := w.Write([]string{
-			d.Path, d.Title, d.Format, d.Summary,
-			fmt.Sprintf("%d", d.WordCount),
-			fmt.Sprintf("%d", d.PageCount),
+			h.ID, h.Name, fmt.Sprintf("%d", h.Level),
 		}); err != nil {
 			return err
 		}
@@ -389,8 +448,8 @@ func WriteDocumentNodesCSV(path string, docs []DocumentNode) error {
 	return w.Error()
 }
 
-// WriteSectionNodesCSV writes Section nodes to a CSV file.
-func WriteSectionNodesCSV(path string, sections []SectionNode) error {
+// WriteChunkNodesCSV writes Chunk nodes to a CSV file.
+func WriteChunkNodesCSV(path string, chunks []ChunkNode) error {
 	f, err := os.Create(path)
 	if err != nil {
 		return err
@@ -398,37 +457,12 @@ func WriteSectionNodesCSV(path string, sections []SectionNode) error {
 	defer f.Close()
 
 	w := csv.NewWriter(f)
-	if err := w.Write([]string{"id", "heading", "level", "content", "summary", "doc_path"}); err != nil {
-		return err
-	}
-	for _, s := range sections {
-		if err := w.Write([]string{
-			s.ID, s.Heading, fmt.Sprintf("%d", s.Level),
-			s.Content, s.Summary, s.DocPath,
-		}); err != nil {
-			return err
-		}
-	}
-	w.Flush()
-	return w.Error()
-}
-
-// WriteDocChunkNodesCSV writes DocChunk nodes to a CSV file.
-func WriteDocChunkNodesCSV(path string, chunks []DocChunkNode) error {
-	f, err := os.Create(path)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-
-	w := csv.NewWriter(f)
-	if err := w.Write([]string{"id", "text", "chunk_index", "section_id", "passage_id"}); err != nil {
+	if err := w.Write([]string{"id", "text", "start_char", "end_char"}); err != nil {
 		return err
 	}
 	for _, c := range chunks {
 		if err := w.Write([]string{
-			c.ID, c.Text, fmt.Sprintf("%d", c.ChunkIndex),
-			c.SectionID, fmt.Sprintf("%d", c.PassageID),
+			c.ID, c.Text, fmt.Sprintf("%d", c.StartChar), fmt.Sprintf("%d", c.EndChar),
 		}); err != nil {
 			return err
 		}
@@ -437,8 +471,8 @@ func WriteDocChunkNodesCSV(path string, chunks []DocChunkNode) error {
 	return w.Error()
 }
 
-// WriteHasSectionCSV writes HAS_SECTION edges to a CSV file.
-func WriteHasSectionCSV(path string, edges []EdgeHasSection) error {
+// WriteContainsDocCSV writes CONTAINS_DOC edges to a CSV file.
+func WriteContainsDocCSV(path string, edges []EdgeContainsDoc) error {
 	f, err := os.Create(path)
 	if err != nil {
 		return err
@@ -450,7 +484,7 @@ func WriteHasSectionCSV(path string, edges []EdgeHasSection) error {
 		return err
 	}
 	for _, e := range edges {
-		if err := w.Write([]string{e.DocPath, e.SectionID}); err != nil {
+		if err := w.Write([]string{e.FolderVPath, e.DocVPath}); err != nil {
 			return err
 		}
 	}
@@ -458,8 +492,29 @@ func WriteHasSectionCSV(path string, edges []EdgeHasSection) error {
 	return w.Error()
 }
 
-// WriteHasSubsectionCSV writes HAS_SUBSECTION edges to a CSV file.
-func WriteHasSubsectionCSV(path string, edges []EdgeHasSubsection) error {
+// WriteHasHeadingCSV writes HAS_HEADING edges to a CSV file.
+func WriteHasHeadingCSV(path string, edges []EdgeHasHeading) error {
+	f, err := os.Create(path)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	w := csv.NewWriter(f)
+	if err := w.Write([]string{"from", "to"}); err != nil {
+		return err
+	}
+	for _, e := range edges {
+		if err := w.Write([]string{e.DocVPath, e.HeadingID}); err != nil {
+			return err
+		}
+	}
+	w.Flush()
+	return w.Error()
+}
+
+// WriteChildHeadingCSV writes CHILD_HEADING edges to a CSV file.
+func WriteChildHeadingCSV(path string, edges []EdgeChildHeading) error {
 	f, err := os.Create(path)
 	if err != nil {
 		return err
@@ -479,41 +534,20 @@ func WriteHasSubsectionCSV(path string, edges []EdgeHasSubsection) error {
 	return w.Error()
 }
 
-// WriteHasChunkCSV writes HAS_CHUNK edges to a CSV file.
-func WriteHasChunkCSV(path string, edges []EdgeHasChunk) error {
-	f, err := os.Create(path)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-
-	w := csv.NewWriter(f)
-	if err := w.Write([]string{"from", "to"}); err != nil {
-		return err
-	}
-	for _, e := range edges {
-		if err := w.Write([]string{e.SectionID, e.ChunkID}); err != nil {
-			return err
-		}
-	}
-	w.Flush()
-	return w.Error()
+// DeleteDocumentSectionsQuery returns Cypher to delete all Headings belonging to a document.
+func DeleteDocumentSectionsQuery(docVPath string) string {
+	return fmt.Sprintf(`MATCH (d:Document {vpath: %q})-[:HAS_HEADING]->(h:Heading) DETACH DELETE h`, docVPath)
 }
 
-// DeleteDocumentSectionsQuery returns Cypher to delete all Sections belonging to a document.
-func DeleteDocumentSectionsQuery(docPath string) string {
-	return fmt.Sprintf(`MATCH (s:Section {doc_path: %q}) DETACH DELETE s`, docPath)
-}
-
-// DeleteDocumentChunksQuery returns Cypher to delete all DocChunks referencing sections of a doc.
-func DeleteDocumentChunksQuery(docPath string) string {
+// DeleteDocumentChunksQuery returns Cypher to delete all Chunks referencing headings or doc.
+func DeleteDocumentChunksQuery(docVPath string) string {
 	return fmt.Sprintf(
-		`MATCH (s:Section {doc_path: %q})-[:HAS_CHUNK]->(c:DocChunk) DETACH DELETE c`,
-		docPath,
+		`MATCH (d:Document {vpath: %q})-[:HAS_HEADING]->(:Heading)-[:HAS_CHUNK_HEADING]->(c:Chunk) DETACH DELETE c`,
+		docVPath,
 	)
 }
 
 // DeleteDocumentQuery returns Cypher to delete a Document node.
-func DeleteDocumentQuery(docPath string) string {
-	return fmt.Sprintf(`MATCH (d:Document {path: %q}) DETACH DELETE d`, docPath)
+func DeleteDocumentQuery(docVPath string) string {
+	return fmt.Sprintf(`MATCH (d:Document {vpath: %q}) DETACH DELETE d`, docVPath)
 }

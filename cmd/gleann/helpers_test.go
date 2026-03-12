@@ -118,7 +118,7 @@ func TestMarkdownToPluginResult(t *testing.T) {
 		{ID: "s2", Heading: "Sub", Level: 2, Content: "Sub content", ParentID: "s1"},
 	}
 
-	result := markdownToPluginResult(sections, "README.md", 50)
+	result := markdownToPluginResult(sections, "README.md", 50, "")
 
 	// Should have 1 Document + 2 Section nodes.
 	if len(result.Nodes) != 3 {
@@ -158,7 +158,7 @@ func TestMarkdownToPluginResult_NoH1(t *testing.T) {
 		{ID: "s1", Heading: "Overview", Level: 2, Content: "content"},
 	}
 
-	result := markdownToPluginResult(sections, "test.md", 10)
+	result := markdownToPluginResult(sections, "test.md", 10, "")
 
 	// When there's no H1, use the first heading as title.
 	docNode := result.Nodes[0]
