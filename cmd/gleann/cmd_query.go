@@ -114,6 +114,7 @@ func cmdAsk(args []string) {
 		fmt.Fprintln(os.Stderr, "")
 		fmt.Fprintln(os.Stderr, "Flags:")
 		fmt.Fprintln(os.Stderr, "  --interactive        Start interactive chat session")
+		fmt.Fprintln(os.Stderr, "  --agent              Use ReAct agent with read_full_document tool")
 		fmt.Fprintln(os.Stderr, "  --continue ID        Continue a previous conversation")
 		fmt.Fprintln(os.Stderr, "  --continue-last      Continue the most recent conversation")
 		fmt.Fprintln(os.Stderr, "  --title TITLE        Set conversation title")
@@ -209,6 +210,8 @@ func cmdAsk(args []string) {
 	noLimit := hasFlag(args, "--no-limit")
 
 	interactive := hasFlag(args, "--interactive")
+	agentMode := hasFlag(args, "--agent")
+	useGraph := hasFlag(args, "--graph")
 
 	// Resolve index name if not provided explicitly.
 	convStore := conversations.DefaultStore()
@@ -305,6 +308,10 @@ func cmdAsk(args []string) {
 				}
 				s.SetReranker(gleann.NewReranker(rerankerCfg))
 				config.SearchConfig.UseReranker = true
+			}
+			// If --graph is set, enable graph context enrichment.
+			if useGraph {
+				config.SearchConfig.UseGraphContext = true
 			}
 			searcher = s
 		} else {
@@ -524,6 +531,25 @@ func cmdAsk(args []string) {
 			}
 			fmt.Print("\n\n")
 		}
+	} else if agentMode {
+		// Agent mode: wire up the ReAct agent with read_full_document tool.
+		var tools []gleann.ReActTool
+		tools = append(tools, gleann.NewSearchTool(nil)) // search is baked into the chat
+		if ls, ok := searcher.(*gleann.LeannSearcher); ok {
+			tools = append(tools, gleann.NewReadDocumentTool(ls))
+		}
+		agent := gleann.NewReActAgent(chat, tools, 6)
+		fmt.Fprintf(os.Stderr, "🤖 Agent mode (index: %s, model: %s)\n", name, chatConfig.Model)
+		answer, steps, err := agent.Run(ctx, question)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "agent error: %v\n", err)
+			os.Exit(1)
+		}
+		for i, s := range steps {
+			fmt.Fprintf(os.Stderr, "  Step %d: Thought=%q Action=%q\n", i+1, s.Thought, s.Action)
+		}
+		fmt.Println(answer)
+		saveConversation()
 	} else {
 		fmt.Print("")
 		err := chat.AskStream(ctx, question, func(token string) {

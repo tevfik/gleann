@@ -21,6 +21,17 @@ const (
 type GraphContextInfo struct {
 	// Symbols declared in the same source file as the search result.
 	Symbols []SymbolNeighbors `json:"symbols,omitempty"`
+	// DocumentContext holds Folder, Document Name, Summary, etc.
+	DocumentContext *DocumentContextData `json:"document_context,omitempty"`
+}
+
+// DocumentContextData holds hierarchical graph metadata about a document.
+type DocumentContextData struct {
+	VPath      string   `json:"vpath"`
+	RPath      string   `json:"rpath"`
+	Name       string   `json:"name"`
+	Summary    string   `json:"summary"`
+	FolderName string   `json:"folder_name,omitempty"`
 }
 
 // SymbolNeighbors holds a symbol and its direct callers/callees from the code graph.

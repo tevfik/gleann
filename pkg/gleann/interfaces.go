@@ -151,6 +151,8 @@ type GraphDB interface {
 	Callers(calleeFQN string) ([]Callee, error)
 	SymbolsInFile(filePath string) ([]Callee, error)
 	DocumentSymbols(docPath string) ([]SymbolInfo, error)
+	DocumentContext(vpath string) (*DocumentContextData, error)
+	FullDocument(vpath string) (string, error)
 	// Impact performs a transitive caller analysis (blast radius) for the given FQN.
 	// maxDepth controls how many hops to traverse (0 = unlimited, capped at 10).
 	Impact(fqn string, maxDepth int) (*ImpactResult, error)

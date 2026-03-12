@@ -5,6 +5,8 @@
 package gleann
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -121,6 +123,11 @@ func MarkdownToPluginResult(markdown, sourcePath string) *PluginResult {
 	// Word count.
 	wordCount := len(strings.Fields(markdown))
 
+	// Summary and Hash
+	summaryStr := ExtractSummary(markdown)
+	hashBytes := sha256.Sum256([]byte(markdown))
+	hashStr := hex.EncodeToString(hashBytes[:])
+
 	// Infer format from extension.
 	ext := strings.TrimPrefix(filepath.Ext(sourcePath), ".")
 	if ext == "" {
@@ -134,9 +141,12 @@ func MarkdownToPluginResult(markdown, sourcePath string) *PluginResult {
 		Type: "Document",
 		Data: map[string]any{
 			"_type":      "Document",
-			"path":       sourcePath,
+			"rpath":      sourcePath,
+			"vpath":      sourcePath, // Optional: Can be overridden by the indexer
 			"title":      title,
 			"format":     ext,
+			"hash":       hashStr,
+			"summary":    summaryStr,
 			"word_count": wordCount,
 		},
 	})

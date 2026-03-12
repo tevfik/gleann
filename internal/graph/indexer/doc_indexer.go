@@ -62,7 +62,7 @@ func (di *DocIndexer) IndexDocument(result *gleann.PluginResult, sourcePath stri
 	start := time.Now()
 
 	// 1. Extract typed data from plugin result
-	docs, sections, hasSectionEdges, hasSubsectionEdges := di.extractFromPlugin(result, sourcePath)
+	folders, docs, headings, containsEdges, hasHeadingEdges, childHeadingEdges := di.extractFromPlugin(result, sourcePath)
 
 	if len(docs) == 0 {
 		return nil, fmt.Errorf("no Document node in plugin result for %s", sourcePath)
@@ -98,26 +98,37 @@ func (di *DocIndexer) IndexDocument(result *gleann.PluginResult, sourcePath stri
 		return nil
 	}
 
+	if len(folders) > 0 {
+		if err := doCopy("Folder", func(p string) error { return kuzu.WriteFolderNodesCSV(p, folders) }); err != nil {
+			return nil, err
+		}
+	}
 	if err := doCopy("Document", func(p string) error { return kuzu.WriteDocumentNodesCSV(p, docs) }); err != nil {
 		return nil, err
 	}
-	if len(sections) > 0 {
-		if err := doCopy("Section", func(p string) error { return kuzu.WriteSectionNodesCSV(p, sections) }); err != nil {
+	if len(headings) > 0 {
+		if err := doCopy("Heading", func(p string) error { return kuzu.WriteHeadingNodesCSV(p, headings) }); err != nil {
 			return nil, err
 		}
 	}
 
 	// 4. Create edges via transaction
 	var edgeQueries []string
-	for _, e := range hasSectionEdges {
+	for _, e := range containsEdges {
 		edgeQueries = append(edgeQueries, fmt.Sprintf(
-			`MATCH (d:Document {path: %q}), (s:Section {id: %q}) MERGE (d)-[:HAS_SECTION]->(s)`,
-			e.DocPath, e.SectionID,
+			`MATCH (f:Folder {vpath: %q}), (d:Document {vpath: %q}) MERGE (f)-[:CONTAINS_DOC]->(d)`,
+			e.FolderVPath, e.DocVPath,
 		))
 	}
-	for _, e := range hasSubsectionEdges {
+	for _, e := range hasHeadingEdges {
 		edgeQueries = append(edgeQueries, fmt.Sprintf(
-			`MATCH (p:Section {id: %q}), (c:Section {id: %q}) MERGE (p)-[:HAS_SUBSECTION]->(c)`,
+			`MATCH (d:Document {vpath: %q}), (h:Heading {id: %q}) MERGE (d)-[:HAS_HEADING]->(h)`,
+			e.DocVPath, e.HeadingID,
+		))
+	}
+	for _, e := range childHeadingEdges {
+		edgeQueries = append(edgeQueries, fmt.Sprintf(
+			`MATCH (p:Heading {id: %q}), (c:Heading {id: %q}) MERGE (p)-[:CHILD_HEADING]->(c)`,
 			e.ParentID, e.ChildID,
 		))
 	}
@@ -128,7 +139,8 @@ func (di *DocIndexer) IndexDocument(result *gleann.PluginResult, sourcePath stri
 	}
 
 	// 5. Chunk section content for vector indexing
-	doc := di.buildStructuredDocument(docs[0], sections)
+	// Note: buildStructuredDocument still needs the original Section/Heading data
+	doc := di.buildStructuredDocument(docs[0], headings, result)
 	mdChunks := di.chunker.ChunkDocument(doc)
 
 	// Add source metadata to all chunks
@@ -146,8 +158,8 @@ func (di *DocIndexer) IndexDocument(result *gleann.PluginResult, sourcePath stri
 	}
 
 	elapsed := time.Since(start)
-	log.Printf("[INFO] DocIndexer: indexed %s (%d sections, %d chunks) in %v",
-		sourcePath, len(sections), len(mdChunks), elapsed)
+	log.Printf("[INFO] DocIndexer: indexed %s (%d headings, %d chunks) in %v",
+		sourcePath, len(headings), len(mdChunks), elapsed)
 
 	return &DocIndexResult{
 		Chunks: mdChunks,
@@ -164,7 +176,7 @@ func (di *DocIndexer) WriteGraph(result *gleann.PluginResult, sourcePath string)
 
 	start := time.Now()
 
-	docs, sections, hasSectionEdges, hasSubsectionEdges := di.extractFromPlugin(result, sourcePath)
+	folders, docs, headings, containsEdges, hasHeadingEdges, childHeadingEdges := di.extractFromPlugin(result, sourcePath)
 	if len(docs) == 0 {
 		return fmt.Errorf("no Document node in plugin result for %s", sourcePath)
 	}
@@ -198,26 +210,37 @@ func (di *DocIndexer) WriteGraph(result *gleann.PluginResult, sourcePath string)
 		return nil
 	}
 
+	if len(folders) > 0 {
+		if err := doCopy("Folder", func(p string) error { return kuzu.WriteFolderNodesCSV(p, folders) }); err != nil {
+			return err
+		}
+	}
 	if err := doCopy("Document", func(p string) error { return kuzu.WriteDocumentNodesCSV(p, docs) }); err != nil {
 		return err
 	}
-	if len(sections) > 0 {
-		if err := doCopy("Section", func(p string) error { return kuzu.WriteSectionNodesCSV(p, sections) }); err != nil {
+	if len(headings) > 0 {
+		if err := doCopy("Heading", func(p string) error { return kuzu.WriteHeadingNodesCSV(p, headings) }); err != nil {
 			return err
 		}
 	}
 
 	// Create edges via transaction.
 	var edgeQueries []string
-	for _, e := range hasSectionEdges {
+	for _, e := range containsEdges {
 		edgeQueries = append(edgeQueries, fmt.Sprintf(
-			`MATCH (d:Document {path: %q}), (s:Section {id: %q}) MERGE (d)-[:HAS_SECTION]->(s)`,
-			e.DocPath, e.SectionID,
+			`MATCH (f:Folder {vpath: %q}), (d:Document {vpath: %q}) MERGE (f)-[:CONTAINS_DOC]->(d)`,
+			e.FolderVPath, e.DocVPath,
 		))
 	}
-	for _, e := range hasSubsectionEdges {
+	for _, e := range hasHeadingEdges {
 		edgeQueries = append(edgeQueries, fmt.Sprintf(
-			`MATCH (p:Section {id: %q}), (c:Section {id: %q}) MERGE (p)-[:HAS_SUBSECTION]->(c)`,
+			`MATCH (d:Document {vpath: %q}), (h:Heading {id: %q}) MERGE (d)-[:HAS_HEADING]->(h)`,
+			e.DocVPath, e.HeadingID,
+		))
+	}
+	for _, e := range childHeadingEdges {
+		edgeQueries = append(edgeQueries, fmt.Sprintf(
+			`MATCH (p:Heading {id: %q}), (c:Heading {id: %q}) MERGE (p)-[:CHILD_HEADING]->(c)`,
 			e.ParentID, e.ChildID,
 		))
 	}
@@ -228,19 +251,11 @@ func (di *DocIndexer) WriteGraph(result *gleann.PluginResult, sourcePath string)
 	}
 
 	elapsed := time.Since(start)
-	log.Printf("[INFO] DocIndexer.WriteGraph: %s (%d sections) in %v",
-		sourcePath, len(sections), elapsed)
+	log.Printf("[INFO] DocIndexer.WriteGraph: %s (%d headings) in %v",
+		sourcePath, len(headings), elapsed)
 	return nil
 }
 
-// WriteGraphBatch writes multiple documents to KuzuDB in a single batch.
-// Instead of per-document CSV writes and transactions (~200ms each),
-// this collects all nodes/edges across documents and does:
-//   - 1 CSV COPY for all Document nodes
-//   - 1 CSV COPY for all Section nodes
-//   - 1 transaction for all edges
-//
-// This reduces 42 × ~200ms = 8.4s down to ~1-2s.
 func (di *DocIndexer) WriteGraphBatch(docs []*DocGraphInput) error {
 	if len(docs) == 0 {
 		return nil
@@ -252,50 +267,57 @@ func (di *DocIndexer) WriteGraphBatch(docs []*DocGraphInput) error {
 	start := time.Now()
 
 	// Phase 1: Collect all typed data and delete queries.
+	var allFolders []kuzu.FolderNode
 	var allDocs []kuzu.DocumentNode
-	var allSections []kuzu.SectionNode
+	var allHeadings []kuzu.HeadingNode
 	var deleteQueries []string
 	var edgeQueries []string
 
 	for _, d := range docs {
-		docNodes, sections, hasSectionEdges, hasSubsectionEdges := di.extractFromPlugin(d.Result, d.SourcePath)
+		folders, docNodes, headings, containsEdges, hasHeadingEdges, childHeadingEdges := di.extractFromPlugin(d.Result, d.SourcePath)
 		if len(docNodes) == 0 {
 			log.Printf("[WARN] DocIndexer.WriteGraphBatch: no Document node for %s, skipping", d.SourcePath)
 			continue
 		}
 
-		// Collect delete queries for idempotent re-index.
 		deleteQueries = append(deleteQueries,
 			kuzu.DeleteDocumentChunksQuery(d.SourcePath),
 			kuzu.DeleteDocumentSectionsQuery(d.SourcePath),
 			kuzu.DeleteDocumentQuery(d.SourcePath),
 		)
 
+		allFolders = append(allFolders, folders...)
 		allDocs = append(allDocs, docNodes...)
-		allSections = append(allSections, sections...)
+		allHeadings = append(allHeadings, headings...)
 
-		for _, e := range hasSectionEdges {
+		for _, e := range containsEdges {
 			edgeQueries = append(edgeQueries, fmt.Sprintf(
-				`MATCH (d:Document {path: %q}), (s:Section {id: %q}) MERGE (d)-[:HAS_SECTION]->(s)`,
-				e.DocPath, e.SectionID,
+				`MATCH (f:Folder {vpath: %q}), (d:Document {vpath: %q}) MERGE (f)-[:CONTAINS_DOC]->(d)`,
+				e.FolderVPath, e.DocVPath,
 			))
 		}
-		for _, e := range hasSubsectionEdges {
+		for _, e := range hasHeadingEdges {
 			edgeQueries = append(edgeQueries, fmt.Sprintf(
-				`MATCH (p:Section {id: %q}), (c:Section {id: %q}) MERGE (p)-[:HAS_SUBSECTION]->(c)`,
+				`MATCH (d:Document {vpath: %q}), (h:Heading {id: %q}) MERGE (d)-[:HAS_HEADING]->(h)`,
+				e.DocVPath, e.HeadingID,
+			))
+		}
+		for _, e := range childHeadingEdges {
+			edgeQueries = append(edgeQueries, fmt.Sprintf(
+				`MATCH (p:Heading {id: %q}), (c:Heading {id: %q}) MERGE (p)-[:CHILD_HEADING]->(c)`,
 				e.ParentID, e.ChildID,
 			))
 		}
 	}
 
-	// Phase 2: Delete old data in one transaction.
+	// Phase 2: Delete old data.
 	if len(deleteQueries) > 0 {
 		if err := kuzu.ExecTxOn(di.db.Conn(), deleteQueries); err != nil {
 			log.Printf("[WARN] DocIndexer.WriteGraphBatch: delete old data: %v", err)
 		}
 	}
 
-	// Phase 3: CSV bulk load all nodes in one shot.
+	// Phase 3: CSV bulk load.
 	doCopy := func(tableName string, writeFunc func(p string) error) error {
 		tmp, err := os.CreateTemp("", "kuzu_doc_batch_"+tableName+"_*.csv")
 		if err != nil {
@@ -314,18 +336,23 @@ func (di *DocIndexer) WriteGraphBatch(docs []*DocGraphInput) error {
 		return nil
 	}
 
+	if len(allFolders) > 0 {
+		if err := doCopy("Folder", func(p string) error { return kuzu.WriteFolderNodesCSV(p, allFolders) }); err != nil {
+			return fmt.Errorf("batch folder copy: %w", err)
+		}
+	}
 	if len(allDocs) > 0 {
 		if err := doCopy("Document", func(p string) error { return kuzu.WriteDocumentNodesCSV(p, allDocs) }); err != nil {
 			return fmt.Errorf("batch Document copy: %w", err)
 		}
 	}
-	if len(allSections) > 0 {
-		if err := doCopy("Section", func(p string) error { return kuzu.WriteSectionNodesCSV(p, allSections) }); err != nil {
-			return fmt.Errorf("batch Section copy: %w", err)
+	if len(allHeadings) > 0 {
+		if err := doCopy("Heading", func(p string) error { return kuzu.WriteHeadingNodesCSV(p, allHeadings) }); err != nil {
+			return fmt.Errorf("batch Heading copy: %w", err)
 		}
 	}
 
-	// Phase 4: Create all edges in one transaction.
+	// Phase 4: Create edges.
 	if len(edgeQueries) > 0 {
 		if err := kuzu.ExecTxOn(di.db.Conn(), edgeQueries); err != nil {
 			return fmt.Errorf("batch doc edges: %w", err)
@@ -333,8 +360,8 @@ func (di *DocIndexer) WriteGraphBatch(docs []*DocGraphInput) error {
 	}
 
 	elapsed := time.Since(start)
-	log.Printf("[INFO] DocIndexer.WriteGraphBatch: %d documents, %d sections in %v",
-		len(allDocs), len(allSections), elapsed)
+	log.Printf("[INFO] DocIndexer.WriteGraphBatch: %d documents, %d headings in %v",
+		len(allDocs), len(allHeadings), elapsed)
 	return nil
 }
 
@@ -346,30 +373,50 @@ type DocGraphInput struct {
 
 // extractFromPlugin converts the generic PluginResult into typed KuzuDB structs.
 func (di *DocIndexer) extractFromPlugin(result *gleann.PluginResult, sourcePath string) (
+	folders []kuzu.FolderNode,
 	docs []kuzu.DocumentNode,
-	sections []kuzu.SectionNode,
-	hasSections []kuzu.EdgeHasSection,
-	hasSubsections []kuzu.EdgeHasSubsection,
+	headings []kuzu.HeadingNode,
+	containsDocs []kuzu.EdgeContainsDoc,
+	hasHeadings []kuzu.EdgeHasHeading,
+	childHeadings []kuzu.EdgeChildHeading,
 ) {
+	var folderPath string
+
 	for _, node := range result.Nodes {
 		switch node.Type {
 		case "Document":
+			vpath := getStr(node.Data, "vpath", sourcePath)
+			rpath := getStr(node.Data, "rpath", sourcePath)
+
+			// Try to automatically parse folder from vpath
+			if strings.Contains(vpath, "/") {
+				parts := strings.Split(vpath, "/")
+				folderPath = strings.Join(parts[:len(parts)-1], "/")
+				folderName := parts[len(parts)-2]
+
+				folders = append(folders, kuzu.FolderNode{
+					VPath: folderPath,
+					Name:  folderName,
+				})
+
+				containsDocs = append(containsDocs, kuzu.EdgeContainsDoc{
+					FolderVPath: folderPath,
+					DocVPath:    vpath,
+				})
+			}
+
 			docs = append(docs, kuzu.DocumentNode{
-				Path:      getStr(node.Data, "path", sourcePath),
-				Title:     getStr(node.Data, "title", ""),
-				Format:    getStr(node.Data, "format", ""),
-				Summary:   getStr(node.Data, "summary", ""),
-				WordCount: getInt64(node.Data, "word_count"),
-				PageCount: getInt64(node.Data, "page_count"),
+				VPath:   vpath,
+				RPath:   rpath,
+				Name:    getStr(node.Data, "title", ""),
+				Hash:    getStr(node.Data, "hash", ""),
+				Summary: getStr(node.Data, "summary", ""),
 			})
 		case "Section":
-			sections = append(sections, kuzu.SectionNode{
-				ID:      getStr(node.Data, "id", ""),
-				Heading: getStr(node.Data, "heading", ""),
-				Level:   getInt64(node.Data, "level"),
-				Content: getStr(node.Data, "content", ""),
-				Summary: getStr(node.Data, "summary", ""),
-				DocPath: getStr(node.Data, "doc_path", sourcePath),
+			headings = append(headings, kuzu.HeadingNode{
+				ID:    getStr(node.Data, "id", ""),
+				Name:  getStr(node.Data, "heading", ""),
+				Level: getInt64(node.Data, "level"),
 			})
 		}
 	}
@@ -377,12 +424,12 @@ func (di *DocIndexer) extractFromPlugin(result *gleann.PluginResult, sourcePath 
 	for _, edge := range result.Edges {
 		switch edge.Type {
 		case "HAS_SECTION":
-			hasSections = append(hasSections, kuzu.EdgeHasSection{
-				DocPath:   edge.From,
-				SectionID: edge.To,
+			hasHeadings = append(hasHeadings, kuzu.EdgeHasHeading{
+				DocVPath:  edge.From,
+				HeadingID: edge.To,
 			})
 		case "HAS_SUBSECTION":
-			hasSubsections = append(hasSubsections, kuzu.EdgeHasSubsection{
+			childHeadings = append(childHeadings, kuzu.EdgeChildHeading{
 				ParentID: edge.From,
 				ChildID:  edge.To,
 			})
@@ -393,11 +440,17 @@ func (di *DocIndexer) extractFromPlugin(result *gleann.PluginResult, sourcePath 
 }
 
 // buildStructuredDocument converts KuzuDB types back to StructuredDocument for chunking.
-func (di *DocIndexer) buildStructuredDocument(doc kuzu.DocumentNode, sections []kuzu.SectionNode) *chunking.StructuredDocument {
-	mdSections := make([]chunking.MarkdownSection, len(sections))
-	for i, s := range sections {
-		// Extract parent ID from HAS_SUBSECTION edges — encoded in section ID.
-		// e.g. "doc:report.pdf:s0.1" → parent is "doc:report.pdf:s0"
+func (di *DocIndexer) buildStructuredDocument(doc kuzu.DocumentNode, headings []kuzu.HeadingNode, result *gleann.PluginResult) *chunking.StructuredDocument {
+	mdSections := make([]chunking.MarkdownSection, len(headings))
+	idToContent := make(map[string]string)
+
+	for _, n := range result.Nodes {
+		if n.Type == "Section" {
+			idToContent[getStr(n.Data, "id", "")] = getStr(n.Data, "content", "")
+		}
+	}
+
+	for i, s := range headings {
 		parentID := ""
 		if lastDot := strings.LastIndex(s.ID, "."); lastDot > 0 {
 			parentID = s.ID[:lastDot]
@@ -405,23 +458,18 @@ func (di *DocIndexer) buildStructuredDocument(doc kuzu.DocumentNode, sections []
 
 		mdSections[i] = chunking.MarkdownSection{
 			ID:       s.ID,
-			Heading:  s.Heading,
+			Heading:  s.Name,
 			Level:    int(s.Level),
-			Content:  s.Content,
-			Summary:  s.Summary,
+			Content:  idToContent[s.ID],
+			Summary:  "",
 			ParentID: parentID,
 		}
 	}
 
-	wc := int(doc.WordCount)
-	pc := int(doc.PageCount)
 	return &chunking.StructuredDocument{
 		Document: chunking.DocumentMeta{
-			Title:     doc.Title,
-			Format:    doc.Format,
-			PageCount: &pc,
-			WordCount: wc,
-			Summary:   doc.Summary,
+			Title:   doc.Name,
+			Summary: doc.Summary,
 		},
 		Sections: mdSections,
 	}

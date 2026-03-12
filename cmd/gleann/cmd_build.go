@@ -382,7 +382,7 @@ func readDocuments(dir string, chunkSize, chunkOverlap int, tracker *vault.Track
 						sections := chunking.ParseMarkdownHeadings(text)
 						if len(sections) > 0 {
 							wordCount := len(strings.Fields(text))
-							pResult := markdownToPluginResult(sections, relPath, wordCount)
+							pResult := markdownToPluginResult(sections, relPath, wordCount, text)
 							pluginDocsMu.Lock()
 							pluginDocs = append(pluginDocs, &PluginDoc{
 								Result:     pResult,
