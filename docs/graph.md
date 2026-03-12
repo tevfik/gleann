@@ -23,13 +23,24 @@ gleann search my-code "handleSearch" --graph
 
 ## Graph Schema
 
+The KuzuDB property graph models both source code ASTs and the structural layout of documents. For a deeper dive into document structures, see [Hierarchical GraphRAG](hierarchical_graphrag.md).
+
 | Node | Properties |
 |------|------------|
+| `Folder` | `vpath`, `name` |
+| `Document` | `vpath`, `rpath`, `name`, `hash`, `summary` |
+| `Heading` | `id`, `name`, `level` |
 | `CodeFile` | `path`, `lang` |
 | `Symbol` | `fqn`, `name`, `kind`, `file`, `line` |
+| `DocChunk`, `Chunk` | `id`, `content` |
 
 | Edge | From → To | Meaning |
 |------|----------|---------|
+| `CONTAINS_DOC` | `Folder → Document` | Folder contains a document |
+| `HAS_HEADING` | `Document → Heading` | Document contains a top-level heading |
+| `CHILD_HEADING` | `Heading → Heading` | H1 contains H2, etc. |
+| `HAS_CHUNK_DOC` | `Document → DocChunk` | Document contains text chunks (if no headings) |
+| `HAS_CHUNK_HEADING` | `Heading → Chunk` | Heading contains text chunks |
 | `DECLARES` | `CodeFile → Symbol` | File contains symbol |
 | `CALLS` | `Symbol → Symbol` | Function calls another |
 | `IMPLEMENTS` | `Symbol → Symbol` | Struct implements interface |
