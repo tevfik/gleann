@@ -48,6 +48,11 @@ Instead of storing all embedding vectors, gleann stores only the HNSW graph stru
 - Same `BackendFactory` interface — just change backend name
 - Enabled via `-tags faiss` build flag — excluded by default
 
+### Hierarchical GraphRAG & Extractive Summarization
+
+- Explicitly models the structural layout of files, folders, and markdown headings in KuzuDB alongside AST code symbols.
+- Zero-config Extractive Summarizer: High-density sentences are extracted algorithmically during build time, completely bypassing slow/costly LLMs, enabling zero-latency "Smart Summaries".
+
 ### Goroutine Embedding Server (no ZMQ)
 
 - Python LEANN uses ZMQ for embedding server communication
@@ -87,6 +92,8 @@ Instead of storing all embedding vectors, gleann stores only the HNSW graph stru
 | `.gleannignore` | — | ✅ (gitignore-style exclusions) |
 | ReAct Agent | ✅ | ✅ |
 | AST-aware Chunking | tree-sitter | go/ast + optional tree-sitter |
+| Hierarchical GraphRAG | — | ✅ (Folders, Documents, Headings) |
+| Extractive Summarizer | — | ✅ (Build-time NLP algorithm) |
 | MCP Server | ✅ | ✅ (built-in) |
 | File Sync (incremental) | ✅ | ✅ |
 | Hybrid Search (BM25) | — | ✅ |

@@ -244,13 +244,21 @@ curl -X POST http://localhost:8080/api/search \
       "index": "backend-code",
       "text": "func HandleLogin...",
       "score": 0.92,
-      "metadata": {"source": "auth/handler.go"}
+      "metadata": {"source": "auth/handler.go"},
+      "graph_context": {
+        "symbols": [{"name": "HandleLogin", "kind": "function"}]
+      }
     },
     {
       "index": "docs",
       "text": "Authentication uses JWT tokens...",
       "score": 0.88,
-      "metadata": {"source": "auth.md"}
+      "metadata": {"source": "auth.md"},
+      "document_context": {
+        "vpath": "auth.md",
+        "name": "Authentication Overview",
+        "summary": "This document explains the JWT flow..."
+      }
     }
   ],
   "count": 2,

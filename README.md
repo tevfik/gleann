@@ -4,6 +4,7 @@
 
 **A lightweight, brutally fast, and highly flexible AI/RAG workspace and autonomous agent framework built with Go. Inspired by the academic excellence of the Leann RAG backend, engineered for daily terminal use.**
 
+> 🤖 **Note:** This project, including its documentation, was developed with the assistance of AI.
 ---
 
 ## The Story and Inspiration (Why Gleann?)
@@ -23,6 +24,7 @@ The result is a highly portable system that boots in milliseconds, respects your
 ## Key Features
 
 - **Academic Vision, Full-Fledged Agent**: Built on the shoulders of Leann's RAG architecture to create an autonomous assistant where LLM, vector/graph DBs, and plugins unite in one Go app.
+- **Zero-Config Extractive Summarization**: High-density sentences are extracted algorithmically during build time, bypassing LLMs and enabling zero-latency "Smart Summaries".
 - **Flexible Intelligence (Local or Cloud)**: Run LLMs 100% locally via llama.cpp for total privacy, or connect to any OpenAI-compatible API for high-reasoning tasks.
 - **Advanced RAG (Faiss / HNSW & Kuzu Graph DB)**: Indexes documents and code semantically (vector) and relationally (graph), not just via simple keyword matching.
 - **Smart Chunking (Tree-sitter)**: Intelligent AST-aware partitioning preserves the structural integrity of your code functions and classes.
@@ -55,7 +57,6 @@ Detailed guides:
 - [FAISS Backend](docs/faiss.md) — Optional FAISS vector backend
 - [Tree-sitter](docs/treesitter.md) — AST-aware code chunking
 - [Benchmarks](docs/benchmarks.md) — Performance measurements
-- [Roadmap](docs/roadmap.md) — Feature roadmap and status
 
 ## Installation
 
@@ -197,45 +198,6 @@ Gleann supports external **Plugins** for parsing complex files via local HTTP AP
 
 * **[gleann-plugin-docs](https://github.com/tevfik/gleann-plugin-docs)**: PDF, Docx, Xlsx extraction via MarkItDown.
 * **[gleann-plugin-sound](https://github.com/tevfik/gleann-plugin-sound)**: Audio/Video transcription via whisper.cpp.
-
-## Roadmap
-
-- [x] Interactive TUI
-- [x] Two-stage reranker
-- [x] MCP server (embedded)
-- [x] Setup wizard + install
-- [x] AST Graph Indexer (KuzuDB)
-- [x] Graph-Augmented Search (callers/callees in search results)
-- [x] Impact Analysis endpoint (BFS blast radius)
-- [x] Rebuild command (convenience remove + build)
-- [x] Streaming chat responses (SSE)
-- [x] OpenAPI/Swagger spec for REST API
-- [x] Docker image
-- [x] Incremental Graph Update
-- [x] Multi-index search (cross-project queries)
-- [x] OpenTelemetry metrics
-- [x] Webhook notifications
-- [x] Multi-index chat (`gleann ask idx1,idx2 "question"`)
-- [x] Conversation persistence & management (`gleann conversations`)
-- [x] Named roles (`--role code`, `--role shell`, custom in config)
-- [x] Stdin/pipe support (`cat file | gleann ask ...`)
-- [x] Output format control (`--format json/markdown/raw`)
-- [x] Raw & quiet modes (`--raw`, `--quiet`, auto-raw when piped)
-- [x] `.gleannignore` (gitignore-style build exclusions)
-- [x] Config-driven roles & format-text (`~/.gleann/config.json`)
-- [x] Word-wrap control (`--word-wrap N`)
-- [x] LLM auto-summarization for conversation titles
-- [x] REST API: role & conversation_id fields, conversation endpoints
-- [x] TUI: role selector in settings, conversation browser (`/history`)
-- [x] Embedding cache (content-hash keyed disk cache)
-- [x] CLI restructure: `gleann index list/build/remove/...` subcommands
-- [x] CLI: conversations merged into `gleann chat --list/--show/--delete`
-- [x] Markdown rendering (glamour) in CLI ask and TUI chat
-- [x] `--no-cache` flag (skip conversation save)
-- [x] `--no-limit` flag (unlimited token output)
-- [x] `gleann config` subcommand (show/path/edit/validate)
-- [x] Backward compat aliases removed (clean `gleann index *` only)
-- [x] Graph+vector watch sync (incremental graph updates with changed files)
 
 ## Contributing
 
