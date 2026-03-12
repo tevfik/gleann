@@ -85,7 +85,7 @@ CLI flags override both defaults and config file values.
 --rerank                # Enable two-stage reranking
 --rerank-model <model>  # Reranker model
 --hybrid                # Hybrid search (vector + BM25)
---graph                 # Enrich results with graph context
+--graph                 # Enrich results with AST and/or hierarchical document context
 --ef-search <n>         # HNSW ef_search parameter
 ```
 
@@ -107,11 +107,13 @@ CLI flags override both defaults and config file values.
 --continue <id>         # Continue a previous conversation
 --continue-last         # Continue the most recent conversation
 --title <title>         # Set conversation title
---role <role>            # Use a named role (code, shell, explain, summarize, or custom)
---format <fmt>           # Output format: json, markdown, raw
---raw                    # Output raw text (no formatting); auto-enabled when piped
---quiet                  # Suppress status messages (for scripting)
---word-wrap <n>          # Wrap output at N columns (default: terminal width)
+--role <role>           # Use a named role (code, shell, explain, summarize, or custom)
+--agent                 # Enable ReAct Agent mode (with access to KuzuDB and full documents)
+--graph                 # Inject AST and structural document context into the LLM prompt
+--format <fmt>          # Output format: json, markdown, raw
+--raw                   # Output raw text (no formatting); auto-enabled when piped
+--quiet                 # Suppress status messages (for scripting)
+--word-wrap <n>         # Wrap output at N columns (default: terminal width)
 ```
 
 ### Conversation Management
