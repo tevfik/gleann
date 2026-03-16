@@ -7,6 +7,16 @@ import (
 	"strings"
 )
 
+var (
+	reCode   = regexp.MustCompile("(?s)```.*?```")
+	reInline = regexp.MustCompile("`[^`]+`")
+	reLink   = regexp.MustCompile(`\[([^\]]+)\]\([^)]+\)`)
+	reLists  = regexp.MustCompile(`(?m)^[\s]*[#\*\-\+>]+\s+.*$`)
+	reHTML   = regexp.MustCompile(`(?s)<.*?>`)
+	sentRe   = regexp.MustCompile(`([A-Z][^\.!\?]+[\.!\?])`)
+	wordRe   = regexp.MustCompile(`[a-z0-9]+`)
+)
+
 var stopWords = map[string]bool{
 	"a": true, "an": true, "the": true, "and": true, "or": true, "but": true,
 	"if": true, "then": true, "else": true, "when": true, "is": true, "are": true,
@@ -23,23 +33,13 @@ var stopWords = map[string]bool{
 // and returns the top 3 most information-dense sentences.
 func ExtractSummary(text string) string {
 	// 1. Clean Markdown Noise
-	reCode := regexp.MustCompile("(?s)```.*?```")
 	text = reCode.ReplaceAllString(text, "")
-
-	reInline := regexp.MustCompile("`[^`]+`")
 	text = reInline.ReplaceAllString(text, "")
-
-	reLink := regexp.MustCompile(`\[([^\]]+)\]\([^)]+\)`)
 	text = reLink.ReplaceAllString(text, "$1")
-
-	reLists := regexp.MustCompile(`(?m)^[\s]*[#\*\-\+>]+\s+.*$`)
 	text = reLists.ReplaceAllString(text, "")
-
-	reHTML := regexp.MustCompile(`(?s)<.*?>`)
 	text = reHTML.ReplaceAllString(text, "")
 
 	// 2. Sentence Extraction
-	sentRe := regexp.MustCompile(`([A-Z][^\.!\?]+[\.!\?])`)
 	rawSentences := sentRe.FindAllString(text, -1)
 
 	var sentences []string
@@ -57,7 +57,6 @@ func ExtractSummary(text string) string {
 	// 3. Word Frequency (TF)
 	wordFreq := make(map[string]int)
 	wordTokens := make([][]string, len(sentences))
-	wordRe := regexp.MustCompile(`[a-z0-9]+`)
 
 	for i, s := range sentences {
 		words := wordRe.FindAllString(strings.ToLower(s), -1)
