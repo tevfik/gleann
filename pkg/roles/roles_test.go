@@ -3,6 +3,7 @@ package roles
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -78,12 +79,16 @@ func TestLoadMessagePlainText(t *testing.T) {
 
 func TestLoadMessageFilePrefix(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "role.txt")
-	if err := os.WriteFile(path, []byte("role from file"), 0644); err != nil {
+	oldRolesDir := RolesDir
+	RolesDir = dir
+	defer func() { RolesDir = oldRolesDir }()
+
+	filename := "role.txt"
+	if err := os.WriteFile(filepath.Join(dir, filename), []byte("role from file"), 0644); err != nil {
 		t.Fatal(err)
 	}
 
-	content, err := LoadMessage("file://" + path)
+	content, err := LoadMessage("file://" + filename)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -93,7 +98,12 @@ func TestLoadMessageFilePrefix(t *testing.T) {
 }
 
 func TestLoadMessageFileMissing(t *testing.T) {
-	_, err := LoadMessage("file:///nonexistent/path.txt")
+	dir := t.TempDir()
+	oldRolesDir := RolesDir
+	RolesDir = dir
+	defer func() { RolesDir = oldRolesDir }()
+
+	_, err := LoadMessage("file://nonexistent.txt")
 	if err == nil {
 		t.Error("expected error for missing file")
 	}
@@ -101,13 +111,17 @@ func TestLoadMessageFileMissing(t *testing.T) {
 
 func TestRegistryResolveWithFile(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "prompt.txt")
-	if err := os.WriteFile(path, []byte("From file."), 0644); err != nil {
+	oldRolesDir := RolesDir
+	RolesDir = dir
+	defer func() { RolesDir = oldRolesDir }()
+
+	filename := "prompt.txt"
+	if err := os.WriteFile(filepath.Join(dir, filename), []byte("From file."), 0644); err != nil {
 		t.Fatal(err)
 	}
 
 	reg := NewRegistry(map[string][]string{
-		"hybrid": {"Inline prompt.", "file://" + path},
+		"hybrid": {"Inline prompt.", "file://" + filename},
 	})
 
 	msgs, err := reg.Resolve("hybrid")
@@ -116,5 +130,41 @@ func TestRegistryResolveWithFile(t *testing.T) {
 	}
 	if len(msgs) != 2 || msgs[0] != "Inline prompt." || msgs[1] != "From file." {
 		t.Errorf("unexpected resolved messages: %v", msgs)
+	}
+}
+
+func TestLoadMessagePathTraversalSecurity(t *testing.T) {
+	rolesDir := t.TempDir()
+	secretDir := t.TempDir()
+
+	oldRolesDir := RolesDir
+	RolesDir = rolesDir
+	defer func() { RolesDir = oldRolesDir }()
+
+	secretFile := filepath.Join(secretDir, "secret.txt")
+	if err := os.WriteFile(secretFile, []byte("top secret"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	// Try to access the secret file via path traversal
+	// We need to construct a relative path from rolesDir to secretFile
+	relPath, err := filepath.Rel(rolesDir, secretFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = LoadMessage("file://" + relPath)
+	if err == nil {
+		t.Error("expected security error for path traversal, but got none")
+	} else if !strings.Contains(err.Error(), "outside allowed roles directory") {
+		t.Errorf("expected security error message, got: %v", err)
+	}
+
+	// Try with direct absolute path (if it's not under rolesDir)
+	_, err = LoadMessage("file://" + secretFile)
+	if err == nil {
+		t.Error("expected security error for absolute path traversal, but got none")
+	} else if !strings.Contains(err.Error(), "outside allowed roles directory") {
+		t.Errorf("expected security error message, got: %v", err)
 	}
 }

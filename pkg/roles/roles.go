@@ -8,9 +8,20 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 )
+
+// RolesDir is the directory where local role files are stored.
+// It can be overridden in tests.
+var RolesDir = DefaultRolesDir()
+
+// DefaultRolesDir returns the platform-appropriate default roles directory.
+func DefaultRolesDir() string {
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, ".gleann", "roles")
+}
 
 // Role is a named list of system prompt segments.
 // Each segment can be a plain string, a file:// path, or an https:// URL.
@@ -129,7 +140,33 @@ func LoadMessage(msg string) (string, error) {
 	}
 
 	if strings.HasPrefix(msg, "file://") {
-		bts, err := os.ReadFile(strings.TrimPrefix(msg, "file://"))
+		path := strings.TrimPrefix(msg, "file://")
+		// Secure path resolution: ensure it stays within RolesDir.
+		absBase, err := filepath.Abs(RolesDir)
+		if err != nil {
+			return "", fmt.Errorf("abs base: %w", err)
+		}
+
+		// Use absolute path if provided, otherwise join with base.
+		target := path
+		if !filepath.IsAbs(path) {
+			target = filepath.Join(absBase, path)
+		}
+		absTarget, err := filepath.Abs(target)
+		if err != nil {
+			return "", fmt.Errorf("abs target: %w", err)
+		}
+
+		// Check if the resolved path is within the allowed directory.
+		rel, err := filepath.Rel(absBase, absTarget)
+		if err != nil {
+			return "", fmt.Errorf("rel: %w", err)
+		}
+		if strings.HasPrefix(rel, ".."+string(filepath.Separator)) || rel == ".." {
+			return "", fmt.Errorf("security: path %q is outside allowed roles directory", path)
+		}
+
+		bts, err := os.ReadFile(absTarget)
 		if err != nil {
 			return "", fmt.Errorf("read file: %w", err)
 		}
