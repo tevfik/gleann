@@ -23,14 +23,15 @@ import (
 
 // Server is the REST API server for gleann.
 type Server struct {
-	config    gleann.Config
-	embedder  *embedding.Computer
-	searchers map[string]*gleann.LeannSearcher
-	mu        sync.RWMutex
-	addr      string
-	version   string
-	server    *http.Server
-	graphPool *graphDBPool
+	config     gleann.Config
+	embedder   *embedding.Computer
+	searchers  map[string]*gleann.LeannSearcher
+	mu         sync.RWMutex
+	addr       string
+	version    string
+	server     *http.Server
+	graphPool  *graphDBPool
+	memoryPool *memoryPool // Memory Engine: generic Entity/RELATES_TO graph
 }
 
 // NewServer creates a new REST API server.
@@ -48,12 +49,13 @@ func NewServer(config gleann.Config, addr, version string) *Server {
 	}
 
 	return &Server{
-		config:    config,
-		embedder:  embedder,
-		searchers: make(map[string]*gleann.LeannSearcher),
-		addr:      addr,
-		version:   version,
-		graphPool: newGraphDBPool(config.IndexDir),
+		config:     config,
+		embedder:   embedder,
+		searchers:  make(map[string]*gleann.LeannSearcher),
+		addr:       addr,
+		version:    version,
+		graphPool:  newGraphDBPool(config.IndexDir),
+		memoryPool: newMemoryPool(config.IndexDir),
 	}
 }
 
@@ -91,6 +93,12 @@ func (s *Server) Start() error {
 	mux.HandleFunc("POST /api/graph/{name}/query", s.handleGraphQuery)
 	mux.HandleFunc("POST /api/graph/{name}/index", s.handleGraphIndex)
 
+	// Memory Engine endpoints (generic Entity/RELATES_TO knowledge graph).
+	mux.HandleFunc("POST /api/memory/{name}/inject", s.handleMemoryInject)
+	mux.HandleFunc("DELETE /api/memory/{name}/nodes/{id}", s.handleMemoryDeleteNode)
+	mux.HandleFunc("DELETE /api/memory/{name}/edges", s.handleMemoryDeleteEdge)
+	mux.HandleFunc("POST /api/memory/{name}/traverse", s.handleMemoryTraverse)
+
 	// OpenAI-compatible proxy endpoints.
 	mux.HandleFunc("GET /v1/models", s.handleListModels)
 	mux.HandleFunc("POST /v1/chat/completions", s.handleChatCompletions)
@@ -116,6 +124,7 @@ func (s *Server) Stop(ctx context.Context) error {
 	if s.graphPool != nil {
 		s.graphPool.closeAll()
 	}
+	s.stopMemoryPool(ctx)
 	return s.server.Shutdown(ctx)
 }
 

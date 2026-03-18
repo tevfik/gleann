@@ -30,6 +30,7 @@ func (s *Server) openAPISpec() map[string]any {
 			{"name": "indexes", "description": "Index management"},
 			{"name": "search", "description": "Semantic and hybrid search"},
 			{"name": "graph", "description": "KuzuDB code graph queries"},
+			{"name": "memory", "description": "Memory Engine — generic Entity/RELATES_TO knowledge graph for external AI agents"},
 			{"name": "webhooks", "description": "Webhook notification management"},
 			{"name": "metrics", "description": "Prometheus-compatible metrics"},
 			{"name": "proxy", "description": "OpenAI-compatible RAG proxy (model: \"gleann/<index>\")"},
@@ -292,10 +293,143 @@ func (s *Server) openAPISpec() map[string]any {
 					},
 				},
 			},
+
+			// ── Memory Engine endpoints ──────────────────────────────────────────
+			"/api/memory/{name}/inject": map[string]any{
+				"post": map[string]any{
+					"tags":        []string{"memory"},
+					"summary":     "Inject nodes and edges (bulk upsert)",
+					"description": "Atomically upserts a batch of Entity nodes and RELATES_TO edges into the knowledge graph. The operation is idempotent — re-submitting the same payload is safe. Nodes with non-empty content are also indexed in the HNSW vector store.",
+					"operationId": "memoryInject",
+					"parameters":  []map[string]any{paramName()},
+					"requestBody": map[string]any{
+						"required": true,
+						"content": map[string]any{
+							"application/json": map[string]any{
+								"schema": refSchema("GraphInjectionPayload"),
+							},
+						},
+					},
+					"responses": map[string]any{
+						"200": map[string]any{
+							"description": "Injection successful",
+							"content": map[string]any{
+								"application/json": map[string]any{
+									"schema": map[string]any{
+										"type": "object",
+										"properties": map[string]any{
+											"ok":         map[string]any{"type": "boolean"},
+											"nodes_sent": map[string]any{"type": "integer"},
+											"edges_sent": map[string]any{"type": "integer"},
+										},
+									},
+								},
+							},
+						},
+						"400": map[string]any{"description": "Invalid request body"},
+						"500": map[string]any{"description": "Internal server error"},
+					},
+				},
+			},
+			"/api/memory/{name}/nodes/{id}": map[string]any{
+				"delete": map[string]any{
+					"tags":        []string{"memory"},
+					"summary":     "Delete an entity node",
+					"description": "Removes the Entity identified by id from the knowledge graph together with all of its incident RELATES_TO edges. If a vector syncer is configured, the corresponding embedding is also deleted.",
+					"operationId": "memoryDeleteNode",
+					"parameters": []map[string]any{
+						paramName(),
+						{
+							"name":        "id",
+							"in":          "path",
+							"required":    true,
+							"description": "Entity node ID",
+							"schema":      map[string]any{"type": "string"},
+						},
+					},
+					"responses": map[string]any{
+						"200": map[string]any{
+							"description": "Entity deleted",
+							"content": map[string]any{
+								"application/json": map[string]any{
+									"schema": map[string]any{
+										"type": "object",
+										"properties": map[string]any{
+											"ok":         map[string]any{"type": "boolean"},
+											"deleted_id": map[string]any{"type": "string"},
+										},
+									},
+								},
+							},
+						},
+						"400": map[string]any{"description": "Missing id"},
+						"500": map[string]any{"description": "Internal server error"},
+					},
+				},
+			},
+			"/api/memory/{name}/edges": map[string]any{
+				"delete": map[string]any{
+					"tags":        []string{"memory"},
+					"summary":     "Delete a specific edge",
+					"description": "Removes the single RELATES_TO relationship identified by (from, to, relation_type). Other edges between the same pair with different relation types are not affected.",
+					"operationId": "memoryDeleteEdge",
+					"parameters":  []map[string]any{paramName()},
+					"requestBody": map[string]any{
+						"required": true,
+						"content": map[string]any{
+							"application/json": map[string]any{
+								"schema": refSchema("DeleteEdgeRequest"),
+							},
+						},
+					},
+					"responses": map[string]any{
+						"200": map[string]any{
+							"description": "Edge deleted",
+							"content": map[string]any{
+								"application/json": map[string]any{
+									"schema": map[string]any{
+										"type":       "object",
+										"properties": map[string]any{"ok": map[string]any{"type": "boolean"}},
+									},
+								},
+							},
+						},
+						"400": map[string]any{"description": "Missing required fields"},
+						"500": map[string]any{"description": "Internal server error"},
+					},
+				},
+			},
+			"/api/memory/{name}/traverse": map[string]any{
+				"post": map[string]any{
+					"tags":        []string{"memory"},
+					"summary":     "Traverse the knowledge graph",
+					"description": "Walks RELATES_TO edges starting from start_id up to depth hops. Returns all reachable Entity nodes and the edges that connect them within the sub-graph. Useful for agents exploring requirement chains, dependency graphs, or semantic concept clusters.",
+					"operationId": "memoryTraverse",
+					"parameters":  []map[string]any{paramName()},
+					"requestBody": map[string]any{
+						"required": true,
+						"content": map[string]any{
+							"application/json": map[string]any{
+								"schema": refSchema("TraverseRequest"),
+							},
+						},
+					},
+					"responses": map[string]any{
+						"200": map[string]any{
+							"description": "Sub-graph result",
+							"content": map[string]any{
+								"application/json": map[string]any{
+									"schema": refSchema("TraverseResponse"),
+								},
+							},
+						},
+						"400": map[string]any{"description": "Invalid request"},
+						"500": map[string]any{"description": "Internal server error"},
+					},
+				},
+			},
 			"/api/search": map[string]any{
 				"post": map[string]any{
-					"tags":        []string{"search"},
-					"summary":     "Multi-index search",
 					"description": "Search across multiple indexes simultaneously. Results are merged by score, each tagged with the source index. Omit 'indexes' to search all available indexes.",
 					"operationId": "multiIndexSearch",
 					"requestBody": map[string]any{
@@ -655,6 +789,74 @@ func (s *Server) openAPISpec() map[string]any {
 					"properties": map[string]any{
 						"docs_dir": map[string]any{"type": "string", "description": "Directory path to index"},
 						"module":   map[string]any{"type": "string", "description": "Go module name (auto-detected from go.mod if omitted)"},
+					},
+				},
+
+				// ── Memory Engine schemas ─────────────────────────────────────────
+				"MemoryGraphNode": map[string]any{
+					"type":     "object",
+					"required": []string{"id", "type"},
+					"properties": map[string]any{
+						"id":         map[string]any{"type": "string", "description": "Globally unique, stable node identifier (e.g. UUID or slug)"},
+						"type":       map[string]any{"type": "string", "description": "Semantic class of the node (e.g. requirement, concept, code_symbol)"},
+						"content":    map[string]any{"type": "string", "description": "Natural-language text used to generate the vector embedding. Omit if no vector search is needed."},
+						"attributes": map[string]any{"type": "object", "additionalProperties": true, "description": "Arbitrary key-value metadata persisted as JSON"},
+					},
+				},
+				"MemoryGraphEdge": map[string]any{
+					"type":     "object",
+					"required": []string{"from", "to", "relation_type"},
+					"properties": map[string]any{
+						"from":          map[string]any{"type": "string", "description": "Source node ID"},
+						"to":            map[string]any{"type": "string", "description": "Destination node ID"},
+						"relation_type": map[string]any{"type": "string", "description": "Semantic edge label (e.g. DEPENDS_ON, IMPLEMENTS, RELATED_TO)"},
+						"weight":        map[string]any{"type": "number", "format": "double", "default": 1.0, "description": "Optional edge strength"},
+						"attributes":    map[string]any{"type": "object", "additionalProperties": true, "description": "Arbitrary edge metadata"},
+					},
+				},
+				"GraphInjectionPayload": map[string]any{
+					"type":        "object",
+					"description": "Bulk upsert payload for the Memory Engine. Nodes and edges are processed inside a single KuzuDB transaction.",
+					"properties": map[string]any{
+						"nodes": map[string]any{
+							"type":  "array",
+							"items": refSchema("MemoryGraphNode"),
+						},
+						"edges": map[string]any{
+							"type":  "array",
+							"items": refSchema("MemoryGraphEdge"),
+						},
+					},
+				},
+				"DeleteEdgeRequest": map[string]any{
+					"type":     "object",
+					"required": []string{"from", "to", "relation_type"},
+					"properties": map[string]any{
+						"from":          map[string]any{"type": "string", "description": "Source node ID"},
+						"to":            map[string]any{"type": "string", "description": "Destination node ID"},
+						"relation_type": map[string]any{"type": "string", "description": "Edge label to remove"},
+					},
+				},
+				"TraverseRequest": map[string]any{
+					"type":     "object",
+					"required": []string{"start_id"},
+					"properties": map[string]any{
+						"start_id": map[string]any{"type": "string", "description": "ID of the starting Entity node"},
+						"depth":    map[string]any{"type": "integer", "default": 1, "minimum": 0, "maximum": 10, "description": "Maximum traversal depth (hops). Capped at 10."},
+					},
+				},
+				"TraverseResponse": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"nodes": map[string]any{
+							"type":  "array",
+							"items": refSchema("MemoryGraphNode"),
+						},
+						"edges": map[string]any{
+							"type":  "array",
+							"items": refSchema("MemoryGraphEdge"),
+						},
+						"count": map[string]any{"type": "integer", "description": "Number of nodes returned"},
 					},
 				},
 				"Error": map[string]any{

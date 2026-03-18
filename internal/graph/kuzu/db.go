@@ -1,3 +1,5 @@
+//go:build treesitter
+
 // Package kuzu provides an embedded property graph database backed by KuzuDB
 // for storing and querying AST (Abstract Syntax Tree) relationships extracted
 // from a codebase.
@@ -195,6 +197,28 @@ func (g *DB) initSchema() error {
 		`CREATE REL TABLE IF NOT EXISTS EXPLAINS(
 			FROM Chunk TO Symbol,
 			MANY_MANY
+		)`,
+
+		// ── Memory Engine: generic Entity / RELATES_TO schema ──────────────
+		// These tables support the Knowledge Graph Memory Engine that external
+		// AI agents (e.g. Yaver, Claude) can read from and write to without
+		// coupling to gleann's internal AST / document schemas.
+		`CREATE NODE TABLE IF NOT EXISTS Entity(
+			id         STRING,
+			type       STRING,
+			content    STRING,
+			attributes STRING,
+			PRIMARY KEY (id)
+		)`,
+		// RELATES_TO is a generic directed, labeled, weighted relationship.
+		// relation_type distinguishes semantically different edge classes
+		// (e.g. "DEPENDS_ON", "IMPLEMENTS", "RELATED_TO") without requiring
+		// separate table definitions per relationship kind.
+		`CREATE REL TABLE IF NOT EXISTS RELATES_TO(
+			FROM Entity TO Entity,
+			relation_type STRING,
+			weight        DOUBLE,
+			attributes    STRING
 		)`,
 	}
 

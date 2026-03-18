@@ -1,3 +1,5 @@
+//go:build treesitter
+
 // Package indexer provides an AST-based graph indexer that extracts code symbols
 // (functions, methods, types, structs, interfaces, consts, vars) and their
 // relationships (DECLARES, CALLS, IMPLEMENTS, REFERENCES) from source files

@@ -33,7 +33,8 @@ type Server struct {
 	embedder    gleann.EmbeddingComputer
 	config      gleann.Config
 	searchers   map[string]*gleann.LeannSearcher
-	searcherLRU []string // tracks access order: most recent at end
+	searcherLRU []string       // tracks access order: most recent at end
+	memPool     *mcpMemoryPool // Memory Engine: generic Entity/RELATES_TO graph
 }
 
 // NewServer initializes a new MCP server that exposes Gleann capabilities using the SDK.
@@ -64,6 +65,7 @@ func NewServer(cfg Config) *Server {
 		config:    glCfg,
 		embedder:  embedder,
 		searchers: make(map[string]*gleann.LeannSearcher),
+		memPool:   newMCPMemoryPool(cfg.IndexDir),
 	}
 
 	// Register tools natively with the SDK
@@ -74,6 +76,11 @@ func NewServer(cfg Config) *Server {
 	s.AddTool(srv.buildGraphNeighborsTool(), srv.handleGraphNeighbors)
 	s.AddTool(srv.buildDocumentLinksTool(), srv.handleDocumentLinks)
 	s.AddTool(srv.buildImpactTool(), srv.handleImpact)
+
+	// Memory Engine tools — external agents can manipulate the knowledge graph directly.
+	s.AddTool(srv.buildInjectKGTool(), srv.handleInjectKG)
+	s.AddTool(srv.buildDeleteEntityTool(), srv.handleDeleteEntity)
+	s.AddTool(srv.buildTraverseKGTool(), srv.handleTraverseKG)
 
 	// Register generic index list resource
 	s.AddResource(mcp.Resource{
@@ -99,6 +106,13 @@ func (s *Server) Run() {
 	// Start stdio transport
 	if err := server.ServeStdio(s.mcpServer); err != nil {
 		log.Fatalf("Server error: %v", err)
+	}
+}
+
+// Close releases all resources held by the MCP server (KuzuDB handles, etc.).
+func (s *Server) Close() {
+	if s.memPool != nil {
+		s.memPool.closeAll()
 	}
 }
 

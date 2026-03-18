@@ -1,3 +1,5 @@
+//go:build treesitter
+
 // Package indexer provides graph indexers for both code (AST) and documents.
 //
 // DocIndexer ingests structured plugin responses (Document + Section nodes,

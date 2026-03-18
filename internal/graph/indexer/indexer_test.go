@@ -1,4 +1,4 @@
-//go:build !windows
+//go:build treesitter && !windows
 
 package indexer_test
 
