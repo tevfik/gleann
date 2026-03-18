@@ -3,27 +3,32 @@
 ## Overview
 
 ```
-┌──────────────────────────────────────────────────────┐
-│          TUI / CLI / REST API / MCP Server           │
-├────────────────┬─────────────────────────────────────┤
-│  LeannBuilder  │  Searcher Interface                 │
-│  (build index) │  ├── LeannSearcher (single index)   │
-│  .gleannignore │  └── MultiSearcher (fan-out merge)  │
-├────────────────┤                                     │
-│  LeannChat     │  Conversations / Roles / Format     │
-│  (LLM Q&A)    │  Stdin · Pipe · Raw · Quiet          │
-├────────────────┴─────────────────────────────────────┤
-│              Backend Registry                        │
-├──────────────┬───────────────────────────────────────┤
-│  Pure Go     │  FAISS (optional, CGo)                │
-│  HNSW Graph  │  HNSW via libfaiss C API              │
-│  CSR Format  │  AVX2/SIMD, OpenMP                    │
-├──────────────┴───────────────────────────────────────┤
-│  Passage Manager  │  BM25 Scorer  │  Chunking        │
-│  (Bbolt KV)       │  (Okapi BM25) │  (sentence/code) │
-├───────────────────┴───────────────┴──────────────────┤
-│  Embedding Server  (goroutine pool)                  │
-└──────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────┐
+│          TUI / CLI / REST API / MCP Server                           │
+├───────────────────┬──────────────────────────────────────────────────┤
+│  LeannBuilder     │  Searcher Interface                              │
+│  (build index)    │  ├── LeannSearcher (single index)                │
+│  .gleannignore    │  └── MultiSearcher (fan-out merge)               │
+├───────────────────┤                                                  │
+│  LeannChat        │  Conversations / Roles / Format                  │
+│  (LLM Q&A)       │  Stdin · Pipe · Raw · Quiet                       │
+├───────────────────┴──────────────────────────────────────────────────┤
+│              Backend Registry                                        │
+├──────────────────┬───────────────────────────────────────────────────┤
+│  Pure Go         │  FAISS (optional, CGo)                            │
+│  HNSW Graph      │  HNSW via libfaiss C API                          │
+│  CSR Format      │  AVX2/SIMD, OpenMP                                │
+├──────────────────┴───────────────────────────────────────────────────┤
+│  Passage Manager  │  BM25 Scorer  │  Chunking                        │
+│  (Bbolt KV)       │  (Okapi BM25) │  (sentence/AST/markdown)         │
+├───────────────────┴───────────────┴──────────────────────────────────┤
+│  Embedding Server  (goroutine pool)                                  │
+├──────────────────────────────────────────────────────────────────────┤
+│  KuzuDB Graph Layer                                                  │
+│  ├── Code Graph  (CodeFile, Symbol, CALLS, IMPLEMENTS …)             │
+│  ├── Document Graph  (Folder, Document, Heading, Chunk …)            │
+│  └── Memory Engine  (Entity, RELATES_TO — generic AI agent memory)   │
+└──────────────────────────────────────────────────────────────────────┘
 ```
 
 ### Storage Optimization: Selective Recomputation
@@ -47,6 +52,40 @@ Instead of storing all embedding vectors, gleann stores only the HNSW graph stru
 - 15-34x faster builds, 3-28x faster search via AVX2 SIMD + OpenMP
 - Same `BackendFactory` interface — just change backend name
 - Enabled via `-tags faiss` build flag — excluded by default
+
+### Memory Engine: Generic AI Agent Memory
+
+gleann v2 introduces a **Memory Engine** that transforms the system from a
+closed RAG box into a generic knowledge graph backend for autonomous AI agents.
+
+```
+External Agent (e.g. Yaver, Claude)
+        │
+        │  MCP tools:                    HTTP endpoints:
+        │  inject_knowledge_graph   ←→   POST /api/memory/{name}/inject
+        │  delete_graph_entity      ←→   DELETE /api/memory/{name}/nodes/{id}
+        │  traverse_knowledge_graph ←→   POST /api/memory/{name}/traverse
+        │
+        ▼
+  KuzuDB Entity / RELATES_TO schema
+  ├─ Node: {id, type, content, attributes}
+  └─ Edge: {from, to, relation_type, weight, attributes}
+        │
+        ▼ (when content is non-empty)
+  HNSW + BM25 vector index (via VectorSyncer)
+```
+
+**Key design properties:**
+
+| Property | Implementation |
+|----------|---------------|
+| **Generic schema** | Single `Entity` node table + single `RELATES_TO` rel table |
+| **Idempotent writes** | Cypher `MERGE` — safe to re-inject the same payload |
+| **Atomic batches** | `BEGIN / COMMIT` transaction per `InjectEntities` call |
+| **Vector sync** | Optional `VectorSyncer` interface — graph write commits first, then vector store is updated |
+| **Cascade deletes** | `DETACH DELETE` removes a node and all its incident edges atomically |
+| **Traversal** | Variable-length Cypher path `[:RELATES_TO*0..N]` with depth cap at 10 |
+| **Co-existence** | Entity/RELATES_TO live in a separate DB (`<name>_memory`) from the AST/document graph |
 
 ### Hierarchical GraphRAG & Extractive Summarization
 
@@ -95,6 +134,7 @@ Instead of storing all embedding vectors, gleann stores only the HNSW graph stru
 | Hierarchical GraphRAG | — | ✅ (Folders, Documents, Headings) |
 | Extractive Summarizer | — | ✅ (Build-time NLP algorithm) |
 | MCP Server | ✅ | ✅ (built-in) |
+| Memory Engine (AI agent memory) | — | ✅ (Entity/RELATES_TO KuzuDB) |
 | File Sync (incremental) | ✅ | ✅ |
 | Hybrid Search (BM25) | — | ✅ |
 | REST API Server | — | ✅ |

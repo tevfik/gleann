@@ -55,6 +55,20 @@ When the server is running, interactive Swagger UI documentation is available at
 | POST | `/api/graph/{name}/query` | Query the code graph |
 | POST | `/api/graph/{name}/index` | Trigger AST graph indexing |
 
+### Memory Engine (Generic Knowledge Graph)
+
+The Memory Engine exposes a generic `Entity` / `RELATES_TO` graph that external
+AI agents can read from and write to without coupling to gleann's internal RAG
+pipeline.  Each `{name}` corresponds to an independent KuzuDB store under
+`<index-dir>/<name>_memory/`.
+
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/api/memory/{name}/inject` | Atomically upsert nodes and edges |
+| DELETE | `/api/memory/{name}/nodes/{id}` | Delete an entity and its incident edges |
+| DELETE | `/api/memory/{name}/edges` | Delete a specific relationship |
+| POST | `/api/memory/{name}/traverse` | Walk the graph N hops from a start node |
+
 ### Webhooks
 
 | Method | Path | Description |
@@ -200,6 +214,93 @@ curl -X POST http://localhost:8080/api/graph/my-code/query \
     "max_depth": 3
   }'
 ```
+
+### Memory Engine — Inject Knowledge
+
+Atomically upsert Entity nodes and RELATES_TO edges. The operation is idempotent
+(re-submitting the same payload creates no duplicates):
+
+```bash
+curl -X POST http://localhost:8080/api/memory/project/inject \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "nodes": [
+      {
+        "id": "req-001",
+        "type": "requirement",
+        "content": "User must be able to log in with email and password",
+        "attributes": {"priority": "high", "sprint": 3}
+      },
+      {
+        "id": "feat-jwt",
+        "type": "code_symbol",
+        "content": "JWT authentication handler"
+      }
+    ],
+    "edges": [
+      {
+        "from": "req-001",
+        "to": "feat-jwt",
+        "relation_type": "IMPLEMENTED_BY",
+        "weight": 1.0
+      }
+    ]
+  }'
+```
+
+**Response:**
+```json
+{"ok": true, "nodes_sent": 2, "edges_sent": 1}
+```
+
+### Memory Engine — Traverse Sub-graph
+
+Walk the knowledge graph from a starting node up to `depth` hops. Returns all
+reachable nodes and the intra-subgraph edges:
+
+```bash
+curl -X POST http://localhost:8080/api/memory/project/traverse \
+  -H 'Content-Type: application/json' \
+  -d '{"start_id": "req-001", "depth": 2}'
+```
+
+**Response:**
+```json
+{
+  "nodes": [
+    {"id": "req-001", "type": "requirement", "content": "User must be able to log in..."},
+    {"id": "feat-jwt",  "type": "code_symbol", "content": "JWT authentication handler"}
+  ],
+  "edges": [
+    {"from": "req-001", "to": "feat-jwt", "relation_type": "IMPLEMENTED_BY", "weight": 1}
+  ],
+  "count": 2
+}
+```
+
+### Memory Engine — Delete a Node
+
+```bash
+curl -X DELETE http://localhost:8080/api/memory/project/nodes/req-001
+```
+
+All RELATES_TO edges incident to the deleted node are removed automatically
+(`DETACH DELETE` semantics).
+
+### Memory Engine — Delete a Specific Edge
+
+```bash
+curl -X DELETE http://localhost:8080/api/memory/project/edges \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "from": "req-001",
+    "to": "feat-jwt",
+    "relation_type": "IMPLEMENTED_BY"
+  }'
+```
+
+Only the matching RELATES_TO relationship is removed; both nodes survive and any
+other relation types between them remain intact.
 
 ### Build Index
 

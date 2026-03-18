@@ -44,17 +44,30 @@ type pluginInfo struct {
 	RepoURL     string // git clone URL
 	Language    string // "python" | "go"
 	Extensions  []string
+
+	// HasSettings indicates the plugin ships its own configuration TUI.
+	// When true, a "c — configure" action is shown in the detail view.
+	HasSettings bool
+	// SettingsCmd is the command line to launch the plugin's config TUI,
+	// e.g. ["gleann-plugin-sound", "tui"].
+	SettingsCmd []string
+
+	// RequiresMarkitdown indicates the plugin depends on the markitdown CLI tool.
+	// When true, markitdown status is shown in the detail view and the m-key
+	// is offered as an install shortcut.
+	RequiresMarkitdown bool
 }
 
 // knownPlugins is the built-in catalog of available plugins.
 var knownPlugins = []pluginInfo{
 	{
-		Name:        "gleann-docs",
-		Icon:        "📄",
-		Description: "Document extraction (PDF, DOCX, XLSX, PPTX)",
-		RepoURL:     "https://github.com/tevfik/gleann-plugin-docs",
-		Language:    "python (markitdown, docling)",
-		Extensions:  []string{".pdf", ".docx", ".xlsx", ".pptx", ".csv"},
+		Name:               "gleann-docs",
+		Icon:               "📄",
+		Description:        "Document extraction (PDF, DOCX, XLSX, PPTX)",
+		RepoURL:            "https://github.com/tevfik/gleann-plugin-docs",
+		Language:           "python (markitdown, docling)",
+		Extensions:         []string{".pdf", ".docx", ".xlsx", ".pptx", ".csv"},
+		RequiresMarkitdown: true,
 	},
 	{
 		Name:        "gleann-sound",
@@ -63,6 +76,9 @@ var knownPlugins = []pluginInfo{
 		RepoURL:     "https://github.com/tevfik/gleann-plugin-sound",
 		Language:    "go",
 		Extensions:  []string{".wav", ".mp3", ".flac", ".ogg"},
+		HasSettings: true,
+		// The binary is named gleann-sound (matches the repo root binary).
+		SettingsCmd: []string{"gleann-sound", "tui"},
 	},
 }
 
@@ -152,9 +168,10 @@ type PluginModel struct {
 	width         int
 	height        int
 	quitting      bool
-	status        string   // transient message
-	actionMsg     string   // action in progress
-	progressLines []string // detailed progress log
+	status        string            // transient message
+	actionMsg     string            // action in progress
+	progressLines []string          // detailed progress log
+	configSummary map[string]string // display-only snapshot of installed plugin config
 }
 
 // NewPluginModel creates a new plugin management screen.
@@ -290,8 +307,8 @@ func (m PluginModel) updateMain(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 
 	case "m":
-		// Install markitdown CLI.
-		if !m.markitdown.available {
+		// Install markitdown CLI when the selected plugin requires it.
+		if m.plugins[m.cursor].RequiresMarkitdown && !m.markitdown.available {
 			return m.startMarkitdownInstall()
 		}
 
@@ -315,6 +332,18 @@ func (m PluginModel) updateDetail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "i":
 		if m.statuses[m.cursor] == statusNotInstalled {
 			return m.startInstall()
+		}
+
+	case "c":
+		// Open the plugin's own configuration TUI as a subprocess.
+		if m.statuses[m.cursor] != statusNotInstalled && m.plugins[m.cursor].HasSettings {
+			return m.startConfigure()
+		}
+
+	case "m":
+		// Install markitdown when this plugin requires it.
+		if m.plugins[m.cursor].RequiresMarkitdown && !m.markitdown.available {
+			return m.startMarkitdownInstall()
 		}
 
 	case "u":
@@ -402,6 +431,122 @@ func listenForProgress(plugin string, ch chan string) tea.Cmd {
 	}
 }
 
+// startConfigure launches the plugin's own configuration TUI as a subprocess.
+// Bubble Tea hands the terminal to the child process and resumes when it exits.
+func (m PluginModel) startConfigure() (tea.Model, tea.Cmd) {
+	info := m.plugins[m.cursor]
+	if !info.HasSettings || len(info.SettingsCmd) == 0 {
+		return m, nil
+	}
+
+	binary := resolveBinary(info)
+	if binary == "" {
+		return m, func() tea.Msg {
+			return pluginActionMsg{
+				plugin: info.Name,
+				action: "configure",
+				err:    fmt.Errorf("binary %q not found in PATH or plugin directory", info.SettingsCmd[0]),
+			}
+		}
+	}
+
+	cmd := exec.Command(binary, info.SettingsCmd[1:]...)
+	return m, tea.ExecProcess(cmd, func(err error) tea.Msg {
+		if err != nil {
+			return pluginActionMsg{plugin: info.Name, action: "configure", err: err}
+		}
+		return pluginActionMsg{plugin: info.Name, action: "configure", output: "Configuration saved."}
+	})
+}
+
+// resolveBinary finds the executable for a plugin's settings command.
+// Search order:
+//  1. PATH
+//  2. ~/.gleann/plugins/<name>/<binary>  (directory layout)
+//  3. Repo root resolved via symlink     (binary-in-repo-root layout)
+func resolveBinary(info pluginInfo) string {
+	binary := info.SettingsCmd[0]
+
+	// 1. PATH.
+	if p, err := exec.LookPath(binary); err == nil {
+		return p
+	}
+
+	home, _ := os.UserHomeDir()
+	pluginDir := filepath.Join(home, ".gleann", "plugins", info.Name)
+
+	// 2. Standard directory layout: ~/.gleann/plugins/<name>/<binary>.
+	candidate := filepath.Join(pluginDir, binary)
+	if fi, err := os.Stat(candidate); err == nil && !fi.IsDir() {
+		return candidate
+	}
+
+	// 3. Binary-in-repo-root layout: pluginDir is a symlink to the binary file
+	// itself; resolve the symlink and search the parent directory.
+	if fi, err := os.Lstat(pluginDir); err == nil && fi.Mode()&os.ModeSymlink != 0 {
+		realPath, err := filepath.EvalSymlinks(pluginDir)
+		if err == nil {
+			// realPath may itself be the binary; check parent directory.
+			repoRoot := filepath.Dir(realPath)
+			// Try the exact SettingsCmd binary name first.
+			for _, name := range []string{binary, info.Name} {
+				c := filepath.Join(repoRoot, name)
+				if fi2, err := os.Stat(c); err == nil && !fi2.IsDir() {
+					return c
+				}
+			}
+		}
+	}
+
+	return ""
+}
+
+// loadPluginConfigSummary reads display-ready key/value pairs from the plugin's
+// own config file. Returns nil when the file does not exist or is not supported.
+func loadPluginConfigSummary(name string) map[string]string {
+	home, _ := os.UserHomeDir()
+
+	var cfgPath string
+	switch name {
+	case "gleann-sound":
+		cfgPath = filepath.Join(home, ".gleann", "sound.json")
+	default:
+		return nil
+	}
+
+	data, err := os.ReadFile(cfgPath)
+	if err != nil {
+		return nil
+	}
+
+	var raw map[string]any
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return nil
+	}
+
+	labels := map[string]string{
+		"default_model": "Model",
+		"language":      "Language",
+		"hotkey":        "Hotkey",
+		"backend":       "Backend",
+		"audio_source":  "Audio Source",
+	}
+
+	summary := make(map[string]string)
+	for jsonKey, label := range labels {
+		if v, ok := raw[jsonKey]; ok {
+			if s, ok := v.(string); ok && s != "" {
+				summary[label] = s
+			}
+		}
+	}
+
+	if len(summary) == 0 {
+		return nil
+	}
+	return summary
+}
+
 func (m PluginModel) startUninstall() (tea.Model, tea.Cmd) {
 	info := m.plugins[m.cursor]
 	m.state = psAction
@@ -457,6 +602,20 @@ func installPluginWithProgress(info pluginInfo, progress chan<- string) (string,
 
 	pluginDir := filepath.Join(pluginsDir, info.Name)
 
+	// If pluginDir exists but is not a directory (e.g. a stale symlink pointing
+	// at a binary file), remove it so the clone+link step runs cleanly.
+	if fi, err := os.Lstat(pluginDir); err == nil {
+		if fi.Mode()&os.ModeSymlink != 0 {
+			if target, err := os.Stat(pluginDir); err != nil || !target.IsDir() {
+				progress <- "⚠️  Removing invalid plugin entry (not a directory)..."
+				os.Remove(pluginDir)
+			}
+		} else if !fi.IsDir() {
+			progress <- "⚠️  Removing invalid plugin entry (not a directory)..."
+			os.Remove(pluginDir)
+		}
+	}
+
 	// Clone if not exists.
 	if _, err := os.Stat(pluginDir); os.IsNotExist(err) {
 		// Try git clone first.
@@ -488,10 +647,9 @@ func installPluginWithProgress(info pluginInfo, progress chan<- string) (string,
 		progress <- "🔗 Linking plugin directory..."
 		srcDir := filepath.Join(repoDir, info.Name)
 
-		// If subdirectory doesn't exist, use repo root (single-plugin repos).
-		if _, err := os.Stat(srcDir); os.IsNotExist(err) {
-			progress <- "ℹ️  No subdirectory found, using repository root..."
-			srcDir = repoDir
+		// Use repo root when the expected subdirectory does not exist OR when a
+		// file (e.g. a pre-built binary) shares the same name as the plugin.
+		if fi, err := os.Stat(srcDir); os.IsNotExist(err) || (err == nil && !fi.IsDir()) {
 		}
 
 		if err := linkOrCopy(srcDir, pluginDir); err != nil {
@@ -559,10 +717,24 @@ func setupPythonPluginWithProgress(pluginDir, name string, progress chan<- strin
 func setupGoPluginWithProgress(pluginDir, name string, progress chan<- string) (string, error) {
 	binaryPath := filepath.Join(pluginDir, name)
 
-	// Check if binary already exists.
+	// Check if binary already exists at expected location.
 	if _, err := os.Stat(binaryPath); err == nil {
 		progress <- "✓ Binary already installed"
 		return fmt.Sprintf("Installed %s (Go binary)", name), nil
+	}
+
+	// pluginDir may be a symlink that resolves to a file rather than a directory
+	// (happens when a pre-built binary in the repo root shares the plugin name).
+	// In that case resolve the real path and search the repo root for the binary.
+	if fi, err := os.Stat(pluginDir); err == nil && !fi.IsDir() {
+		progress <- "🔍 Detected pre-built binary in repository root..."
+		realPath, _ := filepath.EvalSymlinks(pluginDir)
+		repoRoot := filepath.Dir(realPath)
+		candidate := filepath.Join(repoRoot, name)
+		if _, err := os.Stat(candidate); err == nil {
+			progress <- "✓ Binary found in repository root"
+			return fmt.Sprintf("Installed %s (Go binary)", name), nil
+		}
 	}
 
 	// Try to download from GitHub releases first.
@@ -613,23 +785,15 @@ func setupGoPluginWithProgress(pluginDir, name string, progress chan<- string) (
 	// Fallback: Try to build from source (only if source files exist).
 	progress <- "🔍 Checking for source files..."
 
-	// Check if source files exist in plugin directory.
-	hasGoFiles := false
-	if entries, err := os.ReadDir(pluginDir); err == nil {
-		for _, e := range entries {
-			if !e.IsDir() && strings.HasSuffix(e.Name(), ".go") {
-				hasGoFiles = true
-				break
-			}
-		}
-	}
+	// Check root directory first, then cmd/* subdirectories (common Go project layout).
+	buildTarget, hasGoFiles := findGoBuildTarget(pluginDir)
 
 	if !hasGoFiles {
 		return "", fmt.Errorf("no binary in releases and no source files to build from")
 	}
 
-	progress <- "🔨 Building Go binary from source..."
-	cmd := exec.Command("go", "build", "-o", binaryPath, ".")
+	progress <- fmt.Sprintf("🔨 Building Go binary from source (%s)...", buildTarget)
+	cmd := exec.Command("go", "build", "-o", binaryPath, "./"+buildTarget)
 	cmd.Dir = pluginDir
 	if output, err := cmd.CombinedOutput(); err != nil {
 		return "", fmt.Errorf("go build: %s", string(output))
@@ -1040,6 +1204,18 @@ func installPlugin(info pluginInfo) (string, error) {
 
 	pluginDir := filepath.Join(pluginsDir, info.Name)
 
+	// If pluginDir exists but is not a directory (e.g. a stale symlink pointing
+	// at a binary file), remove it so the clone+link step runs cleanly.
+	if fi, err := os.Lstat(pluginDir); err == nil {
+		if fi.Mode()&os.ModeSymlink != 0 {
+			if target, err := os.Stat(pluginDir); err != nil || !target.IsDir() {
+				os.Remove(pluginDir)
+			}
+		} else if !fi.IsDir() {
+			os.Remove(pluginDir)
+		}
+	}
+
 	// Clone if not exists.
 	if _, err := os.Stat(pluginDir); os.IsNotExist(err) {
 		// Try git clone first.
@@ -1073,8 +1249,9 @@ func installPlugin(info pluginInfo) (string, error) {
 		// Link (or copy on Windows) the specific plugin subdirectory.
 		srcDir := filepath.Join(repoDir, info.Name)
 
-		// If subdirectory doesn't exist, use repo root (single-plugin repos).
-		if _, err := os.Stat(srcDir); os.IsNotExist(err) {
+		// Use repo root when the expected subdirectory does not exist OR when a
+		// file (e.g. a pre-built binary) shares the same name as the plugin.
+		if fi, err := os.Stat(srcDir); os.IsNotExist(err) || (err == nil && !fi.IsDir()) {
 			srcDir = repoDir
 		}
 
@@ -1131,9 +1308,18 @@ func setupPythonPlugin(pluginDir, name string) (string, error) {
 func setupGoPlugin(pluginDir, name string) (string, error) {
 	binaryPath := filepath.Join(pluginDir, name)
 
-	// Check if binary already exists.
+	// Check if binary already exists at expected location.
 	if _, err := os.Stat(binaryPath); err == nil {
 		return fmt.Sprintf("Installed %s (Go binary)", name), nil
+	}
+
+	// Handle pre-built binary in repo root (pluginDir is a symlink to a file).
+	if fi, err := os.Stat(pluginDir); err == nil && !fi.IsDir() {
+		realPath, _ := filepath.EvalSymlinks(pluginDir)
+		candidate := filepath.Join(filepath.Dir(realPath), name)
+		if _, err := os.Stat(candidate); err == nil {
+			return fmt.Sprintf("Installed %s (Go binary)", name), nil
+		}
 	}
 
 	// Try to download from GitHub releases (no progress output for legacy function).
@@ -1169,13 +1355,52 @@ func setupGoPlugin(pluginDir, name string) (string, error) {
 	close(noopProgress)
 
 	// Fallback: Try to build from source.
-	cmd := exec.Command("go", "build", "-o", binaryPath, ".")
+	buildTarget, hasGoFiles := findGoBuildTarget(pluginDir)
+	if !hasGoFiles {
+		return "", fmt.Errorf("no binary in releases and no source files to build from")
+	}
+	cmd := exec.Command("go", "build", "-o", binaryPath, "./"+buildTarget)
 	cmd.Dir = pluginDir
 	if output, err := cmd.CombinedOutput(); err != nil {
 		return "", fmt.Errorf("go build: %s", string(output))
 	}
 
 	return fmt.Sprintf("Built and installed %s (Go)", name), nil
+}
+
+// findGoBuildTarget looks for a buildable Go package in pluginDir.
+// It checks the root directory first, then cmd/* subdirectories (standard Go layout).
+// Returns the relative build target path (e.g. "." or "cmd/gleann-plugin-sound")
+// and whether any Go source files were found.
+func findGoBuildTarget(pluginDir string) (string, bool) {
+	// Check root directory.
+	if entries, err := os.ReadDir(pluginDir); err == nil {
+		for _, e := range entries {
+			if !e.IsDir() && strings.HasSuffix(e.Name(), ".go") {
+				return ".", true
+			}
+		}
+	}
+
+	// Check cmd/* subdirectories (e.g. cmd/gleann-plugin-sound/).
+	cmdDir := filepath.Join(pluginDir, "cmd")
+	if subdirs, err := os.ReadDir(cmdDir); err == nil {
+		for _, sub := range subdirs {
+			if !sub.IsDir() {
+				continue
+			}
+			subPath := filepath.Join(cmdDir, sub.Name())
+			if entries, err := os.ReadDir(subPath); err == nil {
+				for _, e := range entries {
+					if !e.IsDir() && strings.HasSuffix(e.Name(), ".go") {
+						return filepath.Join("cmd", sub.Name()), true
+					}
+				}
+			}
+		}
+	}
+
+	return ".", false
 }
 
 func uninstallPlugin(info pluginInfo) (string, error) {
@@ -1259,22 +1484,6 @@ func (m PluginModel) viewMain() string {
 	b.WriteString(TitleStyle.Render(" 🔌 Plugins "))
 	b.WriteString("\n\n")
 
-	// Layer 0: markitdown CLI status.
-	b.WriteString("  ")
-	b.WriteString(lipgloss.NewStyle().Foreground(ColorAccent).Bold(true).Render("Layer 0: markitdown CLI"))
-	b.WriteString("  ")
-	if m.markitdown.available {
-		b.WriteString(SuccessBadge.Render("✓ " + m.markitdown.path))
-	} else {
-		b.WriteString(lipgloss.NewStyle().Foreground(ColorMuted).Render("○ Not installed"))
-		b.WriteString(lipgloss.NewStyle().Foreground(ColorDimFg).Render("  (press m to install)"))
-	}
-	b.WriteString("\n\n")
-
-	// Separator.
-	b.WriteString(lipgloss.NewStyle().Foreground(ColorMuted).Render("  ─────────────────────────────────────────"))
-	b.WriteString("\n\n")
-
 	// Plugin list.
 	for i, info := range m.plugins {
 		cursor := "  "
@@ -1298,7 +1507,14 @@ func (m PluginModel) viewMain() string {
 		exts := lipgloss.NewStyle().Foreground(ColorDimFg).Render(
 			"    " + strings.Join(info.Extensions, " "),
 		)
-		b.WriteString(exts + "\n\n")
+		b.WriteString(exts + "\n")
+
+		// Inline dependency warning for plugins that need markitdown.
+		if info.RequiresMarkitdown && !m.markitdown.available {
+			warn := lipgloss.NewStyle().Foreground(ColorError).Render("    ⚠ markitdown not installed  (press m to install)")
+			b.WriteString(warn + "\n")
+		}
+		b.WriteString("\n")
 	}
 
 	// Status message.
@@ -1307,7 +1523,11 @@ func (m PluginModel) viewMain() string {
 	}
 
 	// Footer.
-	help := HelpStyle.Render("  ↑/↓ navigate • enter detail • i install • u uninstall • m markitdown • r refresh • q back")
+	helpMain := "  ↑/↓ navigate • enter detail • i install • u uninstall • r refresh • q back"
+	if m.plugins[m.cursor].RequiresMarkitdown && !m.markitdown.available {
+		helpMain = "  ↑/↓ navigate • enter detail • i install • m markitdown • r refresh • q back"
+	}
+	help := HelpStyle.Render(helpMain)
 	b.WriteString(help + "\n")
 
 	return b.String()
@@ -1342,15 +1562,50 @@ func (m PluginModel) viewDetail() string {
 
 	b.WriteString("\n")
 
+	// Dependencies section (e.g. markitdown for gleann-docs).
+	if info.RequiresMarkitdown {
+		b.WriteString("\n")
+		b.WriteString("  " + lipgloss.NewStyle().Foreground(ColorAccent).Bold(true).Render("Dependencies") + "\n")
+		if m.markitdown.available {
+			b.WriteString("  " + labelSt.Render("markitdown:") + " " + SuccessBadge.Render("✓ "+m.markitdown.path) + "\n")
+		} else {
+			b.WriteString("  " + labelSt.Render("markitdown:") + " " +
+				lipgloss.NewStyle().Foreground(ColorError).Render("○ Not installed") +
+				lipgloss.NewStyle().Foreground(ColorDimFg).Render("  (press m to install)") + "\n")
+		}
+	}
+
+	// Config summary (only when installed and a config file exists).
+	summary := loadPluginConfigSummary(info.Name)
+	if status != statusNotInstalled && len(summary) > 0 {
+		b.WriteString("\n")
+		b.WriteString("  " + lipgloss.NewStyle().Foreground(ColorAccent).Bold(true).Render("Settings") + "\n")
+		for _, key := range []string{"Model", "Language", "Hotkey", "Backend", "Audio Source"} {
+			if val, ok := summary[key]; ok {
+				b.WriteString("  " + labelSt.Render(key+":") + " " + valueSt.Render(val) + "\n")
+			}
+		}
+	}
+
+	b.WriteString("\n")
+
 	// Actions.
 	if status == statusNotInstalled {
 		b.WriteString("  " + lipgloss.NewStyle().Foreground(ColorSuccess).Render("Press i to install") + "\n")
 	} else {
+		if info.HasSettings {
+			b.WriteString("  " + lipgloss.NewStyle().Foreground(ColorAccent).Render("Press c to configure") + "\n")
+		}
 		b.WriteString("  " + lipgloss.NewStyle().Foreground(ColorError).Render("Press u to uninstall") + "\n")
 	}
 
 	b.WriteString("\n")
-	b.WriteString(HelpStyle.Render("  esc back • i install • u uninstall") + "\n")
+
+	helpText := "  esc back • i install • u uninstall"
+	if status != statusNotInstalled && info.HasSettings {
+		helpText = "  esc back • c configure • u uninstall"
+	}
+	b.WriteString(HelpStyle.Render(helpText) + "\n")
 
 	return b.String()
 }

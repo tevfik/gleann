@@ -54,7 +54,7 @@ Location: `~/.gleann/config.json`
 | `ollama_host` | `http://localhost:11434` | Ollama server URL |
 | `openai_key` | — | OpenAI API key (if using openai provider) |
 | `openai_base_url` | — | Custom OpenAI-compatible API base URL |
-| `index_dir` | `~/.gleann/indexes` | Where indexes are stored |
+| `index_dir` | `~/.gleann/indexes` | Root directory for all index data. Each named index `<name>` creates `<name>/` (RAG), `<name>_graph/` (code graph), and `<name>_memory/` (Memory Engine) sub-directories here |
 | `llm_provider` | `ollama` | Provider for ask/chat: `ollama`, `openai`, `anthropic` |
 | `llm_model` | `llama3.2` | LLM model for ask/chat commands |
 | `quiet` | `false` | Suppress status messages globally |

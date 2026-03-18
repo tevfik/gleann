@@ -1,3 +1,5 @@
+//go:build treesitter
+
 package kuzu
 
 import (
