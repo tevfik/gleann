@@ -1,3 +1,5 @@
+//go:build treesitter
+
 package kuzu
 
 import (
@@ -140,7 +142,7 @@ func (g *DB) DocumentContext(vpath string) (*gleann.DocumentContextData, error) 
 	if err != nil {
 		return nil, err
 	}
-	
+
 	m, err := row.GetAsMap()
 	if err != nil {
 		return nil, err

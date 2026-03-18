@@ -5,6 +5,7 @@ package gleann
 
 import (
 	"encoding/json"
+	"fmt"
 	"time"
 )
 
@@ -27,11 +28,11 @@ type GraphContextInfo struct {
 
 // DocumentContextData holds hierarchical graph metadata about a document.
 type DocumentContextData struct {
-	VPath      string   `json:"vpath"`
-	RPath      string   `json:"rpath"`
-	Name       string   `json:"name"`
-	Summary    string   `json:"summary"`
-	FolderName string   `json:"folder_name,omitempty"`
+	VPath      string `json:"vpath"`
+	RPath      string `json:"rpath"`
+	Name       string `json:"name"`
+	Summary    string `json:"summary"`
+	FolderName string `json:"folder_name,omitempty"`
 }
 
 // SymbolNeighbors holds a symbol and its direct callers/callees from the code graph.
@@ -255,4 +256,81 @@ func DefaultChunkConfig() ChunkConfig {
 type EmbeddingBatch struct {
 	IDs        []int64     `json:"ids"`
 	Embeddings [][]float32 `json:"embeddings"`
+}
+
+// ── Memory Engine types ───────────────────────────────────────────────────────
+//
+// These types form the generic Knowledge Graph / Memory Engine API that allows
+// external AI agents (e.g. Yaver, Claude) to inject, query, and manage graph
+// knowledge without coupling to gleann's internal RAG pipeline.
+
+// MemoryGraphNode is a generic, labeled property node stored in the Entity
+// table of the Memory Engine's KuzuDB schema.
+type MemoryGraphNode struct {
+	// ID is the user-supplied primary key (e.g. a UUID or stable slug).
+	ID string `json:"id"`
+
+	// Type classifies the node (e.g. "requirement", "code_symbol", "concept").
+	Type string `json:"type"`
+
+	// Content is the natural-language text used to generate the vector
+	// embedding. Leave empty if no vector representation is needed.
+	Content string `json:"content,omitempty"`
+
+	// Attributes holds arbitrary key-value metadata persisted as a JSON
+	// string inside KuzuDB so the schema stays generic.
+	Attributes map[string]any `json:"attributes,omitempty"`
+}
+
+// MemoryGraphEdge is a directed, typed relationship between two MemoryGraphNodes.
+type MemoryGraphEdge struct {
+	// From is the source node ID.
+	From string `json:"from"`
+
+	// To is the destination node ID.
+	To string `json:"to"`
+
+	// RelationType is the semantic label for the relationship
+	// (e.g. "DEPENDS_ON", "IMPLEMENTS", "RELATED_TO").
+	RelationType string `json:"relation_type"`
+
+	// Weight is an optional numeric strength for the edge (default 1.0).
+	Weight float64 `json:"weight,omitempty"`
+
+	// Attributes holds arbitrary edge metadata, persisted as JSON in KuzuDB.
+	Attributes map[string]any `json:"attributes,omitempty"`
+}
+
+// GraphInjectionPayload is a bulk write request that carries nodes and edges
+// in a single atomic operation for the Memory Engine ingestion endpoint.
+type GraphInjectionPayload struct {
+	Nodes []MemoryGraphNode `json:"nodes"`
+	Edges []MemoryGraphEdge `json:"edges"`
+}
+
+// AttributesToJSON marshals a map[string]any to a compact JSON string suitable
+// for storage in KuzuDB's STRING attributes column.
+// An empty or nil map is serialized as "{}".
+func AttributesToJSON(attrs map[string]any) (string, error) {
+	if len(attrs) == 0 {
+		return "{}", nil
+	}
+	b, err := json.Marshal(attrs)
+	if err != nil {
+		return "", fmt.Errorf("marshal attributes: %w", err)
+	}
+	return string(b), nil
+}
+
+// JSONToAttributes unmarshals a JSON string retrieved from KuzuDB back into
+// a map[string]any. Returns nil for empty or "{}" inputs.
+func JSONToAttributes(s string) (map[string]any, error) {
+	if s == "" || s == "{}" {
+		return nil, nil
+	}
+	var m map[string]any
+	if err := json.Unmarshal([]byte(s), &m); err != nil {
+		return nil, fmt.Errorf("unmarshal attributes: %w", err)
+	}
+	return m, nil
 }
