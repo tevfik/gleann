@@ -64,6 +64,7 @@ func createMockServerEnv(t *testing.T) (*Server, *mockTrackingServer) {
 
 	dir := t.TempDir()
 	pm := gleann.NewPassageManager(dir + "/test")
+	t.Cleanup(func() { pm.Close() })
 
 	items := make([]gleann.Item, 100)
 	for i := 0; i < 100; i++ {

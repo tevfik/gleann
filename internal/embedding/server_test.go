@@ -16,6 +16,7 @@ func newTestPassageManager(t *testing.T) *gleann.PassageManager {
 	t.Helper()
 	dir := t.TempDir()
 	pm := gleann.NewPassageManager(dir + "/test")
+	t.Cleanup(func() { pm.Close() })
 
 	items := []gleann.Item{
 		{Text: "hello world", Metadata: map[string]any{}},
