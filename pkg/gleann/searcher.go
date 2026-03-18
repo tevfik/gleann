@@ -429,6 +429,11 @@ func (s *LeannSearcher) Close() error {
 			errs = append(errs, err)
 		}
 	}
+	if s.passages != nil {
+		if err := s.passages.Close(); err != nil {
+			errs = append(errs, err)
+		}
+	}
 	if s.graphDB != nil {
 		s.graphDB.Close()
 	}
