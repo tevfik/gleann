@@ -10,6 +10,7 @@ func TestPassageManagerAddAndGet(t *testing.T) {
 	dir := t.TempDir()
 	basePath := filepath.Join(dir, "test")
 	pm := NewPassageManager(basePath)
+	defer pm.Close()
 
 	items := []Item{
 		{Text: "Hello world", Metadata: map[string]any{"source": "test.txt"}},
@@ -53,6 +54,7 @@ func TestPassageManagerAddAndGet(t *testing.T) {
 func TestPassageManagerGetBatch(t *testing.T) {
 	dir := t.TempDir()
 	pm := NewPassageManager(filepath.Join(dir, "test"))
+	defer pm.Close()
 
 	items := []Item{
 		{Text: "first"},
@@ -76,6 +78,7 @@ func TestPassageManagerGetBatch(t *testing.T) {
 func TestPassageManagerGetTexts(t *testing.T) {
 	dir := t.TempDir()
 	pm := NewPassageManager(filepath.Join(dir, "test"))
+	defer pm.Close()
 
 	pm.Add([]Item{{Text: "hello"}, {Text: "world"}})
 
@@ -103,6 +106,7 @@ func TestPassageManagerLoad(t *testing.T) {
 
 	// Load from disk.
 	pm2 := NewPassageManager(basePath)
+	defer pm2.Close()
 	if err := pm2.Load(); err != nil {
 		t.Fatalf("load: %v", err)
 	}
@@ -123,6 +127,7 @@ func TestPassageManagerLoad(t *testing.T) {
 func TestPassageManagerAppend(t *testing.T) {
 	dir := t.TempDir()
 	pm := NewPassageManager(filepath.Join(dir, "test"))
+	defer pm.Close()
 
 	// First batch.
 	ids1, _ := pm.Add([]Item{{Text: "first"}, {Text: "second"}})
@@ -144,6 +149,7 @@ func TestPassageManagerAppend(t *testing.T) {
 func TestPassageManagerAll(t *testing.T) {
 	dir := t.TempDir()
 	pm := NewPassageManager(filepath.Join(dir, "test"))
+	defer pm.Close()
 	pm.Add([]Item{{Text: "a"}, {Text: "b"}})
 
 	all := pm.All()
@@ -156,6 +162,7 @@ func TestPassageManagerDelete(t *testing.T) {
 	dir := t.TempDir()
 	basePath := filepath.Join(dir, "test")
 	pm := NewPassageManager(basePath)
+	defer pm.Close()
 
 	pm.Add([]Item{{Text: "delete me"}})
 
@@ -177,6 +184,7 @@ func TestPassageManagerDelete(t *testing.T) {
 func TestPassageManagerOutOfRange(t *testing.T) {
 	dir := t.TempDir()
 	pm := NewPassageManager(filepath.Join(dir, "test"))
+	defer pm.Close()
 	pm.Add([]Item{{Text: "only one"}})
 
 	_, err := pm.Get(5)
@@ -188,6 +196,7 @@ func TestPassageManagerOutOfRange(t *testing.T) {
 func TestPassageManagerLoadEmpty(t *testing.T) {
 	dir := t.TempDir()
 	pm := NewPassageManager(filepath.Join(dir, "nonexistent"))
+	defer pm.Close()
 
 	if err := pm.Load(); err != nil {
 		t.Fatalf("load: %v", err)
