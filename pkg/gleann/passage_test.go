@@ -99,6 +99,7 @@ func TestPassageManagerLoad(t *testing.T) {
 		{Text: "beta"},
 		{Text: "gamma"},
 	})
+	pm1.Close()
 
 	// Load from disk.
 	pm2 := NewPassageManager(basePath)
@@ -158,15 +159,18 @@ func TestPassageManagerDelete(t *testing.T) {
 
 	pm.Add([]Item{{Text: "delete me"}})
 
-	pm.Delete()
-
-	if pm.Count() != 0 {
-		t.Error("expected 0 after delete")
+	if err := pm.Delete(); err != nil {
+		t.Fatalf("delete failed: %v", err)
 	}
 
 	// Files should be removed.
-	if _, err := os.Stat(pm.jsonlPath()); !os.IsNotExist(err) {
-		t.Error("JSONL file should be deleted")
+	if _, err := os.Stat(pm.dbPath()); !os.IsNotExist(err) {
+		t.Errorf("DB file should be deleted, err: %v", err)
+	}
+
+	// Calling Count() after Delete() recreates an empty DB.
+	if pm.Count() != 0 {
+		t.Error("expected 0 after delete")
 	}
 }
 

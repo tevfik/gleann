@@ -1,30 +1,28 @@
 package gleann
 
 import (
-	"bufio"
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"sync"
+	"time"
+
+	"go.etcd.io/bbolt"
 )
 
+var bucketPassages = []byte("passages")
+
 // PassageManager handles storage and retrieval of text passages.
-// It uses JSONL format for passages and a binary offset index for O(1) random access.
-//
-// Files:
-//   - {name}.passages.jsonl — one JSON object per line
-//   - {name}.passages.idx  — binary offset map (int64 per passage)
-//
-// This mirrors Python LEANN's PassageManager.
+// It uses bbolt for fast O(1) retrieval and ACID transactions.
 type PassageManager struct {
 	mu       sync.RWMutex
-	basePath string // path without extension
-	passages []Passage
-	offsets  []int64 // byte offsets into JSONL file
-	loaded   bool
+	basePath string
+	db       *bbolt.DB
+	
+	// Optional caching for LoadAll() callers like BM25
+	cached []Passage
 }
 
 // NewPassageManager creates a new PassageManager.
@@ -34,117 +32,174 @@ func NewPassageManager(basePath string) *PassageManager {
 	}
 }
 
-// jsonlPath returns the path to the JSONL file.
-func (pm *PassageManager) jsonlPath() string {
-	return pm.basePath + ".passages.jsonl"
+func (pm *PassageManager) dbPath() string {
+	return pm.basePath + ".passages.db"
 }
 
-// idxPath returns the path to the offset index file.
-func (pm *PassageManager) idxPath() string {
-	return pm.basePath + ".passages.idx"
+func (pm *PassageManager) ensureDB() error {
+	pm.mu.Lock()
+	defer pm.mu.Unlock()
+
+	if pm.db != nil {
+		return nil
+	}
+
+	dir := filepath.Dir(pm.basePath)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return fmt.Errorf("create directory: %w", err)
+	}
+
+	options := &bbolt.Options{Timeout: 5 * time.Second}
+	db, err := bbolt.Open(pm.dbPath(), 0644, options)
+	if err != nil {
+		return fmt.Errorf("open bbolt: %w", err)
+	}
+
+	err = db.Update(func(tx *bbolt.Tx) error {
+		_, err := tx.CreateBucketIfNotExists(bucketPassages)
+		return err
+	})
+	if err != nil {
+		db.Close()
+		return fmt.Errorf("create bucket: %w", err)
+	}
+
+	pm.db = db
+	return nil
 }
 
 // Add adds passages to the manager and writes them to disk.
 func (pm *PassageManager) Add(items []Item) ([]int64, error) {
+	if err := pm.ensureDB(); err != nil {
+		return nil, err
+	}
+
+	var ids []int64
+	var newPassages []Passage
+
+	err := pm.db.Update(func(tx *bbolt.Tx) error {
+		b := tx.Bucket(bucketPassages)
+
+		for _, item := range items {
+			seq, err := b.NextSequence()
+			if err != nil {
+				return err
+			}
+			id := int64(seq) - 1 // 0-indexed IDs
+
+			ids = append(ids, id)
+
+			passage := Passage{
+				ID:       id,
+				Text:     item.Text,
+				Metadata: item.Metadata,
+			}
+			newPassages = append(newPassages, passage)
+
+			data, err := json.Marshal(passage)
+			if err != nil {
+				return fmt.Errorf("marshal passage %d: %w", id, err)
+			}
+
+			var key [8]byte
+			binary.BigEndian.PutUint64(key[:], uint64(id))
+
+			if err := b.Put(key[:], data); err != nil {
+				return fmt.Errorf("put passage %d: %w", id, err)
+			}
+		}
+		return nil
+	})
+
+	if err != nil {
+		return nil, err
+	}
+
 	pm.mu.Lock()
-	defer pm.mu.Unlock()
-
-	// Ensure directory exists.
-	dir := filepath.Dir(pm.basePath)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return nil, fmt.Errorf("create directory: %w", err)
+	if pm.cached != nil {
+		pm.cached = append(pm.cached, newPassages...)
 	}
-
-	// Open JSONL file for append.
-	f, err := os.OpenFile(pm.jsonlPath(), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
-	if err != nil {
-		return nil, fmt.Errorf("open JSONL file: %w", err)
-	}
-	defer f.Close()
-
-	// Get current file position.
-	pos, err := f.Seek(0, io.SeekEnd)
-	if err != nil {
-		return nil, fmt.Errorf("seek to end: %w", err)
-	}
-
-	startID := int64(len(pm.passages))
-	ids := make([]int64, len(items))
-	newOffsets := make([]int64, len(items))
-	newPassages := make([]Passage, len(items))
-
-	w := bufio.NewWriter(f)
-	for i, item := range items {
-		id := startID + int64(i)
-		ids[i] = id
-		newOffsets[i] = pos
-
-		passage := Passage{
-			ID:       id,
-			Text:     item.Text,
-			Metadata: item.Metadata,
-		}
-		newPassages[i] = passage
-
-		data, err := json.Marshal(passage)
-		if err != nil {
-			return nil, fmt.Errorf("marshal passage %d: %w", id, err)
-		}
-		data = append(data, '\n')
-		n, err := w.Write(data)
-		if err != nil {
-			return nil, fmt.Errorf("write passage %d: %w", id, err)
-		}
-		pos += int64(n)
-	}
-	if err := w.Flush(); err != nil {
-		return nil, fmt.Errorf("flush JSONL: %w", err)
-	}
-
-	pm.passages = append(pm.passages, newPassages...)
-	pm.offsets = append(pm.offsets, newOffsets...)
-	pm.loaded = true
-
-	// Write offset index.
-	if err := pm.writeOffsets(); err != nil {
-		return nil, fmt.Errorf("write offsets: %w", err)
-	}
+	pm.mu.Unlock()
 
 	return ids, nil
 }
 
-// Get retrieves a passage by its ID using the offset index for O(1) access.
+// Get retrieves a passage by its ID in O(1).
 func (pm *PassageManager) Get(id int64) (Passage, error) {
-	pm.mu.RLock()
-	defer pm.mu.RUnlock()
-
-	// If in-memory, return directly.
-	if pm.loaded && id >= 0 && id < int64(len(pm.passages)) {
-		return pm.passages[id], nil
+	if err := pm.ensureDB(); err != nil {
+		return Passage{}, err
 	}
 
-	// Otherwise, use offset index for random access from disk.
-	return pm.readFromDisk(id)
+	pm.mu.RLock()
+	if pm.cached != nil && id >= 0 && id < int64(len(pm.cached)) {
+		p := pm.cached[id]
+		pm.mu.RUnlock()
+		return p, nil
+	}
+	pm.mu.RUnlock()
+
+	var passage Passage
+	err := pm.db.View(func(tx *bbolt.Tx) error {
+		b := tx.Bucket(bucketPassages)
+		if b == nil {
+			return fmt.Errorf("bucket not found")
+		}
+
+		var key [8]byte
+		binary.BigEndian.PutUint64(key[:], uint64(id))
+
+		val := b.Get(key[:])
+		if val == nil {
+			return fmt.Errorf("passage %d not found", id)
+		}
+
+		return json.Unmarshal(val, &passage)
+	})
+
+	return passage, err
 }
 
 // GetBatch retrieves multiple passages by their IDs.
 func (pm *PassageManager) GetBatch(ids []int64) ([]Passage, error) {
-	pm.mu.RLock()
-	defer pm.mu.RUnlock()
+	if err := pm.ensureDB(); err != nil {
+		return nil, err
+	}
 
 	passages := make([]Passage, len(ids))
-	for i, id := range ids {
-		if pm.loaded && id >= 0 && id < int64(len(pm.passages)) {
-			passages[i] = pm.passages[id]
-		} else {
-			p, err := pm.readFromDisk(id)
-			if err != nil {
-				return nil, fmt.Errorf("read passage %d: %w", id, err)
-			}
-			passages[i] = p
+
+	err := pm.db.View(func(tx *bbolt.Tx) error {
+		b := tx.Bucket(bucketPassages)
+		if b == nil {
+			return fmt.Errorf("bucket not found")
 		}
-	}
-	return passages, nil
+
+		for i, id := range ids {
+			pm.mu.RLock()
+			if pm.cached != nil && id >= 0 && id < int64(len(pm.cached)) {
+				passages[i] = pm.cached[id]
+				pm.mu.RUnlock()
+				continue
+			}
+			pm.mu.RUnlock()
+
+			var key [8]byte
+			binary.BigEndian.PutUint64(key[:], uint64(id))
+
+			val := b.Get(key[:])
+			if val == nil {
+				return fmt.Errorf("passage %d not found", id)
+			}
+
+			var passage Passage
+			if err := json.Unmarshal(val, &passage); err != nil {
+				return err
+			}
+			passages[i] = passage
+		}
+		return nil
+	})
+
+	return passages, err
 }
 
 // GetTexts retrieves text content for the given IDs.
@@ -160,187 +215,111 @@ func (pm *PassageManager) GetTexts(ids []int64) ([]string, error) {
 	return texts, nil
 }
 
-// All returns all passages in memory.
+// All returns all passages.
 func (pm *PassageManager) All() []Passage {
+	if err := pm.ensureDB(); err != nil {
+		return nil
+	}
+
 	pm.mu.RLock()
-	defer pm.mu.RUnlock()
-	return pm.passages
+	if pm.cached != nil {
+		defer pm.mu.RUnlock()
+		return pm.cached
+	}
+	pm.mu.RUnlock()
+
+	var passages []Passage
+	pm.db.View(func(tx *bbolt.Tx) error {
+		b := tx.Bucket(bucketPassages)
+		if b == nil {
+			return nil
+		}
+		
+		return b.ForEach(func(k, v []byte) error {
+			var p Passage
+			if err := json.Unmarshal(v, &p); err == nil {
+				passages = append(passages, p)
+			}
+			return nil
+		})
+	})
+	return passages
 }
 
 // Count returns the number of passages.
 func (pm *PassageManager) Count() int {
-	pm.mu.RLock()
-	defer pm.mu.RUnlock()
-	if len(pm.passages) > 0 {
-		return len(pm.passages)
+	if err := pm.ensureDB(); err != nil {
+		return 0
 	}
-	return len(pm.offsets)
+
+	pm.mu.RLock()
+	if pm.cached != nil {
+		defer pm.mu.RUnlock()
+		return len(pm.cached)
+	}
+	pm.mu.RUnlock()
+
+	var count int
+	pm.db.View(func(tx *bbolt.Tx) error {
+		b := tx.Bucket(bucketPassages)
+		if b != nil {
+			count = b.Stats().KeyN
+		}
+		return nil
+	})
+	return count
 }
 
-// Load loads passages and offsets from disk.
-// By default it uses lazy loading: only the offset index is read (typically <1 KB),
-// and individual passages are fetched on demand via readFromDisk.
+// Load prepares the database connection.
 func (pm *PassageManager) Load() error {
-	pm.mu.Lock()
-	defer pm.mu.Unlock()
-
-	// Try loading just the offset index (tiny file).
-	if err := pm.loadOffsets(); err != nil {
-		// Offsets file doesn't exist — build it from JSONL.
-		if err := pm.buildOffsets(); err != nil {
-			return err
-		}
-		if err := pm.writeOffsets(); err != nil {
-			return fmt.Errorf("write offsets: %w", err)
-		}
-	}
-
-	// Don't load full JSONL into memory. Passages are loaded on demand.
-	pm.loaded = false
-	return nil
+	return pm.ensureDB()
 }
 
 // LoadAll loads all passages into memory (needed for BM25 scoring).
 func (pm *PassageManager) LoadAll() error {
+	if err := pm.ensureDB(); err != nil {
+		return err
+	}
+
 	pm.mu.Lock()
 	defer pm.mu.Unlock()
-	return pm.loadFromJSONL()
-}
 
-// buildOffsets scans the JSONL file to build the offset index
-// without parsing each line's JSON content.
-func (pm *PassageManager) buildOffsets() error {
-	f, err := os.Open(pm.jsonlPath())
-	if err != nil {
-		if os.IsNotExist(err) {
-			pm.offsets = nil
-			pm.loaded = true
+	if pm.cached != nil {
+		return nil // already loaded
+	}
+
+	var passages []Passage
+	err := pm.db.View(func(tx *bbolt.Tx) error {
+		b := tx.Bucket(bucketPassages)
+		if b == nil {
 			return nil
 		}
-		return fmt.Errorf("open JSONL: %w", err)
-	}
-	defer f.Close()
-
-	pm.offsets = nil
-	scanner := bufio.NewScanner(f)
-	scanner.Buffer(make([]byte, 1024*1024), 10*1024*1024)
-
-	var pos int64
-	for scanner.Scan() {
-		pm.offsets = append(pm.offsets, pos)
-		pos += int64(len(scanner.Bytes())) + 1 // +1 for newline
-	}
-	if err := scanner.Err(); err != nil {
-		return fmt.Errorf("scan JSONL for offsets: %w", err)
-	}
-	return nil
-}
-
-// loadFromJSONL loads all passages from the JSONL file.
-func (pm *PassageManager) loadFromJSONL() error {
-	f, err := os.Open(pm.jsonlPath())
-	if err != nil {
-		if os.IsNotExist(err) {
-			pm.passages = nil
-			pm.offsets = nil
-			pm.loaded = true
+		return b.ForEach(func(k, v []byte) error {
+			var p Passage
+			if err := json.Unmarshal(v, &p); err != nil {
+				return err
+			}
+			passages = append(passages, p)
 			return nil
-		}
-		return fmt.Errorf("open JSONL: %w", err)
+		})
+	})
+
+	if err == nil {
+		pm.cached = passages
 	}
-	defer f.Close()
+	return err
+}
 
-	pm.passages = nil
-	pm.offsets = nil
-
-	scanner := bufio.NewScanner(f)
-	// Increase buffer for long lines.
-	scanner.Buffer(make([]byte, 1024*1024), 10*1024*1024)
-
-	var pos int64
-	for scanner.Scan() {
-		pm.offsets = append(pm.offsets, pos)
-
-		line := scanner.Bytes()
-		var passage Passage
-		if err := json.Unmarshal(line, &passage); err != nil {
-			return fmt.Errorf("unmarshal passage at offset %d: %w", pos, err)
-		}
-		pm.passages = append(pm.passages, passage)
-		pos += int64(len(line)) + 1 // +1 for newline
+// Close closes the underlying database.
+func (pm *PassageManager) Close() error {
+	pm.mu.Lock()
+	defer pm.mu.Unlock()
+	if pm.db != nil {
+		err := pm.db.Close()
+		pm.db = nil
+		return err
 	}
-	if err := scanner.Err(); err != nil {
-		return fmt.Errorf("scan JSONL: %w", err)
-	}
-
-	pm.loaded = true
 	return nil
-}
-
-// readFromDisk reads a single passage from disk using the offset index.
-func (pm *PassageManager) readFromDisk(id int64) (Passage, error) {
-	if id < 0 || id >= int64(len(pm.offsets)) {
-		return Passage{}, fmt.Errorf("passage ID %d out of range [0, %d)", id, len(pm.offsets))
-	}
-
-	f, err := os.Open(pm.jsonlPath())
-	if err != nil {
-		return Passage{}, fmt.Errorf("open JSONL: %w", err)
-	}
-	defer f.Close()
-
-	offset := pm.offsets[id]
-	if _, err := f.Seek(offset, io.SeekStart); err != nil {
-		return Passage{}, fmt.Errorf("seek to offset %d: %w", offset, err)
-	}
-
-	reader := bufio.NewReader(f)
-	line, err := reader.ReadBytes('\n')
-	if err != nil && err != io.EOF {
-		return Passage{}, fmt.Errorf("read line: %w", err)
-	}
-
-	var passage Passage
-	if err := json.Unmarshal(line, &passage); err != nil {
-		return Passage{}, fmt.Errorf("unmarshal passage: %w", err)
-	}
-
-	return passage, nil
-}
-
-// writeOffsets writes the offset index to disk.
-func (pm *PassageManager) writeOffsets() error {
-	f, err := os.Create(pm.idxPath())
-	if err != nil {
-		return fmt.Errorf("create index file: %w", err)
-	}
-	defer f.Close()
-
-	w := bufio.NewWriter(f)
-	for _, offset := range pm.offsets {
-		if err := binary.Write(w, binary.LittleEndian, offset); err != nil {
-			return fmt.Errorf("write offset: %w", err)
-		}
-	}
-	return w.Flush()
-}
-
-// loadOffsets loads the offset index from disk.
-func (pm *PassageManager) loadOffsets() error {
-	f, err := os.Open(pm.idxPath())
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-
-	stat, err := f.Stat()
-	if err != nil {
-		return err
-	}
-
-	numOffsets := stat.Size() / 8 // int64 = 8 bytes
-	pm.offsets = make([]int64, numOffsets)
-	return binary.Read(f, binary.LittleEndian, pm.offsets)
 }
 
 // Delete removes all files associated with this passage manager.
@@ -348,11 +327,14 @@ func (pm *PassageManager) Delete() error {
 	pm.mu.Lock()
 	defer pm.mu.Unlock()
 
-	pm.passages = nil
-	pm.offsets = nil
-	pm.loaded = false
+	if pm.db != nil {
+		pm.db.Close()
+		pm.db = nil
+	}
 
-	os.Remove(pm.jsonlPath())
-	os.Remove(pm.idxPath())
-	return nil
+	pm.cached = nil
+	os.Remove(pm.basePath + ".passages.jsonl") // cleanup old format if present
+	os.Remove(pm.basePath + ".passages.idx")   // cleanup old format if present
+	return os.Remove(pm.dbPath())
 }
+

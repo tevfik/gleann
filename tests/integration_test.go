@@ -97,7 +97,7 @@ func TestBuildAndSearch(t *testing.T) {
 
 	// Verify index files exist.
 	indexDir := filepath.Join(dir, "test-index")
-	for _, suffix := range []string{".meta.json", ".passages.jsonl", ".index"} {
+	for _, suffix := range []string{".meta.json", ".passages.db", ".index"} {
 		path := filepath.Join(indexDir, "test-index"+suffix)
 		if _, err := os.Stat(path); os.IsNotExist(err) {
 			t.Errorf("expected file %s to exist", path)

@@ -20,7 +20,7 @@
 │  CSR Format  │  AVX2/SIMD, OpenMP                    │
 ├──────────────┴───────────────────────────────────────┤
 │  Passage Manager  │  BM25 Scorer  │  Chunking        │
-│  (JSONL + idx)    │  (Okapi BM25) │  (sentence/code) │
+│  (Bbolt KV)       │  (Okapi BM25) │  (sentence/code) │
 ├───────────────────┴───────────────┴──────────────────┤
 │  Embedding Server  (goroutine pool)                  │
 └──────────────────────────────────────────────────────┘
@@ -66,11 +66,11 @@ Instead of storing all embedding vectors, gleann stores only the HNSW graph stru
 - Selective embedding storage with entry-point preservation
 - O(1) node lookup by position
 
-### JSONL + Offset Index
+### bbolt Passage Storage
 
-- Passages stored as newline-delimited JSON
-- Binary offset index (`.passages.idx`) for O(1) random access
-- Append-only for incremental indexing
+- Key-value store for passages and metadata
+- Efficient random access and append-only operations
+- Single file database for easy deployment
 
 ## Comparison with Python LEANN
 

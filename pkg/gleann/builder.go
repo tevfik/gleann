@@ -51,8 +51,12 @@ func (b *LeannBuilder) Build(ctx context.Context, name string, items []Item) err
 
 	basePath := filepath.Join(indexDir, name)
 
+	// Clean up any old passages database to ensure we start from ID 0.
+	os.Remove(basePath + ".passages.db")
+
 	// Initialize passage manager and store passages.
 	pm := NewPassageManager(basePath)
+	defer pm.Close()
 	b.passages = pm
 
 	ids, err := pm.Add(items)
@@ -127,6 +131,7 @@ func (b *LeannBuilder) AddToIndex(ctx context.Context, name string, items []Item
 	if err := pm.Load(); err != nil {
 		return fmt.Errorf("load passages: %w", err)
 	}
+	defer pm.Close()
 
 	startID := int64(pm.Count())
 
