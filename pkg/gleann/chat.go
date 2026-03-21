@@ -26,14 +26,18 @@ const (
 
 // ChatConfig holds configuration for LLM chat.
 type ChatConfig struct {
-	Provider     LLMProvider `json:"provider"`
-	Model        string      `json:"model"`
-	BaseURL      string      `json:"base_url,omitempty"`
-	APIKey       string      `json:"api_key,omitempty"`
-	Temperature  float64     `json:"temperature,omitempty"`
-	MaxTokens    int         `json:"max_tokens,omitempty"`
-	SystemPrompt string      `json:"system_prompt,omitempty"`
+	Provider     LLMProvider   `json:"provider"`
+	Model        string        `json:"model"`
+	BaseURL      string        `json:"base_url,omitempty"`
+	APIKey       string        `json:"api_key,omitempty"`
+	Temperature  float64       `json:"temperature,omitempty"`
+	MaxTokens    int           `json:"max_tokens,omitempty"`
+	SystemPrompt string        `json:"system_prompt,omitempty"`
+	Timeout      time.Duration `json:"timeout,omitempty"` // HTTP client timeout; 0 uses DefaultChatTimeout
 }
+
+// DefaultChatTimeout is the default HTTP timeout for LLM chat requests.
+const DefaultChatTimeout = 10 * time.Minute
 
 // DefaultChatConfig returns default chat configuration.
 func DefaultChatConfig() ChatConfig {
@@ -94,10 +98,15 @@ func NewChat(searcher Searcher, config ChatConfig) *LeannChat {
 		}
 	}
 
+	timeout := config.Timeout
+	if timeout <= 0 {
+		timeout = DefaultChatTimeout
+	}
+
 	return &LeannChat{
 		searcher: searcher,
 		config:   config,
-		client:   &http.Client{Timeout: 120 * time.Second},
+		client:   &http.Client{Timeout: timeout},
 	}
 }
 
