@@ -16,6 +16,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"sync"
 
 	mcpsdk "github.com/mark3labs/mcp-go/mcp"
@@ -290,9 +291,7 @@ func (s *Server) handleTraverseKG(ctx context.Context, req mcpsdk.CallToolReques
 	}
 
 	// Format output as readable text for agent consumption.
-	var sb fmt.Stringer
-	_ = sb // silence linter; we use fmt.Fprintf below
-	out := &stringWriter{}
+	out := &strings.Builder{}
 
 	fmt.Fprintf(out, "Traversal from %q (depth %d) — %d nodes, %d edges\n\n", startID, depth, len(nodes), len(edges))
 
@@ -331,15 +330,3 @@ func markStart(id, startID string) string {
 	}
 	return " "
 }
-
-// stringWriter is a simple fmt.Fprintf target that accumulates a string.
-type stringWriter struct {
-	buf []byte
-}
-
-func (w *stringWriter) Write(p []byte) (int, error) {
-	w.buf = append(w.buf, p...)
-	return len(p), nil
-}
-
-func (w *stringWriter) String() string { return string(w.buf) }
