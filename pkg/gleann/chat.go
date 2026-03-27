@@ -34,6 +34,7 @@ type ChatConfig struct {
 	MaxTokens    int           `json:"max_tokens,omitempty"`
 	SystemPrompt string        `json:"system_prompt,omitempty"`
 	Timeout      time.Duration `json:"timeout,omitempty"` // HTTP client timeout; 0 uses DefaultChatTimeout
+	Think        *bool         `json:"think,omitempty"`   // Ollama: nil=model default, false=disable thinking
 }
 
 // DefaultChatTimeout is the default HTTP timeout for LLM chat requests.
@@ -343,6 +344,7 @@ type ollamaChatRequest struct {
 	Messages []ChatMessage  `json:"messages"`
 	Stream   bool           `json:"stream"`
 	Options  map[string]any `json:"options,omitempty"`
+	Think    *bool          `json:"think,omitempty"`
 }
 
 type ollamaChatResponse struct {
@@ -354,6 +356,7 @@ func (c *LeannChat) chatOllama(ctx context.Context, messages []ChatMessage) (str
 		Model:    c.config.Model,
 		Messages: messages,
 		Stream:   false,
+		Think:    c.config.Think,
 		Options: map[string]any{
 			"temperature": c.config.Temperature,
 		},
@@ -550,6 +553,7 @@ func (c *LeannChat) chatOllamaStream(ctx context.Context, messages []ChatMessage
 		Model:    c.config.Model,
 		Messages: messages,
 		Stream:   true,
+		Think:    c.config.Think,
 		Options: map[string]any{
 			"temperature": c.config.Temperature,
 		},
