@@ -48,20 +48,39 @@ The result is a highly portable system that boots in milliseconds, respects your
 
 Detailed guides:
 
+- **[Getting Started](docs/getting-started.md)** — Zero to first search in 5 minutes
+- **[Cookbook](docs/cookbook.md)** — Real-world usage recipes
 - [Architecture & Design](docs/architecture.md) — Internals, module structure, data flow
 - [Configuration](docs/configuration.md) — Config file, CLI flags, recommended models
+- [Environment Variables](docs/env-vars.md) — Complete env var reference
 - [REST API Reference](docs/api.md) — Endpoint docs, curl examples, OpenAPI/Swagger UI
 - [MCP Server](docs/mcp.md) — Setup for Cursor, Claude Desktop, and other AI editors
 - [Plugin System](docs/plugins.md) — External plugins for PDF, audio, and more
+- [Plugin Installation Guide](docs/plugin-install-guide.md) — Step-by-step plugin setup
 - [AST Graph Indexer](docs/graph.md) — KuzuDB-based code graph
 - [FAISS Backend](docs/faiss.md) — Optional FAISS vector backend
 - [Tree-sitter](docs/treesitter.md) — AST-aware code chunking
 - [Benchmarks](docs/benchmarks.md) — Performance measurements
+- [Troubleshooting](docs/troubleshooting.md) — Common issues and solutions
 
 ## Installation
 
+### One-Liner Install (Linux / macOS)
+
 ```bash
-# From source
+curl -sSfL https://raw.githubusercontent.com/tevfik/gleann/main/scripts/install.sh | sh
+```
+
+Options:
+```bash
+GLEANN_VERSION=v1.0.0 curl -sSfL .../install.sh | sh   # specific version
+GLEANN_FULL=1 curl -sSfL .../install.sh | sh            # full build (tree-sitter)
+GLEANN_INSTALL_DIR=/usr/local/bin curl -sSfL .../install.sh | sh  # custom location
+```
+
+### From Source
+
+```bash
 git clone https://github.com/tevfik/gleann.git
 cd gleann
 
@@ -118,6 +137,12 @@ sudo make install
 ```bash
 # Interactive setup wizard
 gleann setup
+
+# Quick auto-configuration (detects Ollama + models)
+gleann setup --bootstrap
+
+# Check system health
+gleann doctor
 
 # Build index from documents
 gleann index build my-docs --docs ./documents/
