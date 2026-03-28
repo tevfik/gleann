@@ -63,10 +63,18 @@ type ChatMessage struct {
 // The searcher field accepts the Searcher interface, so LeannChat works
 // transparently with a single LeannSearcher or a MultiSearcher.
 type LeannChat struct {
-	searcher Searcher
-	config   ChatConfig
-	history  []ChatMessage
-	client   *http.Client
+	searcher     Searcher
+	config       ChatConfig
+	history      []ChatMessage
+	client       *http.Client
+	streamClient *http.Client // No timeout; context handles cancellation for streaming
+}
+
+func (c *LeannChat) getStreamClient() *http.Client {
+	if c.streamClient != nil {
+		return c.streamClient
+	}
+	return &http.Client{}
 }
 
 // NewChat creates a new LeannChat instance.
@@ -105,9 +113,10 @@ func NewChat(searcher Searcher, config ChatConfig) *LeannChat {
 	}
 
 	return &LeannChat{
-		searcher: searcher,
-		config:   config,
-		client:   &http.Client{Timeout: timeout},
+		searcher:     searcher,
+		config:       config,
+		client:       &http.Client{Timeout: timeout},
+		streamClient: &http.Client{},
 	}
 }
 
@@ -574,9 +583,8 @@ func (c *LeannChat) chatOllamaStream(ctx context.Context, messages []ChatMessage
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	// Use a client without timeout for streaming (context handles cancellation).
-	streamClient := &http.Client{}
-	resp, err := streamClient.Do(req)
+	// Use the shared stream client (no timeout; context handles cancellation).
+	resp, err := c.getStreamClient().Do(req)
 	if err != nil {
 		return fmt.Errorf("POST %s: %w", url, err)
 	}
@@ -653,8 +661,7 @@ func (c *LeannChat) chatOpenAIStream(ctx context.Context, messages []ChatMessage
 		req.Header.Set("Authorization", "Bearer "+c.config.APIKey)
 	}
 
-	streamClient := &http.Client{}
-	resp, err := streamClient.Do(req)
+	resp, err := c.getStreamClient().Do(req)
 	if err != nil {
 		return fmt.Errorf("POST %s: %w", url, err)
 	}
@@ -750,8 +757,7 @@ func (c *LeannChat) chatAnthropicStream(ctx context.Context, messages []ChatMess
 		req.Header.Set("x-api-key", c.config.APIKey)
 	}
 
-	streamClient := &http.Client{}
-	resp, err := streamClient.Do(req)
+	resp, err := c.getStreamClient().Do(req)
 	if err != nil {
 		return fmt.Errorf("POST %s: %w", url, err)
 	}

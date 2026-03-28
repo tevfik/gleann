@@ -36,7 +36,7 @@ type Tracker struct {
 func DefaultDBPath() string {
 	home, _ := os.UserHomeDir()
 	dir := filepath.Join(home, ".gleann", "vault")
-	os.MkdirAll(dir, 0755)
+	os.MkdirAll(dir, 0700)
 	return filepath.Join(dir, "vault.db")
 }
 
