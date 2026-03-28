@@ -3,6 +3,7 @@ package bm25
 
 import (
 	"math"
+	"sort"
 	"strings"
 	"sync"
 	"unicode"
@@ -54,7 +55,10 @@ func NewScorerWithParams(k1, b float64) *Scorer {
 func (s *Scorer) AddDocument(id int64, text string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.addDocumentLocked(id, text)
+}
 
+func (s *Scorer) addDocumentLocked(id int64, text string) {
 	tokens := tokenize(text)
 	tf := make(map[string]int)
 	for _, token := range tokens {
@@ -75,8 +79,10 @@ func (s *Scorer) AddDocument(id int64, text string) {
 
 // AddDocuments adds multiple documents at once.
 func (s *Scorer) AddDocuments(ids []int64, texts []string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	for i := range ids {
-		s.AddDocument(ids[i], texts[i])
+		s.addDocumentLocked(ids[i], texts[i])
 	}
 }
 
@@ -142,13 +148,9 @@ func (s *Scorer) TopK(query string, k int) ([]int64, []float32) {
 	}
 
 	// Sort descending by score.
-	for i := 0; i < len(items); i++ {
-		for j := i + 1; j < len(items); j++ {
-			if items[j].score > items[i].score {
-				items[i], items[j] = items[j], items[i]
-			}
-		}
-	}
+	sort.Slice(items, func(i, j int) bool {
+		return items[i].score > items[j].score
+	})
 
 	if len(items) > k {
 		items = items[:k]
