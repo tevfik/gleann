@@ -42,7 +42,10 @@ func TestNativeExtractor_CSV(t *testing.T) {
 	tmp := t.TempDir()
 	path := filepath.Join(tmp, "data.csv")
 
-	f, _ := os.Create(path)
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatalf("create temp file: %v", err)
+	}
 	w := csv.NewWriter(f)
 	w.WriteAll([][]string{
 		{"Name", "Age", "City"},
@@ -250,7 +253,10 @@ func TestDocExtractor_NativeLayerFallback(t *testing.T) {
 
 	tmp := t.TempDir()
 	csvPath := filepath.Join(tmp, "test.csv")
-	f, _ := os.Create(csvPath)
+	f, err := os.Create(csvPath)
+	if err != nil {
+		t.Fatalf("create temp file: %v", err)
+	}
 	w := csv.NewWriter(f)
 	w.WriteAll([][]string{{"A", "B"}, {"1", "2"}})
 	f.Close()
