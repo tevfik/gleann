@@ -140,11 +140,14 @@ func (c *Computer) Compute(ctx context.Context, texts []string) ([][]float32, er
 	}
 
 	// Apply prompt template if set.
+	c.mu.Lock()
+	tmpl := c.promptTemplate
+	c.mu.Unlock()
 	processedTexts := texts
-	if c.promptTemplate != "" {
+	if tmpl != "" {
 		processedTexts = make([]string, len(texts))
 		for i, t := range texts {
-			processedTexts[i] = c.promptTemplate + t
+			processedTexts[i] = tmpl + t
 		}
 	}
 
@@ -160,6 +163,7 @@ func (c *Computer) Compute(ctx context.Context, texts []string) ([][]float32, er
 	var wg sync.WaitGroup
 	var errOnce sync.Once
 	var firstErr error
+	var errMu sync.Mutex // protects firstErr reads
 
 	// Calculate number of batches to avoid math.Ceil overhead
 	numBatches := (len(processedTexts) + c.batchSize - 1) / c.batchSize
@@ -184,7 +188,10 @@ func (c *Computer) Compute(ctx context.Context, texts []string) ([][]float32, er
 			defer func() { <-sem }() // Release semaphore
 
 			// Don't start new work if there's an error
-			if firstErr != nil {
+			errMu.Lock()
+			hasErr := firstErr != nil
+			errMu.Unlock()
+			if hasErr {
 				return
 			}
 
@@ -223,7 +230,9 @@ func (c *Computer) Compute(ctx context.Context, texts []string) ([][]float32, er
 
 						if singleErr != nil {
 							errOnce.Do(func() {
+								errMu.Lock()
 								firstErr = fmt.Errorf("compute text %d (retry): %w", startIdx+j, singleErr)
+								errMu.Unlock()
 							})
 							return
 						}
@@ -232,7 +241,9 @@ func (c *Computer) Compute(ctx context.Context, texts []string) ([][]float32, er
 					embeddings = singleRetryEmbeddings
 				} else {
 					errOnce.Do(func() {
+						errMu.Lock()
 						firstErr = fmt.Errorf("compute batch %d-%d: %w", startIdx, endIdx, err)
+						errMu.Unlock()
 					})
 					return
 				}
