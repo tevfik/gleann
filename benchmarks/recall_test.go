@@ -190,6 +190,9 @@ func TestRecallHighDim(t *testing.T) {
 
 // TestRecallAtMultipleK tests Recall@1, @3, @5, @10, @20.
 func TestRecallAtMultipleK(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping heavy recall benchmark in short mode")
+	}
 	const (
 		n        = 2000
 		dims     = 128
@@ -318,6 +321,9 @@ func TestRecallWithRecompute(t *testing.T) {
 // TestRecallComplexitySweep finds the minimum efSearch needed for target recall.
 // This mirrors Python LEANN's Stage 3 (binary search for complexity).
 func TestRecallComplexitySweep(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping heavy recall benchmark in short mode")
+	}
 	const (
 		n        = 2000
 		dims     = 128
@@ -445,6 +451,9 @@ func TestRecallAfterCSRRoundtrip(t *testing.T) {
 
 // TestRecallMParameterSweep explores the recall–speed trade-off across M values.
 func TestRecallMParameterSweep(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping heavy recall benchmark in short mode")
+	}
 	const (
 		n        = 2000
 		dims     = 128
