@@ -209,13 +209,25 @@ func (mg *MmapGraph) Close() error {
 
 // GetExternalID returns the external node ID for a given internal index.
 func (mg *MmapGraph) GetExternalID(internalIdx int64) int64 {
+	if internalIdx < 0 || internalIdx >= mg.NumNodes {
+		return -1
+	}
 	start := mg.offsetIDMap + (internalIdx * 8)
+	if start+8 > int64(len(mg.data)) {
+		return -1
+	}
 	return int64(binary.LittleEndian.Uint64(mg.data[start : start+8]))
 }
 
 // GetNodeLevel returns the maximum HNSW level for a given internal index.
 func (mg *MmapGraph) GetNodeLevel(internalIdx int64) int {
+	if internalIdx < 0 || internalIdx >= mg.NumNodes {
+		return -1
+	}
 	start := mg.offsetNodeLevels + (internalIdx * 4)
+	if start+4 > int64(len(mg.data)) {
+		return -1
+	}
 	return int(binary.LittleEndian.Uint32(mg.data[start : start+4]))
 }
 
@@ -233,17 +245,24 @@ func (mg *MmapGraph) GetNeighbors(internalIdx int64, level int) []int64 {
 
 	// 1. Read start and end offsets from NodeOffsets array
 	offsetsStart := lvl.offsetNodes + (internalIdx * 8)
+	if offsetsStart+16 > int64(len(mg.data)) {
+		return nil
+	}
 	edgeStartPos := int64(binary.LittleEndian.Uint64(mg.data[offsetsStart : offsetsStart+8]))
 	edgeEndPos := int64(binary.LittleEndian.Uint64(mg.data[offsetsStart+8 : offsetsStart+16]))
 
 	count := edgeEndPos - edgeStartPos
-	if count <= 0 {
+	if count <= 0 || edgeStartPos < 0 || edgeEndPos > lvl.numNeighbors {
 		return nil
 	}
 
 	// 2. Read the neighbor IDs directly
 	neighbors := make([]int64, count)
 	edgesByteStart := lvl.offsetEdges + (edgeStartPos * 8)
+	endByte := edgesByteStart + (count * 8)
+	if endByte > int64(len(mg.data)) {
+		return nil
+	}
 
 	for i := int64(0); i < count; i++ {
 		bStart := edgesByteStart + (i * 8)
@@ -264,8 +283,12 @@ func (mg *MmapGraph) GetStoredEmbedding(externalID int64) []float32 {
 	// but strictly according to the current gleann CSR format, we iterate over them.
 	offset := mg.offsetEmbeddings
 	vecBytes := int64(mg.Dimensions * 4)
+	dataLen := int64(len(mg.data))
 
 	for i := int64(0); i < mg.NumStored; i++ {
+		if offset+8+vecBytes > dataLen {
+			return nil
+		}
 		id := int64(binary.LittleEndian.Uint64(mg.data[offset : offset+8]))
 		offset += 8
 
