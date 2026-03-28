@@ -76,8 +76,9 @@ func OpenMmapGraph(path string) (*MmapGraph, error) {
 }
 
 func (mg *MmapGraph) parseHeaders() error {
-	if len(mg.data) < 32 {
-		return fmt.Errorf("file too small to contain header")
+	dataLen := int64(len(mg.data))
+	if dataLen < 52 {
+		return fmt.Errorf("file too small to contain header (%d bytes)", dataLen)
 	}
 
 	// === Header ===
@@ -108,25 +109,46 @@ func (mg *MmapGraph) parseHeaders() error {
 	offset += 8
 
 	// === ID Map ===
+	if offset+8 > dataLen {
+		return fmt.Errorf("truncated: cannot read numIDs at offset %d", offset)
+	}
 	numIDs := int64(binary.LittleEndian.Uint64(mg.data[offset:]))
 	offset += 8
+	if numIDs < 0 || offset+numIDs*8 > dataLen {
+		return fmt.Errorf("invalid numIDs: %d (would exceed file size)", numIDs)
+	}
 	mg.offsetIDMap = offset
 	offset += numIDs * 8
 
 	// === Node Levels ===
 	mg.offsetNodeLevels = offset
+	if offset+numIDs*4 > dataLen {
+		return fmt.Errorf("truncated: NodeLevels section exceeds file size")
+	}
 	offset += numIDs * 4
 
 	// === Per-level Data ===
+	if offset+4 > dataLen {
+		return fmt.Errorf("truncated: cannot read numLevels at offset %d", offset)
+	}
 	numLevels := int(binary.LittleEndian.Uint32(mg.data[offset:]))
 	offset += 4
+	if numLevels < 0 || numLevels > 256 {
+		return fmt.Errorf("invalid numLevels: %d", numLevels)
+	}
 
 	mg.offsetLevels = offset
 	mg.levels = make([]mmapLevel, numLevels)
 
 	for l := 0; l < numLevels; l++ {
+		if offset+8 > dataLen {
+			return fmt.Errorf("truncated at level %d: cannot read numNodes", l)
+		}
 		nn := int64(binary.LittleEndian.Uint64(mg.data[offset:]))
 		offset += 8
+		if nn < 0 {
+			return fmt.Errorf("invalid numNodes at level %d: %d", l, nn)
+		}
 
 		levelInfo := mmapLevel{
 			numNodes:    nn,
@@ -134,16 +156,30 @@ func (mg *MmapGraph) parseHeaders() error {
 		}
 
 		// Skip NodeOffsets array: (nn + 1) * 8 bytes
-		offset += (nn + 1) * 8
+		skip := (nn + 1) * 8
+		if offset+skip > dataLen {
+			return fmt.Errorf("truncated at level %d: NodeOffsets overflow", l)
+		}
+		offset += skip
 
+		if offset+8 > dataLen {
+			return fmt.Errorf("truncated at level %d: cannot read numNeighbors", l)
+		}
 		numNeighbors := int64(binary.LittleEndian.Uint64(mg.data[offset:]))
 		offset += 8
+		if numNeighbors < 0 {
+			return fmt.Errorf("invalid numNeighbors at level %d: %d", l, numNeighbors)
+		}
 
 		levelInfo.offsetEdges = offset
 		levelInfo.numNeighbors = numNeighbors
 
 		// Skip Neighbors array: numNeighbors * 8 bytes
-		offset += numNeighbors * 8
+		skip = numNeighbors * 8
+		if offset+skip > dataLen {
+			return fmt.Errorf("truncated at level %d: Neighbors overflow", l)
+		}
+		offset += skip
 
 		mg.levels[l] = levelInfo
 	}
