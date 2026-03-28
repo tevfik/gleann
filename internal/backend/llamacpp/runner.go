@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"syscall"
 	"time"
 )
 
@@ -87,7 +88,17 @@ func (r *Runner) Start(ctx context.Context) error {
 // Stop gracefully shuts down the server process.
 func (r *Runner) Stop() error {
 	if r.cmd != nil && r.cmd.Process != nil {
-		return r.cmd.Process.Kill()
+		// Send SIGTERM for graceful shutdown; the process should exit on its own.
+		_ = r.cmd.Process.Signal(syscall.SIGTERM)
+		// Wait briefly then force-kill if still running.
+		done := make(chan error, 1)
+		go func() { done <- r.cmd.Wait() }()
+		select {
+		case <-done:
+			return nil
+		case <-time.After(5 * time.Second):
+			return r.cmd.Process.Kill()
+		}
 	}
 	return nil
 }
