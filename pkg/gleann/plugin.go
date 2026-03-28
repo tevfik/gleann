@@ -316,7 +316,10 @@ func (m *PluginManager) processRaw(plugin *Plugin, filePath string) (map[string]
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		respBody, _ := io.ReadAll(resp.Body)
+		respBody, readErr := io.ReadAll(resp.Body)
+		if readErr != nil {
+			return nil, fmt.Errorf("plugin returned status %d (body unreadable: %v)", resp.StatusCode, readErr)
+		}
 		return nil, fmt.Errorf("plugin returned status %d: %s", resp.StatusCode, string(respBody))
 	}
 
