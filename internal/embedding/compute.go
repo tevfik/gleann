@@ -414,7 +414,10 @@ func (c *Computer) computeOllama(ctx context.Context, texts []string) ([][]float
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		respBody, _ := io.ReadAll(resp.Body)
+		respBody, readErr := io.ReadAll(resp.Body)
+		if readErr != nil {
+			return nil, fmt.Errorf("POST %s returned %d (body unreadable: %v)", url, resp.StatusCode, readErr)
+		}
 		return nil, fmt.Errorf("POST %s returned %d: %s", url, resp.StatusCode, string(respBody))
 	}
 
@@ -476,7 +479,10 @@ func (c *Computer) computeOpenAI(ctx context.Context, texts []string) ([][]float
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		respBody, _ := io.ReadAll(resp.Body)
+		respBody, readErr := io.ReadAll(resp.Body)
+		if readErr != nil {
+			return nil, fmt.Errorf("POST %s returned %d (body unreadable: %v)", url, resp.StatusCode, readErr)
+		}
 		return nil, fmt.Errorf("POST %s returned %d: %s", url, resp.StatusCode, string(respBody))
 	}
 
@@ -576,7 +582,10 @@ func (c *Computer) computeGemini(ctx context.Context, texts []string) ([][]float
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		respBody, _ := io.ReadAll(resp.Body)
+		respBody, readErr := io.ReadAll(resp.Body)
+		if readErr != nil {
+			return nil, fmt.Errorf("gemini returned %d (body unreadable: %v)", resp.StatusCode, readErr)
+		}
 		return nil, fmt.Errorf("gemini returned %d: %s", resp.StatusCode, string(respBody))
 	}
 
