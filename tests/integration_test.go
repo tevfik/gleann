@@ -7,6 +7,7 @@ import (
 	"math/rand"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/tevfik/gleann/modules/bm25"
@@ -436,12 +437,5 @@ func randomSentence(seed int) string {
 	for i := range parts {
 		parts[i] = words[r.Intn(len(words))]
 	}
-	result := ""
-	for i, p := range parts {
-		if i > 0 {
-			result += " "
-		}
-		result += p
-	}
-	return result
+	return strings.Join(parts, " ")
 }

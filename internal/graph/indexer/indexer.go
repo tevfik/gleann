@@ -277,11 +277,13 @@ func (idx *Indexer) IndexDir(root string) error {
 		})
 	})
 
-	if err := g.Wait(); err != nil {
-		return err
-	}
+	gerr := g.Wait()
 	close(docChan)
 	<-docDone
+
+	if gerr != nil {
+		return gerr
+	}
 
 	// --- Deduplicate Data to Prevent KuzuDB "primary key / relationship exists" constraints ---
 	uniqueFiles := make([]kuzu.FileNode, 0, len(allFiles))

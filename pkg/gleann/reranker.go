@@ -197,10 +197,13 @@ type ollamaEmbedResponse struct {
 }
 
 func (r *CrossEncoderReranker) ollamaEmbed(ctx context.Context, texts []string) ([][]float32, error) {
-	body, _ := json.Marshal(ollamaEmbedRequest{
+	body, err := json.Marshal(ollamaEmbedRequest{
 		Model: r.config.Model,
 		Input: texts,
 	})
+	if err != nil {
+		return nil, fmt.Errorf("marshal ollama request: %w", err)
+	}
 
 	url := strings.TrimRight(r.config.BaseURL, "/") + "/api/embed"
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
@@ -334,7 +337,10 @@ func (r *CrossEncoderReranker) rerankCohere(ctx context.Context, query string, r
 		Documents: docs,
 	}
 
-	body, _ := json.Marshal(reqBody)
+	body, err := json.Marshal(reqBody)
+	if err != nil {
+		return nil, fmt.Errorf("marshal cohere request: %w", err)
+	}
 	url := strings.TrimRight(r.config.BaseURL, "/") + "/v2/rerank"
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
@@ -406,7 +412,10 @@ func (r *CrossEncoderReranker) rerankVoyage(ctx context.Context, query string, r
 		Documents: docs,
 	}
 
-	body, _ := json.Marshal(reqBody)
+	body, err := json.Marshal(reqBody)
+	if err != nil {
+		return nil, fmt.Errorf("marshal voyage request: %w", err)
+	}
 	url := strings.TrimRight(r.config.BaseURL, "/") + "/v1/rerank"
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
