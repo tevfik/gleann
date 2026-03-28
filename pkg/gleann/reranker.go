@@ -219,7 +219,10 @@ func (r *CrossEncoderReranker) ollamaEmbed(ctx context.Context, texts []string) 
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		errBody, _ := io.ReadAll(resp.Body)
+		errBody, readErr := io.ReadAll(resp.Body)
+		if readErr != nil {
+			errBody = []byte("(body unreadable)")
+		}
 		return nil, fmt.Errorf("ollama error %d: %s", resp.StatusCode, string(errBody))
 	}
 
@@ -281,7 +284,10 @@ func (r *CrossEncoderReranker) rerankJina(ctx context.Context, query string, res
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		errBody, _ := io.ReadAll(resp.Body)
+		errBody, readErr := io.ReadAll(resp.Body)
+		if readErr != nil {
+			errBody = []byte("(body unreadable)")
+		}
 		return nil, fmt.Errorf("jina error %d: %s", resp.StatusCode, string(errBody))
 	}
 
@@ -356,7 +362,10 @@ func (r *CrossEncoderReranker) rerankCohere(ctx context.Context, query string, r
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		errBody, _ := io.ReadAll(resp.Body)
+		errBody, readErr := io.ReadAll(resp.Body)
+		if readErr != nil {
+			errBody = []byte("(body unreadable)")
+		}
 		return nil, fmt.Errorf("cohere error %d: %s", resp.StatusCode, string(errBody))
 	}
 
@@ -431,7 +440,10 @@ func (r *CrossEncoderReranker) rerankVoyage(ctx context.Context, query string, r
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		errBody, _ := io.ReadAll(resp.Body)
+		errBody, readErr := io.ReadAll(resp.Body)
+		if readErr != nil {
+			errBody = []byte("(body unreadable)")
+		}
 		return nil, fmt.Errorf("voyage error %d: %s", resp.StatusCode, string(errBody))
 	}
 

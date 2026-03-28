@@ -67,7 +67,10 @@ func fetchOllamaModels(host string) ([]ModelInfo, error) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
+		body, readErr := io.ReadAll(resp.Body)
+		if readErr != nil {
+			body = []byte("(body unreadable)")
+		}
 		return nil, fmt.Errorf("Ollama returned %d: %s", resp.StatusCode, string(body))
 	}
 
@@ -134,7 +137,10 @@ func fetchOpenAIModels(host, apiKey string) ([]ModelInfo, error) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
+		body, readErr := io.ReadAll(resp.Body)
+		if readErr != nil {
+			body = []byte("(body unreadable)")
+		}
 		return nil, fmt.Errorf("OpenAI returned %d: %s", resp.StatusCode, string(body))
 	}
 

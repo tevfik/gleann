@@ -393,7 +393,10 @@ func (c *LeannChat) chatOllama(ctx context.Context, messages []ChatMessage) (str
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		respBody, _ := io.ReadAll(resp.Body)
+		respBody, readErr := io.ReadAll(resp.Body)
+		if readErr != nil {
+			respBody = []byte("(body unreadable)")
+		}
 		return "", fmt.Errorf("POST %s returned %d: %s", url, resp.StatusCode, string(respBody))
 	}
 
@@ -450,7 +453,10 @@ func (c *LeannChat) chatOpenAI(ctx context.Context, messages []ChatMessage) (str
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		respBody, _ := io.ReadAll(resp.Body)
+		respBody, readErr := io.ReadAll(resp.Body)
+		if readErr != nil {
+			respBody = []byte("(body unreadable)")
+		}
 		return "", fmt.Errorf("POST %s returned %d: %s", url, resp.StatusCode, string(respBody))
 	}
 
@@ -529,7 +535,10 @@ func (c *LeannChat) chatAnthropic(ctx context.Context, messages []ChatMessage) (
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		respBody, _ := io.ReadAll(resp.Body)
+		respBody, readErr := io.ReadAll(resp.Body)
+		if readErr != nil {
+			respBody = []byte("(body unreadable)")
+		}
 		return "", fmt.Errorf("POST %s returned %d: %s", url, resp.StatusCode, string(respBody))
 	}
 
@@ -591,7 +600,10 @@ func (c *LeannChat) chatOllamaStream(ctx context.Context, messages []ChatMessage
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		respBody, _ := io.ReadAll(resp.Body)
+		respBody, readErr := io.ReadAll(resp.Body)
+		if readErr != nil {
+			respBody = []byte("(body unreadable)")
+		}
 		return fmt.Errorf("POST %s returned %d: %s", url, resp.StatusCode, string(respBody))
 	}
 
@@ -668,7 +680,10 @@ func (c *LeannChat) chatOpenAIStream(ctx context.Context, messages []ChatMessage
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		respBody, _ := io.ReadAll(resp.Body)
+		respBody, readErr := io.ReadAll(resp.Body)
+		if readErr != nil {
+			respBody = []byte("(body unreadable)")
+		}
 		return fmt.Errorf("POST %s returned %d: %s", url, resp.StatusCode, string(respBody))
 	}
 
@@ -764,7 +779,10 @@ func (c *LeannChat) chatAnthropicStream(ctx context.Context, messages []ChatMess
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		respBody, _ := io.ReadAll(resp.Body)
+		respBody, readErr := io.ReadAll(resp.Body)
+		if readErr != nil {
+			respBody = []byte("(body unreadable)")
+		}
 		return fmt.Errorf("POST %s returned %d: %s", url, resp.StatusCode, string(respBody))
 	}
 
