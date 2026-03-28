@@ -37,6 +37,7 @@ type PluginRegistry struct {
 type PluginManager struct {
 	Registry   *PluginRegistry
 	activeCmds map[string]*exec.Cmd
+	logFiles   map[string]*os.File
 	mu         sync.Mutex
 }
 
@@ -74,6 +75,7 @@ func NewPluginManager() (*PluginManager, error) {
 	return &PluginManager{
 		Registry:   reg,
 		activeCmds: make(map[string]*exec.Cmd),
+		logFiles:   make(map[string]*os.File),
 	}, nil
 }
 
@@ -88,7 +90,11 @@ func (m *PluginManager) Close() {
 			time.AfterFunc(2*time.Second, func() { _ = proc.Kill() })
 		}
 	}
+	for _, f := range m.logFiles {
+		f.Close()
+	}
 	m.activeCmds = make(map[string]*exec.Cmd)
+	m.logFiles = make(map[string]*os.File)
 }
 
 // FindDocumentExtractor returns the first plugin capable of extracting the given extension.
@@ -155,6 +161,7 @@ func (m *PluginManager) EnsurePluginRunning(p *Plugin) error {
 	if err == nil {
 		cmd.Stdout = logFile
 		cmd.Stderr = logFile
+		m.logFiles[p.Name] = logFile
 	}
 
 	if err := cmd.Start(); err != nil {
