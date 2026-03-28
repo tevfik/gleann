@@ -622,7 +622,9 @@ func (s *Server) getSearcher(ctx context.Context, name string) (*gleann.LeannSea
 func writeJSON(w http.ResponseWriter, status int, data any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(data)
+	if err := json.NewEncoder(w).Encode(data); err != nil {
+		log.Printf("writeJSON encode error: %v", err)
+	}
 }
 
 func writeError(w http.ResponseWriter, status int, message string) {
