@@ -388,6 +388,9 @@ func (c *LeannChat) chatOllama(ctx context.Context, messages []ChatMessage) (str
 
 	resp, err := c.client.Do(req)
 	if err != nil {
+		if strings.Contains(err.Error(), "connection refused") {
+			return "", fmt.Errorf("cannot connect to Ollama at %s — is it running?\n  Fix: ollama serve   (or: systemctl start ollama)\n  Check: gleann doctor", c.config.BaseURL)
+		}
 		return "", fmt.Errorf("POST %s: %w", url, err)
 	}
 	defer resp.Body.Close()
@@ -397,7 +400,11 @@ func (c *LeannChat) chatOllama(ctx context.Context, messages []ChatMessage) (str
 		if readErr != nil {
 			respBody = []byte("(body unreadable)")
 		}
-		return "", fmt.Errorf("POST %s returned %d: %s", url, resp.StatusCode, string(respBody))
+		bodyStr := string(respBody)
+		if resp.StatusCode == http.StatusNotFound && strings.Contains(bodyStr, "not found") {
+			return "", fmt.Errorf("model '%s' not found in Ollama\n  Fix: ollama pull %s\n  Available models: ollama list", c.config.Model, c.config.Model)
+		}
+		return "", fmt.Errorf("POST %s returned %d: %s", url, resp.StatusCode, bodyStr)
 	}
 
 	var result ollamaChatResponse
@@ -595,6 +602,9 @@ func (c *LeannChat) chatOllamaStream(ctx context.Context, messages []ChatMessage
 	// Use the shared stream client (no timeout; context handles cancellation).
 	resp, err := c.getStreamClient().Do(req)
 	if err != nil {
+		if strings.Contains(err.Error(), "connection refused") {
+			return fmt.Errorf("cannot connect to Ollama at %s — is it running?\n  Fix: ollama serve   (or: systemctl start ollama)\n  Check: gleann doctor", c.config.BaseURL)
+		}
 		return fmt.Errorf("POST %s: %w", url, err)
 	}
 	defer resp.Body.Close()
@@ -604,7 +614,11 @@ func (c *LeannChat) chatOllamaStream(ctx context.Context, messages []ChatMessage
 		if readErr != nil {
 			respBody = []byte("(body unreadable)")
 		}
-		return fmt.Errorf("POST %s returned %d: %s", url, resp.StatusCode, string(respBody))
+		bodyStr := string(respBody)
+		if resp.StatusCode == http.StatusNotFound && strings.Contains(bodyStr, "not found") {
+			return fmt.Errorf("model '%s' not found in Ollama\n  Fix: ollama pull %s\n  Available models: ollama list", c.config.Model, c.config.Model)
+		}
+		return fmt.Errorf("POST %s returned %d: %s", url, resp.StatusCode, bodyStr)
 	}
 
 	// Ollama streams NDJSON: one JSON object per line.

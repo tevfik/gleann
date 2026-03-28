@@ -438,7 +438,7 @@ _gleann() {
         cword=$COMP_CWORD
     fi
 
-    local commands="index search ask serve graph chat mcp tui setup config completion version help"
+    local commands="index search ask serve graph chat mcp tui setup doctor config completion version help"
     
     # Command-specific flags
     local index_flags="--path --model --provider --backend --batch-size --concurrency --chunk-size --chunk-overlap --extensions --ignore --ollama-host --anthropic-api-key --openai-api-key --json"
@@ -627,6 +627,9 @@ _gleann() {
         'mcp:Start MCP server (stdio)'
         'tui:Launch interactive TUI'
         'setup:Run configuration wizard'
+        'doctor:Check system health'
+        'config:Manage configuration'
+        'completion:Output shell completion script'
         'version:Show version'
         'help:Show help'
     )
@@ -710,6 +713,9 @@ complete -c gleann -n '__fish_use_subcommand' -a 'serve' -d 'Start HTTP server'
 complete -c gleann -n '__fish_use_subcommand' -a 'mcp' -d 'Start MCP server (stdio)'
 complete -c gleann -n '__fish_use_subcommand' -a 'tui' -d 'Launch interactive TUI'
 complete -c gleann -n '__fish_use_subcommand' -a 'setup' -d 'Run configuration wizard'
+complete -c gleann -n '__fish_use_subcommand' -a 'doctor' -d 'Check system health'
+complete -c gleann -n '__fish_use_subcommand' -a 'config' -d 'Manage configuration'
+complete -c gleann -n '__fish_use_subcommand' -a 'completion' -d 'Output shell completion script'
 complete -c gleann -n '__fish_use_subcommand' -a 'version' -d 'Show version'
 complete -c gleann -n '__fish_use_subcommand' -a 'help' -d 'Show help'
 

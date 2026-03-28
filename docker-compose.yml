@@ -24,8 +24,14 @@ services:
       EMBEDDING_PROVIDER: ollama
     depends_on:
       ollama:
-        condition: service_started
+        condition: service_healthy
     restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+        reservations:
+          memory: 512M
 
   ollama:
     image: ollama/ollama:latest
@@ -33,7 +39,19 @@ services:
       - "11434:11434"
     volumes:
       - ollama-data:/root/.ollama
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:11434/api/tags || exit 1"]
+      interval: 30s
+      timeout: 10s
+      start_period: 30s
+      retries: 3
     restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 8G
+        reservations:
+          memory: 2G
     # Uncomment the following for GPU support:
     # deploy:
     #   resources:

@@ -409,6 +409,9 @@ func (c *Computer) computeOllama(ctx context.Context, texts []string) ([][]float
 
 	resp, err := c.client.Do(req)
 	if err != nil {
+		if isConnectionRefused(err) {
+			return nil, fmt.Errorf("cannot connect to Ollama at %s — is it running?\n  Fix: ollama serve   (or: systemctl start ollama)\n  Check: gleann doctor", c.baseURL)
+		}
 		return nil, fmt.Errorf("POST %s: %w", url, err)
 	}
 	defer resp.Body.Close()
@@ -418,7 +421,11 @@ func (c *Computer) computeOllama(ctx context.Context, texts []string) ([][]float
 		if readErr != nil {
 			return nil, fmt.Errorf("POST %s returned %d (body unreadable: %v)", url, resp.StatusCode, readErr)
 		}
-		return nil, fmt.Errorf("POST %s returned %d: %s", url, resp.StatusCode, string(respBody))
+		bodyStr := string(respBody)
+		if resp.StatusCode == http.StatusNotFound && strings.Contains(bodyStr, "not found") {
+			return nil, fmt.Errorf("model '%s' not found in Ollama\n  Fix: ollama pull %s\n  Available models: ollama list", c.model, c.model)
+		}
+		return nil, fmt.Errorf("POST %s returned %d: %s", url, resp.StatusCode, bodyStr)
 	}
 
 	var result ollamaEmbedResponse
@@ -600,4 +607,14 @@ func (c *Computer) computeGemini(ctx context.Context, texts []string) ([][]float
 	}
 
 	return embeddings, nil
+}
+
+// isConnectionRefused checks if an error is a "connection refused" network error.
+func isConnectionRefused(err error) bool {
+	if opErr, ok := err.(*net.OpError); ok {
+		if sysErr, ok := opErr.Err.(*os.SyscallError); ok {
+			return strings.Contains(sysErr.Err.Error(), "connection refused")
+		}
+	}
+	return strings.Contains(err.Error(), "connection refused")
 }
