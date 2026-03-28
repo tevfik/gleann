@@ -39,6 +39,8 @@ func main() {
 		cmdTUI()
 	case "setup":
 		cmdSetup()
+	case "doctor":
+		cmdDoctor()
 	case "config":
 		cmdConfig(args)
 	case "completion":
@@ -67,6 +69,7 @@ Usage:
   gleann mcp                            Start MCP server (stdio, for AI editors)
   gleann tui                            Launch interactive TUI
   gleann setup                          Run configuration wizard
+  gleann doctor                         Check system health (config, Ollama, models, indexes)
   gleann config  <show|path|edit|validate>  Manage configuration
   gleann completion <bash|zsh|fish>      Output shell completion script
   gleann version                        Show version
