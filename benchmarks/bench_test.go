@@ -151,6 +151,9 @@ func BenchmarkCSRSerialize(b *testing.B) {
 // ---- Storage Reduction Report ----
 
 func TestStorageReductionReport(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping benchmark in short mode")
+	}
 	dims := []int{64, 128, 384, 768}
 	ns := []int{100, 1000, 5000}
 
@@ -297,6 +300,9 @@ func BenchmarkEndToEndPipeline(b *testing.B) {
 // ---- Memory Usage Report ----
 
 func TestMemoryUsageReport(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping benchmark in short mode")
+	}
 	dims := []int{128, 384, 768}
 	ns := []int{1000, 5000}
 
@@ -344,6 +350,9 @@ func TestMemoryUsageReport(t *testing.T) {
 // ---- Latency Report ----
 
 func TestSearchLatencyReport(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping benchmark in short mode")
+	}
 	dims := 128
 	ns := []int{1000, 5000}
 	efs := []int{32, 64, 128, 256}
@@ -386,6 +395,9 @@ func TestSearchLatencyReport(t *testing.T) {
 // ---- Comparison with Brute Force ----
 
 func TestBruteForceComparison(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping benchmark in short mode")
+	}
 	dim := 128
 	n := 5000
 	numQueries := 100
