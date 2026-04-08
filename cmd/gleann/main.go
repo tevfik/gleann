@@ -59,114 +59,148 @@ func main() {
 }
 
 func printUsage() {
-	fmt.Println(`gleann — Lightweight Vector Database with Graph-Based Recomputation
+	fmt.Println(`gleann — AI-powered search, code analysis & long-term memory
 
-Usage:
-  gleann ask    <name> <question>       Ask a question (RAG Q&A)
-  gleann chat   [name]                  Interactive chat TUI / conversation management
-  gleann memory <sub> [args]              Long-term memory management (remember, forget, search)
-  gleann search <name> <query>          Search an index
-  gleann index  <sub> [args]            Manage indexes (list, build, remove, rebuild, info, watch)
-  gleann graph  <deps|callers> <sym>    Query AST Graph in KuzuDB
-  gleann serve  [--addr :8080]          Start REST API server
-  gleann mcp                            Start MCP server (stdio, for AI editors)
-  gleann tui                            Launch interactive TUI
-  gleann setup                          Run configuration wizard
-  gleann doctor                         Check system health (config, Ollama, models, indexes)
-  gleann config  <show|path|edit|validate>  Manage configuration
-  gleann completion <bash|zsh|fish>      Output shell completion script
+gleann has three intelligence pillars that work together:
+
+  ┌─ Document & Code Search ──────────────────────────────────────────┐
+  │  Index any docs or source code, then search or ask questions.     │
+  │  Memory context is automatically injected into every LLM query.  │
+  └───────────────────────────────────────────────────────────────────┘
+  ┌─ Code Intelligence (AST Graph) ───────────────────────────────────┐
+  │  Build a call graph alongside your index. Trace dependencies,     │
+  │  callers, and blast-radius across your codebase.                  │
+  └───────────────────────────────────────────────────────────────────┘
+  ┌─ Long-term Memory ────────────────────────────────────────────────┐
+  │  Store persistent facts, preferences, and conversation summaries. │
+  │  Injected automatically as context into ask, chat, and agents.   │
+  └───────────────────────────────────────────────────────────────────┘
+
+── Document & Code Search ────────────────────────────────────────────
+
+  gleann index  <sub> [args]            Manage indexes
+  gleann search <name> <query>          Semantic search
+  gleann ask    <name> <question>       RAG-powered Q&A (LLM answer from docs)
+  gleann chat   [name]                  Interactive chat TUI
+
+  gleann index subcommands:
+    list                                List all indexes
+    build  <name> --docs <dir>          Build index from documents
+    build  <name> --docs <dir> --graph  Also build AST code graph
+    rebuild <name> --docs <dir>         Remove & rebuild from scratch
+    remove <name>                       Delete an index
+    info   <name>                       Show index metadata
+    watch  <name> --docs <dir>          Watch directory & auto-rebuild
+
+── Code Intelligence ─────────────────────────────────────────────────
+
+  gleann graph deps    <fqn> --index <name>    What does this symbol call?
+  gleann graph callers <fqn> --index <name>    Who calls this symbol?
+
+  Requires: gleann index build <name> --docs <dir> --graph
+
+── Long-term Memory ──────────────────────────────────────────────────
+
+  gleann memory remember <text>               Store important knowledge (long-term)
+  gleann memory forget   <query-or-id>        Remove a memory
+  gleann memory list     [--tier short|medium|long]  Browse stored memories
+  gleann memory search   <query>              Full-text search across all tiers
+  gleann memory add      <tier> <text>        Add a note to a specific tier
+  gleann memory clear    [--tier <tier>]      Clear memories (tier or all)
+  gleann memory stats                         Storage statistics
+  gleann memory summarize --last              Auto-summarize last conversation into memory
+  gleann memory summarize --id <conv-id>      Summarize a specific conversation
+  gleann memory prune    [--age <duration>]   Remove old entries (e.g. 30d, 90d)
+  gleann memory maintain                      Full maintenance pass (prune + archive)
+  gleann memory context                       Show current compiled memory context
+
+  Memory tiers:
+    short   In-memory, session-scoped → auto-promoted to medium on chat exit
+    medium  BBolt, daily summaries → auto-archived to long after 30 days
+    long    BBolt, permanent facts, user preferences (never auto-deleted)
+
+  Chat slash commands:
+    /remember <text>   Store fact to long-term memory mid-conversation
+    /forget <query>    Remove matching memories mid-conversation
+    /memories          Browse stored memories
+    /new               Start a fresh conversation thread
+
+  Memory is automatically injected into every: ask, chat, mcp
+
+── Conversation Management ───────────────────────────────────────────
+
+  gleann chat --list                    List saved conversations
+  gleann chat --pick                    Interactively pick a conversation
+  gleann chat --show <id>               Show a conversation
+  gleann chat --show-last               Show most recent conversation
+  gleann chat --delete <id> [id...]     Delete conversations
+  gleann chat --delete-older-than <d>   Delete by age (e.g. 7d, 2w, 30d)
+
+── Infrastructure ────────────────────────────────────────────────────
+
+  gleann serve  [--addr :8080]          REST API server
+  gleann mcp                            MCP server (stdio, for AI editors)
+  gleann tui                            Interactive TUI launcher
+  gleann setup  [--bootstrap]           Configuration wizard
+  gleann doctor                         Health check (config, Ollama, models)
+  gleann config <show|path|edit|validate>  Manage configuration
+  gleann completion <bash|zsh|fish>     Shell completion script
   gleann version                        Show version
 
-Index Management (gleann index <sub>):
-  list                                  List all indexes
-  build  <name> --docs <dir> [--graph]  Build index from documents
-  remove <name>                         Remove an index
-  rebuild <name> --docs <dir> [--graph] Remove & rebuild index from scratch
-  info   <name>                         Show index metadata
-  watch  <name> --docs <dir> [--graph]  Watch & auto-rebuild on changes
+── Common Options ────────────────────────────────────────────────────
 
-Embedding Options:
-  --model <model>         Embedding model (default: bge-m3)
-  --provider <provider>   Embedding provider: ollama, openai (default: ollama)
-  --host <url>            Ollama host URL (default: http://localhost:11434)
-  --batch-size <n>        Embedding batch size (default: auto based on provider)
-  --concurrency <n>       Max concurrent embedding batches (default: auto based on provider)
+  Embedding:
+    --model <model>         Embedding model (default: bge-m3)
+    --provider <provider>   ollama | openai (default: ollama)
+    --host <url>            Ollama host (default: http://localhost:11434)
 
-Search Options:
-  --top-k <n>             Number of results (default: 10)
-  --metric <metric>       Distance metric: l2, cosine, ip (default: l2)
-  --json                  Output as JSON
-  --rerank                Enable two-stage reranking for higher accuracy
-  --rerank-model <model>  Reranker model (default: bge-reranker-v2-m3)
-  --hybrid                Use hybrid search (vector + BM25)
-  --graph                 Enrich results with graph context (callers/callees)
-  --ef-search <n>         HNSW ef_search parameter (higher = more accurate, slower)
+  Search:
+    --top-k <n>             Results to retrieve (default: 10)
+    --rerank                Two-stage reranking for higher accuracy
+    --hybrid                Vector + BM25 hybrid search
+    --graph                 Enrich results with code graph context
 
-Build Options:
-  --index-dir <dir>       Index storage directory (default: ~/.gleann/indexes)
-  --chunk-size <n>        Chunk size in tokens (default: 512)
-  --chunk-overlap <n>     Chunk overlap in tokens (default: 50)
-  --graph                 Build AST-based code graph (requires treesitter build tag)
-  --prune                 Prune unchanged files during incremental builds
-  --no-mmap               Disable memory-mapped file access
+  LLM:
+    --llm-model <model>     LLM model (default: llama3.2)
+    --llm-provider <prov>   ollama | openai | anthropic
+    --role <role>           System prompt role (code, shell, explain, ...)
+    --format <fmt>          Output format: json | markdown | raw
+    --no-limit              Remove output token limit
 
-LLM Options:
-  --llm-model <model>     LLM model for ask/chat (default: llama3.2)
-  --llm-provider <prov>   LLM provider: ollama, openai, anthropic (default: ollama)
-  --interactive           Interactive chat mode (ask command)
-  --session <file>        Resume chat from a session file
+  Ask/Chat:
+    --continue <id>         Continue a previous conversation
+    --continue-last         Continue most recent conversation
+    --no-cache              Don't save conversation to history
+    --quiet                 Suppress status messages
 
-Ask & Chat Options:
-  --continue <id>         Continue a previous conversation
-  --continue-last         Continue the most recent conversation
-  --title <title>         Set conversation title
-  --role <role>           Use a named role (e.g. code, shell, explain)
-  --format <fmt>          Output format: json, markdown, raw
-  --raw                   Output raw text (no markdown rendering); auto-enabled when piped
-  --quiet                 Suppress status messages
-  --word-wrap <n>         Wrap output at N columns (default: terminal width)
-  --no-cache              Don't save conversation to history
-  --no-limit              Remove token limit (unlimited output)
+── Examples ──────────────────────────────────────────────────────────
 
-Chat Conversation Management (gleann chat ...):
-  --list                  List saved conversations
-  --pick                  Interactively pick a conversation (arrow keys)
-  --show <id>             Show a specific conversation
-  --show-last             Show the most recent conversation
-  --delete <id> [id...]   Delete specific conversations
-  --delete-older-than <d> Delete conversations older than duration (e.g. 7d, 2w)
-
-Config Subcommands (gleann config <sub>):
-  show                    Show current configuration (JSON)
-  path                    Print config file path
-  edit                    Open config in $EDITOR
-  validate                Check config syntax and values
-
-Graph Options:
-  --index <name>          Index name for graph queries (required for graph command)
-
-Examples:
-  gleann index list
+  # Index and search documents
   gleann index build my-docs --docs ./documents/
+  gleann search my-docs "How does authentication work?" --rerank
+  gleann ask my-docs "Explain the architecture"
+
+  # Index source code with call graph
   gleann index build my-code --docs ./src/ --graph
-  gleann index watch my-code --docs ./src/ --graph
-  gleann search my-docs "How does caching work?" --rerank
-  gleann ask my-docs "Explain the architecture" --interactive
-  gleann ask my-docs "Summarize this" --role code --format json
-  gleann ask my-docs "long answer" --no-limit
+  gleann graph deps "github.com/org/pkg.Handler" --index my-code
+  gleann graph callers "github.com/org/pkg.Handler" --index my-code
+
+  # Long-term memory
+  gleann memory remember "Project uses hexagonal architecture"
+  gleann memory remember "Prefer snake_case for DB columns" --tag "preference"
+  gleann memory search "architecture"
+  gleann memory summarize --last
+  gleann memory stats
+
+  # Chat with memory-augmented context
+  gleann chat my-docs       # memory auto-injected
   cat file.go | gleann ask my-code "Review this code"
   gleann ask my-code --continue-last "What about error handling?"
-  gleann chat --list
-  gleann chat --delete-older-than 30d
-  gleann chat my-docs
-  gleann graph deps main.handleRequest --index my-code
-  gleann config show
-  gleann config edit
-  gleann tui
-  gleann serve --addr :8080
 
-Setup Options:
-  --bootstrap             Quick setup with auto-detected defaults (no TUI)
-  --check                 Check if gleann is configured
-  --host <url>            Ollama host for bootstrap mode (default: http://localhost:11434)`)
+  # Multi-index search
+  gleann search code,docs "rate limiter" --rerank
+
+  # REST API / MCP
+  gleann serve --addr :8080
+  gleann mcp`)
 }

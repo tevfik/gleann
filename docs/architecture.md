@@ -12,6 +12,7 @@
 ├───────────────────┤                                                  │
 │  LeannChat        │  Conversations / Roles / Format                  │
 │  (LLM Q&A)       │  Stdin · Pipe · Raw · Quiet                       │
+│                   │  ↑ memory context injected as system message     │
 ├───────────────────┴──────────────────────────────────────────────────┤
 │              Backend Registry                                        │
 ├──────────────────┬───────────────────────────────────────────────────┤
@@ -27,11 +28,56 @@
 │  KuzuDB Graph Layer                                                  │
 │  ├── Code Graph  (CodeFile, Symbol, CALLS, IMPLEMENTS …)             │
 │  ├── Document Graph  (Folder, Document, Heading, Chunk …)            │
-│  └── Memory Engine  (Entity, RELATES_TO — generic AI agent memory)   │
+│  └── Memory Engine  (Entity, RELATES_TO — external agent memory)     │
+├──────────────────────────────────────────────────────────────────────┤
+│  Long-term Memory Layer  (pkg/memory)                                │
+│  ├── Short-term  in-process  session notes → promoted on exit        │
+│  ├── Medium-term BBolt      conversation summaries, daily digests    │
+│  └── Long-term   BBolt      permanent facts, preferences, knowledge  │
 └──────────────────────────────────────────────────────────────────────┘
 ```
 
-### Storage Optimization: Selective Recomputation
+### Three Intelligence Pillars
+
+gleann combines three capabilities into one coherent system.  Each pillar feeds
+the others automatically at query time:
+
+```
+┌────────────────────────────────────────────────────────┐
+│  1. Document & Code Search  (index + search + ask)     │
+│     Build semantic vector indexes from any docs/code.  │
+│     Ask questions → RAG-powered answers from your data.│
+├────────────────────────────────────────────────────────┤
+│  2. Code Intelligence  (graph + treesitter)            │
+│     AST-level call graphs stored in KuzuDB.            │
+│     Trace dependencies, callers, blast-radius.         │
+│     Search results enriched with structural context.   │
+├────────────────────────────────────────────────────────┤
+│  3. Long-term Memory  (pkg/memory → BBolt)             │
+│     Persistent facts, preferences, conversation sums.  │
+│     Injected as a system message into EVERY LLM query. │
+│     Human: /remember  •  CLI: gleann memory remember   │
+└────────────────────────────────────────────────────────┘
+         All three active simultaneously during ask/chat
+```
+
+### Two Memory Subsystems
+
+gleann has two distinct memory subsystems that serve different audiences:
+
+| Subsystem | Storage | Interface | Audience |
+|-----------|---------|-----------|----------|
+| **Long-term Memory** (`pkg/memory`) | BBolt | `gleann memory *` · `/remember` in chat | Human users & agents via CLI |
+| **Memory Engine** (`internal/graph/kuzu`) | KuzuDB | MCP tools · REST `/api/memory/{name}/*` | External AI agents (programmatic API) |
+
+The Long-term Memory layer stores natural-language facts and conversation
+summaries that are compiled into `<memory_context>` XML and automatically
+prepended to every LLM query.
+
+The Memory Engine is a low-level graph store for structured entity-relationship
+knowledge that external agents inject via MCP or REST (no CLI interaction).
+
+
 
 Instead of storing all embedding vectors, gleann stores only the HNSW graph structure (CSR format) and recomputes embeddings on-demand during search. This is the core LEANN innovation:
 
