@@ -15,6 +15,7 @@ import (
 	"github.com/tevfik/gleann/internal/embedding"
 	"github.com/tevfik/gleann/pkg/conversations"
 	"github.com/tevfik/gleann/pkg/gleann"
+	"github.com/tevfik/gleann/pkg/memory"
 	"github.com/tevfik/gleann/pkg/roles"
 
 	// Register HNSW backend.
@@ -31,7 +32,8 @@ type Server struct {
 	version    string
 	server     *http.Server
 	graphPool  *graphDBPool
-	memoryPool *memoryPool // Memory Engine: generic Entity/RELATES_TO graph
+	memoryPool *memoryPool     // Memory Engine: generic Entity/RELATES_TO graph
+	blockMem   *memory.Manager // BBolt hierarchical memory blocks (pkg/memory)
 }
 
 // NewServer creates a new REST API server.
@@ -99,6 +101,17 @@ func (s *Server) Start() error {
 	mux.HandleFunc("DELETE /api/memory/{name}/edges", s.handleMemoryDeleteEdge)
 	mux.HandleFunc("POST /api/memory/{name}/traverse", s.handleMemoryTraverse)
 
+	// Memory Block endpoints (BBolt hierarchical memory — pkg/memory).
+	// Note: /api/blocks/search and /api/blocks/context must be registered before
+	// /api/blocks/{id} so the router matches them as literals first.
+	mux.HandleFunc("GET /api/blocks/search", s.handleSearchBlocks)
+	mux.HandleFunc("GET /api/blocks/context", s.handleBlockContext)
+	mux.HandleFunc("GET /api/blocks/stats", s.handleBlockStats)
+	mux.HandleFunc("GET /api/blocks", s.handleListBlocks)
+	mux.HandleFunc("POST /api/blocks", s.handleAddBlock)
+	mux.HandleFunc("DELETE /api/blocks/{id}", s.handleDeleteBlock)
+	mux.HandleFunc("DELETE /api/blocks", s.handleClearBlocks)
+
 	// OpenAI-compatible proxy endpoints.
 	mux.HandleFunc("GET /v1/models", s.handleListModels)
 	mux.HandleFunc("POST /v1/chat/completions", s.handleChatCompletions)
@@ -125,6 +138,7 @@ func (s *Server) Stop(ctx context.Context) error {
 		s.graphPool.closeAll()
 	}
 	s.stopMemoryPool(ctx)
+	s.closeBlockMem()
 	return s.server.Shutdown(ctx)
 }
 
