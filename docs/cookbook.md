@@ -229,3 +229,56 @@ GLEANN_CHAT_MODEL=llama3.1:70b gleann ask myproject "refactor strategy for the p
 # Specialized coding model
 GLEANN_CHAT_MODEL=qwen2.5-coder:7b gleann ask myproject "find potential bugs in the auth handler"
 ```
+
+## 13. Long-term Memory
+
+Store persistent knowledge that is automatically injected into every LLM query:
+
+```bash
+# Remember project-level facts once
+gleann memory remember "This project uses hexagonal architecture"
+gleann memory remember "Database: PostgreSQL 16, ORM: sqlx" --tag "stack"
+gleann memory remember "Auth owner: Alice, payments owner: Bob" --tag "team"
+gleann memory remember "Never use global state; prefer dependency injection" --tag "convention"
+
+# From now on, every 'ask' and 'chat' receives this context automatically.
+gleann ask myproject "Who should I talk to about the payment module?"
+# → "According to your stored memory, payments are owned by Bob."
+
+# Review what's in memory
+gleann memory list
+gleann memory context   # show exactly what the LLM receives
+
+# Auto-summarize a conversation into medium-term memory
+gleann memory summarize --last
+gleann memory summarize --last --extract   # also extract individual facts
+
+# Inside 'gleann chat':
+# /remember Project is moving to microservices in Q3
+# /forget  "hexagonal architecture"
+# /memories
+```
+
+## 14. Memory-Augmented Code Review Workflow
+
+Build a persistent coding assistant that remembers your team's conventions:
+
+```bash
+# 1. Index the codebase with code graph
+gleann index build myrepo --docs ./src/ --graph
+
+# 2. Store team conventions once
+gleann memory remember "Always add error context with fmt.Errorf(\"...: %w\", err)" --tag "convention"
+gleann memory remember "Unit tests live in _test.go files alongside source" --tag "convention"
+gleann memory remember "Use table-driven tests with t.Run()" --tag "convention"
+
+# 3. Review code with context (conventions auto-injected)
+cat pkg/auth/handler.go | gleann ask myrepo "Review this file for convention violations"
+
+# 4. Impact analysis
+gleann graph callers "pkg/auth.ValidateToken" --index myrepo
+
+# 5. End of day: summarize the conversation
+gleann memory summarize --last
+```
+```
