@@ -35,6 +35,7 @@ type Server struct {
 	searchers   map[string]*gleann.LeannSearcher
 	searcherLRU []string       // tracks access order: most recent at end
 	memPool     *mcpMemoryPool // Memory Engine: generic Entity/RELATES_TO graph
+	blockMem    *blockMemPool  // BBolt hierarchical memory blocks (pkg/memory)
 }
 
 // NewServer initializes a new MCP server that exposes Gleann capabilities using the SDK.
@@ -66,6 +67,7 @@ func NewServer(cfg Config) *Server {
 		embedder:  embedder,
 		searchers: make(map[string]*gleann.LeannSearcher),
 		memPool:   newMCPMemoryPool(cfg.IndexDir),
+		blockMem:  &blockMemPool{},
 	}
 
 	// Register tools natively with the SDK
@@ -76,6 +78,13 @@ func NewServer(cfg Config) *Server {
 	s.AddTool(srv.buildGraphNeighborsTool(), srv.handleGraphNeighbors)
 	s.AddTool(srv.buildDocumentLinksTool(), srv.handleDocumentLinks)
 	s.AddTool(srv.buildImpactTool(), srv.handleImpact)
+
+	// Memory Block tools — persistent hierarchical memory (BBolt, no CGo).
+	s.AddTool(srv.buildMemoryRememberTool(), srv.handleMemoryRemember)
+	s.AddTool(srv.buildMemoryForgetTool(), srv.handleMemoryForget)
+	s.AddTool(srv.buildMemorySearchTool(), srv.handleMemorySearch)
+	s.AddTool(srv.buildMemoryListTool(), srv.handleMemoryList)
+	s.AddTool(srv.buildMemoryContextTool(), srv.handleMemoryContext)
 
 	// Memory Engine tools — external agents can manipulate the knowledge graph directly.
 	s.AddTool(srv.buildInjectKGTool(), srv.handleInjectKG)
@@ -113,6 +122,9 @@ func (s *Server) Run() {
 func (s *Server) Close() {
 	if s.memPool != nil {
 		s.memPool.closeAll()
+	}
+	if s.blockMem != nil {
+		s.blockMem.close()
 	}
 }
 
