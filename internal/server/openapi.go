@@ -31,6 +31,7 @@ func (s *Server) openAPISpec() map[string]any {
 			{"name": "search", "description": "Semantic and hybrid search"},
 			{"name": "graph", "description": "KuzuDB code graph queries"},
 			{"name": "memory", "description": "Memory Engine — generic Entity/RELATES_TO knowledge graph for external AI agents"},
+			{"name": "blocks", "description": "Memory Blocks — hierarchical BBolt storage (short/medium/long tiers) providing infinite persistent memory for LLMs"},
 			{"name": "webhooks", "description": "Webhook notification management"},
 			{"name": "metrics", "description": "Prometheus-compatible metrics"},
 			{"name": "proxy", "description": "OpenAI-compatible RAG proxy (model: \"gleann/<index>\")"},
@@ -425,6 +426,216 @@ func (s *Server) openAPISpec() map[string]any {
 						},
 						"400": map[string]any{"description": "Invalid request"},
 						"500": map[string]any{"description": "Internal server error"},
+					},
+				},
+			},
+
+			// ── Memory Block endpoints (BBolt hierarchical memory) ───────────────────────
+			"/api/blocks": map[string]any{
+				"get": map[string]any{
+					"tags":        []string{"blocks"},
+					"summary":     "List memory blocks",
+					"description": "Returns all persisted memory blocks. Use `tier` to filter by storage tier.",
+					"operationId": "listBlocks",
+					"parameters": []map[string]any{
+						{
+							"name":        "tier",
+							"in":          "query",
+							"required":    false,
+							"description": "Filter by memory tier",
+							"schema":      map[string]any{"type": "string", "enum": []string{"short", "medium", "long"}},
+						},
+					},
+					"responses": map[string]any{
+						"200": map[string]any{
+							"description": "List of memory blocks",
+							"content": map[string]any{
+								"application/json": map[string]any{
+									"schema": map[string]any{
+										"type": "object",
+										"properties": map[string]any{
+											"blocks": map[string]any{"type": "array", "items": refSchema("MemoryBlock")},
+											"count":  map[string]any{"type": "integer"},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+				"post": map[string]any{
+					"tags":        []string{"blocks"},
+					"summary":     "Add a memory block",
+					"description": "Stores a new memory block in the specified tier. Short-term blocks are in-memory (session-scoped), medium and long-term are persisted to BBolt.",
+					"operationId": "addBlock",
+					"requestBody": map[string]any{
+						"required": true,
+						"content": map[string]any{
+							"application/json": map[string]any{
+								"schema": refSchema("BlockAddRequest"),
+							},
+						},
+					},
+					"responses": map[string]any{
+						"201": map[string]any{
+							"description": "Block created",
+							"content": map[string]any{
+								"application/json": map[string]any{
+									"schema": refSchema("MemoryBlock"),
+								},
+							},
+						},
+						"400": map[string]any{"description": "Invalid request"},
+						"500": map[string]any{"description": "Internal server error"},
+					},
+				},
+				"delete": map[string]any{
+					"tags":        []string{"blocks"},
+					"summary":     "Clear memory blocks",
+					"description": "Removes all blocks from a specific tier, or all tiers if `tier` is omitted.",
+					"operationId": "clearBlocks",
+					"parameters": []map[string]any{
+						{
+							"name":        "tier",
+							"in":          "query",
+							"required":    false,
+							"description": "Tier to clear (omit to clear all)",
+							"schema":      map[string]any{"type": "string", "enum": []string{"short", "medium", "long"}},
+						},
+					},
+					"responses": map[string]any{
+						"200": map[string]any{
+							"description": "Blocks cleared",
+							"content": map[string]any{
+								"application/json": map[string]any{
+									"schema": map[string]any{
+										"type":       "object",
+										"properties": map[string]any{"ok": map[string]any{"type": "boolean"}, "cleared": map[string]any{"type": "integer"}},
+									},
+								},
+							},
+						},
+						"400": map[string]any{"description": "Invalid tier value"},
+						"500": map[string]any{"description": "Internal server error"},
+					},
+				},
+			},
+			"/api/blocks/{id}": map[string]any{
+				"delete": map[string]any{
+					"tags":        []string{"blocks"},
+					"summary":     "Forget a memory block",
+					"description": "Removes a specific memory block by ID. Also accepts a content query — all blocks matching the query will be deleted.",
+					"operationId": "deleteBlock",
+					"parameters": []map[string]any{
+						{
+							"name":        "id",
+							"in":          "path",
+							"required":    true,
+							"description": "Block ID",
+							"schema":      map[string]any{"type": "string"},
+						},
+					},
+					"responses": map[string]any{
+						"200": map[string]any{
+							"description": "Block deleted",
+							"content": map[string]any{
+								"application/json": map[string]any{
+									"schema": map[string]any{
+										"type":       "object",
+										"properties": map[string]any{"ok": map[string]any{"type": "boolean"}, "deleted": map[string]any{"type": "integer"}},
+									},
+								},
+							},
+						},
+						"404": map[string]any{"description": "Block not found"},
+						"500": map[string]any{"description": "Internal server error"},
+					},
+				},
+			},
+			"/api/blocks/search": map[string]any{
+				"get": map[string]any{
+					"tags":        []string{"blocks"},
+					"summary":     "Search memory blocks",
+					"description": "Full-text search across all memory tiers. Matches content, label, and tags.",
+					"operationId": "searchBlocks",
+					"parameters": []map[string]any{
+						{
+							"name":        "q",
+							"in":          "query",
+							"required":    true,
+							"description": "Search query",
+							"schema":      map[string]any{"type": "string"},
+						},
+					},
+					"responses": map[string]any{
+						"200": map[string]any{
+							"description": "Matching memory blocks",
+							"content": map[string]any{
+								"application/json": map[string]any{
+									"schema": map[string]any{
+										"type": "object",
+										"properties": map[string]any{
+											"blocks": map[string]any{"type": "array", "items": refSchema("MemoryBlock")},
+											"count":  map[string]any{"type": "integer"},
+											"query":  map[string]any{"type": "string"},
+										},
+									},
+								},
+							},
+						},
+						"400": map[string]any{"description": "Missing q parameter"},
+					},
+				},
+			},
+			"/api/blocks/context": map[string]any{
+				"get": map[string]any{
+					"tags":        []string{"blocks"},
+					"summary":     "Get compiled memory context",
+					"description": "Returns the full compiled memory context window — the exact text that gleann injects into LLM system prompts. Use `?format=xml` to get raw XML instead of JSON.",
+					"operationId": "blockContext",
+					"parameters": []map[string]any{
+						{
+							"name":        "format",
+							"in":          "query",
+							"required":    false,
+							"description": "Response format: json (default) or xml",
+							"schema":      map[string]any{"type": "string", "enum": []string{"json", "xml"}},
+						},
+					},
+					"responses": map[string]any{
+						"200": map[string]any{
+							"description": "Memory context window",
+							"content": map[string]any{
+								"application/json": map[string]any{
+									"schema": map[string]any{
+										"type": "object",
+										"properties": map[string]any{
+											"context":  refSchema("ContextWindow"),
+											"rendered": map[string]any{"type": "string", "description": "LLM-injectable <memory_context> XML string"},
+										},
+									},
+								},
+								"text/xml": map[string]any{"schema": map[string]any{"type": "string"}},
+							},
+						},
+					},
+				},
+			},
+			"/api/blocks/stats": map[string]any{
+				"get": map[string]any{
+					"tags":        []string{"blocks"},
+					"summary":     "Memory storage statistics",
+					"description": "Returns block counts per tier and total disk usage of the BBolt memory store.",
+					"operationId": "blockStats",
+					"responses": map[string]any{
+						"200": map[string]any{
+							"description": "Memory statistics",
+							"content": map[string]any{
+								"application/json": map[string]any{
+									"schema": refSchema("MemoryStats"),
+								},
+							},
+						},
 					},
 				},
 			},
@@ -863,6 +1074,72 @@ func (s *Server) openAPISpec() map[string]any {
 					"type": "object",
 					"properties": map[string]any{
 						"error": map[string]any{"type": "string"},
+					},
+				},
+
+				// ── Memory Block schemas ───────────────────────────────────────────────────────────────────
+				"MemoryBlock": map[string]any{
+					"type":        "object",
+					"description": "A single persisted memory entry in the hierarchical BBolt store.",
+					"properties": map[string]any{
+						"id":         map[string]any{"type": "string", "description": "Unique block identifier (content-derived hash)"},
+						"tier":       map[string]any{"type": "string", "enum": []string{"short", "medium", "long"}, "description": "Storage tier"},
+						"label":      map[string]any{"type": "string", "description": "Semantic label (e.g. user_preference, project_fact)"},
+						"content":    map[string]any{"type": "string", "description": "The memory content"},
+						"source":     map[string]any{"type": "string", "description": "Origin: user, api, mcp_agent, auto_summary, system"},
+						"tags":       map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Searchable tags"},
+						"metadata":   map[string]any{"type": "object", "additionalProperties": map[string]any{"type": "string"}, "description": "Arbitrary key-value metadata"},
+						"created_at": map[string]any{"type": "string", "format": "date-time"},
+						"updated_at": map[string]any{"type": "string", "format": "date-time"},
+						"expires_at": map[string]any{"type": "string", "format": "date-time", "nullable": true, "description": "Expiration time (null = never)"},
+					},
+				},
+				"BlockAddRequest": map[string]any{
+					"type":     "object",
+					"required": []string{"content"},
+					"properties": map[string]any{
+						"content":    map[string]any{"type": "string", "description": "The fact or knowledge to store"},
+						"tier":       map[string]any{"type": "string", "enum": []string{"short", "medium", "long"}, "default": "long", "description": "Storage tier"},
+						"label":      map[string]any{"type": "string", "description": "Semantic label for search/grouping"},
+						"source":     map[string]any{"type": "string", "description": "Origin tag (default: api)"},
+						"tags":       map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+						"metadata":   map[string]any{"type": "object", "additionalProperties": map[string]any{"type": "string"}},
+						"expires_in": map[string]any{"type": "string", "example": "24h", "description": "Go duration string (e.g. 24h, 7d). Omit for no expiry."},
+					},
+				},
+				"MemoryStats": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"short_term_count":  map[string]any{"type": "integer", "description": "Number of in-memory short-term blocks"},
+						"medium_term_count": map[string]any{"type": "integer", "description": "Number of persisted medium-term blocks"},
+						"long_term_count":   map[string]any{"type": "integer", "description": "Number of persisted long-term blocks"},
+						"total_count":       map[string]any{"type": "integer"},
+						"disk_size_bytes":   map[string]any{"type": "integer", "format": "int64", "description": "BBolt file size in bytes"},
+					},
+				},
+				"ContextWindow": map[string]any{
+					"type":        "object",
+					"description": "Compiled memory context ready for LLM injection.",
+					"properties": map[string]any{
+						"short_term":  map[string]any{"type": "array", "items": refSchema("MemoryBlock")},
+						"medium_term": map[string]any{"type": "array", "items": refSchema("MemoryBlock")},
+						"long_term":   map[string]any{"type": "array", "items": refSchema("MemoryBlock")},
+						"summaries": map[string]any{
+							"type":  "array",
+							"items": refSchema("MemorySummary"),
+						},
+					},
+				},
+				"MemorySummary": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"conversation_id": map[string]any{"type": "string"},
+						"title":           map[string]any{"type": "string"},
+						"content":         map[string]any{"type": "string"},
+						"message_count":   map[string]any{"type": "integer"},
+						"index_names":     map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+						"model":           map[string]any{"type": "string"},
+						"created_at":      map[string]any{"type": "string", "format": "date-time"},
 					},
 				},
 				"ConversationSummary": map[string]any{
