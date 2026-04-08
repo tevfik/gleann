@@ -63,11 +63,12 @@ type ChatMessage struct {
 // The searcher field accepts the Searcher interface, so LeannChat works
 // transparently with a single LeannSearcher or a MultiSearcher.
 type LeannChat struct {
-	searcher     Searcher
-	config       ChatConfig
-	history      []ChatMessage
-	client       *http.Client
-	streamClient *http.Client // No timeout; context handles cancellation for streaming
+	searcher      Searcher
+	config        ChatConfig
+	history       []ChatMessage
+	client        *http.Client
+	streamClient  *http.Client // No timeout; context handles cancellation for streaming
+	memoryContext string       // Compiled memory context for LLM injection (separate context window)
 }
 
 func (c *LeannChat) getStreamClient() *http.Client {
@@ -143,6 +144,14 @@ func (c *LeannChat) Ask(ctx context.Context, question string, opts ...SearchOpti
 		{Role: "system", Content: c.config.SystemPrompt},
 	}
 
+	// Inject memory context as a separate system message.
+	if c.memoryContext != "" {
+		messages = append(messages, ChatMessage{
+			Role:    "system",
+			Content: c.memoryContext,
+		})
+	}
+
 	// Add conversation history (Sliding Window: Keep last N messages to prevent context overflow).
 	const historyLimit = 20 // 10 conversation turns (user + assistant)
 	startIdx := 0
@@ -196,6 +205,14 @@ func (c *LeannChat) AskStream(ctx context.Context, question string, callback Str
 	// Step 4: Build messages.
 	messages := []ChatMessage{
 		{Role: "system", Content: c.config.SystemPrompt},
+	}
+
+	// Inject memory context as a separate system message.
+	if c.memoryContext != "" {
+		messages = append(messages, ChatMessage{
+			Role:    "system",
+			Content: c.memoryContext,
+		})
 	}
 
 	const historyLimit = 20
@@ -311,6 +328,13 @@ func (c *LeannChat) SetSystemPrompt(prompt string) {
 // SetModel updates the model for subsequent requests.
 func (c *LeannChat) SetModel(model string) {
 	c.config.Model = model
+}
+
+// SetMemoryContext updates the memory context for subsequent requests.
+// The memory context is injected as a separate system message before the
+// conversation history, providing the LLM with long-term knowledge.
+func (c *LeannChat) SetMemoryContext(ctx string) {
+	c.memoryContext = ctx
 }
 
 // GetSearcher returns the underlying searcher instance.

@@ -16,6 +16,7 @@ import (
 
 	"github.com/tevfik/gleann/pkg/conversations"
 	"github.com/tevfik/gleann/pkg/gleann"
+	"github.com/tevfik/gleann/pkg/memory"
 	"github.com/tevfik/gleann/pkg/roles"
 )
 
@@ -132,6 +133,9 @@ type ChatModel struct {
 	showHistory   bool
 	historyItems  []conversations.Conversation
 	historyCursor int
+
+	// Memory system.
+	memoryMgr *memory.Manager
 }
 
 // NewChatModel creates a new chat TUI model.
@@ -249,6 +253,12 @@ func NewChatModel(chat *gleann.LeannChat, indexName, modelName string) ChatModel
 	chat.SetMaxTokens(maxTokens)
 	chat.SetSystemPrompt(systemPrompt)
 
+	// Initialize memory manager.
+	var memMgr *memory.Manager
+	if mgr, err := memory.DefaultManager(); err == nil {
+		memMgr = mgr
+	}
+
 	// Fetch available reranker models using the embedding provider from `savedCfg`.
 	rerankModels, rerankModelIdx := fetchRerankModelList(savedCfg)
 
@@ -307,6 +317,7 @@ func NewChatModel(chat *gleann.LeannChat, indexName, modelName string) ChatModel
 		promptInput:       pi,
 		width:             80,
 		height:            24,
+		memoryMgr:         memMgr,
 	}
 	// Initialize layout with defaults so View renders immediately.
 	m = m.relayout()
@@ -412,6 +423,7 @@ func (m ChatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.messages = append(m.messages, chatMsg{
 					role: "system",
 					content: "Commands: /clear • /settings • /history • /help • /quit\n" +
+						"Memory:   /remember <text> • /forget <query> • /memories • /new\n" +
 						"Shortcuts: ctrl+s settings • pgup/pgdn scroll • esc clear/back\n" +
 						"CLI: --role <name> • --format <fmt> • --continue • --continue-last • --title <t>\n" +
 						"Pipe: cat file | gleann ask <index> \"question\" • --raw • --quiet",
@@ -439,6 +451,98 @@ func (m ChatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.showHistory = true
 				m.textarea.Reset()
 				m.textarea.Blur()
+				return m, nil
+
+			case strings.HasPrefix(input, "/remember "):
+				text := strings.TrimPrefix(input, "/remember ")
+				text = strings.TrimSpace(text)
+				if text == "" || m.memoryMgr == nil {
+					msg := "Usage: /remember <important information>"
+					if m.memoryMgr == nil {
+						msg = "⚠ Memory system unavailable"
+					}
+					m.messages = append(m.messages, chatMsg{role: "system", content: msg})
+				} else {
+					block, err := m.memoryMgr.Remember(text)
+					if err != nil {
+						m.messages = append(m.messages, chatMsg{role: "system", content: "⚠ Error: " + err.Error()})
+					} else {
+						m.messages = append(m.messages, chatMsg{
+							role:    "system",
+							content: fmt.Sprintf("✅ Remembered [%s]: %s", block.ID[:8], text),
+						})
+					}
+				}
+				m.textarea.Reset()
+				m.viewport.SetContent(m.renderMessages())
+				m.viewport.GotoBottom()
+				return m, nil
+
+			case strings.HasPrefix(input, "/forget "):
+				query := strings.TrimPrefix(input, "/forget ")
+				query = strings.TrimSpace(query)
+				if query == "" || m.memoryMgr == nil {
+					msg := "Usage: /forget <query or ID>"
+					if m.memoryMgr == nil {
+						msg = "⚠ Memory system unavailable"
+					}
+					m.messages = append(m.messages, chatMsg{role: "system", content: msg})
+				} else {
+					count, err := m.memoryMgr.Forget(query)
+					if err != nil {
+						m.messages = append(m.messages, chatMsg{role: "system", content: "⚠ " + err.Error()})
+					} else {
+						m.messages = append(m.messages, chatMsg{
+							role:    "system",
+							content: fmt.Sprintf("🗑 Forgot %d memory block(s) matching %q", count, query),
+						})
+					}
+				}
+				m.textarea.Reset()
+				m.viewport.SetContent(m.renderMessages())
+				m.viewport.GotoBottom()
+				return m, nil
+
+			case input == "/memories":
+				if m.memoryMgr == nil {
+					m.messages = append(m.messages, chatMsg{role: "system", content: "⚠ Memory system unavailable"})
+				} else {
+					blocks, err := m.memoryMgr.List("")
+					if err != nil || len(blocks) == 0 {
+						m.messages = append(m.messages, chatMsg{role: "system", content: "No memories stored."})
+					} else {
+						var sb strings.Builder
+						sb.WriteString(fmt.Sprintf("🧠 Memories (%d):\n", len(blocks)))
+						for _, b := range blocks {
+							label := b.Label
+							if len(label) > 12 {
+								label = label[:12]
+							}
+							content := b.Content
+							if len(content) > 60 {
+								content = content[:57] + "..."
+							}
+							sb.WriteString(fmt.Sprintf("  [%s] %-8s %-12s %s\n", b.ID[:8], b.Tier, label, content))
+						}
+						m.messages = append(m.messages, chatMsg{role: "system", content: sb.String()})
+					}
+				}
+				m.textarea.Reset()
+				m.viewport.SetContent(m.renderMessages())
+				m.viewport.GotoBottom()
+				return m, nil
+
+			case input == "/new":
+				// Start a fresh conversation thread.
+				m.messages = m.messages[:0]
+				m.chat.ClearHistory()
+				m.messages = append(m.messages, chatMsg{
+					role:    "system",
+					content: fmt.Sprintf("🆕 New conversation started — index %q, model: %s", m.indexName, m.modelName),
+				})
+				m.textarea.Reset()
+				m.viewport.SetContent(m.renderMessages())
+				m.viewport.GotoBottom()
 				return m, nil
 			}
 
@@ -951,8 +1055,17 @@ func (m ChatModel) askLLMStream(question string) tea.Cmd {
 	chat := m.chat
 	topK := m.topK
 	rerank := m.rerankEnabled
+	memMgr := m.memoryMgr
 
 	return func() tea.Msg {
+		// Refresh memory context before each query.
+		if memMgr != nil {
+			if cw, err := memMgr.BuildContext(); err == nil {
+				rendered := cw.Render()
+				chat.SetMemoryContext(rendered)
+			}
+		}
+
 		// Create a channel for streaming communication.
 		tokenChan := make(chan string, 100)
 

@@ -33,6 +33,8 @@ func main() {
 		cmdGraph(args)
 	case "chat":
 		cmdChat(args)
+	case "memory":
+		cmdMemory(args)
 	case "mcp":
 		cmdMCP()
 	case "tui":
@@ -62,6 +64,7 @@ func printUsage() {
 Usage:
   gleann ask    <name> <question>       Ask a question (RAG Q&A)
   gleann chat   [name]                  Interactive chat TUI / conversation management
+  gleann memory <sub> [args]              Long-term memory management (remember, forget, search)
   gleann search <name> <query>          Search an index
   gleann index  <sub> [args]            Manage indexes (list, build, remove, rebuild, info, watch)
   gleann graph  <deps|callers> <sym>    Query AST Graph in KuzuDB
