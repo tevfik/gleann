@@ -16,7 +16,7 @@ import (
 func cmdMemory(args []string) {
 	if len(args) == 0 {
 		printMemoryUsage()
-		os.Exit(1)
+		return // exit 0: showing help is not an error
 	}
 
 	sub := args[0]
@@ -55,41 +55,77 @@ func cmdMemory(args []string) {
 }
 
 func printMemoryUsage() {
-	fmt.Println(`gleann memory — Long-term memory management for agents
+	fmt.Println(`gleann memory — Hierarchical long-term memory for agents and conversations
+
+gleann memory stores knowledge across three tiers that persist between sessions.
+All stored memory is automatically injected into every LLM query (ask, chat, mcp).
 
 Usage:
-  gleann memory remember <text>           Remember important information (long-term)
-  gleann memory forget <id-or-query>      Forget a memory by ID or content match
-  gleann memory list [--tier <tier>]       List all memories (optional: filter by tier)
-  gleann memory search <query>            Search across all memory tiers
-  gleann memory add <tier> <text>          Add a note to a specific tier (short/medium/long)
-  gleann memory clear [--tier <tier>]      Clear memories (all tiers or specific tier)
-  gleann memory stats                     Show memory statistics
-  gleann memory summarize [--last|--id ID] Summarize a conversation into memory
-  gleann memory prune [--age <duration>]   Prune old blocks (default: 90d short/medium)
-  gleann memory context                   Show compiled memory context for LLM
-  gleann memory maintain                  Run maintenance (prune, archive, promote)
-
-Options:
-  --json          Output as JSON
-  --tag <tag>     Add tag(s) to memory (comma-separated)
-  --label <label> Set memory label
+  gleann memory remember <text>                  Store fact in long-term memory
+  gleann memory forget   <query-or-id>           Remove memory by content match or ID
+  gleann memory list     [--tier <tier>]          List memories (all tiers or specific)
+  gleann memory search   <query>                 Full-text search across all tiers
+  gleann memory add      <tier> <text>            Add note to specific tier
+  gleann memory clear    [--tier <tier>]          Delete memories (tier or all)
+  gleann memory stats                             Storage statistics
+  gleann memory summarize --last                 Summarize last conversation → memory
+  gleann memory summarize --id <conv-id>          Summarize specific conversation
+  gleann memory summarize --last --extract        Also extract individual facts
+  gleann memory prune    [--age <duration>]       Remove old entries
+  gleann memory maintain                          Full maintenance pass
+  gleann memory context                           Show compiled context sent to LLM
 
 Memory Tiers:
-  short    Active session notes (in-memory, promoted on session end)
-  medium   Daily summaries, conversation digests (BBolt, auto-archived after 30d)
-  long     Permanent facts, preferences, archived knowledge (BBolt, persistent)
+  short    In-memory, session-scoped
+           → auto-promoted to medium when chat session ends
+  medium   BBolt, conversation digests, daily summaries
+           → auto-archived to long after 30 days
+  long     BBolt, permanent facts, user preferences
+           → never automatically deleted
+
+Options:
+  --tier <tier>           Filter by tier: short | medium | long
+  --tag <tags>            Comma-separated tags (e.g. "preference,project")
+  --label <label>         Semantic label (default: "note" or "user_memory")
+  --age <duration>        Duration for prune (e.g. 30d, 90d, 2w, 24h)
+  --json                  Output as JSON
+  --extract               Also extract individual facts (with summarize)
+
+Chat Slash Commands (inside 'gleann chat'):
+  /remember <text>        Store fact to long-term memory
+  /forget <query>         Remove memories matching query
+  /memories               Browse stored memories
+  /new                    Start a fresh conversation thread (clears context)
+
+Auto-injection:
+  Memory context is compiled and injected as a system message before every
+  LLM query. This gives agents persistent knowledge across sessions.
+  Use 'gleann memory context' to inspect what the LLM currently receives.
 
 Examples:
-  gleann memory remember "User prefers dark mode"
-  gleann memory remember "Project uses Go 1.24" --tag "project,tech"
-  gleann memory add short "Working on memory system"
-  gleann memory search "dark mode"
+  gleann memory remember "Project uses hexagonal architecture"
+  gleann memory remember "Prefer snake_case for DB columns" --tag "preference"
+  gleann memory remember "Auth service owner: Alice" --tag "team" --label "contact"
+  gleann memory add short "Current task: refactoring auth module"
+  gleann memory add medium "Sprint 12 focus: performance improvements"
+  gleann memory search "architecture"
+  gleann memory search "snake_case" --json
   gleann memory list --tier long
-  gleann memory forget "dark mode"
+  gleann memory forget "snake_case"
+  gleann memory forget abc123ef
   gleann memory summarize --last
-  gleann memory prune --age 30d
-  gleann memory stats`)
+  gleann memory summarize --last --extract
+  gleann memory summarize --id abc12345
+  gleann memory prune --age 90d
+  gleann memory stats
+  gleann memory context
+  gleann memory maintain
+
+Related Commands:
+  gleann chat --list                  Browse conversation history
+  gleann chat --delete-older-than 30d Clean up old conversations
+  gleann serve                        REST API also exposes memory engine endpoints
+  gleann mcp                          MCP server exposes inject_knowledge_graph tool`)
 }
 
 func openMemoryManager() *memory.Manager {
