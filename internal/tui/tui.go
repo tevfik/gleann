@@ -13,6 +13,7 @@ import (
 	"github.com/tevfik/gleann/internal/backend/llamacpp"
 	"github.com/tevfik/gleann/internal/embedding"
 	"github.com/tevfik/gleann/pkg/gleann"
+	"github.com/tevfik/gleann/pkg/memory"
 
 	// Register HNSW backend.
 	_ "github.com/tevfik/gleann/pkg/backends"
@@ -108,6 +109,12 @@ func RunChat(chat *gleann.LeannChat, indexName, modelName string) error {
 	m := NewChatModel(chat, indexName, modelName)
 	p := tea.NewProgram(m, tea.WithAltScreen())
 	_, err := p.Run()
+
+	// End memory session (promote short-term → medium-term).
+	if memMgr, memErr := memory.DefaultManager(); memErr == nil {
+		_ = memMgr.EndSession()
+		memMgr.Close()
+	}
 
 	home, _ := os.UserHomeDir()
 	sessionDir := filepath.Join(home, ".gleann", "chatsessions")

@@ -17,6 +17,7 @@ import (
 	"github.com/tevfik/gleann/internal/tui"
 	"github.com/tevfik/gleann/pkg/conversations"
 	"github.com/tevfik/gleann/pkg/gleann"
+	"github.com/tevfik/gleann/pkg/memory"
 	"github.com/tevfik/gleann/pkg/roles"
 	"github.com/tevfik/gleann/pkg/wordwrap"
 )
@@ -383,6 +384,16 @@ func cmdAsk(args []string) {
 
 	applyLlamaChatOverride(&chatConfig)
 	chat := gleann.NewChat(searcher, chatConfig)
+
+	// Inject memory context.
+	if memMgr, err := memory.DefaultManager(); err == nil {
+		defer memMgr.Close()
+		if cw, err := memMgr.BuildContext(); err == nil {
+			if rendered := cw.Render(); rendered != "" {
+				chat.SetMemoryContext(rendered)
+			}
+		}
+	}
 
 	// Apply --no-limit: remove token limit for unlimited output.
 	if noLimit {
