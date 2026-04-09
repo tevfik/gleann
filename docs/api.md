@@ -139,6 +139,83 @@ Orchestrates all memory layers (block storage, knowledge graph, vector search) t
 | POST | `/api/memory/ingest` | Store facts + relationships across memory layers |
 | POST | `/api/memory/recall` | Query all memory layers in parallel |
 
+#### Ingest Request Fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `facts[].content` | string | **Required.** The fact text to store |
+| `facts[].tags` | string[] | Searchable tags |
+| `facts[].tier` | string | `short` (default), `medium`, or `long` |
+| `facts[].metadata` | object | Arbitrary key-value metadata (e.g. `{"source_file": "auth.go"}`) |
+| `facts[].expires_in` | string | TTL as Go duration (`1h`, `7d`, `2w`) |
+| `facts[].char_limit` | int | Per-block character limit |
+| `relationships[].from` | string | Source entity ID |
+| `relationships[].to` | string | Target entity ID |
+| `relationships[].relation` | string | Relation type (e.g. `DEPENDS_ON`, `IMPLEMENTS`) |
+| `relationships[].weight` | float | Edge importance (default: 1.0) |
+| `relationships[].attributes` | object | Edge metadata |
+| `scope` | string | Isolate facts to a conversation/agent |
+
+#### Recall Request Fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `query` | string | **Required.** Search text |
+| `layers` | string[] | `blocks`, `graph`, `vector` (default: all) |
+| `top_k` | int | Max results per layer (default: 5) |
+| `tier` | string | Filter blocks by tier |
+| `tags` | string[] | Filter blocks by tags (AND logic) |
+| `after` | string | Filter blocks created after (RFC3339 or duration like `24h`, `7d`) |
+| `before` | string | Filter blocks created before |
+| `relations` | string[] | Filter graph edges by relation types |
+| `scope` | string | Filter blocks by scope |
+| `depth` | int | Graph traversal depth (default: 2) |
+| `format` | string | `json` (default) or `context` (LLM-ready XML) |
+
+#### Unified Memory Examples
+
+```bash
+# Store a fact with metadata and TTL
+curl -X POST http://localhost:8080/api/memory/ingest \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "facts": [{
+      "content": "Auth service uses JWT tokens with RS256 signing",
+      "tags": ["auth", "security", "jwt"],
+      "metadata": {"source_file": "auth/jwt.go", "confidence": "high"},
+      "tier": "long",
+      "expires_in": "90d"
+    }],
+    "relationships": [{
+      "from": "AuthService",
+      "to": "JWTValidator",
+      "relation": "DEPENDS_ON",
+      "weight": 0.9
+    }]
+  }'
+
+# Recall facts from the last 7 days, filtered by tag
+curl -X POST http://localhost:8080/api/memory/recall \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "query": "authentication",
+    "layers": ["blocks"],
+    "tags": ["security"],
+    "after": "7d",
+    "tier": "long"
+  }'
+
+# Full multi-layer recall in LLM-ready format
+curl -X POST http://localhost:8080/api/memory/recall \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "query": "how does auth work",
+    "format": "context",
+    "top_k": 10
+  }'
+# Returns XML with <facts>, <relationships>, <relevant_documents>
+```
+
 ### Background Tasks
 
 Monitor and manage long-running background operations (indexing, memory consolidation, health checks).
