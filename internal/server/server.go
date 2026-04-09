@@ -121,6 +121,9 @@ func (s *Server) Start() error {
 	mux.HandleFunc("GET /api/openapi.json", s.handleOpenAPISpec)
 	mux.HandleFunc("GET /api/docs", s.handleSwaggerUI)
 
+	// A2A Protocol endpoints (Agent-to-Agent discovery and communication).
+	s.mountA2A(mux)
+
 	s.server = &http.Server{
 		Addr:         s.addr,
 		Handler:      withMiddleware(mux),
