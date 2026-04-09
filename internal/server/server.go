@@ -34,6 +34,7 @@ type Server struct {
 	graphPool  *graphDBPool
 	memoryPool *memoryPool     // Memory Engine: generic Entity/RELATES_TO graph
 	blockMem   *memory.Manager // BBolt hierarchical memory blocks (pkg/memory)
+	stopCh     chan struct{}   // closed on Stop() to signal background goroutines
 }
 
 // NewServer creates a new REST API server.
@@ -128,12 +129,22 @@ func (s *Server) Start() error {
 		IdleTimeout:  60 * time.Second,
 	}
 
+	// Start background maintenance scheduler for BBolt memory.
+	s.stopCh = make(chan struct{})
+	if mgr, err := s.blockManager(); err == nil {
+		startMaintenanceScheduler(mgr, s.stopCh)
+	}
+
 	log.Printf("gleann server starting on %s", s.addr)
 	return s.server.ListenAndServe()
 }
 
 // Stop gracefully shuts down the server.
 func (s *Server) Stop(ctx context.Context) error {
+	// Signal background goroutines to stop.
+	if s.stopCh != nil {
+		close(s.stopCh)
+	}
 	if s.graphPool != nil {
 		s.graphPool.closeAll()
 	}
@@ -646,7 +657,8 @@ func writeError(w http.ResponseWriter, status int, message string) {
 }
 
 func withMiddleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	// Chain: rate limiter → timeout → CORS/logging.
+	return rateLimitMiddleware(timeoutMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// CORS.
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
@@ -665,5 +677,5 @@ func withMiddleware(next http.Handler) http.Handler {
 		if !strings.Contains(r.URL.Path, "health") {
 			log.Printf("%s %s %s", r.Method, r.URL.Path, time.Since(start))
 		}
-	})
+	})))
 }

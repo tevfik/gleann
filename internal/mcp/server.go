@@ -86,6 +86,9 @@ func NewServer(cfg Config) *Server {
 	s.AddTool(srv.buildMemoryListTool(), srv.handleMemoryList)
 	s.AddTool(srv.buildMemoryContextTool(), srv.handleMemoryContext)
 
+	// Batch query — run multiple questions concurrently.
+	s.AddTool(srv.buildBatchAskTool(), srv.handleBatchAsk)
+
 	// Memory Engine tools — external agents can manipulate the knowledge graph directly.
 	s.AddTool(srv.buildInjectKGTool(), srv.handleInjectKG)
 	s.AddTool(srv.buildDeleteEntityTool(), srv.handleDeleteEntity)

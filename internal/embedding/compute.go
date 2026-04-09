@@ -17,6 +17,8 @@ import (
 	"time"
 
 	gleann "github.com/tevfik/gleann/pkg/gleann"
+
+	"github.com/tevfik/gleann/pkg/retry"
 )
 
 // Provider is the embedding computation provider type.
@@ -198,16 +200,19 @@ func (c *Computer) Compute(ctx context.Context, texts []string) ([][]float32, er
 			var embeddings [][]float32
 			var err error
 
-			switch c.provider {
-			case ProviderOllama, ProviderLlamaCPP:
-				embeddings, err = c.computeOllama(ctx, batch)
-			case ProviderOpenAI:
-				embeddings, err = c.computeOpenAI(ctx, batch)
-			case ProviderGemini:
-				embeddings, err = c.computeGemini(ctx, batch)
-			default:
-				err = fmt.Errorf("unsupported provider: %s", c.provider)
-			}
+			err = retry.Do(ctx, retry.DefaultPolicy(), func() error {
+				switch c.provider {
+				case ProviderOllama, ProviderLlamaCPP:
+					embeddings, err = c.computeOllama(ctx, batch)
+				case ProviderOpenAI:
+					embeddings, err = c.computeOpenAI(ctx, batch)
+				case ProviderGemini:
+					embeddings, err = c.computeGemini(ctx, batch)
+				default:
+					return fmt.Errorf("unsupported provider: %s", c.provider)
+				}
+				return err
+			})
 
 			if err != nil {
 				// Retry one-by-one if batch fails (e.g., one text too long).
