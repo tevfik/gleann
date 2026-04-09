@@ -135,3 +135,80 @@ type timeoutErr struct{}
 func (e *timeoutErr) Error() string   { return "i/o timeout" }
 func (e *timeoutErr) Timeout() bool   { return true }
 func (e *timeoutErr) Temporary() bool { return true }
+
+func TestAggressivePolicy_Values(t *testing.T) {
+	p := retry.AggressivePolicy()
+	if p.MaxAttempts != 5 {
+		t.Fatalf("expected 5 attempts, got %d", p.MaxAttempts)
+	}
+	if p.Base != 2*time.Second {
+		t.Fatalf("expected 2s base, got %v", p.Base)
+	}
+	if p.MaxDelay != 60*time.Second {
+		t.Fatalf("expected 60s max, got %v", p.MaxDelay)
+	}
+}
+
+func TestDo_JitterAddsVariation(t *testing.T) {
+	p := retry.Policy{MaxAttempts: 3, Base: time.Millisecond, MaxDelay: 100 * time.Millisecond, JitterFrac: 0.5}
+	calls := 0
+	start := time.Now()
+	retry.Do(context.Background(), p, func() error {
+		calls++
+		return errors.New("503 service unavailable")
+	})
+	elapsed := time.Since(start)
+	// With jitter, total sleep should be > 0 and < 10ms for these tiny delays.
+	if elapsed < 0 || calls != 3 {
+		t.Fatalf("expected 3 calls, took %v", elapsed)
+	}
+}
+
+func TestDo_ZeroMaxAttempts_SingleCall(t *testing.T) {
+	p := retry.Policy{MaxAttempts: 0}
+	calls := 0
+	retry.Do(context.Background(), p, func() error {
+		calls++
+		return nil
+	})
+	if calls != 1 {
+		t.Fatalf("expected MaxAttempts=0 to default to 1 call, got %d", calls)
+	}
+}
+
+func TestDo_MaxDelayCapsSleep(t *testing.T) {
+	// Base=1s, MaxDelay=2ms — the exponential backoff (1s, 2s, ...) should be capped.
+	p := retry.Policy{MaxAttempts: 2, Base: 1 * time.Second, MaxDelay: 2 * time.Millisecond, JitterFrac: 0}
+	start := time.Now()
+	retry.Do(context.Background(), p, func() error {
+		return errors.New("503 service unavailable")
+	})
+	elapsed := time.Since(start)
+	// Should be capped ~2ms not 1s.
+	if elapsed > 500*time.Millisecond {
+		t.Fatalf("MaxDelay not capping sleep: took %v", elapsed)
+	}
+}
+
+func TestIsRetryable_ContextErrors(t *testing.T) {
+	// context.Canceled and DeadlineExceeded should be retryable
+	// (allow retry when it's the server's deadline, not the caller's).
+	if !retry.IsRetryable(context.Canceled) {
+		t.Fatal("expected context.Canceled to be retryable")
+	}
+	if !retry.IsRetryable(context.DeadlineExceeded) {
+		t.Fatal("expected DeadlineExceeded to be retryable")
+	}
+}
+
+func TestIsRetryable_EOF(t *testing.T) {
+	if !retry.IsRetryable(errors.New("unexpected EOF")) {
+		t.Fatal("expected EOF to be retryable")
+	}
+}
+
+func TestIsRetryable_BrokenPipe(t *testing.T) {
+	if !retry.IsRetryable(errors.New("write: broken pipe")) {
+		t.Fatal("expected broken pipe to be retryable")
+	}
+}

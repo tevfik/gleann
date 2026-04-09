@@ -123,3 +123,81 @@ func TestTimeoutMiddleware_SkipsEventStreamAccept(t *testing.T) {
 		t.Fatalf("expected 200 for text/event-stream, got %d", w.Code)
 	}
 }
+
+// --- envSeconds tests ---
+
+func TestEnvSeconds_Empty(t *testing.T) {
+	t.Setenv("TEST_TIMEOUT", "")
+	// Test indirectly via newTimeoutConfig with overrides.
+	v := envSeconds("TEST_TIMEOUT")
+	if v != 0 {
+		t.Fatalf("expected 0 for empty env, got %d", v)
+	}
+}
+
+func TestEnvSeconds_ValidNumber(t *testing.T) {
+	t.Setenv("TEST_TIMEOUT2", "42")
+	v := envSeconds("TEST_TIMEOUT2")
+	if v != 42 {
+		t.Fatalf("expected 42, got %d", v)
+	}
+}
+
+func TestEnvSeconds_InvalidNumber(t *testing.T) {
+	t.Setenv("TEST_TIMEOUT3", "abc")
+	v := envSeconds("TEST_TIMEOUT3")
+	if v != 0 {
+		t.Fatalf("expected 0 for invalid, got %d", v)
+	}
+}
+
+func TestEnvSeconds_NegativeNumber(t *testing.T) {
+	t.Setenv("TEST_TIMEOUT4", "-5")
+	v := envSeconds("TEST_TIMEOUT4")
+	if v != 0 {
+		t.Fatalf("expected 0 for negative, got %d", v)
+	}
+}
+
+// --- newTimeoutConfig env var overrides ---
+
+func TestNewTimeoutConfig_EnvOverrides(t *testing.T) {
+	t.Setenv("GLEANN_TIMEOUT_ASK_S", "120")
+	t.Setenv("GLEANN_TIMEOUT_SEARCH_S", "15")
+	t.Setenv("GLEANN_TIMEOUT_BUILD_S", "300")
+	t.Setenv("GLEANN_TIMEOUT_DEFAULT_S", "45")
+	cfg := newTimeoutConfig()
+	if cfg.ask != 120*time.Second {
+		t.Fatalf("expected ask=120s, got %v", cfg.ask)
+	}
+	if cfg.search != 15*time.Second {
+		t.Fatalf("expected search=15s, got %v", cfg.search)
+	}
+	if cfg.build != 300*time.Second {
+		t.Fatalf("expected build=300s, got %v", cfg.build)
+	}
+	if cfg.dflt != 45*time.Second {
+		t.Fatalf("expected default=45s, got %v", cfg.dflt)
+	}
+}
+
+// --- timeoutWriter Write/Flush tests ---
+
+func TestTimeoutWriter_Write(t *testing.T) {
+	w := httptest.NewRecorder()
+	tw := &timeoutWriter{ResponseWriter: w}
+	n, err := tw.Write([]byte("hello"))
+	if err != nil || n != 5 {
+		t.Fatalf("expected 5 bytes, got %d, err=%v", n, err)
+	}
+	if !tw.wroteHeader {
+		t.Fatal("Write should set wroteHeader=true")
+	}
+}
+
+func TestTimeoutWriter_Flush(t *testing.T) {
+	w := httptest.NewRecorder()
+	tw := &timeoutWriter{ResponseWriter: w}
+	// Flush should not panic even without prior write.
+	tw.Flush()
+}
