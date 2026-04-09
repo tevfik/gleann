@@ -203,6 +203,191 @@ func TestBuildRecallContext(t *testing.T) {
 	}
 }
 
+func TestUnifiedIngest_WithMetadata(t *testing.T) {
+	s := newUnifiedTestServer(t)
+
+	body := `{
+		"facts": [{
+			"content": "auth uses JWT tokens",
+			"metadata": {"source_file": "auth.go", "confidence": "high"},
+			"tags": ["auth", "security"],
+			"char_limit": 500
+		}]
+	}`
+	req := httptest.NewRequest("POST", "/api/memory/ingest", bytes.NewBufferString(body))
+	w := httptest.NewRecorder()
+	s.handleUnifiedIngest(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var resp UnifiedIngestResponse
+	json.NewDecoder(w.Body).Decode(&resp)
+	if resp.FactsStored != 1 {
+		t.Errorf("expected 1 fact, got %d", resp.FactsStored)
+	}
+
+	// Recall and verify metadata is returned.
+	recallBody := `{"query": "JWT", "layers": ["blocks"]}`
+	req = httptest.NewRequest("POST", "/api/memory/recall", bytes.NewBufferString(recallBody))
+	w = httptest.NewRecorder()
+	s.handleUnifiedRecall(w, req)
+
+	var recallResp UnifiedRecallResponse
+	json.NewDecoder(w.Body).Decode(&recallResp)
+	if len(recallResp.Blocks) == 0 {
+		t.Fatal("expected block result")
+	}
+	if recallResp.Blocks[0].Metadata["source_file"] != "auth.go" {
+		t.Errorf("expected metadata source_file=auth.go, got %v", recallResp.Blocks[0].Metadata)
+	}
+	if recallResp.Blocks[0].CreatedAt.IsZero() {
+		t.Error("expected non-zero CreatedAt timestamp")
+	}
+}
+
+func TestUnifiedIngest_WithTTL(t *testing.T) {
+	s := newUnifiedTestServer(t)
+
+	body := `{
+		"facts": [{"content": "temporary fact", "expires_in": "1h"}]
+	}`
+	req := httptest.NewRequest("POST", "/api/memory/ingest", bytes.NewBufferString(body))
+	w := httptest.NewRecorder()
+	s.handleUnifiedIngest(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var resp UnifiedIngestResponse
+	json.NewDecoder(w.Body).Decode(&resp)
+	if resp.FactsStored != 1 {
+		t.Errorf("expected 1, got %d", resp.FactsStored)
+	}
+}
+
+func TestUnifiedRecall_TagFilter(t *testing.T) {
+	s := newUnifiedTestServer(t)
+
+	// Ingest facts with different tags.
+	ingestBody := `{
+		"facts": [
+			{"content": "Go uses goroutines for concurrency", "tags": ["go", "concurrency"]},
+			{"content": "Go compiles to native code", "tags": ["go", "compiler"]},
+			{"content": "Rust is memory safe", "tags": ["rust", "safety"]}
+		]
+	}`
+	req := httptest.NewRequest("POST", "/api/memory/ingest", bytes.NewBufferString(ingestBody))
+	w := httptest.NewRecorder()
+	s.handleUnifiedIngest(w, req)
+
+	// Recall with tag filter — only "go" tagged.
+	recallBody := `{"query": "memory", "layers": ["blocks"], "tags": ["go"]}`
+	req = httptest.NewRequest("POST", "/api/memory/recall", bytes.NewBufferString(recallBody))
+	w = httptest.NewRecorder()
+	s.handleUnifiedRecall(w, req)
+
+	var resp UnifiedRecallResponse
+	json.NewDecoder(w.Body).Decode(&resp)
+	// Should only return Go-tagged facts, not the Rust one.
+	for _, b := range resp.Blocks {
+		hasGoTag := false
+		for _, tag := range b.Tags {
+			if tag == "go" {
+				hasGoTag = true
+			}
+		}
+		if !hasGoTag {
+			t.Errorf("block %q should have 'go' tag but has %v", b.Content, b.Tags)
+		}
+	}
+}
+
+func TestUnifiedRecall_TierFilter(t *testing.T) {
+	s := newUnifiedTestServer(t)
+
+	ingestBody := `{
+		"facts": [
+			{"content": "short fact", "tier": "short"},
+			{"content": "long fact", "tier": "long"}
+		]
+	}`
+	req := httptest.NewRequest("POST", "/api/memory/ingest", bytes.NewBufferString(ingestBody))
+	w := httptest.NewRecorder()
+	s.handleUnifiedIngest(w, req)
+
+	// Filter by long tier only.
+	recallBody := `{"query": "fact", "layers": ["blocks"], "tier": "long"}`
+	req = httptest.NewRequest("POST", "/api/memory/recall", bytes.NewBufferString(recallBody))
+	w = httptest.NewRecorder()
+	s.handleUnifiedRecall(w, req)
+
+	var resp UnifiedRecallResponse
+	json.NewDecoder(w.Body).Decode(&resp)
+	for _, b := range resp.Blocks {
+		if b.Tier != "long" {
+			t.Errorf("expected tier=long, got %s", b.Tier)
+		}
+	}
+}
+
+func TestUnifiedRecall_DateFilter(t *testing.T) {
+	s := newUnifiedTestServer(t)
+
+	ingestBody := `{"facts": [{"content": "recent fact from today"}]}`
+	req := httptest.NewRequest("POST", "/api/memory/ingest", bytes.NewBufferString(ingestBody))
+	w := httptest.NewRecorder()
+	s.handleUnifiedIngest(w, req)
+
+	// Filter: only facts from last 1 hour.
+	recallBody := `{"query": "recent", "layers": ["blocks"], "after": "1h"}`
+	req = httptest.NewRequest("POST", "/api/memory/recall", bytes.NewBufferString(recallBody))
+	w = httptest.NewRecorder()
+	s.handleUnifiedRecall(w, req)
+
+	var resp UnifiedRecallResponse
+	json.NewDecoder(w.Body).Decode(&resp)
+	if len(resp.Blocks) == 0 {
+		t.Error("expected recent fact to be found with after=1h filter")
+	}
+}
+
+func TestParseDuration(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{"24h", "24h0m0s"},
+		{"7d", "168h0m0s"},
+		{"1w", "168h0m0s"},
+		{"30m", "30m0s"},
+	}
+	for _, tt := range tests {
+		d, err := parseDuration(tt.input)
+		if err != nil {
+			t.Errorf("parseDuration(%q) error: %v", tt.input, err)
+			continue
+		}
+		if d.String() != tt.want {
+			t.Errorf("parseDuration(%q) = %s, want %s", tt.input, d, tt.want)
+		}
+	}
+}
+
+func TestContainsAllTags(t *testing.T) {
+	if !containsAllTags([]string{"go", "rust", "python"}, []string{"go", "rust"}) {
+		t.Error("should match when all required tags present")
+	}
+	if containsAllTags([]string{"go", "rust"}, []string{"go", "python"}) {
+		t.Error("should not match when required tag missing")
+	}
+	if !containsAllTags([]string{"Go", "RUST"}, []string{"go", "rust"}) {
+		t.Error("should match case-insensitively")
+	}
+}
+
 func contains(s, substr string) bool {
 	return bytes.Contains([]byte(s), []byte(substr))
 }
