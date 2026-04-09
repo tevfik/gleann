@@ -118,6 +118,37 @@ Use gleann indexes as if they were OpenAI models. Compatible with any tool that 
 
 **Custom headers**: `X-Gleann-Top-K` (RAG result count), `X-Gleann-Min-Score` (score threshold).
 
+### A2A Protocol (Agent-to-Agent)
+
+Google's Agent-to-Agent protocol for agent discovery and inter-agent communication. Enabled by default; set `GLEANN_A2A_ENABLED=false` to disable.
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/.well-known/agent-card.json` | A2A Agent Card (discovery) |
+| POST | `/a2a/v1/message:send` | Send a message to an A2A skill |
+| GET | `/a2a/v1/tasks/{id}` | Get task status by ID |
+
+**Built-in skills**: `semantic-search`, `ask-rag`, `code-analysis`, `memory-management`.
+
+### Unified Memory API
+
+Orchestrates all memory layers (block storage, knowledge graph, vector search) through a single interface. Simplifies agent integration by eliminating the need to call individual memory APIs.
+
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/api/memory/ingest` | Store facts + relationships across memory layers |
+| POST | `/api/memory/recall` | Query all memory layers in parallel |
+
+### Background Tasks
+
+Monitor and manage long-running background operations (indexing, memory consolidation, health checks).
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/tasks` | List background tasks (optional `?status=` filter) |
+| GET | `/api/tasks/{id}` | Get task status by ID |
+| DELETE | `/api/tasks` | Cleanup completed/failed tasks older than 1 hour |
+
 ## Examples
 
 ### Search

@@ -85,6 +85,19 @@ Rate-limited requests receive `429 Too Many Requests` with a `Retry-After: 1` he
 |----------|---------|-------------|
 | `GLEANN_BLOCK_CHAR_LIMIT` | `0` (unlimited) | Default character limit for memory blocks. When set, new blocks are auto-truncated if they exceed this limit |
 
+## A2A Protocol (Agent-to-Agent)
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `GLEANN_A2A_ENABLED` | `true` | Enable A2A protocol endpoints (`false` or `0` to disable) |
+| `GLEANN_A2A_BASE_URL` | auto-detected | Base URL for the A2A Agent Card (e.g. `https://my-host:8080`) |
+
+## Multimodal Processing
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `GLEANN_MULTIMODAL_MODEL` | auto-detected | Ollama model for multimodal processing (e.g. `gemma4`, `llava`) |
+
 ## Plugin Settings
 
 | Variable | Default | Description |

@@ -4,7 +4,7 @@ git s# Architecture & Design
 
 ```
 ┌──────────────────────────────────────────────────────────────────────┐
-│          TUI / CLI / REST API / MCP Server                           │
+│          TUI / CLI / REST API / MCP Server / A2A Protocol            │
 ├──────────────────────────────────────────────────────────────────────┤
 │  Middleware Layer                                                     │
 │  ├── Rate Limiter  (per-IP token bucket, 429)                        │
@@ -20,6 +20,15 @@ git s# Architecture & Design
 │  + retry logic    │  ↑ memory context injected as system message     │
 ├───────────────────┴──────────────────────────────────────────────────┤
 │  Retry Layer  (pkg/retry — exponential backoff for transient errors) │
+├──────────────────────────────────────────────────────────────────────┤
+│  A2A Protocol Layer  (internal/a2a — Agent-to-Agent communication)   │
+│  ├── Agent Card   (/.well-known/agent-card.json)                     │
+│  ├── Skills       (semantic-search, ask-rag, code-analysis, memory)  │
+│  └── Task Store   (in-memory, bounded at 1000)                       │
+├──────────────────────────────────────────────────────────────────────┤
+│  Unified Memory API  (internal/server/unified_memory_handler.go)     │
+│  ├── Ingest       (facts → blocks, relationships → graph)            │
+│  └── Recall       (parallel: blocks + graph + vector search)         │
 ├──────────────────────────────────────────────────────────────────────┤
 │              Backend Registry                                        │
 ├──────────────────┬───────────────────────────────────────────────────┤
@@ -42,6 +51,19 @@ git s# Architecture & Design
 │  ├── Medium-term BBolt      conversation summaries, daily digests    │
 │  ├── Long-term   BBolt      permanent facts, preferences, knowledge  │
 │  └── Maintenance Scheduler  (background goroutine, 24h cycle)        │
+├──────────────────────────────────────────────────────────────────────┤
+│  Background Task Manager  (internal/background)                      │
+│  ├── Worker Pool   (bounded, default 2 workers)                      │
+│  ├── Task Lifecycle (queued → running → completed/failed)            │
+│  └── Progress Tracking  (real-time 0.0–1.0 + messages)               │
+├──────────────────────────────────────────────────────────────────────┤
+│  Auto-Bootstrap  (internal/autosetup)                                │
+│  └── Detects Ollama, picks best models, creates config automatically │
+├──────────────────────────────────────────────────────────────────────┤
+│  Multimodal Layer  (internal/multimodal)                             │
+│  ├── Media Detection  (image/audio/video classification)             │
+│  ├── Model Capability Detection  (Ollama + heuristics)               │
+│  └── Processor  (base64 → Ollama /api/chat → text description)      │
 └──────────────────────────────────────────────────────────────────────┘
 ```
 
