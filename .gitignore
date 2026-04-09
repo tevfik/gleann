@@ -35,3 +35,6 @@ indexes/
 # Temp
 /tmp/
 *.log
+
+# Local-only documents (not committed)
+LOCAL_*.md

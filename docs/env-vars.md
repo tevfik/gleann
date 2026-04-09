@@ -71,6 +71,20 @@ Rate-limited requests receive `429 Too Many Requests` with a `Retry-After: 1` he
 | `GLEANN_MAINTENANCE_ENABLED` | `true` | Enable background maintenance scheduler (`false` or `0` to disable) |
 | `GLEANN_MAINTENANCE_INTERVAL_H` | `24` | Hours between maintenance runs (promotes medium→long, prunes expired blocks) |
 
+## Sleep-Time Compute (Letta-inspired)
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `GLEANN_SLEEPTIME_ENABLED` | `false` | Enable sleep-time engine — background agent that reflects on conversations and extracts memories (`true` or `1` to enable) |
+| `GLEANN_SLEEPTIME_INTERVAL` | `30m` | Go duration between reflection cycles (e.g. `15m`, `1h`) |
+| `GLEANN_SLEEPTIME_MAX_CONVS` | `5` | Maximum recent conversations to process per cycle |
+
+## Memory Block Limits
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `GLEANN_BLOCK_CHAR_LIMIT` | `0` (unlimited) | Default character limit for memory blocks. When set, new blocks are auto-truncated if they exceed this limit |
+
 ## Plugin Settings
 
 | Variable | Default | Description |

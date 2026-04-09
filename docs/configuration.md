@@ -179,6 +179,28 @@ A background scheduler periodically promotes medium-term memory blocks to long-t
 | `GLEANN_MAINTENANCE_ENABLED` | `true` | Set to `false` or `0` to disable |
 | `GLEANN_MAINTENANCE_INTERVAL_H` | `24` | Hours between maintenance runs |
 
+### Sleep-Time Compute (Letta-inspired)
+
+When enabled, a background "sleep-time" agent periodically reflects on recent conversations, extracts key facts, and stores them as long-term memory blocks — without blocking the interactive flow.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `GLEANN_SLEEPTIME_ENABLED` | `false` | Set to `true` or `1` to enable |
+| `GLEANN_SLEEPTIME_INTERVAL` | `30m` | Go duration between reflection cycles |
+| `GLEANN_SLEEPTIME_MAX_CONVS` | `5` | Max recent conversations per cycle |
+
+The engine uses the server's configured LLM (model/provider) to summarize conversations and extract memories tagged with `sleep_time` source.
+
+### Memory Block Limits & Scoping
+
+Blocks can have a per-block character limit (`char_limit`) and a scope for isolation.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `GLEANN_BLOCK_CHAR_LIMIT` | `0` (unlimited) | Default char limit applied to new blocks |
+
+**Scopes:** Blocks can be isolated to a specific context (e.g. conversation ID) by setting the `scope` field. When querying with `?scope=xxx`, only global blocks (scope="") and blocks matching the requested scope are returned. This enables conversation-level memory isolation similar to Letta's conversation model.
+
 ### Retry Logic
 
 LLM and embedding API calls automatically retry on transient errors (503, 502, 429, connection refused, timeouts). Default: 3 attempts with exponential backoff (1s → 2s → 4s). Non-retryable errors (400, 401, 404) fail immediately.

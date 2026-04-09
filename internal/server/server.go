@@ -133,6 +133,7 @@ func (s *Server) Start() error {
 	s.stopCh = make(chan struct{})
 	if mgr, err := s.blockManager(); err == nil {
 		startMaintenanceScheduler(mgr, s.stopCh)
+		startSleepTimeEngine(mgr, s.stopCh)
 	}
 
 	log.Printf("gleann server starting on %s", s.addr)
