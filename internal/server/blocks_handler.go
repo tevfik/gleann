@@ -26,9 +26,9 @@ import (
 // blockAddRequest is the body for POST /api/blocks.
 type blockAddRequest struct {
 	Content   string            `json:"content"`
-	Tier      string            `json:"tier,omitempty"`       // "short" | "medium" | "long" (default: "long")
-	Label     string            `json:"label,omitempty"`      // semantic label
-	Source    string            `json:"source,omitempty"`     // origin tag
+	Tier      string            `json:"tier,omitempty"`   // "short" | "medium" | "long" (default: "long")
+	Label     string            `json:"label,omitempty"`  // semantic label
+	Source    string            `json:"source,omitempty"` // origin tag
 	Tags      []string          `json:"tags,omitempty"`
 	Metadata  map[string]string `json:"metadata,omitempty"`
 	ExpiresIn string            `json:"expires_in,omitempty"` // e.g. "24h", "7d"
