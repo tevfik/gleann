@@ -143,3 +143,42 @@ gleann conversations --delete-older-than 30d  # Delete old conversations
 | `llama3.2` | 4GB | Good | Fast, small |
 | `phi-4:14b` | 10GB | Excellent | Best balance |
 | `qwen2.5:32b` | 20GB+ | Outstanding | If you have the VRAM |
+
+## Server Mode Settings
+
+When running `gleann serve`, the following features are configurable via environment variables:
+
+### Rate Limiting
+
+Per-IP token-bucket rate limiter. Requests exceeding the limit receive `429 Too Many Requests`.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `GLEANN_RATE_LIMIT` | `60` | Sustained rate (tokens/second per IP) |
+| `GLEANN_RATE_BURST` | `120` | Burst capacity per IP |
+
+The `/health` and `/metrics` endpoints are exempt from rate limiting.
+
+### Request Timeouts
+
+Each request gets a context deadline based on its endpoint. Timed-out requests return `504 Gateway Timeout`. SSE streams bypass timeouts.
+
+| Variable | Default | Applies to |
+|----------|---------|-----------|
+| `GLEANN_TIMEOUT_ASK_S` | `300` (5 min) | `/ask`, `/v1/chat/completions` |
+| `GLEANN_TIMEOUT_SEARCH_S` | `30` | `/search` |
+| `GLEANN_TIMEOUT_BUILD_S` | `600` (10 min) | `/build` |
+| `GLEANN_TIMEOUT_DEFAULT_S` | `60` | All other endpoints |
+
+### Background Maintenance
+
+A background scheduler periodically promotes medium-term memory blocks to long-term and prunes expired entries.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `GLEANN_MAINTENANCE_ENABLED` | `true` | Set to `false` or `0` to disable |
+| `GLEANN_MAINTENANCE_INTERVAL_H` | `24` | Hours between maintenance runs |
+
+### Retry Logic
+
+LLM and embedding API calls automatically retry on transient errors (503, 502, 429, connection refused, timeouts). Default: 3 attempts with exponential backoff (1s → 2s → 4s). Non-retryable errors (400, 401, 404) fail immediately.

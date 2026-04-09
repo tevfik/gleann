@@ -224,3 +224,69 @@ gleann setup --check
 ```
 
 If the issue persists, please [open an issue](https://github.com/tevfik/gleann/issues) with the output of `gleann doctor`.
+
+## Rate Limiting (429 Errors)
+
+### "429 Too Many Requests"
+
+**Symptoms:** API calls return HTTP 429 with a `Retry-After` header.
+
+**Why:** The server applies per-IP token-bucket rate limiting (default: 60 req/s sustained, 120 burst).
+
+**Fixes:**
+```bash
+# Increase the rate limit
+export GLEANN_RATE_LIMIT=200
+export GLEANN_RATE_BURST=400
+gleann serve
+
+# Or in docker-compose.yml:
+environment:
+  GLEANN_RATE_LIMIT: "200"
+  GLEANN_RATE_BURST: "400"
+```
+
+The `/health` and `/metrics` endpoints bypass rate limiting and can always be reached.
+
+## Request Timeouts (504 Errors)
+
+### "504 Gateway Timeout"
+
+**Symptoms:** Long-running `/ask` or `/build` requests return 504.
+
+**Why:** Each endpoint has a context deadline to prevent hung requests.
+
+| Endpoint | Default | Env var |
+|----------|---------|---------|
+| `/ask`, `/v1/chat/completions` | 5 min | `GLEANN_TIMEOUT_ASK_S` |
+| `/search` | 30 sec | `GLEANN_TIMEOUT_SEARCH_S` |
+| `/build` | 10 min | `GLEANN_TIMEOUT_BUILD_S` |
+| All others | 60 sec | `GLEANN_TIMEOUT_DEFAULT_S` |
+
+**Fixes:**
+```bash
+# Increase ask timeout to 15 minutes
+export GLEANN_TIMEOUT_ASK_S=900
+gleann serve
+```
+
+SSE streaming endpoints (`?stream=true`) bypass the timeout middleware — they use client disconnect detection instead.
+
+## LLM Connection Failures & Retry
+
+### "Intermittent 503 / connection refused from Ollama"
+
+**Symptoms:** LLM or embedding calls fail sporadically, especially under load.
+
+**Why:** GPU memory pressure or Ollama restarts can cause transient 503/502 errors.
+
+**How gleann handles it:** All LLM and embedding calls use automatic exponential-backoff retry:
+- 3 attempts with 1s → 2s → 4s delays (LLM calls)
+- 3 attempts with 1s → 2s → 4s delays (embedding batch dispatch)
+- Non-retryable errors (400, 401, 404) fail immediately
+
+If you see persistent failures, check Ollama's health:
+```bash
+curl http://localhost:11434/api/tags
+ollama ps  # check running models
+```

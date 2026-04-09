@@ -216,3 +216,50 @@ func findAllRefs(v any) []string {
 	}
 	return refs
 }
+
+func TestOpenAPISpec_ErrorSchemas(t *testing.T) {
+	s := newTestServer()
+	spec := s.openAPISpec()
+
+	components := spec["components"].(map[string]any)
+	schemas := components["schemas"].(map[string]any)
+
+	for _, name := range []string{"ErrorResponse", "RateLimitError", "TimeoutError"} {
+		schema, ok := schemas[name]
+		if !ok {
+			t.Errorf("missing schema: %q", name)
+			continue
+		}
+		obj, ok := schema.(map[string]any)
+		if !ok {
+			t.Errorf("schema %q is not an object", name)
+			continue
+		}
+		props, ok := obj["properties"].(map[string]any)
+		if !ok {
+			t.Errorf("schema %q has no properties", name)
+			continue
+		}
+		// All error schemas should have an "error" field.
+		if _, ok := props["error"]; !ok {
+			t.Errorf("schema %q missing 'error' property", name)
+		}
+	}
+}
+
+func TestOpenAPISpec_BlocksTag(t *testing.T) {
+	s := newTestServer()
+	spec := s.openAPISpec()
+
+	tags := spec["tags"].([]map[string]any)
+	found := false
+	for _, tag := range tags {
+		if tag["name"] == "blocks" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("missing 'blocks' tag in OpenAPI spec")
+	}
+}

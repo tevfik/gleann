@@ -1263,6 +1263,27 @@ func (s *Server) openAPISpec() map[string]any {
 						"data":   map[string]any{"type": "array", "items": refSchema("ModelObject")},
 					},
 				},
+				// ── Error responses ────────────────────────────────────────────────
+				"ErrorResponse": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"error": map[string]any{"type": "string", "description": "Human-readable error message"},
+					},
+				},
+				"RateLimitError": map[string]any{
+					"type":        "object",
+					"description": "Returned when a client exceeds the per-IP rate limit (token bucket: default 60 req/s sustained, 120 burst). Configure via GLEANN_RATE_LIMIT / GLEANN_RATE_BURST env vars. The Retry-After header indicates how many seconds to wait.",
+					"properties": map[string]any{
+						"error": map[string]any{"type": "string", "example": "rate limit exceeded — slow down"},
+					},
+				},
+				"TimeoutError": map[string]any{
+					"type":        "object",
+					"description": "Returned when a request exceeds the per-endpoint context deadline. Configure via GLEANN_TIMEOUT_ASK_S, GLEANN_TIMEOUT_SEARCH_S, GLEANN_TIMEOUT_BUILD_S, GLEANN_TIMEOUT_DEFAULT_S env vars. SSE streams bypass the timeout.",
+					"properties": map[string]any{
+						"error": map[string]any{"type": "string", "example": "request timed out — try a shorter query or increase GLEANN_TIMEOUT_*_S"},
+					},
+				},
 			},
 		},
 	}
