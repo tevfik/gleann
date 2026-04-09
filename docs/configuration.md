@@ -204,3 +204,22 @@ Blocks can have a per-block character limit (`char_limit`) and a scope for isola
 ### Retry Logic
 
 LLM and embedding API calls automatically retry on transient errors (503, 502, 429, connection refused, timeouts). Default: 3 attempts with exponential backoff (1s → 2s → 4s). Non-retryable errors (400, 401, 404) fail immediately.
+
+### A2A Protocol
+
+Config file settings for the Agent-to-Agent protocol. These can also be set via environment variables.
+
+| Config Key | Env Var | Default | Description |
+|-----------|---------|---------|-------------|
+| `a2a_enabled` | `GLEANN_A2A_ENABLED` | `true` | Enable A2A endpoints |
+| `a2a_base_url` | `GLEANN_A2A_BASE_URL` | auto | Base URL for Agent Card |
+
+See [A2A Protocol](a2a.md) for full documentation.
+
+### Multimodal Processing
+
+| Config Key | Env Var | Default | Description |
+|-----------|---------|---------|-------------|
+| `multimodal_model` | `GLEANN_MULTIMODAL_MODEL` | auto-detected | Ollama model for media processing |
+
+See [Multimodal Processing](multimodal.md) for supported models and media types.

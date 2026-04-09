@@ -15,8 +15,10 @@ import (
 // mountA2A sets up the A2A protocol server with skill handlers
 // backed by gleann's actual search, RAG, memory, and graph engines.
 func (s *Server) mountA2A(mux *http.ServeMux) {
-	// Check if A2A is disabled.
-	if os.Getenv("GLEANN_A2A_ENABLED") == "false" {
+	// Check if A2A is disabled (env var overrides config).
+	if env := os.Getenv("GLEANN_A2A_ENABLED"); env == "false" {
+		return
+	} else if env == "" && s.config.A2AEnabled != nil && !*s.config.A2AEnabled {
 		return
 	}
 

@@ -74,6 +74,8 @@ Detailed guides:
 - [Benchmarks](docs/benchmarks.md) — Performance measurements
 - [Troubleshooting](docs/troubleshooting.md) — Common issues and solutions
 - [Memory Engine](docs/memory_engine.md) — Generic Knowledge Graph for AI agents
+- [A2A Protocol](docs/a2a.md) — Agent-to-Agent discovery and communication
+- [Multimodal Processing](docs/multimodal.md) — Image, audio, and video processing
 - [Hierarchical GraphRAG](docs/hierarchical_graphrag.md) — Document-level structural intelligence
 
 ## Installation
