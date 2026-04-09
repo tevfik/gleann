@@ -13,12 +13,12 @@ import (
 type TaskType string
 
 const (
-	TaskTypeSleepTimeCompute    TaskType = "SleepTimeCompute"
-	TaskTypeAutoIndex           TaskType = "AutoIndex"
-	TaskTypeMemoryConsolidate   TaskType = "MemoryConsolidate"
-	TaskTypeHealthCheck         TaskType = "HealthCheck"
-	TaskTypeReIndex             TaskType = "ReIndex"
-	TaskTypeCustom              TaskType = "Custom"
+	TaskTypeSleepTimeCompute  TaskType = "SleepTimeCompute"
+	TaskTypeAutoIndex         TaskType = "AutoIndex"
+	TaskTypeMemoryConsolidate TaskType = "MemoryConsolidate"
+	TaskTypeHealthCheck       TaskType = "HealthCheck"
+	TaskTypeReIndex           TaskType = "ReIndex"
+	TaskTypeCustom            TaskType = "Custom"
 )
 
 // TaskStatus represents the lifecycle state of a background task.
@@ -37,8 +37,8 @@ type Task struct {
 	ID        string     `json:"id"`
 	Type      TaskType   `json:"type"`
 	Status    TaskStatus `json:"status"`
-	Progress  float64    `json:"progress"`  // 0.0 - 1.0
-	Message   string     `json:"message"`   // Human-readable status
+	Progress  float64    `json:"progress"` // 0.0 - 1.0
+	Message   string     `json:"message"`  // Human-readable status
 	Error     string     `json:"error,omitempty"`
 	CreatedAt time.Time  `json:"created_at"`
 	StartedAt time.Time  `json:"started_at,omitempty"`

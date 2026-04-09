@@ -33,10 +33,10 @@ type Server struct {
 	version    string
 	server     *http.Server
 	graphPool  *graphDBPool
-	memoryPool *memoryPool     // Memory Engine: generic Entity/RELATES_TO graph
-	blockMem   *memory.Manager        // BBolt hierarchical memory blocks (pkg/memory)
-	bgManager  *background.Manager    // Background task manager
-	stopCh     chan struct{}          // closed on Stop() to signal background goroutines
+	memoryPool *memoryPool         // Memory Engine: generic Entity/RELATES_TO graph
+	blockMem   *memory.Manager     // BBolt hierarchical memory blocks (pkg/memory)
+	bgManager  *background.Manager // Background task manager
+	stopCh     chan struct{}       // closed on Stop() to signal background goroutines
 }
 
 // NewServer creates a new REST API server.
@@ -129,6 +129,9 @@ func (s *Server) Start() error {
 
 	// Background task management endpoints.
 	s.mountBackgroundTasks(mux)
+
+	// Unified memory API (orchestrates blocks + graph + vector).
+	s.mountUnifiedMemory(mux)
 
 	s.server = &http.Server{
 		Addr:         s.addr,
