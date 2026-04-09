@@ -13,6 +13,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/tevfik/gleann/pkg/retry"
 )
 
 // LLMProvider specifies the LLM provider type.
@@ -358,16 +360,30 @@ func (c *LeannChat) SetReranker(r Reranker) {
 
 // chat sends messages to the LLM provider and returns the response.
 func (c *LeannChat) chat(ctx context.Context, messages []ChatMessage) (string, error) {
+	var answer string
+	var doErr error
+
 	switch c.config.Provider {
 	case LLMOllama:
-		return c.chatOllama(ctx, messages)
+		doErr = retry.Do(ctx, retry.DefaultPolicy(), func() error {
+			answer, doErr = c.chatOllama(ctx, messages)
+			return doErr
+		})
 	case LLMOpenAI:
-		return c.chatOpenAI(ctx, messages)
+		doErr = retry.Do(ctx, retry.DefaultPolicy(), func() error {
+			answer, doErr = c.chatOpenAI(ctx, messages)
+			return doErr
+		})
 	case LLMAnthropic:
-		return c.chatAnthropic(ctx, messages)
+		doErr = retry.Do(ctx, retry.DefaultPolicy(), func() error {
+			answer, doErr = c.chatAnthropic(ctx, messages)
+			return doErr
+		})
 	default:
 		return "", fmt.Errorf("unsupported LLM provider: %s", c.config.Provider)
 	}
+
+	return answer, doErr
 }
 
 // --- Ollama Chat ---
