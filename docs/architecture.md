@@ -1,10 +1,15 @@
-# Architecture & Design
+git s# Architecture & Design
 
 ## Overview
 
 ```
 ┌──────────────────────────────────────────────────────────────────────┐
 │          TUI / CLI / REST API / MCP Server                           │
+├──────────────────────────────────────────────────────────────────────┤
+│  Middleware Layer                                                     │
+│  ├── Rate Limiter  (per-IP token bucket, 429)                        │
+│  ├── Timeout       (per-path context deadline, 504)                  │
+│  └── CORS / Logging                                                  │
 ├───────────────────┬──────────────────────────────────────────────────┤
 │  LeannBuilder     │  Searcher Interface                              │
 │  (build index)    │  ├── LeannSearcher (single index)                │
@@ -12,8 +17,10 @@
 ├───────────────────┤                                                  │
 │  LeannChat        │  Conversations / Roles / Format                  │
 │  (LLM Q&A)       │  Stdin · Pipe · Raw · Quiet                       │
-│                   │  ↑ memory context injected as system message     │
+│  + retry logic    │  ↑ memory context injected as system message     │
 ├───────────────────┴──────────────────────────────────────────────────┤
+│  Retry Layer  (pkg/retry — exponential backoff for transient errors) │
+├──────────────────────────────────────────────────────────────────────┤
 │              Backend Registry                                        │
 ├──────────────────┬───────────────────────────────────────────────────┤
 │  Pure Go         │  FAISS (optional, CGo)                            │
@@ -23,7 +30,7 @@
 │  Passage Manager  │  BM25 Scorer  │  Chunking                        │
 │  (Bbolt KV)       │  (Okapi BM25) │  (sentence/AST/markdown)         │
 ├───────────────────┴───────────────┴──────────────────────────────────┤
-│  Embedding Server  (goroutine pool)                                  │
+│  Embedding Server  (goroutine pool + retry)                          │
 ├──────────────────────────────────────────────────────────────────────┤
 │  KuzuDB Graph Layer                                                  │
 │  ├── Code Graph  (CodeFile, Symbol, CALLS, IMPLEMENTS …)             │
@@ -33,7 +40,8 @@
 │  Long-term Memory Layer  (pkg/memory)                                │
 │  ├── Short-term  in-process  session notes → promoted on exit        │
 │  ├── Medium-term BBolt      conversation summaries, daily digests    │
-│  └── Long-term   BBolt      permanent facts, preferences, knowledge  │
+│  ├── Long-term   BBolt      permanent facts, preferences, knowledge  │
+│  └── Maintenance Scheduler  (background goroutine, 24h cycle)        │
 └──────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -181,6 +189,13 @@ External Agent (e.g. Yaver, Claude)
 | Extractive Summarizer | — | ✅ (Build-time NLP algorithm) |
 | MCP Server | ✅ | ✅ (built-in) |
 | Memory Engine (AI agent memory) | — | ✅ (Entity/RELATES_TO KuzuDB) |
+| Long-term Memory (BBolt blocks) | — | ✅ (short/medium/long tiers, auto-injection) |
+| Rate Limiting | — | ✅ (per-IP token bucket, 429) |
+| Request Timeouts | — | ✅ (per-path context deadline, 504) |
+| Retry Logic | — | ✅ (exponential backoff for LLM/embedding calls) |
+| Batch Query (MCP) | — | ✅ (`gleann_batch_ask` — 10 concurrent questions) |
+| Background Maintenance | — | ✅ (auto-promote blocks, prune expired) |
+| OpenAI-Compatible Proxy | — | ✅ (`/v1/chat/completions`) |
 | File Sync (incremental) | ✅ | ✅ |
 | Hybrid Search (BM25) | — | ✅ |
 | REST API Server | — | ✅ |

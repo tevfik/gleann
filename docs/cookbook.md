@@ -281,4 +281,72 @@ gleann graph callers "pkg/auth.ValidateToken" --index myrepo
 # 5. End of day: summarize the conversation
 gleann memory summarize --last
 ```
+
+## 15. Batch Explore a Codebase (MCP)
+
+Use the `gleann_batch_ask` MCP tool to research multiple aspects of a codebase in one round-trip:
+
+```json
+{
+  "tool": "gleann_batch_ask",
+  "arguments": {
+    "questions": [
+      "How is authentication handled?",
+      "What database technology is used?",
+      "How are errors propagated?",
+      "What testing patterns are used?",
+      "How is configuration loaded?"
+    ],
+    "index": "my-code",
+    "top_k": 5,
+    "concurrency": 5
+  }
+}
+```
+
+This runs all 5 questions concurrently and returns answers with per-question latency.
+
+## 16. OpenAI-Compatible Integration
+
+Use gleann as a drop-in replacement for OpenAI in any compatible tool:
+
+```python
+# Python — OpenAI SDK
+from openai import OpenAI
+
+client = OpenAI(base_url="http://localhost:8080/v1", api_key="unused")
+resp = client.chat.completions.create(
+    model="gleann/my-code",
+    messages=[{"role": "user", "content": "Explain the auth flow"}],
+)
+print(resp.choices[0].message.content)
+```
+
+```bash
+# curl — stream tokens
+curl -N -X POST http://localhost:8080/v1/chat/completions \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "model": "gleann/my-code",
+    "messages": [{"role": "user", "content": "How does auth work?"}],
+    "stream": true
+  }'
+```
+
+## 17. Memory Blocks via REST API
+
+```bash
+# Store project knowledge
+curl -X POST http://localhost:8080/api/blocks \
+  -H 'Content-Type: application/json' \
+  -d '{"content": "Uses PostgreSQL 16 with sqlx", "tier": "long", "tags": ["stack"]}'
+
+# Search memories
+curl 'http://localhost:8080/api/blocks/search?q=database'
+
+# See what the LLM receives
+curl http://localhost:8080/api/blocks/context
+
+# Check storage stats
+curl http://localhost:8080/api/blocks/stats
 ```

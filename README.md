@@ -42,6 +42,12 @@ The result is a highly portable system that boots in milliseconds, respects your
 - **`.gleannignore`**: Gitignore-style patterns to exclude files during index builds.
 - **Config Management**: `gleann config show/path/edit/validate` for easy configuration.
 - **Model Context Protocol (MCP) Server**: A background service that bridges the gap between your local context and AI tools like Cursor or Claude Desktop.
+- **Long-term Memory (BBolt Blocks)**: Hierarchical short/medium/long-term memory that is automatically injected into every LLM query. Store facts with `/remember`, browse with `/memories`.
+- **OpenAI-Compatible Proxy**: Drop-in replacement for OpenAI API — use any OpenAI SDK with `model: "gleann/<index>"` for instant RAG.
+- **Batch Query (MCP)**: `gleann_batch_ask` runs up to 10 questions concurrently against an index in a single round-trip.
+- **Rate Limiting & Timeouts**: Per-IP token-bucket rate limiting (429) and per-endpoint context deadlines (504) protect the server in production.
+- **Retry Logic**: Automatic exponential-backoff retry for transient LLM/embedding failures (503, 502, 429, connection refused).
+- **Background Maintenance**: Scheduler auto-promotes memory blocks between tiers and prunes expired entries.
 - **Sleek and Fast Terminal Interface (TUI)**: A keyboard-centric, fluid interface that brings your documents and code to life directly in your shell.
 
 ## Documentation
@@ -62,6 +68,8 @@ Detailed guides:
 - [Tree-sitter](docs/treesitter.md) — AST-aware code chunking
 - [Benchmarks](docs/benchmarks.md) — Performance measurements
 - [Troubleshooting](docs/troubleshooting.md) — Common issues and solutions
+- [Memory Engine](docs/memory_engine.md) — Generic Knowledge Graph for AI agents
+- [Hierarchical GraphRAG](docs/hierarchical_graphrag.md) — Document-level structural intelligence
 
 ## Installation
 

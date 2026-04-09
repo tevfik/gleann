@@ -138,7 +138,7 @@ gleann has three intelligence pillars that work together:
 
 ── Infrastructure ────────────────────────────────────────────────────
 
-  gleann serve  [--addr :8080]          REST API server
+  gleann serve  [--addr :8080]          REST API server (rate limiting, timeouts)
   gleann mcp                            MCP server (stdio, for AI editors)
   gleann tui                            Interactive TUI launcher
   gleann setup  [--bootstrap]           Configuration wizard
@@ -146,6 +146,12 @@ gleann has three intelligence pillars that work together:
   gleann config <show|path|edit|validate>  Manage configuration
   gleann completion <bash|zsh|fish>     Shell completion script
   gleann version                        Show version
+
+  Server env vars:
+    GLEANN_RATE_LIMIT=60     Requests/sec per IP (token bucket)
+    GLEANN_RATE_BURST=120    Per-IP burst capacity
+    GLEANN_TIMEOUT_ASK_S=300 Timeout for /ask endpoints (seconds)
+    GLEANN_MAINTENANCE_ENABLED=true  Background memory maintenance
 
 ── Common Options ────────────────────────────────────────────────────
 

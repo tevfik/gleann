@@ -178,3 +178,91 @@ func TestRateLimitMiddleware_Returns429WhenLimited(t *testing.T) {
 		t.Fatal("at least one request should have been allowed")
 	}
 }
+
+// --- newRateLimiter env var tests ---
+
+func TestNewRateLimiter_EnvVarOverride(t *testing.T) {
+	t.Setenv("GLEANN_RATE_LIMIT", "100")
+	t.Setenv("GLEANN_RATE_BURST", "200")
+	rl := newRateLimiter()
+	if rl.rate != 100 {
+		t.Fatalf("expected rate 100, got %f", rl.rate)
+	}
+	if rl.burst != 200 {
+		t.Fatalf("expected burst 200, got %f", rl.burst)
+	}
+}
+
+func TestNewRateLimiter_InvalidEnvVars(t *testing.T) {
+	t.Setenv("GLEANN_RATE_LIMIT", "not-a-number")
+	t.Setenv("GLEANN_RATE_BURST", "-5")
+	rl := newRateLimiter()
+	if rl.rate != 60 { // should fall back to default
+		t.Fatalf("expected default rate 60, got %f", rl.rate)
+	}
+	if rl.burst != 120 { // should fall back to default (negative ignored)
+		t.Fatalf("expected default burst 120, got %f", rl.burst)
+	}
+}
+
+// --- sanitizeIP tests ---
+
+func TestSanitizeIP_Valid(t *testing.T) {
+	ip := sanitizeIP("  10.0.0.1")
+	if ip != "10.0.0.1" {
+		t.Fatalf("expected 10.0.0.1, got %q", ip)
+	}
+}
+
+func TestSanitizeIP_Invalid(t *testing.T) {
+	ip := sanitizeIP("not-an-ip")
+	if ip != "" {
+		t.Fatalf("expected empty for invalid IP, got %q", ip)
+	}
+}
+
+// --- isPrivate tests ---
+
+func TestIsPrivate_LoopbackIsPrivate(t *testing.T) {
+	if !isPrivate("127.0.0.1:80") {
+		t.Fatal("127.0.0.1 should be private")
+	}
+}
+
+func TestIsPrivate_PrivateRanges(t *testing.T) {
+	for _, addr := range []string{"10.0.0.1:80", "192.168.1.1:80", "172.16.0.1:80"} {
+		if !isPrivate(addr) {
+			t.Fatalf("%s should be private", addr)
+		}
+	}
+}
+
+func TestIsPrivate_PublicIPNotPrivate(t *testing.T) {
+	if isPrivate("8.8.8.8:80") {
+		t.Fatal("8.8.8.8 should not be private")
+	}
+}
+
+// --- Middleware bypass for /metrics ---
+
+func TestRateLimitMiddleware_AllowsMetricsEndpoint(t *testing.T) {
+	rl := &rateLimiter{
+		buckets: make(map[string]*bucket),
+		rate:    0.001,
+		burst:   0,
+		ttl:     10 * time.Minute,
+		cleaned: time.Now(),
+	}
+	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+	handler := rl.middleware(inner)
+
+	req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 for /metrics, got %d", w.Code)
+	}
+}

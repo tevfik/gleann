@@ -91,6 +91,33 @@ pipeline.  Each `{name}` corresponds to an independent KuzuDB store under
 | GET | `/api/conversations/{id}` | Get conversation by ID |
 | DELETE | `/api/conversations/{id}` | Delete a conversation |
 
+### Memory Blocks (Long-term Memory)
+
+Hierarchical BBolt memory store with three tiers (short, medium, long). Blocks stored here are automatically injected into every LLM query as system context.
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/blocks` | List memory blocks (optional `?tier=short\|medium\|long`) |
+| POST | `/api/blocks` | Store a new memory block |
+| DELETE | `/api/blocks` | Clear blocks (optional `?tier=` filter) |
+| DELETE | `/api/blocks/{id}` | Delete a specific block by ID |
+| GET | `/api/blocks/search?q=` | Full-text search across all tiers |
+| GET | `/api/blocks/context` | Compiled memory context (what the LLM receives) |
+| GET | `/api/blocks/stats` | Storage statistics per tier |
+
+### OpenAI-Compatible Proxy
+
+Use gleann indexes as if they were OpenAI models. Compatible with any tool that speaks the OpenAI chat completions API.
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/v1/models` | List indexes as OpenAI-compatible model objects |
+| POST | `/v1/chat/completions` | Chat completions with automatic RAG injection |
+
+**Model naming**: `"gleann/<index-name>"` for RAG-augmented answers, `"gleann/"` for pure LLM pass-through.
+
+**Custom headers**: `X-Gleann-Top-K` (RAG result count), `X-Gleann-Min-Score` (score threshold).
+
 ## Examples
 
 ### Search
@@ -520,5 +547,106 @@ Common HTTP status codes:
 | 200 | Success |
 | 400 | Bad request (missing required fields) |
 | 404 | Index or graph not found |
+| 429 | Rate limit exceeded (per-IP token bucket; see `GLEANN_RATE_LIMIT`) — includes `Retry-After: 1` header |
 | 500 | Internal server error |
 | 503 | Feature unavailable (e.g., graph without treesitter build tag) |
+| 504 | Gateway timeout — request exceeded its deadline (see `GLEANN_TIMEOUT_*_S` env vars) |
+
+## Rate Limiting
+
+The server applies per-IP token-bucket rate limiting (default: 60 req/s sustained, 120 burst). The `/health` and `/metrics` endpoints are exempt. Configure via `GLEANN_RATE_LIMIT` and `GLEANN_RATE_BURST` environment variables.
+
+## Request Timeouts
+
+Each endpoint has a context deadline based on its path:
+
+| Endpoint pattern | Default timeout | Env var |
+|-----------------|----------------|---------|
+| `*/ask`, `/v1/chat/completions` | 5 minutes | `GLEANN_TIMEOUT_ASK_S` |
+| `*/search` | 30 seconds | `GLEANN_TIMEOUT_SEARCH_S` |
+| `*/build` | 10 minutes | `GLEANN_TIMEOUT_BUILD_S` |
+| All others | 60 seconds | `GLEANN_TIMEOUT_DEFAULT_S` |
+
+SSE streaming endpoints (`?stream=true` or `Accept: text/event-stream`) bypass the timeout middleware; they rely on client disconnect detection instead.
+
+## Examples: Memory Blocks
+
+### Store a fact
+
+```bash
+curl -X POST http://localhost:8080/api/blocks \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "content": "Project uses hexagonal architecture",
+    "tier": "long",
+    "tags": ["convention", "architecture"],
+    "label": "project_fact"
+  }'
+```
+
+### List all blocks
+
+```bash
+# All tiers
+curl http://localhost:8080/api/blocks
+
+# Only long-term memories
+curl http://localhost:8080/api/blocks?tier=long
+```
+
+### Search blocks
+
+```bash
+curl 'http://localhost:8080/api/blocks/search?q=architecture'
+```
+
+### Show compiled context (what the LLM receives)
+
+```bash
+curl http://localhost:8080/api/blocks/context
+```
+
+### Delete a specific block
+
+```bash
+curl -X DELETE http://localhost:8080/api/blocks/abc123
+```
+
+## Examples: OpenAI-Compatible Proxy
+
+Use any OpenAI-compatible client with gleann as the backend:
+
+```bash
+# RAG-augmented: model = "gleann/<index-name>"
+curl -X POST http://localhost:8080/v1/chat/completions \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "model": "gleann/my-code",
+    "messages": [{"role": "user", "content": "How does auth work?"}],
+    "stream": false
+  }'
+
+# Custom RAG parameters via headers
+curl -X POST http://localhost:8080/v1/chat/completions \
+  -H 'Content-Type: application/json' \
+  -H 'X-Gleann-Top-K: 15' \
+  -d '{
+    "model": "gleann/my-docs",
+    "messages": [{"role": "user", "content": "Summarize the architecture"}]
+  }'
+
+# List available indexes as OpenAI models
+curl http://localhost:8080/v1/models
+```
+
+**Python (OpenAI SDK)**:
+```python
+from openai import OpenAI
+
+client = OpenAI(base_url="http://localhost:8080/v1", api_key="unused")
+response = client.chat.completions.create(
+    model="gleann/my-code",
+    messages=[{"role": "user", "content": "Explain the auth flow"}],
+)
+print(response.choices[0].message.content)
+```

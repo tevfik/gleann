@@ -37,6 +37,46 @@ Useful for Docker, CI/CD, and environments where editing config files is impract
 | `SEARCH_RERANK` | `search.reranker` | `false` | Enable two-stage reranking |
 | `SEARCH_RERANK_MODEL` | `search.reranker_model` | — | Reranker model name |
 
+## API Keys (Rerankers & Providers)
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `ANTHROPIC_API_KEY` | — | Anthropic API key (LLM provider) |
+| `GEMINI_API_KEY` | — | Google Gemini API key (embedding/LLM provider) |
+| `GOOGLE_API_KEY` | — | Alias for `GEMINI_API_KEY` |
+| `JINA_API_KEY` | — | Jina AI reranker API key |
+| `COHERE_API_KEY` | — | Cohere reranker API key |
+| `CO_API_KEY` | — | Alias for `COHERE_API_KEY` |
+| `VOYAGE_API_KEY` | — | Voyage AI reranker API key |
+
+## Rate Limiting & Timeout (Server Mode)
+
+These variables configure the REST API server (`gleann serve`).
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `GLEANN_RATE_LIMIT` | `60` | Sustained request rate per IP (tokens/second) |
+| `GLEANN_RATE_BURST` | `120` | Maximum burst capacity per IP |
+| `GLEANN_TIMEOUT_ASK_S` | `300` | Timeout in seconds for `/ask` and `/v1/chat/completions` endpoints |
+| `GLEANN_TIMEOUT_SEARCH_S` | `30` | Timeout in seconds for `/search` endpoints |
+| `GLEANN_TIMEOUT_BUILD_S` | `600` | Timeout in seconds for `/build` endpoints |
+| `GLEANN_TIMEOUT_DEFAULT_S` | `60` | Default timeout in seconds for all other endpoints |
+
+Rate-limited requests receive `429 Too Many Requests` with a `Retry-After: 1` header. Timed-out requests receive `504 Gateway Timeout`. The `/health` and `/metrics` endpoints bypass rate limiting. SSE streaming endpoints bypass the timeout middleware.
+
+## Memory Maintenance (Server Mode)
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `GLEANN_MAINTENANCE_ENABLED` | `true` | Enable background maintenance scheduler (`false` or `0` to disable) |
+| `GLEANN_MAINTENANCE_INTERVAL_H` | `24` | Hours between maintenance runs (promotes medium→long, prunes expired blocks) |
+
+## Plugin Settings
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `GLEANN_PLUGIN_OWNER` | — | Default GitHub owner for plugin downloads |
+
 ## Docker Example
 
 ```yaml

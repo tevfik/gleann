@@ -69,6 +69,26 @@ relationships.
 | `delete_graph_entity` | Remove an entity and all its incident edges |
 | `traverse_knowledge_graph` | Walk the graph N hops from a start node |
 
+### Long-term Memory (Blocks) Tools
+
+Persistent hierarchical memory (BBolt). Facts stored here are automatically
+compiled into a `<memory_context>` system message for every LLM query. This
+gives agents persistent knowledge across sessions.
+
+| Tool | Description |
+|------|-------------|
+| `gleann_memory_remember` | Store a fact in long-term memory |
+| `gleann_memory_forget` | Delete a memory block by ID or content match |
+| `gleann_memory_search` | Full-text search across all memory tiers |
+| `gleann_memory_list` | List memory blocks (optional tier filter) |
+| `gleann_memory_context` | Show compiled memory context the LLM currently receives |
+
+### Batch Query Tool
+
+| Tool | Description |
+|------|-------------|
+| `gleann_batch_ask` | Run 1–10 questions concurrently against a single index, returning all answers in one response |
+
 ---
 
 ### gleann_search
@@ -198,6 +218,86 @@ The text result highlights the start node with `*` and lists edges as:
 === Edges ===
   "req-001" -[IMPLEMENTED_BY]-> "feat-jwt" (weight=1.00)
 ```
+
+---
+
+### gleann_memory_remember
+
+Store a fact in persistent long-term memory. Facts are injected into every
+subsequent LLM query as part of the `<memory_context>` system message.
+
+```json
+{
+  "content": "This project uses hexagonal architecture with ports and adapters",
+  "tags": "architecture,convention"
+}
+```
+
+### gleann_memory_forget
+
+Delete a memory block by ID or by content match:
+
+```json
+{
+  "query": "hexagonal architecture"
+}
+```
+
+### gleann_memory_search
+
+Search across all memory tiers:
+
+```json
+{
+  "query": "architecture"
+}
+```
+
+### gleann_memory_list
+
+List all memory blocks, optionally filtered by tier:
+
+```json
+{
+  "tier": "long"
+}
+```
+
+### gleann_memory_context
+
+Returns the compiled memory context string — exactly what the LLM currently
+receives as a system message. No arguments required.
+
+```json
+{}
+```
+
+### gleann_batch_ask
+
+Run multiple questions concurrently against a single index. Useful for agents
+that need to explore a topic from several angles without sequential round-trips.
+
+```json
+{
+  "questions": [
+    "How does authentication work?",
+    "What database is used?",
+    "How are errors handled?"
+  ],
+  "index": "my-code",
+  "top_k": 5,
+  "concurrency": 3
+}
+```
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `questions` | array | *(required)* | 1–10 questions to answer |
+| `index` | string | *(required)* | Target gleann index name |
+| `top_k` | number | `5` | RAG context chunks per question |
+| `concurrency` | number | `3` | Parallel question slots (max 5) |
+
+**Response** (text): numbered Q/A pairs with per-question latency.
 
 ## Resources
 
