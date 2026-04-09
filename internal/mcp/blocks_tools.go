@@ -90,6 +90,14 @@ func (s *Server) buildMemoryRememberTool() mcpsdk.Tool {
 					"items":       map[string]interface{}{"type": "string"},
 					"description": "Optional tags for categorization and search",
 				},
+				"char_limit": map[string]interface{}{
+					"type":        "integer",
+					"description": "Max characters for this block's content (0 = unlimited, default uses server setting)",
+				},
+				"scope": map[string]interface{}{
+					"type":        "string",
+					"description": "Isolate this block to a specific scope (e.g. conversation ID). Empty = global.",
+				},
 			},
 			Required: []string{"content"},
 		},
@@ -137,12 +145,23 @@ func (s *Server) handleMemoryRemember(ctx context.Context, req mcpsdk.CallToolRe
 		return mcpsdk.NewToolResultError("open memory store: " + err.Error()), nil
 	}
 
+	charLimit := 0
+	if raw, ok := args["char_limit"]; ok && raw != nil {
+		if v, ok := raw.(float64); ok {
+			charLimit = int(v)
+		}
+	}
+
+	scope, _ := args["scope"].(string)
+
 	block := &memory.Block{
-		Tier:    tier,
-		Label:   label,
-		Content: content,
-		Source:  "mcp_agent",
-		Tags:    tags,
+		Tier:      tier,
+		Label:     label,
+		Content:   content,
+		Source:    "mcp_agent",
+		Tags:      tags,
+		CharLimit: charLimit,
+		Scope:     scope,
 	}
 	if err := mgr.Store().Add(block); err != nil {
 		return mcpsdk.NewToolResultError("remember failed: " + err.Error()), nil
