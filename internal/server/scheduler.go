@@ -18,6 +18,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/tevfik/gleann/pkg/conversations"
 	"github.com/tevfik/gleann/pkg/memory"
 )
 
@@ -87,10 +88,20 @@ func runOnce(mgr *memory.Manager) {
 		log.Printf("memory maintenance error: %v", err)
 		return
 	}
+	log.Println("memory maintenance completed")
+}
 
-	stats, err := mgr.Stats()
-	if err == nil {
-		log.Printf("memory maintenance done — blocks: short=%d medium=%d long=%d",
-			stats.ShortTermCount, stats.MediumTermCount, stats.LongTermCount)
+// startSleepTimeEngine launches the sleep-time compute engine that
+// asynchronously reflects on conversations and updates memory blocks.
+// Controlled by GLEANN_SLEEPTIME_ENABLED (default: disabled).
+func startSleepTimeEngine(mgr *memory.Manager, stopCh <-chan struct{}) {
+	cfg := memory.DefaultSleepTimeConfig()
+	if !cfg.Enabled {
+		return
 	}
+
+	cfg.ConvStore = conversations.DefaultStore()
+
+	engine := memory.NewSleepTimeEngine(mgr, cfg)
+	engine.Start(stopCh)
 }

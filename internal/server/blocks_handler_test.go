@@ -378,3 +378,105 @@ func TestHandleBlockStats(t *testing.T) {
 		t.Errorf("total_count = %d, want >= 1", stats.TotalCount)
 	}
 }
+
+// ── Scope and CharLimit Handler Tests ─────────────────────────────────────────
+
+func TestHandleAddBlock_WithScope(t *testing.T) {
+	_, mux := newBlocksTestServer(t)
+	w := doBlockAdd(t, mux, blockAddRequest{
+		Content: "scoped fact",
+		Scope:   "conv-abc",
+	})
+	if w.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var block memory.Block
+	json.NewDecoder(w.Body).Decode(&block)
+	if block.Scope != "conv-abc" {
+		t.Errorf("scope = %q, want conv-abc", block.Scope)
+	}
+}
+
+func TestHandleAddBlock_WithCharLimit(t *testing.T) {
+	_, mux := newBlocksTestServer(t)
+	w := doBlockAdd(t, mux, blockAddRequest{
+		Content:   "test",
+		CharLimit: 500,
+	})
+	if w.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var block memory.Block
+	json.NewDecoder(w.Body).Decode(&block)
+	if block.CharLimit != 500 {
+		t.Errorf("char_limit = %d, want 500", block.CharLimit)
+	}
+}
+
+func TestHandleListBlocks_ScopeFilter(t *testing.T) {
+	_, mux := newBlocksTestServer(t)
+	doBlockAdd(t, mux, blockAddRequest{Content: "global fact"})
+	doBlockAdd(t, mux, blockAddRequest{Content: "conv-1 fact", Scope: "conv-1"})
+	doBlockAdd(t, mux, blockAddRequest{Content: "conv-2 fact", Scope: "conv-2"})
+
+	// Filter by scope=conv-1 → should get global + conv-1 = 2.
+	r := httptest.NewRequest(http.MethodGet, "/api/blocks?scope=conv-1", nil)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+
+	var resp map[string]any
+	json.NewDecoder(w.Body).Decode(&resp)
+	if resp["count"].(float64) != 2 {
+		t.Errorf("scope=conv-1 count = %v, want 2", resp["count"])
+	}
+}
+
+func TestHandleSearchBlocks_ScopeFilter(t *testing.T) {
+	_, mux := newBlocksTestServer(t)
+	doBlockAdd(t, mux, blockAddRequest{Content: "dark mode global"})
+	doBlockAdd(t, mux, blockAddRequest{Content: "dark theme conv1", Scope: "conv-1"})
+	doBlockAdd(t, mux, blockAddRequest{Content: "dark bg conv2", Scope: "conv-2"})
+
+	// Scope=conv-1, q=dark → global match + conv-1 match = 2.
+	r := httptest.NewRequest(http.MethodGet, "/api/blocks/search?q=dark&scope=conv-1", nil)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+
+	var resp map[string]any
+	json.NewDecoder(w.Body).Decode(&resp)
+	if resp["count"].(float64) != 2 {
+		t.Errorf("scoped search count = %v, want 2", resp["count"])
+	}
+}
+
+func TestHandleBlockContext_ScopeFilter(t *testing.T) {
+	_, mux := newBlocksTestServer(t)
+	doBlockAdd(t, mux, blockAddRequest{Content: "global memory"})
+	doBlockAdd(t, mux, blockAddRequest{Content: "scoped A memory", Scope: "scope-A"})
+	doBlockAdd(t, mux, blockAddRequest{Content: "scoped B memory", Scope: "scope-B"})
+
+	r := httptest.NewRequest(http.MethodGet, "/api/blocks/context?scope=scope-A", nil)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+
+	var resp map[string]any
+	json.NewDecoder(w.Body).Decode(&resp)
+	rendered, _ := resp["rendered"].(string)
+	if rendered == "" {
+		t.Error("expected non-empty rendered context")
+	}
+}

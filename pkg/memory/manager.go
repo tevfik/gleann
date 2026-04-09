@@ -2,6 +2,8 @@ package memory
 
 import (
 	"fmt"
+	"os"
+	"strconv"
 	"sync"
 	"time"
 )
@@ -17,17 +19,33 @@ type Manager struct {
 	MediumTermMaxAge time.Duration // Auto-archive medium-term blocks older than this
 	AutoPromote      bool          // Auto-promote short-term blocks on session end
 	AutoCleanup      bool          // Auto-cleanup expired blocks
+
+	// Character limit defaults (Letta-inspired).
+	DefaultCharLimit int  // Default char limit for new blocks (0 = unlimited)
+	EnforceCharLimit bool // Whether to truncate blocks that exceed their limit on Add
 }
 
 // NewManager creates a new memory manager wrapping the given store.
 func NewManager(store *Store) *Manager {
-	return &Manager{
+	mgr := &Manager{
 		store:            store,
 		ShortTermTTL:     0,
 		MediumTermMaxAge: 30 * 24 * time.Hour, // 30 days default
 		AutoPromote:      true,
 		AutoCleanup:      true,
+		DefaultCharLimit: 0,
+		EnforceCharLimit: false,
 	}
+
+	// Read char limit from env.
+	if v := os.Getenv("GLEANN_BLOCK_CHAR_LIMIT"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			mgr.DefaultCharLimit = n
+			mgr.EnforceCharLimit = true
+		}
+	}
+
+	return mgr
 }
 
 // DefaultManager opens the default store and returns a manager.
@@ -64,6 +82,7 @@ func (m *Manager) Remember(content string, tags ...string) (*Block, error) {
 		Source:  "user",
 		Tags:    tags,
 	}
+	m.applyDefaults(block)
 	if err := m.store.Add(block); err != nil {
 		return nil, err
 	}
@@ -121,6 +140,33 @@ func (m *Manager) AddNote(tier Tier, label, content string, tags ...string) (*Bl
 		block.ExpiresAt = &exp
 	}
 
+	m.applyDefaults(block)
+	if err := m.store.Add(block); err != nil {
+		return nil, err
+	}
+	return block, nil
+}
+
+// AddScopedNote adds a note scoped to a specific context (e.g. conversation).
+func (m *Manager) AddScopedNote(scope string, tier Tier, label, content string, tags ...string) (*Block, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	block := &Block{
+		Tier:    tier,
+		Label:   label,
+		Content: content,
+		Source:  "user",
+		Tags:    tags,
+		Scope:   scope,
+	}
+
+	if tier == TierShort && m.ShortTermTTL > 0 {
+		exp := time.Now().Add(m.ShortTermTTL)
+		block.ExpiresAt = &exp
+	}
+
+	m.applyDefaults(block)
 	if err := m.store.Add(block); err != nil {
 		return nil, err
 	}
@@ -156,12 +202,38 @@ func (m *Manager) Search(query string) ([]Block, error) {
 	return m.store.Search(query)
 }
 
+// SearchScoped searches within a specific scope plus global blocks.
+func (m *Manager) SearchScoped(scope, query string) ([]Block, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	all, err := m.store.Search(query)
+	if err != nil {
+		return nil, err
+	}
+
+	return filterScope(all, scope), nil
+}
+
 // List lists all blocks for a tier (empty string = all tiers).
 func (m *Manager) List(tier Tier) ([]Block, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
 	return m.store.List(tier)
+}
+
+// ListScoped lists blocks for a tier within a specific scope plus global blocks.
+func (m *Manager) ListScoped(scope string, tier Tier) ([]Block, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	all, err := m.store.List(tier)
+	if err != nil {
+		return nil, err
+	}
+
+	return filterScope(all, scope), nil
 }
 
 // Stats returns memory statistics.
@@ -180,6 +252,27 @@ func (m *Manager) BuildContext() (*ContextWindow, error) {
 	defer m.mu.RUnlock()
 
 	return m.store.BuildContext()
+}
+
+// BuildScopedContext compiles memory visible to a specific scope.
+// Includes both global blocks (scope="") and blocks matching the given scope.
+func (m *Manager) BuildScopedContext(scope string) (*ContextWindow, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	cw, err := m.store.BuildContext()
+	if err != nil {
+		return nil, err
+	}
+
+	if scope == "" {
+		return cw, nil // No filtering needed.
+	}
+
+	cw.ShortTerm = filterScope(cw.ShortTerm, scope)
+	cw.MediumTerm = filterScope(cw.MediumTerm, scope)
+	cw.LongTerm = filterScope(cw.LongTerm, scope)
+	return cw, nil
 }
 
 // ── Lifecycle ─────────────────────────────────────────────────────
@@ -244,4 +337,30 @@ func (m *Manager) RunMaintenance() error {
 	_, _ = m.store.DeleteSummariesOlderThan(90 * 24 * time.Hour)
 
 	return nil
+}
+
+// ── Internal Helpers ──────────────────────────────────────────────
+
+// applyDefaults sets default char limit and enforces truncation if configured.
+func (m *Manager) applyDefaults(block *Block) {
+	if block.CharLimit == 0 && m.DefaultCharLimit > 0 {
+		block.CharLimit = m.DefaultCharLimit
+	}
+	if m.EnforceCharLimit {
+		block.TruncateToLimit()
+	}
+}
+
+// filterScope returns blocks that are global (Scope=="") or match the given scope.
+func filterScope(blocks []Block, scope string) []Block {
+	if scope == "" {
+		return blocks
+	}
+	var out []Block
+	for _, b := range blocks {
+		if b.Scope == "" || b.Scope == scope {
+			out = append(out, b)
+		}
+	}
+	return out
 }

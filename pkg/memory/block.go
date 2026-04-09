@@ -42,12 +42,20 @@ type Block struct {
 	Tier      Tier              `json:"tier"`     // Storage tier
 	Label     string            `json:"label"`    // Semantic label (e.g. "user_preference", "conversation_summary")
 	Content   string            `json:"content"`  // The memory content
-	Source    string            `json:"source"`   // Origin: "user", "auto_summary", "system"
+	Source    string            `json:"source"`   // Origin: "user", "auto_summary", "system", "sleep_time"
 	Tags      []string          `json:"tags"`     // Searchable tags
 	Metadata  map[string]string `json:"metadata"` // Arbitrary key-value metadata
 	CreatedAt time.Time         `json:"created_at"`
 	UpdatedAt time.Time         `json:"updated_at"`
 	ExpiresAt *time.Time        `json:"expires_at"` // nil = never expires
+
+	// Character limit for this block's content. 0 = unlimited.
+	// When content exceeds this limit, it is truncated or compressed.
+	CharLimit int `json:"char_limit,omitempty"`
+
+	// Scope isolates the block to a specific context (e.g. conversation ID,
+	// session ID, or a named group). Empty string means global (visible everywhere).
+	Scope string `json:"scope,omitempty"`
 }
 
 // IsExpired returns true if the block has passed its expiration date.
@@ -56,6 +64,30 @@ func (b *Block) IsExpired() bool {
 		return false
 	}
 	return time.Now().After(*b.ExpiresAt)
+}
+
+// ExceedsLimit returns true if the block's content exceeds its character limit.
+// Returns false when CharLimit is 0 (unlimited).
+func (b *Block) ExceedsLimit() bool {
+	if b.CharLimit <= 0 {
+		return false
+	}
+	return len(b.Content) > b.CharLimit
+}
+
+// TruncateToLimit trims content to the character limit if exceeded.
+// Appends "... [truncated]" when trimming occurs.
+func (b *Block) TruncateToLimit() {
+	if !b.ExceedsLimit() {
+		return
+	}
+	// Keep the last portion (most recent info is often appended).
+	cutoff := b.CharLimit - 15 // room for "... [truncated]"
+	if cutoff < 0 {
+		cutoff = 0
+	}
+	b.Content = b.Content[:cutoff] + "... [truncated]"
+	b.UpdatedAt = time.Now()
 }
 
 // Summary represents a conversation summary stored in medium-term memory.

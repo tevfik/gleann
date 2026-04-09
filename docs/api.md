@@ -93,16 +93,16 @@ pipeline.  Each `{name}` corresponds to an independent KuzuDB store under
 
 ### Memory Blocks (Long-term Memory)
 
-Hierarchical BBolt memory store with three tiers (short, medium, long). Blocks stored here are automatically injected into every LLM query as system context.
+Hierarchical BBolt memory store with three tiers (short, medium, long). Blocks stored here are automatically injected into every LLM query as system context. Supports **scoped isolation** (e.g. per-conversation) and **character limits**.
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/api/blocks` | List memory blocks (optional `?tier=short\|medium\|long`) |
-| POST | `/api/blocks` | Store a new memory block |
+| GET | `/api/blocks` | List memory blocks (optional `?tier=short\|medium\|long`, `?scope=`) |
+| POST | `/api/blocks` | Store a new memory block (supports `char_limit`, `scope` fields) |
 | DELETE | `/api/blocks` | Clear blocks (optional `?tier=` filter) |
 | DELETE | `/api/blocks/{id}` | Delete a specific block by ID |
-| GET | `/api/blocks/search?q=` | Full-text search across all tiers |
-| GET | `/api/blocks/context` | Compiled memory context (what the LLM receives) |
+| GET | `/api/blocks/search?q=` | Full-text search across all tiers (optional `?scope=`) |
+| GET | `/api/blocks/context` | Compiled memory context (optional `?scope=`, `?format=xml`) |
 | GET | `/api/blocks/stats` | Storage statistics per tier |
 
 ### OpenAI-Compatible Proxy
@@ -584,6 +584,32 @@ curl -X POST http://localhost:8080/api/blocks \
   }'
 ```
 
+### Store a scoped block (conversation-isolated)
+
+```bash
+curl -X POST http://localhost:8080/api/blocks \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "content": "User asked about deployment strategies",
+    "tier": "medium",
+    "scope": "conv-abc123",
+    "label": "conversation_note"
+  }'
+```
+
+### Store with character limit
+
+```bash
+curl -X POST http://localhost:8080/api/blocks \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "content": "Running notes that may grow over time...",
+    "tier": "long",
+    "char_limit": 2000,
+    "label": "rolling_notes"
+  }'
+```
+
 ### List all blocks
 
 ```bash
@@ -592,18 +618,32 @@ curl http://localhost:8080/api/blocks
 
 # Only long-term memories
 curl http://localhost:8080/api/blocks?tier=long
+
+# Scoped to a conversation (global + conversation-specific)
+curl 'http://localhost:8080/api/blocks?scope=conv-abc123'
 ```
 
 ### Search blocks
 
 ```bash
+# All scopes
 curl 'http://localhost:8080/api/blocks/search?q=architecture'
+
+# Scoped search
+curl 'http://localhost:8080/api/blocks/search?q=architecture&scope=conv-abc123'
 ```
 
 ### Show compiled context (what the LLM receives)
 
 ```bash
+# Global context
 curl http://localhost:8080/api/blocks/context
+
+# Conversation-scoped context
+curl 'http://localhost:8080/api/blocks/context?scope=conv-abc123'
+
+# XML format
+curl 'http://localhost:8080/api/blocks/context?format=xml'
 ```
 
 ### Delete a specific block

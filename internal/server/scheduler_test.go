@@ -100,3 +100,22 @@ func TestRunOnce_DoesNotPanicOnEmptyStore(t *testing.T) {
 	// runOnce calls mgr.RunMaintenance(); should not panic on empty store.
 	runOnce(mgr)
 }
+
+func TestStartSleepTimeEngine_DisabledByDefault(t *testing.T) {
+	store := openTempStore(t)
+	mgr := memory.NewManager(store)
+	stopCh := make(chan struct{})
+	// Should not panic when disabled (default).
+	startSleepTimeEngine(mgr, stopCh)
+	close(stopCh)
+}
+
+func TestStartSleepTimeEngine_EnabledButNoConvStore(t *testing.T) {
+	t.Setenv("GLEANN_SLEEPTIME_ENABLED", "true")
+	store := openTempStore(t)
+	mgr := memory.NewManager(store)
+	stopCh := make(chan struct{})
+	// convStore is nil via DefaultSleepTimeConfig, engine's Start should handle gracefully.
+	startSleepTimeEngine(mgr, stopCh)
+	close(stopCh)
+}

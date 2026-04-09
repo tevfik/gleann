@@ -26,12 +26,14 @@ import (
 // blockAddRequest is the body for POST /api/blocks.
 type blockAddRequest struct {
 	Content   string            `json:"content"`
-	Tier      string            `json:"tier,omitempty"`   // "short" | "medium" | "long" (default: "long")
-	Label     string            `json:"label,omitempty"`  // semantic label
-	Source    string            `json:"source,omitempty"` // origin tag
+	Tier      string            `json:"tier,omitempty"`       // "short" | "medium" | "long" (default: "long")
+	Label     string            `json:"label,omitempty"`      // semantic label
+	Source    string            `json:"source,omitempty"`     // origin tag
 	Tags      []string          `json:"tags,omitempty"`
 	Metadata  map[string]string `json:"metadata,omitempty"`
 	ExpiresIn string            `json:"expires_in,omitempty"` // e.g. "24h", "7d"
+	CharLimit int               `json:"char_limit,omitempty"` // max characters (0 = use default)
+	Scope     string            `json:"scope,omitempty"`      // isolation scope (e.g. conversation ID)
 }
 
 // ── lazy blockMem accessor ────────────────────────────────────────────────────
@@ -69,8 +71,10 @@ func (s *Server) blockManager() (*memory.Manager, error) {
 //
 //	GET /api/blocks
 //	GET /api/blocks?tier=short|medium|long
+//	GET /api/blocks?scope=conversation_id
 func (s *Server) handleListBlocks(w http.ResponseWriter, r *http.Request) {
 	tierStr := r.URL.Query().Get("tier")
+	scope := r.URL.Query().Get("scope")
 
 	var tier memory.Tier
 	if tierStr != "" {
@@ -88,7 +92,12 @@ func (s *Server) handleListBlocks(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	blocks, err := mgr.List(tier)
+	var blocks []memory.Block
+	if scope != "" {
+		blocks, err = mgr.ListScoped(scope, tier)
+	} else {
+		blocks, err = mgr.List(tier)
+	}
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "list blocks: "+err.Error())
 		return
@@ -146,12 +155,14 @@ func (s *Server) handleAddBlock(w http.ResponseWriter, r *http.Request) {
 	}
 
 	block := &memory.Block{
-		Tier:     tier,
-		Label:    label,
-		Content:  req.Content,
-		Source:   source,
-		Tags:     req.Tags,
-		Metadata: req.Metadata,
+		Tier:      tier,
+		Label:     label,
+		Content:   req.Content,
+		Source:    source,
+		Tags:      req.Tags,
+		Metadata:  req.Metadata,
+		CharLimit: req.CharLimit,
+		Scope:     req.Scope,
 	}
 
 	// Parse optional expiry.
@@ -238,12 +249,14 @@ func (s *Server) handleClearBlocks(w http.ResponseWriter, r *http.Request) {
 // handleSearchBlocks performs a full-text search across all memory tiers.
 //
 //	GET /api/blocks/search?q=your+query
+//	GET /api/blocks/search?q=your+query&scope=conversation_id
 func (s *Server) handleSearchBlocks(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query().Get("q")
 	if q == "" {
 		writeError(w, http.StatusBadRequest, "query parameter 'q' is required")
 		return
 	}
+	scope := r.URL.Query().Get("scope")
 
 	mgr, err := s.blockManager()
 	if err != nil {
@@ -251,7 +264,12 @@ func (s *Server) handleSearchBlocks(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	blocks, err := mgr.Search(q)
+	var blocks []memory.Block
+	if scope != "" {
+		blocks, err = mgr.SearchScoped(scope, q)
+	} else {
+		blocks, err = mgr.Search(q)
+	}
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "search blocks: "+err.Error())
 		return
@@ -272,8 +290,9 @@ func (s *Server) handleSearchBlocks(w http.ResponseWriter, r *http.Request) {
 // handleBlockContext returns the compiled memory context window.
 // Used by AI agents to retrieve the current memory state as LLM-injectable text.
 //
-//	GET /api/blocks/context           — returns JSON with context + rendered XML
-//	GET /api/blocks/context?format=xml — returns raw <memory_context> XML
+//	GET /api/blocks/context                      — returns JSON with context + rendered XML
+//	GET /api/blocks/context?format=xml           — returns raw <memory_context> XML
+//	GET /api/blocks/context?scope=conversation_id — filter by scope
 func (s *Server) handleBlockContext(w http.ResponseWriter, r *http.Request) {
 	mgr, err := s.blockManager()
 	if err != nil {
@@ -281,7 +300,14 @@ func (s *Server) handleBlockContext(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cw, err := mgr.BuildContext()
+	scope := r.URL.Query().Get("scope")
+
+	var cw *memory.ContextWindow
+	if scope != "" {
+		cw, err = mgr.BuildScopedContext(scope)
+	} else {
+		cw, err = mgr.BuildContext()
+	}
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "build context: "+err.Error())
 		return

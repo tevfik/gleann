@@ -195,6 +195,9 @@ External Agent (e.g. Yaver, Claude)
 | Retry Logic | — | ✅ (exponential backoff for LLM/embedding calls) |
 | Batch Query (MCP) | — | ✅ (`gleann_batch_ask` — 10 concurrent questions) |
 | Background Maintenance | — | ✅ (auto-promote blocks, prune expired) |
+| Sleep-Time Compute | — | ✅ (Letta-inspired background reflection on conversations) |
+| Memory Block Limits | — | ✅ (per-block char limit with auto-truncation) |
+| Scoped Memory Blocks | — | ✅ (conversation/session isolation) |
 | OpenAI-Compatible Proxy | — | ✅ (`/v1/chat/completions`) |
 | File Sync (incremental) | ✅ | ✅ |
 | Hybrid Search (BM25) | — | ✅ |
