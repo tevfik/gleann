@@ -398,6 +398,106 @@ func TestContainsAllTags(t *testing.T) {
 	}
 }
 
+// ── Project field shorthand ────────────────────────────────────────────────────
+
+func TestUnifiedIngest_ProjectField_SetsScope(t *testing.T) {
+	s := newUnifiedTestServer(t)
+
+	body := `{
+		"project": "myapp",
+		"facts": [{"content": "myapp uses hexagonal architecture"}]
+	}`
+	req := httptest.NewRequest("POST", "/api/memory/ingest", bytes.NewBufferString(body))
+	w := httptest.NewRecorder()
+	s.handleUnifiedIngest(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var resp UnifiedIngestResponse
+	json.NewDecoder(w.Body).Decode(&resp)
+	if resp.FactsStored != 1 {
+		t.Errorf("expected 1 fact stored, got %d", resp.FactsStored)
+	}
+	if len(resp.FactIDs) != 1 {
+		t.Errorf("expected 1 fact ID, got %d", len(resp.FactIDs))
+	}
+}
+
+func TestUnifiedRecall_ProjectField_IsolatesScope(t *testing.T) {
+	s := newUnifiedTestServer(t)
+
+	// Ingest facts in two different project scopes.
+	for _, body := range []string{
+		`{"project": "alpha", "facts": [{"content": "alpha uses microservices"}]}`,
+		`{"project": "beta",  "facts": [{"content": "beta uses monolith"}]}`,
+	} {
+		req := httptest.NewRequest("POST", "/api/memory/ingest", bytes.NewBufferString(body))
+		w := httptest.NewRecorder()
+		s.handleUnifiedIngest(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("ingest failed: %s", w.Body.String())
+		}
+	}
+
+	// Recall scoped to "alpha" — query matches alpha fact but not beta.
+	recallBody := `{"project": "alpha", "query": "microservices", "layers": ["blocks"]}`
+	req := httptest.NewRequest("POST", "/api/memory/recall", bytes.NewBufferString(recallBody))
+	w := httptest.NewRecorder()
+	s.handleUnifiedRecall(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("recall failed: %d %s", w.Code, w.Body.String())
+	}
+
+	var resp UnifiedRecallResponse
+	json.NewDecoder(w.Body).Decode(&resp)
+	if len(resp.Blocks) == 0 {
+		t.Fatal("expected at least one block for alpha scope")
+	}
+	for _, b := range resp.Blocks {
+		if b.Content == "beta uses monolith" {
+			t.Error("beta fact should not appear in alpha recall")
+		}
+	}
+}
+
+func TestUnifiedIngest_ProjectOverridesScope(t *testing.T) {
+	s := newUnifiedTestServer(t)
+
+	// When both project and scope are provided, project wins.
+	body := `{
+		"project": "myproject",
+		"scope": "should-be-ignored",
+		"facts": [{"content": "project overrides scope"}]
+	}`
+	req := httptest.NewRequest("POST", "/api/memory/ingest", bytes.NewBufferString(body))
+	w := httptest.NewRecorder()
+	s.handleUnifiedIngest(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var resp UnifiedIngestResponse
+	json.NewDecoder(w.Body).Decode(&resp)
+	if resp.FactsStored != 1 {
+		t.Errorf("expected 1 fact stored, got %d", resp.FactsStored)
+	}
+
+	// Recall under the project scope should find the fact.
+	recallBody := `{"project": "myproject", "query": "scope", "layers": ["blocks"]}`
+	req = httptest.NewRequest("POST", "/api/memory/recall", bytes.NewBufferString(recallBody))
+	w = httptest.NewRecorder()
+	s.handleUnifiedRecall(w, req)
+	var rr UnifiedRecallResponse
+	json.NewDecoder(w.Body).Decode(&rr)
+	if len(rr.Blocks) == 0 {
+		t.Error("expected fact to be found under project scope")
+	}
+}
+
 func contains(s, substr string) bool {
 	return bytes.Contains([]byte(s), []byte(substr))
 }
