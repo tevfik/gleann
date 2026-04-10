@@ -46,7 +46,9 @@ git s# Architecture & Design
 │  KuzuDB Graph Layer                                                  │
 │  ├── Code Graph  (CodeFile, Symbol, CALLS, IMPLEMENTS …)             │
 │  ├── Document Graph  (Folder, Document, Heading, Chunk …)            │
-│  └── Memory Engine  (Entity, RELATES_TO — external agent memory)     │
+│  ├── Memory Engine  (Entity, RELATES_TO — external agent memory)     │
+│  ├── Community Detection  (Louvain — god nodes, clusters, cohesion)  │
+│  └── Visualization  (vis.js HTML, Markdown report, GraphML export)   │
 ├──────────────────────────────────────────────────────────────────────┤
 │  Long-term Memory Layer  (pkg/memory)                                │
 │  ├── Short-term  in-process  session notes → promoted on exit        │

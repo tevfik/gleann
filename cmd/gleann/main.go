@@ -45,6 +45,8 @@ func main() {
 		cmdDoctor()
 	case "tasks":
 		cmdTasks(args)
+	case "benchmark":
+		cmdBenchmark(args)
 	case "config":
 		cmdConfig(args)
 	case "completion":
@@ -98,6 +100,9 @@ gleann has three intelligence pillars that work together:
 
   gleann graph deps    <fqn> --index <name>    What does this symbol call?
   gleann graph callers <fqn> --index <name>    Who calls this symbol?
+  gleann graph viz         --index <name>      Interactive HTML visualization
+  gleann graph report      --index <name>      Markdown report (communities, god nodes)
+  gleann graph communities --index <name>      Community detection results
 
   Requires: gleann index build <name> --docs <dir> --graph
 
@@ -142,6 +147,7 @@ gleann has three intelligence pillars that work together:
 
   gleann serve  [--addr :8080]          REST API server (rate limiting, timeouts)
   gleann tasks                          View background tasks (requires serve)
+  gleann benchmark --index <n> --docs <d>  Token reduction analysis
   gleann mcp                            MCP server (stdio, for AI editors)
   gleann tui                            Interactive TUI launcher
   gleann setup  [--bootstrap]           Configuration wizard (quick or advanced)
@@ -198,6 +204,14 @@ gleann has three intelligence pillars that work together:
   gleann index build my-code --docs ./src/ --graph
   gleann graph deps "github.com/org/pkg.Handler" --index my-code
   gleann graph callers "github.com/org/pkg.Handler" --index my-code
+
+  # Graph analysis & visualization
+  gleann graph viz --index my-code                     # interactive HTML
+  gleann graph report --index my-code                  # GRAPH_REPORT.md
+  gleann graph communities --index my-code             # community detection
+
+  # Token reduction benchmark
+  gleann benchmark --index my-code --docs ./src/
 
   # Long-term memory
   gleann memory remember "Project uses hexagonal architecture"
