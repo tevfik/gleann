@@ -11,12 +11,17 @@ import (
 	"github.com/smacker/go-tree-sitter/c"
 	"github.com/smacker/go-tree-sitter/cpp"
 	csharp "github.com/smacker/go-tree-sitter/csharp"
+	"github.com/smacker/go-tree-sitter/elixir"
 	"github.com/smacker/go-tree-sitter/java"
 	"github.com/smacker/go-tree-sitter/javascript"
+	"github.com/smacker/go-tree-sitter/kotlin"
+	"github.com/smacker/go-tree-sitter/lua"
 	"github.com/smacker/go-tree-sitter/php"
 	"github.com/smacker/go-tree-sitter/python"
 	"github.com/smacker/go-tree-sitter/ruby"
 	"github.com/smacker/go-tree-sitter/rust"
+	"github.com/smacker/go-tree-sitter/scala"
+	"github.com/smacker/go-tree-sitter/swift"
 	"github.com/smacker/go-tree-sitter/typescript/typescript"
 
 	"github.com/tevfik/gleann/internal/graph/kuzu"
@@ -131,6 +136,45 @@ var callQueries = map[chunking.Language]tsQuery{
   (member_call_expression
     name: (name) @name) @call
 ]
+`,
+	},
+	chunking.LangKotlin: {
+		Lang: kotlin.GetLanguage(),
+		Query: `
+(call_expression
+  (simple_identifier) @name) @call
+`,
+	},
+	chunking.LangScala: {
+		Lang: scala.GetLanguage(),
+		Query: `
+(call_expression
+  function: [
+    (identifier) @name
+    (field_expression field: (identifier) @name)
+  ]
+) @call
+`,
+	},
+	chunking.LangSwift: {
+		Lang: swift.GetLanguage(),
+		Query: `
+(call_expression
+  (simple_identifier) @name) @call
+`,
+	},
+	chunking.LangLua: {
+		Lang: lua.GetLanguage(),
+		Query: `
+(function_call
+  name: (identifier) @name) @call
+`,
+	},
+	chunking.LangElixir: {
+		Lang: elixir.GetLanguage(),
+		Query: `
+(call
+  target: (identifier) @name) @call
 `,
 	},
 }
@@ -250,7 +294,7 @@ func collectTSCallQueries(idx *Indexer, absPath, relPath, source string, chunks 
 		seen[edgeKey] = true
 
 		nodes = append(nodes, kuzu_symbol(calleeFQN))
-		edges = append(edges, kuzu.EdgeCalls{CallerFQN: callerFQN, CalleeFQN: calleeFQN})
+		edges = append(edges, kuzu.EdgeCalls{CallerFQN: callerFQN, CalleeFQN: calleeFQN, Confidence: "extracted"})
 	}
 
 	return nodes, edges, nil

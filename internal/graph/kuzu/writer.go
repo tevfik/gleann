@@ -34,8 +34,9 @@ type EdgeDeclares struct {
 
 // EdgeCalls represents a CALLS relationship (FROM Symbol TO Symbol).
 type EdgeCalls struct {
-	CallerFQN string
-	CalleeFQN string
+	CallerFQN  string
+	CalleeFQN  string
+	Confidence string // "extracted" (AST-resolved), "inferred" (heuristic), "ambiguous"
 }
 
 // UpsertFile inserts or ignores a CodeFile node.
