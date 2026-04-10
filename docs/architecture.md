@@ -24,11 +24,13 @@ git s# Architecture & Design
 │  A2A Protocol Layer  (internal/a2a — Agent-to-Agent communication)   │
 │  ├── Agent Card   (/.well-known/agent-card.json)                     │
 │  ├── Skills       (semantic-search, ask-rag, code-analysis, memory)  │
+│  ├── Skill Router (keyword match → scoring-based fallback)           │
 │  └── Task Store   (in-memory, bounded at 1000)                       │
 ├──────────────────────────────────────────────────────────────────────┤
 │  Unified Memory API  (internal/server/unified_memory_handler.go)     │
 │  ├── Ingest       (facts → blocks, relationships → graph)            │
-│  └── Recall       (parallel: blocks + graph + vector search)         │
+│  ├── Recall       (parallel: blocks + graph + vector search)         │
+│  └── Project field (syntactic sugar for scope + index)               │
 ├──────────────────────────────────────────────────────────────────────┤
 │              Backend Registry                                        │
 ├──────────────────┬───────────────────────────────────────────────────┤
@@ -218,6 +220,9 @@ External Agent (e.g. Yaver, Claude)
 | Batch Query (MCP) | — | ✅ (`gleann_batch_ask` — 10 concurrent questions) |
 | Background Maintenance | — | ✅ (auto-promote blocks, prune expired) |
 | Sleep-Time Compute | — | ✅ (Letta-inspired background reflection on conversations) |
+| A2A Skill Router | — | ✅ (keyword + scoring-based fallback routing) |
+| Temporal Graph Edges | — | ✅ (auto `created_at`/`updated_at` on edges) |
+| Project-scoped Memory | — | ✅ (`project` field → scope + index shorthand) |
 | Memory Block Limits | — | ✅ (per-block char limit with auto-truncation) |
 | Scoped Memory Blocks | — | ✅ (conversation/session isolation) |
 | OpenAI-Compatible Proxy | — | ✅ (`/v1/chat/completions`) |

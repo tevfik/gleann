@@ -291,12 +291,13 @@ func (s *Server) routeSkill(query string, metadata map[string]interface{}) strin
 		keywords []string
 	}
 	priorities := []skillMatch{
-		{"code-analysis", []string{"callers", "callees", "impact", "dependency", "graph", "bağımlılık"}},
-		{"memory-management", []string{"remember", "forget", "memory", "recall", "hatırla", "unut", "bellek"}},
-		{"semantic-search", []string{"search", "find", "ara", "bul", "look for"}},
-		{"ask-rag", []string{"ask", "explain", "how", "why", "what", "describe", "sor", "anlat", "nasıl", "neden"}},
+		{"code-analysis", []string{"callers", "callees", "impact", "dependency", "graph", "bağımlılık", "who calls", "call graph", "depends on", "references", "symbol"}},
+		{"memory-management", []string{"remember", "forget", "memory", "recall", "hatırla", "unut", "bellek", "store", "note", "save this", "block"}},
+		{"semantic-search", []string{"search", "find", "ara", "bul", "look for", "grep", "locate", "where is", "similar to"}},
+		{"ask-rag", []string{"ask", "explain", "how", "why", "what", "describe", "sor", "anlat", "nasıl", "neden", "tell me", "summarize", "özetle"}},
 	}
 
+	// Phase 1: exact keyword match (fast path).
 	for _, sm := range priorities {
 		for _, kw := range sm.keywords {
 			if containsCI(query, kw) {
@@ -305,6 +306,31 @@ func (s *Server) routeSkill(query string, metadata map[string]interface{}) strin
 				}
 			}
 		}
+	}
+
+	// Phase 2: scoring-based fallback — count keyword overlap per skill.
+	bestID := ""
+	bestScore := 0
+	for _, sm := range priorities {
+		if _, ok := s.handlers[sm.id]; !ok {
+			continue
+		}
+		score := 0
+		for _, kw := range sm.keywords {
+			// Partial match: any word in query starts with keyword prefix.
+			for _, word := range splitWords(query) {
+				if len(word) >= 3 && containsCI(word, kw[:min2(3, len(kw))]) {
+					score++
+				}
+			}
+		}
+		if score > bestScore {
+			bestScore = score
+			bestID = sm.id
+		}
+	}
+	if bestID != "" {
+		return bestID
 	}
 
 	// Default to ask-rag if registered.
@@ -359,6 +385,36 @@ func extractText(parts []Part) string {
 		}
 	}
 	return text
+}
+
+// splitWords splits a query into lowercase words for scoring.
+func splitWords(s string) []string {
+	lower := toLower(s)
+	var words []string
+	start := -1
+	for i, c := range lower {
+		if c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == '_' || c >= 0x80 {
+			if start < 0 {
+				start = i
+			}
+		} else {
+			if start >= 0 {
+				words = append(words, lower[start:i])
+				start = -1
+			}
+		}
+	}
+	if start >= 0 {
+		words = append(words, lower[start:])
+	}
+	return words
+}
+
+func min2(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
 
 // evictOldTasks removes the oldest tasks to keep the store bounded.

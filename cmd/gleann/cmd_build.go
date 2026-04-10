@@ -366,6 +366,19 @@ func readDocuments(dir string, chunkSize, chunkOverlap int, tracker *vault.Track
 							})
 						}
 					}
+
+					// Generate graph-ready PluginResult from extracted markdown
+					// so native-extracted documents also feed the knowledge graph.
+					pResult := gleann.MarkdownToPluginResult(md, relPath)
+					if pResult != nil && (len(pResult.Nodes) > 0 || pResult.Markdown != "") {
+						pluginDocsMu.Lock()
+						pluginDocs = append(pluginDocs, &PluginDoc{
+							Result:     pResult,
+							SourcePath: relPath,
+						})
+						pluginDocsMu.Unlock()
+					}
+
 					resCh <- result{items: items}
 					continue
 				}

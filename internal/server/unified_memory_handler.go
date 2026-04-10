@@ -29,6 +29,9 @@ type UnifiedIngestRequest struct {
 	Relationships []IngestRelationship `json:"relationships,omitempty"`
 	// Scope isolates facts to a conversation/agent (default: global).
 	Scope string `json:"scope,omitempty"`
+	// Project sets scope to "project:{name}" and targets matching index.
+	// Overrides Scope if both are set.
+	Project string `json:"project,omitempty"`
 }
 
 // IngestFact is a piece of knowledge to remember.
@@ -70,6 +73,17 @@ func (s *Server) handleUnifiedIngest(w http.ResponseWriter, r *http.Request) {
 	if len(req.Facts) == 0 && len(req.Relationships) == 0 {
 		writeError(w, http.StatusBadRequest, "at least one fact or relationship required")
 		return
+	}
+
+	// Resolve project shorthand → scope + default index for relationships.
+	if req.Project != "" {
+		req.Scope = "project:" + req.Project
+		// Set default index for relationships that don't specify one.
+		for i := range req.Relationships {
+			if req.Relationships[i].Index == "" {
+				req.Relationships[i].Index = req.Project
+			}
+		}
 	}
 
 	resp := UnifiedIngestResponse{}
@@ -176,6 +190,8 @@ type UnifiedRecallRequest struct {
 	After     string   `json:"after,omitempty"`     // Filter blocks created after (RFC3339 or duration like "24h")
 	Before    string   `json:"before,omitempty"`    // Filter blocks created before (RFC3339 or duration like "7d")
 	Relations []string `json:"relations,omitempty"` // Filter graph edges by relation types
+	// Project sets scope to "project:{name}" and index to matching name.
+	Project string `json:"project,omitempty"`
 }
 
 // UnifiedRecallResponse merges results from all memory layers.
@@ -245,6 +261,16 @@ func (s *Server) handleUnifiedRecall(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Depth <= 0 {
 		req.Depth = 2
+	}
+
+	// Resolve project shorthand → scope + index.
+	if req.Project != "" {
+		if req.Scope == "" {
+			req.Scope = "project:" + req.Project
+		}
+		if req.Index == "" {
+			req.Index = req.Project
+		}
 	}
 
 	layers := layerSet(req.Layers)
