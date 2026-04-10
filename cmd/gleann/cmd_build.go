@@ -189,6 +189,9 @@ func readDocuments(dir string, chunkSize, chunkOverlap int, tracker *vault.Track
 		defer pluginManager.Close()
 	}
 
+	// Native extractor: pure-Go fallback for PDF, DOCX, XLSX, PPTX, CSV, HTML.
+	nativeExtractor := gleann.NewNativeExtractor()
+
 	// Load .gleannignore patterns (empty matcher if no file).
 	ignoreMatcher := gleannignore.Load(dir)
 
@@ -227,16 +230,17 @@ func readDocuments(dir string, chunkSize, chunkOverlap int, tracker *vault.Track
 		}
 		ext := strings.ToLower(filepath.Ext(path))
 
-		// Check if a plugin can extract this document.
+		// Check if a plugin or native extractor can handle this file.
 		hasPlugin := false
 		if pluginManager != nil && pluginManager.FindDocumentExtractor(ext) != nil {
 			hasPlugin = true
 		}
+		hasNative := nativeExtractor.CanHandle(ext)
 
-		if !hasPlugin && binaryExts[ext] {
+		if !hasPlugin && !hasNative && binaryExts[ext] {
 			return nil
 		}
-		if !hasPlugin && info.Size() > 1<<20 { // >1MB (plugins can bypass this if they want to handle big docs)
+		if !hasPlugin && !hasNative && info.Size() > 1<<20 { // >1MB without handler
 			return nil
 		}
 
@@ -327,6 +331,43 @@ func readDocuments(dir string, chunkSize, chunkOverlap int, tracker *vault.Track
 						resCh <- result{items: items}
 						continue
 					}
+				}
+
+				// Try native extractor for binary document formats (PDF, DOCX, etc.).
+				if nativeExtractor.CanHandle(ext) {
+					md, nerr := nativeExtractor.Extract(fe.path)
+					if nerr != nil {
+						fmt.Fprintf(os.Stderr, "Warning: native extraction failed for %s: %v\n", filepath.Base(fe.path), nerr)
+						resCh <- result{}
+						continue
+					}
+					if md = strings.TrimSpace(md); md == "" {
+						resCh <- result{}
+						continue
+					}
+
+					relPath, _ := filepath.Rel(dir, fe.path)
+					mdChunks := mdChunker.ChunkMarkdown(md, relPath)
+
+					var items []gleann.Item
+					if len(mdChunks) == 0 {
+						// Single-chunk fallback for short documents.
+						items = append(items, gleann.Item{
+							Text:     md,
+							Metadata: map[string]any{"source": relPath, "extractor": "native"},
+						})
+					} else {
+						for _, ch := range mdChunks {
+							ch.Metadata["source"] = relPath
+							ch.Metadata["extractor"] = "native"
+							items = append(items, gleann.Item{
+								Text:     ch.Text,
+								Metadata: ch.Metadata,
+							})
+						}
+					}
+					resCh <- result{items: items}
+					continue
 				}
 
 				if data == nil {
