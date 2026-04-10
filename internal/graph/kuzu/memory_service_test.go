@@ -597,3 +597,156 @@ func TestMemoryService_CoexistsWithCodeGraph(t *testing.T) {
 		t.Fatalf("InjectEntities alongside code graph: %v", err)
 	}
 }
+
+// ── Temporal edge attributes ───────────────────────────────────────────────────
+
+func TestMemoryService_TemporalEdgeAttributes_AutoInjected(t *testing.T) {
+	ctx := context.Background()
+	svc := newTestMemoryService(t)
+
+	// Inject an edge with no user-provided attributes.
+	if err := svc.InjectEntities(ctx, gleann.GraphInjectionPayload{
+		Nodes: []gleann.MemoryGraphNode{
+			{ID: "ta1", Type: "node"},
+			{ID: "ta2", Type: "node"},
+		},
+		Edges: []gleann.MemoryGraphEdge{
+			{From: "ta1", To: "ta2", RelationType: "TEMPORAL_TEST", Weight: 1.0},
+		},
+	}); err != nil {
+		t.Fatalf("inject: %v", err)
+	}
+
+	_, edges, err := svc.Traverse(ctx, "ta1", 1)
+	if err != nil {
+		t.Fatalf("Traverse: %v", err)
+	}
+
+	var found bool
+	for _, e := range edges {
+		if e.RelationType == "TEMPORAL_TEST" {
+			found = true
+			if e.Attributes == nil {
+				t.Fatal("edge attributes should not be nil — temporal attrs must be injected")
+			}
+			if _, ok := e.Attributes["created_at"]; !ok {
+				t.Error("auto-injected created_at attribute missing")
+			}
+			if _, ok := e.Attributes["updated_at"]; !ok {
+				t.Error("auto-injected updated_at attribute missing")
+			}
+			// Verify RFC 3339 format: "2006-01-02T15:04:05Z07:00"
+			createdAt, ok := e.Attributes["created_at"].(string)
+			if !ok || len(createdAt) < 20 {
+				t.Errorf("created_at should be RFC3339 string, got %v", e.Attributes["created_at"])
+			}
+		}
+	}
+	if !found {
+		t.Error("TEMPORAL_TEST edge not found in traversal")
+	}
+}
+
+func TestMemoryService_TemporalEdgeAttributes_CreatedAtPreservedOnUpdate(t *testing.T) {
+	ctx := context.Background()
+	svc := newTestMemoryService(t)
+
+	payload := gleann.GraphInjectionPayload{
+		Nodes: []gleann.MemoryGraphNode{
+			{ID: "tp1", Type: "node"},
+			{ID: "tp2", Type: "node"},
+		},
+		Edges: []gleann.MemoryGraphEdge{
+			{From: "tp1", To: "tp2", RelationType: "PRESERVE_CREATED", Weight: 1.0},
+		},
+	}
+
+	// First injection sets created_at.
+	if err := svc.InjectEntities(ctx, payload); err != nil {
+		t.Fatalf("first inject: %v", err)
+	}
+
+	_, edges1, err := svc.Traverse(ctx, "tp1", 1)
+	if err != nil {
+		t.Fatalf("Traverse 1: %v", err)
+	}
+	var firstCreatedAt string
+	for _, e := range edges1 {
+		if e.RelationType == "PRESERVE_CREATED" {
+			firstCreatedAt, _ = e.Attributes["created_at"].(string)
+		}
+	}
+	if firstCreatedAt == "" {
+		t.Fatal("created_at must be set after first injection")
+	}
+
+	// Second injection — user provides a different created_at, it should NOT be overridden.
+	payload.Edges[0].Attributes = map[string]any{"created_at": "user-supplied"}
+	if err := svc.InjectEntities(ctx, payload); err != nil {
+		t.Fatalf("second inject: %v", err)
+	}
+	// The "user-supplied" value should be preserved (code only sets created_at if absent).
+	// updated_at should always be refreshed.
+	_, edges2, err := svc.Traverse(ctx, "tp1", 1)
+	if err != nil {
+		t.Fatalf("Traverse 2: %v", err)
+	}
+	for _, e := range edges2 {
+		if e.RelationType == "PRESERVE_CREATED" {
+			if e.Attributes["created_at"] != "user-supplied" {
+				t.Errorf("user-supplied created_at should be preserved, got %v", e.Attributes["created_at"])
+			}
+			if _, ok := e.Attributes["updated_at"]; !ok {
+				t.Error("updated_at should be present")
+			}
+			return
+		}
+	}
+	t.Error("PRESERVE_CREATED edge not found on second traversal")
+}
+
+func TestMemoryService_TemporalEdgeAttributes_UserAttrsPreserved(t *testing.T) {
+	ctx := context.Background()
+	svc := newTestMemoryService(t)
+
+	// User provides custom attributes alongside the auto-injected temporal ones.
+	if err := svc.InjectEntities(ctx, gleann.GraphInjectionPayload{
+		Nodes: []gleann.MemoryGraphNode{
+			{ID: "tua1", Type: "node"},
+			{ID: "tua2", Type: "node"},
+		},
+		Edges: []gleann.MemoryGraphEdge{
+			{
+				From: "tua1", To: "tua2", RelationType: "RICH_EDGE", Weight: 1.0,
+				Attributes: map[string]any{"confidence": float64(0.95), "source": "llm"},
+			},
+		},
+	}); err != nil {
+		t.Fatalf("inject: %v", err)
+	}
+
+	_, edges, err := svc.Traverse(ctx, "tua1", 1)
+	if err != nil {
+		t.Fatalf("Traverse: %v", err)
+	}
+
+	for _, e := range edges {
+		if e.RelationType == "RICH_EDGE" {
+			if e.Attributes["confidence"] != float64(0.95) {
+				t.Errorf("confidence = %v, want 0.95", e.Attributes["confidence"])
+			}
+			if e.Attributes["source"] != "llm" {
+				t.Errorf("source = %v, want llm", e.Attributes["source"])
+			}
+			// Temporal attrs should also be present.
+			if _, ok := e.Attributes["created_at"]; !ok {
+				t.Error("created_at missing alongside user attrs")
+			}
+			if _, ok := e.Attributes["updated_at"]; !ok {
+				t.Error("updated_at missing alongside user attrs")
+			}
+			return
+		}
+	}
+	t.Error("RICH_EDGE not found")
+}
