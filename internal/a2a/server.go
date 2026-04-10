@@ -101,6 +101,15 @@ type Message struct {
 type Part struct {
 	Text      string `json:"text,omitempty"`
 	MediaType string `json:"mediaType,omitempty"`
+	// File is a base64-encoded file attachment (A2A FilePart).
+	File *FilePart `json:"file,omitempty"`
+}
+
+// FilePart represents an inline file attachment.
+type FilePart struct {
+	Name      string `json:"name,omitempty"`
+	MimeType  string `json:"mimeType,omitempty"`
+	Bytes     string `json:"bytes,omitempty"` // base64-encoded data
 }
 
 // Artifact is a task output.
@@ -143,6 +152,7 @@ type SkillHandler func(ctx SkillContext) (string, error)
 type SkillContext struct {
 	Query    string
 	Metadata map[string]interface{}
+	Files    []FilePart // Attached media files from A2A message parts
 }
 
 // Server implements the A2A HTTP+JSON protocol binding.
@@ -189,10 +199,16 @@ func (s *Server) handleSendMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Extract text from message parts.
+	// Extract text and file parts from message.
 	query := extractText(req.Message.Parts)
-	if query == "" {
-		writeA2AError(w, http.StatusBadRequest, "INVALID_ARGUMENT", "message must contain at least one text part")
+	var files []FilePart
+	for _, p := range req.Message.Parts {
+		if p.File != nil && p.File.Bytes != "" {
+			files = append(files, *p.File)
+		}
+	}
+	if query == "" && len(files) == 0 {
+		writeA2AError(w, http.StatusBadRequest, "INVALID_ARGUMENT", "message must contain at least one text or file part")
 		return
 	}
 
@@ -220,6 +236,7 @@ func (s *Server) handleSendMessage(w http.ResponseWriter, r *http.Request) {
 	result, err := handler(SkillContext{
 		Query:    query,
 		Metadata: req.Metadata,
+		Files:    files,
 	})
 
 	if err != nil {
