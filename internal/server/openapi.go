@@ -31,7 +31,10 @@ func (s *Server) openAPISpec() map[string]any {
 			{"name": "search", "description": "Semantic and hybrid search"},
 			{"name": "graph", "description": "KuzuDB code graph queries"},
 			{"name": "memory", "description": "Memory Engine — generic Entity/RELATES_TO knowledge graph for external AI agents"},
+			{"name": "unified-memory", "description": "Unified Memory API — single interface orchestrating blocks, graph, and vector search"},
 			{"name": "blocks", "description": "Memory Blocks — hierarchical BBolt storage (short/medium/long tiers) providing infinite persistent memory for LLMs"},
+			{"name": "a2a", "description": "A2A Protocol — Google Agent-to-Agent discovery and communication"},
+			{"name": "tasks", "description": "Background task management"},
 			{"name": "webhooks", "description": "Webhook notification management"},
 			{"name": "metrics", "description": "Prometheus-compatible metrics"},
 			{"name": "proxy", "description": "OpenAI-compatible RAG proxy (model: \"gleann/<index>\")"},
@@ -849,6 +852,200 @@ func (s *Server) openAPISpec() map[string]any {
 					},
 				},
 			},
+
+			// ── A2A Protocol endpoints ─────────────────────────────────────────────
+			"/.well-known/agent-card.json": map[string]any{
+				"get": map[string]any{
+					"tags":        []string{"a2a"},
+					"summary":     "A2A Agent Card (discovery)",
+					"description": "Returns the A2A Agent Card describing gleann's capabilities and skills. Used by other agents and orchestrators to discover this agent.",
+					"operationId": "getAgentCard",
+					"responses": map[string]any{
+						"200": map[string]any{
+							"description": "Agent Card",
+							"content": map[string]any{
+								"application/json": map[string]any{
+									"schema": refSchema("AgentCard"),
+								},
+							},
+						},
+					},
+				},
+			},
+			"/a2a/v1/message:send": map[string]any{
+				"post": map[string]any{
+					"tags":        []string{"a2a"},
+					"summary":     "Send a message to an A2A skill",
+					"description": "Routes the message to the best matching skill (semantic-search, ask-rag, code-analysis, memory-management) based on content keywords. Set metadata.skill to target a specific skill.",
+					"operationId": "a2aSendMessage",
+					"requestBody": map[string]any{
+						"required": true,
+						"content": map[string]any{
+							"application/json": map[string]any{
+								"schema": refSchema("A2ASendMessageRequest"),
+							},
+						},
+					},
+					"responses": map[string]any{
+						"200": map[string]any{
+							"description": "Task result",
+							"content": map[string]any{
+								"application/json": map[string]any{
+									"schema": refSchema("A2ATask"),
+								},
+							},
+						},
+						"400": map[string]any{"description": "Invalid request"},
+					},
+				},
+			},
+			"/a2a/v1/tasks/{id}": map[string]any{
+				"get": map[string]any{
+					"tags":        []string{"a2a"},
+					"summary":     "Get A2A task status",
+					"operationId": "a2aGetTask",
+					"parameters": []map[string]any{
+						{"name": "id", "in": "path", "required": true, "schema": map[string]any{"type": "string"}, "description": "Task ID"},
+					},
+					"responses": map[string]any{
+						"200": map[string]any{
+							"description": "Task details",
+							"content": map[string]any{
+								"application/json": map[string]any{
+									"schema": refSchema("A2ATask"),
+								},
+							},
+						},
+						"404": map[string]any{"description": "Task not found"},
+					},
+				},
+			},
+
+			// ── Unified Memory API ─────────────────────────────────────────────
+			"/api/memory/ingest": map[string]any{
+				"post": map[string]any{
+					"tags":        []string{"unified-memory"},
+					"summary":     "Ingest facts and relationships",
+					"description": "Store facts (block memory) and relationships (knowledge graph) in a single call. Supports metadata, TTL, scoping, and edge attributes.",
+					"operationId": "unifiedMemoryIngest",
+					"requestBody": map[string]any{
+						"required": true,
+						"content": map[string]any{
+							"application/json": map[string]any{
+								"schema": refSchema("UnifiedIngestRequest"),
+							},
+						},
+					},
+					"responses": map[string]any{
+						"200": map[string]any{
+							"description": "Ingest result",
+							"content": map[string]any{
+								"application/json": map[string]any{
+									"schema": refSchema("UnifiedIngestResponse"),
+								},
+							},
+						},
+						"400": map[string]any{"description": "Invalid request"},
+						"422": map[string]any{"description": "Nothing was stored (all facts/relationships failed)"},
+					},
+				},
+			},
+			"/api/memory/recall": map[string]any{
+				"post": map[string]any{
+					"tags":        []string{"unified-memory"},
+					"summary":     "Recall from all memory layers",
+					"description": "Queries blocks, knowledge graph, and vector search in parallel. Supports date-range filtering, tag filtering, tier filtering, relation filtering, and LLM-ready context output.",
+					"operationId": "unifiedMemoryRecall",
+					"requestBody": map[string]any{
+						"required": true,
+						"content": map[string]any{
+							"application/json": map[string]any{
+								"schema": refSchema("UnifiedRecallRequest"),
+							},
+						},
+					},
+					"responses": map[string]any{
+						"200": map[string]any{
+							"description": "Merged recall results",
+							"content": map[string]any{
+								"application/json": map[string]any{
+									"schema": refSchema("UnifiedRecallResponse"),
+								},
+							},
+						},
+						"400": map[string]any{"description": "Invalid request (empty query)"},
+					},
+				},
+			},
+
+			// ── Background Tasks ───────────────────────────────────────────────
+			"/api/tasks": map[string]any{
+				"get": map[string]any{
+					"tags":        []string{"tasks"},
+					"summary":     "List background tasks",
+					"description": "Returns all background tasks. Use status query param to filter.",
+					"operationId": "listTasks",
+					"parameters": []map[string]any{
+						{"name": "status", "in": "query", "required": false, "schema": map[string]any{"type": "string", "enum": []string{"queued", "running", "completed", "failed", "cancelled"}}, "description": "Filter by task status"},
+					},
+					"responses": map[string]any{
+						"200": map[string]any{
+							"description": "Task list",
+							"content": map[string]any{
+								"application/json": map[string]any{
+									"schema": map[string]any{
+										"type": "object",
+										"properties": map[string]any{
+											"tasks": map[string]any{"type": "array", "items": refSchema("BackgroundTask")},
+											"count": map[string]any{"type": "integer"},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+				"delete": map[string]any{
+					"tags":        []string{"tasks"},
+					"summary":     "Cleanup old tasks",
+					"description": "Removes completed and failed tasks older than 1 hour.",
+					"operationId": "cleanupTasks",
+					"responses": map[string]any{
+						"200": map[string]any{
+							"description": "Cleanup result",
+							"content": map[string]any{
+								"application/json": map[string]any{
+									"schema": map[string]any{
+										"type":       "object",
+										"properties": map[string]any{"removed": map[string]any{"type": "integer"}},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			"/api/tasks/{id}": map[string]any{
+				"get": map[string]any{
+					"tags":        []string{"tasks"},
+					"summary":     "Get task by ID",
+					"operationId": "getTask",
+					"parameters": []map[string]any{
+						{"name": "id", "in": "path", "required": true, "schema": map[string]any{"type": "string"}, "description": "Background task ID"},
+					},
+					"responses": map[string]any{
+						"200": map[string]any{
+							"description": "Task details",
+							"content": map[string]any{
+								"application/json": map[string]any{
+									"schema": refSchema("BackgroundTask"),
+								},
+							},
+						},
+						"404": map[string]any{"description": "Task not found"},
+					},
+				},
+			},
 		},
 		"components": map[string]any{
 			"schemas": map[string]any{
@@ -1282,6 +1479,243 @@ func (s *Server) openAPISpec() map[string]any {
 					"description": "Returned when a request exceeds the per-endpoint context deadline. Configure via GLEANN_TIMEOUT_ASK_S, GLEANN_TIMEOUT_SEARCH_S, GLEANN_TIMEOUT_BUILD_S, GLEANN_TIMEOUT_DEFAULT_S env vars. SSE streams bypass the timeout.",
 					"properties": map[string]any{
 						"error": map[string]any{"type": "string", "example": "request timed out — try a shorter query or increase GLEANN_TIMEOUT_*_S"},
+					},
+				},
+
+				// ── A2A schemas ────────────────────────────────────────
+				"AgentCard": map[string]any{
+					"type":        "object",
+					"description": "A2A Agent Card — self-describing manifest published at /.well-known/agent-card.json for agent discovery.",
+					"properties": map[string]any{
+						"name":                map[string]any{"type": "string"},
+						"description":         map[string]any{"type": "string"},
+						"version":             map[string]any{"type": "string"},
+						"documentationUrl":    map[string]any{"type": "string"},
+						"iconUrl":             map[string]any{"type": "string"},
+						"defaultInputModes":   map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+						"defaultOutputModes":  map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+						"supportedInterfaces": map[string]any{"type": "array", "items": refSchema("AgentInterface")},
+						"capabilities":        refSchema("AgentCapabilities"),
+						"skills":              map[string]any{"type": "array", "items": refSchema("AgentSkill")},
+					},
+				},
+				"AgentInterface": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"url":             map[string]any{"type": "string"},
+						"protocolBinding": map[string]any{"type": "string"},
+						"protocolVersion": map[string]any{"type": "string"},
+					},
+				},
+				"AgentCapabilities": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"streaming":         map[string]any{"type": "boolean"},
+						"pushNotifications": map[string]any{"type": "boolean"},
+					},
+				},
+				"AgentSkill": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"id":          map[string]any{"type": "string"},
+						"name":        map[string]any{"type": "string"},
+						"description": map[string]any{"type": "string"},
+						"tags":        map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+						"examples":    map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+						"inputModes":  map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+						"outputModes": map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+					},
+				},
+				"A2ASendMessageRequest": map[string]any{
+					"type":     "object",
+					"required": []string{"message"},
+					"properties": map[string]any{
+						"message":  refSchema("A2AMessage"),
+						"metadata": map[string]any{"type": "object", "additionalProperties": true, "description": "Optional metadata. Set 'skill' key to target a specific skill by ID."},
+					},
+				},
+				"A2AMessage": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"messageId": map[string]any{"type": "string"},
+						"role":      map[string]any{"type": "string", "enum": []string{"ROLE_USER", "ROLE_AGENT"}},
+						"parts":     map[string]any{"type": "array", "items": refSchema("A2APart")},
+					},
+				},
+				"A2APart": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"text":      map[string]any{"type": "string"},
+						"mediaType": map[string]any{"type": "string"},
+					},
+				},
+				"A2ATask": map[string]any{
+					"type":        "object",
+					"description": "A2A Task — the core unit of work in the A2A protocol.",
+					"properties": map[string]any{
+						"id":        map[string]any{"type": "string"},
+						"contextId": map[string]any{"type": "string"},
+						"status": map[string]any{
+							"type": "object",
+							"properties": map[string]any{
+								"state":     map[string]any{"type": "string", "enum": []string{"TASK_STATE_SUBMITTED", "TASK_STATE_WORKING", "TASK_STATE_COMPLETED", "TASK_STATE_FAILED", "TASK_STATE_CANCELED", "TASK_STATE_INPUT_REQUIRED"}},
+								"message":   refSchema("A2AMessage"),
+								"timestamp": map[string]any{"type": "string"},
+							},
+						},
+						"artifacts": map[string]any{
+							"type": "array",
+							"items": map[string]any{
+								"type": "object",
+								"properties": map[string]any{
+									"artifactId": map[string]any{"type": "string"},
+									"name":       map[string]any{"type": "string"},
+									"parts":      map[string]any{"type": "array", "items": refSchema("A2APart")},
+								},
+							},
+						},
+						"history": map[string]any{"type": "array", "items": refSchema("A2AMessage")},
+					},
+				},
+
+				// ── Unified Memory schemas ─────────────────────────────
+				"UnifiedIngestRequest": map[string]any{
+					"type":        "object",
+					"description": "Ingest facts and relationships into unified memory.",
+					"properties": map[string]any{
+						"facts": map[string]any{
+							"type": "array",
+							"items": map[string]any{
+								"type":     "object",
+								"required": []string{"content"},
+								"properties": map[string]any{
+									"content":    map[string]any{"type": "string", "description": "The knowledge to store"},
+									"tags":       map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+									"label":      map[string]any{"type": "string", "description": "Short label (auto-truncated from content if omitted)"},
+									"tier":       map[string]any{"type": "string", "enum": []string{"short", "medium", "long"}, "default": "short"},
+									"metadata":   map[string]any{"type": "object", "additionalProperties": map[string]any{"type": "string"}, "description": "Arbitrary key-value metadata"},
+									"expires_in": map[string]any{"type": "string", "description": "TTL as Go duration (e.g. \"24h\", \"7d\")"},
+									"char_limit": map[string]any{"type": "integer", "description": "Per-block character limit (0 = unlimited)"},
+								},
+							},
+						},
+						"relationships": map[string]any{
+							"type": "array",
+							"items": map[string]any{
+								"type":     "object",
+								"required": []string{"from", "to", "relation"},
+								"properties": map[string]any{
+									"from":       map[string]any{"type": "string", "description": "Source entity"},
+									"to":         map[string]any{"type": "string", "description": "Target entity"},
+									"relation":   map[string]any{"type": "string", "description": "Edge type (e.g. DEPENDS_ON, IMPLEMENTS)"},
+									"weight":     map[string]any{"type": "number"},
+									"index":      map[string]any{"type": "string", "description": "Target index (default: first available)"},
+									"attributes": map[string]any{"type": "object", "additionalProperties": true, "description": "Edge metadata"},
+								},
+							},
+						},
+						"scope":   map[string]any{"type": "string", "description": "Isolate facts to a conversation/agent scope (default: global)"},
+						"project": map[string]any{"type": "string", "description": "Project shorthand: sets scope to 'project:{name}' and defaults relationship index to this name"},
+					},
+				},
+				"UnifiedIngestResponse": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"facts_stored":  map[string]any{"type": "integer"},
+						"edges_created": map[string]any{"type": "integer"},
+						"fact_ids":      map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+						"errors":        map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+					},
+				},
+				"UnifiedRecallRequest": map[string]any{
+					"type":     "object",
+					"required": []string{"query"},
+					"properties": map[string]any{
+						"query":     map[string]any{"type": "string", "description": "Natural-language recall query"},
+						"scope":     map[string]any{"type": "string", "description": "Restrict block search to scope"},
+						"index":     map[string]any{"type": "string", "description": "Index for vector + graph search"},
+						"layers":    map[string]any{"type": "array", "items": map[string]any{"type": "string", "enum": []string{"blocks", "graph", "vector"}}, "description": "Memory layers to query (default: all)"},
+						"top_k":     map[string]any{"type": "integer", "default": 5, "description": "Max results per layer"},
+						"depth":     map[string]any{"type": "integer", "default": 2, "description": "Graph traversal depth"},
+						"format":    map[string]any{"type": "string", "enum": []string{"json", "context"}, "default": "json", "description": "Output format (context = pre-formatted for LLM injection)"},
+						"tier":      map[string]any{"type": "string", "enum": []string{"short", "medium", "long"}, "description": "Filter blocks by tier"},
+						"tags":      map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Filter blocks by tags (AND logic)"},
+						"after":     map[string]any{"type": "string", "description": "Filter blocks created after (RFC3339 or Go duration like \"24h\")"},
+						"before":    map[string]any{"type": "string", "description": "Filter blocks created before (RFC3339 or Go duration like \"7d\")"},
+						"relations": map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Filter graph edges by relation types"},
+						"project":   map[string]any{"type": "string", "description": "Project shorthand: sets scope to 'project:{name}' and index to matching name"},
+					},
+				},
+				"UnifiedRecallResponse": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"query":   map[string]any{"type": "string"},
+						"blocks":  map[string]any{"type": "array", "items": refSchema("RecallBlock")},
+						"graph":   refSchema("RecallGraph"),
+						"vector":  map[string]any{"type": "array", "items": refSchema("RecallHit")},
+						"context": map[string]any{"type": "string", "description": "Pre-formatted context for LLM injection (when format=context)"},
+					},
+				},
+				"RecallBlock": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"id":         map[string]any{"type": "string"},
+						"tier":       map[string]any{"type": "string"},
+						"label":      map[string]any{"type": "string"},
+						"content":    map[string]any{"type": "string"},
+						"tags":       map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+						"scope":      map[string]any{"type": "string"},
+						"metadata":   map[string]any{"type": "object", "additionalProperties": map[string]any{"type": "string"}},
+						"created_at": map[string]any{"type": "string", "format": "date-time"},
+						"source":     map[string]any{"type": "string"},
+					},
+				},
+				"RecallGraph": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"nodes": map[string]any{"type": "array", "items": map[string]any{
+							"type": "object",
+							"properties": map[string]any{
+								"id":      map[string]any{"type": "string"},
+								"type":    map[string]any{"type": "string"},
+								"content": map[string]any{"type": "string"},
+							},
+						}},
+						"edges": map[string]any{"type": "array", "items": map[string]any{
+							"type": "object",
+							"properties": map[string]any{
+								"from":     map[string]any{"type": "string"},
+								"to":       map[string]any{"type": "string"},
+								"relation": map[string]any{"type": "string"},
+								"weight":   map[string]any{"type": "number"},
+							},
+						}},
+					},
+				},
+				"RecallHit": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"content":  map[string]any{"type": "string"},
+						"source":   map[string]any{"type": "string"},
+						"score":    map[string]any{"type": "number"},
+						"chunk_id": map[string]any{"type": "integer"},
+					},
+				},
+
+				// ── Background Task schemas ────────────────────────────
+				"BackgroundTask": map[string]any{
+					"type":        "object",
+					"description": "Background task status and metadata.",
+					"properties": map[string]any{
+						"id":         map[string]any{"type": "string"},
+						"type":       map[string]any{"type": "string", "enum": []string{"SleepTimeCompute", "AutoIndex", "MemoryConsolidate", "HealthCheck", "ReIndex", "Custom"}},
+						"status":     map[string]any{"type": "string", "enum": []string{"queued", "running", "completed", "failed", "cancelled"}},
+						"progress":   map[string]any{"type": "number", "description": "Completion percentage 0.0 – 1.0"},
+						"message":    map[string]any{"type": "string", "description": "Human-readable status message"},
+						"error":      map[string]any{"type": "string"},
+						"created_at": map[string]any{"type": "string", "format": "date-time"},
+						"started_at": map[string]any{"type": "string", "format": "date-time"},
+						"ended_at":   map[string]any{"type": "string", "format": "date-time"},
 					},
 				},
 			},

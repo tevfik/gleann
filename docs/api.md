@@ -118,6 +118,132 @@ Use gleann indexes as if they were OpenAI models. Compatible with any tool that 
 
 **Custom headers**: `X-Gleann-Top-K` (RAG result count), `X-Gleann-Min-Score` (score threshold).
 
+### A2A Protocol (Agent-to-Agent)
+
+Google's Agent-to-Agent protocol for agent discovery and inter-agent communication. Enabled by default; set `GLEANN_A2A_ENABLED=false` to disable.
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/.well-known/agent-card.json` | A2A Agent Card (discovery) |
+| POST | `/a2a/v1/message:send` | Send a message to an A2A skill |
+| GET | `/a2a/v1/tasks/{id}` | Get task status by ID |
+
+**Built-in skills**: `semantic-search`, `ask-rag`, `code-analysis`, `memory-management`.
+
+### Unified Memory API
+
+Orchestrates all memory layers (block storage, knowledge graph, vector search) through a single interface. Simplifies agent integration by eliminating the need to call individual memory APIs.
+
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/api/memory/ingest` | Store facts + relationships across memory layers |
+| POST | `/api/memory/recall` | Query all memory layers in parallel |
+
+#### Ingest Request Fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `facts[].content` | string | **Required.** The fact text to store |
+| `facts[].tags` | string[] | Searchable tags |
+| `facts[].tier` | string | `short` (default), `medium`, or `long` |
+| `facts[].metadata` | object | Arbitrary key-value metadata (e.g. `{"source_file": "auth.go"}`) |
+| `facts[].expires_in` | string | TTL as Go duration (`1h`, `7d`, `2w`) |
+| `facts[].char_limit` | int | Per-block character limit |
+| `relationships[].from` | string | Source entity ID |
+| `relationships[].to` | string | Target entity ID |
+| `relationships[].relation` | string | Relation type (e.g. `DEPENDS_ON`, `IMPLEMENTS`) |
+| `relationships[].weight` | float | Edge importance (default: 1.0) |
+| `relationships[].attributes` | object | Edge metadata |
+| `scope` | string | Isolate facts to a conversation/agent |
+
+#### Recall Request Fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `query` | string | **Required.** Search text |
+| `layers` | string[] | `blocks`, `graph`, `vector` (default: all) |
+| `top_k` | int | Max results per layer (default: 5) |
+| `tier` | string | Filter blocks by tier |
+| `tags` | string[] | Filter blocks by tags (AND logic) |
+| `after` | string | Filter blocks created after (RFC3339 or duration like `24h`, `7d`) |
+| `before` | string | Filter blocks created before |
+| `relations` | string[] | Filter graph edges by relation types |
+| `scope` | string | Filter blocks by scope |
+| `depth` | int | Graph traversal depth (default: 2) |
+| `format` | string | `json` (default) or `context` (LLM-ready XML) |
+
+#### Unified Memory Examples
+
+```bash
+# Store a fact with metadata and TTL
+curl -X POST http://localhost:8080/api/memory/ingest \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "facts": [{
+      "content": "Auth service uses JWT tokens with RS256 signing",
+      "tags": ["auth", "security", "jwt"],
+      "metadata": {"source_file": "auth/jwt.go", "confidence": "high"},
+      "tier": "long",
+      "expires_in": "90d"
+    }],
+    "relationships": [{
+      "from": "AuthService",
+      "to": "JWTValidator",
+      "relation": "DEPENDS_ON",
+      "weight": 0.9
+    }]
+  }'
+
+# Project-scoped ingest (sets scope="project:myapp" + default index)
+curl -X POST http://localhost:8080/api/memory/ingest \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "project": "myapp",
+    "facts": [{"content": "The API uses rate limiting at 100 req/s"}],
+    "relationships": [{"from": "Gateway", "to": "RateLimiter", "relation": "USES"}]
+  }'
+
+# Recall facts from the last 7 days, filtered by tag
+curl -X POST http://localhost:8080/api/memory/recall \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "query": "authentication",
+    "layers": ["blocks"],
+    "tags": ["security"],
+    "after": "7d",
+    "tier": "long"
+  }'
+
+# Project-scoped recall (searches blocks with scope + vector/graph in index)
+curl -X POST http://localhost:8080/api/memory/recall \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "project": "myapp",
+    "query": "rate limiting",
+    "format": "context"
+  }'
+
+# Full multi-layer recall in LLM-ready format
+curl -X POST http://localhost:8080/api/memory/recall \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "query": "how does auth work",
+    "format": "context",
+    "top_k": 10
+  }'
+# Returns XML with <facts>, <relationships>, <relevant_documents>
+```
+
+### Background Tasks
+
+Monitor and manage long-running background operations (indexing, memory consolidation, health checks).
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/tasks` | List background tasks (optional `?status=` filter) |
+| GET | `/api/tasks/{id}` | Get task status by ID |
+| DELETE | `/api/tasks` | Cleanup completed/failed tasks older than 1 hour |
+
 ## Examples
 
 ### Search

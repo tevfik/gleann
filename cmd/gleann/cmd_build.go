@@ -17,6 +17,7 @@ import (
 
 	"github.com/fsnotify/fsnotify"
 	"github.com/tevfik/gleann/internal/embedding"
+	"github.com/tevfik/gleann/internal/multimodal"
 	"github.com/tevfik/gleann/internal/vault"
 	"github.com/tevfik/gleann/modules/chunking"
 	"github.com/tevfik/gleann/pkg/gleann"
@@ -43,6 +44,10 @@ func cmdBuild(args []string) {
 
 	config := getConfig(args)
 	applySavedConfig(&config, args)
+
+	// Multimodal model for indexing media files (images, audio, video).
+	mmModel := getFlag(args, "--multimodal-model")
+	mmProcessor := initMultimodalProcessor(config.OllamaHost, mmModel)
 
 	if err := initLlamaCPP(context.Background(), &config); err != nil {
 		fmt.Fprintf(os.Stderr, "error initializing llamacpp: %v\n", err)
@@ -76,7 +81,7 @@ func cmdBuild(args []string) {
 
 	// Read documents from directory.
 	fmt.Printf("📂 Reading documents from %s...\n", docsDir)
-	items, pluginDocs, err := readDocuments(docsDir, config.ChunkConfig.ChunkSize, config.ChunkConfig.ChunkOverlap, tracker)
+	items, pluginDocs, err := readDocuments(docsDir, config.ChunkConfig.ChunkSize, config.ChunkConfig.ChunkOverlap, tracker, mmProcessor)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error reading documents: %v\n", err)
 		os.Exit(1)
@@ -140,7 +145,8 @@ func cmdRebuild(args []string) {
 }
 
 func buildIndex(name, docsDir string, config gleann.Config, embedder gleann.EmbeddingComputer, tracker *vault.Tracker) []*PluginDoc {
-	items, pluginDocs, err := readDocuments(docsDir, config.ChunkConfig.ChunkSize, config.ChunkConfig.ChunkOverlap, tracker)
+	mmProcessor := initMultimodalProcessor(config.OllamaHost, "")
+	items, pluginDocs, err := readDocuments(docsDir, config.ChunkConfig.ChunkSize, config.ChunkConfig.ChunkOverlap, tracker, mmProcessor)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error reading documents: %v\n", err)
 		return nil
@@ -165,7 +171,7 @@ func buildIndex(name, docsDir string, config gleann.Config, embedder gleann.Embe
 	return pluginDocs
 }
 
-func readDocuments(dir string, chunkSize, chunkOverlap int, tracker *vault.Tracker) ([]gleann.Item, []*PluginDoc, error) {
+func readDocuments(dir string, chunkSize, chunkOverlap int, tracker *vault.Tracker, mmProcessor *multimodal.Processor) ([]gleann.Item, []*PluginDoc, error) {
 	type fileEntry struct {
 		path string
 		info os.FileInfo
@@ -188,6 +194,9 @@ func readDocuments(dir string, chunkSize, chunkOverlap int, tracker *vault.Track
 	if pluginManager != nil {
 		defer pluginManager.Close()
 	}
+
+	// Native extractor: pure-Go fallback for PDF, DOCX, XLSX, PPTX, CSV, HTML.
+	nativeExtractor := gleann.NewNativeExtractor()
 
 	// Load .gleannignore patterns (empty matcher if no file).
 	ignoreMatcher := gleannignore.Load(dir)
@@ -227,16 +236,18 @@ func readDocuments(dir string, chunkSize, chunkOverlap int, tracker *vault.Track
 		}
 		ext := strings.ToLower(filepath.Ext(path))
 
-		// Check if a plugin can extract this document.
+		// Check if a plugin or native extractor can handle this file.
 		hasPlugin := false
 		if pluginManager != nil && pluginManager.FindDocumentExtractor(ext) != nil {
 			hasPlugin = true
 		}
+		hasNative := nativeExtractor.CanHandle(ext)
+		hasMultimodal := mmProcessor != nil && mmProcessor.CanProcess(path)
 
-		if !hasPlugin && binaryExts[ext] {
+		if !hasPlugin && !hasNative && !hasMultimodal && binaryExts[ext] {
 			return nil
 		}
-		if !hasPlugin && info.Size() > 1<<20 { // >1MB (plugins can bypass this if they want to handle big docs)
+		if !hasPlugin && !hasNative && !hasMultimodal && info.Size() > 1<<20 { // >1MB without handler
 			return nil
 		}
 
@@ -327,6 +338,89 @@ func readDocuments(dir string, chunkSize, chunkOverlap int, tracker *vault.Track
 						resCh <- result{items: items}
 						continue
 					}
+				}
+
+				// Try native extractor for binary document formats (PDF, DOCX, etc.).
+				if nativeExtractor.CanHandle(ext) {
+					md, nerr := nativeExtractor.Extract(fe.path)
+					if nerr != nil {
+						fmt.Fprintf(os.Stderr, "Warning: native extraction failed for %s: %v\n", filepath.Base(fe.path), nerr)
+						resCh <- result{}
+						continue
+					}
+					if md = strings.TrimSpace(md); md == "" {
+						resCh <- result{}
+						continue
+					}
+
+					relPath, _ := filepath.Rel(dir, fe.path)
+					mdChunks := mdChunker.ChunkMarkdown(md, relPath)
+
+					var items []gleann.Item
+					if len(mdChunks) == 0 {
+						// Single-chunk fallback for short documents.
+						items = append(items, gleann.Item{
+							Text:     md,
+							Metadata: map[string]any{"source": relPath, "extractor": "native"},
+						})
+					} else {
+						for _, ch := range mdChunks {
+							ch.Metadata["source"] = relPath
+							ch.Metadata["extractor"] = "native"
+							items = append(items, gleann.Item{
+								Text:     ch.Text,
+								Metadata: ch.Metadata,
+							})
+						}
+					}
+
+					// Generate graph-ready PluginResult from extracted markdown
+					// so native-extracted documents also feed the knowledge graph.
+					pResult := gleann.MarkdownToPluginResult(md, relPath)
+					if pResult != nil && (len(pResult.Nodes) > 0 || pResult.Markdown != "") {
+						pluginDocsMu.Lock()
+						pluginDocs = append(pluginDocs, &PluginDoc{
+							Result:     pResult,
+							SourcePath: relPath,
+						})
+						pluginDocsMu.Unlock()
+					}
+
+					resCh <- result{items: items}
+					continue
+				}
+
+				// Try multimodal processing for media files (images, audio, video).
+				if mmProcessor != nil && mmProcessor.CanProcess(fe.path) {
+					mr := mmProcessor.ProcessFile(fe.path)
+					if mr.Error != nil {
+						fmt.Fprintf(os.Stderr, "Warning: multimodal processing failed for %s: %v\n", filepath.Base(fe.path), mr.Error)
+						resCh <- result{}
+						continue
+					}
+					if desc := strings.TrimSpace(mr.Description); desc != "" {
+						relPath, _ := filepath.Rel(dir, fe.path)
+						mediaType := "image"
+						switch mr.MediaType {
+						case multimodal.MediaTypeAudio:
+							mediaType = "audio"
+						case multimodal.MediaTypeVideo:
+							mediaType = "video"
+						}
+						items := []gleann.Item{{
+							Text: desc,
+							Metadata: map[string]any{
+								"source":     relPath,
+								"extractor":  "multimodal",
+								"media_type": mediaType,
+							},
+						}}
+						fmt.Printf("🎨 Multimodal: %s → %d chars\n", filepath.Base(fe.path), len(desc))
+						resCh <- result{items: items}
+					} else {
+						resCh <- result{}
+					}
+					continue
 				}
 
 				if data == nil {
@@ -566,4 +660,32 @@ func cmdWatch(args []string) {
 			}
 		}
 	}
+}
+
+// initMultimodalProcessor creates a multimodal processor if a model is available.
+// Priority: --multimodal-model flag > GLEANN_MULTIMODAL_MODEL env > auto-detect.
+func initMultimodalProcessor(ollamaHost, flagModel string) *multimodal.Processor {
+	model := flagModel
+	if model == "" {
+		model = os.Getenv("GLEANN_MULTIMODAL_MODEL")
+	}
+	if model == "" {
+		model = multimodal.AutoDetectModel(ollamaHost)
+	}
+	if model == "" {
+		return nil
+	}
+	p := multimodal.NewProcessor(ollamaHost, model)
+	caps := multimodal.DetectCapabilities(ollamaHost, model)
+	features := []string{}
+	if caps.Vision {
+		features = append(features, "vision")
+	}
+	if caps.Audio {
+		features = append(features, "audio")
+	}
+	if len(features) > 0 {
+		fmt.Printf("🎨 Multimodal indexing: %s (%s)\n", model, strings.Join(features, "+"))
+	}
+	return p
 }

@@ -18,12 +18,17 @@ import (
 	"github.com/smacker/go-tree-sitter/c"
 	"github.com/smacker/go-tree-sitter/cpp"
 	csharp "github.com/smacker/go-tree-sitter/csharp"
+	"github.com/smacker/go-tree-sitter/elixir"
 	"github.com/smacker/go-tree-sitter/java"
 	"github.com/smacker/go-tree-sitter/javascript"
+	"github.com/smacker/go-tree-sitter/kotlin"
+	"github.com/smacker/go-tree-sitter/lua"
 	"github.com/smacker/go-tree-sitter/php"
 	"github.com/smacker/go-tree-sitter/python"
 	"github.com/smacker/go-tree-sitter/ruby"
 	"github.com/smacker/go-tree-sitter/rust"
+	"github.com/smacker/go-tree-sitter/scala"
+	"github.com/smacker/go-tree-sitter/swift"
 	"github.com/smacker/go-tree-sitter/typescript/typescript"
 )
 
@@ -85,6 +90,16 @@ func treeSitterLanguage(lang Language) *sitter.Language {
 		return ruby.GetLanguage()
 	case LangPHP:
 		return php.GetLanguage()
+	case LangKotlin:
+		return kotlin.GetLanguage()
+	case LangScala:
+		return scala.GetLanguage()
+	case LangSwift:
+		return swift.GetLanguage()
+	case LangLua:
+		return lua.GetLanguage()
+	case LangElixir:
+		return elixir.GetLanguage()
 	default:
 		return nil
 	}
@@ -172,6 +187,35 @@ var nodeTypeRules = map[Language][]nodeRule{
 		{Type: "interface_declaration", ChunkType: "interface"},
 		{Type: "trait_declaration", ChunkType: "trait"},
 	},
+	LangKotlin: {
+		{Type: "function_declaration", ChunkType: "function"},
+		{Type: "class_declaration", ChunkType: "class"},
+		{Type: "object_declaration", ChunkType: "object"},
+		{Type: "interface_declaration", ChunkType: "interface"},
+		{Type: "property_declaration", ChunkType: "property"},
+	},
+	LangScala: {
+		{Type: "function_definition", ChunkType: "function"},
+		{Type: "class_definition", ChunkType: "class"},
+		{Type: "object_definition", ChunkType: "object"},
+		{Type: "trait_definition", ChunkType: "trait"},
+		{Type: "val_definition", ChunkType: "val"},
+	},
+	LangSwift: {
+		{Type: "function_declaration", ChunkType: "function"},
+		{Type: "class_declaration", ChunkType: "class"},
+		{Type: "struct_declaration", ChunkType: "struct"},
+		{Type: "protocol_declaration", ChunkType: "protocol"},
+		{Type: "enum_declaration", ChunkType: "enum"},
+	},
+	LangLua: {
+		{Type: "function_declaration", ChunkType: "function"},
+		{Type: "local_function_declaration", ChunkType: "function"},
+		{Type: "function_definition", ChunkType: "function"},
+	},
+	LangElixir: {
+		{Type: "call", ChunkType: "function"},
+	},
 }
 
 // nodeRule maps a tree-sitter node type to a chunk type.
@@ -230,6 +274,20 @@ var nameFieldByNodeType = map[string]string{
 	// PHP functions/methods share the same types as C++ but are handled
 	// gracefully by the same extractor pattern. trait_declaration etc.
 	"trait_declaration": "name",
+
+	// Kotlin
+	"object_declaration": "name",
+
+	// Scala — class_definition already mapped above (Python), same field "name"
+	"object_definition": "name",
+	"trait_definition":  "name",
+	"val_definition":    "pattern",
+
+	// Swift
+	"protocol_declaration": "name",
+
+	// Lua — function_declaration uses "name", local_function_declaration uses "name"
+	"local_function_declaration": "name",
 }
 
 // treeSitterChunk parses source code using tree-sitter and returns semantic chunks.
