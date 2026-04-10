@@ -19,6 +19,7 @@ type wizardPhase int
 
 const (
 	phaseMenu           wizardPhase = -1   // settings menu (existing config)
+	phaseQuickOrAdv     wizardPhase = 0    // "Quick Setup" vs "Advanced Setup"
 	phaseEmbProvider    wizardPhase = iota // select: ollama / openai
 	phaseEmbHost                           // text input: host URL
 	phaseEmbAPIKey                         // text input: API key (openai only)
@@ -119,6 +120,10 @@ type OnboardModel struct {
 	menuCursor  int
 	returnPhase wizardPhase // phase to return to after editing (-1 = menu)
 	existingCfg *OnboardResult
+
+	// Quick vs Advanced choice.
+	quickAdvOptions   []string
+	quickAdvOptionIdx int
 
 	// Provider selects.
 	embProviders   []string
@@ -251,24 +256,26 @@ func NewOnboardModel() OnboardModel {
 	serverAddr.Width = 24
 
 	return OnboardModel{
-		phase:            phaseEmbProvider,
-		embProviders:     []string{"ollama", "openai", "llamacpp"},
-		llmProviders:     []string{"ollama", "openai", "anthropic", "llamacpp"},
-		embHostInput:     embHost,
-		embKeyInput:      embKey,
-		llmHostInput:     llmHost,
-		llmKeyInput:      llmKey,
-		indexDirInput:    indexDir,
-		rerankOptions:    []string{"Skip (no reranking)", "Enable reranker"},
-		rerankOptionIdx:  0,
-		mcpOptions:       []string{"Disable MCP server", "Enable MCP server"},
-		mcpOptionIdx:     0,
-		serverOptions:    []string{"Disable REST API server", "Enable REST API server"},
-		serverOptionIdx:  0,
-		serverAddrInput:  serverAddr,
-		installOptions:   buildInstallOptions(),
-		installOptionIdx: 0,
-		spinner:          sp,
+		phase:             phaseQuickOrAdv,
+		quickAdvOptions:   []string{"⚡ Quick Setup (auto-detect, 30 seconds)", "🔧 Advanced Setup (full control, all options)"},
+		quickAdvOptionIdx: 0,
+		embProviders:      []string{"ollama", "openai", "llamacpp"},
+		llmProviders:      []string{"ollama", "openai", "anthropic", "llamacpp"},
+		embHostInput:      embHost,
+		embKeyInput:       embKey,
+		llmHostInput:      llmHost,
+		llmKeyInput:       llmKey,
+		indexDirInput:     indexDir,
+		rerankOptions:     []string{"Skip (no reranking)", "Enable reranker"},
+		rerankOptionIdx:   0,
+		mcpOptions:        []string{"Disable MCP server", "Enable MCP server"},
+		mcpOptionIdx:      0,
+		serverOptions:     []string{"Disable REST API server", "Enable REST API server"},
+		serverOptionIdx:   0,
+		serverAddrInput:   serverAddr,
+		installOptions:    buildInstallOptions(),
+		installOptionIdx:  0,
+		spinner:           sp,
 	}
 }
 
@@ -528,6 +535,38 @@ func (m OnboardModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.phase = target
 			m.focusActiveInput()
 			return m, nil
+		}
+		return m, nil
+
+	// ── Quick vs Advanced Setup ──
+	case phaseQuickOrAdv:
+		switch key {
+		case "up", "k":
+			if m.quickAdvOptionIdx > 0 {
+				m.quickAdvOptionIdx--
+			}
+		case "down", "j":
+			if m.quickAdvOptionIdx < len(m.quickAdvOptions)-1 {
+				m.quickAdvOptionIdx++
+			}
+		case "enter":
+			if m.quickAdvOptionIdx == 0 {
+				// Quick Setup: auto-detect Ollama, pick best models, save, done.
+				m.buildResult() // defaults
+				host := m.embHostInput.Value()
+				if ollamaReachable(host) {
+					models, err := fetchModels("ollama", host, "")
+					if err == nil && len(models) > 0 {
+						pickBestModels(&m.result, models)
+					}
+				}
+				m.result.Completed = true
+				m.done = true
+				return m, tea.Quit
+			}
+			// Advanced Setup: proceed to full wizard.
+			m.phase = phaseEmbProvider
+			m.focusActiveInput()
 		}
 		return m, nil
 
@@ -889,6 +928,7 @@ func (m *OnboardModel) focusActiveInput() {
 
 func (m OnboardModel) prevPhase() int {
 	prev := map[wizardPhase]wizardPhase{
+		phaseEmbProvider:    phaseQuickOrAdv,
 		phaseEmbHost:        phaseEmbProvider,
 		phaseEmbAPIKey:      phaseEmbProvider,
 		phaseEmbModel:       phaseEmbHost,
@@ -1064,8 +1104,8 @@ func (m OnboardModel) View() string {
 	}
 	b.WriteString("\n")
 
-	// Progress bar (only in wizard mode).
-	if !m.menuMode {
+	// Progress bar (only in wizard mode, not on quick/advanced choice screen).
+	if !m.menuMode && m.phase != phaseQuickOrAdv {
 		step := m.visibleStep()
 		progress := float64(step) / float64(totalVisibleSteps)
 		if m.phase == phaseSummary || m.phase == phaseInstall {
@@ -1088,6 +1128,15 @@ func (m OnboardModel) View() string {
 		b.WriteString(m.renderSettingsMenu())
 		b.WriteString("\n")
 		return b.String()
+
+	case phaseQuickOrAdv:
+		b.WriteString(m.renderSelect("", "Setup Mode",
+			"Choose how you'd like to configure gleann.\nQuick Setup auto-detects Ollama and picks optimal models — done in seconds.\nAdvanced Setup lets you configure every option manually.",
+			m.quickAdvOptions, m.quickAdvOptionIdx,
+			[]string{
+				"Auto-detect Ollama, pick best models, save & go (recommended)",
+				"Full wizard: embedding, LLM, reranker, MCP, plugins",
+			}))
 
 	case phaseEmbProvider:
 		b.WriteString(m.renderSelect("1", "Embedding Provider",
