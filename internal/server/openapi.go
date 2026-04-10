@@ -1615,6 +1615,7 @@ func (s *Server) openAPISpec() map[string]any {
 							},
 						},
 						"scope": map[string]any{"type": "string", "description": "Isolate facts to a conversation/agent scope (default: global)"},
+						"project": map[string]any{"type": "string", "description": "Project shorthand: sets scope to 'project:{name}' and defaults relationship index to this name"},
 					},
 				},
 				"UnifiedIngestResponse": map[string]any{
@@ -1642,6 +1643,7 @@ func (s *Server) openAPISpec() map[string]any {
 						"after":     map[string]any{"type": "string", "description": "Filter blocks created after (RFC3339 or Go duration like \"24h\")"},
 						"before":    map[string]any{"type": "string", "description": "Filter blocks created before (RFC3339 or Go duration like \"7d\")"},
 						"relations": map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Filter graph edges by relation types"},
+						"project":   map[string]any{"type": "string", "description": "Project shorthand: sets scope to 'project:{name}' and index to matching name"},
 					},
 				},
 				"UnifiedRecallResponse": map[string]any{

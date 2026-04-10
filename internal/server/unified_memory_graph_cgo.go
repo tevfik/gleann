@@ -29,13 +29,19 @@ func (s *Server) injectGraphRelationship(r *http.Request, indexName string, rel 
 		weight = 1.0
 	}
 
+	// Merge user-provided attributes with auto-generated metadata.
+	attrs := rel.Attributes
+	if attrs == nil {
+		attrs = make(map[string]any)
+	}
+
 	payload := gleann.GraphInjectionPayload{
 		Nodes: []gleann.MemoryGraphNode{
 			{ID: rel.From, Type: "entity", Content: rel.From},
 			{ID: rel.To, Type: "entity", Content: rel.To},
 		},
 		Edges: []gleann.MemoryGraphEdge{
-			{From: rel.From, To: rel.To, RelationType: rel.Relation, Weight: weight},
+			{From: rel.From, To: rel.To, RelationType: rel.Relation, Weight: weight, Attributes: attrs},
 		},
 	}
 
