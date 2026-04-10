@@ -11,6 +11,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/tevfik/gleann/internal/autosetup"
 	"github.com/tevfik/gleann/internal/mcp"
 	"github.com/tevfik/gleann/internal/server"
 	"github.com/tevfik/gleann/internal/tui"
@@ -18,6 +19,13 @@ import (
 )
 
 func cmdServe(args []string) {
+	// Auto-bootstrap: if no config exists, detect Ollama and create one.
+	ollamaHost := getFlag(args, "--host")
+	quiet := hasFlag(args, "--quiet")
+	if _, err := autosetup.EnsureConfig(ollamaHost, quiet); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: auto-setup failed: %v\n", err)
+	}
+
 	config := getConfig(args)
 	applySavedConfig(&config, args)
 
@@ -100,6 +108,11 @@ func cmdServe(args []string) {
 	fmt.Println("   GET  /metrics                   Prometheus metrics")
 	fmt.Println("   GET  /api/docs                  Swagger UI")
 	fmt.Println("   GET  /api/openapi.json          OpenAPI 3.0 spec")
+	fmt.Println()
+	fmt.Println("   A2A Protocol (Agent-to-Agent):")
+	fmt.Println("   GET  /.well-known/agent-card.json  Agent discovery card")
+	fmt.Println("   POST /a2a/v1/message:send          Send message to agent")
+	fmt.Println("   GET  /a2a/v1/tasks/{id}            Get task status")
 	fmt.Println()
 
 	if err := srv.Start(); err != nil {

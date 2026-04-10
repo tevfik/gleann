@@ -48,6 +48,11 @@ The result is a highly portable system that boots in milliseconds, respects your
 - **Rate Limiting & Timeouts**: Per-IP token-bucket rate limiting (429) and per-endpoint context deadlines (504) protect the server in production.
 - **Retry Logic**: Automatic exponential-backoff retry for transient LLM/embedding failures (503, 502, 429, connection refused).
 - **Background Maintenance**: Scheduler auto-promotes memory blocks between tiers and prunes expired entries.
+- **A2A Protocol (Agent-to-Agent)**: Google's A2A protocol for agent discovery — other AI agents find and communicate with gleann via `/.well-known/agent-card.json`.
+- **Unified Memory API**: Single `POST /api/memory/ingest` + `POST /api/memory/recall` interface that orchestrates block memory, knowledge graph, and vector search in parallel.
+- **Multimodal Detection**: Automatically detects and uses multimodal Ollama models (Gemma4, Qwen3-VL, LLaVA) for processing images, audio, and video.
+- **Background Task Manager**: Monitor long-running operations (indexing, memory consolidation) with progress tracking via `GET /api/tasks`.
+- **Zero-Config Auto-Bootstrap**: `gleann serve` detects Ollama, picks the best models, and creates a config file automatically — zero setup required.
 - **Sleek and Fast Terminal Interface (TUI)**: A keyboard-centric, fluid interface that brings your documents and code to life directly in your shell.
 
 ## Documentation
@@ -69,6 +74,8 @@ Detailed guides:
 - [Benchmarks](docs/benchmarks.md) — Performance measurements
 - [Troubleshooting](docs/troubleshooting.md) — Common issues and solutions
 - [Memory Engine](docs/memory_engine.md) — Generic Knowledge Graph for AI agents
+- [A2A Protocol](docs/a2a.md) — Agent-to-Agent discovery and communication
+- [Multimodal Processing](docs/multimodal.md) — Image, audio, and video processing
 - [Hierarchical GraphRAG](docs/hierarchical_graphrag.md) — Document-level structural intelligence
 
 ## Installation

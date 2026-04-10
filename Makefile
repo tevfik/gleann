@@ -49,7 +49,7 @@ build-cgo: $(BUILD_DIR)/gleann-cgo
 
 $(BUILD_DIR)/gleann-cgo:
 	@mkdir -p $(BUILD_DIR)
-	CGO_ENABLED=1 go build -tags "treesitter" -ldflags "$(LDFLAGS)" -o $(BINARY) $(CMD)
+	CGO_ENABLED=1 CGO_CFLAGS="-w" go build -tags "treesitter" -ldflags "$(LDFLAGS)" -o $(BINARY) $(CMD)
 	@echo "✅ Built $(BINARY) (with CGo and tree-sitter)"
 
 # ── FAISS + Tree-sitter build ──────────────────────────────────────────────
@@ -60,6 +60,7 @@ $(BINARY_FULL):
 	@echo "🔧 Building $(BINARY_FULL) with FAISS + tree-sitter..."
 	@mkdir -p $(BUILD_DIR)
 	CGO_ENABLED=1 \
+	CGO_CFLAGS="-w" \
 	CGO_LDFLAGS="$(RPATH_FLAGS) -L$(FAISS_LIB_DIR) -lfaiss_c -lfaiss" \
 	go build -tags "faiss treesitter" -ldflags "$(LDFLAGS)" -o $(BINARY_FULL) $(CMD)
 	@echo "✅ Built $(BINARY_FULL)"

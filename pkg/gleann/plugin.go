@@ -97,6 +97,15 @@ func (m *PluginManager) Close() {
 	m.logFiles = make(map[string]*os.File)
 }
 
+// deprecatedMediaExts are extensions now handled by model-native multimodal processing.
+// Plugins targeting these are deprecated in favor of --multimodal-model.
+var deprecatedMediaExts = map[string]bool{
+	".png": true, ".jpg": true, ".jpeg": true, ".gif": true, ".webp": true,
+	".bmp": true, ".tiff": true, ".svg": true,
+	".mp3": true, ".wav": true, ".flac": true, ".ogg": true,
+	".m4a": true, ".aac": true, ".wma": true, ".opus": true,
+}
+
 // FindDocumentExtractor returns the first plugin capable of extracting the given extension.
 func (m *PluginManager) FindDocumentExtractor(ext string) *Plugin {
 	if m.Registry == nil {
@@ -116,6 +125,9 @@ func (m *PluginManager) FindDocumentExtractor(ext string) *Plugin {
 		}
 		for _, supportedExt := range p.Extensions {
 			if strings.ToLower(supportedExt) == ext {
+				if deprecatedMediaExts[ext] {
+					fmt.Fprintf(os.Stderr, "⚠ Plugin %q handles %s but media extensions are now supported natively via --multimodal-model.\n  Consider removing this plugin and using: gleann index build <name> --docs <dir> --multimodal-model gemma4:e4b\n", p.Name, ext)
+				}
 				return &p
 			}
 		}

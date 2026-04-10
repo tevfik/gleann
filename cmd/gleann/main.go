@@ -43,6 +43,10 @@ func main() {
 		cmdSetup()
 	case "doctor":
 		cmdDoctor()
+	case "tasks":
+		cmdTasks(args)
+	case "benchmark":
+		cmdBenchmark(args)
 	case "config":
 		cmdConfig(args)
 	case "completion":
@@ -96,6 +100,9 @@ gleann has three intelligence pillars that work together:
 
   gleann graph deps    <fqn> --index <name>    What does this symbol call?
   gleann graph callers <fqn> --index <name>    Who calls this symbol?
+  gleann graph viz         --index <name>      Interactive HTML visualization
+  gleann graph report      --index <name>      Markdown report (communities, god nodes)
+  gleann graph communities --index <name>      Community detection results
 
   Requires: gleann index build <name> --docs <dir> --graph
 
@@ -139,9 +146,11 @@ gleann has three intelligence pillars that work together:
 ── Infrastructure ────────────────────────────────────────────────────
 
   gleann serve  [--addr :8080]          REST API server (rate limiting, timeouts)
+  gleann tasks                          View background tasks (requires serve)
+  gleann benchmark --index <n> --docs <d>  Token reduction analysis
   gleann mcp                            MCP server (stdio, for AI editors)
   gleann tui                            Interactive TUI launcher
-  gleann setup  [--bootstrap]           Configuration wizard
+  gleann setup  [--bootstrap]           Configuration wizard (quick or advanced)
   gleann doctor                         Health check (config, Ollama, models)
   gleann config <show|path|edit|validate>  Manage configuration
   gleann completion <bash|zsh|fish>     Shell completion script
@@ -173,6 +182,10 @@ gleann has three intelligence pillars that work together:
     --format <fmt>          Output format: json | markdown | raw
     --no-limit              Remove output token limit
 
+  Multimodal:
+    --attach <file>         Attach image/audio for analysis (repeatable)
+    --multimodal-model <m>  Model for media indexing (default: auto-detect)
+
   Ask/Chat:
     --continue <id>         Continue a previous conversation
     --continue-last         Continue most recent conversation
@@ -183,6 +196,7 @@ gleann has three intelligence pillars that work together:
 
   # Index and search documents
   gleann index build my-docs --docs ./documents/
+  gleann index build my-docs --docs ./media/ --multimodal-model gemma4:e4b
   gleann search my-docs "How does authentication work?" --rerank
   gleann ask my-docs "Explain the architecture"
 
@@ -190,6 +204,14 @@ gleann has three intelligence pillars that work together:
   gleann index build my-code --docs ./src/ --graph
   gleann graph deps "github.com/org/pkg.Handler" --index my-code
   gleann graph callers "github.com/org/pkg.Handler" --index my-code
+
+  # Graph analysis & visualization
+  gleann graph viz --index my-code                     # interactive HTML
+  gleann graph report --index my-code                  # GRAPH_REPORT.md
+  gleann graph communities --index my-code             # community detection
+
+  # Token reduction benchmark
+  gleann benchmark --index my-code --docs ./src/
 
   # Long-term memory
   gleann memory remember "Project uses hexagonal architecture"
@@ -205,6 +227,14 @@ gleann has three intelligence pillars that work together:
 
   # Multi-index search
   gleann search code,docs "rate limiter" --rerank
+
+  # Multimodal (image/audio analysis during RAG)
+  gleann ask my-docs "What's in this diagram?" --attach diagram.png
+  gleann ask my-docs "Summarize this recording" --attach meeting.wav
+
+  # Background tasks
+  gleann tasks                          # list running tasks
+  gleann tasks --status running         # filter by status
 
   # REST API / MCP
   gleann serve --addr :8080

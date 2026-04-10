@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/tevfik/gleann/internal/background"
 	"github.com/tevfik/gleann/internal/embedding"
 	"github.com/tevfik/gleann/pkg/conversations"
 	"github.com/tevfik/gleann/pkg/gleann"
@@ -32,9 +33,10 @@ type Server struct {
 	version    string
 	server     *http.Server
 	graphPool  *graphDBPool
-	memoryPool *memoryPool     // Memory Engine: generic Entity/RELATES_TO graph
-	blockMem   *memory.Manager // BBolt hierarchical memory blocks (pkg/memory)
-	stopCh     chan struct{}   // closed on Stop() to signal background goroutines
+	memoryPool *memoryPool         // Memory Engine: generic Entity/RELATES_TO graph
+	blockMem   *memory.Manager     // BBolt hierarchical memory blocks (pkg/memory)
+	bgManager  *background.Manager // Background task manager
+	stopCh     chan struct{}       // closed on Stop() to signal background goroutines
 }
 
 // NewServer creates a new REST API server.
@@ -59,6 +61,7 @@ func NewServer(config gleann.Config, addr, version string) *Server {
 		version:    version,
 		graphPool:  newGraphDBPool(config.IndexDir),
 		memoryPool: newMemoryPool(config.IndexDir),
+		bgManager:  background.NewManager(2),
 	}
 }
 
@@ -121,6 +124,15 @@ func (s *Server) Start() error {
 	mux.HandleFunc("GET /api/openapi.json", s.handleOpenAPISpec)
 	mux.HandleFunc("GET /api/docs", s.handleSwaggerUI)
 
+	// A2A Protocol endpoints (Agent-to-Agent discovery and communication).
+	s.mountA2A(mux)
+
+	// Background task management endpoints.
+	s.mountBackgroundTasks(mux)
+
+	// Unified memory API (orchestrates blocks + graph + vector).
+	s.mountUnifiedMemory(mux)
+
 	s.server = &http.Server{
 		Addr:         s.addr,
 		Handler:      withMiddleware(mux),
@@ -145,6 +157,9 @@ func (s *Server) Stop(ctx context.Context) error {
 	// Signal background goroutines to stop.
 	if s.stopCh != nil {
 		close(s.stopCh)
+	}
+	if s.bgManager != nil {
+		s.bgManager.Stop()
 	}
 	if s.graphPool != nil {
 		s.graphPool.closeAll()

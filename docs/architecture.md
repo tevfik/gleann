@@ -4,7 +4,7 @@ git s# Architecture & Design
 
 ```
 ┌──────────────────────────────────────────────────────────────────────┐
-│          TUI / CLI / REST API / MCP Server                           │
+│          TUI / CLI / REST API / MCP Server / A2A Protocol            │
 ├──────────────────────────────────────────────────────────────────────┤
 │  Middleware Layer                                                     │
 │  ├── Rate Limiter  (per-IP token bucket, 429)                        │
@@ -21,6 +21,17 @@ git s# Architecture & Design
 ├───────────────────┴──────────────────────────────────────────────────┤
 │  Retry Layer  (pkg/retry — exponential backoff for transient errors) │
 ├──────────────────────────────────────────────────────────────────────┤
+│  A2A Protocol Layer  (internal/a2a — Agent-to-Agent communication)   │
+│  ├── Agent Card   (/.well-known/agent-card.json)                     │
+│  ├── Skills       (semantic-search, ask-rag, code-analysis, memory)  │
+│  ├── Skill Router (keyword match → scoring-based fallback)           │
+│  └── Task Store   (in-memory, bounded at 1000)                       │
+├──────────────────────────────────────────────────────────────────────┤
+│  Unified Memory API  (internal/server/unified_memory_handler.go)     │
+│  ├── Ingest       (facts → blocks, relationships → graph)            │
+│  ├── Recall       (parallel: blocks + graph + vector search)         │
+│  └── Project field (syntactic sugar for scope + index)               │
+├──────────────────────────────────────────────────────────────────────┤
 │              Backend Registry                                        │
 ├──────────────────┬───────────────────────────────────────────────────┤
 │  Pure Go         │  FAISS (optional, CGo)                            │
@@ -35,13 +46,32 @@ git s# Architecture & Design
 │  KuzuDB Graph Layer                                                  │
 │  ├── Code Graph  (CodeFile, Symbol, CALLS, IMPLEMENTS …)             │
 │  ├── Document Graph  (Folder, Document, Heading, Chunk …)            │
-│  └── Memory Engine  (Entity, RELATES_TO — external agent memory)     │
+│  ├── Memory Engine  (Entity, RELATES_TO — external agent memory)     │
+│  ├── Community Detection  (Louvain — god nodes, clusters, cohesion)  │
+│  └── Visualization  (vis.js HTML, Markdown report, GraphML export)   │
 ├──────────────────────────────────────────────────────────────────────┤
 │  Long-term Memory Layer  (pkg/memory)                                │
 │  ├── Short-term  in-process  session notes → promoted on exit        │
 │  ├── Medium-term BBolt      conversation summaries, daily digests    │
 │  ├── Long-term   BBolt      permanent facts, preferences, knowledge  │
 │  └── Maintenance Scheduler  (background goroutine, 24h cycle)        │
+├──────────────────────────────────────────────────────────────────────┤
+│  Background Task Manager  (internal/background)                      │
+│  ├── Worker Pool   (bounded, default 2 workers)                      │
+│  ├── Task Lifecycle (queued → running → completed/failed)            │
+│  ├── Progress Tracking  (real-time 0.0–1.0 + messages)               │
+│  ├── Auto-Index    (fsnotify file watcher → debounced re-index)      │
+│  └── CLI: gleann tasks  · REST: GET /api/tasks                       │
+├──────────────────────────────────────────────────────────────────────┤
+│  Auto-Bootstrap  (internal/autosetup)                                │
+│  └── Detects Ollama, picks best models, creates config automatically │
+├──────────────────────────────────────────────────────────────────────┤
+│  Multimodal Layer  (internal/multimodal)                             │
+│  ├── Media Detection  (image/audio/video classification)             │
+│  ├── Model Capability Detection  (Ollama + heuristics)               │
+│  ├── Processor  (base64 → Ollama /api/chat → text description)      │
+│  ├── Index-time: --multimodal-model → media → text → embed           │
+│  └── Chat-time: --attach → base64 → LLM with RAG context            │
 └──────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -196,6 +226,9 @@ External Agent (e.g. Yaver, Claude)
 | Batch Query (MCP) | — | ✅ (`gleann_batch_ask` — 10 concurrent questions) |
 | Background Maintenance | — | ✅ (auto-promote blocks, prune expired) |
 | Sleep-Time Compute | — | ✅ (Letta-inspired background reflection on conversations) |
+| A2A Skill Router | — | ✅ (keyword + scoring-based fallback routing) |
+| Temporal Graph Edges | — | ✅ (auto `created_at`/`updated_at` on edges) |
+| Project-scoped Memory | — | ✅ (`project` field → scope + index shorthand) |
 | Memory Block Limits | — | ✅ (per-block char limit with auto-truncation) |
 | Scoped Memory Blocks | — | ✅ (conversation/session isolation) |
 | OpenAI-Compatible Proxy | — | ✅ (`/v1/chat/completions`) |
