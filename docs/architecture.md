@@ -57,7 +57,9 @@ git s# Architecture & Design
 │  Background Task Manager  (internal/background)                      │
 │  ├── Worker Pool   (bounded, default 2 workers)                      │
 │  ├── Task Lifecycle (queued → running → completed/failed)            │
-│  └── Progress Tracking  (real-time 0.0–1.0 + messages)               │
+│  ├── Progress Tracking  (real-time 0.0–1.0 + messages)               │
+│  ├── Auto-Index    (fsnotify file watcher → debounced re-index)      │
+│  └── CLI: gleann tasks  · REST: GET /api/tasks                       │
 ├──────────────────────────────────────────────────────────────────────┤
 │  Auto-Bootstrap  (internal/autosetup)                                │
 │  └── Detects Ollama, picks best models, creates config automatically │
@@ -65,7 +67,9 @@ git s# Architecture & Design
 │  Multimodal Layer  (internal/multimodal)                             │
 │  ├── Media Detection  (image/audio/video classification)             │
 │  ├── Model Capability Detection  (Ollama + heuristics)               │
-│  └── Processor  (base64 → Ollama /api/chat → text description)      │
+│  ├── Processor  (base64 → Ollama /api/chat → text description)      │
+│  ├── Index-time: --multimodal-model → media → text → embed           │
+│  └── Chat-time: --attach → base64 → LLM with RAG context            │
 └──────────────────────────────────────────────────────────────────────┘
 ```
 

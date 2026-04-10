@@ -17,6 +17,7 @@ import (
 
 	"github.com/fsnotify/fsnotify"
 	"github.com/tevfik/gleann/internal/embedding"
+	"github.com/tevfik/gleann/internal/multimodal"
 	"github.com/tevfik/gleann/internal/vault"
 	"github.com/tevfik/gleann/modules/chunking"
 	"github.com/tevfik/gleann/pkg/gleann"
@@ -43,6 +44,10 @@ func cmdBuild(args []string) {
 
 	config := getConfig(args)
 	applySavedConfig(&config, args)
+
+	// Multimodal model for indexing media files (images, audio, video).
+	mmModel := getFlag(args, "--multimodal-model")
+	mmProcessor := initMultimodalProcessor(config.OllamaHost, mmModel)
 
 	if err := initLlamaCPP(context.Background(), &config); err != nil {
 		fmt.Fprintf(os.Stderr, "error initializing llamacpp: %v\n", err)
@@ -76,7 +81,7 @@ func cmdBuild(args []string) {
 
 	// Read documents from directory.
 	fmt.Printf("📂 Reading documents from %s...\n", docsDir)
-	items, pluginDocs, err := readDocuments(docsDir, config.ChunkConfig.ChunkSize, config.ChunkConfig.ChunkOverlap, tracker)
+	items, pluginDocs, err := readDocuments(docsDir, config.ChunkConfig.ChunkSize, config.ChunkConfig.ChunkOverlap, tracker, mmProcessor)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error reading documents: %v\n", err)
 		os.Exit(1)
@@ -140,7 +145,8 @@ func cmdRebuild(args []string) {
 }
 
 func buildIndex(name, docsDir string, config gleann.Config, embedder gleann.EmbeddingComputer, tracker *vault.Tracker) []*PluginDoc {
-	items, pluginDocs, err := readDocuments(docsDir, config.ChunkConfig.ChunkSize, config.ChunkConfig.ChunkOverlap, tracker)
+	mmProcessor := initMultimodalProcessor(config.OllamaHost, "")
+	items, pluginDocs, err := readDocuments(docsDir, config.ChunkConfig.ChunkSize, config.ChunkConfig.ChunkOverlap, tracker, mmProcessor)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error reading documents: %v\n", err)
 		return nil
@@ -165,7 +171,7 @@ func buildIndex(name, docsDir string, config gleann.Config, embedder gleann.Embe
 	return pluginDocs
 }
 
-func readDocuments(dir string, chunkSize, chunkOverlap int, tracker *vault.Tracker) ([]gleann.Item, []*PluginDoc, error) {
+func readDocuments(dir string, chunkSize, chunkOverlap int, tracker *vault.Tracker, mmProcessor *multimodal.Processor) ([]gleann.Item, []*PluginDoc, error) {
 	type fileEntry struct {
 		path string
 		info os.FileInfo
@@ -236,11 +242,12 @@ func readDocuments(dir string, chunkSize, chunkOverlap int, tracker *vault.Track
 			hasPlugin = true
 		}
 		hasNative := nativeExtractor.CanHandle(ext)
+		hasMultimodal := mmProcessor != nil && mmProcessor.CanProcess(path)
 
-		if !hasPlugin && !hasNative && binaryExts[ext] {
+		if !hasPlugin && !hasNative && !hasMultimodal && binaryExts[ext] {
 			return nil
 		}
-		if !hasPlugin && !hasNative && info.Size() > 1<<20 { // >1MB without handler
+		if !hasPlugin && !hasNative && !hasMultimodal && info.Size() > 1<<20 { // >1MB without handler
 			return nil
 		}
 
@@ -380,6 +387,39 @@ func readDocuments(dir string, chunkSize, chunkOverlap int, tracker *vault.Track
 					}
 
 					resCh <- result{items: items}
+					continue
+				}
+
+				// Try multimodal processing for media files (images, audio, video).
+				if mmProcessor != nil && mmProcessor.CanProcess(fe.path) {
+					mr := mmProcessor.ProcessFile(fe.path)
+					if mr.Error != nil {
+						fmt.Fprintf(os.Stderr, "Warning: multimodal processing failed for %s: %v\n", filepath.Base(fe.path), mr.Error)
+						resCh <- result{}
+						continue
+					}
+					if desc := strings.TrimSpace(mr.Description); desc != "" {
+						relPath, _ := filepath.Rel(dir, fe.path)
+						mediaType := "image"
+						switch mr.MediaType {
+						case multimodal.MediaTypeAudio:
+							mediaType = "audio"
+						case multimodal.MediaTypeVideo:
+							mediaType = "video"
+						}
+						items := []gleann.Item{{
+							Text: desc,
+							Metadata: map[string]any{
+								"source":     relPath,
+								"extractor":  "multimodal",
+								"media_type": mediaType,
+							},
+						}}
+						fmt.Printf("🎨 Multimodal: %s → %d chars\n", filepath.Base(fe.path), len(desc))
+						resCh <- result{items: items}
+					} else {
+						resCh <- result{}
+					}
 					continue
 				}
 
@@ -620,4 +660,32 @@ func cmdWatch(args []string) {
 			}
 		}
 	}
+}
+
+// initMultimodalProcessor creates a multimodal processor if a model is available.
+// Priority: --multimodal-model flag > GLEANN_MULTIMODAL_MODEL env > auto-detect.
+func initMultimodalProcessor(ollamaHost, flagModel string) *multimodal.Processor {
+	model := flagModel
+	if model == "" {
+		model = os.Getenv("GLEANN_MULTIMODAL_MODEL")
+	}
+	if model == "" {
+		model = multimodal.AutoDetectModel(ollamaHost)
+	}
+	if model == "" {
+		return nil
+	}
+	p := multimodal.NewProcessor(ollamaHost, model)
+	caps := multimodal.DetectCapabilities(ollamaHost, model)
+	features := []string{}
+	if caps.Vision {
+		features = append(features, "vision")
+	}
+	if caps.Audio {
+		features = append(features, "audio")
+	}
+	if len(features) > 0 {
+		fmt.Printf("🎨 Multimodal indexing: %s (%s)\n", model, strings.Join(features, "+"))
+	}
+	return p
 }

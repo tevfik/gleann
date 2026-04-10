@@ -58,7 +58,7 @@ func DefaultChatConfig() ChatConfig {
 
 // ChatMessage represents a single message in a conversation.
 type ChatMessage struct {
-	Role    string   `json:"role"`    // "system", "user", "assistant"
+	Role    string   `json:"role"` // "system", "user", "assistant"
 	Content string   `json:"content"`
 	Images  []string `json:"images,omitempty"` // base64-encoded media (images/audio) — native Ollama format
 }
