@@ -308,6 +308,113 @@ func TestRouteSkill_Keywords(t *testing.T) {
 	}
 }
 
+func TestRouteSkill_ExpandedKeywords(t *testing.T) {
+	s := testServer()
+
+	tests := []struct {
+		query    string
+		expected string
+	}{
+		// Code analysis — expanded keywords
+		{"who calls handlePayment?", "code-analysis"},
+		{"what does this depends on?", "code-analysis"},
+		{"show me the call graph", "code-analysis"},
+		{"find references to UserService", "code-analysis"},
+		// Memory management — expanded keywords
+		{"store this note for later", "memory-management"},
+		{"save this decision", "memory-management"},
+		{"note: we use JWT", "memory-management"},
+		{"forget that old approach", "memory-management"},
+		// Semantic search — expanded keywords
+		{"grep for authentication", "semantic-search"},
+		{"locate the config file", "semantic-search"},
+		{"where is the main entry point?", "semantic-search"},
+		// Ask-RAG — Turkish keywords
+		{"özetle bu kodu", "ask-rag"},
+		{"nasıl çalışıyor?", "ask-rag"},
+	}
+
+	for _, tt := range tests {
+		got := s.routeSkill(tt.query, nil)
+		if got != tt.expected {
+			t.Errorf("routeSkill(%q) = %s, want %s", tt.query, got, tt.expected)
+		}
+	}
+}
+
+func TestRouteSkill_ExplicitMetadata(t *testing.T) {
+	s := testServer()
+
+	// Explicit skill via metadata overrides keyword routing.
+	tests := []struct {
+		query    string
+		skill    string
+		expected string
+	}{
+		{"random query", "code-analysis", "code-analysis"},
+		{"remember this", "semantic-search", "semantic-search"}, // override the memory keyword
+		{"search for x", "ask-rag", "ask-rag"},                  // override the search keyword
+	}
+
+	for _, tt := range tests {
+		meta := map[string]interface{}{"skill": tt.skill}
+		got := s.routeSkill(tt.query, meta)
+		if got != tt.expected {
+			t.Errorf("routeSkill(%q, skill=%s) = %s, want %s", tt.query, tt.skill, got, tt.expected)
+		}
+	}
+}
+
+func TestRouteSkill_ScoringFallback(t *testing.T) {
+	s := testServer()
+
+	// Queries that don't hit any exact keyword but should route via scoring.
+	// "callers" and "impact" are multi-word concepts — partial scoring should
+	// still prefer code-analysis over ask-rag for code-flavoured queries.
+	tests := []struct {
+		query    string
+		expected string
+	}{
+		// No exact keyword, but words contain code-analysis prefix chars
+		{"sym structure", "code-analysis"},
+		// No exact keyword — ask-rag has the most general coverage
+		{"please synthesize", "ask-rag"},
+	}
+
+	for _, tt := range tests {
+		got := s.routeSkill(tt.query, nil)
+		if got != tt.expected {
+			t.Errorf("routeSkill(%q) scoring fallback = %s, want %s", tt.query, got, tt.expected)
+		}
+	}
+}
+
+func TestSplitWords(t *testing.T) {
+	tests := []struct {
+		input string
+		want  []string
+	}{
+		{"hello world", []string{"hello", "world"}},
+		{"Who calls main?", []string{"who", "calls", "main"}},
+		{"  spaces  between  ", []string{"spaces", "between"}},
+		{"camelCase_and-hyphen", []string{"camelcase_and", "hyphen"}},
+		{"", nil},
+	}
+
+	for _, tt := range tests {
+		got := splitWords(tt.input)
+		if len(got) != len(tt.want) {
+			t.Errorf("splitWords(%q) = %v, want %v", tt.input, got, tt.want)
+			continue
+		}
+		for i := range got {
+			if got[i] != tt.want[i] {
+				t.Errorf("splitWords(%q)[%d] = %q, want %q", tt.input, i, got[i], tt.want[i])
+			}
+		}
+	}
+}
+
 func TestExtractText(t *testing.T) {
 	parts := []Part{
 		{Text: "hello"},

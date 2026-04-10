@@ -1614,7 +1614,7 @@ func (s *Server) openAPISpec() map[string]any {
 								},
 							},
 						},
-						"scope": map[string]any{"type": "string", "description": "Isolate facts to a conversation/agent scope (default: global)"},
+						"scope":   map[string]any{"type": "string", "description": "Isolate facts to a conversation/agent scope (default: global)"},
 						"project": map[string]any{"type": "string", "description": "Project shorthand: sets scope to 'project:{name}' and defaults relationship index to this name"},
 					},
 				},
