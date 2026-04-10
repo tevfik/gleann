@@ -121,6 +121,7 @@ func cmdAsk(args []string) {
 		fmt.Fprintln(os.Stderr, "  --title TITLE        Set conversation title")
 		fmt.Fprintln(os.Stderr, "  --role ROLE          Use a named role (e.g. code, shell, explain)")
 		fmt.Fprintln(os.Stderr, "  --format FORMAT      Output format: json, markdown, raw")
+		fmt.Fprintln(os.Stderr, "  --attach FILE        Attach image/audio file (can repeat; requires multimodal model)")
 		fmt.Fprintln(os.Stderr, "  --raw                Output raw text (no formatting); auto-enabled when piped")
 		fmt.Fprintln(os.Stderr, "  --quiet              Suppress status messages")
 		fmt.Fprintln(os.Stderr, "  --word-wrap N        Wrap output at N columns (default: terminal width)")
@@ -134,13 +135,20 @@ func cmdAsk(args []string) {
 
 	// Collect all non-flag positional arguments.
 	var positional []string
+	var attachFiles []string
 	flagsWithValue := map[string]bool{
 		"--continue": true, "--title": true, "--role": true, "--format": true,
 		"--word-wrap": true, "--llm-model": true, "--llm-provider": true,
 		"--rerank-model": true, "--top-k": true, "--metric": true,
 		"--model": true, "--provider": true, "--host": true,
+		"--attach": true,
 	}
 	for i := 0; i < len(args); i++ {
+		if args[i] == "--attach" && i+1 < len(args) {
+			i++
+			attachFiles = append(attachFiles, args[i])
+			continue
+		}
 		if strings.HasPrefix(args[i], "--") {
 			if flagsWithValue[args[i]] && i+1 < len(args) {
 				i++ // skip flag value
@@ -328,6 +336,23 @@ func cmdAsk(args []string) {
 
 	// Build chat config.
 	chatConfig := gleann.DefaultChatConfig()
+	// Apply saved config LLM settings.
+	if config.LLMProvider != "" {
+		chatConfig.Provider = gleann.LLMProvider(config.LLMProvider)
+	}
+	if config.LLMModel != "" {
+		chatConfig.Model = config.LLMModel
+	}
+	if config.OllamaHost != "" {
+		chatConfig.BaseURL = config.OllamaHost
+	}
+	if config.OpenAIAPIKey != "" {
+		chatConfig.APIKey = config.OpenAIAPIKey
+	}
+	if config.OpenAIBaseURL != "" && chatConfig.Provider == gleann.LLMOpenAI {
+		chatConfig.BaseURL = config.OpenAIBaseURL
+	}
+	// CLI flags override saved config.
 	if llmModel := getFlag(args, "--llm-model"); llmModel != "" {
 		chatConfig.Model = llmModel
 	}
@@ -563,9 +588,16 @@ func cmdAsk(args []string) {
 		saveConversation()
 	} else {
 		fmt.Print("")
-		err := chat.AskStream(ctx, question, func(token string) {
-			wrapper.Write(token)
-		})
+		var err error
+		if len(attachFiles) > 0 {
+			err = chat.AskStreamWithMedia(ctx, question, attachFiles, func(token string) {
+				wrapper.Write(token)
+			})
+		} else {
+			err = chat.AskStream(ctx, question, func(token string) {
+				wrapper.Write(token)
+			})
+		}
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 			os.Exit(1)
