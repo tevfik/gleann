@@ -75,7 +75,7 @@ func (s *Server) a2aSearchHandler(ctx a2a.SkillContext) (string, error) {
 	return strings.Join(results, "\n\n"), nil
 }
 
-// a2aAskHandler performs RAG question answering.
+// a2aAskHandler performs RAG question answering using the LLM.
 func (s *Server) a2aAskHandler(ctx a2a.SkillContext) (string, error) {
 	indexes, err := gleann.ListIndexes(s.config.IndexDir)
 	if err != nil || len(indexes) == 0 {
@@ -84,30 +84,27 @@ func (s *Server) a2aAskHandler(ctx a2a.SkillContext) (string, error) {
 
 	// Use the first available index.
 	indexName := indexes[0].Name
+	if idx, ok := ctx.Metadata["index"].(string); ok && idx != "" {
+		indexName = idx
+	}
+
 	searcher, err := s.getSearcher(context.Background(), indexName)
 	if err != nil {
 		return "", fmt.Errorf("index %q not available: %v", indexName, err)
 	}
 
-	// Build RAG context from search results.
-	hits, err := searcher.Search(context.Background(), ctx.Query)
+	// Build LLM config from server settings.
+	chatCfg := s.proxyLLMConfig()
+	if model, ok := ctx.Metadata["llm_model"].(string); ok && model != "" {
+		chatCfg.Model = model
+	}
+
+	chat := gleann.NewChat(searcher, chatCfg)
+
+	answer, err := chat.Ask(context.Background(), ctx.Query)
 	if err != nil {
-		return "", fmt.Errorf("search failed: %v", err)
+		return "", fmt.Errorf("RAG ask failed: %v", err)
 	}
-
-	var contextParts []string
-	for _, h := range hits {
-		contextParts = append(contextParts, h.Text)
-	}
-
-	if len(contextParts) == 0 {
-		return "I couldn't find relevant context to answer: " + ctx.Query, nil
-	}
-
-	ragContext := strings.Join(contextParts, "\n---\n")
-	answer := fmt.Sprintf("Based on %d retrieved documents from index '%s':\n\n%s\n\nQuery: %s",
-		len(contextParts), indexName, ragContext, ctx.Query)
-
 	return answer, nil
 }
 
@@ -165,13 +162,80 @@ func (s *Server) a2aMemoryHandler(ctx a2a.SkillContext) (string, error) {
 	return fmt.Sprintf("Found %d memories:\n%s", len(blocks), strings.Join(parts, "\n")), nil
 }
 
-// a2aCodeHandler provides code graph analysis.
+// a2aCodeHandler provides code graph analysis using the KuzuDB graph pool.
 func (s *Server) a2aCodeHandler(ctx a2a.SkillContext) (string, error) {
-	// Code analysis requires a specific index with graph data.
-	indexes, err := gleann.ListIndexes(s.config.IndexDir)
-	if err != nil || len(indexes) == 0 {
-		return "", fmt.Errorf("no indexes available for code analysis")
+	if s.graphPool == nil {
+		return "", fmt.Errorf("code graph not available (build with -tags treesitter)")
 	}
 
-	return fmt.Sprintf("Code analysis for query '%s': Use the graph API endpoint (POST /api/graph/{name}/query) with specific index name for detailed results. Available indexes: %d", ctx.Query, len(indexes)), nil
+	// Resolve index name: prefer metadata, then first available index.
+	indexName, _ := ctx.Metadata["index"].(string)
+	if indexName == "" {
+		indexes, err := gleann.ListIndexes(s.config.IndexDir)
+		if err != nil || len(indexes) == 0 {
+			return "", fmt.Errorf("no indexes available for code analysis")
+		}
+		indexName = indexes[0].Name
+	}
+
+	db, err := s.graphPool.get(indexName)
+	if err != nil {
+		return "", fmt.Errorf("graph index %q not found: %v", indexName, err)
+	}
+
+	// Resolve symbol: prefer metadata["symbol"], else use the raw query.
+	symbol, _ := ctx.Metadata["symbol"].(string)
+	if symbol == "" {
+		symbol = ctx.Query
+	}
+
+	// Detect query intent: callers vs callees vs symbols_in_file.
+	lq := strings.ToLower(ctx.Query)
+	var nodes []GraphNode
+	var queryType string
+
+	switch {
+	case strings.Contains(lq, "who calls") || strings.Contains(lq, "callers") ||
+		strings.Contains(lq, "kim çağırıyor") || strings.Contains(lq, "references"):
+		nodes, err = db.Callers(symbol)
+		queryType = "callers"
+
+	case strings.Contains(lq, "callees") || strings.Contains(lq, "depends on") ||
+		strings.Contains(lq, "bağımlılık") || strings.Contains(lq, "calls") ||
+		strings.Contains(lq, "impact"):
+		if strings.Contains(lq, "impact") {
+			impact, ierr := db.Impact(symbol, 3)
+			if ierr != nil {
+				return "", fmt.Errorf("impact analysis failed: %v", ierr)
+			}
+			return fmt.Sprintf(
+				"Impact of %q (index: %s):\n  Direct callers: %d\n  Transitive callers: %d\n  Affected files: %d\n  Depth searched: %d",
+				symbol, indexName,
+				len(impact.DirectCallers), len(impact.TransitiveCallers),
+				len(impact.AffectedFiles), impact.Depth,
+			), nil
+		}
+		nodes, err = db.Callees(symbol)
+		queryType = "callees"
+
+	default:
+		// Default to callees.
+		nodes, err = db.Callees(symbol)
+		queryType = "callees"
+	}
+
+	if err != nil {
+		return "", fmt.Errorf("graph query (%s %q) failed: %v", queryType, symbol, err)
+	}
+
+	if len(nodes) == 0 {
+		return fmt.Sprintf("No %s found for symbol %q in index %q.", queryType, symbol, indexName), nil
+	}
+
+	var lines []string
+	for _, n := range nodes {
+		lines = append(lines, fmt.Sprintf("  - %s (%s)", n.FQN, n.Kind))
+	}
+	return fmt.Sprintf("%s of %q (index: %s):\n%s",
+		strings.Title(queryType), symbol, indexName, strings.Join(lines, "\n")), nil
 }
