@@ -167,9 +167,9 @@ func isCodeExtension(ext string) bool {
 	codeExts := map[string]bool{
 		".go": true, ".py": true, ".js": true, ".ts": true, ".jsx": true, ".tsx": true,
 		".java": true, ".c": true, ".cpp": true, ".h": true, ".hpp": true,
-		".rs": true, ".rb": true, ".php": true, ".swift": true, ".kt": true,
+		".rs": true, ".rb": true, ".php": true, ".swift": true, ".kt": true, ".kts": true,
 		".cs": true, ".m": true, ".mm": true, ".lua": true, ".r": true,
-		".scala": true, ".clj": true, ".ex": true, ".erl": true, ".hs": true,
+		".scala": true, ".sc": true, ".clj": true, ".ex": true, ".exs": true, ".erl": true, ".hs": true,
 		".ml": true, ".pl": true, ".sh": true, ".bash": true, ".zsh": true,
 		".fish": true, ".ps1": true, ".bat": true, ".cmd": true,
 		".sql": true, ".graphql": true, ".proto": true,

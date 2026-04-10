@@ -108,7 +108,7 @@ func collectGoCallQueries(idx *Indexer, relPath, source string, chunks []chunkin
 			seen[edgeKey] = true
 
 			nodes = append(nodes, kuzu_symbol(calleeFQN))
-			edges = append(edges, kuzu.EdgeCalls{CallerFQN: callerFQN, CalleeFQN: calleeFQN})
+			edges = append(edges, kuzu.EdgeCalls{CallerFQN: callerFQN, CalleeFQN: calleeFQN, Confidence: "extracted"})
 			return true
 		})
 	}

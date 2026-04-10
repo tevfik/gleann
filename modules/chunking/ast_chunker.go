@@ -32,28 +32,41 @@ const (
 	LangCSharp     Language = "csharp"
 	LangRuby       Language = "ruby"
 	LangPHP        Language = "php"
+	LangKotlin     Language = "kotlin"
+	LangScala      Language = "scala"
+	LangSwift      Language = "swift"
+	LangLua        Language = "lua"
+	LangElixir     Language = "elixir"
 	LangUnknown    Language = "unknown"
 )
 
 // extensionMap maps file extensions to languages.
 var extensionMap = map[string]Language{
-	".go":   LangGo,
-	".py":   LangPython,
-	".js":   LangJavaScript,
-	".jsx":  LangJavaScript,
-	".ts":   LangTypeScript,
-	".tsx":  LangTypeScript,
-	".java": LangJava,
-	".c":    LangC,
-	".h":    LangC,
-	".cpp":  LangCPP,
-	".cc":   LangCPP,
-	".cxx":  LangCPP,
-	".hpp":  LangCPP,
-	".rs":   LangRust,
-	".cs":   LangCSharp,
-	".rb":   LangRuby,
-	".php":  LangPHP,
+	".go":    LangGo,
+	".py":    LangPython,
+	".js":    LangJavaScript,
+	".jsx":   LangJavaScript,
+	".ts":    LangTypeScript,
+	".tsx":   LangTypeScript,
+	".java":  LangJava,
+	".c":     LangC,
+	".h":     LangC,
+	".cpp":   LangCPP,
+	".cc":    LangCPP,
+	".cxx":   LangCPP,
+	".hpp":   LangCPP,
+	".rs":    LangRust,
+	".cs":    LangCSharp,
+	".rb":    LangRuby,
+	".php":   LangPHP,
+	".kt":    LangKotlin,
+	".kts":   LangKotlin,
+	".scala": LangScala,
+	".sc":    LangScala,
+	".swift": LangSwift,
+	".lua":   LangLua,
+	".ex":    LangElixir,
+	".exs":   LangElixir,
 }
 
 // CodeChunk represents a semantic code chunk with metadata.
@@ -138,7 +151,7 @@ func (c *ASTChunker) ChunkCode(source, filename string) []CodeChunk {
 	case LangGo:
 		// Go always uses native go/ast (no tree-sitter needed).
 		chunks = c.chunkGo(source, filename)
-	case LangPython, LangJavaScript, LangTypeScript, LangJava, LangCSharp, LangC, LangCPP, LangRust, LangRuby, LangPHP:
+	case LangPython, LangJavaScript, LangTypeScript, LangJava, LangCSharp, LangC, LangCPP, LangRust, LangRuby, LangPHP, LangKotlin, LangScala, LangSwift, LangLua, LangElixir:
 		// Try tree-sitter first (if compiled with -tags treesitter).
 		chunks = treeSitterChunk(source, filename, lang, c.config)
 		if chunks == nil {

@@ -114,6 +114,56 @@ Response includes:
 | Java / C# | tree-sitter `method_declaration`, `class_declaration` | `call_expression` nodes |
 | Ruby | tree-sitter `method`, `class` | `call` nodes |
 | PHP | tree-sitter `function_definition`, `class_declaration` | `function_call_expression` nodes |
+| **Kotlin** | tree-sitter `function_declaration`, `class_declaration` | `call_expression` nodes |
+| **Scala** | tree-sitter `function_definition`, `class_definition` | `call_expression` nodes |
+| **Swift** | tree-sitter `function_declaration`, `struct_declaration` | `call_expression` nodes |
+| **Lua** | tree-sitter `function_declaration`, `local_function_declaration` | `function_call` nodes |
+| **Elixir** | tree-sitter `call` | `call` nodes |
+
+## Community Detection (Louvain)
+
+gleann can detect communities (clusters) in your code graph using the Louvain algorithm:
+
+```bash
+# Run community detection and print results
+gleann graph communities --index my-code
+
+# Generate interactive HTML visualization
+gleann graph viz --index my-code
+gleann graph viz --index my-code --output project_graph.html
+
+# Generate Markdown report with communities, god nodes, surprising edges
+gleann graph report --index my-code
+gleann graph report --index my-code --output GRAPH_REPORT.md
+```
+
+### What the analysis reveals
+
+- **Communities**: Groups of tightly-connected symbols (functions, types) that form natural modules
+- **God Nodes**: High-degree hubs — symbols that many others depend on (coupling hotspots)
+- **Surprising Edges**: Cross-community connections that may indicate leaky abstractions
+- **Modularity (Q)**: Quantitative measure of code modularity (Q > 0.4 = well-modularized)
+
+### Edge Confidence
+
+Each CALLS edge carries an implicit confidence label:
+
+| Confidence | Meaning |
+|------------|---------|
+| `extracted` | Deterministic, AST-resolved call (tree-sitter or go/ast) |
+| `inferred` | Heuristic-based resolution (e.g. methods via type inference) |
+| `ambiguous` | Unresolved — callee couldn't be mapped to a known FQN |
+
+## Token Reduction Benchmark
+
+Measure how much context compression the RAG pipeline achieves:
+
+```bash
+gleann benchmark --index my-code --docs ./src/
+gleann benchmark --index my-docs --docs ./documents/ --top-k 20
+```
+
+Output: `Token Reduction: 62.1x` — raw corpus tokens / RAG context tokens.
 
 ## Graph Index Performance
 
