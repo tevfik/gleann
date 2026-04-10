@@ -298,6 +298,10 @@ func TestRouteSkill_Keywords(t *testing.T) {
 		{"Remember this fact", "memory-management"},
 		{"What are the callers of main?", "code-analysis"},
 		{"random text without keywords", "ask-rag"}, // default fallback
+		// Regression: doc queries containing "memory" must NOT route to memory-management (issue #routing-memory)
+		{"How does the gleann memory API work?", "ask-rag"},
+		{"Explain memory management in the codebase", "ask-rag"},
+		{"What is the vector memory store architecture?", "ask-rag"},
 	}
 
 	for _, tt := range tests {

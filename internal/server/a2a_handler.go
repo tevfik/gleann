@@ -98,6 +98,9 @@ func (s *Server) a2aAskHandler(ctx a2a.SkillContext) (string, error) {
 	if model, ok := ctx.Metadata["llm_model"].(string); ok && model != "" {
 		chatCfg.Model = model
 	}
+	if provider, ok := ctx.Metadata["llm_provider"].(string); ok && provider != "" {
+		chatCfg.Provider = gleann.LLMProvider(provider)
+	}
 
 	chat := gleann.NewChat(searcher, chatCfg)
 

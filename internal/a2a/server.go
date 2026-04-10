@@ -292,7 +292,7 @@ func (s *Server) routeSkill(query string, metadata map[string]interface{}) strin
 	}
 	priorities := []skillMatch{
 		{"code-analysis", []string{"callers", "callees", "impact", "dependency", "graph", "bağımlılık", "who calls", "call graph", "depends on", "references", "symbol"}},
-		{"memory-management", []string{"remember", "forget", "memory", "recall", "hatırla", "unut", "bellek", "store", "note", "save this", "block"}},
+		{"memory-management", []string{"remember", "forget", "recall", "hatırla", "unut", "bellek", "store this", "note this", "save this", "block"}}, // "memory"/"store"/"note" alone are too broad, match doc queries
 		{"semantic-search", []string{"search", "find", "ara", "bul", "look for", "grep", "locate", "where is", "similar to"}},
 		{"ask-rag", []string{"ask", "explain", "how", "why", "what", "describe", "sor", "anlat", "nasıl", "neden", "tell me", "summarize", "özetle"}},
 	}
