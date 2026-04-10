@@ -104,6 +104,23 @@ func (s *Server) a2aAskHandler(ctx a2a.SkillContext) (string, error) {
 
 	chat := gleann.NewChat(searcher, chatCfg)
 
+	// If A2A message includes file attachments (images/audio), use multimodal path.
+	if len(ctx.Files) > 0 {
+		var images []string
+		for _, f := range ctx.Files {
+			if f.Bytes != "" {
+				images = append(images, f.Bytes)
+			}
+		}
+		if len(images) > 0 {
+			answer, err := chat.AskWithImages(context.Background(), ctx.Query, images)
+			if err != nil {
+				return "", fmt.Errorf("multimodal RAG ask failed: %v", err)
+			}
+			return answer, nil
+		}
+	}
+
 	answer, err := chat.Ask(context.Background(), ctx.Query)
 	if err != nil {
 		return "", fmt.Errorf("RAG ask failed: %v", err)

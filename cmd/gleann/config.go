@@ -161,4 +161,11 @@ func applySavedConfig(config *gleann.Config, args []string) {
 	if getFlag(args, "--index-dir") == "" && savedCfg.IndexDir != "" {
 		config.IndexDir = savedCfg.IndexDir
 	}
+	// LLM settings from saved config.
+	if getFlag(args, "--llm-provider") == "" && savedCfg.LLMProvider != "" {
+		config.LLMProvider = savedCfg.LLMProvider
+	}
+	if getFlag(args, "--llm-model") == "" && savedCfg.LLMModel != "" {
+		config.LLMModel = savedCfg.LLMModel
+	}
 }

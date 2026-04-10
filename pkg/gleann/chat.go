@@ -5,6 +5,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -57,8 +58,9 @@ func DefaultChatConfig() ChatConfig {
 
 // ChatMessage represents a single message in a conversation.
 type ChatMessage struct {
-	Role    string `json:"role"` // "system", "user", "assistant"
-	Content string `json:"content"`
+	Role    string   `json:"role"`    // "system", "user", "assistant"
+	Content string   `json:"content"`
+	Images  []string `json:"images,omitempty"` // base64-encoded media (images/audio) — native Ollama format
 }
 
 // LeannChat provides RAG-based Q&A over indexed data.
@@ -242,6 +244,152 @@ func (c *LeannChat) AskStream(ctx context.Context, question string, callback Str
 		ChatMessage{Role: "assistant", Content: fullAnswer.String()},
 	)
 
+	return nil
+}
+
+// LoadMediaFiles reads files from disk and returns base64-encoded strings.
+// Ollama uses the "images" field for both images and audio.
+func LoadMediaFiles(paths []string) ([]string, error) {
+	var encoded []string
+	for _, p := range paths {
+		data, err := os.ReadFile(p)
+		if err != nil {
+			return nil, fmt.Errorf("read %s: %w", p, err)
+		}
+		if len(data) > 50<<20 { // 50 MB limit
+			return nil, fmt.Errorf("file %s too large (%d bytes, max 50MB)", p, len(data))
+		}
+		encoded = append(encoded, base64.StdEncoding.EncodeToString(data))
+	}
+	return encoded, nil
+}
+
+// AskWithMedia performs RAG with attached media files (images, audio).
+// Media files are read from disk, base64-encoded and attached to the user message.
+func (c *LeannChat) AskWithMedia(ctx context.Context, question string, mediaFiles []string, opts ...SearchOption) (string, error) {
+	images, err := LoadMediaFiles(mediaFiles)
+	if err != nil {
+		return "", err
+	}
+	return c.AskWithImages(ctx, question, images, opts...)
+}
+
+// AskWithImages performs RAG with pre-encoded base64 image/audio data
+// attached to the user message. Use this when media data is already in memory.
+func (c *LeannChat) AskWithImages(ctx context.Context, question string, images []string, opts ...SearchOption) (string, error) {
+	results, searchErr := c.searcher.Search(ctx, question, opts...)
+	if searchErr != nil {
+		return "", fmt.Errorf("search: %w", searchErr)
+	}
+
+	var contextParts []string
+	for i, r := range results {
+		contextParts = append(contextParts, formatResult(r, i+1))
+	}
+	contextText := strings.Join(contextParts, "\n\n")
+
+	// Build multimodal prompt: media is the primary input, RAG provides supporting context.
+	userPrompt := fmt.Sprintf(
+		"The user has attached media file(s) (image or audio). Analyze the attached media first.\n\n"+
+			"Supporting document context (may or may not be relevant):\n%s\n\n"+
+			"Question: %s", contextText, question)
+
+	// For multimodal, use only the base system prompt.
+	// Memory context (with XML-like tags) interferes with Gemma4 audio/image processing.
+	messages := []ChatMessage{
+		{Role: "system", Content: c.config.SystemPrompt},
+	}
+	const historyLimit = 20
+	startIdx := 0
+	if len(c.history) > historyLimit {
+		startIdx = len(c.history) - historyLimit
+	}
+	messages = append(messages, c.history[startIdx:]...)
+	messages = append(messages, ChatMessage{Role: "user", Content: userPrompt, Images: images})
+
+	answer, err := c.chat(ctx, messages)
+	if err != nil {
+		return "", fmt.Errorf("chat: %w", err)
+	}
+
+	c.history = append(c.history,
+		ChatMessage{Role: "user", Content: question},
+		ChatMessage{Role: "assistant", Content: answer},
+	)
+	return answer, nil
+}
+
+// AskStreamWithMedia performs streaming RAG with attached media files.
+// Note: Audio files force non-streaming mode due to Ollama streaming+audio limitations.
+func (c *LeannChat) AskStreamWithMedia(ctx context.Context, question string, mediaFiles []string, callback StreamCallback, opts ...SearchOption) error {
+	// Detect if any file is audio — Ollama streaming doesn't process audio correctly.
+	hasAudio := false
+	for _, f := range mediaFiles {
+		ext := strings.ToLower(filepath.Ext(f))
+		switch ext {
+		case ".mp3", ".wav", ".flac", ".ogg", ".m4a", ".aac", ".wma", ".opus":
+			hasAudio = true
+		}
+	}
+
+	// For audio files, fall back to non-streaming (Ollama bug: stream+audio drops audio data).
+	if hasAudio {
+		answer, err := c.AskWithMedia(ctx, question, mediaFiles, opts...)
+		if err != nil {
+			return err
+		}
+		callback(answer)
+		return nil
+	}
+
+	images, err := LoadMediaFiles(mediaFiles)
+	if err != nil {
+		return err
+	}
+
+	results, searchErr := c.searcher.Search(ctx, question, opts...)
+	if searchErr != nil {
+		return fmt.Errorf("search: %w", searchErr)
+	}
+
+	var contextParts []string
+	for i, r := range results {
+		contextParts = append(contextParts, formatResult(r, i+1))
+	}
+	contextText := strings.Join(contextParts, "\n\n")
+
+	// Build multimodal prompt: media is the primary input, RAG provides supporting context.
+	userPrompt := fmt.Sprintf(
+		"The user has attached media file(s) (image or audio). Analyze the attached media first.\n\n"+
+			"Supporting document context (may or may not be relevant):\n%s\n\n"+
+			"Question: %s", contextText, question)
+
+	// For multimodal, use only the base system prompt.
+	// Memory context (with XML-like tags) interferes with Gemma4 audio/image processing.
+	messages := []ChatMessage{
+		{Role: "system", Content: c.config.SystemPrompt},
+	}
+	const historyLimit = 20
+	startIdx := 0
+	if len(c.history) > historyLimit {
+		startIdx = len(c.history) - historyLimit
+	}
+	messages = append(messages, c.history[startIdx:]...)
+	messages = append(messages, ChatMessage{Role: "user", Content: userPrompt, Images: images})
+
+	var fullAnswer strings.Builder
+	wrappedCB := func(token string) {
+		fullAnswer.WriteString(token)
+		callback(token)
+	}
+	if err := c.chatStream(ctx, messages, wrappedCB); err != nil {
+		return fmt.Errorf("chat stream: %w", err)
+	}
+
+	c.history = append(c.history,
+		ChatMessage{Role: "user", Content: question},
+		ChatMessage{Role: "assistant", Content: fullAnswer.String()},
+	)
 	return nil
 }
 
@@ -457,9 +605,35 @@ func (c *LeannChat) chatOllama(ctx context.Context, messages []ChatMessage) (str
 
 // --- OpenAI Chat ---
 
+// openAIContentPart represents a structured content part for multimodal messages.
+type openAIContentPart struct {
+	Type     string          `json:"type"`
+	Text     string          `json:"text,omitempty"`
+	ImageURL *openAIImageURL `json:"image_url,omitempty"`
+}
+
+type openAIImageURL struct {
+	URL    string `json:"url"`
+	Detail string `json:"detail,omitempty"`
+}
+
+// openAIMultimodalMessage is used when images are present.
+type openAIMultimodalMessage struct {
+	Role    string              `json:"role"`
+	Content []openAIContentPart `json:"content"`
+}
+
 type openAIChatRequest struct {
 	Model       string        `json:"model"`
 	Messages    []ChatMessage `json:"messages"`
+	Temperature float64       `json:"temperature,omitempty"`
+	MaxTokens   int           `json:"max_tokens,omitempty"`
+}
+
+// openAIMultimodalRequest uses interface{} messages to support mixed content.
+type openAIMultimodalRequest struct {
+	Model       string        `json:"model"`
+	Messages    []interface{} `json:"messages"`
 	Temperature float64       `json:"temperature,omitempty"`
 	MaxTokens   int           `json:"max_tokens,omitempty"`
 }
@@ -470,17 +644,59 @@ type openAIChatResponse struct {
 	} `json:"choices"`
 }
 
-func (c *LeannChat) chatOpenAI(ctx context.Context, messages []ChatMessage) (string, error) {
-	reqBody := openAIChatRequest{
-		Model:       c.config.Model,
-		Messages:    messages,
-		Temperature: c.config.Temperature,
-		MaxTokens:   c.config.MaxTokens,
+// hasImages checks if any message contains image data.
+func hasImages(messages []ChatMessage) bool {
+	for _, m := range messages {
+		if len(m.Images) > 0 {
+			return true
+		}
 	}
+	return false
+}
 
-	body, err := json.Marshal(reqBody)
-	if err != nil {
-		return "", fmt.Errorf("marshal request: %w", err)
+// toOpenAIMultimodalMessages converts ChatMessages with images to OpenAI format.
+func toOpenAIMultimodalMessages(messages []ChatMessage) []interface{} {
+	out := make([]interface{}, 0, len(messages))
+	for _, m := range messages {
+		if len(m.Images) == 0 {
+			out = append(out, struct {
+				Role    string `json:"role"`
+				Content string `json:"content"`
+			}{m.Role, m.Content})
+			continue
+		}
+		parts := []openAIContentPart{{Type: "text", Text: m.Content}}
+		for _, img := range m.Images {
+			parts = append(parts, openAIContentPart{
+				Type:     "image_url",
+				ImageURL: &openAIImageURL{URL: "data:image/jpeg;base64," + img, Detail: "auto"},
+			})
+		}
+		out = append(out, openAIMultimodalMessage{Role: m.Role, Content: parts})
+	}
+	return out
+}
+
+func (c *LeannChat) chatOpenAI(ctx context.Context, messages []ChatMessage) (string, error) {
+	var body []byte
+	var err error
+
+	if hasImages(messages) {
+		reqBody := openAIMultimodalRequest{
+			Model:       c.config.Model,
+			Messages:    toOpenAIMultimodalMessages(messages),
+			Temperature: c.config.Temperature,
+			MaxTokens:   c.config.MaxTokens,
+		}
+		body, err = json.Marshal(reqBody)
+	} else {
+		reqBody := openAIChatRequest{
+			Model:       c.config.Model,
+			Messages:    messages,
+			Temperature: c.config.Temperature,
+			MaxTokens:   c.config.MaxTokens,
+		}
+		body, err = json.Marshal(reqBody)
 	}
 
 	url := c.config.BaseURL + "/v1/chat/completions"
@@ -528,10 +744,57 @@ type anthropicRequest struct {
 	Temperature float64       `json:"temperature,omitempty"`
 }
 
+// anthropicMultimodalRequest supports structured content blocks for images.
+type anthropicMultimodalRequest struct {
+	Model       string        `json:"model"`
+	MaxTokens   int           `json:"max_tokens"`
+	System      string        `json:"system,omitempty"`
+	Messages    []interface{} `json:"messages"`
+	Temperature float64       `json:"temperature,omitempty"`
+}
+
+type anthropicContentBlock struct {
+	Type   string                `json:"type"`
+	Text   string                `json:"text,omitempty"`
+	Source *anthropicImageSource `json:"source,omitempty"`
+}
+
+type anthropicImageSource struct {
+	Type      string `json:"type"`       // "base64"
+	MediaType string `json:"media_type"` // "image/jpeg"
+	Data      string `json:"data"`
+}
+
 type anthropicResponse struct {
 	Content []struct {
 		Text string `json:"text"`
 	} `json:"content"`
+}
+
+// toAnthropicMultimodalMessages converts ChatMessages with images to Anthropic format.
+func toAnthropicMultimodalMessages(messages []ChatMessage) []interface{} {
+	out := make([]interface{}, 0, len(messages))
+	for _, m := range messages {
+		if len(m.Images) == 0 {
+			out = append(out, struct {
+				Role    string `json:"role"`
+				Content string `json:"content"`
+			}{m.Role, m.Content})
+			continue
+		}
+		blocks := []anthropicContentBlock{{Type: "text", Text: m.Content}}
+		for _, img := range m.Images {
+			blocks = append(blocks, anthropicContentBlock{
+				Type:   "image",
+				Source: &anthropicImageSource{Type: "base64", MediaType: "image/jpeg", Data: img},
+			})
+		}
+		out = append(out, struct {
+			Role    string                  `json:"role"`
+			Content []anthropicContentBlock `json:"content"`
+		}{m.Role, blocks})
+	}
+	return out
 }
 
 func (c *LeannChat) chatAnthropic(ctx context.Context, messages []ChatMessage) (string, error) {
@@ -551,17 +814,27 @@ func (c *LeannChat) chatAnthropic(ctx context.Context, messages []ChatMessage) (
 		maxTokens = 2048
 	}
 
-	reqBody := anthropicRequest{
-		Model:       c.config.Model,
-		MaxTokens:   maxTokens,
-		System:      system,
-		Messages:    userMessages,
-		Temperature: c.config.Temperature,
-	}
+	var body []byte
+	var err error
 
-	body, err := json.Marshal(reqBody)
-	if err != nil {
-		return "", fmt.Errorf("marshal request: %w", err)
+	if hasImages(userMessages) {
+		reqBody := anthropicMultimodalRequest{
+			Model:       c.config.Model,
+			MaxTokens:   maxTokens,
+			System:      system,
+			Messages:    toAnthropicMultimodalMessages(userMessages),
+			Temperature: c.config.Temperature,
+		}
+		body, err = json.Marshal(reqBody)
+	} else {
+		reqBody := anthropicRequest{
+			Model:       c.config.Model,
+			MaxTokens:   maxTokens,
+			System:      system,
+			Messages:    userMessages,
+			Temperature: c.config.Temperature,
+		}
+		body, err = json.Marshal(reqBody)
 	}
 
 	url := c.config.BaseURL + "/v1/messages"
@@ -702,9 +975,13 @@ type openAIStreamChunk struct {
 }
 
 func (c *LeannChat) chatOpenAIStream(ctx context.Context, messages []ChatMessage, callback StreamCallback) error {
+	var msgs interface{} = messages
+	if hasImages(messages) {
+		msgs = toOpenAIMultimodalMessages(messages)
+	}
 	reqBody := map[string]any{
 		"model":       c.config.Model,
-		"messages":    messages,
+		"messages":    msgs,
 		"temperature": c.config.Temperature,
 		"stream":      true,
 	}
@@ -799,10 +1076,14 @@ func (c *LeannChat) chatAnthropicStream(ctx context.Context, messages []ChatMess
 		maxTokens = 2048
 	}
 
+	var msgs interface{} = userMessages
+	if hasImages(userMessages) {
+		msgs = toAnthropicMultimodalMessages(userMessages)
+	}
 	reqBody := map[string]any{
 		"model":       c.config.Model,
 		"max_tokens":  maxTokens,
-		"messages":    userMessages,
+		"messages":    msgs,
 		"temperature": c.config.Temperature,
 		"stream":      true,
 	}
