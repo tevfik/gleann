@@ -13,6 +13,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"time"
 
 	gokuzu "github.com/kuzudb/go-kuzu"
 	"github.com/tevfik/gleann/pkg/gleann"
@@ -86,8 +87,17 @@ func (m *MemoryService) InjectEntities(ctx context.Context, payload gleann.Graph
 	}
 
 	// ── Edge upserts ─────────────────────────────────────────────────────────
+	now := time.Now().UTC().Format(time.RFC3339)
 	for i := range payload.Edges {
 		e := &payload.Edges[i]
+		// Auto-inject temporal attributes.
+		if e.Attributes == nil {
+			e.Attributes = make(map[string]any)
+		}
+		if _, ok := e.Attributes["created_at"]; !ok {
+			e.Attributes["created_at"] = now
+		}
+		e.Attributes["updated_at"] = now
 		attrsJSON, err := gleann.AttributesToJSON(e.Attributes)
 		if err != nil {
 			return fmt.Errorf("inject entities: edge %q→%q attributes: %w", e.From, e.To, err)

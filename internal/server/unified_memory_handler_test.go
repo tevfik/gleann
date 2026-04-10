@@ -8,11 +8,21 @@ import (
 	"testing"
 
 	"github.com/tevfik/gleann/pkg/gleann"
+	"github.com/tevfik/gleann/pkg/memory"
 )
 
 func newUnifiedTestServer(t *testing.T) *Server {
 	t.Helper()
-	s := NewServer(gleann.Config{IndexDir: t.TempDir()}, ":0", "test")
+	dir := t.TempDir()
+
+	store, err := memory.OpenStore(dir + "/memory.db")
+	if err != nil {
+		t.Fatalf("open test memory store: %v", err)
+	}
+	mgr := memory.NewManager(store)
+
+	s := NewServer(gleann.Config{IndexDir: dir}, ":0", "test")
+	s.blockMem = mgr
 	t.Cleanup(func() {
 		s.closeBlockMem()
 		s.bgManager.Stop()

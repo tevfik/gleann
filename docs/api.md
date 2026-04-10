@@ -194,6 +194,15 @@ curl -X POST http://localhost:8080/api/memory/ingest \
     }]
   }'
 
+# Project-scoped ingest (sets scope="project:myapp" + default index)
+curl -X POST http://localhost:8080/api/memory/ingest \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "project": "myapp",
+    "facts": [{"content": "The API uses rate limiting at 100 req/s"}],
+    "relationships": [{"from": "Gateway", "to": "RateLimiter", "relation": "USES"}]
+  }'
+
 # Recall facts from the last 7 days, filtered by tag
 curl -X POST http://localhost:8080/api/memory/recall \
   -H 'Content-Type: application/json' \
@@ -203,6 +212,15 @@ curl -X POST http://localhost:8080/api/memory/recall \
     "tags": ["security"],
     "after": "7d",
     "tier": "long"
+  }'
+
+# Project-scoped recall (searches blocks with scope + vector/graph in index)
+curl -X POST http://localhost:8080/api/memory/recall \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "project": "myapp",
+    "query": "rate limiting",
+    "format": "context"
   }'
 
 # Full multi-layer recall in LLM-ready format

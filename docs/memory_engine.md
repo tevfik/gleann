@@ -30,6 +30,12 @@ A directed, labeled, weighted relationship between two Entity nodes.
 | `weight` | float64 | optional | Numeric strength (default `1.0`) |
 | `attributes` | object | optional | Arbitrary edge metadata |
 
+> **Temporal attributes** — When edges are created via `InjectEntities()`,
+> the engine **auto-injects** `created_at` (set once, on first insert) and
+> `updated_at` (refreshed on every upsert) into the edge `attributes` JSON.
+> Both values use RFC 3339 / UTC format (e.g. `"2025-07-15T12:00:00Z"`).
+> You may supply additional attributes alongside these; they will be merged.
+
 ### Storage Layout
 
 Each Memory Engine store is an **independent KuzuDB database** stored at:
