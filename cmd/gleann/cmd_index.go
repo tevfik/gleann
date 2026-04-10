@@ -61,11 +61,14 @@ Options:
   --docs <dir>            Source directory (required for build/rebuild/watch)
   --index-dir <dir>       Index storage directory (default: ~/.gleann/indexes)
   --prune                 Prune unchanged files during incremental builds
+  --multimodal-model <m>  Model for media file indexing (images/audio/video)
+                          Auto-detects if GLEANN_MULTIMODAL_MODEL is set
 
 Examples:
   gleann index list
   gleann index build my-docs --docs ./documents/
   gleann index build my-code --docs ./src/ --graph
+  gleann index build my-media --docs ./media/ --multimodal-model gemma4:e4b
   gleann index remove my-old-index
   gleann index rebuild my-code --docs ./src/ --graph
   gleann index info my-docs

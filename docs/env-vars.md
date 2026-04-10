@@ -96,7 +96,17 @@ Rate-limited requests receive `429 Too Many Requests` with a `Retry-After: 1` he
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `GLEANN_MULTIMODAL_MODEL` | auto-detected | Ollama model for multimodal processing (e.g. `gemma4`, `llava`) |
+| `GLEANN_MULTIMODAL_MODEL` | auto-detected | Ollama model for multimodal processing during indexing and chat (e.g. `gemma4:e4b`, `llava`). Auto-detects from available Ollama models if not set. CLI flag: `--multimodal-model` |
+
+**Indexing**: When set, `gleann index build` processes images/audio/video files through the multimodal model, converting them to text descriptions for search.
+
+**Chat**: Use `gleann ask <index> <question> --attach <file>` to analyze media during RAG queries.
+
+## Background Auto-Index
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `GLEANN_AUTO_INDEX_DEBOUNCE` | `5s` | Debounce interval for auto-index file watcher |
 
 ## Plugin Settings
 

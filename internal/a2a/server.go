@@ -107,9 +107,9 @@ type Part struct {
 
 // FilePart represents an inline file attachment.
 type FilePart struct {
-	Name      string `json:"name,omitempty"`
-	MimeType  string `json:"mimeType,omitempty"`
-	Bytes     string `json:"bytes,omitempty"` // base64-encoded data
+	Name     string `json:"name,omitempty"`
+	MimeType string `json:"mimeType,omitempty"`
+	Bytes    string `json:"bytes,omitempty"` // base64-encoded data
 }
 
 // Artifact is a task output.
