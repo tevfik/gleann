@@ -38,3 +38,9 @@ indexes/
 
 # Local-only documents (not committed)
 LOCAL_*.md
+
+# E2E generated outputs (run artifacts, not fixtures)
+e2e/results/*.html
+e2e/results/*.md
+e2e/results/*.log
+e2e/indexes/
