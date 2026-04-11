@@ -67,9 +67,8 @@ func TestPickModel(t *testing.T) {
 func TestEnsureConfig_CreatesFile(t *testing.T) {
 	// Use temp dir as HOME.
 	tmpDir := t.TempDir()
-	origHome := os.Getenv("HOME")
-	os.Setenv("HOME", tmpDir)
-	defer os.Setenv("HOME", origHome)
+	t.Setenv("HOME", tmpDir)
+	t.Setenv("USERPROFILE", tmpDir) // Windows home directory var
 
 	// Start a mock Ollama.
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -111,9 +110,8 @@ func TestEnsureConfig_CreatesFile(t *testing.T) {
 
 func TestEnsureConfig_SkipsExisting(t *testing.T) {
 	tmpDir := t.TempDir()
-	origHome := os.Getenv("HOME")
-	os.Setenv("HOME", tmpDir)
-	defer os.Setenv("HOME", origHome)
+	t.Setenv("HOME", tmpDir)
+	t.Setenv("USERPROFILE", tmpDir) // Windows home directory var
 
 	// Create existing config.
 	gleannDir := filepath.Join(tmpDir, ".gleann")
