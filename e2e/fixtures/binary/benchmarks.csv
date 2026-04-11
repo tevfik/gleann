@@ -1,0 +1,11 @@
+benchmark_name,backend,index_size_mb,build_time_s,search_latency_p50_ms,search_latency_p99_ms,recall_at_10,throughput_qps,memory_rss_mb,notes
+hnsw_100k_docs,hnsw,45.2,12.4,1.2,8.5,0.94,820,312,pure-go no cgo
+faiss_flat_100k,faiss,38.1,9.8,0.8,4.2,0.99,1240,448,faiss IndexFlatL2 exhaustive
+faiss_ivf_100k,faiss,18.4,14.2,1.1,6.8,0.96,1100,280,faiss IVF nprobe=32
+hnsw_500k_docs,hnsw,210.7,58.3,1.8,12.4,0.93,680,890,ef_search=128
+faiss_ivf_500k,faiss,89.3,72.1,1.4,9.2,0.95,920,540,IVF1024 nprobe=64
+hnsw_nomic,hnsw,52.3,18.6,1.4,9.1,0.95,750,340,nomic-embed-text 768d
+hnsw_bge,hnsw,48.9,16.2,1.3,8.7,0.96,790,328,bge-m3 1024d
+faiss_flatip_bge,faiss,41.2,10.3,0.9,5.1,0.99,1180,412,inner product similarity
+hybrid_hnsw_bm25,hnsw,53.1,20.4,2.1,14.3,0.97,610,356,alpha=0.7 hybrid
+hybrid_faiss_bm25,faiss,44.8,18.9,1.9,12.1,0.98,670,390,alpha=0.7 hybrid

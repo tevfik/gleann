@@ -3,8 +3,8 @@
 # E2E Test Suite for gleann — Plugins, DocExtractor & Cross-Platform
 #
 # Usage:
-#   ./scripts/e2e_plugin_test.sh          # run all tests
-#   ./scripts/e2e_plugin_test.sh --quick  # skip slow tests (markitdown install, git clone)
+#   ./e2e/plugin_test.sh          # run all tests
+#   ./e2e/plugin_test.sh --quick  # skip slow tests (markitdown install, git clone)
 #
 # Exit codes:
 #   0 = all tests passed

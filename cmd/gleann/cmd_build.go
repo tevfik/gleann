@@ -296,52 +296,55 @@ func readDocuments(dir string, chunkSize, chunkOverlap int, tracker *vault.Track
 				var err error
 
 				// If a plugin handles this extension, use structured extraction.
+				pluginSucceeded := false
 				if pluginManager != nil {
 					if plugin := pluginManager.FindDocumentExtractor(ext); plugin != nil {
 						pResult, perr := pluginManager.ProcessStructured(plugin, fe.path)
 						if perr != nil {
-							fmt.Fprintf(os.Stderr, "Warning: plugin %s failed to extract %s: %v\n", plugin.Name, filepath.Base(fe.path), perr)
-							resCh <- result{err: nil}
+							fmt.Fprintf(os.Stderr, "Warning: plugin %s failed to extract %s: %v (fallback to native)\n", plugin.Name, filepath.Base(fe.path), perr)
+							// Fall through to native extractor
+						} else {
+							pluginSucceeded = true
+
+							relPath, _ := filepath.Rel(dir, fe.path)
+
+							// Convert plugin result → StructuredDocument → context-aware chunks.
+							doc := pluginResultToDoc(pResult)
+							mdChunks := mdChunker.ChunkDocument(doc)
+
+							// Fallback: if structured extraction produced no sections but
+							// raw markdown is available (e.g. markitdown backend), use
+							// the markdown chunker's heading-based parser instead.
+							if len(mdChunks) == 0 && pResult.Markdown != "" {
+								mdChunks = mdChunker.ChunkMarkdown(pResult.Markdown, relPath)
+							}
+
+							var items []gleann.Item
+							for _, ch := range mdChunks {
+								ch.Metadata["source"] = relPath
+								items = append(items, gleann.Item{
+									Text:     ch.Text,
+									Metadata: ch.Metadata,
+								})
+							}
+
+							// Save plugin result for graph indexing (if --graph is active).
+							pluginDocsMu.Lock()
+							pluginDocs = append(pluginDocs, &PluginDoc{
+								Result:     pResult,
+								SourcePath: relPath,
+							})
+							pluginDocsMu.Unlock()
+
+							resCh <- result{items: items}
 							continue
 						}
-
-						relPath, _ := filepath.Rel(dir, fe.path)
-
-						// Convert plugin result → StructuredDocument → context-aware chunks.
-						doc := pluginResultToDoc(pResult)
-						mdChunks := mdChunker.ChunkDocument(doc)
-
-						// Fallback: if structured extraction produced no sections but
-						// raw markdown is available (e.g. markitdown backend), use
-						// the markdown chunker's heading-based parser instead.
-						if len(mdChunks) == 0 && pResult.Markdown != "" {
-							mdChunks = mdChunker.ChunkMarkdown(pResult.Markdown, relPath)
-						}
-
-						var items []gleann.Item
-						for _, ch := range mdChunks {
-							ch.Metadata["source"] = relPath
-							items = append(items, gleann.Item{
-								Text:     ch.Text,
-								Metadata: ch.Metadata,
-							})
-						}
-
-						// Save plugin result for graph indexing (if --graph is active).
-						pluginDocsMu.Lock()
-						pluginDocs = append(pluginDocs, &PluginDoc{
-							Result:     pResult,
-							SourcePath: relPath,
-						})
-						pluginDocsMu.Unlock()
-
-						resCh <- result{items: items}
-						continue
 					}
 				}
 
 				// Try native extractor for binary document formats (PDF, DOCX, etc.).
-				if nativeExtractor.CanHandle(ext) {
+				// (Only if plugin didn't succeed)
+				if !pluginSucceeded && nativeExtractor.CanHandle(ext) {
 					md, nerr := nativeExtractor.Extract(fe.path)
 					if nerr != nil {
 						fmt.Fprintf(os.Stderr, "Warning: native extraction failed for %s: %v\n", filepath.Base(fe.path), nerr)
