@@ -145,6 +145,31 @@ type ImpactResult struct {
 	Depth             int      `json:"depth"`              // Max traversal depth used
 }
 
+// GraphEdge represents a single edge in a graph traversal result.
+type GraphEdge struct {
+	From       string `json:"from"`
+	To         string `json:"to"`
+	Relation   string `json:"relation"`    // CALLS, IMPLEMENTS, REFERENCES
+	TargetKind string `json:"target_kind"` // function, method, type, etc.
+	Confidence string `json:"confidence"`  // extracted, inferred, ambiguous
+}
+
+// PathStep represents one hop in a shortest-path result.
+type PathStep struct {
+	From     string `json:"from"`
+	To       string `json:"to"`
+	Relation string `json:"relation"`
+}
+
+// GraphStats holds basic graph statistics.
+type GraphStats struct {
+	Files           int `json:"files"`
+	Symbols         int `json:"symbols"`
+	CallEdges       int `json:"call_edges"`
+	DeclareEdges    int `json:"declare_edges"`
+	ImplementsEdges int `json:"implements_edges"`
+}
+
 // GraphDB represents a graph database backend capable of querying AST and document relationships.
 type GraphDB interface {
 	Callees(callerFQN string) ([]Callee, error)
@@ -153,8 +178,10 @@ type GraphDB interface {
 	DocumentSymbols(docPath string) ([]SymbolInfo, error)
 	DocumentContext(vpath string) (*DocumentContextData, error)
 	FullDocument(vpath string) (string, error)
-	// Impact performs a transitive caller analysis (blast radius) for the given FQN.
-	// maxDepth controls how many hops to traverse (0 = unlimited, capped at 10).
 	Impact(fqn string, maxDepth int) (*ImpactResult, error)
+	Neighbors(fqn string, maxDepth int) ([]GraphEdge, error)
+	ShortestPath(fromFQN, toFQN string) ([]PathStep, error)
+	SymbolSearch(pattern string) ([]Callee, error)
+	Stats() (*GraphStats, error)
 	Close()
 }
