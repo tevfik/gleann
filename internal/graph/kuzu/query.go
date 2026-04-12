@@ -287,3 +287,292 @@ func (g *DB) Impact(fqn string, maxDepth int) (*gleann.ImpactResult, error) {
 
 	return result, nil
 }
+
+// Neighbors returns all symbols directly connected to the given FQN (both directions, all edge types).
+func (g *DB) Neighbors(fqn string, maxDepth int) ([]gleann.GraphEdge, error) {
+	if maxDepth <= 0 {
+		maxDepth = 1
+	}
+	if maxDepth > 5 {
+		maxDepth = 5
+	}
+
+	var edges []gleann.GraphEdge
+	visited := map[string]bool{fqn: true}
+	frontier := []string{fqn}
+
+	for depth := 0; depth < maxDepth && len(frontier) > 0; depth++ {
+		var nextFrontier []string
+		for _, node := range frontier {
+			// Outgoing CALLS
+			cypher := fmt.Sprintf(
+				`MATCH (a:Symbol {fqn: %q})-[:CALLS]->(b:Symbol) RETURN b.fqn AS fqn, b.name AS name, b.kind AS kind`,
+				node,
+			)
+			if res, err := g.conn.Query(cypher); err == nil {
+				for res.HasNext() {
+					row, _ := res.Next()
+					m, _ := row.GetAsMap()
+					target := fmt.Sprint(m["fqn"])
+					edges = append(edges, gleann.GraphEdge{
+						From: node, To: target, Relation: "CALLS",
+						TargetKind: fmt.Sprint(m["kind"]), Confidence: "extracted",
+					})
+					if !visited[target] {
+						visited[target] = true
+						nextFrontier = append(nextFrontier, target)
+					}
+				}
+				res.Close()
+			}
+
+			// Incoming CALLS
+			cypher = fmt.Sprintf(
+				`MATCH (a:Symbol)-[:CALLS]->(b:Symbol {fqn: %q}) RETURN a.fqn AS fqn, a.name AS name, a.kind AS kind`,
+				node,
+			)
+			if res, err := g.conn.Query(cypher); err == nil {
+				for res.HasNext() {
+					row, _ := res.Next()
+					m, _ := row.GetAsMap()
+					source := fmt.Sprint(m["fqn"])
+					edges = append(edges, gleann.GraphEdge{
+						From: source, To: node, Relation: "CALLS",
+						TargetKind: fmt.Sprint(m["kind"]), Confidence: "extracted",
+					})
+					if !visited[source] {
+						visited[source] = true
+						nextFrontier = append(nextFrontier, source)
+					}
+				}
+				res.Close()
+			}
+
+			// IMPLEMENTS
+			cypher = fmt.Sprintf(
+				`MATCH (a:Symbol {fqn: %q})-[:IMPLEMENTS]->(b:Symbol) RETURN b.fqn AS fqn, b.name AS name, b.kind AS kind`,
+				node,
+			)
+			if res, err := g.conn.Query(cypher); err == nil {
+				for res.HasNext() {
+					row, _ := res.Next()
+					m, _ := row.GetAsMap()
+					target := fmt.Sprint(m["fqn"])
+					edges = append(edges, gleann.GraphEdge{
+						From: node, To: target, Relation: "IMPLEMENTS",
+						TargetKind: fmt.Sprint(m["kind"]), Confidence: "extracted",
+					})
+					if !visited[target] {
+						visited[target] = true
+						nextFrontier = append(nextFrontier, target)
+					}
+				}
+				res.Close()
+			}
+
+			// REFERENCES
+			cypher = fmt.Sprintf(
+				`MATCH (a:Symbol {fqn: %q})-[:REFERENCES]->(b:Symbol) RETURN b.fqn AS fqn, b.name AS name, b.kind AS kind`,
+				node,
+			)
+			if res, err := g.conn.Query(cypher); err == nil {
+				for res.HasNext() {
+					row, _ := res.Next()
+					m, _ := row.GetAsMap()
+					target := fmt.Sprint(m["fqn"])
+					edges = append(edges, gleann.GraphEdge{
+						From: node, To: target, Relation: "REFERENCES",
+						TargetKind: fmt.Sprint(m["kind"]), Confidence: "extracted",
+					})
+					if !visited[target] {
+						visited[target] = true
+						nextFrontier = append(nextFrontier, target)
+					}
+				}
+				res.Close()
+			}
+		}
+		frontier = nextFrontier
+	}
+
+	return edges, nil
+}
+
+// ShortestPath finds the shortest path between two symbols using BFS over CALLS edges.
+func (g *DB) ShortestPath(fromFQN, toFQN string) ([]gleann.PathStep, error) {
+	type bfsNode struct {
+		fqn    string
+		parent string
+		edge   string
+	}
+
+	visited := map[string]bool{fromFQN: true}
+	queue := []bfsNode{{fqn: fromFQN}}
+	parents := map[string]bfsNode{fromFQN: {fqn: fromFQN}}
+
+	for len(queue) > 0 && len(visited) < 1000 {
+		current := queue[0]
+		queue = queue[1:]
+
+		if current.fqn == toFQN {
+			// Reconstruct path
+			var path []gleann.PathStep
+			node := current.fqn
+			for node != fromFQN {
+				p := parents[node]
+				path = append([]gleann.PathStep{{
+					From: p.parent, To: node, Relation: p.edge,
+				}}, path...)
+				node = p.parent
+			}
+			return path, nil
+		}
+
+		// Expand outgoing CALLS
+		cypher := fmt.Sprintf(
+			`MATCH (a:Symbol {fqn: %q})-[:CALLS]->(b:Symbol) RETURN b.fqn AS fqn`,
+			current.fqn,
+		)
+		if res, err := g.conn.Query(cypher); err == nil {
+			for res.HasNext() {
+				row, _ := res.Next()
+				m, _ := row.GetAsMap()
+				next := fmt.Sprint(m["fqn"])
+				if !visited[next] {
+					visited[next] = true
+					parents[next] = bfsNode{fqn: next, parent: current.fqn, edge: "CALLS"}
+					queue = append(queue, bfsNode{fqn: next})
+				}
+			}
+			res.Close()
+		}
+
+		// Expand incoming CALLS
+		cypher = fmt.Sprintf(
+			`MATCH (a:Symbol)-[:CALLS]->(b:Symbol {fqn: %q}) RETURN a.fqn AS fqn`,
+			current.fqn,
+		)
+		if res, err := g.conn.Query(cypher); err == nil {
+			for res.HasNext() {
+				row, _ := res.Next()
+				m, _ := row.GetAsMap()
+				next := fmt.Sprint(m["fqn"])
+				if !visited[next] {
+					visited[next] = true
+					parents[next] = bfsNode{fqn: next, parent: current.fqn, edge: "CALLED_BY"}
+					queue = append(queue, bfsNode{fqn: next})
+				}
+			}
+			res.Close()
+		}
+
+		// Expand IMPLEMENTS
+		cypher = fmt.Sprintf(
+			`MATCH (a:Symbol {fqn: %q})-[:IMPLEMENTS]->(b:Symbol) RETURN b.fqn AS fqn`,
+			current.fqn,
+		)
+		if res, err := g.conn.Query(cypher); err == nil {
+			for res.HasNext() {
+				row, _ := res.Next()
+				m, _ := row.GetAsMap()
+				next := fmt.Sprint(m["fqn"])
+				if !visited[next] {
+					visited[next] = true
+					parents[next] = bfsNode{fqn: next, parent: current.fqn, edge: "IMPLEMENTS"}
+					queue = append(queue, bfsNode{fqn: next})
+				}
+			}
+			res.Close()
+		}
+	}
+
+	return nil, fmt.Errorf("no path found between %q and %q (explored %d nodes)", fromFQN, toFQN, len(visited))
+}
+
+// SymbolSearch searches for symbols whose FQN or name contains the given substring (case-insensitive).
+func (g *DB) SymbolSearch(pattern string) ([]gleann.Callee, error) {
+	cypher := fmt.Sprintf(
+		`MATCH (s:Symbol)
+		 WHERE s.fqn CONTAINS %q OR s.name CONTAINS %q
+		 RETURN s.fqn AS fqn, s.name AS name, s.kind AS kind
+		 LIMIT 50`,
+		strings.ToLower(pattern), strings.ToLower(pattern),
+	)
+	res, err := g.conn.Query(cypher)
+	if err != nil {
+		return nil, err
+	}
+	defer res.Close()
+	return consumeCallees(res)
+}
+
+// Stats returns basic graph statistics.
+func (g *DB) Stats() (*gleann.GraphStats, error) {
+	stats := &gleann.GraphStats{}
+
+	// Count files
+	if res, err := g.conn.Query(`MATCH (f:CodeFile) RETURN count(f) AS cnt`); err == nil {
+		if res.HasNext() {
+			row, _ := res.Next()
+			m, _ := row.GetAsMap()
+			stats.Files = toInt(m["cnt"])
+		}
+		res.Close()
+	}
+
+	// Count symbols
+	if res, err := g.conn.Query(`MATCH (s:Symbol) RETURN count(s) AS cnt`); err == nil {
+		if res.HasNext() {
+			row, _ := res.Next()
+			m, _ := row.GetAsMap()
+			stats.Symbols = toInt(m["cnt"])
+		}
+		res.Close()
+	}
+
+	// Count CALLS edges
+	if res, err := g.conn.Query(`MATCH ()-[r:CALLS]->() RETURN count(r) AS cnt`); err == nil {
+		if res.HasNext() {
+			row, _ := res.Next()
+			m, _ := row.GetAsMap()
+			stats.CallEdges = toInt(m["cnt"])
+		}
+		res.Close()
+	}
+
+	// Count DECLARES edges
+	if res, err := g.conn.Query(`MATCH ()-[r:DECLARES]->() RETURN count(r) AS cnt`); err == nil {
+		if res.HasNext() {
+			row, _ := res.Next()
+			m, _ := row.GetAsMap()
+			stats.DeclareEdges = toInt(m["cnt"])
+		}
+		res.Close()
+	}
+
+	// Count IMPLEMENTS edges
+	if res, err := g.conn.Query(`MATCH ()-[r:IMPLEMENTS]->() RETURN count(r) AS cnt`); err == nil {
+		if res.HasNext() {
+			row, _ := res.Next()
+			m, _ := row.GetAsMap()
+			stats.ImplementsEdges = toInt(m["cnt"])
+		}
+		res.Close()
+	}
+
+	return stats, nil
+}
+
+func toInt(v any) int {
+	if v == nil {
+		return 0
+	}
+	switch n := v.(type) {
+	case int64:
+		return int(n)
+	case float64:
+		return int(n)
+	default:
+		return 0
+	}
+}

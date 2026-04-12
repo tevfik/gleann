@@ -41,6 +41,18 @@ func (m *mockGraphDB) Impact(fqn string, maxDepth int) (*ImpactResult, error) {
 	}
 	return result, nil
 }
+func (m *mockGraphDB) Neighbors(_ string, _ int) ([]GraphEdge, error) {
+	return nil, nil
+}
+func (m *mockGraphDB) ShortestPath(_, _ string) ([]PathStep, error) {
+	return nil, nil
+}
+func (m *mockGraphDB) SymbolSearch(_ string) ([]Callee, error) {
+	return nil, nil
+}
+func (m *mockGraphDB) Stats() (*GraphStats, error) {
+	return &GraphStats{}, nil
+}
 func (m *mockGraphDB) Close() {}
 
 func newMockGraphDB() *mockGraphDB {

@@ -21,52 +21,66 @@ import (
 type Language string
 
 const (
-	LangGo         Language = "go"
-	LangPython     Language = "python"
-	LangJavaScript Language = "javascript"
-	LangTypeScript Language = "typescript"
-	LangJava       Language = "java"
-	LangC          Language = "c"
-	LangCPP        Language = "cpp"
-	LangRust       Language = "rust"
-	LangCSharp     Language = "csharp"
-	LangRuby       Language = "ruby"
-	LangPHP        Language = "php"
-	LangKotlin     Language = "kotlin"
-	LangScala      Language = "scala"
-	LangSwift      Language = "swift"
-	LangLua        Language = "lua"
-	LangElixir     Language = "elixir"
-	LangUnknown    Language = "unknown"
+	LangGo          Language = "go"
+	LangPython      Language = "python"
+	LangJavaScript  Language = "javascript"
+	LangTypeScript  Language = "typescript"
+	LangJava        Language = "java"
+	LangC           Language = "c"
+	LangCPP         Language = "cpp"
+	LangRust        Language = "rust"
+	LangCSharp      Language = "csharp"
+	LangRuby        Language = "ruby"
+	LangPHP         Language = "php"
+	LangKotlin      Language = "kotlin"
+	LangScala       Language = "scala"
+	LangSwift       Language = "swift"
+	LangLua         Language = "lua"
+	LangElixir      Language = "elixir"
+	LangZig         Language = "zig"
+	LangPowerShell  Language = "powershell"
+	LangJulia       Language = "julia"
+	LangObjectiveC  Language = "objc"
+	LangVue         Language = "vue"
+	LangSvelte      Language = "svelte"
+	LangUnknown     Language = "unknown"
 )
 
 // extensionMap maps file extensions to languages.
 var extensionMap = map[string]Language{
-	".go":    LangGo,
-	".py":    LangPython,
-	".js":    LangJavaScript,
-	".jsx":   LangJavaScript,
-	".ts":    LangTypeScript,
-	".tsx":   LangTypeScript,
-	".java":  LangJava,
-	".c":     LangC,
-	".h":     LangC,
-	".cpp":   LangCPP,
-	".cc":    LangCPP,
-	".cxx":   LangCPP,
-	".hpp":   LangCPP,
-	".rs":    LangRust,
-	".cs":    LangCSharp,
-	".rb":    LangRuby,
-	".php":   LangPHP,
-	".kt":    LangKotlin,
-	".kts":   LangKotlin,
-	".scala": LangScala,
-	".sc":    LangScala,
-	".swift": LangSwift,
-	".lua":   LangLua,
-	".ex":    LangElixir,
-	".exs":   LangElixir,
+	".go":      LangGo,
+	".py":      LangPython,
+	".js":      LangJavaScript,
+	".jsx":     LangJavaScript,
+	".ts":      LangTypeScript,
+	".tsx":     LangTypeScript,
+	".java":    LangJava,
+	".c":       LangC,
+	".h":       LangC,
+	".cpp":     LangCPP,
+	".cc":      LangCPP,
+	".cxx":     LangCPP,
+	".hpp":     LangCPP,
+	".rs":      LangRust,
+	".cs":      LangCSharp,
+	".rb":      LangRuby,
+	".php":     LangPHP,
+	".kt":      LangKotlin,
+	".kts":     LangKotlin,
+	".scala":   LangScala,
+	".sc":      LangScala,
+	".swift":   LangSwift,
+	".lua":     LangLua,
+	".ex":      LangElixir,
+	".exs":     LangElixir,
+	".zig":     LangZig,
+	".ps1":     LangPowerShell,
+	".psm1":    LangPowerShell,
+	".jl":      LangJulia,
+	".m":       LangObjectiveC,
+	".mm":      LangObjectiveC,
+	".vue":     LangVue,
+	".svelte":  LangSvelte,
 }
 
 // CodeChunk represents a semantic code chunk with metadata.
@@ -151,7 +165,7 @@ func (c *ASTChunker) ChunkCode(source, filename string) []CodeChunk {
 	case LangGo:
 		// Go always uses native go/ast (no tree-sitter needed).
 		chunks = c.chunkGo(source, filename)
-	case LangPython, LangJavaScript, LangTypeScript, LangJava, LangCSharp, LangC, LangCPP, LangRust, LangRuby, LangPHP, LangKotlin, LangScala, LangSwift, LangLua, LangElixir:
+	case LangPython, LangJavaScript, LangTypeScript, LangJava, LangCSharp, LangC, LangCPP, LangRust, LangRuby, LangPHP, LangKotlin, LangScala, LangSwift, LangLua, LangElixir, LangZig, LangPowerShell, LangJulia, LangObjectiveC, LangVue, LangSvelte:
 		// Try tree-sitter first (if compiled with -tags treesitter).
 		chunks = treeSitterChunk(source, filename, lang, c.config)
 		if chunks == nil {
@@ -409,20 +423,94 @@ func goPatterns() []boundaryPattern {
 	}
 }
 
+// rubyElixirPatterns returns fallback regex patterns for Ruby/Elixir.
+func rubyElixirPatterns() []boundaryPattern {
+	return []boundaryPattern{
+		{regexp.MustCompile(`(?m)^\s*def\s+(\w+)`), "function"},
+		{regexp.MustCompile(`(?m)^\s*defp?\s+(\w+)`), "function"},
+		{regexp.MustCompile(`(?m)^\s*class\s+(\w+)`), "class"},
+		{regexp.MustCompile(`(?m)^\s*module\s+(\w+)`), "module"},
+		{regexp.MustCompile(`(?m)^\s*defmodule\s+(\w+)`), "module"},
+		{regexp.MustCompile(`(?m)^\s*defstruct\b`), "struct"},
+	}
+}
+
+// phpPatterns returns fallback regex patterns for PHP.
+func phpPatterns() []boundaryPattern {
+	return []boundaryPattern{
+		{regexp.MustCompile(`(?m)^\s*(?:public|private|protected|static)?\s*function\s+(\w+)`), "function"},
+		{regexp.MustCompile(`(?m)^\s*class\s+(\w+)`), "class"},
+		{regexp.MustCompile(`(?m)^\s*interface\s+(\w+)`), "interface"},
+		{regexp.MustCompile(`(?m)^\s*trait\s+(\w+)`), "trait"},
+	}
+}
+
+// swiftPatterns returns fallback regex patterns for Swift.
+func swiftPatterns() []boundaryPattern {
+	return []boundaryPattern{
+		{regexp.MustCompile(`(?m)^\s*(?:public|private|internal|open)?\s*func\s+(\w+)`), "function"},
+		{regexp.MustCompile(`(?m)^\s*(?:public|private|internal|open)?\s*class\s+(\w+)`), "class"},
+		{regexp.MustCompile(`(?m)^\s*(?:public|private|internal|open)?\s*struct\s+(\w+)`), "struct"},
+		{regexp.MustCompile(`(?m)^\s*(?:public|private|internal|open)?\s*protocol\s+(\w+)`), "interface"},
+		{regexp.MustCompile(`(?m)^\s*(?:public|private|internal|open)?\s*enum\s+(\w+)`), "enum"},
+	}
+}
+
+// luaPatterns returns fallback regex patterns for Lua.
+func luaPatterns() []boundaryPattern {
+	return []boundaryPattern{
+		{regexp.MustCompile(`(?m)^\s*function\s+(\w[\w.]*)\s*\(`), "function"},
+		{regexp.MustCompile(`(?m)^\s*local\s+function\s+(\w+)\s*\(`), "function"},
+		{regexp.MustCompile(`(?m)^\s*(\w+)\s*=\s*function\s*\(`), "function"},
+	}
+}
+
+// powershellPatterns returns fallback regex patterns for PowerShell.
+func powershellPatterns() []boundaryPattern {
+	return []boundaryPattern{
+		{regexp.MustCompile(`(?mi)^\s*function\s+(\w[\w-]*)`), "function"},
+		{regexp.MustCompile(`(?mi)^\s*class\s+(\w+)`), "class"},
+		{regexp.MustCompile(`(?mi)^\s*filter\s+(\w+)`), "function"},
+	}
+}
+
+// juliaPatterns returns fallback regex patterns for Julia.
+func juliaPatterns() []boundaryPattern {
+	return []boundaryPattern{
+		{regexp.MustCompile(`(?m)^\s*function\s+(\w+)`), "function"},
+		{regexp.MustCompile(`(?m)^\s*macro\s+(\w+)`), "function"},
+		{regexp.MustCompile(`(?m)^\s*(?:mutable\s+)?struct\s+(\w+)`), "struct"},
+		{regexp.MustCompile(`(?m)^\s*abstract\s+type\s+(\w+)`), "type"},
+		{regexp.MustCompile(`(?m)^\s*module\s+(\w+)`), "module"},
+	}
+}
+
 // chunkByRegex dispatches to the appropriate regex patterns for a language.
 // Used as fallback when tree-sitter is not available.
 func (c *ASTChunker) chunkByRegex(source, filename string, lang Language) []CodeChunk {
 	switch lang {
 	case LangPython:
 		return c.chunkByPattern(source, filename, pythonPatterns(), lang)
-	case LangJavaScript, LangTypeScript:
+	case LangJavaScript, LangTypeScript, LangVue, LangSvelte:
 		return c.chunkByPattern(source, filename, jstsPatterns(), lang)
-	case LangJava, LangCSharp:
+	case LangJava, LangCSharp, LangKotlin, LangScala:
 		return c.chunkByPattern(source, filename, javaPatterns(), lang)
-	case LangC, LangCPP:
+	case LangC, LangCPP, LangObjectiveC:
 		return c.chunkByPattern(source, filename, cPatterns(), lang)
-	case LangRust:
+	case LangRust, LangZig:
 		return c.chunkByPattern(source, filename, rustPatterns(), lang)
+	case LangRuby, LangElixir:
+		return c.chunkByPattern(source, filename, rubyElixirPatterns(), lang)
+	case LangPHP:
+		return c.chunkByPattern(source, filename, phpPatterns(), lang)
+	case LangSwift:
+		return c.chunkByPattern(source, filename, swiftPatterns(), lang)
+	case LangLua:
+		return c.chunkByPattern(source, filename, luaPatterns(), lang)
+	case LangPowerShell:
+		return c.chunkByPattern(source, filename, powershellPatterns(), lang)
+	case LangJulia:
+		return c.chunkByPattern(source, filename, juliaPatterns(), lang)
 	default:
 		return c.chunkSlidingWindow(source, filename, lang)
 	}

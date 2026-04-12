@@ -108,18 +108,94 @@ func WriteMarkdown(w io.Writer, result *community.Result, opts Options) error {
 		p("## Cross-Community Edges (Surprising Connections)")
 		p("")
 		p("These edges connect symbols in different communities, indicating inter-module coupling.")
+		p("Ranked by composite score: cross-community edges involving different packages score higher.")
 		p("")
-		p("| From | To | Communities |")
-		p("|------|----|------------|")
+		p("| From | To | Communities | Score |")
+		p("|------|----|------------|-------|")
 		for _, e := range result.SurprisingEdges {
-			p("| `%s` | `%s` | %d → %d |", shortName(e.From), shortName(e.To), e.FromCommunity, e.ToCommunity)
+			score := surprisingScore(e)
+			p("| `%s` | `%s` | %d → %d | %.2f |", shortName(e.From), shortName(e.To), e.FromCommunity, e.ToCommunity, score)
 		}
 		p("")
 		p("> **Tip:** Many cross-community edges between the same two communities may indicate they should be merged, or there's a missing abstraction layer.")
 		p("")
 	}
 
+	// Suggested Questions
+	questions := suggestQuestions(result)
+	if len(questions) > 0 {
+		p("## Suggested Questions")
+		p("")
+		p("Based on graph structure, these questions may reveal useful insights:")
+		p("")
+		for i, q := range questions {
+			p("%d. %s", i+1, q)
+		}
+		p("")
+	}
+
 	return nil
+}
+
+// surprisingScore computes a composite score for a surprising edge.
+// Higher score = more architecturally significant.
+func surprisingScore(e community.SurprisingEdge) float64 {
+	score := e.Weight
+
+	// Cross-package edges are more surprising than intra-package
+	fromPkg := extractPkg(e.From)
+	toPkg := extractPkg(e.To)
+	if fromPkg != toPkg && fromPkg != "" && toPkg != "" {
+		score *= 1.5
+	}
+
+	// Greater community distance = more surprising
+	commDist := e.FromCommunity - e.ToCommunity
+	if commDist < 0 {
+		commDist = -commDist
+	}
+	if commDist > 3 {
+		score *= 1.2
+	}
+
+	return score
+}
+
+// extractPkg extracts the package portion from an FQN.
+func extractPkg(fqn string) string {
+	if i := strings.LastIndex(fqn, "."); i > 0 {
+		return fqn[:i]
+	}
+	return ""
+}
+
+// suggestQuestions generates questions the graph is uniquely positioned to answer.
+func suggestQuestions(result *community.Result) []string {
+	var qs []string
+
+	if len(result.GodNodes) >= 2 {
+		qs = append(qs, fmt.Sprintf("What would break if `%s` (degree %d) were refactored?",
+			result.GodNodes[0].Name, result.GodNodes[0].TotalDeg))
+		qs = append(qs, fmt.Sprintf("Is `%s` a genuine hub or should it be split into smaller interfaces?",
+			result.GodNodes[1].Name))
+	}
+
+	if len(result.Communities) >= 2 {
+		qs = append(qs, fmt.Sprintf("Why do communities '%s' and '%s' share cross-module edges?",
+			result.Communities[0].Label, result.Communities[1].Label))
+	}
+
+	if len(result.SurprisingEdges) > 0 {
+		e := result.SurprisingEdges[0]
+		qs = append(qs, fmt.Sprintf("What is the relationship between `%s` and `%s` (surprising cross-community edge)?",
+			shortName(e.From), shortName(e.To)))
+	}
+
+	if result.Modularity < 0.3 && result.NodeCount > 50 {
+		qs = append(qs, "Why is the modularity low — is there a central package coupling everything together?")
+	}
+
+	return qs
 }
 
 // shortName extracts the short symbol name from an FQN.

@@ -28,6 +28,7 @@ import (
 	"github.com/smacker/go-tree-sitter/ruby"
 	"github.com/smacker/go-tree-sitter/rust"
 	"github.com/smacker/go-tree-sitter/scala"
+	"github.com/smacker/go-tree-sitter/svelte"
 	"github.com/smacker/go-tree-sitter/swift"
 	"github.com/smacker/go-tree-sitter/typescript/typescript"
 )
@@ -100,6 +101,14 @@ func treeSitterLanguage(lang Language) *sitter.Language {
 		return lua.GetLanguage()
 	case LangElixir:
 		return elixir.GetLanguage()
+	case LangSvelte:
+		return svelte.GetLanguage()
+	case LangVue:
+		// Vue SFC contains JS/TS sections — use JavaScript grammar as best approximation
+		return javascript.GetLanguage()
+	case LangObjectiveC:
+		// Objective-C is a C superset, use C grammar for basic parsing
+		return c.GetLanguage()
 	default:
 		return nil
 	}
@@ -215,6 +224,25 @@ var nodeTypeRules = map[Language][]nodeRule{
 	},
 	LangElixir: {
 		{Type: "call", ChunkType: "function"},
+	},
+	LangSvelte: {
+		{Type: "script_element", ChunkType: "script"},
+		{Type: "style_element", ChunkType: "style"},
+		{Type: "element", ChunkType: "component"},
+	},
+	LangVue: {
+		{Type: "function_declaration", ChunkType: "function"},
+		{Type: "class_declaration", ChunkType: "class"},
+		{Type: "method_definition", ChunkType: "method"},
+		{Type: "lexical_declaration", ChunkType: "declaration"},
+		{Type: "export_statement", ChunkType: "export"},
+	},
+	LangObjectiveC: {
+		{Type: "function_definition", ChunkType: "function"},
+		{Type: "struct_specifier", ChunkType: "struct"},
+		{Type: "enum_specifier", ChunkType: "enum"},
+		{Type: "preproc_function_def", ChunkType: "macro"},
+		{Type: "type_definition", ChunkType: "type"},
 	},
 }
 
