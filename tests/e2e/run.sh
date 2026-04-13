@@ -768,9 +768,9 @@ fi
 rm -rf "$IGNORE_DIR"
 
 # ══════════════════════════════════════════════════════════════════════════════
-# SECTION 11: WATCHER
+# SECTION 11: WATCHER & INCREMENTAL INDEXING
 # ══════════════════════════════════════════════════════════════════════════════
-header "§11 Auto-index Watcher  $(ts)"
+header "§11 Auto-index Watcher & Incremental Indexing  $(ts)"
 
 sub "Testing watch builds index on first run..."
 IDX_WATCH="e2e-watch-$$"
@@ -786,8 +786,68 @@ if echo "$OUT" | grep -qi "chunks\|passages\|model\|backend"; then
 else
   warn "watcher: index not confirmed after first run"
 fi
+
+# 11b. Incremental update: build, add a file, update should re-embed only that file
+sub "Testing incremental indexing..."
+IDX_INCR="e2e-incremental-$$"
+INCR_DIR=$(mktemp -d)
+cp "$FIXTURES/docs/quantum_computing.md" "$INCR_DIR/"
+
+# Build initial index
+OUT=$("$BINARY" index build "$IDX_INCR" --docs "$INCR_DIR" 2>&1)
+assert_exit_ok "incremental: initial build" $?
+INITIAL_COUNT=$(echo "$OUT" | grep -oP '\d+ (?:passage|chunk|text chunk)' | grep -oP '\d+' | head -1)
+sub "Initial index: ${INITIAL_COUNT:-?} passages"
+
+# Add a new file and rebuild — should produce more passages
+cat > "$INCR_DIR/extra_doc.md" << 'HEREDOC'
+# Extra Document for Incremental Test
+
+## Section One
+This is additional content that should be picked up by incremental indexing.
+The quick brown fox jumps over the lazy dog. Embedding models convert text to vectors.
+
+## Section Two
+Vector databases enable fast similarity search over high-dimensional embeddings.
+HNSW graphs provide logarithmic query time with high recall rates.
+HEREDOC
+
+OUT=$("$BINARY" index build "$IDX_INCR" --docs "$INCR_DIR" 2>&1)
+assert_exit_ok "incremental: rebuild with new file" $?
+REBUILD_COUNT=$(echo "$OUT" | grep -oP '\d+ (?:passage|chunk|text chunk)' | grep -oP '\d+' | head -1)
+sub "After adding file: ${REBUILD_COUNT:-?} passages"
+
+if [[ -n "$INITIAL_COUNT" && -n "$REBUILD_COUNT" && "$REBUILD_COUNT" -gt "$INITIAL_COUNT" ]]; then
+  pass "incremental: passage count increased after adding file ($INITIAL_COUNT → $REBUILD_COUNT)"
+else
+  warn "incremental: could not verify passage count increase"
+fi
+
+# 11c. Verify search finds content from new file
+OUT=$("$BINARY" search "$IDX_INCR" "HNSW similarity search vectors" 2>&1)
+if echo "$OUT" | grep -qi "HNSW\|similarity\|vector\|embedding"; then
+  pass "incremental: search finds content from added file"
+else
+  warn "incremental: search did not return content from added file"
+fi
+
+# 11d. Remove a file and rebuild — passage count should decrease
+rm "$INCR_DIR/extra_doc.md"
+OUT=$("$BINARY" index build "$IDX_INCR" --docs "$INCR_DIR" 2>&1)
+assert_exit_ok "incremental: rebuild after file removal" $?
+REMOVED_COUNT=$(echo "$OUT" | grep -oP '\d+ (?:passage|chunk|text chunk)' | grep -oP '\d+' | head -1)
+sub "After removing file: ${REMOVED_COUNT:-?} passages"
+
+if [[ -n "$INITIAL_COUNT" && -n "$REMOVED_COUNT" && "$REMOVED_COUNT" -le "$INITIAL_COUNT" ]]; then
+  pass "incremental: passage count restored after file removal ($REBUILD_COUNT → $REMOVED_COUNT)"
+else
+  warn "incremental: could not verify passage count after removal"
+fi
+
+# Cleanup incremental test
+"$BINARY" index remove "$IDX_INCR" >/dev/null 2>&1 || true
 "$BINARY" index remove "$IDX_WATCH" >/dev/null 2>&1 || true
-rm -rf "$WATCH_DIR"
+rm -rf "$WATCH_DIR" "$INCR_DIR"
 
 # ══════════════════════════════════════════════════════════════════════════════
 # SECTION 12: BENCHMARK MODE — Quality Scoring & Weak Point Detection

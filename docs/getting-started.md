@@ -90,14 +90,113 @@ Sources:
   [2] docs/api-reference.md (score: 0.87)
 ```
 
-## Step 6: Explore Further
+### Power-user search options
+
+```bash
+# Multi-index search — comma-separate any number of indexes
+gleann search code,docs "rate limiter implementation"
+
+# Search all indexes at once
+gleann search --all "deployment pipeline"
+
+# Enable cross-encoder reranking for higher precision (requires bge-reranker)
+gleann search my-docs "authentication" --rerank
+gleann search code,docs "cache invalidation" --rerank --rerank-model bge-reranker-v2-m3
+```
+
+## Step 6: Code Intelligence (AST Graph)
+
+If you built your index with `--graph`, you can traverse the call graph:
+
+```bash
+# What does this function call?
+gleann graph deps    myFunc --index my-code
+
+# Who calls this function?
+gleann graph callers myFunc --index my-code
+
+# Full context: callers, callees, blast radius
+gleann graph explain myFunc --index my-code
+
+# Find symbols by name or pattern
+gleann graph query   "handler" --index my-code
+
+# Shortest dependency path between two symbols
+gleann graph path    ServiceA ServiceB --index my-code
+
+# Generate a Markdown report (god nodes, communities) → GRAPH_REPORT.md
+gleann graph report  --index my-code
+
+# Interactive HTML visualization
+gleann graph viz     --index my-code
+```
+
+## Step 7: Long-term Memory
+
+Gleann maintains persistent tiered memory that survives across sessions:
+
+```bash
+# Store a permanent fact (long-tier, default)
+gleann memory remember "This codebase uses hexagonal architecture"
+
+# Store sprint-scoped info (medium-tier)
+gleann memory add medium "Sprint 14: focus on latency improvements"
+
+# Session-only note (short-tier)
+gleann memory add short "Current task: refactoring auth module"
+
+# Recall everything
+gleann memory list
+gleann memory search "architecture"
+
+# Housekeeping
+gleann memory summarize --last   # compress last conversation into memory
+gleann memory prune --age 90d    # remove entries older than 90 days
+gleann memory stats
+```
+
+## Step 8: Integrate with AI Editors
+
+Install gleann into your AI coding platform in one command:
+
+```bash
+# Auto-detect your platform (OpenCode, Claude Code, Cursor, Codex, etc.)
+gleann install
+
+# Or target a specific platform
+gleann install --platform opencode
+gleann install --platform claude
+gleann install --platform cursor
+
+# See all supported platforms
+gleann install --list
+```
+
+This writes `AGENTS.md`, MCP config, and platform-specific hooks automatically.
+
+## Step 9: Explore Further
 
 ```bash
 # Launch the visual TUI
 gleann tui
 
-# Start the REST API server
+# Start the REST API + OpenAI-compatible proxy
 gleann serve
+
+# Use gleann as an OpenAI-compatible backend from any client
+# (after gleann serve is running)
+python3 -c "
+from openai import OpenAI
+client = OpenAI(base_url='http://localhost:8080/v1', api_key='none')
+r = client.chat.completions.create(
+    model='gleann/my-docs',
+    messages=[{'role':'user','content':'How does auth work?'}]
+)
+print(r.choices[0].message.content)
+"
+
+# Auto-rebuild index whenever files change (incremental — only re-embeds changed files)
+gleann index watch my-code --docs ./src/
 
 # Check system health
 gleann doctor
@@ -112,9 +211,19 @@ source <(gleann completion bash)
 |------|---------|
 | Setup | `gleann setup` |
 | Build index | `gleann index build <name> --docs <dir>` |
+| Build with graph | `gleann index build <name> --docs <dir> --graph` |
+| Auto-rebuild on change | `gleann index watch <name> --docs <dir>` (incremental) |
 | Search | `gleann search <name> <query>` |
+| Multi-index search | `gleann search name1,name2 <query>` |
+| Search all indexes | `gleann search --all <query>` |
+| Search + rerank | `gleann search <name> <query> --rerank` |
 | Ask (RAG) | `gleann ask <name> <question>` |
 | Chat | `gleann chat <name>` |
+| Graph explain | `gleann graph explain <symbol> --index <name>` |
+| Graph report | `gleann graph report --index <name>` |
+| Memory store | `gleann memory remember "<fact>"` |
+| Memory recall | `gleann memory list` |
+| Install for AI editor | `gleann install [--platform <name>]` |
 | List indexes | `gleann index list` |
 | TUI | `gleann tui` |
 | API server | `gleann serve` |
@@ -124,10 +233,13 @@ source <(gleann completion bash)
 ## Next Steps
 
 - [Configuration Guide](configuration.md) — Fine-tune models, providers, and search parameters
+- [Platform Install](mcp.md) — Auto-configure for OpenCode, Claude Code, Cursor, and more
 - [Plugin System](plugins.md) — Add PDF, DOCX, audio support
 - [Plugin Installation Guide](plugin-install-guide.md) — Step-by-step plugin setup
+- [Graph Intelligence](graph.md) — Deep dive into AST call graph features
+- [Long-term Memory](memory_engine.md) — Tiered memory, sleep-time engine, rotation
 - [Cookbook](cookbook.md) — Real-world usage recipes
 - [Environment Variables](env-vars.md) — Override config for Docker/CI
-- [REST API Reference](api.md) — Build integrations
+- [REST API Reference](api.md) — Build integrations (includes OpenAI proxy + A2A)
 - [MCP Server](mcp.md) — Connect to AI editors (Cursor, Claude Desktop, VS Code)
 - [Troubleshooting](troubleshooting.md) — Common issues and fixes
