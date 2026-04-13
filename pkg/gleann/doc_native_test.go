@@ -178,6 +178,46 @@ func TestNativeExtractor_DOCX(t *testing.T) {
 	t.Logf("DOCX output:\n%s", md)
 }
 
+func TestNativeExtractor_DOCX_WithTable(t *testing.T) {
+	tmp := t.TempDir()
+	path := filepath.Join(tmp, "table.docx")
+
+	createDOCXWithTable(t, path)
+
+	n := NewNativeExtractor()
+	md, err := n.Extract(path)
+	if err != nil {
+		t.Fatalf("extract docx with table: %v", err)
+	}
+
+	// Should contain table header.
+	if !strings.Contains(md, "Name") || !strings.Contains(md, "Score") {
+		t.Error("expected table headers 'Name' and 'Score'")
+	}
+	// Should contain table data.
+	if !strings.Contains(md, "Alice") {
+		t.Error("expected table data 'Alice'")
+	}
+	if !strings.Contains(md, "Bob") {
+		t.Error("expected table data 'Bob'")
+	}
+	// Should be formatted as markdown table.
+	if !strings.Contains(md, "|") {
+		t.Error("expected markdown table pipe characters")
+	}
+	if !strings.Contains(md, "---") {
+		t.Error("expected markdown table separator")
+	}
+	// Paragraph before/after table should also be present.
+	if !strings.Contains(md, "Before table") {
+		t.Error("expected paragraph before table")
+	}
+	if !strings.Contains(md, "After table") {
+		t.Error("expected paragraph after table")
+	}
+	t.Logf("DOCX with table output:\n%s", md)
+}
+
 func TestNativeExtractor_PPTX(t *testing.T) {
 	tmp := t.TempDir()
 	path := filepath.Join(tmp, "presentation.pptx")
@@ -203,6 +243,33 @@ func TestNativeExtractor_PPTX(t *testing.T) {
 		t.Error("expected Slide 2 heading")
 	}
 	t.Logf("PPTX output:\n%s", md)
+}
+
+func TestNativeExtractor_PPTX_WithTable(t *testing.T) {
+	tmp := t.TempDir()
+	path := filepath.Join(tmp, "table_pres.pptx")
+
+	createPPTXWithTable(t, path)
+
+	n := NewNativeExtractor()
+	md, err := n.Extract(path)
+	if err != nil {
+		t.Fatalf("extract pptx with table: %v", err)
+	}
+
+	if !strings.Contains(md, "Model") || !strings.Contains(md, "Accuracy") {
+		t.Error("expected table headers 'Model' and 'Accuracy'")
+	}
+	if !strings.Contains(md, "GPT-4") {
+		t.Error("expected table data 'GPT-4'")
+	}
+	if !strings.Contains(md, "|") {
+		t.Error("expected markdown table pipe characters")
+	}
+	if !strings.Contains(md, "---") {
+		t.Error("expected markdown table separator")
+	}
+	t.Logf("PPTX with table output:\n%s", md)
 }
 
 func TestNativeExtractor_XLSX(t *testing.T) {
@@ -385,6 +452,87 @@ func createMinimalXLSX(t *testing.T, path string) {
 	if err := f.SaveAs(path); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func createDOCXWithTable(t *testing.T, path string) {
+	t.Helper()
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+
+	zw := zip.NewWriter(f)
+
+	ct, _ := zw.Create("[Content_Types].xml")
+	ct.Write([]byte(`<?xml version="1.0" encoding="UTF-8"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+<Default Extension="xml" ContentType="application/xml"/>
+<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+</Types>`))
+
+	doc, _ := zw.Create("word/document.xml")
+	doc.Write([]byte(`<?xml version="1.0" encoding="UTF-8"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+<w:body>
+<w:p><w:r><w:t>Before table</w:t></w:r></w:p>
+<w:tbl>
+  <w:tr>
+    <w:tc><w:p><w:r><w:t>Name</w:t></w:r></w:p></w:tc>
+    <w:tc><w:p><w:r><w:t>Score</w:t></w:r></w:p></w:tc>
+  </w:tr>
+  <w:tr>
+    <w:tc><w:p><w:r><w:t>Alice</w:t></w:r></w:p></w:tc>
+    <w:tc><w:p><w:r><w:t>95</w:t></w:r></w:p></w:tc>
+  </w:tr>
+  <w:tr>
+    <w:tc><w:p><w:r><w:t>Bob</w:t></w:r></w:p></w:tc>
+    <w:tc><w:p><w:r><w:t>87</w:t></w:r></w:p></w:tc>
+  </w:tr>
+</w:tbl>
+<w:p><w:r><w:t>After table</w:t></w:r></w:p>
+</w:body></w:document>`))
+
+	zw.Close()
+}
+
+func createPPTXWithTable(t *testing.T, path string) {
+	t.Helper()
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+
+	zw := zip.NewWriter(f)
+
+	slideXML := `<?xml version="1.0" encoding="UTF-8"?>
+<p:sld xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"
+       xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main">
+<p:cSld><p:spTree>
+<p:sp><p:txBody><a:p><a:r><a:t>Benchmark Results</a:t></a:r></a:p></p:txBody></p:sp>
+<p:graphicFrame><a:graphic><a:graphicData>
+<a:tbl>
+  <a:tr>
+    <a:tc><a:txBody><a:p><a:r><a:t>Model</a:t></a:r></a:p></a:txBody></a:tc>
+    <a:tc><a:txBody><a:p><a:r><a:t>Accuracy</a:t></a:r></a:p></a:txBody></a:tc>
+  </a:tr>
+  <a:tr>
+    <a:tc><a:txBody><a:p><a:r><a:t>GPT-4</a:t></a:r></a:p></a:txBody></a:tc>
+    <a:tc><a:txBody><a:p><a:r><a:t>92.3%</a:t></a:r></a:p></a:txBody></a:tc>
+  </a:tr>
+  <a:tr>
+    <a:tc><a:txBody><a:p><a:r><a:t>Claude</a:t></a:r></a:p></a:txBody></a:tc>
+    <a:tc><a:txBody><a:p><a:r><a:t>91.7%</a:t></a:r></a:p></a:txBody></a:tc>
+  </a:tr>
+</a:tbl>
+</a:graphicData></a:graphic></p:graphicFrame>
+</p:spTree></p:cSld>
+</p:sld>`
+
+	w, _ := zw.Create("ppt/slides/slide1.xml")
+	w.Write([]byte(slideXML))
+	zw.Close()
 }
 
 func itoa(n int) string {

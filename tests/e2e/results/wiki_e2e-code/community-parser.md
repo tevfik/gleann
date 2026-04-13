@@ -6,8 +6,8 @@
 
 | Symbol | Kind |
 |--------|------|
-| `code.Parser.Parse` | method |
-| `fmt.Errorf` | function |
+| `code.CyclomaticComplexity` | function |
+| `strings.Count` | function |
 
 ---
 [← Back to Index](index.md)
