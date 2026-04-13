@@ -8,8 +8,8 @@
 //
 // Run:
 //
-//	go test -v -run TestRecall ./benchmarks/
-//	go test -v -run TestRecallReport ./benchmarks/
+//	go test -v -run TestRecall ./tests/benchmarks/
+//	go test -v -run TestRecallReport ./tests/benchmarks/
 package benchmarks
 
 import (

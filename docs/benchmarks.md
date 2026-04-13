@@ -58,7 +58,7 @@ All benchmarks on Intel i9-13900H (20 threads), Go 1.22, Linux.
 
 ## Retrieval Quality Report (5K vectors, 128-dim, 30 clusters, 500 queries)
 
-Full 5-stage quality evaluation via `go test -v -run TestRecallReport ./benchmarks/`.
+Full 5-stage quality evaluation via `go test -v -run TestRecallReport ./tests/benchmarks/`.
 
 **Stage 1: Index Build**
 | Mode | Build Time | Pruned Embeddings |

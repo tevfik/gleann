@@ -23,7 +23,7 @@ jobs:
           go-version: "1.24"
 
       - name: Test
-        run: go test -race $(go list ./... | grep -v /benchmarks)
+        run: go test -race $(go list ./... | grep -v /tests/benchmarks)
 
   # ── Pure Go builds (all platforms, no CGo) ──
   release-pure:

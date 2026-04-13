@@ -77,3 +77,225 @@ func TestKuzuPoc(t *testing.T) {
 
 	t.Logf("✅ KuzuDB PoC passed: %d callees for Put, %d symbols in file", len(callees), len(symbols))
 }
+
+// helper: setupGraph creates an in-memory DB and populates it with a
+// small call graph:
+//
+//	file1: A → B → C   (CALLS chain)
+//	file2: D → B        (cross-file caller)
+//
+// Returns the open DB and a cleanup function.
+func setupGraph(t *testing.T) *kgraph.DB {
+	t.Helper()
+	db, err := kgraph.Open("")
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+
+	// Files
+	for _, f := range []string{"pkg/file1.go", "pkg/file2.go"} {
+		if err := db.UpsertFile(f, "go"); err != nil {
+			t.Fatalf("UpsertFile(%s): %v", f, err)
+		}
+	}
+
+	// Symbols
+	syms := []kgraph.SymbolNode{
+		{FQN: "mod/pkg.A", Kind: "function", File: "pkg/file1.go", Line: 10, Name: "A"},
+		{FQN: "mod/pkg.B", Kind: "function", File: "pkg/file1.go", Line: 20, Name: "B"},
+		{FQN: "mod/pkg.C", Kind: "function", File: "pkg/file1.go", Line: 30, Name: "C"},
+		{FQN: "mod/pkg.D", Kind: "function", File: "pkg/file2.go", Line: 10, Name: "D"},
+	}
+	for _, s := range syms {
+		if err := db.UpsertSymbol(s); err != nil {
+			t.Fatalf("UpsertSymbol(%s): %v", s.FQN, err)
+		}
+	}
+
+	// Declares
+	// Use individual calls for each file→symbol pair:
+	for _, pair := range [][2]string{
+		{"pkg/file1.go", "mod/pkg.A"},
+		{"pkg/file1.go", "mod/pkg.B"},
+		{"pkg/file1.go", "mod/pkg.C"},
+		{"pkg/file2.go", "mod/pkg.D"},
+	} {
+		if err := db.AddDeclares(pair[0], pair[1]); err != nil {
+			t.Fatalf("AddDeclares(%s, %s): %v", pair[0], pair[1], err)
+		}
+	}
+
+	// Calls: A→B, B→C, D→B
+	for _, pair := range [][2]string{
+		{"mod/pkg.A", "mod/pkg.B"},
+		{"mod/pkg.B", "mod/pkg.C"},
+		{"mod/pkg.D", "mod/pkg.B"},
+	} {
+		if err := db.AddCalls(pair[0], pair[1]); err != nil {
+			t.Fatalf("AddCalls(%s→%s): %v", pair[0], pair[1], err)
+		}
+	}
+
+	return db
+}
+
+func TestNeighbors(t *testing.T) {
+	db := setupGraph(t)
+	defer db.Close()
+
+	// Depth-1 neighbors of B should include A (caller), C (callee), D (caller)
+	edges, err := db.Neighbors("mod/pkg.B", 1)
+	if err != nil {
+		t.Fatalf("Neighbors: %v", err)
+	}
+
+	if len(edges) < 3 {
+		t.Errorf("expected ≥3 edges around B, got %d: %+v", len(edges), edges)
+	}
+
+	seenA, seenC, seenD := false, false, false
+	for _, e := range edges {
+		if e.From == "mod/pkg.A" || e.To == "mod/pkg.A" {
+			seenA = true
+		}
+		if e.From == "mod/pkg.C" || e.To == "mod/pkg.C" {
+			seenC = true
+		}
+		if e.From == "mod/pkg.D" || e.To == "mod/pkg.D" {
+			seenD = true
+		}
+	}
+	if !seenA {
+		t.Error("expected to see A as neighbor of B")
+	}
+	if !seenC {
+		t.Error("expected to see C as neighbor of B")
+	}
+	if !seenD {
+		t.Error("expected to see D as neighbor of B")
+	}
+}
+
+func TestShortestPath(t *testing.T) {
+	db := setupGraph(t)
+	defer db.Close()
+
+	// Path from A to C should go A→B→C
+	path, err := db.ShortestPath("mod/pkg.A", "mod/pkg.C")
+	if err != nil {
+		t.Fatalf("ShortestPath: %v", err)
+	}
+
+	if len(path) != 2 {
+		t.Fatalf("expected 2 hops (A→B→C), got %d: %+v", len(path), path)
+	}
+	if path[0].From != "mod/pkg.A" || path[0].To != "mod/pkg.B" {
+		t.Errorf("hop 0: expected A→B, got %s→%s", path[0].From, path[0].To)
+	}
+	if path[1].From != "mod/pkg.B" || path[1].To != "mod/pkg.C" {
+		t.Errorf("hop 1: expected B→C, got %s→%s", path[1].From, path[1].To)
+	}
+
+	// Path from C to D (not directly connected by CALLS outgoing from C)
+	// but via reverse: C←B←D
+	path2, err := db.ShortestPath("mod/pkg.C", "mod/pkg.D")
+	if err != nil {
+		t.Fatalf("ShortestPath C→D: %v", err)
+	}
+	if len(path2) < 1 {
+		t.Errorf("expected path C→D, got none")
+	}
+
+	// Non-existent path
+	_, err = db.ShortestPath("mod/pkg.A", "nonexistent.Foo")
+	if err == nil {
+		t.Error("expected error for non-existent target, got nil")
+	}
+}
+
+func TestSymbolSearch(t *testing.T) {
+	db := setupGraph(t)
+	defer db.Close()
+
+	// Search with a lowercase substring that matches stored FQN (mod/pkg.X)
+	results, err := db.SymbolSearch("mod/pkg")
+	if err != nil {
+		t.Fatalf("SymbolSearch: %v", err)
+	}
+
+	if len(results) < 4 {
+		t.Errorf("expected ≥4 symbols matching 'mod/pkg', got %d", len(results))
+	}
+
+	// Search for non-existent pattern
+	results2, err := db.SymbolSearch("zzz_nonexistent_zzz")
+	if err != nil {
+		t.Fatalf("SymbolSearch(nonexistent): %v", err)
+	}
+	if len(results2) != 0 {
+		t.Errorf("expected 0 symbols for nonexistent search, got %d", len(results2))
+	}
+}
+
+func TestStats(t *testing.T) {
+	db := setupGraph(t)
+	defer db.Close()
+
+	stats, err := db.Stats()
+	if err != nil {
+		t.Fatalf("Stats: %v", err)
+	}
+
+	if stats.Files != 2 {
+		t.Errorf("expected 2 files, got %d", stats.Files)
+	}
+	if stats.Symbols != 4 {
+		t.Errorf("expected 4 symbols, got %d", stats.Symbols)
+	}
+	if stats.CallEdges != 3 {
+		t.Errorf("expected 3 call edges, got %d", stats.CallEdges)
+	}
+	if stats.DeclareEdges != 4 {
+		t.Errorf("expected 4 declare edges, got %d", stats.DeclareEdges)
+	}
+}
+
+func TestImpact(t *testing.T) {
+	db := setupGraph(t)
+	defer db.Close()
+
+	// Impact of changing C: who calls C? B calls C, and A/D call B.
+	result, err := db.Impact("mod/pkg.C", 5)
+	if err != nil {
+		t.Fatalf("Impact: %v", err)
+	}
+
+	if result.Symbol != "mod/pkg.C" {
+		t.Errorf("symbol should be mod/pkg.C, got %s", result.Symbol)
+	}
+
+	// Direct callers of C: B
+	foundB := false
+	for _, c := range result.DirectCallers {
+		if c == "mod/pkg.B" {
+			foundB = true
+		}
+	}
+	if !foundB {
+		t.Errorf("expected B as direct caller of C, got %v", result.DirectCallers)
+	}
+
+	// Transitive: A and D call B which calls C
+	transitiveSet := make(map[string]bool)
+	for _, c := range result.TransitiveCallers {
+		transitiveSet[c] = true
+	}
+	if !transitiveSet["mod/pkg.A"] && !transitiveSet["mod/pkg.D"] {
+		t.Errorf("expected A or D as transitive callers, got %v", result.TransitiveCallers)
+	}
+
+	// Affected files should include file1.go and file2.go
+	if len(result.AffectedFiles) < 1 {
+		t.Errorf("expected ≥1 affected files, got %v", result.AffectedFiles)
+	}
+}

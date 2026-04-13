@@ -37,7 +37,7 @@ jobs:
 
       - name: Test (unit + integration)
         timeout-minutes: 10
-        run: go test -v -race -timeout 8m -coverprofile=coverage.out $(go list ./... | grep -v /benchmarks)
+        run: go test -v -race -timeout 8m -coverprofile=coverage.out $(go list ./... | grep -v /tests/benchmarks)
         shell: bash
 
       - name: Upload coverage

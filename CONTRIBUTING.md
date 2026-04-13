@@ -40,8 +40,22 @@ go vet ./...
 
 ## Testing
 
-- **Unit tests**: Fast, no external dependencies. Run with `make test`.
-- **E2E tests**: Require Ollama running. Run with `make test-e2e`.
+All tests live under `tests/`:
+
+```
+tests/
+  integration/   — Go integration tests (mock embedder, vault, plugins)
+  benchmarks/    — Performance benchmarks (HNSW, recall, FAISS vs Go)
+  e2e/           — Full end-to-end bash suite + fixtures + benchmark mode
+    run.sh       — Main e2e test runner (77+ checks)
+    fixtures/    — Deterministic test documents (MD, code, binary)
+```
+
+- **Unit tests**: Co-located with source (`*_test.go`). Run with `make test`.
+- **Integration tests**: `make test-e2e` (requires Ollama + markitdown).
+- **Full E2E suite**: `make test-e2e-full` (requires gleann-full binary).
+- **Benchmark scoring**: `make test-benchmark` (outputs JSON with weak point detection).
+- **Go benchmarks**: `make test-bench` (HNSW insert/search/recall).
 - Write tests for all new functionality.
 - Aim for >80% coverage on new code.
 
