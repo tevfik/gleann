@@ -1,6 +1,6 @@
 # Graph Report: e2e-code
 
-Generated: 2026-04-13 13:02:46
+Generated: 2026-04-13 19:38:34
 
 ## Summary
 
@@ -8,8 +8,8 @@ Generated: 2026-04-13 13:02:46
 |--------|-------|
 | Nodes | 139 |
 | Edges | 189 |
-| Communities | 23 |
-| Modularity (Q) | 0.5791 |
+| Communities | 26 |
+| Modularity (Q) | 0.5444 |
 | God Nodes | 20 |
 | Cross-Community Edges | 20 |
 
@@ -30,17 +30,17 @@ These symbols have an unusually high number of connections, making them central 
 | 7 | `code.parseGo` | function | 2 | 7 | 9 |
 | 8 | `code.parseTypeScript` | function | 2 | 7 | 9 |
 | 9 | `code._InMemoryStore` | class | 2 | 6 | 8 |
-| 10 | `code.extractGoFuncName` | function | 2 | 5 | 7 |
-| 11 | `code.DistributedRateLimiter` | class | 1 | 6 | 7 |
-| 12 | `code.generateId` | function | 2 | 5 | 7 |
-| 13 | `code.parsePython` | function | 2 | 5 | 7 |
-| 14 | `strings.TrimSpace` | function | 6 | 0 | 6 |
-| 15 | `code.PersistentQueue_part4` | class | 1 | 5 | 6 |
-| 16 | `code.TokenBucket_part2` | class | 1 | 4 | 5 |
-| 17 | `code.append` | function | 5 | 0 | 5 |
+| 10 | `code.DistributedRateLimiter` | class | 1 | 6 | 7 |
+| 11 | `code.parsePython` | function | 2 | 5 | 7 |
+| 12 | `code.extractGoFuncName` | function | 2 | 5 | 7 |
+| 13 | `code.generateId` | function | 2 | 5 | 7 |
+| 14 | `code.PersistentQueue_part4` | class | 1 | 5 | 6 |
+| 15 | `strings.TrimSpace` | function | 6 | 0 | 6 |
+| 16 | `code.extractTSFuncName` | function | 2 | 3 | 5 |
+| 17 | `code.Parser.Parse` | method | 1 | 4 | 5 |
 | 18 | `code.TokenBucket_part1` | class | 1 | 4 | 5 |
-| 19 | `strings.HasPrefix` | function | 5 | 0 | 5 |
-| 20 | `code.PersistentQueue_part1` | class | 1 | 4 | 5 |
+| 19 | `code.monotonic` | function | 5 | 0 | 5 |
+| 20 | `code.TokenBucket_part2` | class | 1 | 4 | 5 |
 
 > **Tip:** God nodes are potential coupling hotspots. If a god node changes, many dependents may be affected.
 
@@ -98,32 +98,14 @@ Detected via the Louvain algorithm. Each community represents a group of tightly
 
 ### Community 2: code (6 nodes, cohesion=0.167)
 
-- `code.LeakyBucket`
-- `code._leak`
-- `code.deque`
-- `code.len`
-- `code.popleft`
-- `code.range`
+- `code.PersistentQueue_part3`
+- `code.pow`
+- `code.random`
+- `code.reEnqueueExpiredMessages`
+- `code.receive`
+- `code.setInterval`
 
-### Community 3: parser (6 nodes, cohesion=0.050)
-
-- `code.LangGo`
-- `code.Language`
-- `code.New`
-- `code.Parser`
-- `code.Symbol`
-- `parser.go`
-
-### Community 4: code (6 nodes, cohesion=0.167)
-
-- `code.PersistentQueue_part2`
-- `code.add`
-- `code.delete`
-- `code.entries`
-- `code.has`
-- `code.push`
-
-### Community 5: code (6 nodes, cohesion=0.167)
+### Community 3: code (6 nodes, cohesion=0.167)
 
 - `code.from`
 - `code.generateId`
@@ -132,7 +114,16 @@ Detected via the Louvain algorithm. Each community represents a group of tightly
 - `code.padStart`
 - `code.toString`
 
-### Community 6: code (6 nodes, cohesion=0.167)
+### Community 4: parser (6 nodes, cohesion=0.050)
+
+- `code.LangGo`
+- `code.Language`
+- `code.New`
+- `code.Parser`
+- `code.Symbol`
+- `parser.go`
+
+### Community 5: code (6 nodes, cohesion=0.167)
 
 - `code.DistributedRateLimiter`
 - `code.expire`
@@ -141,107 +132,125 @@ Detected via the Louvain algorithm. Each community represents a group of tightly
 - `code.max`
 - `code.time`
 
-### Community 7: code (6 nodes, cohesion=0.167)
+### Community 6: code (6 nodes, cohesion=0.167)
 
-- `code.PersistentQueue_part3`
-- `code.pow`
-- `code.random`
-- `code.reEnqueueExpiredMessages`
-- `code.receive`
-- `code.setInterval`
+- `code.LeakyBucket`
+- `code._leak`
+- `code.deque`
+- `code.len`
+- `code.popleft`
+- `code.range`
 
-### Community 8: strings (5 nodes, cohesion=0.250)
+### Community 7: code (5 nodes, cohesion=0.200)
 
-- `code.extractTSFuncName`
-- `code.parseTypeScript`
-- `strings.Contains`
-- `strings.HasPrefix`
-- `strings.IndexAny`
+- `code.PersistentQueue_part2`
+- `code.add`
+- `code.entries`
+- `code.has`
+- `code.push`
 
-### Community 9: parser (5 nodes, cohesion=0.300)
-
-- `code.extractGoFuncName`
-- `code.extractGoTypeName`
-- `code.parseGo`
-- `strings.Index`
-- `strings.TrimPrefix`
-
-### Community 10: parser (5 nodes, cohesion=0.250)
-
-- `code.extractPyName`
-- `code.extractTSClassName`
-- `code.parsePython`
-- `strings.Split`
-- `strings.TrimSpace`
-
-### Community 11: code (4 nodes, cohesion=0.250)
-
-- `code.PersistentQueue_part4`
-- `code.clearInterval`
-- `code.emit`
-- `code.get`
-
-### Community 12: code (4 nodes, cohesion=0.250)
+### Community 8: code (5 nodes, cohesion=0.200)
 
 - `code._InMemoryStore`
 - `code._evict_expired`
+- `code.get`
 - `code.items`
 - `code.pop`
 
-### Community 13: code (3 nodes, cohesion=0.333)
+### Community 9: code (4 nodes, cohesion=0.250)
 
-- `code.Lock`
-- `code.SlidingWindowCounter_part1`
-- `code.monotonic`
+- `code.TokenBucket_part1`
+- `code._refill`
+- `code.field`
+- `code.min`
 
-### Community 14: code (3 nodes, cohesion=0.333)
+### Community 10: code (4 nodes, cohesion=0.250)
+
+- `code.PersistentQueue_part4`
+- `code.clearInterval`
+- `code.delete`
+- `code.emit`
+
+### Community 11: code (3 nodes, cohesion=0.333)
 
 - `code.TokenBucket_part2`
-- `code._refill`
+- `code.monotonic`
 - `code.sleep`
 
-### Community 15: code (3 nodes, cohesion=0.333)
+### Community 12: parser (3 nodes, cohesion=0.500)
+
+- `code.extractTSFuncName`
+- `code.parseTypeScript`
+- `strings.HasPrefix`
+
+### Community 13: code (3 nodes, cohesion=0.333)
 
 - `code.PersistentQueue_part1`
 - `code.now`
 - `code.set`
 
-### Community 16: code (3 nodes, cohesion=0.333)
-
-- `code.TokenBucket_part1`
-- `code.field`
-- `code.min`
-
-### Community 17: code (3 nodes, cohesion=0.333)
+### Community 14: code (3 nodes, cohesion=0.333)
 
 - `code.SlidingWindowCounter_part2`
 - `code._advance_window_if_needed`
 - `code._estimate_count`
 
-### Community 18: strings (2 nodes, cohesion=0.500)
+### Community 15: parser (3 nodes, cohesion=0.500)
 
-- `code.CyclomaticComplexity`
-- `strings.Count`
+- `code.extractPyName`
+- `code.parsePython`
+- `strings.TrimSpace`
+
+### Community 16: strings (3 nodes, cohesion=0.333)
+
+- `code.parseGo`
+- `strings.Contains`
+- `strings.Split`
+
+### Community 17: code (2 nodes, cohesion=0.500)
+
+- `code.Lock`
+- `code.SlidingWindowCounter_part1`
+
+### Community 18: parser (2 nodes, cohesion=0.500)
+
+- `code.extractGoFuncName`
+- `strings.IndexAny`
 
 ### Community 19: parser (2 nodes, cohesion=0.500)
-
-- `code.FilterByKind`
-- `code.append`
-
-### Community 20: parser (2 nodes, cohesion=0.500)
 
 - `code.CountSymbols`
 - `code.make`
 
-### Community 21: code (2 nodes, cohesion=0.500)
+### Community 20: parser (2 nodes, cohesion=0.500)
 
-- `code.CircularBuffer`
-- `code.fill`
+- `code.CyclomaticComplexity`
+- `strings.Count`
+
+### Community 21: parser (2 nodes, cohesion=0.500)
+
+- `code.extractTSClassName`
+- `strings.Index`
 
 ### Community 22: parser (2 nodes, cohesion=0.500)
 
 - `code.Parser.Parse`
 - `fmt.Errorf`
+
+### Community 23: parser (2 nodes, cohesion=0.500)
+
+- `code.extractGoTypeName`
+- `strings.TrimPrefix`
+
+### Community 24: queue (2 nodes, cohesion=0.500)
+
+- `code.CircularBuffer`
+- `code.fill`
+
+### Community 25: parser (2 nodes, cohesion=0.500)
+
+- `code.FilterByKind`
+- `code.append`
 
 ## Cross-Community Edges (Surprising Connections)
 
@@ -250,26 +259,26 @@ Ranked by composite score: cross-community edges involving different packages sc
 
 | From | To | Communities | Score |
 |------|----|------------|-------|
-| `code.extractTSClassName` | `strings.Index` | 10 → 9 | 1.50 |
-| `code.PersistentQueue_part4` | `code.now` | 11 → 15 | 1.20 |
-| `code.parseTypeScript` | `strings.TrimSpace` | 8 → 10 | 1.50 |
-| `code.parseTypeScript` | `code.append` | 8 → 19 | 1.20 |
-| `code.parsePython` | `code.append` | 10 → 19 | 1.20 |
-| `code.PersistentQueue_part1` | `code.generateId` | 15 → 5 | 1.20 |
-| `code.extractGoFuncName` | `strings.IndexAny` | 9 → 8 | 1.50 |
-| `code.extractGoFuncName` | `strings.TrimSpace` | 9 → 10 | 1.50 |
-| `code.monotonic` | `code.TokenBucket_part2` | 13 → 14 | 1.00 |
-| `code.int` | `code.LeakyBucket` | 6 → 2 | 1.20 |
-| `code.parseGo` | `code.append` | 9 → 19 | 1.20 |
-| `code.parseGo` | `strings.TrimSpace` | 9 → 10 | 1.50 |
-| `code.Parser.Parse` | `code.parseTypeScript` | 22 → 8 | 1.80 |
-| `code.Parser.Parse` | `code.parseGo` | 22 → 9 | 1.80 |
-| `code.Parser.Parse` | `code.parsePython` | 22 → 10 | 1.80 |
-| `code.LeakyBucket` | `code.append` | 2 → 19 | 1.20 |
-| `code.LeakyBucket` | `code.monotonic` | 2 → 13 | 1.20 |
-| `code.LeakyBucket` | `code.Lock` | 2 → 13 | 1.20 |
-| `strings.Index` | `code.extractPyName` | 9 → 10 | 1.50 |
-| `code.DistributedRateLimiter` | `code._InMemoryStore` | 6 → 12 | 1.20 |
+| `code.PersistentQueue_part3` | `code.set` | 2 → 13 | 1.20 |
+| `code.extractGoFuncName` | `code.parseGo` | 18 → 16 | 1.00 |
+| `code.extractTSClassName` | `strings.TrimSpace` | 21 → 15 | 1.80 |
+| `code.PersistentQueue_part1` | `code.emit` | 13 → 10 | 1.00 |
+| `code.parseTypeScript` | `strings.Contains` | 12 → 16 | 1.80 |
+| `code.parseTypeScript` | `strings.TrimSpace` | 12 → 15 | 1.50 |
+| `code.parseTypeScript` | `strings.Split` | 12 → 16 | 1.80 |
+| `code.parseTypeScript` | `code.Parser.Parse` | 12 → 22 | 1.80 |
+| `code.parseTypeScript` | `code.append` | 12 → 25 | 1.20 |
+| `code.TokenBucket_part2` | `code._refill` | 11 → 9 | 1.00 |
+| `code._InMemoryStore` | `code.Lock` | 8 → 17 | 1.20 |
+| `code.DistributedRateLimiter` | `code._InMemoryStore` | 5 → 8 | 1.00 |
+| `strings.IndexAny` | `code.extractTSFuncName` | 18 → 12 | 1.80 |
+| `code.len` | `code.extractTSFuncName` | 6 → 12 | 1.20 |
+| `code.parsePython` | `code.Parser.Parse` | 15 → 22 | 1.80 |
+| `code.LeakyBucket` | `code.int` | 6 → 5 | 1.00 |
+| `code.LeakyBucket` | `code.monotonic` | 6 → 11 | 1.20 |
+| `code.LeakyBucket` | `code.append` | 6 → 25 | 1.20 |
+| `code.LeakyBucket` | `code.Lock` | 6 → 17 | 1.20 |
+| `code.parsePython` | `strings.Split` | 15 → 16 | 1.50 |
 
 > **Tip:** Many cross-community edges between the same two communities may indicate they should be merged, or there's a missing abstraction layer.
 
@@ -280,5 +289,5 @@ Based on graph structure, these questions may reveal useful insights:
 1. What would break if `queue.ts` (degree 39) were refactored?
 2. Is `rate_limiter.py` a genuine hub or should it be split into smaller interfaces?
 3. Why do communities 'queue' and 'rate_limiter' share cross-module edges?
-4. What is the relationship between `code.extractTSClassName` and `strings.Index` (surprising cross-community edge)?
+4. What is the relationship between `code.PersistentQueue_part3` and `code.set` (surprising cross-community edge)?
 

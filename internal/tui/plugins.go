@@ -677,7 +677,7 @@ func setupPythonPluginWithProgress(pluginDir, name string, progress chan<- strin
 	// Create venv if needed.
 	if _, err := os.Stat(venvDir); os.IsNotExist(err) {
 		progress <- "🐍 Creating Python virtual environment..."
-		cmd := exec.Command("python3", "-m", "venv", venvDir)
+		cmd := exec.Command(findPython3(), "-m", "venv", venvDir)
 		if output, err := cmd.CombinedOutput(); err != nil {
 			return "", fmt.Errorf("create venv: %s", string(output))
 		}
@@ -1276,7 +1276,7 @@ func setupPythonPlugin(pluginDir, name string) (string, error) {
 
 	// Create venv if needed.
 	if _, err := os.Stat(venvDir); os.IsNotExist(err) {
-		cmd := exec.Command("python3", "-m", "venv", venvDir)
+		cmd := exec.Command(findPython3(), "-m", "venv", venvDir)
 		if output, err := cmd.CombinedOutput(); err != nil {
 			return "", fmt.Errorf("create venv: %s", string(output))
 		}
@@ -1654,6 +1654,21 @@ func (m PluginModel) viewResult() string {
 // marshalJSON serializes the plugin registry to JSON.
 func marshalJSON(reg *gleann.PluginRegistry) ([]byte, error) {
 	return json.MarshalIndent(reg, "", "  ")
+}
+
+// findPython3 returns the Python 3 executable name for the current platform.
+// On Windows, "python3" is often not available; "python" is the standard name.
+func findPython3() string {
+	if runtime.GOOS == "windows" {
+		// Windows Python installer registers as "python", not "python3".
+		if _, err := exec.LookPath("python"); err == nil {
+			return "python"
+		}
+	}
+	if _, err := exec.LookPath("python3"); err == nil {
+		return "python3"
+	}
+	return "python"
 }
 
 // venvBinary returns the correct path for a binary inside a Python virtualenv.

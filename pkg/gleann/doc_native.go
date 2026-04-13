@@ -164,7 +164,7 @@ func (n *NativeExtractor) extractDOCX(filePath string) (string, error) {
 	return parseWordXML(rc, filePath)
 }
 
-// parseWordXML extracts text from OOXML word/document.xml.
+// parseWordXML extracts text and tables from OOXML word/document.xml.
 func parseWordXML(r io.Reader, fileName string) (string, error) {
 	decoder := xml.NewDecoder(r)
 
@@ -172,8 +172,13 @@ func parseWordXML(r io.Reader, fileName string) (string, error) {
 	b.WriteString(fmt.Sprintf("# %s\n\n", filepath.Base(fileName)))
 
 	var inParagraph bool
+	var inTable bool
+	var inTableCell bool
 	var paragraphText strings.Builder
+	var cellText strings.Builder
 	var currentStyle string
+	var currentRow []string
+	var tableRows [][]string
 
 	for {
 		tok, err := decoder.Token()
@@ -184,10 +189,24 @@ func parseWordXML(r io.Reader, fileName string) (string, error) {
 		switch t := tok.(type) {
 		case xml.StartElement:
 			switch t.Name.Local {
+			case "tbl": // <w:tbl> — table
+				inTable = true
+				tableRows = nil
+			case "tr": // <w:tr> — table row
+				if inTable {
+					currentRow = nil
+				}
+			case "tc": // <w:tc> — table cell
+				if inTable {
+					inTableCell = true
+					cellText.Reset()
+				}
 			case "p": // <w:p> — paragraph
-				inParagraph = true
-				paragraphText.Reset()
-				currentStyle = ""
+				if !inTableCell {
+					inParagraph = true
+					paragraphText.Reset()
+					currentStyle = ""
+				}
 			case "pStyle": // <w:pStyle w:val="Heading1"/>
 				for _, attr := range t.Attr {
 					if attr.Name.Local == "val" {
@@ -196,33 +215,97 @@ func parseWordXML(r io.Reader, fileName string) (string, error) {
 				}
 			}
 		case xml.CharData:
-			if inParagraph {
+			if inTableCell {
+				cellText.Write(t)
+			} else if inParagraph {
 				paragraphText.Write(t)
 			}
 		case xml.EndElement:
-			if t.Name.Local == "p" && inParagraph {
-				text := strings.TrimSpace(paragraphText.String())
-				if text != "" {
-					// Convert Word heading styles to markdown.
-					switch {
-					case strings.Contains(currentStyle, "Heading1") || strings.Contains(currentStyle, "heading 1"):
-						b.WriteString("## " + text + "\n\n")
-					case strings.Contains(currentStyle, "Heading2") || strings.Contains(currentStyle, "heading 2"):
-						b.WriteString("### " + text + "\n\n")
-					case strings.Contains(currentStyle, "Heading3") || strings.Contains(currentStyle, "heading 3"):
-						b.WriteString("#### " + text + "\n\n")
-					case strings.Contains(currentStyle, "ListParagraph"):
-						b.WriteString("- " + text + "\n")
-					default:
-						b.WriteString(text + "\n\n")
-					}
+			switch t.Name.Local {
+			case "tbl":
+				if inTable && len(tableRows) > 0 {
+					b.WriteString(renderMarkdownTable(tableRows))
+					b.WriteString("\n")
 				}
-				inParagraph = false
+				inTable = false
+				tableRows = nil
+			case "tr":
+				if inTable && currentRow != nil {
+					tableRows = append(tableRows, currentRow)
+					currentRow = nil
+				}
+			case "tc":
+				if inTable && inTableCell {
+					currentRow = append(currentRow, strings.TrimSpace(cellText.String()))
+					inTableCell = false
+				}
+			case "p":
+				if inTableCell {
+					// Inside a table cell, paragraphs add line breaks.
+					if cellText.Len() > 0 {
+						text := strings.TrimSpace(cellText.String())
+						if text != "" {
+							cellText.Reset()
+							cellText.WriteString(text + " ")
+						}
+					}
+				} else if inParagraph {
+					text := strings.TrimSpace(paragraphText.String())
+					if text != "" {
+						switch {
+						case strings.Contains(currentStyle, "Heading1") || strings.Contains(currentStyle, "heading 1"):
+							b.WriteString("## " + text + "\n\n")
+						case strings.Contains(currentStyle, "Heading2") || strings.Contains(currentStyle, "heading 2"):
+							b.WriteString("### " + text + "\n\n")
+						case strings.Contains(currentStyle, "Heading3") || strings.Contains(currentStyle, "heading 3"):
+							b.WriteString("#### " + text + "\n\n")
+						case strings.Contains(currentStyle, "ListParagraph"):
+							b.WriteString("- " + text + "\n")
+						default:
+							b.WriteString(text + "\n\n")
+						}
+					}
+					inParagraph = false
+				}
 			}
 		}
 	}
 
 	return b.String(), nil
+}
+
+// renderMarkdownTable converts a 2D string grid into a markdown table.
+// The first row is treated as the header.
+func renderMarkdownTable(rows [][]string) string {
+	if len(rows) == 0 {
+		return ""
+	}
+
+	// Find max column count.
+	maxCols := 0
+	for _, row := range rows {
+		if len(row) > maxCols {
+			maxCols = len(row)
+		}
+	}
+	if maxCols == 0 {
+		return ""
+	}
+
+	var b strings.Builder
+
+	// Header row.
+	header := padRow(rows[0], maxCols)
+	b.WriteString("| " + strings.Join(header, " | ") + " |\n")
+	b.WriteString("|" + strings.Repeat(" --- |", maxCols) + "\n")
+
+	// Data rows.
+	for _, row := range rows[1:] {
+		cells := padRow(row, maxCols)
+		b.WriteString("| " + strings.Join(cells, " | ") + " |\n")
+	}
+
+	return b.String()
 }
 
 // ── XLSX ───────────────────────────────────────────────────────
@@ -330,11 +413,17 @@ func (n *NativeExtractor) extractPPTX(filePath string) (string, error) {
 	return b.String(), nil
 }
 
-// extractXMLText pulls all text content from an XML stream.
+// extractXMLText pulls all text content and tables from an XML stream.
+// Handles both PPTX (<a:t>, <a:tbl>) and DOCX (<w:t>) elements.
 func extractXMLText(r io.Reader) string {
 	decoder := xml.NewDecoder(r)
-	var texts []string
+	var parts []string
 	var inText bool
+	var inTable bool
+	var inTableCell bool
+	var cellText strings.Builder
+	var currentRow []string
+	var tableRows [][]string
 
 	for {
 		tok, err := decoder.Token()
@@ -343,25 +432,56 @@ func extractXMLText(r io.Reader) string {
 		}
 		switch t := tok.(type) {
 		case xml.StartElement:
-			// <a:t> in PPTX, <w:t> in DOCX
-			if t.Name.Local == "t" {
+			switch t.Name.Local {
+			case "tbl": // <a:tbl> in PPTX
+				inTable = true
+				tableRows = nil
+			case "tr":
+				if inTable {
+					currentRow = nil
+				}
+			case "tc":
+				if inTable {
+					inTableCell = true
+					cellText.Reset()
+				}
+			case "t": // <a:t> or <w:t>
 				inText = true
 			}
 		case xml.CharData:
-			if inText {
+			if inTableCell && inText {
+				cellText.Write(t)
+			} else if inText && !inTable {
 				s := strings.TrimSpace(string(t))
 				if s != "" {
-					texts = append(texts, s)
+					parts = append(parts, s)
 				}
 			}
 		case xml.EndElement:
-			if t.Name.Local == "t" {
+			switch t.Name.Local {
+			case "t":
 				inText = false
+			case "tc":
+				if inTable && inTableCell {
+					currentRow = append(currentRow, strings.TrimSpace(cellText.String()))
+					inTableCell = false
+				}
+			case "tr":
+				if inTable && currentRow != nil {
+					tableRows = append(tableRows, currentRow)
+					currentRow = nil
+				}
+			case "tbl":
+				if inTable && len(tableRows) > 0 {
+					parts = append(parts, "\n"+renderMarkdownTable(tableRows))
+				}
+				inTable = false
+				tableRows = nil
 			}
 		}
 	}
 
-	return strings.Join(texts, " ")
+	return strings.Join(parts, " ")
 }
 
 // ── PDF ────────────────────────────────────────────────────────
