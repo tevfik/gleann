@@ -3,8 +3,8 @@
 # E2E Test Suite for gleann — Plugins, DocExtractor & Cross-Platform
 #
 # Usage:
-#   ./e2e/plugin_test.sh          # run all tests
-#   ./e2e/plugin_test.sh --quick  # skip slow tests (markitdown install, git clone)
+#   ./tests/e2e/plugin_test.sh          # run all tests
+#   ./tests/e2e/plugin_test.sh --quick  # skip slow tests (markitdown install, git clone)
 #
 # Exit codes:
 #   0 = all tests passed
@@ -34,7 +34,7 @@ header(){ echo -e "\n${CYAN}${BOLD}━━━ $1 ━━━${NC}"; }
 
 # ── Workspace ──
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+PROJECT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 cd "$PROJECT_DIR"
 
 TMPDIR_BASE=$(mktemp -d)
@@ -84,8 +84,8 @@ else
 fi
 
 # 2.3 Run integration tests
-if go test ./tests/ -count=1 -timeout 60s >/dev/null 2>&1; then
-    pass "integration tests (tests/)"
+if go test ./tests/integration/ -count=1 -timeout 60s >/dev/null 2>&1; then
+    pass "integration tests (tests/integration/)"
 else
     fail "integration tests (tests/)"
 fi
@@ -481,7 +481,7 @@ TEST_PKGS=$(go test ./... -list '.*' 2>/dev/null | grep -c "^Test" || echo 0)
 echo -e "  Found $TEST_PKGS test functions across workspace"
 
 # Run all tests
-FULL_TEST_OUTPUT=$(go test ./pkg/gleann/ ./modules/chunking/ ./tests/ -count=1 -timeout 120s 2>&1)
+FULL_TEST_OUTPUT=$(go test ./pkg/gleann/ ./modules/chunking/ ./tests/integration/ -count=1 -timeout 120s 2>&1)
 FULL_TEST_EXIT=$?
 
 if [[ $FULL_TEST_EXIT -eq 0 ]]; then

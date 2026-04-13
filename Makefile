@@ -105,7 +105,7 @@ install-full: $(BINARY_FULL)
 # ── Tests ────────────────────────────────────────────────────────────────────
 .PHONY: test
 test:
-	go test -race -timeout 120s $$(go list ./... | grep -v /benchmarks)
+	go test -race -timeout 120s $$(go list ./... | grep -v /tests/benchmarks)
 
 .PHONY: test-faiss
 test-faiss:
@@ -115,18 +115,37 @@ test-faiss:
 test-treesitter:
 	go test -tags "cgo treesitter" -count=1 -timeout 60s ./modules/chunking/...
 
-# test-e2e — run E2E plugin tests locally (before commit). Requires Ollama running.
+# test-e2e — run Go integration E2E tests. Requires Ollama running.
 .PHONY: test-e2e
 test-e2e: $(BINARY)
 	@echo "🧪 Running E2E tests (requires Ollama + markitdown)..."
-	go test ./tests/ -run TestE2E -v -count=1 -timeout 8m
+	go test ./tests/integration/ -run TestE2E -v -count=1 -timeout 8m
 	@echo "✅ E2E tests passed"
 
 .PHONY: test-e2e-plugins
 test-e2e-plugins: $(BINARY)
 	@echo "🧪 Running E2E plugin bash tests..."
-	bash scripts/e2e_plugin_test.sh
+	bash tests/e2e/plugin_test.sh
 	@echo "✅ E2E plugin tests passed"
+
+# test-e2e-full — run the full bash E2E suite against gleann-full binary.
+.PHONY: test-e2e-full
+test-e2e-full: $(BINARY_FULL)
+	@echo "🧪 Running full E2E suite..."
+	bash tests/e2e/run.sh
+	@echo "✅ Full E2E suite passed"
+
+# test-benchmark — run E2E suite with benchmark scoring and weak point detection.
+.PHONY: test-benchmark
+test-benchmark: $(BINARY_FULL)
+	@echo "🧪 Running E2E + benchmark..."
+	bash tests/e2e/run.sh --benchmark
+	@echo "✅ Benchmark complete — results in tests/e2e/results/"
+
+# test-bench — run Go performance benchmarks.
+.PHONY: test-bench
+test-bench:
+	go test -run=^$$ -bench=. -benchmem -timeout 120s ./tests/benchmarks/
 
 # pre-commit — run all checks locally before committing
 .PHONY: pre-commit
@@ -187,7 +206,7 @@ dev:
 
 .PHONY: bench-faiss
 bench-faiss:
-	go test -tags "cgo faiss" -run=^$$ -bench=. -benchmem -timeout 120s ./internal/backend/faiss/
+	go test -tags "cgo faiss" -run=^$$ -bench=. -benchmem -timeout 120s ./tests/benchmarks/vector_db/
 
 .PHONY: vet
 vet:

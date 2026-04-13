@@ -493,7 +493,7 @@ func (g *DB) ShortestPath(fromFQN, toFQN string) ([]gleann.PathStep, error) {
 func (g *DB) SymbolSearch(pattern string) ([]gleann.Callee, error) {
 	cypher := fmt.Sprintf(
 		`MATCH (s:Symbol)
-		 WHERE s.fqn CONTAINS %q OR s.name CONTAINS %q
+		 WHERE lower(s.fqn) CONTAINS %q OR lower(s.name) CONTAINS %q
 		 RETURN s.fqn AS fqn, s.name AS name, s.kind AS kind
 		 LIMIT 50`,
 		strings.ToLower(pattern), strings.ToLower(pattern),

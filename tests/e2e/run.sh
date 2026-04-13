@@ -7,19 +7,20 @@
 # Works offline — Ollama must be running with configured models.
 #
 # Usage:
-#   ./e2e/run.sh                  # full suite
-#   ./e2e/run.sh --quick          # skip LLM-dependent tests
-#   ./e2e/run.sh --section search # run only a specific section
-#   ./e2e/run.sh --help
+#   ./tests/e2e/run.sh                  # full suite
+#   ./tests/e2e/run.sh --quick          # skip LLM-dependent tests
+#   ./tests/e2e/run.sh --benchmark      # full suite + quality scoring & weak point detection
+#   ./tests/e2e/run.sh --section search # run only a specific section
+#   ./tests/e2e/run.sh --help
 #
 # Exit code: 0 = all required tests pass, 1 = any failure
 # ══════════════════════════════════════════════════════════════════════════════
 set +e
 
-REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 BINARY="${REPO_ROOT}/build/gleann-full"
-FIXTURES="${REPO_ROOT}/e2e/fixtures"
-RESULTS_DIR="${REPO_ROOT}/e2e/results"
+FIXTURES="${REPO_ROOT}/tests/e2e/fixtures"
+RESULTS_DIR="${REPO_ROOT}/tests/e2e/results"
 
 IDX_DOCS="e2e-docs"
 IDX_CODE="e2e-code"
@@ -30,9 +31,11 @@ QUICK=false
 SECTION=""
 
 # ── Argument parsing ────────────────────────────────────────────────────────
+BENCHMARK=false
 for arg in "$@"; do
   case "$arg" in
-    --quick)    QUICK=true ;;
+    --quick)     QUICK=true ;;
+    --benchmark) BENCHMARK=true ;;
     --help|-h)
       grep '^#' "${BASH_SOURCE[0]}" | head -20 | sed 's/^# \?//'
       exit 0 ;;
@@ -57,6 +60,71 @@ skip()  { SKIP=$((SKIP+1));  echo -e "  ${YELLOW}⊘${NC} $1 (skipped)"; }
 warn()  { WARN=$((WARN+1));  echo -e "  ${YELLOW}⚠${NC} $1"; }
 header(){ echo -e "\n${CYAN}${BOLD}══ $1 ══${NC}"; }
 sub()   { echo -e "  ${BLUE}▸${NC} $1"; }
+
+# ── Benchmark helpers ────────────────────────────────────────────────────────
+BENCH_JSON="${RESULTS_DIR}/benchmark.json"
+declare -A BENCH_METRICS
+
+bench_record() {
+  local key="$1" value="$2"
+  BENCH_METRICS["$key"]="$value"
+}
+
+# time_cmd <label> <cmd...> — runs the command, captures output, records latency
+time_cmd() {
+  local label="$1"; shift
+  local start_ns=$(date +%s%N)
+  local output
+  output=$("$@" 2>&1)
+  local end_ns=$(date +%s%N)
+  local ms=$(( (end_ns - start_ns) / 1000000 ))
+  bench_record "${label}_ms" "$ms"
+  echo "$output"
+  return 0
+}
+
+bench_write_json() {
+  echo "{" > "$BENCH_JSON"
+  echo "  \"timestamp\": \"$(date -Iseconds)\"," >> "$BENCH_JSON"
+  echo "  \"pass\": $PASS," >> "$BENCH_JSON"
+  echo "  \"fail\": $FAIL," >> "$BENCH_JSON"
+  echo "  \"warn\": $WARN," >> "$BENCH_JSON"
+  echo "  \"total\": $((PASS + FAIL))," >> "$BENCH_JSON"
+  echo "  \"metrics\": {" >> "$BENCH_JSON"
+  local first=true
+  for key in $(echo "${!BENCH_METRICS[@]}" | tr ' ' '\n' | sort); do
+    if [[ "$first" == "true" ]]; then first=false; else echo "," >> "$BENCH_JSON"; fi
+    printf "    \"%s\": %s" "$key" "${BENCH_METRICS[$key]}" >> "$BENCH_JSON"
+  done
+  echo "" >> "$BENCH_JSON"
+  echo "  }," >> "$BENCH_JSON"
+  echo "  \"weak_points\": [" >> "$BENCH_JSON"
+  local wfirst=true
+  # Detect weak points: search precision < 100%, latency > 2000ms, warn > 5
+  if [[ "${BENCH_METRICS[search_precision_pct]:-0}" != "100" ]]; then
+    if [[ "$wfirst" == "true" ]]; then wfirst=false; else echo "," >> "$BENCH_JSON"; fi
+    printf "    {\"area\": \"search_precision\", \"value\": %s, \"threshold\": 100, \"note\": \"Some precision queries missed expected content\"}" \
+      "${BENCH_METRICS[search_precision_pct]:-0}" >> "$BENCH_JSON"
+  fi
+  if [[ "${BENCH_METRICS[search_avg_latency_ms]:-0}" -gt 2000 ]] 2>/dev/null; then
+    if [[ "$wfirst" == "true" ]]; then wfirst=false; else echo "," >> "$BENCH_JSON"; fi
+    printf "    {\"area\": \"search_latency\", \"value\": %s, \"threshold\": 2000, \"note\": \"Average search latency above 2s\"}" \
+      "${BENCH_METRICS[search_avg_latency_ms]:-0}" >> "$BENCH_JSON"
+  fi
+  if [[ $WARN -gt 5 ]]; then
+    if [[ "$wfirst" == "true" ]]; then wfirst=false; else echo "," >> "$BENCH_JSON"; fi
+    printf "    {\"area\": \"warnings\", \"value\": %d, \"threshold\": 5, \"note\": \"High number of warnings indicates instability\"}" \
+      "$WARN" >> "$BENCH_JSON"
+  fi
+  if [[ $FAIL -gt 0 ]]; then
+    if [[ "$wfirst" == "true" ]]; then wfirst=false; else echo "," >> "$BENCH_JSON"; fi
+    printf "    {\"area\": \"failures\", \"value\": %d, \"threshold\": 0, \"note\": \"Any failure is a critical weak point\"}" \
+      "$FAIL" >> "$BENCH_JSON"
+  fi
+  echo "" >> "$BENCH_JSON"
+  echo "  ]" >> "$BENCH_JSON"
+  echo "}" >> "$BENCH_JSON"
+}
 
 assert_contains() {
   local desc="$1" pattern="$2" text="$3"
@@ -226,7 +294,7 @@ declare -A SEARCH_CASES=(
 for query in "${!SEARCH_CASES[@]}"; do
   expected="${SEARCH_CASES[$query]}"
   OUT=$("$BINARY" search "$IDX_DOCS" "$query" --json 2>&1)
-  if echo "$OUT" | grep -qi "$(echo "$expected" | tr '_' ' \|')"; then
+  if echo "$OUT" | grep -qiE "$(echo "$expected" | tr '_' '|')"; then
     pass "search: '$query' → found $expected content"
   else
     # Softer check: any result returned at all
@@ -355,8 +423,132 @@ OUT=$("$BINARY" graph report --index "$IDX_CODE" --output "$RPT_OUT" 2>&1)
 if [[ -f "$RPT_OUT" ]]; then
   RPT_SIZE=$(wc -c < "$RPT_OUT")
   pass "graph report: Markdown created (${RPT_SIZE} bytes)"
+
+  # Check report contains "Suggested Questions" section
+  if grep -q "Suggested Questions" "$RPT_OUT" 2>/dev/null; then
+    pass "graph report: contains Suggested Questions section"
+  else
+    warn "graph report: Suggested Questions section not found (corpus may be too small)"
+  fi
+
+  # Check report contains Cross-Community Edges with scores
+  if grep -qE "Score|Cross-Community" "$RPT_OUT" 2>/dev/null; then
+    pass "graph report: contains surprising edge scoring"
+  else
+    warn "graph report: surprising edge scoring not found"
+  fi
 else
   warn "graph report: output file not created"
+fi
+
+# ══════════════════════════════════════════════════════════════════════════════
+# SECTION 5b: GRAPH QUERY / PATH / EXPLAIN
+# ══════════════════════════════════════════════════════════════════════════════
+header "§5b Graph Query / Path / Explain  $(ts)"
+
+# graph query: search for a symbol from the code fixtures
+QUERY_TERM="parser"  # parser.go has several symbols containing this
+OUT=$("$BINARY" graph query "$QUERY_TERM" --index "$IDX_CODE" 2>&1)
+if echo "$OUT" | grep -qiE "symbol|matching|function|method|\["; then
+  pass "graph query: symbol search returned results"
+  sub "$(echo "$OUT" | head -5)"
+else
+  warn "graph query: no symbols found (code corpus may be too small)"
+fi
+
+# graph explain: show full context for a symbol
+# First find a symbol name from the code index
+FIRST_SYM=$("$BINARY" graph query "$QUERY_TERM" --index "$IDX_CODE" 2>&1 | grep -oP '(?<=\] )\S+' | head -1)
+if [[ -n "$FIRST_SYM" ]]; then
+  OUT=$("$BINARY" graph explain "$FIRST_SYM" --index "$IDX_CODE" 2>&1)
+  if echo "$OUT" | grep -qiE "symbol|callee|caller|edge|neighbor|impact|explain"; then
+    pass "graph explain: context shown for '$FIRST_SYM'"
+  else
+    warn "graph explain: unexpected output for '$FIRST_SYM'"
+  fi
+else
+  skip "graph explain: no symbol found to explain"
+fi
+
+# graph path: find shortest path between two symbols
+if [[ -n "$FIRST_SYM" ]]; then
+  SECOND_SYM=$("$BINARY" graph query "$QUERY_TERM" --index "$IDX_CODE" 2>&1 | grep -oP '(?<=\] )\S+' | sed -n '2p')
+  if [[ -n "$SECOND_SYM" && "$SECOND_SYM" != "$FIRST_SYM" ]]; then
+    OUT=$("$BINARY" graph path "$FIRST_SYM" "$SECOND_SYM" --index "$IDX_CODE" 2>&1)
+    if echo "$OUT" | grep -qiE "path|hop|→|←|CALLS|no path"; then
+      pass "graph path: path query executed"
+    else
+      warn "graph path: unexpected output"
+    fi
+  else
+    skip "graph path: need two distinct symbols"
+  fi
+fi
+
+# graph stats
+OUT=$("$BINARY" graph query "." --index "$IDX_CODE" 2>&1)
+assert_exit_ok "graph query exits cleanly" $?
+
+# ══════════════════════════════════════════════════════════════════════════════
+# SECTION 5c: GRAPH EXPORT
+# ══════════════════════════════════════════════════════════════════════════════
+header "§5c Graph Export  $(ts)"
+
+# GraphML export
+GML_OUT="${RESULTS_DIR}/graph_export_${IDX_CODE}.graphml"
+OUT=$("$BINARY" graph export --index "$IDX_CODE" --format graphml --output "$GML_OUT" 2>&1)
+if [[ -f "$GML_OUT" ]]; then
+  GML_SIZE=$(wc -c < "$GML_OUT")
+  pass "graph export graphml: file created (${GML_SIZE} bytes)"
+  if grep -q "graphml\|<node\|<edge" "$GML_OUT" 2>/dev/null; then
+    pass "graph export graphml: valid XML structure"
+  else
+    warn "graph export graphml: expected XML tags not found"
+  fi
+else
+  warn "graph export graphml: output file not created"
+fi
+
+# Cypher export
+CYP_OUT="${RESULTS_DIR}/graph_export_${IDX_CODE}.cypher"
+OUT=$("$BINARY" graph export --index "$IDX_CODE" --format cypher --output "$CYP_OUT" 2>&1)
+if [[ -f "$CYP_OUT" ]]; then
+  CYP_SIZE=$(wc -c < "$CYP_OUT")
+  pass "graph export cypher: file created (${CYP_SIZE} bytes)"
+  if grep -qiE "CREATE|MERGE|neo4j" "$CYP_OUT" 2>/dev/null; then
+    pass "graph export cypher: contains Neo4j statements"
+  else
+    warn "graph export cypher: expected Cypher statements not found"
+  fi
+else
+  warn "graph export cypher: output file not created"
+fi
+
+# ══════════════════════════════════════════════════════════════════════════════
+# SECTION 5d: GRAPH WIKI
+# ══════════════════════════════════════════════════════════════════════════════
+header "§5d Graph Wiki  $(ts)"
+
+WIKI_DIR="${RESULTS_DIR}/wiki_${IDX_CODE}"
+mkdir -p "$WIKI_DIR"
+OUT=$("$BINARY" graph wiki --index "$IDX_CODE" --output "$WIKI_DIR" 2>&1)
+WIKI_FILES=$(find "$WIKI_DIR" -name "*.md" 2>/dev/null | wc -l)
+if [[ "$WIKI_FILES" -gt 0 ]]; then
+  pass "graph wiki: ${WIKI_FILES} markdown files generated"
+else
+  warn "graph wiki: no wiki files generated (corpus may be too small for communities)"
+fi
+
+# ══════════════════════════════════════════════════════════════════════════════
+# SECTION 5e: GRAPH HOOKS
+# ══════════════════════════════════════════════════════════════════════════════
+header "§5e Graph Hooks  $(ts)"
+
+OUT=$("$BINARY" graph hook status 2>&1)
+if echo "$OUT" | grep -qiE "hook|install|not found|status|git|pre-commit"; then
+  pass "graph hook status: command executed"
+else
+  warn "graph hook status: unexpected output"
 fi
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -461,7 +653,7 @@ else
   for question in "${!ASK_CASES[@]}"; do
     expected="${ASK_CASES[$question]}"
     OUT=$("$BINARY" ask "$IDX_DOCS" "$question" --quiet 2>&1 | tail -20)
-    if echo "$OUT" | grep -qiE "$expected"; then
+    if echo "$OUT" | grep -qi "$expected"; then
       pass "ask: '${question:0:60}...'"
     elif echo "$OUT" | grep -qi "error\|connection\|refused\|failed"; then
       skip "ask failed: LLM error"
@@ -598,6 +790,188 @@ fi
 rm -rf "$WATCH_DIR"
 
 # ══════════════════════════════════════════════════════════════════════════════
+# SECTION 12: BENCHMARK MODE — Quality Scoring & Weak Point Detection
+# ══════════════════════════════════════════════════════════════════════════════
+if [[ "$BENCHMARK" == "true" ]]; then
+  header "§12 Benchmark Scoring  $(ts)"
+
+  # ── Search Precision: measure how many precision queries hit the right doc ──
+  sub "Measuring search precision..."
+  PRECISION_HIT=0
+  PRECISION_TOTAL=0
+  TOTAL_LATENCY=0
+
+  declare -A PRECISION_QUERIES=(
+    ["quantum entanglement superposition"]="qubit\|quantum\|superposition\|entangle"
+    ["zero-knowledge proof succinct"]="proof\|zk\|commitm\|groth\|snar"
+    ["CRISPR Cas9 gene editing"]="crispr\|cas9\|gene\|edit\|pam"
+    ["transformer attention mechanism"]="attention\|transformer\|scale\|softmax"
+    ["HotStuff BFT consensus protocol"]="hotstuff\|bft\|consensus\|linear"
+    ["permafrost thawing climate"]="permafrost\|thaw\|climate\|carbon"
+    ["Louvain community detection modularity"]="community\|modularity\|louvain\|graph"
+    ["mRNA vaccine pseudouridine"]="mrna\|pseudouridine\|vaccine\|codon"
+  )
+
+  for query in "${!PRECISION_QUERIES[@]}"; do
+    expected="${PRECISION_QUERIES[$query]}"
+    PRECISION_TOTAL=$((PRECISION_TOTAL + 1))
+    START_NS=$(date +%s%N)
+    OUT=$("$BINARY" search "$IDX_DOCS" "$query" 2>&1)
+    END_NS=$(date +%s%N)
+    LATENCY=$(( (END_NS - START_NS) / 1000000 ))
+    TOTAL_LATENCY=$((TOTAL_LATENCY + LATENCY))
+
+    if echo "$OUT" | grep -qi "$expected"; then
+      PRECISION_HIT=$((PRECISION_HIT + 1))
+      pass "precision: '${query:0:45}...' (${LATENCY}ms)"
+    else
+      warn "precision: '${query:0:45}...' MISS (${LATENCY}ms)"
+    fi
+    bench_record "search_query_${PRECISION_TOTAL}_ms" "$LATENCY"
+  done
+
+  if [[ $PRECISION_TOTAL -gt 0 ]]; then
+    PRECISION_PCT=$((PRECISION_HIT * 100 / PRECISION_TOTAL))
+    AVG_LATENCY=$((TOTAL_LATENCY / PRECISION_TOTAL))
+    bench_record "search_precision_pct" "$PRECISION_PCT"
+    bench_record "search_precision_hit" "$PRECISION_HIT"
+    bench_record "search_precision_total" "$PRECISION_TOTAL"
+    bench_record "search_avg_latency_ms" "$AVG_LATENCY"
+    bench_record "search_total_latency_ms" "$TOTAL_LATENCY"
+    sub "Search precision: ${PRECISION_HIT}/${PRECISION_TOTAL} (${PRECISION_PCT}%)"
+    sub "Average search latency: ${AVG_LATENCY}ms"
+  fi
+
+  # ── Code Search Precision ────────────────────────────────────────────────
+  sub "Measuring code search precision..."
+  CODE_HIT=0
+  CODE_TOTAL=0
+
+  declare -A CODE_QUERIES=(
+    ["circular buffer ring buffer"]="circular\|buffer\|ring\|queue"
+    ["rate limiter token bucket"]="rate\|limit\|bucket\|token"
+    ["fibonacci recursive memoize"]="fib\|recurs\|memo"
+  )
+
+  for query in "${!CODE_QUERIES[@]}"; do
+    expected="${CODE_QUERIES[$query]}"
+    CODE_TOTAL=$((CODE_TOTAL + 1))
+    OUT=$("$BINARY" search "$IDX_CODE" "$query" 2>&1)
+    if echo "$OUT" | grep -qiE "$expected"; then
+      CODE_HIT=$((CODE_HIT + 1))
+    fi
+  done
+
+  if [[ $CODE_TOTAL -gt 0 ]]; then
+    CODE_PCT=$((CODE_HIT * 100 / CODE_TOTAL))
+    bench_record "code_search_precision_pct" "$CODE_PCT"
+    sub "Code search precision: ${CODE_HIT}/${CODE_TOTAL} (${CODE_PCT}%)"
+  fi
+
+  # ── Graph Metrics ────────────────────────────────────────────────────────
+  sub "Measuring graph quality..."
+  OUT=$("$BINARY" graph communities --index "$IDX_CODE" 2>&1)
+  COMMUNITY_COUNT=$(echo "$OUT" | grep -oP '\d+(?= communit)' | head -1)
+  MODULARITY=$(echo "$OUT" | grep -oP '[\d.]+(?=\s*modularity)' | head -1)
+  GOD_NODE_COUNT=$(echo "$OUT" | grep -oP '\d+(?= god node)' | head -1)
+
+  bench_record "graph_communities" "\"${COMMUNITY_COUNT:-0}\""
+  bench_record "graph_modularity" "\"${MODULARITY:-0}\""
+  bench_record "graph_god_nodes" "\"${GOD_NODE_COUNT:-0}\""
+  sub "Communities: ${COMMUNITY_COUNT:-?}, Modularity: ${MODULARITY:-?}, God Nodes: ${GOD_NODE_COUNT:-?}"
+
+  # ── Memory System Roundtrip ──────────────────────────────────────────────
+  sub "Measuring memory system latency..."
+  MEM_TAG="bench_$$"
+
+  START_NS=$(date +%s%N)
+  "$BINARY" memory add short "benchmark test fact: neural architecture search [${MEM_TAG}]" >/dev/null 2>&1
+  END_NS=$(date +%s%N)
+  MEM_ADD_MS=$(( (END_NS - START_NS) / 1000000 ))
+  bench_record "memory_add_ms" "$MEM_ADD_MS"
+
+  START_NS=$(date +%s%N)
+  "$BINARY" memory search "neural architecture search" >/dev/null 2>&1
+  END_NS=$(date +%s%N)
+  MEM_SEARCH_MS=$(( (END_NS - START_NS) / 1000000 ))
+  bench_record "memory_search_ms" "$MEM_SEARCH_MS"
+
+  START_NS=$(date +%s%N)
+  "$BINARY" memory context >/dev/null 2>&1
+  END_NS=$(date +%s%N)
+  MEM_CTX_MS=$(( (END_NS - START_NS) / 1000000 ))
+  bench_record "memory_context_ms" "$MEM_CTX_MS"
+
+  sub "Memory latency: add=${MEM_ADD_MS}ms search=${MEM_SEARCH_MS}ms context=${MEM_CTX_MS}ms"
+
+  # ── Index Build Throughput ───────────────────────────────────────────────
+  sub "Measuring index build throughput..."
+  IDX_BENCH="e2e-bench-$$"
+  START_NS=$(date +%s%N)
+  "$BINARY" index build "$IDX_BENCH" --docs "$FIXTURES/docs" >/dev/null 2>&1
+  END_NS=$(date +%s%N)
+  BUILD_MS=$(( (END_NS - START_NS) / 1000000 ))
+  bench_record "index_build_ms" "$BUILD_MS"
+  sub "Index build: ${BUILD_MS}ms for ${doc_count} docs"
+  "$BINARY" index remove "$IDX_BENCH" >/dev/null 2>&1 || true
+
+  # ── Token Reduction Quality ──────────────────────────────────────────────
+  OUT=$("$BINARY" benchmark --index "$IDX_DOCS" --docs "$FIXTURES/docs" 2>&1)
+  REDUCTION_RATIO=$(echo "$OUT" | grep -oE '[0-9]+(\.[0-9]+)?x' | head -1 | tr -d 'x')
+  if [[ -n "$REDUCTION_RATIO" ]]; then
+    bench_record "token_reduction_ratio" "\"${REDUCTION_RATIO}\""
+    sub "Token reduction: ${REDUCTION_RATIO}x"
+  fi
+
+  # ── Feature Coverage Summary ─────────────────────────────────────────────
+  bench_record "e2e_pass" "$PASS"
+  bench_record "e2e_fail" "$FAIL"
+  bench_record "e2e_warn" "$WARN"
+  bench_record "e2e_skip" "$SKIP"
+
+  # Write benchmark JSON
+  bench_write_json
+  pass "benchmark: results written to ${BENCH_JSON}"
+
+  # ── Print Benchmark Report ──────────────────────────────────────────────
+  echo ""
+  echo -e "${CYAN}${BOLD}══ BENCHMARK REPORT ══════════════════════════════════${NC}"
+  echo -e "  ${BOLD}Search Precision${NC}      ${PRECISION_HIT:-?}/${PRECISION_TOTAL:-?} (${PRECISION_PCT:-?}%)"
+  echo -e "  ${BOLD}Avg Search Latency${NC}    ${AVG_LATENCY:-?}ms"
+  echo -e "  ${BOLD}Code Search Precision${NC} ${CODE_HIT:-?}/${CODE_TOTAL:-?} (${CODE_PCT:-?}%)"
+  echo -e "  ${BOLD}Index Build Time${NC}      ${BUILD_MS:-?}ms"
+  echo -e "  ${BOLD}Token Reduction${NC}       ${REDUCTION_RATIO:-?}x"
+  echo -e "  ${BOLD}Memory Add Latency${NC}    ${MEM_ADD_MS:-?}ms"
+  echo -e "  ${BOLD}Memory Search Latency${NC} ${MEM_SEARCH_MS:-?}ms"
+  echo -e "  ${BOLD}Graph Communities${NC}     ${COMMUNITY_COUNT:-?}"
+  echo -e "  ${BOLD}Graph Modularity${NC}      ${MODULARITY:-?}"
+  echo ""
+
+  # Print weak points
+  WEAK_FOUND=false
+  if [[ "${PRECISION_PCT:-0}" -lt 75 ]]; then
+    echo -e "  ${RED}⚠ WEAK:${NC} Search precision below 75% — check embedding model quality"
+    WEAK_FOUND=true
+  fi
+  if [[ "${AVG_LATENCY:-0}" -gt 2000 ]]; then
+    echo -e "  ${RED}⚠ WEAK:${NC} Average search latency above 2s — consider index optimization"
+    WEAK_FOUND=true
+  fi
+  if [[ $FAIL -gt 0 ]]; then
+    echo -e "  ${RED}⚠ WEAK:${NC} ${FAIL} test failures — critical functionality broken"
+    WEAK_FOUND=true
+  fi
+  if [[ $WARN -gt 10 ]]; then
+    echo -e "  ${YELLOW}⚠ NOTE:${NC} ${WARN} warnings — review for potential regressions"
+    WEAK_FOUND=true
+  fi
+  if [[ "$WEAK_FOUND" == "false" ]]; then
+    echo -e "  ${GREEN}✓${NC} No weak points detected — all metrics within thresholds"
+  fi
+  echo ""
+fi
+
+# ══════════════════════════════════════════════════════════════════════════════
 # CLEANUP
 # ══════════════════════════════════════════════════════════════════════════════
 header "Cleanup  $(ts)"
@@ -610,7 +984,7 @@ sub "Clearing e2e test memories..."
 
 echo ""
 echo -e "${BOLD}Results written to: ${RESULTS_DIR}/${NC}"
-ls -lh "$RESULTS_DIR"/*.{html,md} 2>/dev/null | awk '{print "  "$NF, $5}' || true
+ls -lh "$RESULTS_DIR"/*.{html,md,json,graphml,cypher} 2>/dev/null | awk '{print "  "$NF, $5}' || true
 
 # ══════════════════════════════════════════════════════════════════════════════
 # SUMMARY

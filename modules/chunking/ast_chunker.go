@@ -21,66 +21,66 @@ import (
 type Language string
 
 const (
-	LangGo          Language = "go"
-	LangPython      Language = "python"
-	LangJavaScript  Language = "javascript"
-	LangTypeScript  Language = "typescript"
-	LangJava        Language = "java"
-	LangC           Language = "c"
-	LangCPP         Language = "cpp"
-	LangRust        Language = "rust"
-	LangCSharp      Language = "csharp"
-	LangRuby        Language = "ruby"
-	LangPHP         Language = "php"
-	LangKotlin      Language = "kotlin"
-	LangScala       Language = "scala"
-	LangSwift       Language = "swift"
-	LangLua         Language = "lua"
-	LangElixir      Language = "elixir"
-	LangZig         Language = "zig"
-	LangPowerShell  Language = "powershell"
-	LangJulia       Language = "julia"
-	LangObjectiveC  Language = "objc"
-	LangVue         Language = "vue"
-	LangSvelte      Language = "svelte"
-	LangUnknown     Language = "unknown"
+	LangGo         Language = "go"
+	LangPython     Language = "python"
+	LangJavaScript Language = "javascript"
+	LangTypeScript Language = "typescript"
+	LangJava       Language = "java"
+	LangC          Language = "c"
+	LangCPP        Language = "cpp"
+	LangRust       Language = "rust"
+	LangCSharp     Language = "csharp"
+	LangRuby       Language = "ruby"
+	LangPHP        Language = "php"
+	LangKotlin     Language = "kotlin"
+	LangScala      Language = "scala"
+	LangSwift      Language = "swift"
+	LangLua        Language = "lua"
+	LangElixir     Language = "elixir"
+	LangZig        Language = "zig"
+	LangPowerShell Language = "powershell"
+	LangJulia      Language = "julia"
+	LangObjectiveC Language = "objc"
+	LangVue        Language = "vue"
+	LangSvelte     Language = "svelte"
+	LangUnknown    Language = "unknown"
 )
 
 // extensionMap maps file extensions to languages.
 var extensionMap = map[string]Language{
-	".go":      LangGo,
-	".py":      LangPython,
-	".js":      LangJavaScript,
-	".jsx":     LangJavaScript,
-	".ts":      LangTypeScript,
-	".tsx":     LangTypeScript,
-	".java":    LangJava,
-	".c":       LangC,
-	".h":       LangC,
-	".cpp":     LangCPP,
-	".cc":      LangCPP,
-	".cxx":     LangCPP,
-	".hpp":     LangCPP,
-	".rs":      LangRust,
-	".cs":      LangCSharp,
-	".rb":      LangRuby,
-	".php":     LangPHP,
-	".kt":      LangKotlin,
-	".kts":     LangKotlin,
-	".scala":   LangScala,
-	".sc":      LangScala,
-	".swift":   LangSwift,
-	".lua":     LangLua,
-	".ex":      LangElixir,
-	".exs":     LangElixir,
-	".zig":     LangZig,
-	".ps1":     LangPowerShell,
-	".psm1":    LangPowerShell,
-	".jl":      LangJulia,
-	".m":       LangObjectiveC,
-	".mm":      LangObjectiveC,
-	".vue":     LangVue,
-	".svelte":  LangSvelte,
+	".go":     LangGo,
+	".py":     LangPython,
+	".js":     LangJavaScript,
+	".jsx":    LangJavaScript,
+	".ts":     LangTypeScript,
+	".tsx":    LangTypeScript,
+	".java":   LangJava,
+	".c":      LangC,
+	".h":      LangC,
+	".cpp":    LangCPP,
+	".cc":     LangCPP,
+	".cxx":    LangCPP,
+	".hpp":    LangCPP,
+	".rs":     LangRust,
+	".cs":     LangCSharp,
+	".rb":     LangRuby,
+	".php":    LangPHP,
+	".kt":     LangKotlin,
+	".kts":    LangKotlin,
+	".scala":  LangScala,
+	".sc":     LangScala,
+	".swift":  LangSwift,
+	".lua":    LangLua,
+	".ex":     LangElixir,
+	".exs":    LangElixir,
+	".zig":    LangZig,
+	".ps1":    LangPowerShell,
+	".psm1":   LangPowerShell,
+	".jl":     LangJulia,
+	".m":      LangObjectiveC,
+	".mm":     LangObjectiveC,
+	".vue":    LangVue,
+	".svelte": LangSvelte,
 }
 
 // CodeChunk represents a semantic code chunk with metadata.

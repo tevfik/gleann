@@ -3,7 +3,7 @@
 //
 // Usage:
 //
-//	go run ./e2e/cmd/gen_fixtures/
+//	go run ./tests/e2e/cmd/gen_fixtures/
 //
 // This creates deterministic fixture files that are committed to the repo and used
 // by the e2e/run.sh test suite to verify native document extraction (PDF, DOCX, etc.).
@@ -22,7 +22,7 @@ import (
 )
 
 func main() {
-	outDir := filepath.Join("e2e", "fixtures", "binary")
+	outDir := filepath.Join("tests", "e2e", "fixtures", "binary")
 	if err := os.MkdirAll(outDir, 0o755); err != nil {
 		fmt.Fprintf(os.Stderr, "mkdir: %v\n", err)
 		os.Exit(1)
