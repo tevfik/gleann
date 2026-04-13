@@ -1,14 +1,74 @@
-# MCP Server Guide
+# MCP Server Guide & Platform Install
 
 Gleann includes a built-in [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server that exposes your indexed knowledge base to AI editors like Cursor, Windsurf, Claude Desktop, and others.
 
-## Quick Start
+## One-command Platform Setup
+
+The `gleann install` command auto-detects your AI coding platform and writes all required integration files (AGENTS.md, MCP config, platform-specific plugins) in one step.
 
 ```bash
-gleann mcp
+# Auto-detect and install for all platforms found in the current directory
+gleann install
+
+# Install for a specific platform
+gleann install --platform opencode
+gleann install --platform claude
+gleann install --platform cursor
+gleann install --platform codex
+gleann install --platform gemini
+gleann install --platform claw      # OpenClaw
+gleann install --platform aider
+gleann install --platform copilot   # GitHub Copilot CLI
+
+# List all supported platforms and detection status
+gleann install --list
+
+# Remove integration files
+gleann install uninstall
+gleann install uninstall --platform cursor
 ```
 
-This starts an MCP server over stdio. Configure your AI editor to use it.
+### What gets written per platform
+
+| Platform | Files written | Integration type |
+|----------|--------------|-----------------|
+| **opencode** | `AGENTS.md` · `.opencode/plugins/gleann.js` · `.opencode/mcp.json` · `opencode.json` | `tool.execute.before` plugin hook |
+| **claude** | `CLAUDE.md` · `~/.claude/settings.json` | `PreToolUse` hook (Glob/Grep/Read) |
+| **cursor** | `.cursor/rules/gleann.mdc` · `.cursor/mcp.json` | `alwaysApply: true` rules file |
+| **codex** | `AGENTS.md` · `.codex/hooks.json` | `PreToolUse` on Bash |
+| **gemini** | `GEMINI.md` · `.gemini/settings.json` | `BeforeTool` hook |
+| **claw** | `AGENTS.md` · `~/.openclaw/skills/gleann/SKILL.md` | Always-on skill |
+| **aider** | `AGENTS.md` | Always-on AGENTS.md |
+| **copilot** | `~/.copilot/skills/gleann/SKILL.md` | CLI skill |
+
+### OpenCode in depth
+
+OpenCode is the only platform that receives a JavaScript plugin (`.opencode/plugins/gleann.js`) which fires automatically before every `bash` tool call. If `GRAPH_REPORT.md` exists in the project root, the plugin injects the first 3 000 characters of its content into the context window so the AI sees god nodes and community structure before it starts searching source files.
+
+To generate the report:
+
+```bash
+gleann graph report --index <name>   # writes GRAPH_REPORT.md
+```
+
+Register the MCP server in OpenCode for inline tool access:
+
+```json5
+// .opencode/mcp.json
+{
+  "mcpServers": {
+    "gleann": { "type": "stdio", "command": "gleann", "args": ["mcp"] }
+  }
+}
+```
+
+`gleann install --platform opencode` writes both files automatically.
+
+---
+
+## Manual MCP Configuration
+
+If you prefer to configure the MCP server manually (without `gleann install`):
 
 ## Editor Configuration
 

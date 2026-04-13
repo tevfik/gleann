@@ -206,3 +206,132 @@ func TestPassageManagerLoadEmpty(t *testing.T) {
 		t.Errorf("expected 0, got %d", pm.Count())
 	}
 }
+
+func TestPassageManagerRemoveBySource(t *testing.T) {
+	dir := t.TempDir()
+	pm := NewPassageManager(filepath.Join(dir, "test"))
+	defer pm.Close()
+
+	items := []Item{
+		{Text: "chunk1 from a.md", Metadata: map[string]any{"source": "a.md"}},
+		{Text: "chunk2 from a.md", Metadata: map[string]any{"source": "a.md"}},
+		{Text: "chunk1 from b.md", Metadata: map[string]any{"source": "b.md"}},
+		{Text: "chunk1 from c.md", Metadata: map[string]any{"source": "c.md"}},
+	}
+
+	ids, err := pm.Add(items)
+	if err != nil {
+		t.Fatalf("add: %v", err)
+	}
+	if len(ids) != 4 {
+		t.Fatalf("expected 4 IDs, got %d", len(ids))
+	}
+
+	// Remove passages from a.md.
+	removedIDs, err := pm.RemoveBySource([]string{"a.md"})
+	if err != nil {
+		t.Fatalf("remove: %v", err)
+	}
+	if len(removedIDs) != 2 {
+		t.Errorf("expected 2 removed IDs, got %d: %v", len(removedIDs), removedIDs)
+	}
+
+	// Count should be 2 now.
+	if pm.Count() != 2 {
+		t.Errorf("expected count 2, got %d", pm.Count())
+	}
+
+	// b.md and c.md passages should still be accessible.
+	p, err := pm.Get(ids[2])
+	if err != nil {
+		t.Fatalf("get b.md passage: %v", err)
+	}
+	if p.Text != "chunk1 from b.md" {
+		t.Errorf("expected 'chunk1 from b.md', got %q", p.Text)
+	}
+
+	// a.md passages should be gone.
+	_, err = pm.Get(ids[0])
+	if err == nil {
+		t.Error("expected error getting removed passage, got nil")
+	}
+
+	// Remove multiple sources at once.
+	removedIDs, err = pm.RemoveBySource([]string{"b.md", "c.md"})
+	if err != nil {
+		t.Fatalf("remove: %v", err)
+	}
+	if len(removedIDs) != 2 {
+		t.Errorf("expected 2 removed, got %d", len(removedIDs))
+	}
+	if pm.Count() != 0 {
+		t.Errorf("expected count 0, got %d", pm.Count())
+	}
+
+	// Remove non-existent source is a no-op.
+	removedIDs, err = pm.RemoveBySource([]string{"nonexistent.md"})
+	if err != nil {
+		t.Fatalf("remove: %v", err)
+	}
+	if len(removedIDs) != 0 {
+		t.Errorf("expected 0 removed, got %d", len(removedIDs))
+	}
+}
+
+func TestPassageManagerRemoveBySourceThenAdd(t *testing.T) {
+	dir := t.TempDir()
+	pm := NewPassageManager(filepath.Join(dir, "test"))
+	defer pm.Close()
+
+	// Add initial items.
+	items := []Item{
+		{Text: "old chunk 1", Metadata: map[string]any{"source": "file.md"}},
+		{Text: "old chunk 2", Metadata: map[string]any{"source": "file.md"}},
+		{Text: "keep this", Metadata: map[string]any{"source": "other.md"}},
+	}
+	_, err := pm.Add(items)
+	if err != nil {
+		t.Fatalf("add: %v", err)
+	}
+
+	// Remove file.md passages.
+	removedIDs, err := pm.RemoveBySource([]string{"file.md"})
+	if err != nil {
+		t.Fatalf("remove: %v", err)
+	}
+	if len(removedIDs) != 2 {
+		t.Fatalf("expected 2 removed, got %d", len(removedIDs))
+	}
+
+	// Add new passages for file.md (simulates re-chunking after edit).
+	newItems := []Item{
+		{Text: "new chunk 1", Metadata: map[string]any{"source": "file.md"}},
+		{Text: "new chunk 2", Metadata: map[string]any{"source": "file.md"}},
+		{Text: "new chunk 3", Metadata: map[string]any{"source": "file.md"}},
+	}
+	newIDs, err := pm.Add(newItems)
+	if err != nil {
+		t.Fatalf("add new: %v", err)
+	}
+
+	// New IDs should be higher than the original max (2).
+	for _, id := range newIDs {
+		if id <= 2 {
+			t.Errorf("expected new ID > 2, got %d", id)
+		}
+	}
+
+	// Total count: 1 (other.md) + 3 (new file.md) = 4.
+	if pm.Count() != 4 {
+		t.Errorf("expected count 4, got %d", pm.Count())
+	}
+
+	// New passages should be accessible.
+	p, err := pm.Get(newIDs[0])
+	if err != nil {
+		t.Fatalf("get new passage: %v", err)
+	}
+	if p.Text != "new chunk 1" {
+		t.Errorf("expected 'new chunk 1', got %q", p.Text)
+	}
+}

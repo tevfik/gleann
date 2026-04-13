@@ -84,6 +84,12 @@ func (w *Watcher) Start(ctx context.Context) {
 					}
 				}
 
+				// Trigger callback for file removals so incremental indexing
+				// can clean up stale passages.
+				if event.Has(fsnotify.Remove) {
+					changed = true
+				}
+
 				// Trigger callback if defined and hash was meaningfully updated
 				if changed && w.OnChange != nil {
 					w.OnChange(event)

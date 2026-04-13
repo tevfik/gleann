@@ -60,7 +60,7 @@ git s# Architecture & Design
 │  ├── Worker Pool   (bounded, default 2 workers)                      │
 │  ├── Task Lifecycle (queued → running → completed/failed)            │
 │  ├── Progress Tracking  (real-time 0.0–1.0 + messages)               │
-│  ├── Auto-Index    (fsnotify file watcher → debounced re-index)      │
+│  ├── Auto-Index    (fsnotify watcher → incremental vector update)    │
 │  └── CLI: gleann tasks  · REST: GET /api/tasks                       │
 ├──────────────────────────────────────────────────────────────────────┤
 │  Auto-Bootstrap  (internal/autosetup)                                │

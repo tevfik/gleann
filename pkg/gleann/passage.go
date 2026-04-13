@@ -20,7 +20,7 @@ type PassageManager struct {
 	mu       sync.RWMutex
 	basePath string
 	db       *bbolt.DB
-	
+
 	// Optional caching for LoadAll() callers like BM25
 	cached []Passage
 }
@@ -234,7 +234,7 @@ func (pm *PassageManager) All() []Passage {
 		if b == nil {
 			return nil
 		}
-		
+
 		return b.ForEach(func(k, v []byte) error {
 			var p Passage
 			if err := json.Unmarshal(v, &p); err == nil {
@@ -322,6 +322,63 @@ func (pm *PassageManager) Close() error {
 	return nil
 }
 
+// RemoveBySource removes all passages whose metadata["source"] matches any of
+// the given relative paths. Returns the IDs of removed passages.
+func (pm *PassageManager) RemoveBySource(sources []string) ([]int64, error) {
+	if err := pm.ensureDB(); err != nil {
+		return nil, err
+	}
+
+	sourceSet := make(map[string]bool, len(sources))
+	for _, s := range sources {
+		sourceSet[s] = true
+	}
+
+	var removedIDs []int64
+
+	err := pm.db.Update(func(tx *bbolt.Tx) error {
+		b := tx.Bucket(bucketPassages)
+		if b == nil {
+			return nil
+		}
+
+		var keysToRemove [][]byte
+		err := b.ForEach(func(k, v []byte) error {
+			var p Passage
+			if err := json.Unmarshal(v, &p); err != nil {
+				return nil // skip corrupt entries
+			}
+			if src, ok := p.Metadata["source"].(string); ok && sourceSet[src] {
+				removedIDs = append(removedIDs, p.ID)
+				key := make([]byte, len(k))
+				copy(key, k)
+				keysToRemove = append(keysToRemove, key)
+			}
+			return nil
+		})
+		if err != nil {
+			return err
+		}
+
+		for _, k := range keysToRemove {
+			if err := b.Delete(k); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	// Invalidate in-memory cache since passages changed.
+	pm.mu.Lock()
+	pm.cached = nil
+	pm.mu.Unlock()
+
+	return removedIDs, nil
+}
+
 // Delete removes all files associated with this passage manager.
 func (pm *PassageManager) Delete() error {
 	pm.mu.Lock()
@@ -337,4 +394,3 @@ func (pm *PassageManager) Delete() error {
 	os.Remove(pm.basePath + ".passages.idx")   // cleanup old format if present
 	return os.Remove(pm.dbPath())
 }
-

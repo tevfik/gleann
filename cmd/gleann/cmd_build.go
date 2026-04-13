@@ -528,6 +528,217 @@ func readDocuments(dir string, chunkSize, chunkOverlap int, tracker *vault.Track
 	return allItems, pluginDocs, nil
 }
 
+// readDocumentsForFiles reads and chunks only the specified files.
+// This is used for incremental indexing in watch mode where only changed files
+// need processing — much faster than re-reading the entire directory.
+func readDocumentsForFiles(dir string, filePaths []string, chunkSize, chunkOverlap int, tracker *vault.Tracker, mmProcessor *multimodal.Processor) ([]gleann.Item, []*PluginDoc, error) {
+	if len(filePaths) == 0 {
+		return nil, nil, nil
+	}
+
+	pluginManager, _ := gleann.NewPluginManager()
+	if pluginManager != nil {
+		defer pluginManager.Close()
+	}
+	nativeExtractor := gleann.NewNativeExtractor()
+	ignoreMatcher := gleannignore.Load(dir)
+
+	splitter := chunking.NewSentenceSplitter(chunkSize, chunkOverlap)
+	codeSplitter := chunking.NewCodeChunker(chunkSize, chunkOverlap)
+	mdChunker := chunking.NewMarkdownChunker(chunkSize, chunkOverlap)
+
+	var allItems []gleann.Item
+	var pluginDocs []*PluginDoc
+
+	for _, filePath := range filePaths {
+		info, err := os.Stat(filePath)
+		if err != nil || info.IsDir() {
+			continue
+		}
+
+		base := filepath.Base(filePath)
+		relPath, _ := filepath.Rel(dir, filePath)
+
+		if strings.HasPrefix(base, ".") {
+			continue
+		}
+		if ignoreMatcher.Match(relPath, false) {
+			continue
+		}
+
+		ext := strings.ToLower(filepath.Ext(filePath))
+
+		// Plugin extraction.
+		if pluginManager != nil {
+			if plugin := pluginManager.FindDocumentExtractor(ext); plugin != nil {
+				pResult, perr := pluginManager.ProcessStructured(plugin, filePath)
+				if perr == nil {
+					doc := pluginResultToDoc(pResult)
+					mdChunks := mdChunker.ChunkDocument(doc)
+					if len(mdChunks) == 0 && pResult.Markdown != "" {
+						mdChunks = mdChunker.ChunkMarkdown(pResult.Markdown, relPath)
+					}
+					for _, ch := range mdChunks {
+						ch.Metadata["source"] = relPath
+						allItems = append(allItems, gleann.Item{Text: ch.Text, Metadata: ch.Metadata})
+					}
+					pluginDocs = append(pluginDocs, &PluginDoc{Result: pResult, SourcePath: relPath})
+					continue
+				}
+			}
+		}
+
+		// Native extraction (PDF, DOCX, etc.).
+		if nativeExtractor.CanHandle(ext) {
+			md, nerr := nativeExtractor.Extract(filePath)
+			if nerr == nil {
+				md = strings.TrimSpace(md)
+				if md != "" {
+					mdChunks := mdChunker.ChunkMarkdown(md, relPath)
+					if len(mdChunks) == 0 {
+						allItems = append(allItems, gleann.Item{Text: md, Metadata: map[string]any{"source": relPath, "extractor": "native"}})
+					} else {
+						for _, ch := range mdChunks {
+							ch.Metadata["source"] = relPath
+							ch.Metadata["extractor"] = "native"
+							allItems = append(allItems, gleann.Item{Text: ch.Text, Metadata: ch.Metadata})
+						}
+					}
+					pResult := gleann.MarkdownToPluginResult(md, relPath)
+					if pResult != nil && (len(pResult.Nodes) > 0 || pResult.Markdown != "") {
+						pluginDocs = append(pluginDocs, &PluginDoc{Result: pResult, SourcePath: relPath})
+					}
+				}
+			}
+			continue
+		}
+
+		// Multimodal processing (images, audio, video).
+		if mmProcessor != nil && mmProcessor.CanProcess(filePath) {
+			mr := mmProcessor.ProcessFile(filePath)
+			if mr.Error == nil {
+				if desc := strings.TrimSpace(mr.Description); desc != "" {
+					mediaType := "image"
+					switch mr.MediaType {
+					case multimodal.MediaTypeAudio:
+						mediaType = "audio"
+					case multimodal.MediaTypeVideo:
+						mediaType = "video"
+					}
+					allItems = append(allItems, gleann.Item{
+						Text:     desc,
+						Metadata: map[string]any{"source": relPath, "extractor": "multimodal", "media_type": mediaType},
+					})
+				}
+			}
+			continue
+		}
+
+		// Text file: read, detect binary, chunk.
+		data, err := os.ReadFile(filePath)
+		if err != nil {
+			continue
+		}
+		check := data
+		if len(check) > 512 {
+			check = check[:512]
+		}
+		if bytes.ContainsRune(check, 0) {
+			continue
+		}
+
+		text := string(data)
+		if len(strings.TrimSpace(text)) == 0 {
+			continue
+		}
+
+		metadata := map[string]any{"source": relPath}
+
+		if tracker != nil {
+			h := sha256.Sum256(data)
+			hash := hex.EncodeToString(h[:])
+			if err := tracker.UpsertRecord(context.Background(), hash, filePath, info.ModTime().Unix(), info.Size()); err == nil {
+				metadata["hash"] = hash
+			}
+		}
+
+		// Markdown files get heading-aware chunking.
+		if chunking.IsMarkdownFile(filePath) {
+			mdChunks := mdChunker.ChunkMarkdown(text, relPath)
+			if len(mdChunks) > 0 {
+				for _, ch := range mdChunks {
+					allItems = append(allItems, gleann.Item{Text: ch.Text, Metadata: ch.Metadata})
+				}
+				sections := chunking.ParseMarkdownHeadings(text)
+				if len(sections) > 0 {
+					wordCount := len(strings.Fields(text))
+					pResult := markdownToPluginResult(sections, relPath, wordCount, text)
+					pluginDocs = append(pluginDocs, &PluginDoc{Result: pResult, SourcePath: relPath})
+				}
+				continue
+			}
+		}
+
+		// Code or sentence chunking.
+		var rawChunks []chunking.Chunk
+		if chunking.IsCodeFile(filePath) {
+			rawChunks = codeSplitter.ChunkWithMetadata(text, metadata)
+		} else {
+			rawChunks = splitter.ChunkWithMetadata(text, metadata)
+		}
+		for _, rc := range rawChunks {
+			allItems = append(allItems, gleann.Item{Text: rc.Text, Metadata: rc.Metadata})
+		}
+	}
+
+	return allItems, pluginDocs, nil
+}
+
+// incrementalBuildIndex attempts to incrementally update the index for changed files.
+// It removes old passages for changed/deleted sources and adds new chunks.
+// Returns plugin docs and true on success, or nil and false if a full rebuild is needed.
+func incrementalBuildIndex(name, docsDir string, changedFiles []string, config gleann.Config, embedder gleann.EmbeddingComputer, tracker *vault.Tracker) ([]*PluginDoc, bool) {
+	// Classify changes: existing files need re-chunking, missing files are deletions.
+	var existingFiles []string
+	var removeSources []string
+
+	for _, f := range changedFiles {
+		relPath, _ := filepath.Rel(docsDir, f)
+		if _, err := os.Stat(f); err != nil {
+			// File was deleted.
+			removeSources = append(removeSources, relPath)
+		} else {
+			// File exists (new or modified) — remove old passages, then re-add.
+			existingFiles = append(existingFiles, f)
+			removeSources = append(removeSources, relPath)
+		}
+	}
+
+	// Read and chunk only the changed files.
+	mmProcessor := initMultimodalProcessor(config.OllamaHost, "")
+	items, pluginDocs, err := readDocumentsForFiles(docsDir, existingFiles,
+		config.ChunkConfig.ChunkSize, config.ChunkConfig.ChunkOverlap, tracker, mmProcessor)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "incremental: error reading changed files: %v\n", err)
+		return nil, false
+	}
+
+	builder, err := gleann.NewBuilder(config, embedder)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "incremental: error creating builder: %v\n", err)
+		return nil, false
+	}
+
+	ctx := context.Background()
+	if err := builder.UpdateIndex(ctx, name, items, removeSources); err != nil {
+		// UpdateIndex may fail if backend doesn't support removal (e.g., FAISS).
+		fmt.Fprintf(os.Stderr, "incremental update failed (%v), falling back to full rebuild\n", err)
+		return nil, false
+	}
+
+	return pluginDocs, true
+}
+
 func cmdWatch(args []string) {
 	if len(args) < 1 {
 		fmt.Fprintln(os.Stderr, "usage: gleann index watch <name> --docs <dir> [--graph] [--interval 5]")
@@ -649,8 +860,15 @@ func cmdWatch(args []string) {
 			changedFiles = make(map[string]bool) // reset
 			changedMu.Unlock()
 
-			fmt.Printf("🔄 %d file(s) changed, rebuilding index %q...\n", len(files), name)
-			pDocs := buildIndex(name, docsDir, config, cachedEmbedder, tracker)
+			fmt.Printf("🔄 %d file(s) changed, updating index %q...\n", len(files), name)
+			start := time.Now()
+			pDocs, ok := incrementalBuildIndex(name, docsDir, files, config, cachedEmbedder, tracker)
+			if !ok {
+				// Fall back to full rebuild.
+				pDocs = buildIndex(name, docsDir, config, cachedEmbedder, tracker)
+			} else {
+				fmt.Printf("⚡ Incremental update complete in %s\n", time.Since(start).Round(time.Millisecond))
+			}
 
 			if buildGraph {
 				buildGraphIndex(name, docsDir, config.IndexDir, pDocs, files)

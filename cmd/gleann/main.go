@@ -39,6 +39,8 @@ func main() {
 		cmdMCP()
 	case "tui":
 		cmdTUI()
+	case "install":
+		cmdInstall(args)
 	case "setup":
 		cmdSetup()
 	case "doctor":
@@ -105,6 +107,15 @@ gleann has three intelligence pillars that work together:
   gleann graph communities --index <name>      Community detection results
 
   Requires: gleann index build <name> --docs <dir> --graph
+
+── Platform Integration ──────────────────────────────────────────────
+
+  gleann install                    Auto-detect & install for AI platforms
+  gleann install --platform <name>  Install for a specific platform
+  gleann install --list             List supported platforms
+  gleann install uninstall          Remove platform integration files
+
+  Platforms: opencode, claude, cursor, codex, gemini, claw, aider, copilot
 
 ── Long-term Memory ──────────────────────────────────────────────────
 
