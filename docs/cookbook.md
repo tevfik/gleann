@@ -115,8 +115,12 @@ gleann mcp
 
 Available MCP tools:
 - `gleann_search` — Semantic search across indexes
+- `gleann_search_ids` — Compact search (5-10× fewer tokens), returns refs + peeks
+- `gleann_fetch` — Hydrate full passage text for selected refs
+- `gleann_get` — Citation lookup by persistent `"indexname:id"` ref
 - `gleann_ask` — Ask questions about indexed content
-- `gleann_list_indexes` — List available indexes
+- `gleann_list` — List available indexes
+- `gleann_session_start` / `gleann_session_end` / `gleann_session_status` — track agent work sessions
 
 ## 8. CI/CD Integration
 

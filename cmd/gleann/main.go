@@ -43,6 +43,8 @@ func main() {
 		cmdInstall(args)
 	case "setup":
 		cmdSetup()
+	case "quickstart":
+		cmdQuickstart(args)
 	case "doctor":
 		cmdDoctor()
 	case "tasks":
@@ -82,6 +84,10 @@ gleann has three intelligence pillars that work together:
   │  Injected automatically as context into ask, chat, and agents.   │
   └───────────────────────────────────────────────────────────────────┘
 
+── Getting Started ───────────────────────────────────────────────────
+
+  gleann quickstart [--name <name>] [--docs <dir>]   Index current dir & show next steps
+
 ── Document & Code Search ────────────────────────────────────────────
 
   gleann index  <sub> [args]            Manage indexes
@@ -100,11 +106,20 @@ gleann has three intelligence pillars that work together:
 
 ── Code Intelligence ─────────────────────────────────────────────────
 
-  gleann graph deps    <fqn> --index <name>    What does this symbol call?
-  gleann graph callers <fqn> --index <name>    Who calls this symbol?
-  gleann graph viz         --index <name>      Interactive HTML visualization
-  gleann graph report      --index <name>      Markdown report (communities, god nodes)
-  gleann graph communities --index <name>      Community detection results
+  Symbol navigation:
+  gleann graph deps    <fqn> --index <name>         What does this symbol call?
+  gleann graph callers <fqn> --index <name>         Who calls this symbol?
+  gleann graph explain <fqn> --index <name>         Full context: edges, community, blast radius
+  gleann graph path    <from> <to> --index <name>   Shortest dependency path between two symbols
+  gleann graph query   <pattern> --index <name>     BFS neighborhood around a symbol (pattern match)
+
+  Analysis & output:
+  gleann graph viz         --index <name>           Interactive HTML call-graph (vis.js)
+  gleann graph report      --index <name>           Markdown report (god nodes, communities)
+  gleann graph communities --index <name>           Community detection results (stdout)
+  gleann graph export      --index <name> --format <graphml|cypher>  Export for Gephi / Neo4j
+  gleann graph wiki        --index <name>           Per-community wiki articles (Markdown)
+  gleann graph hook        install|uninstall|status Git hook: auto-rebuild on commit
 
   Requires: gleann index build <name> --docs <dir> --graph
 

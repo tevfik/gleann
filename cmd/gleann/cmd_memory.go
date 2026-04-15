@@ -132,6 +132,11 @@ func openMemoryManager() *memory.Manager {
 	mgr, err := memory.DefaultManager()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error opening memory store: %v\n", err)
+		if strings.Contains(err.Error(), "timeout") {
+			fmt.Fprintln(os.Stderr, "hint: is 'gleann serve' running? It holds the memory database lock.")
+			fmt.Fprintln(os.Stderr, "      Use the REST API instead: http://localhost:8080/api/blocks")
+			fmt.Fprintln(os.Stderr, "      Or stop the server:  pkill -f 'gleann serve'")
+		}
 		os.Exit(1)
 	}
 	return mgr

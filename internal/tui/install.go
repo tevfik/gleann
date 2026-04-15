@@ -276,6 +276,18 @@ func RunInstall(result *OnboardResult) {
 		fmt.Println("     Run 'gleann mcp' to start server")
 	}
 
+	// REST API server start instructions.
+	if result.ServerEnabled {
+		addr := result.ServerAddr
+		if addr == "" {
+			addr = ":8080"
+		}
+		fmt.Println("🌐 REST API Server enabled")
+		fmt.Printf("  ▶  Start with:    gleann serve --addr %s\n", addr)
+		fmt.Printf("  ℹ️  Background:    nohup gleann serve --addr %s > ~/.gleann/serve.log 2>&1 &\n", addr)
+		fmt.Printf("  ℹ️  Check health:  curl http://localhost%s/health\n", addr)
+	}
+
 	fmt.Println()
 }
 
@@ -438,7 +450,7 @@ _gleann() {
         cword=$COMP_CWORD
     fi
 
-    local commands="index search ask serve graph chat mcp tui setup doctor config completion version help"
+    local commands="index search ask serve graph chat memory mcp tui install quickstart setup doctor tasks benchmark config completion version help"
     
     # Command-specific flags
     local index_flags="--path --model --provider --backend --batch-size --concurrency --chunk-size --chunk-overlap --extensions --ignore --ollama-host --anthropic-api-key --openai-api-key --json"
@@ -623,11 +635,16 @@ _gleann() {
         'remove:Remove an index'
         'info:Show index info'
         'graph:Query AST Graph in KuzuDB'
-        'serve:Start HTTP server'
+        'serve:Start REST API server'
         'mcp:Start MCP server (stdio)'
+        'memory:Long-term memory management'
         'tui:Launch interactive TUI'
+        'install:Install gleann for AI platforms'
+        'quickstart:Index current dir & show next steps'
         'setup:Run configuration wizard'
         'doctor:Check system health'
+        'tasks:View background tasks (requires serve)'
+        'benchmark:Token reduction analysis'
         'config:Manage configuration'
         'completion:Output shell completion script'
         'version:Show version'
@@ -709,11 +726,16 @@ complete -c gleann -n '__fish_use_subcommand' -a 'list' -d 'List all indexes'
 complete -c gleann -n '__fish_use_subcommand' -a 'remove' -d 'Remove an index'
 complete -c gleann -n '__fish_use_subcommand' -a 'info' -d 'Show index info'
 complete -c gleann -n '__fish_use_subcommand' -a 'graph' -d 'Query AST Graph in KuzuDB'
-complete -c gleann -n '__fish_use_subcommand' -a 'serve' -d 'Start HTTP server'
+complete -c gleann -n '__fish_use_subcommand' -a 'serve' -d 'Start REST API server'
 complete -c gleann -n '__fish_use_subcommand' -a 'mcp' -d 'Start MCP server (stdio)'
+complete -c gleann -n '__fish_use_subcommand' -a 'memory' -d 'Long-term memory management'
 complete -c gleann -n '__fish_use_subcommand' -a 'tui' -d 'Launch interactive TUI'
+complete -c gleann -n '__fish_use_subcommand' -a 'install' -d 'Install gleann for AI platforms'
+complete -c gleann -n '__fish_use_subcommand' -a 'quickstart' -d 'Index current dir & show next steps'
 complete -c gleann -n '__fish_use_subcommand' -a 'setup' -d 'Run configuration wizard'
 complete -c gleann -n '__fish_use_subcommand' -a 'doctor' -d 'Check system health'
+complete -c gleann -n '__fish_use_subcommand' -a 'tasks' -d 'View background tasks'
+complete -c gleann -n '__fish_use_subcommand' -a 'benchmark' -d 'Token reduction analysis'
 complete -c gleann -n '__fish_use_subcommand' -a 'config' -d 'Manage configuration'
 complete -c gleann -n '__fish_use_subcommand' -a 'completion' -d 'Output shell completion script'
 complete -c gleann -n '__fish_use_subcommand' -a 'version' -d 'Show version'

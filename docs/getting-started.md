@@ -2,6 +2,28 @@
 
 Get from zero to your first AI-powered search in under 5 minutes.
 
+## Fastest path: `gleann quickstart`
+
+Already have gleann installed and Ollama running? Run one command inside any
+project directory and gleann indexes it, then prints your MCP connection config:
+
+```bash
+cd ~/my-project
+gleann quickstart
+```
+
+gleann autodetects your saved embedding config, builds the index, and outputs
+the exact snippet to paste into your `claude_desktop_config.json` or Cursor MCP
+settings. No flags required — every option can be overridden if needed:
+
+```bash
+gleann quickstart --docs ./docs --name my-project --graph
+```
+
+For first-time setup continue with the steps below.
+
+---
+
 ## Prerequisites
 
 | Requirement | Why | Install |

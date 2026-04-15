@@ -116,6 +116,29 @@ Add to `claude_desktop_config.json`:
 | `gleann_document_links` | Get document structure links |
 | `gleann_impact` | Blast radius analysis for a symbol |
 
+### Progressive Disclosure Tools
+
+Token-efficient two-phase search. First call `gleann_search_ids` to get compact
+results (5–10× fewer tokens), then call `gleann_fetch` only for the passages you
+actually need. Use `gleann_get` to resolve citation references at any time.
+
+| Tool | Description |
+|------|-------------|
+| `gleann_search_ids` | Compact search returning ref/score/source/peek (no full text) |
+| `gleann_fetch` | Hydrate full passage content for selected refs from `gleann_search_ids` |
+| `gleann_get` | Citation lookup — resolve a persistent `"indexname:id"` reference |
+
+### Session Tracking Tools
+
+Capture what an AI agent does during a gleann session. Sessions are stored in
+BBolt (TierShort for events, TierLong for summaries) and survive process restarts.
+
+| Tool | Description |
+|------|-------------|
+| `gleann_session_start` | Begin a named work session |
+| `gleann_session_end` | Close the session with an optional summary |
+| `gleann_session_status` | Show active session name and event count |
+
 ### Memory Engine Tools
 
 These tools allow autonomous agents to **directly manipulate** gleann's generic
@@ -358,6 +381,97 @@ that need to explore a topic from several angles without sequential round-trips.
 | `concurrency` | number | `3` | Parallel question slots (max 5) |
 
 **Response** (text): numbered Q/A pairs with per-question latency.
+
+---
+
+### gleann_search_ids
+
+Token-efficient search. Returns a compact result list — no full passage text.
+
+```json
+{
+  "index": "my-code",
+  "query": "authentication handler",
+  "top_k": 10
+}
+```
+
+**Response fields per result:**
+
+| Field | Description |
+|-------|-------------|
+| `ref` | Persistent citation key (`"indexname:42"`) — pass to `gleann_fetch` or `gleann_get` |
+| `score` | Cosine similarity (0–1) |
+| `source` | File path or document name |
+| `type` | Chunk type (`text`, `code`, `heading`, …) |
+| `peek` | First 120 characters of the passage |
+
+Typical token savings: **5–10× vs `gleann_search`** because full passage text is omitted.
+
+### gleann_fetch
+
+Hydrate full passage content for one or more refs returned by `gleann_search_ids`.
+
+```json
+{
+  "refs": ["my-code:42", "my-code:57"],
+  "index": "my-code"
+}
+```
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `refs` | ✅ | Array of `"indexname:id"` strings from `gleann_search_ids` |
+| `index` | optional | Override the index in refs (rarely needed) |
+
+### gleann_get
+
+Citation lookup. Resolve a single `ref` to its full passage at any point in a
+conversation — useful for sourcing a claim made earlier.
+
+```json
+{
+  "ref": "my-code:42"
+}
+```
+
+Returns the full passage text, source path, chunk type, and score metadata.
+
+---
+
+### gleann_session_start
+
+Begin a named work session. All subsequent `gleann_search` and `gleann_ask`
+calls are automatically logged to this session.
+
+```json
+{
+  "name": "auth-refactor",
+  "description": "Auditing the JWT authentication module"
+}
+```
+
+### gleann_session_end
+
+Close the active session. Optionally record a summary to long-term memory.
+
+```json
+{
+  "summary": "Reviewed JWT handler. Identified path-traversal risk in token parser."
+}
+```
+
+Pass `"summary": ""` to close without recording.
+
+### gleann_session_status
+
+Show the active session name and the number of events logged so far.
+
+```json
+{}
+```
+
+---
 
 ## Resources
 
