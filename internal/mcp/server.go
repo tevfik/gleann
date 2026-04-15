@@ -79,6 +79,16 @@ func NewServer(cfg Config) *Server {
 	s.AddTool(srv.buildDocumentLinksTool(), srv.handleDocumentLinks)
 	s.AddTool(srv.buildImpactTool(), srv.handleImpact)
 
+	// Progressive disclosure — compact search + batch fetch + citation lookup.
+	s.AddTool(srv.buildSearchIDsTool(), srv.handleSearchIDs)
+	s.AddTool(srv.buildFetchTool(), srv.handleFetch)
+	s.AddTool(srv.buildGetTool(), srv.handleGet)
+
+	// Session tracking — log searches/asks to BBolt for cross-session context.
+	s.AddTool(srv.buildSessionStartTool(), srv.handleSessionStart)
+	s.AddTool(srv.buildSessionEndTool(), srv.handleSessionEnd)
+	s.AddTool(srv.buildSessionStatusTool(), srv.handleSessionStatus)
+
 	// Memory Block tools — persistent hierarchical memory (BBolt, no CGo).
 	s.AddTool(srv.buildMemoryRememberTool(), srv.handleMemoryRemember)
 	s.AddTool(srv.buildMemoryForgetTool(), srv.handleMemoryForget)
@@ -399,6 +409,9 @@ func (s *Server) handleSearch(ctx context.Context, request mcp.CallToolRequest) 
 		}
 	}
 
+	// Log to active session if one is running.
+	s.sessionLog("search", indexName, query, len(results))
+
 	return mcp.NewToolResultText(sb.String()), nil
 }
 
@@ -507,6 +520,9 @@ func (s *Server) handleAsk(ctx context.Context, request mcp.CallToolRequest) (*m
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("Error asking question: %v", err)), nil
 	}
+
+	// Log to active session if one is running.
+	s.sessionLog("ask", indexName, question, 1)
 
 	return mcp.NewToolResultText(answer), nil
 }
