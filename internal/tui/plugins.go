@@ -16,8 +16,8 @@ import (
 	"runtime"
 	"strings"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 
 	"github.com/tevfik/gleann/pkg/gleann"
 )
@@ -258,7 +258,7 @@ func (m PluginModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.state = psResult
 		return m, nil
 
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		if m.status != "" && m.state == psMain {
 			m.status = ""
 		}
@@ -275,7 +275,7 @@ func (m PluginModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m PluginModel) updateMain(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m PluginModel) updateMain(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "ctrl+c", "esc", "q":
 		m.quitting = true
@@ -320,7 +320,7 @@ func (m PluginModel) updateMain(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m PluginModel) updateDetail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m PluginModel) updateDetail(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "ctrl+c":
 		m.quitting = true
@@ -355,7 +355,7 @@ func (m PluginModel) updateDetail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m PluginModel) updateResult(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m PluginModel) updateResult(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "ctrl+c":
 		m.quitting = true
@@ -1460,20 +1460,20 @@ func (m PluginModel) Quitting() bool {
 
 // --- View ---
 
-func (m PluginModel) View() string {
+func (m PluginModel) View() tea.View {
 	if m.quitting {
-		return ""
+		return tea.NewView("")
 	}
 
 	switch m.state {
 	case psDetail:
-		return m.viewDetail()
+		return tea.NewView(m.viewDetail())
 	case psAction:
-		return m.viewAction()
+		return tea.NewView(m.viewAction())
 	case psResult:
-		return m.viewResult()
+		return tea.NewView(m.viewResult())
 	default:
-		return m.viewMain()
+		return tea.NewView(m.viewMain())
 	}
 }
 

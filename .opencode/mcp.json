@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "gleann": {
+      "type": "stdio",
+      "command": "gleann",
+      "args": ["mcp"]
+    }
+  }
+}

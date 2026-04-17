@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"strings"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 
 	"github.com/tevfik/gleann/pkg/gleann"
 )
@@ -40,7 +40,7 @@ func (m IndexListModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = msg.Height
 		return m, nil
 
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		switch msg.String() {
 		case "ctrl+c", "esc", "q":
 			m.quitting = true
@@ -89,7 +89,7 @@ func (m IndexListModel) Skipped() bool {
 	return m.skipped
 }
 
-func (m IndexListModel) View() string {
+func (m IndexListModel) View() tea.View {
 	var b strings.Builder
 
 	b.WriteString("\n")
@@ -99,7 +99,7 @@ func (m IndexListModel) View() string {
 	if m.err != nil {
 		b.WriteString(ErrorBadge.Render(fmt.Sprintf("  Error: %v", m.err)))
 		b.WriteString("\n")
-		return b.String()
+		return tea.NewView(b.String())
 	}
 
 	if len(m.indexes) == 0 {
@@ -109,7 +109,7 @@ func (m IndexListModel) View() string {
 		b.WriteString(ActiveItemStyle.Render("▸ ") + noIdxStyle.Render("Continue without index (pure LLM)"))
 		b.WriteString("\n\n")
 		b.WriteString(HelpStyle.Render("  enter continue • esc back"))
-		return b.String()
+		return tea.NewView(b.String())
 	}
 
 	// Show the "no index" option at the bottom.
@@ -140,5 +140,5 @@ func (m IndexListModel) View() string {
 	b.WriteString("\n")
 	b.WriteString(HelpStyle.Render("  ↑/↓ navigate • enter select • esc back"))
 	b.WriteString("\n")
-	return b.String()
+	return tea.NewView(b.String())
 }

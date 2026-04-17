@@ -7,10 +7,10 @@ import (
 
 	"github.com/tevfik/gleann/pkg/gleann"
 
-	"github.com/charmbracelet/bubbles/spinner"
-	"github.com/charmbracelet/bubbles/textinput"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/bubbles/v2/spinner"
+	"charm.land/bubbles/v2/textinput"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 )
 
 // ── Wizard phases ──────────────────────────────────────────────
@@ -213,13 +213,13 @@ func NewOnboardModel() OnboardModel {
 	embHost.Placeholder = gleann.DefaultOllamaHost
 	embHost.SetValue(gleann.DefaultOllamaHost)
 	embHost.CharLimit = 256
-	embHost.Width = 44
+	embHost.SetWidth(44)
 
 	// Embedding API key.
 	embKey := textinput.New()
 	embKey.Placeholder = "sk-..."
 	embKey.CharLimit = 256
-	embKey.Width = 44
+	embKey.SetWidth(44)
 	embKey.EchoMode = textinput.EchoPassword
 
 	// LLM host.
@@ -227,13 +227,13 @@ func NewOnboardModel() OnboardModel {
 	llmHost.Placeholder = gleann.DefaultOllamaHost
 	llmHost.SetValue(gleann.DefaultOllamaHost)
 	llmHost.CharLimit = 256
-	llmHost.Width = 44
+	llmHost.SetWidth(44)
 
 	// LLM API key.
 	llmKey := textinput.New()
 	llmKey.Placeholder = "sk-..."
 	llmKey.CharLimit = 256
-	llmKey.Width = 44
+	llmKey.SetWidth(44)
 	llmKey.EchoMode = textinput.EchoPassword
 
 	// Index dir — use real OS path so the saved value is portable.
@@ -242,7 +242,7 @@ func NewOnboardModel() OnboardModel {
 	indexDir.Placeholder = defaultIdx
 	indexDir.SetValue(defaultIdx)
 	indexDir.CharLimit = 256
-	indexDir.Width = 44
+	indexDir.SetWidth(44)
 
 	sp := spinner.New()
 	sp.Spinner = spinner.Dot
@@ -253,7 +253,7 @@ func NewOnboardModel() OnboardModel {
 	serverAddr.Placeholder = gleann.DefaultServerAddr
 	serverAddr.SetValue(gleann.DefaultServerAddr)
 	serverAddr.CharLimit = 64
-	serverAddr.Width = 24
+	serverAddr.SetWidth(24)
 
 	return OnboardModel{
 		phase:             phaseQuickOrAdv,
@@ -432,7 +432,7 @@ func (m OnboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		return m.handleKey(msg)
 	}
 
@@ -440,7 +440,7 @@ func (m OnboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m.updateActiveInput(msg)
 }
 
-func (m OnboardModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m OnboardModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	key := msg.String()
 
 	// Global.
@@ -1088,9 +1088,9 @@ func (m OnboardModel) OpenPlugins() bool {
 
 // ── View ───────────────────────────────────────────────────────
 
-func (m OnboardModel) View() string {
+func (m OnboardModel) View() tea.View {
 	if m.cancelled {
-		return "\n  " + ErrorBadge.Render("✗ Setup cancelled.") + "\n"
+		return tea.NewView("\n  " + ErrorBadge.Render("✗ Setup cancelled.") + "\n")
 	}
 
 	var b strings.Builder
@@ -1127,7 +1127,7 @@ func (m OnboardModel) View() string {
 	case phaseMenu:
 		b.WriteString(m.renderSettingsMenu())
 		b.WriteString("\n")
-		return b.String()
+		return tea.NewView(b.String())
 
 	case phaseQuickOrAdv:
 		b.WriteString(m.renderSelect("", "Setup Mode",
@@ -1266,7 +1266,7 @@ func (m OnboardModel) View() string {
 	}
 
 	b.WriteString("\n")
-	return b.String()
+	return tea.NewView(b.String())
 }
 
 func (m OnboardModel) renderSettingsMenu() string {

@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 	"github.com/tevfik/gleann/pkg/conversations"
 )
 
@@ -49,7 +49,7 @@ func (m pickerModel) Init() tea.Cmd { return nil }
 
 func (m pickerModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		switch msg.String() {
 		case "ctrl+c", "q", "esc":
 			m.quitting = true
@@ -73,9 +73,9 @@ func (m pickerModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m pickerModel) View() string {
+func (m pickerModel) View() tea.View {
 	if m.quitting {
-		return ""
+		return tea.NewView("")
 	}
 	var sb strings.Builder
 	sb.WriteString("💬 Select a conversation (↑/↓ or j/k to move, Enter to select, q to cancel):\n\n")
@@ -94,7 +94,7 @@ func (m pickerModel) View() string {
 			cursor, conversations.ShortID(c.ID), title, msgs, formatAge(age)))
 	}
 	sb.WriteString("\n")
-	return sb.String()
+	return tea.NewView(sb.String())
 }
 
 func pickConversation(store *conversations.Store, args []string) {
