@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/tevfik/gleann/internal/backend/llamacpp"
 	"github.com/tevfik/gleann/internal/embedding"
@@ -25,7 +25,7 @@ func Run() error {
 	for {
 		// ── Home screen ──
 		home := NewHomeModel()
-		p := tea.NewProgram(home, tea.WithAltScreen())
+		p := tea.NewProgram(home)
 		result, err := p.Run()
 		if err != nil {
 			return fmt.Errorf("home screen: %w", err)
@@ -64,7 +64,7 @@ func RunOnboard() (*OnboardResult, error) {
 	} else {
 		m = NewOnboardModel()
 	}
-	p := tea.NewProgram(m, tea.WithAltScreen())
+	p := tea.NewProgram(m)
 	result, err := p.Run()
 	if err != nil {
 		return nil, fmt.Errorf("onboard: %w", err)
@@ -86,7 +86,7 @@ func RunOnboardWithPlugins() (*OnboardResult, bool, error) {
 	} else {
 		m = NewOnboardModel()
 	}
-	p := tea.NewProgram(m, tea.WithAltScreen())
+	p := tea.NewProgram(m)
 	result, err := p.Run()
 	if err != nil {
 		return nil, false, fmt.Errorf("onboard: %w", err)
@@ -107,7 +107,7 @@ func RunPlugins() error {
 // RunChat runs the chat TUI standalone for a given index.
 func RunChat(chat *gleann.LeannChat, indexName, modelName string) error {
 	m := NewChatModel(chat, indexName, modelName)
-	p := tea.NewProgram(m, tea.WithAltScreen())
+	p := tea.NewProgram(m)
 	_, err := p.Run()
 
 	// End memory session (promote short-term → medium-term).
@@ -137,7 +137,7 @@ func runOnboard() error {
 	} else {
 		m = NewOnboardModel()
 	}
-	p := tea.NewProgram(m, tea.WithAltScreen())
+	p := tea.NewProgram(m)
 	result, err := p.Run()
 	if err != nil {
 		return fmt.Errorf("onboard: %w", err)
@@ -186,7 +186,7 @@ func RunChatFlow() error {
 func runIndexManage() error {
 	cfg := loadConfig()
 	m := NewIndexManageModel(cfg.IndexDir)
-	p := tea.NewProgram(m, tea.WithAltScreen())
+	p := tea.NewProgram(m)
 	_, err := p.Run()
 	if err != nil {
 		return fmt.Errorf("index manager: %w", err)
@@ -196,7 +196,7 @@ func runIndexManage() error {
 
 func runPlugins() error {
 	m := NewPluginModel()
-	p := tea.NewProgram(m, tea.WithAltScreen())
+	p := tea.NewProgram(m)
 	_, err := p.Run()
 	if err != nil {
 		return fmt.Errorf("plugins: %w", err)
@@ -210,7 +210,7 @@ func runChatFlow() error {
 
 	// Pick an index.
 	idxModel := NewIndexListModel(cfg.IndexDir)
-	p := tea.NewProgram(idxModel, tea.WithAltScreen())
+	p := tea.NewProgram(idxModel)
 	result, err := p.Run()
 	if err != nil {
 		return fmt.Errorf("index list: %w", err)

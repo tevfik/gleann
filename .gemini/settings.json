@@ -1,0 +1,9 @@
+{
+  "hooks": {
+    "gleann": {
+      "command": "if [ -f GRAPH_REPORT.md ]; then echo '[gleann] GRAPH_REPORT.md found — review it before searching.' \u003e\u00262; fi",
+      "event": "BeforeTool",
+      "matcher": "read_file|list_files|search_files"
+    }
+  }
+}

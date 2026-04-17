@@ -5,8 +5,8 @@ import (
 	"strings"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 
 	"github.com/tevfik/gleann/pkg/gleann"
 )
@@ -76,7 +76,7 @@ func (m IndexManageModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.state = imList
 		return m, nil
 
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		// Clear transient status on any key.
 		if m.status != "" && m.state == imList {
 			m.status = ""
@@ -95,7 +95,7 @@ func (m IndexManageModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m IndexManageModel) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m IndexManageModel) updateList(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "ctrl+c", "esc", "q":
 		m.quitting = true
@@ -135,7 +135,7 @@ func (m IndexManageModel) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m IndexManageModel) updateDetail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m IndexManageModel) updateDetail(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "ctrl+c":
 		m.quitting = true
@@ -151,7 +151,7 @@ func (m IndexManageModel) updateDetail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m IndexManageModel) updateConfirm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m IndexManageModel) updateConfirm(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "ctrl+c":
 		m.quitting = true
@@ -179,18 +179,18 @@ func (m IndexManageModel) Quitting() bool {
 
 // ── View ───────────────────────────────────────────────────────
 
-func (m IndexManageModel) View() string {
+func (m IndexManageModel) View() tea.View {
 	if m.quitting {
-		return ""
+		return tea.NewView("")
 	}
 
 	switch m.state {
 	case imDetail:
-		return m.viewDetail()
+		return tea.NewView(m.viewDetail())
 	case imConfirm:
-		return m.viewConfirm()
+		return tea.NewView(m.viewConfirm())
 	default:
-		return m.viewList()
+		return tea.NewView(m.viewList())
 	}
 }
 

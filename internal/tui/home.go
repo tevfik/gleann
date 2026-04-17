@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"strings"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 )
 
 // Screen represents the active screen.
@@ -60,7 +60,7 @@ func (m HomeModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = msg.Height
 		return m, nil
 
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		switch msg.String() {
 		case "ctrl+c", "q":
 			m.quitting = true
@@ -109,9 +109,9 @@ func (m HomeModel) Quitting() bool {
 	return m.quitting
 }
 
-func (m HomeModel) View() string {
+func (m HomeModel) View() tea.View {
 	if m.quitting {
-		return "\n  " + lipgloss.NewStyle().Foreground(ColorMuted).Render("Bye! 👋") + "\n"
+		return tea.NewView("\n  " + lipgloss.NewStyle().Foreground(ColorMuted).Render("Bye! 👋") + "\n")
 	}
 
 	var b strings.Builder
@@ -145,5 +145,5 @@ func (m HomeModel) View() string {
 	help := HelpStyle.Render("  ↑/↓ navigate • enter select • q quit")
 	b.WriteString(help + "  " + ver + "\n")
 
-	return b.String()
+	return tea.NewView(b.String())
 }

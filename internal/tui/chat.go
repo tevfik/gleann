@@ -6,13 +6,13 @@ import (
 	"math"
 	"strings"
 
-	"github.com/charmbracelet/bubbles/key"
-	"github.com/charmbracelet/bubbles/spinner"
-	"github.com/charmbracelet/bubbles/textarea"
-	"github.com/charmbracelet/bubbles/viewport"
-	tea "github.com/charmbracelet/bubbletea"
+	"charm.land/bubbles/v2/key"
+	"charm.land/bubbles/v2/spinner"
+	"charm.land/bubbles/v2/textarea"
+	"charm.land/bubbles/v2/viewport"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/glamour"
-	"github.com/charmbracelet/lipgloss"
 
 	"github.com/tevfik/gleann/pkg/conversations"
 	"github.com/tevfik/gleann/pkg/gleann"
@@ -147,15 +147,17 @@ func NewChatModel(chat *gleann.LeannChat, indexName, modelName string) ChatModel
 	ta.SetHeight(3)
 	ta.SetWidth(80)
 	ta.ShowLineNumbers = false
-	ta.FocusedStyle.CursorLine = lipgloss.NewStyle()
-	ta.FocusedStyle.Base = lipgloss.NewStyle().
+	taStyles := textarea.DefaultDarkStyles()
+	taStyles.Focused.CursorLine = lipgloss.NewStyle()
+	taStyles.Focused.Base = lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(ColorPrimary).
 		Padding(0, 1)
-	ta.BlurredStyle.Base = lipgloss.NewStyle().
+	taStyles.Blurred.Base = lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(ColorMuted).
 		Padding(0, 1)
+	ta.SetStyles(taStyles)
 
 	// Disable Enter in textarea — we handle it ourselves for send.
 	ta.KeyMap.InsertNewline = key.NewBinding(key.WithKeys("alt+enter"),
@@ -172,11 +174,13 @@ func NewChatModel(chat *gleann.LeannChat, indexName, modelName string) ChatModel
 	pi.SetHeight(5)
 	pi.SetWidth(60)
 	pi.ShowLineNumbers = false
-	pi.FocusedStyle.CursorLine = lipgloss.NewStyle()
-	pi.FocusedStyle.Base = lipgloss.NewStyle().
+	piStyles := textarea.DefaultDarkStyles()
+	piStyles.Focused.CursorLine = lipgloss.NewStyle()
+	piStyles.Focused.Base = lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(ColorAccent).
 		Padding(0, 1)
+	pi.SetStyles(piStyles)
 
 	cfg := chat.Config()
 
@@ -354,7 +358,7 @@ func (m ChatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m = m.relayout()
 		return m, nil
 
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		switch msg.String() {
 		case "ctrl+c":
 			m.quitting = true
@@ -377,11 +381,11 @@ func (m ChatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		// ── Viewport scroll — intercepted before textarea eats them ──
 		case "pgup", "ctrl+b":
-			m.viewport.HalfViewUp()
+			m.viewport.HalfPageUp()
 			return m, nil
 
 		case "pgdown", "ctrl+d":
-			m.viewport.HalfViewDown()
+			m.viewport.HalfPageDown()
 			return m, nil
 
 		case "ctrl+s":
@@ -659,7 +663,7 @@ func (m ChatModel) updateSettings(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = msg.Height
 		return m, nil
 
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		switch msg.String() {
 		case "ctrl+c":
 			m.quitting = true
@@ -707,7 +711,7 @@ func (m ChatModel) updatePromptEdit(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = msg.Height
 		return m, nil
 
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		switch msg.String() {
 		case "ctrl+c":
 			m.quitting = true
@@ -736,7 +740,7 @@ func (m ChatModel) updateHistory(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = msg.Height
 		return m, nil
 
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		switch msg.String() {
 		case "ctrl+c":
 			m.quitting = true
@@ -1120,7 +1124,7 @@ func (m ChatModel) relayout() ChatModel {
 	}
 
 	if !m.ready {
-		m.viewport = viewport.New(vpWidth, vpHeight)
+		m.viewport = viewport.New(viewport.WithWidth(vpWidth), viewport.WithHeight(vpHeight))
 		// Restore viewport scroll keybindings so ↑/↓/PgUp/PgDn scroll chat history.
 		// We use separate keys here to avoid stealing ↑/↓ from textarea.
 		m.viewport.KeyMap = viewport.KeyMap{
@@ -1132,8 +1136,8 @@ func (m ChatModel) relayout() ChatModel {
 		m.viewport.SetContent(m.renderMessages())
 		m.ready = true
 	} else {
-		m.viewport.Width = vpWidth
-		m.viewport.Height = vpHeight
+		m.viewport.SetWidth(vpWidth)
+		m.viewport.SetHeight(vpHeight)
 	}
 	m.textarea.SetWidth(vpWidth)
 	return m
@@ -1191,22 +1195,22 @@ func (m ChatModel) renderMessages() string {
 	return b.String()
 }
 
-func (m ChatModel) View() string {
+func (m ChatModel) View() tea.View {
 	if m.quitting {
-		return ""
+		return tea.NewView("")
 	}
 	if !m.ready {
-		return "\n  Initializing...\n"
+		return tea.NewView("\n  Initializing...\n")
 	}
 
 	// Settings overlay.
 	if m.showSettings {
-		return m.viewSettings()
+		return tea.NewView(m.viewSettings())
 	}
 
 	// History overlay.
 	if m.showHistory {
-		return m.viewHistory()
+		return tea.NewView(m.viewHistory())
 	}
 
 	var b strings.Builder
@@ -1256,12 +1260,12 @@ func (m ChatModel) View() string {
 	help := HelpStyle.Render("  enter send • pgup/pgdn scroll • ctrl+s settings • esc clear/back")
 	b.WriteString(help)
 
-	return b.String()
+	return tea.NewView(b.String())
 }
 
 // renderScrollbar draws a minimal vertical scrollbar for the viewport.
 func (m ChatModel) renderScrollbar() string {
-	h := m.viewport.Height
+	h := m.viewport.Height()
 	if h <= 0 {
 		return ""
 	}
