@@ -27,7 +27,7 @@ func (m *mockComputer) ComputeSingle(ctx context.Context, text string) ([]float3
 }
 
 func (m *mockComputer) Dimensions() int   { return m.dim }
-func (m *mockComputer) ModelName() string  { return m.model }
+func (m *mockComputer) ModelName() string { return m.model }
 
 func TestCacheKey(t *testing.T) {
 	// Same input should produce same key
