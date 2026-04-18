@@ -4,8 +4,8 @@ import "testing"
 
 func TestParseReActStep(t *testing.T) {
 	tests := []struct {
-		name      string
-		response  string
+		name        string
+		response    string
 		wantThought string
 		wantAction  string
 		wantInput   string
@@ -20,22 +20,22 @@ Action Input: golang concurrency patterns`,
 			wantInput:   "golang concurrency patterns",
 		},
 		{
-			name: "empty response",
-			response: "",
+			name:        "empty response",
+			response:    "",
 			wantThought: "",
 			wantAction:  "",
 			wantInput:   "",
 		},
 		{
-			name: "only thought",
-			response: "Thought: thinking about it",
+			name:        "only thought",
+			response:    "Thought: thinking about it",
 			wantThought: "thinking about it",
 			wantAction:  "",
 			wantInput:   "",
 		},
 		{
-			name: "with extra whitespace",
-			response: "Thought:    lots of space   \nAction:   search  \nAction Input:   query  ",
+			name:        "with extra whitespace",
+			response:    "Thought:    lots of space   \nAction:   search  \nAction Input:   query  ",
 			wantThought: "lots of space",
 			wantAction:  "search",
 			wantInput:   "query",

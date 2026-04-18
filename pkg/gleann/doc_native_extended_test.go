@@ -122,9 +122,9 @@ func TestHtmlToMarkdownExtended(t *testing.T) {
 
 func TestExtractXMLText(t *testing.T) {
 	tests := []struct {
-		name  string
-		xml   string
-		want  string
+		name string
+		xml  string
+		want string
 	}{
 		{"simple text", "<a:t>Hello</a:t>", "Hello"},
 		{"multiple texts", "<p><a:t>Hello</a:t> <a:t>World</a:t></p>", "Hello World"},

@@ -604,7 +604,7 @@ func TestFilterScope(t *testing.T) {
 	blocks := []Block{
 		{Scope: "a", Content: "1"},
 		{Scope: "b", Content: "2"},
-		{Scope: "", Content: "3"},  // global, included in any scope
+		{Scope: "", Content: "3"}, // global, included in any scope
 		{Scope: "a", Content: "4"},
 	}
 
