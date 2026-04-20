@@ -39,6 +39,11 @@ indexes/
 # Local-only documents (not committed)
 LOCAL_*.md
 
+# AI agent instruction files (local only)
+AGENTS.md
+CLAUDE.md
+GEMINI.md
+
 # E2E generated outputs (run artifacts, not fixtures)
 e2e/results/*.html
 e2e/results/*.md
