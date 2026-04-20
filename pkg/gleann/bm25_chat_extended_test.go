@@ -102,6 +102,7 @@ func TestBM25AdapterAddThenScore(t *testing.T) {
 func TestPassageManagerCountExt(t *testing.T) {
 	tmp := t.TempDir()
 	pm := NewPassageManager(tmp)
+	t.Cleanup(func() { pm.Close() })
 
 	if pm.Count() != 0 {
 		t.Errorf("initial count = %d, want 0", pm.Count())
