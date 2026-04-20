@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -46,8 +47,9 @@ func TestGetConfigHost(t *testing.T) {
 
 func TestGetConfigIndexDir(t *testing.T) {
 	cfg := getConfig([]string{"--index-dir", "/tmp/custom-idx"})
-	if cfg.IndexDir != "/tmp/custom-idx" {
-		t.Errorf("index-dir = %q", cfg.IndexDir)
+	want := filepath.FromSlash("/tmp/custom-idx")
+	if cfg.IndexDir != want {
+		t.Errorf("index-dir = %q, want %q", cfg.IndexDir, want)
 	}
 }
 
