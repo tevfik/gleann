@@ -658,6 +658,7 @@ func installPluginWithProgress(info pluginInfo, progress chan<- string) (string,
 		// Use repo root when the expected subdirectory does not exist OR when a
 		// file (e.g. a pre-built binary) shares the same name as the plugin.
 		if fi, err := os.Stat(srcDir); os.IsNotExist(err) || (err == nil && !fi.IsDir()) {
+			srcDir = repoDir
 		}
 
 		if err := linkOrCopy(srcDir, pluginDir); err != nil {
