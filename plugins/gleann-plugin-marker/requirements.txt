@@ -1,0 +1,4 @@
+marker-pdf[full]
+fastapi>=0.111.0
+uvicorn>=0.30.0
+python-multipart>=0.0.9

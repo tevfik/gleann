@@ -133,12 +133,42 @@ func (s *LeannSearcher) Load(ctx context.Context, name string) error {
 		}
 	}
 
-	// Build BM25 index if scorer is set (requires all passages in memory).
+	// Build BM25 index if scorer is set.
+	// For large corpora, use streaming to avoid loading all passages into RAM.
 	if s.scorer != nil {
-		if err := s.passages.LoadAll(); err != nil {
-			return fmt.Errorf("load all passages for BM25: %w", err)
+		numPassages := s.passages.Count()
+		maxBM25 := s.config.SearchConfig.MaxBM25Passages
+		if maxBM25 > 0 && numPassages > maxBM25 {
+			log.Printf("ℹ️  Corpus has %d passages, BM25 limited to %d (MaxBM25Passages). Using streaming index.",
+				numPassages, maxBM25)
 		}
-		s.scorer.AddDocuments(s.passages.All())
+
+		if numPassages > 100_000 {
+			// Streaming: build BM25 index without loading all passages into RAM cache.
+			log.Printf("ℹ️  Large corpus (%d passages), building BM25 index via streaming...", numPassages)
+			indexed := 0
+			if err := s.passages.ForEachPassage(func(p Passage) error {
+				if maxBM25 > 0 && indexed >= maxBM25 {
+					return nil
+				}
+				s.scorer.AddDocuments([]Passage{p})
+				indexed++
+				return nil
+			}); err != nil {
+				return fmt.Errorf("stream passages for BM25: %w", err)
+			}
+			log.Printf("ℹ️  BM25 index built: %d passages indexed", indexed)
+		} else {
+			// Small corpus: load all into cache (fast path).
+			limit := 0
+			if maxBM25 > 0 {
+				limit = maxBM25
+			}
+			if err := s.passages.LoadAllWithLimit(limit); err != nil {
+				return fmt.Errorf("load all passages for BM25: %w", err)
+			}
+			s.scorer.AddDocuments(s.passages.All())
+		}
 	}
 
 	s.loaded = true

@@ -70,6 +70,14 @@ var knownPlugins = []pluginInfo{
 		RequiresMarkitdown: true,
 	},
 	{
+		Name:        "gleann-marker",
+		Icon:        "🖊️",
+		Description: "High-accuracy extraction via marker-pdf (PDF, DOCX, images)",
+		RepoURL:     "https://github.com/tevfik/gleann-plugin-marker",
+		Language:    "python (marker-pdf, surya OCR)",
+		Extensions:  []string{".pdf", ".docx", ".xlsx", ".pptx", ".epub", ".html", ".png", ".jpg"},
+	},
+	{
 		Name:        "gleann-sound",
 		Icon:        "🔊",
 		Description: "Speech-to-text extraction (WAV, MP3, FLAC)",

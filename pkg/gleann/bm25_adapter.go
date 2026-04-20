@@ -45,3 +45,15 @@ func (a *BM25Adapter) AddDocuments(passages []Passage) {
 		a.scorer.AddDocument(p.ID, p.Text)
 	}
 }
+
+// AddDocument adds a single passage to the BM25 index.
+// This is suitable for streaming large corpora via ForEachPassage
+// without loading all passages into memory at once.
+func (a *BM25Adapter) AddDocument(p Passage) {
+	a.scorer.AddDocument(p.ID, p.Text)
+}
+
+// IndexedCount returns the number of documents in the BM25 index.
+func (a *BM25Adapter) IndexedCount() int {
+	return a.scorer.DocCount()
+}
