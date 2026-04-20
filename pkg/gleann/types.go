@@ -217,6 +217,12 @@ type SearchConfig struct {
 	// UseGraphContext enables graph-augmented search: each result is enriched
 	// with symbols from the same file and their caller/callee relationships.
 	UseGraphContext bool `json:"use_graph_context,omitempty"`
+
+	// MaxBM25Passages limits how many passages are loaded for BM25 scoring.
+	// When the corpus exceeds this number, only the first MaxBM25Passages are
+	// indexed for BM25. Set to 0 for no limit (default: 0).
+	// Recommended: 50000–100000 for systems with limited RAM.
+	MaxBM25Passages int `json:"max_bm25_passages,omitempty"`
 }
 
 // DefaultConfig returns a Config with sensible defaults.

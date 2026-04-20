@@ -1,0 +1,6 @@
+# Requirements for LLM-enhanced mode (optional).
+# Install with: pip install -r requirements-llm.txt
+-r requirements.txt
+# Ollama support (local LLM)
+# Set --ollama-model when starting the plugin.
+# For Gemini: set GOOGLE_API_KEY environment variable.

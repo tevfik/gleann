@@ -277,6 +277,14 @@ func (pm *PassageManager) Load() error {
 
 // LoadAll loads all passages into memory (needed for BM25 scoring).
 func (pm *PassageManager) LoadAll() error {
+	return pm.LoadAllWithLimit(0)
+}
+
+// LoadAllWithLimit loads passages into memory up to the given limit.
+// If limit <= 0, all passages are loaded (no limit).
+// When the corpus exceeds the limit, only the first `limit` passages are cached.
+// This prevents unbounded RAM usage for BM25 scoring on large corpora.
+func (pm *PassageManager) LoadAllWithLimit(limit int) error {
 	if err := pm.ensureDB(); err != nil {
 		return err
 	}
@@ -295,6 +303,9 @@ func (pm *PassageManager) LoadAll() error {
 			return nil
 		}
 		return b.ForEach(func(k, v []byte) error {
+			if limit > 0 && len(passages) >= limit {
+				return nil // stop adding beyond limit
+			}
 			var p Passage
 			if err := json.Unmarshal(v, &p); err != nil {
 				return err
@@ -308,6 +319,29 @@ func (pm *PassageManager) LoadAll() error {
 		pm.cached = passages
 	}
 	return err
+}
+
+// ForEachPassage iterates over all passages in the database without loading
+// them all into memory at once. This is suitable for building incremental
+// indexes (e.g. BM25) on very large corpora where LoadAll would OOM.
+func (pm *PassageManager) ForEachPassage(fn func(Passage) error) error {
+	if err := pm.ensureDB(); err != nil {
+		return err
+	}
+
+	return pm.db.View(func(tx *bbolt.Tx) error {
+		b := tx.Bucket(bucketPassages)
+		if b == nil {
+			return nil
+		}
+		return b.ForEach(func(k, v []byte) error {
+			var p Passage
+			if err := json.Unmarshal(v, &p); err != nil {
+				return err // skip corrupt entries
+			}
+			return fn(p)
+		})
+	})
 }
 
 // Close closes the underlying database.

@@ -86,6 +86,14 @@ func (s *Scorer) AddDocuments(ids []int64, texts []string) {
 	}
 }
 
+// HasDocument returns true if the document is already indexed.
+func (s *Scorer) HasDocument(id int64) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	_, ok := s.docTermFreqs[id]
+	return ok
+}
+
 // Score computes BM25 scores for the query against all indexed documents.
 // Returns a map from document ID to score.
 func (s *Scorer) Score(query string) map[int64]float32 {
