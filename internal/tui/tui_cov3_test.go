@@ -631,8 +631,8 @@ func TestResolveGleannBin_FallbackToExe(t *testing.T) {
 func TestInstallClaudeCodeMCP_NewFile(t *testing.T) {
 	// Override HOME to control where the file gets written.
 	home := t.TempDir()
-	os.Setenv("HOME", home)
-	defer os.Unsetenv("HOME")
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 
 	result := installClaudeCodeMCP("/usr/local/bin/gleann")
 	if result == "" {
@@ -652,8 +652,8 @@ func TestInstallClaudeCodeMCP_NewFile(t *testing.T) {
 
 func TestInstallClaudeCodeMCP_ExistingCorrupt(t *testing.T) {
 	home := t.TempDir()
-	os.Setenv("HOME", home)
-	defer os.Unsetenv("HOME")
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 
 	// Write corrupt JSON file.
 	claudeFile := filepath.Join(home, ".claude.json")
@@ -667,14 +667,11 @@ func TestInstallClaudeCodeMCP_ExistingCorrupt(t *testing.T) {
 
 func TestInstallClaudeDesktopMCP_NewFile(t *testing.T) {
 	home := t.TempDir()
-	os.Setenv("HOME", home)
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	if runtime.GOOS == "windows" {
-		os.Setenv("APPDATA", filepath.Join(home, "AppData", "Roaming"))
+		t.Setenv("APPDATA", filepath.Join(home, "AppData", "Roaming"))
 	}
-	defer func() {
-		os.Unsetenv("HOME")
-		os.Unsetenv("APPDATA")
-	}()
 
 	result := installClaudeDesktopMCP("/usr/local/bin/gleann")
 	// May or may not succeed based on platform-specific path resolution.
@@ -686,8 +683,8 @@ func TestInstallClaudeDesktopMCP_NewFile(t *testing.T) {
 func TestCheckSetup_NoConfig(t *testing.T) {
 	// Use empty temp dir so no config is found.
 	home := t.TempDir()
-	os.Setenv("HOME", home)
-	defer os.Unsetenv("HOME")
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 
 	// CheckSetup reads from LoadSavedConfig which uses ~/.gleann/.
 	// No config should exist, so it returns false.

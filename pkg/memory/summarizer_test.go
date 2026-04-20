@@ -137,8 +137,8 @@ func TestCallLLM_Routes(t *testing.T) {
 		{"ollama", "/api/generate"},
 		{"openai", "/v1/chat/completions"},
 		{"anthropic", "/v1/messages"},
-		{"", "/api/generate"},           // default to ollama
-		{"unknown", "/api/generate"},    // default to ollama
+		{"", "/api/generate"},        // default to ollama
+		{"unknown", "/api/generate"}, // default to ollama
 	} {
 		t.Run(tc.provider, func(t *testing.T) {
 			var gotPath string

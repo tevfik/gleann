@@ -2,7 +2,6 @@ package mcp
 
 import (
 	"context"
-	"os"
 	"strings"
 	"testing"
 
@@ -341,7 +340,9 @@ func TestHandleGetMissingArgs(t *testing.T) {
 func TestHandleSessionStartEmpty(t *testing.T) {
 	s := testMCPServer()
 	defer s.Close()
-	t.Setenv("HOME", t.TempDir())
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+	t.Setenv("USERPROFILE", tmp)
 
 	req := makeCallToolReq(map[string]any{"name": ""})
 	result, err := s.handleSessionStart(context.Background(), req)
@@ -467,8 +468,8 @@ func TestHandleMemoryListInvalidTier(t *testing.T) {
 
 func TestMemoryRememberAndSearch(t *testing.T) {
 	tmp := t.TempDir()
-	os.Setenv("HOME", tmp)
-	defer os.Unsetenv("HOME")
+	t.Setenv("HOME", tmp)
+	t.Setenv("USERPROFILE", tmp)
 
 	s := testMCPServer()
 	defer s.Close()
@@ -516,8 +517,8 @@ func TestMemoryRememberAndSearch(t *testing.T) {
 
 func TestMemoryRememberAndList(t *testing.T) {
 	tmp := t.TempDir()
-	os.Setenv("HOME", tmp)
-	defer os.Unsetenv("HOME")
+	t.Setenv("HOME", tmp)
+	t.Setenv("USERPROFILE", tmp)
 
 	s := testMCPServer()
 	defer s.Close()
@@ -561,8 +562,8 @@ func TestMemoryRememberAndList(t *testing.T) {
 
 func TestMemoryRememberAndForget(t *testing.T) {
 	tmp := t.TempDir()
-	os.Setenv("HOME", tmp)
-	defer os.Unsetenv("HOME")
+	t.Setenv("HOME", tmp)
+	t.Setenv("USERPROFILE", tmp)
 
 	s := testMCPServer()
 	defer s.Close()
@@ -588,8 +589,8 @@ func TestMemoryRememberAndForget(t *testing.T) {
 
 func TestMemoryContext(t *testing.T) {
 	tmp := t.TempDir()
-	os.Setenv("HOME", tmp)
-	defer os.Unsetenv("HOME")
+	t.Setenv("HOME", tmp)
+	t.Setenv("USERPROFILE", tmp)
 
 	s := testMCPServer()
 	defer s.Close()
@@ -648,8 +649,8 @@ func TestBlockMemPoolClose(t *testing.T) {
 
 func TestBlockMemPoolGetAndClose(t *testing.T) {
 	tmp := t.TempDir()
-	os.Setenv("HOME", tmp)
-	defer os.Unsetenv("HOME")
+	t.Setenv("HOME", tmp)
+	t.Setenv("USERPROFILE", tmp)
 
 	pool := &blockMemPool{}
 	mgr, err := pool.get()

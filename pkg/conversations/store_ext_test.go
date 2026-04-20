@@ -393,8 +393,9 @@ func TestStoreListIgnoresNonJSON(t *testing.T) {
 func TestStorePath(t *testing.T) {
 	store := NewStore("/tmp/convs")
 	p := store.path("abc123")
-	if p != "/tmp/convs/abc123.json" {
-		t.Errorf("unexpected path: %s", p)
+	want := filepath.Join("/tmp/convs", "abc123.json")
+	if p != want {
+		t.Errorf("unexpected path: %s, want %s", p, want)
 	}
 }
 

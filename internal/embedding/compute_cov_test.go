@@ -147,7 +147,7 @@ func (m *mockCovComputer) ComputeSingle(_ context.Context, text string) ([]float
 	return make([]float32, m.dims), nil
 }
 
-func (m *mockCovComputer) Dimensions() int  { return m.dims }
+func (m *mockCovComputer) Dimensions() int   { return m.dims }
 func (m *mockCovComputer) ModelName() string { return "mock-cov-model" }
 
 // ── TruncateToTokenLimit additional ─────────────────────────────

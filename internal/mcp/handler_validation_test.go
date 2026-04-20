@@ -449,8 +449,8 @@ func TestHandleInjectKGStub(t *testing.T) {
 
 	req := mcpsdk.CallToolRequest{}
 	req.Params.Arguments = map[string]any{
-		"entity_name": "TestEntity",
-		"entity_type": "concept",
+		"entity_name":  "TestEntity",
+		"entity_type":  "concept",
 		"observations": []any{"obs1"},
 	}
 	result, err := s.handleInjectKG(context.Background(), req)

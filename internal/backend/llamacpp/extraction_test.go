@@ -10,11 +10,21 @@ func TestExtractBinary(t *testing.T) {
 	// This test assumes llama-server-linux-amd64 exists in bin/ due to the download script.
 	binName := "llama-server-linux-amd64"
 
+	// The embedded binary is Linux-only; skip on other platforms.
+	if runtime.GOOS != "linux" {
+		t.Skipf("Skipping: embedded binary %s is Linux-only", binName)
+	}
+
 	// Ensure the file is embedded
 	_, err := embeddedBinaries.ReadFile("bin/" + binName)
 	if err != nil {
 		t.Skipf("Skipping test: embedded binary %s not found. Did you run download_binaries.sh?", binName)
 	}
+
+	// extractAllBinaries extracts to ~/.gleann/bin — redirect HOME to a temp dir.
+	tmpHome := t.TempDir()
+	t.Setenv("HOME", tmpHome)
+	t.Setenv("USERPROFILE", tmpHome)
 
 	// extractAllBinaries extracts the main binary and any co-located .so libraries.
 	// It returns the path to the main executable.

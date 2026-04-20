@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"os"
 	"testing"
 	"time"
 )
@@ -131,9 +132,9 @@ func TestModelNamesCov4_Empty(t *testing.T) {
 
 func TestParseGitHubURLCov4(t *testing.T) {
 	tests := []struct {
-		url          string
-		wantOwner    string
-		wantRepo     string
+		url       string
+		wantOwner string
+		wantRepo  string
 	}{
 		{"https://github.com/tevfik/gleann-plugin-docs", "tevfik", "gleann-plugin-docs"},
 		{"https://github.com/tevfik/gleann-plugin-docs.git", "tevfik", "gleann-plugin-docs"},
@@ -307,13 +308,17 @@ func TestJsonMarshalIndentCov4(t *testing.T) {
 // ── ExpandPath ────────────────────────────────────────────────
 
 func TestExpandPathCov4(t *testing.T) {
+	// Other tests in this package modify HOME (os.Setenv / os.Unsetenv)
+	// which races with os.UserHomeDir() under -race. Guard tilde-only case.
+	home, _ := os.UserHomeDir()
+
 	tests := []struct {
 		in   string
 		want bool // just check non-empty
 	}{
 		{"", false},
-		{"~", true},
-		{"~/docs", true},
+		{"~", home != ""},      // returns home dir; empty if HOME unset
+		{"~/docs", true},       // always non-empty: at worst returns "docs"
 		{"/absolute/path", true},
 		{"relative/path", true},
 	}

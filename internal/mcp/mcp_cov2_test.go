@@ -530,9 +530,9 @@ func TestHandleBatchAsk_TruncatesQuestions(t *testing.T) {
 		questions[i] = "question " + string(rune('A'+i))
 	}
 	res, err := s.handleBatchAsk(ctx, mkCallArgs(map[string]any{
-		"index":     "nonexistent",
-		"questions": questions,
-		"top_k":     float64(2),
+		"index":       "nonexistent",
+		"questions":   questions,
+		"top_k":       float64(2),
 		"concurrency": float64(1),
 	}))
 	if err != nil {
