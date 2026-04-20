@@ -317,8 +317,8 @@ func TestExpandPathCov4(t *testing.T) {
 		want bool // just check non-empty
 	}{
 		{"", false},
-		{"~", home != ""},      // returns home dir; empty if HOME unset
-		{"~/docs", true},       // always non-empty: at worst returns "docs"
+		{"~", home != ""}, // returns home dir; empty if HOME unset
+		{"~/docs", true},  // always non-empty: at worst returns "docs"
 		{"/absolute/path", true},
 		{"relative/path", true},
 	}
