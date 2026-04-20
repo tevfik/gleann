@@ -515,7 +515,7 @@ func TestExpandPathEmpty(t *testing.T) {
 
 func TestExpandPathAbsolute(t *testing.T) {
 	got := ExpandPath("/var/log")
-	if got != "/var/log" {
+	if got != filepath.Clean("/var/log") {
 		t.Errorf("got %q", got)
 	}
 }
@@ -533,9 +533,8 @@ func TestConfigPathNotEmpty(t *testing.T) {
 func TestSaveAndLoadConfigRoundTrip(t *testing.T) {
 	// Override HOME to use temp dir.
 	tmp := t.TempDir()
-	origHome := os.Getenv("HOME")
-	os.Setenv("HOME", tmp)
-	defer os.Setenv("HOME", origHome)
+	t.Setenv("HOME", tmp)
+	t.Setenv("USERPROFILE", tmp)
 
 	cfg := OnboardResult{
 		EmbeddingProvider: "ollama",
@@ -564,9 +563,8 @@ func TestSaveAndLoadConfigRoundTrip(t *testing.T) {
 
 func TestUpdateConfigMutate(t *testing.T) {
 	tmp := t.TempDir()
-	origHome := os.Getenv("HOME")
-	os.Setenv("HOME", tmp)
-	defer os.Setenv("HOME", origHome)
+	t.Setenv("HOME", tmp)
+	t.Setenv("USERPROFILE", tmp)
 
 	// Save initial config.
 	SaveConfig(OnboardResult{EmbeddingModel: "old-model", Completed: true})
@@ -607,9 +605,8 @@ func TestDefaultModelsDirNotEmpty(t *testing.T) {
 
 func TestIsSetupNeededNoConfig(t *testing.T) {
 	tmp := t.TempDir()
-	origHome := os.Getenv("HOME")
-	os.Setenv("HOME", tmp)
-	defer os.Setenv("HOME", origHome)
+	t.Setenv("HOME", tmp)
+	t.Setenv("USERPROFILE", tmp)
 
 	if !IsSetupNeeded() {
 		t.Error("should need setup with no config")
@@ -618,9 +615,8 @@ func TestIsSetupNeededNoConfig(t *testing.T) {
 
 func TestIsSetupNeededWithConfig(t *testing.T) {
 	tmp := t.TempDir()
-	origHome := os.Getenv("HOME")
-	os.Setenv("HOME", tmp)
-	defer os.Setenv("HOME", origHome)
+	t.Setenv("HOME", tmp)
+	t.Setenv("USERPROFILE", tmp)
 
 	SaveConfig(OnboardResult{Completed: true})
 

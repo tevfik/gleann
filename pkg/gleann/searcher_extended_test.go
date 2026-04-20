@@ -285,6 +285,7 @@ func TestLoadPlugins(t *testing.T) {
 	// With temp HOME that has no plugins.json.
 	tmpHome := t.TempDir()
 	t.Setenv("HOME", tmpHome)
+	t.Setenv("USERPROFILE", tmpHome)
 	reg, err := LoadPlugins()
 	if err != nil {
 		// May still use os.UserHomeDir which might not respect HOME on some systems.

@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 
+	"path/filepath"
+
 	"charm.land/bubbles/v2/spinner"
 	"charm.land/bubbles/v2/textarea"
 	"charm.land/bubbles/v2/viewport"
@@ -12,7 +14,6 @@ import (
 	"github.com/tevfik/gleann/pkg/conversations"
 	"github.com/tevfik/gleann/pkg/gleann"
 	"github.com/tevfik/gleann/pkg/memory"
-	"path/filepath"
 )
 
 // newTestChatModel creates a minimal ChatModel for testing.

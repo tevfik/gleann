@@ -339,7 +339,9 @@ func TestChatAnthropic_DefaultMaxTokens(t *testing.T) {
 		if req.MaxTokens != 2048 {
 			t.Errorf("expected default max_tokens 2048, got %d", req.MaxTokens)
 		}
-		resp := anthropicResponse{Content: []struct{ Text string `json:"text"` }{{Text: "ok"}}}
+		resp := anthropicResponse{Content: []struct {
+			Text string `json:"text"`
+		}{{Text: "ok"}}}
 		json.NewEncoder(w).Encode(resp)
 	}))
 	defer srv.Close()
@@ -426,7 +428,9 @@ func TestAsk_OpenAIIntegration(t *testing.T) {
 func TestAsk_AnthropicIntegration(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		resp := anthropicResponse{
-			Content: []struct{ Text string `json:"text"` }{{Text: "Anthropic RAG"}},
+			Content: []struct {
+				Text string `json:"text"`
+			}{{Text: "Anthropic RAG"}},
 		}
 		json.NewEncoder(w).Encode(resp)
 	}))

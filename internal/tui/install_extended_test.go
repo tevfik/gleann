@@ -255,6 +255,7 @@ func TestResolveGleannBinWithInstallPath(t *testing.T) {
 func TestInstallClaudeCodeMCP(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)
+	t.Setenv("USERPROFILE", tmp)
 
 	path := installClaudeCodeMCP("/usr/local/bin/gleann")
 	if path == "" {
@@ -276,6 +277,7 @@ func TestInstallClaudeCodeMCP(t *testing.T) {
 func TestInstallClaudeCodeMCPExisting(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)
+	t.Setenv("USERPROFILE", tmp)
 
 	// Pre-create a config file.
 	configPath := filepath.Join(tmp, ".claude.json")
@@ -301,6 +303,7 @@ func TestInstallClaudeCodeMCPExisting(t *testing.T) {
 func TestInstallClaudeDesktopMCP(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)
+	t.Setenv("USERPROFILE", tmp)
 	if runtime.GOOS == "windows" {
 		t.Setenv("APPDATA", filepath.Join(tmp, "AppData"))
 	}
@@ -325,6 +328,7 @@ func TestInstallClaudeDesktopMCP(t *testing.T) {
 func TestInstallMCPConfigs(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)
+	t.Setenv("USERPROFILE", tmp)
 
 	result := &OnboardResult{
 		InstallPath: "",
@@ -341,6 +345,7 @@ func TestInstallMCPConfigs(t *testing.T) {
 func TestRemoveCompletionsEmpty(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)
+	t.Setenv("USERPROFILE", tmp)
 
 	removed := RemoveCompletions()
 	if len(removed) != 0 {
@@ -356,6 +361,7 @@ func TestInstallCompletions(t *testing.T) {
 	}
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)
+	t.Setenv("USERPROFILE", tmp)
 
 	installed := InstallCompletions()
 	if len(installed) == 0 {

@@ -300,6 +300,9 @@ Kubernetes with Helm charts for production deployment.
 // ═══════════════════════════════════════════════════════════════
 
 func TestE2E_PluginRegistry_LoadNoFile(t *testing.T) {
+	// Isolate from real home directory so plugins.json isn't found.
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("USERPROFILE", t.TempDir())
 	// Should not panic when plugins.json doesn't exist.
 	reg, err := gleann.LoadPlugins()
 	if err != nil {

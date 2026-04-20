@@ -20,8 +20,8 @@ func TestExpandPath(t *testing.T) {
 		{"empty", "", ""},
 		{"tilde", "~", home},
 		{"tilde slash", "~/docs", filepath.Join(home, "docs")},
-		{"absolute", "/usr/local/bin", "/usr/local/bin"},
-		{"relative", "relative/path", "relative/path"},
+		{"absolute", "/usr/local/bin", filepath.Clean(filepath.FromSlash("/usr/local/bin"))},
+		{"relative", "relative/path", filepath.Clean(filepath.FromSlash("relative/path"))},
 		{"dot", ".", "."},
 	}
 
@@ -62,9 +62,8 @@ func TestDefaultModelsDir(t *testing.T) {
 func TestSaveAndLoadConfig(t *testing.T) {
 	// Use temp dir so we don't modify real config
 	tmpDir := t.TempDir()
-	original := os.Getenv("HOME")
-	os.Setenv("HOME", tmpDir)
-	t.Cleanup(func() { os.Setenv("HOME", original) })
+	t.Setenv("HOME", tmpDir)
+	t.Setenv("USERPROFILE", tmpDir)
 
 	// Create .gleann dir
 	os.MkdirAll(filepath.Join(tmpDir, ".gleann"), 0o755)
@@ -94,9 +93,8 @@ func TestSaveAndLoadConfig(t *testing.T) {
 
 func TestUpdateConfig(t *testing.T) {
 	tmpDir := t.TempDir()
-	original := os.Getenv("HOME")
-	os.Setenv("HOME", tmpDir)
-	t.Cleanup(func() { os.Setenv("HOME", original) })
+	t.Setenv("HOME", tmpDir)
+	t.Setenv("USERPROFILE", tmpDir)
 
 	os.MkdirAll(filepath.Join(tmpDir, ".gleann"), 0o755)
 

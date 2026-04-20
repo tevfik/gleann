@@ -84,10 +84,10 @@ func TestRerankOllama_Success(t *testing.T) {
 		// Return embeddings: query=[1,0], doc0=[0.9,0.1], doc1=[0,1], doc2=[0.5,0.5]
 		json.NewEncoder(w).Encode(ollamaEmbedResponse{
 			Embeddings: [][]float32{
-				{1.0, 0.0},  // query
-				{0.9, 0.1},  // doc0 — high similarity
-				{0.0, 1.0},  // doc1 — low similarity
-				{0.5, 0.5},  // doc2 — medium similarity
+				{1.0, 0.0}, // query
+				{0.9, 0.1}, // doc0 — high similarity
+				{0.0, 1.0}, // doc1 — low similarity
+				{0.5, 0.5}, // doc2 — medium similarity
 			},
 		})
 	}))

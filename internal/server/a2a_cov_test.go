@@ -754,7 +754,7 @@ func TestProxyLLMConfig_WithAutoScan(t *testing.T) {
 
 func TestProxyLLMConfig_WithOpenAI(t *testing.T) {
 	s := &Server{config: gleann.Config{
-		OpenAIAPIKey: "sk-test",
+		OpenAIAPIKey:  "sk-test",
 		OpenAIBaseURL: "https://custom.openai.com",
 	}}
 	cfg := s.proxyLLMConfig()

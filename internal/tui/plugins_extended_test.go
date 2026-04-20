@@ -92,12 +92,13 @@ func TestRepoName(t *testing.T) {
 }
 
 func TestVenvBinary(t *testing.T) {
-	got := venvBinary("/tmp/venv", "pip")
+	venvDir := filepath.Join(os.TempDir(), "venv")
+	got := venvBinary(venvDir, "pip")
 	if !strings.Contains(got, "pip") {
 		t.Errorf("venvBinary() = %q, expected to contain pip", got)
 	}
-	if !strings.Contains(got, "/tmp/venv") {
-		t.Errorf("venvBinary() = %q, expected to contain venv dir", got)
+	if !strings.Contains(got, venvDir) {
+		t.Errorf("venvBinary() = %q, expected to contain venv dir %q", got, venvDir)
 	}
 }
 
@@ -525,6 +526,7 @@ func TestLoadPluginConfigSummary(t *testing.T) {
 	// gleann-sound with config.
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	gleannDir := filepath.Join(home, ".gleann")
 	os.MkdirAll(gleannDir, 0755)
 	cfg := map[string]any{

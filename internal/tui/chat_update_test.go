@@ -94,7 +94,7 @@ func TestUpdateHistoryEsc(t *testing.T) {
 func TestUpdateHistoryUpDown(t *testing.T) {
 	m := ChatModel{
 		showHistory:   true,
-		historyCursor:  1,
+		historyCursor: 1,
 		historyItems: []conversations.Conversation{
 			{ID: "c1"},
 			{ID: "c2"},
@@ -279,8 +279,8 @@ func TestRenderScrollbarLargeContent(t *testing.T) {
 
 func TestRenderScrollbarSmallContent(t *testing.T) {
 	m := ChatModel{
-		width:  80,
-		height: 24,
+		width:    80,
+		height:   24,
 		viewport: viewport.New(),
 	}
 	m.viewport.SetContent("short")

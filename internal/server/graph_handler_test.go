@@ -43,8 +43,8 @@ func (m *mockGraphDB) Impact(fqn string, maxDepth int) (*ImpactResponse, error) 
 func (m *mockGraphDB) RawCypher(cypher string) ([]map[string]any, error) {
 	return m.cypherResult, m.cypherErr
 }
-func (m *mockGraphDB) FileCount() (int, error)             { return m.fileCount, m.fileCountErr }
-func (m *mockGraphDB) SymbolCount() (int, error)           { return m.symbolCount, m.symbolCountErr }
+func (m *mockGraphDB) FileCount() (int, error)   { return m.fileCount, m.fileCountErr }
+func (m *mockGraphDB) SymbolCount() (int, error) { return m.symbolCount, m.symbolCountErr }
 func (m *mockGraphDB) EdgeCount(relType string) (int, error) {
 	if m.edgeCountErr != nil {
 		return 0, m.edgeCountErr

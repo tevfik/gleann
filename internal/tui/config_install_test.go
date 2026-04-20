@@ -73,9 +73,8 @@ func TestExpandPathRelativeCI(t *testing.T) {
 func TestSaveAndLoadConfigCI(t *testing.T) {
 	// Use temp dir as home
 	tmpDir := t.TempDir()
-	origHome := os.Getenv("HOME")
-	os.Setenv("HOME", tmpDir)
-	defer os.Setenv("HOME", origHome)
+	t.Setenv("HOME", tmpDir)
+	t.Setenv("USERPROFILE", tmpDir)
 
 	cfg := OnboardResult{
 		EmbeddingProvider: "ollama",
@@ -110,9 +109,8 @@ func TestSaveAndLoadConfigCI(t *testing.T) {
 
 func TestLoadSavedConfigNoFileCI(t *testing.T) {
 	tmpDir := t.TempDir()
-	origHome := os.Getenv("HOME")
-	os.Setenv("HOME", tmpDir)
-	defer os.Setenv("HOME", origHome)
+	t.Setenv("HOME", tmpDir)
+	t.Setenv("USERPROFILE", tmpDir)
 
 	if cfg := LoadSavedConfig(); cfg != nil {
 		t.Error("should return nil when no config file")
@@ -121,9 +119,8 @@ func TestLoadSavedConfigNoFileCI(t *testing.T) {
 
 func TestLoadSavedConfigInvalidJSONCI(t *testing.T) {
 	tmpDir := t.TempDir()
-	origHome := os.Getenv("HOME")
-	os.Setenv("HOME", tmpDir)
-	defer os.Setenv("HOME", origHome)
+	t.Setenv("HOME", tmpDir)
+	t.Setenv("USERPROFILE", tmpDir)
 
 	dir := filepath.Join(tmpDir, ".gleann")
 	os.MkdirAll(dir, 0o755)
@@ -138,9 +135,8 @@ func TestLoadSavedConfigInvalidJSONCI(t *testing.T) {
 
 func TestUpdateConfigCreatesNewCI(t *testing.T) {
 	tmpDir := t.TempDir()
-	origHome := os.Getenv("HOME")
-	os.Setenv("HOME", tmpDir)
-	defer os.Setenv("HOME", origHome)
+	t.Setenv("HOME", tmpDir)
+	t.Setenv("USERPROFILE", tmpDir)
 
 	err := UpdateConfig(func(cfg *OnboardResult) {
 		cfg.LLMModel = "phi-4"
@@ -161,9 +157,8 @@ func TestUpdateConfigCreatesNewCI(t *testing.T) {
 
 func TestUpdateConfigModifiesExistingCI(t *testing.T) {
 	tmpDir := t.TempDir()
-	origHome := os.Getenv("HOME")
-	os.Setenv("HOME", tmpDir)
-	defer os.Setenv("HOME", origHome)
+	t.Setenv("HOME", tmpDir)
+	t.Setenv("USERPROFILE", tmpDir)
 
 	_ = SaveConfig(OnboardResult{LLMModel: "a", Completed: true})
 
@@ -273,9 +268,8 @@ func TestPickPreferredFallbackCI(t *testing.T) {
 
 func TestIsSetupNeededNoConfigCI(t *testing.T) {
 	tmpDir := t.TempDir()
-	origHome := os.Getenv("HOME")
-	os.Setenv("HOME", tmpDir)
-	defer os.Setenv("HOME", origHome)
+	t.Setenv("HOME", tmpDir)
+	t.Setenv("USERPROFILE", tmpDir)
 
 	if !IsSetupNeeded() {
 		t.Error("should need setup with no config")
@@ -284,9 +278,8 @@ func TestIsSetupNeededNoConfigCI(t *testing.T) {
 
 func TestIsSetupNeededIncompleteCI(t *testing.T) {
 	tmpDir := t.TempDir()
-	origHome := os.Getenv("HOME")
-	os.Setenv("HOME", tmpDir)
-	defer os.Setenv("HOME", origHome)
+	t.Setenv("HOME", tmpDir)
+	t.Setenv("USERPROFILE", tmpDir)
 
 	_ = SaveConfig(OnboardResult{Completed: false})
 	if !IsSetupNeeded() {
@@ -296,9 +289,8 @@ func TestIsSetupNeededIncompleteCI(t *testing.T) {
 
 func TestIsSetupNeededCompletedCI(t *testing.T) {
 	tmpDir := t.TempDir()
-	origHome := os.Getenv("HOME")
-	os.Setenv("HOME", tmpDir)
-	defer os.Setenv("HOME", origHome)
+	t.Setenv("HOME", tmpDir)
+	t.Setenv("USERPROFILE", tmpDir)
 
 	_ = SaveConfig(OnboardResult{Completed: true})
 	if IsSetupNeeded() {
@@ -327,9 +319,8 @@ func TestInstallBinaryToTempDir(t *testing.T) {
 
 func TestRemoveCompletionsNoFiles(t *testing.T) {
 	tmpDir := t.TempDir()
-	origHome := os.Getenv("HOME")
-	os.Setenv("HOME", tmpDir)
-	defer os.Setenv("HOME", origHome)
+	t.Setenv("HOME", tmpDir)
+	t.Setenv("USERPROFILE", tmpDir)
 
 	removed := RemoveCompletions()
 	if len(removed) != 0 {
@@ -344,9 +335,8 @@ func TestInstallAndRemoveCompletions(t *testing.T) {
 		t.Skip("completions not supported on Windows")
 	}
 	tmpDir := t.TempDir()
-	origHome := os.Getenv("HOME")
-	os.Setenv("HOME", tmpDir)
-	defer os.Setenv("HOME", origHome)
+	t.Setenv("HOME", tmpDir)
+	t.Setenv("USERPROFILE", tmpDir)
 
 	installed := InstallCompletions()
 	if len(installed) == 0 {

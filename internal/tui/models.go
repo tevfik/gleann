@@ -244,21 +244,22 @@ func formatModelSize(bytes int64) string {
 // --- llama.cpp: local .gguf scanning ---
 
 func fetchLlamaCPPModels(host string) ([]ModelInfo, error) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return nil, err
-	}
-
-	searchDirs := []string{
-		DefaultModelsDir(),
-		filepath.Join(home, "models"), // legacy/fallback
-		filepath.Join(home, ".cache", "lm-studio", "models"),
-		filepath.Join(home, ".cache", "huggingface", "hub"),
-	}
+	var searchDirs []string
 
 	// host can be a specific directory for scanning models.
 	if host != "" && !strings.Contains(host, "auto-scan") && !strings.HasPrefix(host, "http://") {
 		searchDirs = []string{host}
+	} else {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return nil, err
+		}
+		searchDirs = []string{
+			DefaultModelsDir(),
+			filepath.Join(home, "models"), // legacy/fallback
+			filepath.Join(home, ".cache", "lm-studio", "models"),
+			filepath.Join(home, ".cache", "huggingface", "hub"),
+		}
 	}
 
 	var models []ModelInfo
