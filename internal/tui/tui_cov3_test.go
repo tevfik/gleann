@@ -9,9 +9,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"path"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -554,7 +554,14 @@ func createTestTarGzWithDirs(t *testing.T, files map[string][]byte) *bytes.Buffe
 	// Add dirs first.
 	dirs := map[string]bool{}
 	for name := range files {
-		dir := path.Dir(name)
+		// Use forward slashes explicitly (POSIX tar convention).
+		slashIdx := strings.LastIndex(name, "/")
+		var dir string
+		if slashIdx <= 0 {
+			dir = "."
+		} else {
+			dir = name[:slashIdx]
+		}
 		if dir != "." && !dirs[dir] {
 			dirs[dir] = true
 			tw.WriteHeader(&tar.Header{
