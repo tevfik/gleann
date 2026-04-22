@@ -47,6 +47,11 @@ AGENTS.md
 CLAUDE.md
 GEMINI.md
 
+# AI tool config directories (local only)
+.gemini/
+.opencode/
+opencode.json
+
 # E2E generated outputs (run artifacts, not fixtures)
 e2e/results/*.html
 e2e/results/*.md

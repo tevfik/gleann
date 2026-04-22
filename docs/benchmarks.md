@@ -106,3 +106,57 @@ Full 5-stage quality evaluation via `go test -v -run TestRecallReport ./tests/be
 | 64 | 98.62% | 10.0s | 772µs |
 
 > **M=32** is the default — best balance of recall (96.7%) vs build/search cost. M=48 peaks at 98.8% recall.
+
+---
+
+## Document Parsing Quality (ParseBench-aligned)
+
+Reference benchmark for evaluating gleann's document parsing pipeline quality. Based on [ParseBench](https://www.llamaindex.ai/blog/parsebench) — ~2,000 human-verified enterprise document pages with 167K+ test rules.
+
+**ParseBench evaluates 5 capability dimensions:**
+
+| Dimension | What it measures | Why it matters for RAG |
+|-----------|-----------------|----------------------|
+| Tables | Merged cells, hierarchical headers, multi-page tables | Agents read specific cells for decisions |
+| Charts | Structured data extraction from visualizations | Chart data must be queryable, not raw OCR |
+| Content Faithfulness | Omissions, hallucinations, reading order | Missing text = wrong answers |
+| Semantic Formatting | Strikethrough, superscript, bold meaning | ~~$49.99~~ $39.99 vs "$49.99 $39.99" |
+| Visual Grounding | Element-to-page localization | Auditability in regulated industries |
+
+**Industry Leaderboard (Top 5, April 2025):**
+
+| Provider | Overall | Tables | Charts | Content | Formatting | Grounding | ¢/Page |
+|----------|---------|--------|--------|---------|------------|-----------|--------|
+| LlamaParse Agentic | **84.9** | 90.7 | 78.1 | 89.7 | 85.2 | 80.6 | 1.25¢ |
+| Gemini 3 Flash (High) | 75.1 | 91.5 | 64.8 | 90.9 | 68.3 | 59.8 | 2.41¢ |
+| Reducto (Agentic) | 73.0 | 80.4 | 73.4 | 86.4 | 57.6 | 67.1 | 4.76¢ |
+| LlamaParse Cost Effective | 71.9 | 73.2 | 66.7 | 88.0 | 73.0 | 58.6 | 0.38¢ |
+| Gemini 3 Flash (Minimal) | 71.0 | 89.9 | 64.8 | 86.2 | 58.4 | 56.0 | 0.65¢ |
+
+**gleann Pipeline Targets:**
+
+| Dimension | gleann-plugin-marker | Target | Notes |
+|-----------|---------------------|--------|-------|
+| Tables | TBD | >75% | Marker + VLM hybrid |
+| Charts | TBD | >50% | VLM-native (gemma4/qwen3-vl) |
+| Content Faithfulness | TBD | >85% | Text extraction accuracy |
+| Semantic Formatting | TBD | >60% | Marker preserves some formatting |
+| Visual Grounding | N/A | — | Text-only pipeline |
+
+> **To run ParseBench against gleann:** See [ParseBench GitHub](https://github.com/run-llama/ParseBench) for evaluation code.
+> Dataset: [HuggingFace](https://huggingface.co/datasets/llamaindex/ParseBench) | Paper: [arXiv:2604.08538](https://arxiv.org/abs/2604.08538)
+
+---
+
+## Context Efficiency Comparison
+
+How gleann compares to other context-optimization tools:
+
+| Tool | Approach | Token Savings | Method |
+|------|----------|--------------|--------|
+| context-mode | Sandbox tools + FTS5 session continuity | 98% | Raw data never enters context |
+| token-savior | Symbol-level navigation + persistent memory | 97% | Pointer-based, not file-based |
+| code-review-graph | AST graph + blast radius | 8.2x reduction | Only affected code surfaces |
+| **gleann** | Semantic search + RAG + graph | TBD | Hybrid vector + graph retrieval |
+
+> gleann's advantage: all-in-one local binary with zero cloud dependency.
