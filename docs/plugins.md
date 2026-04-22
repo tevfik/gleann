@@ -13,10 +13,11 @@ Plugins are standalone executables that expose a local HTTP API. Gleann manages 
 
 ## Available Plugins
 
-| Plugin | Formats | Description |
-|--------|---------|-------------|
-| [gleann-plugin-docs](https://github.com/tevfik/gleann-plugin-docs) | PDF, DOCX, XLSX, PPTX | Document extraction via MarkItDown |
-| [gleann-plugin-sound](https://github.com/tevfik/gleann-plugin-sound) | MP3, WAV, MP4, etc. | Audio/video transcription via whisper.cpp |
+| Plugin | Formats | Backend | Description |
+|--------|---------|---------|-------------|
+| [gleann-plugin-docs](https://github.com/tevfik/gleann-plugin-docs) | PDF, DOCX, XLSX, PPTX, CSV | MarkItDown + Docling | Document extraction with table detection |
+| [gleann-plugin-marker](https://github.com/tevfik/gleann-plugin-marker) | PDF, DOCX, EPUB, HTML, images | marker-pdf + Surya OCR | High-accuracy extraction with deep learning OCR |
+| [gleann-plugin-sound](https://github.com/tevfik/gleann-plugin-sound) | MP3, WAV, MP4, etc. | whisper.cpp | Audio/video transcription |
 
 ## Installation
 
@@ -211,8 +212,36 @@ GLEANN_LOG_LEVEL=debug gleann index build test --docs ./
 
 ### Reference Implementations
 
-- [gleann-plugin-docs](https://github.com/tevfik/gleann-plugin-docs) — PDF/DOCX (Go + Python MarkItDown)
+- [gleann-plugin-docs](https://github.com/tevfik/gleann-plugin-docs) — PDF/DOCX (Python: MarkItDown + Docling)
+- [gleann-plugin-marker](https://github.com/tevfik/gleann-plugin-marker) — High-accuracy PDF/DOCX/images (Python: marker-pdf + Surya OCR)
 - [gleann-plugin-sound](https://github.com/tevfik/gleann-plugin-sound) — Audio transcription (Go + whisper.cpp)
+
+## Extraction Backend Benchmark
+
+For a comprehensive comparison of all 4 extraction backends (go-native, markitdown-cli, plugin-docs, plugin-marker) across 6 file formats with 12+ metrics, see the standalone benchmark document:
+
+**[PLUGIN_BENCHMARK.md](PLUGIN_BENCHMARK.md)**
+
+### Quick Summary
+
+| Backend | Layer | Avg Latency | Sections | Formats | Dependencies |
+|---------|:-----:|:-----------:|:--------:|:-------:|-------------|
+| **go-native** | -1 | **<1ms** | 5.7 | 6 | Zero (always available) |
+| **plugin-docs** | 1a | 114ms | 5.0 | 5 | Python markitdown + docling |
+| **markitdown-cli** | 0 | 396ms | 0.0 | 2* | Python markitdown |
+| **plugin-marker** | 1b | 1026ms | 9.0 | 4 | Python marker-pdf + surya OCR |
+
+\* markitdown-cli requires optional deps for DOCX/XLSX/PPTX (`pip install markitdown[all]`)
+
+### Running the Benchmark
+
+```bash
+# Go test (recommended — tests all 4 backends including go-native)
+go test ./tests/benchmarks/ -run TestPluginBenchmark -v -timeout 300s
+
+# Or via the shell script (3 backends, auto-starts plugins)
+./tests/e2e/plugin_benchmark.sh
+```
 
 ## Further Reading
 
