@@ -144,6 +144,7 @@ func notifyWebhooks(event string, payload map[string]any) {
 	}
 
 	for _, wh := range targets {
+		serverMetrics.RecordWebhook()
 		go fireWebhookHTTP(wh.URL, wh.Secret, body)
 	}
 }

@@ -108,26 +108,6 @@ func TestCapitalizeCov4(t *testing.T) {
 	}
 }
 
-// ── modelNames ────────────────────────────────────────────────
-
-func TestModelNamesCov4(t *testing.T) {
-	models := []ModelInfo{
-		{Name: "bge-m3"},
-		{Name: "llama3"},
-	}
-	names := modelNames(models)
-	if len(names) != 2 || names[0] != "bge-m3" || names[1] != "llama3" {
-		t.Fatalf("unexpected: %v", names)
-	}
-}
-
-func TestModelNamesCov4_Empty(t *testing.T) {
-	names := modelNames(nil)
-	if len(names) != 0 {
-		t.Fatal("expected empty")
-	}
-}
-
 // ── parseGitHubURL ────────────────────────────────────────────
 
 func TestParseGitHubURLCov4(t *testing.T) {
@@ -212,13 +192,6 @@ func TestLogoCov4(t *testing.T) {
 	logo := Logo()
 	if logo == "" || len(logo) < 10 {
 		t.Fatal("expected non-empty logo")
-	}
-}
-
-func TestSmallLogoCov4(t *testing.T) {
-	logo := SmallLogo()
-	if logo == "" {
-		t.Fatal("expected non-empty")
 	}
 }
 

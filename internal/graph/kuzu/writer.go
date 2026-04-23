@@ -100,18 +100,6 @@ func (g *DB) AddReferences(refererFQN, refereeFQN string) error {
 
 // ─── Query-builder helpers (return Cypher strings for batch use) ──────────────
 
-// UpsertFileQuery returns a Cypher string that upserts a CodeFile node.
-func UpsertFileQuery(path, lang string) string {
-	return fmt.Sprintf(`MERGE (f:CodeFile {path: %q}) ON CREATE SET f.lang = %q`, path, lang)
-}
-
-// DeleteFileSymbolsQuery returns a Cypher string that deletes all existing
-// symbols (and their edges such as CALLS) that belong to the given file.
-// Use DeleteFileQueries for a full re-index (also removes the CodeFile node).
-func DeleteFileSymbolsQuery(path string) string {
-	return fmt.Sprintf(`MATCH (s:Symbol {file: %q}) DETACH DELETE s`, path)
-}
-
 // DeleteFileQueries returns Cypher queries that delete both the symbols
 // and the CodeFile node for the given file path. This ensures clean
 // re-indexing without duplicate primary key violations.
@@ -132,70 +120,7 @@ func DeleteAllCodeData() []string {
 	}
 }
 
-// UpsertSymbolQuery returns a Cypher string that upserts a Symbol node.
-func UpsertSymbolQuery(s SymbolNode) string {
-	return fmt.Sprintf(
-		`MERGE (sym:Symbol {fqn: %q}) ON CREATE SET sym.kind=%q, sym.file=%q, sym.line=%d, sym.name=%q, sym.doc=%q`,
-		s.FQN, s.Kind, s.File, s.Line, s.Name, s.Doc,
-	)
-}
-
-// AddDeclaresQuery returns a Cypher string that adds a DECLARES edge.
-func AddDeclaresQuery(filePath, symbolFQN string) string {
-	return fmt.Sprintf(
-		`MATCH (f:CodeFile {path: %q}), (s:Symbol {fqn: %q}) MERGE (f)-[:DECLARES]->(s)`,
-		filePath, symbolFQN,
-	)
-}
-
-// AddCallsQuery returns a Cypher string that adds a CALLS edge.
-func AddCallsQuery(callerFQN, calleeFQN string) string {
-	return fmt.Sprintf(
-		`MATCH (a:Symbol {fqn: %q}), (b:Symbol {fqn: %q}) MERGE (a)-[:CALLS]->(b)`,
-		callerFQN, calleeFQN,
-	)
-}
-
-// ─── Connection-parameterised variants (for concurrent workers) ──────────────
-
-// UpsertFileOn upserts a CodeFile node on an explicit connection.
-func UpsertFileOn(conn *gokuzu.Connection, path, lang string) error {
-	cypher := fmt.Sprintf(
-		`MERGE (f:CodeFile {path: %q}) ON CREATE SET f.lang = %q`,
-		path, lang,
-	)
-	return ExecOn(conn, cypher)
-}
-
-// UpsertSymbolOn upserts a Symbol node on an explicit connection.
-func UpsertSymbolOn(conn *gokuzu.Connection, s SymbolNode) error {
-	cypher := fmt.Sprintf(
-		`MERGE (sym:Symbol {fqn: %q})
-         ON CREATE SET sym.kind=%q, sym.file=%q, sym.line=%d, sym.name=%q, sym.doc=%q`,
-		s.FQN, s.Kind, s.File, s.Line, s.Name, s.Doc,
-	)
-	return ExecOn(conn, cypher)
-}
-
-// AddDeclaresOn records a DECLARES edge on an explicit connection.
-func AddDeclaresOn(conn *gokuzu.Connection, filePath, symbolFQN string) error {
-	cypher := fmt.Sprintf(
-		`MATCH (f:CodeFile {path: %q}), (s:Symbol {fqn: %q})
-         MERGE (f)-[:DECLARES]->(s)`,
-		filePath, symbolFQN,
-	)
-	return ExecOn(conn, cypher)
-}
-
-// AddCallsOn records a CALLS edge on an explicit connection.
-func AddCallsOn(conn *gokuzu.Connection, callerFQN, calleeFQN string) error {
-	cypher := fmt.Sprintf(
-		`MATCH (a:Symbol {fqn: %q}), (b:Symbol {fqn: %q})
-         MERGE (a)-[:CALLS]->(b)`,
-		callerFQN, calleeFQN,
-	)
-	return ExecOn(conn, cypher)
-}
+// ─── Transaction helpers ─────────────────────────────────────────────────────
 
 // ExecTxOn runs all queries in a single manual transaction on the given connection.
 // On any error, ROLLBACK is issued and the error is returned.

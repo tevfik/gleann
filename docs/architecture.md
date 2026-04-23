@@ -70,6 +70,7 @@ git s# Architecture & Design
 │  ├── Media Detection  (image/audio/video classification)             │
 │  ├── Model Capability Detection  (Ollama + heuristics)               │
 │  ├── Processor  (base64 → Ollama /api/chat → text description)      │
+│  ├── PDF Vision  (pdftoppm → VLM → table/chart extraction)          │
 │  ├── Index-time: --multimodal-model → media → text → embed           │
 │  └── Chat-time: --attach → base64 → LLM with RAG context            │
 └──────────────────────────────────────────────────────────────────────┘

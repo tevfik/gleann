@@ -36,12 +36,11 @@ var menuItems = []menuItem{
 
 // HomeModel is the main hub of the TUI.
 type HomeModel struct {
-	cursor    int
-	width     int
-	height    int
-	quitting  bool
-	indexList []string // pre-fetched index names
-	chosen    Screen
+	cursor   int
+	width    int
+	height   int
+	quitting bool
+	chosen   Screen
 }
 
 // NewHomeModel creates a new home screen model.

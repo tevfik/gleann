@@ -162,5 +162,6 @@ func cmdMCP() {
 	}
 
 	server := mcp.NewServer(cfg)
+	defer server.Close()
 	server.Run()
 }

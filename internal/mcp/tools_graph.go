@@ -74,6 +74,7 @@ func (s *Server) registerGraphTools() {
 	s.mcpServer.AddTool(s.buildCommunitiesTool(), s.handleCommunities)
 	s.mcpServer.AddTool(s.buildRiskAnalysisTool(), s.handleRiskAnalysis)
 	s.mcpServer.AddTool(s.buildRepoMapTool(), s.handleRepoMap)
+	s.mcpServer.AddTool(s.buildNavigateSymbolTool(), s.handleNavigateSymbol)
 }
 
 // ── Communities Tool ─────────────────────────────────────────────────────
@@ -342,4 +343,143 @@ func truncPath(s string, maxLen int) string {
 		return s
 	}
 	return s[:maxLen-3] + "..."
+}
+
+// ── Navigate Symbol Tool ─────────────────────────────────────────────────
+
+func (s *Server) buildNavigateSymbolTool() mcpsdk.Tool {
+	return mcpsdk.Tool{
+		Name:        "gleann_navigate_symbol",
+		Description: "Navigate to a symbol in the code graph. Returns the symbol's definition context, callers, and callees without loading full files. Ideal for pointer-based code exploration that saves context window budget.",
+		InputSchema: mcpsdk.ToolInputSchema{
+			Type: "object",
+			Properties: map[string]interface{}{
+				"index": map[string]interface{}{
+					"type":        "string",
+					"description": "Name of the index to search",
+				},
+				"symbol": map[string]interface{}{
+					"type":        "string",
+					"description": "Symbol name or pattern to navigate to (e.g. 'handleRequest', 'Server.Start')",
+				},
+				"depth": map[string]interface{}{
+					"type":        "integer",
+					"description": "How many levels of callers/callees to return (default 1, max 3)",
+				},
+			},
+			Required: []string{"index", "symbol"},
+		},
+	}
+}
+
+func (s *Server) handleNavigateSymbol(ctx context.Context, request mcpsdk.CallToolRequest) (*mcpsdk.CallToolResult, error) {
+	args, ok := request.Params.Arguments.(map[string]interface{})
+	if !ok {
+		return mcpsdk.NewToolResultError("invalid arguments format"), nil
+	}
+
+	indexName, _ := args["index"].(string)
+	if indexName == "" {
+		return mcpsdk.NewToolResultError("index is required"), nil
+	}
+	symbol, _ := args["symbol"].(string)
+	if symbol == "" {
+		return mcpsdk.NewToolResultError("symbol is required"), nil
+	}
+
+	depth := 1
+	if d, ok := args["depth"].(float64); ok && d >= 1 && d <= 3 {
+		depth = int(d)
+	}
+
+	db, err := s.gPool.get(indexName)
+	if err != nil {
+		return mcpsdk.NewToolResultError(fmt.Sprintf("Error opening graph %q: %v", indexName, err)), nil
+	}
+
+	// Find matching symbols.
+	matches, err := db.SymbolSearch(symbol)
+	if err != nil {
+		return mcpsdk.NewToolResultError(fmt.Sprintf("Symbol search failed: %v", err)), nil
+	}
+	if len(matches) == 0 {
+		return mcpsdk.NewToolResultText(fmt.Sprintf("No symbols matching %q found in graph.", symbol)), nil
+	}
+
+	// Limit to top 5 matches.
+	if len(matches) > 5 {
+		matches = matches[:5]
+	}
+
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("Symbol Navigation — %q in %s\n\n", symbol, indexName))
+
+	for i, m := range matches {
+		sb.WriteString(fmt.Sprintf("── %d. %s (%s)\n", i+1, m.FQN, m.Kind))
+
+		// Get callers.
+		callers, err := db.Callers(m.FQN)
+		if err == nil && len(callers) > 0 {
+			sb.WriteString("  Callers:\n")
+			limit := len(callers)
+			if limit > 10 {
+				limit = 10
+			}
+			for _, c := range callers[:limit] {
+				sb.WriteString(fmt.Sprintf("    ← %s (%s)\n", c.FQN, c.Kind))
+			}
+			if len(callers) > 10 {
+				sb.WriteString(fmt.Sprintf("    ... and %d more\n", len(callers)-10))
+			}
+		} else {
+			sb.WriteString("  Callers: none\n")
+		}
+
+		// Get callees.
+		callees, err := db.Callees(m.FQN)
+		if err == nil && len(callees) > 0 {
+			sb.WriteString("  Callees:\n")
+			limit := len(callees)
+			if limit > 10 {
+				limit = 10
+			}
+			for _, c := range callees[:limit] {
+				sb.WriteString(fmt.Sprintf("    → %s (%s)\n", c.FQN, c.Kind))
+			}
+			if len(callees) > 10 {
+				sb.WriteString(fmt.Sprintf("    ... and %d more\n", len(callees)-10))
+			}
+		} else {
+			sb.WriteString("  Callees: none\n")
+		}
+
+		// For depth > 1, recurse one more level on callees.
+		if depth > 1 && len(callees) > 0 {
+			sb.WriteString("  2nd-level callees:\n")
+			seen := make(map[string]bool)
+			count := 0
+			for _, c := range callees {
+				if count >= 20 {
+					break
+				}
+				sub, err := db.Callees(c.FQN)
+				if err == nil {
+					for _, sc := range sub {
+						if !seen[sc.FQN] {
+							seen[sc.FQN] = true
+							sb.WriteString(fmt.Sprintf("    %s → %s (%s)\n", c.FQN, sc.FQN, sc.Kind))
+							count++
+							if count >= 20 {
+								break
+							}
+						}
+					}
+				}
+			}
+		}
+
+		sb.WriteString("\n")
+	}
+
+	return mcpsdk.NewToolResultText(sb.String()), nil
 }

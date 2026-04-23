@@ -149,7 +149,4 @@ func Logo() string {
 	return LogoStyle.Render(logo)
 }
 
-// SmallLogo returns a compact one-line logo.
-func SmallLogo() string {
-	return LogoStyle.Render("⚡ gleann")
-}
+

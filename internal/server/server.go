@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -25,18 +26,19 @@ import (
 
 // Server is the REST API server for gleann.
 type Server struct {
-	config     gleann.Config
-	embedder   *embedding.Computer
-	searchers  map[string]*gleann.LeannSearcher
-	mu         sync.RWMutex
-	addr       string
-	version    string
-	server     *http.Server
-	graphPool  *graphDBPool
-	memoryPool *memoryPool         // Memory Engine: generic Entity/RELATES_TO graph
-	blockMem   *memory.Manager     // BBolt hierarchical memory blocks (pkg/memory)
-	bgManager  *background.Manager // Background task manager
-	stopCh     chan struct{}       // closed on Stop() to signal background goroutines
+	config      gleann.Config
+	embedder    *embedding.Computer
+	searchers   map[string]*gleann.LeannSearcher
+	mu          sync.RWMutex
+	addr        string
+	version     string
+	server      *http.Server
+	graphPool   *graphDBPool
+	memoryPool  *memoryPool         // Memory Engine: generic Entity/RELATES_TO graph
+	blockMem    *memory.Manager     // BBolt hierarchical memory blocks (pkg/memory)
+	bgManager   *background.Manager // Background task manager
+	autoIndexer *background.AutoIndexer
+	stopCh      chan struct{} // closed on Stop() to signal background goroutines
 }
 
 // NewServer creates a new REST API server.
@@ -148,6 +150,9 @@ func (s *Server) Start() error {
 		startSleepTimeEngine(mgr, s.stopCh)
 	}
 
+	// Start auto-indexer for watched directories (env: GLEANN_AUTO_INDEX_DIRS).
+	s.startAutoIndexer()
+
 	log.Printf("gleann server starting on %s", s.addr)
 	return s.server.ListenAndServe()
 }
@@ -158,6 +163,9 @@ func (s *Server) Stop(ctx context.Context) error {
 	if s.stopCh != nil {
 		close(s.stopCh)
 	}
+	if s.autoIndexer != nil {
+		s.autoIndexer.Stop()
+	}
 	if s.bgManager != nil {
 		s.bgManager.Stop()
 	}
@@ -167,6 +175,40 @@ func (s *Server) Stop(ctx context.Context) error {
 	s.stopMemoryPool(ctx)
 	s.closeBlockMem()
 	return s.server.Shutdown(ctx)
+}
+
+// startAutoIndexer initializes the background auto-indexer.
+// It reads GLEANN_AUTO_INDEX_DIRS (format: "name1:dir1,name2:dir2") to
+// determine which indexes to watch for file changes.
+func (s *Server) startAutoIndexer() {
+	dirsEnv := os.Getenv("GLEANN_AUTO_INDEX_DIRS")
+	if dirsEnv == "" {
+		return
+	}
+	ai, err := background.NewAutoIndexer(s.bgManager, background.AutoIndexConfig{
+		IndexDir: s.config.IndexDir,
+	})
+	if err != nil {
+		log.Printf("auto-indexer: init failed: %v", err)
+		return
+	}
+	for _, pair := range strings.Split(dirsEnv, ",") {
+		parts := strings.SplitN(strings.TrimSpace(pair), ":", 2)
+		if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+			continue
+		}
+		if err := ai.Watch(parts[0], parts[1]); err != nil {
+			log.Printf("auto-indexer: watch %q→%q failed: %v", parts[0], parts[1], err)
+		} else {
+			log.Printf("auto-indexer: watching %q → %s", parts[0], parts[1])
+		}
+	}
+	if len(ai.WatchedIndexes()) > 0 {
+		ai.Start(context.Background())
+		s.autoIndexer = ai
+	} else {
+		ai.Stop()
+	}
 }
 
 // --- Handlers ---

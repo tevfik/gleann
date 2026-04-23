@@ -43,7 +43,6 @@ type Computer struct {
 	promptTemplate string
 	client         *http.Client
 	mu             sync.Mutex
-	dimOnce        sync.Once
 }
 
 // Options configures the embedding computer.

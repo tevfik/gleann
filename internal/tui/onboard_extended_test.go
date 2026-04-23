@@ -27,28 +27,6 @@ func TestCapitalize(t *testing.T) {
 	}
 }
 
-func TestModelNames(t *testing.T) {
-	models := []ModelInfo{
-		{Name: "alpha"},
-		{Name: "beta"},
-		{Name: "gamma"},
-	}
-	names := modelNames(models)
-	if len(names) != 3 {
-		t.Fatalf("len = %d, want 3", len(names))
-	}
-	if names[0] != "alpha" || names[1] != "beta" || names[2] != "gamma" {
-		t.Errorf("names = %v", names)
-	}
-}
-
-func TestModelNamesEmpty(t *testing.T) {
-	names := modelNames(nil)
-	if len(names) != 0 {
-		t.Errorf("expected empty, got %v", names)
-	}
-}
-
 func TestBuildInstallOptions(t *testing.T) {
 	opts := buildInstallOptions()
 	if len(opts) == 0 {

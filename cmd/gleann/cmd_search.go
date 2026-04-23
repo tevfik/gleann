@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -58,6 +59,11 @@ func cmdSearch(args []string) {
 
 	searcher := gleann.NewSearcher(config, embedder)
 
+	// Set up BM25 hybrid scoring if --hybrid is specified.
+	if hasFlag(args, "--hybrid") {
+		searcher.SetScorer(gleann.NewBM25Adapter())
+	}
+
 	// Set up reranker if --rerank is specified.
 	if hasFlag(args, "--rerank") {
 		rerankModel := getFlag(args, "--rerank-model")
@@ -75,6 +81,20 @@ func cmdSearch(args []string) {
 
 	ctx := context.Background()
 
+	// Build common search options.
+	var searchOpts []gleann.SearchOption
+	if config.SearchConfig.UseReranker {
+		searchOpts = append(searchOpts, gleann.WithReranker(true))
+	}
+	if hasFlag(args, "--graph") {
+		searchOpts = append(searchOpts, gleann.WithGraphContext(true))
+	}
+	if alphaStr := getFlag(args, "--hybrid-alpha"); alphaStr != "" {
+		if alpha, err := strconv.ParseFloat(alphaStr, 32); err == nil {
+			searchOpts = append(searchOpts, gleann.WithHybridAlpha(float32(alpha)))
+		}
+	}
+
 	// Multi-index search: comma-separated names or --all.
 	names := strings.Split(name, ",")
 	if searchAll || len(names) > 1 {
@@ -85,14 +105,6 @@ func cmdSearch(args []string) {
 		// indexNames == nil means "all indexes"
 
 		start := time.Now()
-		var searchOpts []gleann.SearchOption
-		if config.SearchConfig.UseReranker {
-			searchOpts = append(searchOpts, gleann.WithReranker(true))
-		}
-		if hasFlag(args, "--graph") {
-			searchOpts = append(searchOpts, gleann.WithGraphContext(true))
-		}
-
 		multiResults, err := gleann.SearchMultiple(ctx, config, embedder, indexNames, query, searchOpts...)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "error in multi-search: %v\n", err)
@@ -126,13 +138,6 @@ func cmdSearch(args []string) {
 	defer searcher.Close()
 
 	start := time.Now()
-	var searchOpts []gleann.SearchOption
-	if config.SearchConfig.UseReranker {
-		searchOpts = append(searchOpts, gleann.WithReranker(true))
-	}
-	if hasFlag(args, "--graph") {
-		searchOpts = append(searchOpts, gleann.WithGraphContext(true))
-	}
 	results, err := searcher.Search(ctx, query, searchOpts...)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error searching: %v\n", err)
