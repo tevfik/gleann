@@ -53,6 +53,10 @@ The result is a highly portable system that boots in milliseconds, respects your
 - **Multimodal Detection**: Automatically detects and uses multimodal Ollama models (Gemma4, Qwen3-VL, LLaVA) for processing images, audio, and video.
 - **Background Task Manager**: Monitor long-running operations (indexing, memory consolidation) with progress tracking via `GET /api/tasks`.
 - **Zero-Config Auto-Bootstrap**: `gleann serve` detects Ollama, picks the best models, and creates a config file automatically — zero setup required.
+- **`gleann go` — One-Command Onboarding**: Detect environment → confirm → pull missing models → index — zero to working in 90 seconds.
+- **Cross-Platform Service Management**: `gleann service install/start/stop/status` manages a background server via systemd (Linux), launchd (macOS), or Task Scheduler (Windows).
+- **Auto Model Pull**: Missing Ollama models are automatically pulled with streaming progress — no manual `ollama pull` needed.
+- **Tiered Model Strategy**: Quick-start mode uses lightweight models (nomic-embed-text, 270 MB) for fast onboarding, with upgrade path to larger models.
 - **Sleek and Fast Terminal Interface (TUI)**: A keyboard-centric, fluid interface that brings your documents and code to life directly in your shell.
 
 ## Documentation
@@ -146,6 +150,37 @@ sudo make install
 ```
 
 ## Usage
+
+### Quick Start
+
+```bash
+# Zero-friction onboarding: detect Ollama → auto-configure → pull models → index
+gleann go
+
+# Or with specific options
+gleann go --docs ./my-project --name my-project --yes
+```
+
+`gleann go` detects your environment, shows the configuration for confirmation, pulls any missing models automatically, indexes your current directory, and prints next steps.
+
+### Background Service
+
+```bash
+# Start gleann server in background
+gleann service start
+
+# Auto-start on login (systemd/launchd/schtasks)
+gleann service install
+
+# Server status
+gleann service status
+
+# View logs
+gleann service logs
+
+# Stop server
+gleann service stop
+```
 
 ### CLI
 

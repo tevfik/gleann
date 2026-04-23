@@ -450,7 +450,7 @@ _gleann() {
         cword=$COMP_CWORD
     fi
 
-    local commands="index search ask serve graph chat memory mcp tui install quickstart setup doctor tasks benchmark config completion version help"
+    local commands="go index search ask serve graph chat memory mcp tui install quickstart setup doctor tasks benchmark config service completion version help"
     
     # Command-specific flags
     local index_flags="--path --model --provider --backend --batch-size --concurrency --chunk-size --chunk-overlap --extensions --ignore --ollama-host --anthropic-api-key --openai-api-key --json"
@@ -606,6 +606,18 @@ _gleann() {
                 COMPREPLY=($(compgen -W "$(_gleann_indexes)" -- "$cur"))
             fi
             ;;
+        go)
+            if [[ "$cur" == -* ]]; then
+                COMPREPLY=($(compgen -W "$go_flags" -- "$cur"))
+            fi
+            ;;
+        service)
+            if [[ $cword -eq 2 ]]; then
+                COMPREPLY=($(compgen -W "$service_commands" -- "$cur"))
+            elif [[ "$cur" == -* ]]; then
+                COMPREPLY=($(compgen -W "$service_flags" -- "$cur"))
+            fi
+            ;;
         completion)
             if [[ $cword -eq 2 ]]; then
                 COMPREPLY=($(compgen -W "bash zsh fish" -- "$cur"))
@@ -626,6 +638,7 @@ func ZshCompletion() string {
 _gleann() {
     local -a commands
     commands=(
+        'go:Zero-friction onboarding (detect + configure + index)'
         'build:Build a search index'
         'search:Search an index'
         'ask:Ask a question (RAG Q&A)'
@@ -646,6 +659,7 @@ _gleann() {
         'tasks:View background tasks (requires serve)'
         'benchmark:Token reduction analysis'
         'config:Manage configuration'
+        'service:Manage gleann background service'
         'completion:Output shell completion script'
         'version:Show version'
         'help:Show help'
@@ -702,6 +716,23 @@ _gleann() {
                         '--index[Index name]:index:' \
                         '--index-dir[Index storage directory]:directory:_files -/'
                     ;;
+                go)
+                    _arguments \
+                        '--docs[Documents directory]:directory:_files -/' \
+                        '--name[Index name]:name:' \
+                        '--graph[Build AST graph]' \
+                        '--yes[Auto-confirm]' \
+                        '--host[Ollama host URL]:host:'
+                    ;;
+                service)
+                    local -a service_cmds
+                    service_cmds=(install uninstall start stop restart status logs)
+                    _arguments \
+                        '1:subcommand:compadd -a service_cmds' \
+                        '--addr[Server address]:addr:' \
+                        '--bin[Path to gleann binary]:bin:_files' \
+                        '--lines[Number of log lines]:lines:'
+                    ;;
             esac
             ;;
     esac
@@ -717,6 +748,7 @@ func FishCompletion() string {
 complete -c gleann -f
 
 # Commands
+complete -c gleann -n '__fish_use_subcommand' -a 'go' -d 'Zero-friction onboarding'
 complete -c gleann -n '__fish_use_subcommand' -a 'build' -d 'Build a search index'
 complete -c gleann -n '__fish_use_subcommand' -a 'search' -d 'Search an index'
 complete -c gleann -n '__fish_use_subcommand' -a 'ask' -d 'Ask a question (RAG Q&A)'
@@ -737,6 +769,7 @@ complete -c gleann -n '__fish_use_subcommand' -a 'doctor' -d 'Check system healt
 complete -c gleann -n '__fish_use_subcommand' -a 'tasks' -d 'View background tasks'
 complete -c gleann -n '__fish_use_subcommand' -a 'benchmark' -d 'Token reduction analysis'
 complete -c gleann -n '__fish_use_subcommand' -a 'config' -d 'Manage configuration'
+complete -c gleann -n '__fish_use_subcommand' -a 'service' -d 'Manage gleann background service'
 complete -c gleann -n '__fish_use_subcommand' -a 'completion' -d 'Output shell completion script'
 complete -c gleann -n '__fish_use_subcommand' -a 'version' -d 'Show version'
 complete -c gleann -n '__fish_use_subcommand' -a 'help' -d 'Show help'
@@ -774,6 +807,19 @@ complete -c gleann -n '__fish_seen_subcommand_from chat' -l llm-model -d 'LLM mo
 complete -c gleann -n '__fish_seen_subcommand_from chat' -l llm-provider -d 'LLM provider'
 complete -c gleann -n '__fish_seen_subcommand_from chat' -l rerank -d 'Enable reranking'
 complete -c gleann -n '__fish_seen_subcommand_from chat' -l rerank-model -d 'Reranker model'
+
+# go flags
+complete -c gleann -n '__fish_seen_subcommand_from go' -l docs -d 'Documents directory'
+complete -c gleann -n '__fish_seen_subcommand_from go' -l name -d 'Index name'
+complete -c gleann -n '__fish_seen_subcommand_from go' -l graph -d 'Build AST graph'
+complete -c gleann -n '__fish_seen_subcommand_from go' -l yes -d 'Auto-confirm'
+complete -c gleann -n '__fish_seen_subcommand_from go' -l host -d 'Ollama host URL'
+
+# service subcommands
+complete -c gleann -n '__fish_seen_subcommand_from service' -a 'install uninstall start stop restart status logs'
+complete -c gleann -n '__fish_seen_subcommand_from service' -l addr -d 'Server address'
+complete -c gleann -n '__fish_seen_subcommand_from service' -l bin -d 'Path to gleann binary'
+complete -c gleann -n '__fish_seen_subcommand_from service' -l lines -d 'Number of log lines'
 `
 }
 
