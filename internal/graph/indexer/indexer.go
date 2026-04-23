@@ -415,6 +415,17 @@ func (idx *Indexer) IndexFiles(files []string) error {
 		return nil
 	}
 
+	// Delta step: remove old symbols for changed files before re-indexing.
+	for _, absPath := range files {
+		relPath, err := filepath.Rel(idx.root, absPath)
+		if err != nil {
+			relPath = absPath
+		}
+		if err := idx.db.RemoveFileSymbols(relPath); err != nil {
+			log.Printf("warning: RemoveFileSymbols(%s): %v", relPath, err)
+		}
+	}
+
 	type docResult struct {
 		file     *kuzu.FileNode
 		symbols  []kuzu.SymbolNode

@@ -306,6 +306,176 @@ func TestMouseToggleDefaults(t *testing.T) {
 	}
 }
 
+// ── handleAudioCommand ─────────────────────────────────────────
+
+func TestHandleAudioCommand_EmptyPath(t *testing.T) {
+	m := newTestChatModel(t)
+	result := m.handleAudioCommand("")
+	if !strings.Contains(result, "Usage") {
+		t.Error("expected usage message for empty path")
+	}
+}
+
+func TestHandleAudioCommand_FileNotFound(t *testing.T) {
+	m := newTestChatModel(t)
+	result := m.handleAudioCommand("/nonexistent/audio.mp3")
+	if !strings.Contains(result, "not found") {
+		t.Error("expected 'not found' error")
+	}
+}
+
+func TestHandleAudioCommand_Directory(t *testing.T) {
+	m := newTestChatModel(t)
+	dir := t.TempDir()
+	result := m.handleAudioCommand(dir)
+	if !strings.Contains(result, "directory") {
+		t.Error("expected directory warning")
+	}
+}
+
+func TestHandleAudioCommand_UnsupportedFormat(t *testing.T) {
+	m := newTestChatModel(t)
+	f := filepath.Join(t.TempDir(), "doc.txt")
+	os.WriteFile(f, []byte("fake"), 0644)
+	result := m.handleAudioCommand(f)
+	if !strings.Contains(result, "Unsupported") {
+		t.Errorf("expected unsupported format, got: %s", result)
+	}
+}
+
+func TestHandleAudioCommand_TooLarge(t *testing.T) {
+	m := newTestChatModel(t)
+	f := filepath.Join(t.TempDir(), "big.mp3")
+	fh, _ := os.Create(f)
+	fh.Truncate(51 * 1024 * 1024) // over 50MB limit
+	fh.Close()
+	result := m.handleAudioCommand(f)
+	if !strings.Contains(result, "too large") {
+		t.Errorf("expected size error, got: %s", result)
+	}
+}
+
+func TestHandleAudioCommand_Success(t *testing.T) {
+	m := newTestChatModel(t)
+	f := filepath.Join(t.TempDir(), "test.mp3")
+	data := []byte("fake-mp3-data")
+	os.WriteFile(f, data, 0644)
+	result := m.handleAudioCommand(f)
+	if !strings.Contains(result, "Queued") {
+		t.Errorf("expected Queued message, got: %s", result)
+	}
+	if len(m.pendingImages) != 1 {
+		t.Fatalf("expected 1 pending audio, got %d", len(m.pendingImages))
+	}
+	decoded, err := base64.StdEncoding.DecodeString(m.pendingImages[0])
+	if err != nil {
+		t.Fatalf("base64 decode error: %v", err)
+	}
+	if string(decoded) != "fake-mp3-data" {
+		t.Errorf("decoded mismatch: %q", decoded)
+	}
+}
+
+func TestHandleAudioCommand_MultipleFormats(t *testing.T) {
+	validExts := []string{".wav", ".flac", ".ogg", ".m4a", ".aac", ".opus"}
+	for _, ext := range validExts {
+		t.Run(ext, func(t *testing.T) {
+			m := newTestChatModel(t)
+			f := filepath.Join(t.TempDir(), "audio"+ext)
+			os.WriteFile(f, []byte("data"), 0644)
+			result := m.handleAudioCommand(f)
+			if !strings.Contains(result, "Queued") {
+				t.Errorf("expected Queued for %s, got: %s", ext, result)
+			}
+		})
+	}
+}
+
+// ── handleIndexAdd / handleIndexRemove ─────────────────────────
+
+func TestHandleIndexAdd_Empty(t *testing.T) {
+	m := newTestChatModel(t)
+	result := m.handleIndexAdd("")
+	if !strings.Contains(result, "Usage") {
+		t.Errorf("expected usage message, got: %s", result)
+	}
+}
+
+func TestHandleIndexAdd_AlreadyPrimary(t *testing.T) {
+	m := newTestChatModel(t)
+	result := m.handleIndexAdd("test-index") // same as indexName
+	if !strings.Contains(result, "already the primary") {
+		t.Errorf("expected primary index warning, got: %s", result)
+	}
+}
+
+func TestHandleIndexAdd_AlreadyActive(t *testing.T) {
+	m := newTestChatModel(t)
+	m.activeIndexes = []string{"extra"}
+	result := m.handleIndexAdd("extra")
+	if !strings.Contains(result, "already active") {
+		t.Errorf("expected already active, got: %s", result)
+	}
+}
+
+func TestHandleIndexAdd_NoConfig(t *testing.T) {
+	m := newTestChatModel(t)
+	// With no saved config, LoadSavedConfig returns nil
+	result := m.handleIndexAdd("some-new-index")
+	if !strings.Contains(result, "No index directory") && !strings.Contains(result, "Error") && !strings.Contains(result, "not found") {
+		t.Errorf("expected error for missing config, got: %s", result)
+	}
+}
+
+func TestHandleIndexRemove_Empty(t *testing.T) {
+	m := newTestChatModel(t)
+	result := m.handleIndexRemove("")
+	if !strings.Contains(result, "Usage") {
+		t.Errorf("expected usage message, got: %s", result)
+	}
+}
+
+func TestHandleIndexRemove_NotInSet(t *testing.T) {
+	m := newTestChatModel(t)
+	m.activeIndexes = []string{"alpha"}
+	result := m.handleIndexRemove("beta")
+	if !strings.Contains(result, "not in the active set") {
+		t.Errorf("expected not-in-set error, got: %s", result)
+	}
+}
+
+func TestHandleIndexRemove_Success(t *testing.T) {
+	m := newTestChatModel(t)
+	m.activeIndexes = []string{"alpha", "beta", "gamma"}
+	result := m.handleIndexRemove("beta")
+	if !strings.Contains(result, "Removed") {
+		t.Errorf("expected removed message, got: %s", result)
+	}
+	if len(m.activeIndexes) != 2 {
+		t.Fatalf("expected 2 active indexes, got %d", len(m.activeIndexes))
+	}
+	for _, idx := range m.activeIndexes {
+		if idx == "beta" {
+			t.Error("beta should have been removed")
+		}
+	}
+}
+
+func TestHandleIndexRemove_LastOne(t *testing.T) {
+	m := newTestChatModel(t)
+	m.activeIndexes = []string{"only"}
+	result := m.handleIndexRemove("only")
+	if !strings.Contains(result, "Removed") {
+		t.Errorf("expected removed message, got: %s", result)
+	}
+	if !strings.Contains(result, "Querying only") {
+		t.Errorf("expected 'Querying only' fallback, got: %s", result)
+	}
+	if len(m.activeIndexes) != 0 {
+		t.Error("activeIndexes should be empty")
+	}
+}
+
 // ── /clear resets state ────────────────────────────────────────
 
 func TestClearResetsNewFields(t *testing.T) {

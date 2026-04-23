@@ -162,6 +162,16 @@ func (g *Graph) Edges() []Edge {
 	return out
 }
 
+// ExportForAnalysis returns all nodes and directed edges for use with PageRank, risk, etc.
+func (g *Graph) ExportForAnalysis() ([]Node, []Edge) {
+	nodes := make([]Node, 0, len(g.nodes))
+	for _, n := range g.nodes {
+		nodes = append(nodes, *n)
+	}
+	edges := g.Edges()
+	return nodes, edges
+}
+
 // Detect runs the Louvain algorithm and returns community detection results.
 // godNodeThreshold is the minimum total degree for a node to be considered a god node.
 // maxSurprising limits the number of surprising edges returned.
