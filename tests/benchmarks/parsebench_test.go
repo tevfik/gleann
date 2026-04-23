@@ -55,7 +55,7 @@ type parseBenchResult struct {
 	LatencyMs        int64   `json:"latency_ms"`
 	WordCount        int     `json:"word_count"`
 	TableDetected    int     `json:"tables_detected"`
-	TableAccuracy    float64 `json:"table_accuracy"`    // fraction of table keywords found
+	TableAccuracy    float64 `json:"table_accuracy"` // fraction of table keywords found
 	ChartDetected    int     `json:"charts_detected"`
 	FaithfulnessPct  float64 `json:"faithfulness_pct"`  // fraction of MustContain found
 	HallucinationPct float64 `json:"hallucination_pct"` // fraction of MustNotContain found (lower=better)
@@ -66,14 +66,14 @@ type parseBenchResult struct {
 
 // parseBenchSummary holds the aggregate results.
 type parseBenchSummary struct {
-	Timestamp       string             `json:"timestamp"`
-	Backend         string             `json:"backend"`
-	TotalFixtures   int                `json:"total_fixtures"`
-	PassedFixtures  int                `json:"passed_fixtures"`
-	AvgLatencyMs    int64              `json:"avg_latency_ms"`
-	AvgFaithfulness float64            `json:"avg_faithfulness_pct"`
-	AvgTableAccuracy float64           `json:"avg_table_accuracy_pct"`
-	Results         []parseBenchResult `json:"results"`
+	Timestamp        string             `json:"timestamp"`
+	Backend          string             `json:"backend"`
+	TotalFixtures    int                `json:"total_fixtures"`
+	PassedFixtures   int                `json:"passed_fixtures"`
+	AvgLatencyMs     int64              `json:"avg_latency_ms"`
+	AvgFaithfulness  float64            `json:"avg_faithfulness_pct"`
+	AvgTableAccuracy float64            `json:"avg_table_accuracy_pct"`
+	Results          []parseBenchResult `json:"results"`
 }
 
 // parseBenchFixtures returns the test fixtures.
@@ -97,11 +97,11 @@ func parseBenchFixtures(fixtureDir string) []parseBenchFixture {
 			MinWordCount:   10,
 		},
 		{
-			Name:           "code-readme",
-			File:           filepath.Join(fixtureDir, "code", "README.md"),
-			MustContain:    []string{"package", "import", "func"},
-			HasHeadings:    true,
-			MinWordCount:   5,
+			Name:         "code-readme",
+			File:         filepath.Join(fixtureDir, "code", "README.md"),
+			MustContain:  []string{"package", "import", "func"},
+			HasHeadings:  true,
+			MinWordCount: 5,
 		},
 	}
 }
