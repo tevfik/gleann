@@ -2057,10 +2057,10 @@ func (m *ChatModel) handleIndexCommand(args string) string {
 				}
 			}
 			info += "\n\n**Switch:** `/index <name>` • **Details:** `/index info`"
-		info += "\n**Multi-index:** `/index add <name>` • `/index remove <name>`"
-		if len(m.activeIndexes) > 0 {
-			info += fmt.Sprintf("\n**Active indexes:** %s + %s", m.indexName, strings.Join(m.activeIndexes, ", "))
-		}
+			info += "\n**Multi-index:** `/index add <name>` • `/index remove <name>`"
+			if len(m.activeIndexes) > 0 {
+				info += fmt.Sprintf("\n**Active indexes:** %s + %s", m.indexName, strings.Join(m.activeIndexes, ", "))
+			}
 		}
 		return info
 	}

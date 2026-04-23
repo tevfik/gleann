@@ -13,7 +13,7 @@ type RiskScore struct {
 	Name            string  `json:"name"`
 	Kind            string  `json:"kind"`
 	File            string  `json:"file"`
-	Centrality      float64 `json:"centrality"`       // PageRank-based importance
+	Centrality      float64 `json:"centrality"`        // PageRank-based importance
 	InDegree        int     `json:"in_degree"`         // Number of callers
 	OutDegree       int     `json:"out_degree"`        // Number of callees
 	BlastRadiusSize int     `json:"blast_radius_size"` // Number of affected nodes

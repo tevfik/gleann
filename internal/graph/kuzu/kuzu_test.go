@@ -299,3 +299,81 @@ func TestImpact(t *testing.T) {
 		t.Errorf("expected ≥1 affected files, got %v", result.AffectedFiles)
 	}
 }
+
+func TestRemoveFileSymbols(t *testing.T) {
+	db, err := kgraph.Open("")
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer db.Close()
+
+	// Setup: two files, each with symbols.
+	if err := db.UpsertFile("pkg/a.go", "go"); err != nil {
+		t.Fatalf("UpsertFile a: %v", err)
+	}
+	if err := db.UpsertFile("pkg/b.go", "go"); err != nil {
+		t.Fatalf("UpsertFile b: %v", err)
+	}
+
+	symA1 := kgraph.SymbolNode{FQN: "mod.FuncA1", Kind: "function", File: "pkg/a.go", Line: 1, Name: "FuncA1"}
+	symA2 := kgraph.SymbolNode{FQN: "mod.FuncA2", Kind: "function", File: "pkg/a.go", Line: 10, Name: "FuncA2"}
+	symB1 := kgraph.SymbolNode{FQN: "mod.FuncB1", Kind: "function", File: "pkg/b.go", Line: 1, Name: "FuncB1"}
+
+	for _, s := range []kgraph.SymbolNode{symA1, symA2, symB1} {
+		if err := db.UpsertSymbol(s); err != nil {
+			t.Fatalf("UpsertSymbol %s: %v", s.Name, err)
+		}
+	}
+	for _, s := range []kgraph.SymbolNode{symA1, symA2} {
+		if err := db.AddDeclares("pkg/a.go", s.FQN); err != nil {
+			t.Fatalf("AddDeclares %s: %v", s.FQN, err)
+		}
+	}
+	if err := db.AddDeclares("pkg/b.go", symB1.FQN); err != nil {
+		t.Fatalf("AddDeclares B1: %v", err)
+	}
+	// A1 calls B1
+	if err := db.AddCalls(symA1.FQN, symB1.FQN); err != nil {
+		t.Fatalf("AddCalls: %v", err)
+	}
+
+	// Verify both files have symbols.
+	symsA, _ := db.SymbolsInFile("pkg/a.go")
+	symsB, _ := db.SymbolsInFile("pkg/b.go")
+	if len(symsA) != 2 {
+		t.Fatalf("expected 2 symbols in a.go, got %d", len(symsA))
+	}
+	if len(symsB) != 1 {
+		t.Fatalf("expected 1 symbol in b.go, got %d", len(symsB))
+	}
+
+	// Remove file a.go symbols.
+	if err := db.RemoveFileSymbols("pkg/a.go"); err != nil {
+		t.Fatalf("RemoveFileSymbols: %v", err)
+	}
+
+	// a.go symbols should be gone.
+	symsA2, _ := db.SymbolsInFile("pkg/a.go")
+	if len(symsA2) != 0 {
+		t.Errorf("expected 0 symbols in a.go after removal, got %d", len(symsA2))
+	}
+
+	// b.go symbols should still exist.
+	symsB2, _ := db.SymbolsInFile("pkg/b.go")
+	if len(symsB2) != 1 {
+		t.Errorf("expected 1 symbol in b.go after removal of a.go, got %d", len(symsB2))
+	}
+}
+
+func TestRemoveFileSymbols_NonexistentFile(t *testing.T) {
+	db, err := kgraph.Open("")
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer db.Close()
+
+	// Should not error for a file that doesn't exist.
+	if err := db.RemoveFileSymbols("nonexistent.go"); err != nil {
+		t.Errorf("RemoveFileSymbols for nonexistent file should not error, got: %v", err)
+	}
+}
