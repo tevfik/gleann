@@ -71,6 +71,8 @@ func (m *Manager) Store() *Store {
 
 // Remember adds important information to long-term memory.
 // This is the /remember command equivalent.
+// Performs contradiction checking against existing blocks and records confirmation
+// for blocks that agree with the new content.
 func (m *Manager) Remember(content string, tags ...string) (*Block, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -83,6 +85,26 @@ func (m *Manager) Remember(content string, tags ...string) (*Block, error) {
 		Tags:    tags,
 	}
 	m.applyDefaults(block)
+
+	// Check for contradictions with existing long-term blocks.
+	if contradictions := m.checkContradictions(content); len(contradictions) > 0 {
+		// Mark the new block metadata with contradiction info.
+		if block.Metadata == nil {
+			block.Metadata = make(map[string]string)
+		}
+		block.Metadata["has_contradictions"] = "true"
+		ids := ""
+		for _, c := range contradictions {
+			c.Conflict()
+			_ = m.store.Update(c)
+			if ids != "" {
+				ids += ","
+			}
+			ids += c.ID
+		}
+		block.Metadata["contradicts"] = ids
+	}
+
 	if err := m.store.Add(block); err != nil {
 		return nil, err
 	}
@@ -363,4 +385,54 @@ func filterScope(blocks []Block, scope string) []Block {
 		}
 	}
 	return out
+}
+
+// checkContradictions checks new content against existing long-term blocks
+// for potential contradictions using heuristic text comparison.
+func (m *Manager) checkContradictions(content string) []*Block {
+	blocks, err := m.store.List(TierLong)
+	if err != nil {
+		return nil
+	}
+
+	var contradictions []*Block
+	for i := range blocks {
+		if blocks[i].ContradictionCheck(content) {
+			contradictions = append(contradictions, &blocks[i])
+		}
+	}
+	return contradictions
+}
+
+// StaleBlocks returns all blocks that are stale across all tiers.
+func (m *Manager) StaleBlocks() ([]Block, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	var stale []Block
+	for _, tier := range []Tier{TierShort, TierMedium, TierLong} {
+		blocks, err := m.store.List(tier)
+		if err != nil {
+			continue
+		}
+		for _, b := range blocks {
+			if b.IsStale() {
+				stale = append(stale, b)
+			}
+		}
+	}
+	return stale, nil
+}
+
+// RecordAccess marks a block as accessed, updating its access count and timestamp.
+func (m *Manager) RecordAccess(id string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	block, err := m.store.Get(id)
+	if err != nil {
+		return err
+	}
+	block.RecordAccess()
+	return m.store.Update(block)
 }
