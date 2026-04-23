@@ -536,6 +536,46 @@ func DefaultAgentCard(version, baseURL string) AgentCard {
 					"What do you know about the deployment process?",
 				},
 			},
+			{
+				ID:          "code-communities",
+				Name:        "Code Community Detection",
+				Description: "Run Louvain community detection on the code graph to discover tightly-connected groups of symbols, god nodes, and surprising cross-community edges",
+				Tags:        []string{"code", "graph", "community", "louvain", "modularity"},
+				Examples: []string{
+					"Detect communities in the code graph",
+					"Find god nodes in my codebase",
+				},
+			},
+			{
+				ID:          "repo-map",
+				Name:        "Repository Map",
+				Description: "Generate a compact PageRank-ranked text map of the repository suitable for LLM context injection",
+				Tags:        []string{"code", "graph", "map", "pagerank", "context"},
+				Examples: []string{
+					"Generate a repo map for my project",
+					"Show the most important symbols in the codebase",
+				},
+			},
+			{
+				ID:          "risk-analysis",
+				Name:        "Change Risk Analysis",
+				Description: "Compute change risk scores using PageRank centrality, coupling, and blast radius. Identifies critical/high/medium/low risk symbols and files",
+				Tags:        []string{"code", "risk", "graph", "centrality", "blast-radius"},
+				Examples: []string{
+					"Which files are highest risk to change?",
+					"Show risk analysis for my codebase",
+				},
+			},
+			{
+				ID:          "multimodal-analyze",
+				Name:        "Multimodal Analysis",
+				Description: "Analyze PDF documents, images, and video files using vision-capable LLMs. Extracts text, diagrams, and content descriptions",
+				Tags:        []string{"multimodal", "pdf", "video", "image", "vision"},
+				Examples: []string{
+					"Analyze this PDF document",
+					"What's in this architecture diagram?",
+				},
+			},
 		},
 	}
 }

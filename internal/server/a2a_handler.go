@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/tevfik/gleann/internal/a2a"
+	"github.com/tevfik/gleann/internal/multimodal"
 	"github.com/tevfik/gleann/pkg/gleann"
 )
 
@@ -35,6 +36,10 @@ func (s *Server) mountA2A(mux *http.ServeMux) {
 	srv.RegisterSkill("ask-rag", s.a2aAskHandler)
 	srv.RegisterSkill("memory-management", s.a2aMemoryHandler)
 	srv.RegisterSkill("code-analysis", s.a2aCodeHandler)
+	srv.RegisterSkill("code-communities", s.a2aCommunitiesHandler)
+	srv.RegisterSkill("repo-map", s.a2aRepoMapHandler)
+	srv.RegisterSkill("risk-analysis", s.a2aRiskHandler)
+	srv.RegisterSkill("multimodal-analyze", s.a2aMultimodalHandler)
 
 	srv.Mount(mux)
 }
@@ -258,4 +263,42 @@ func (s *Server) a2aCodeHandler(ctx a2a.SkillContext) (string, error) {
 	}
 	return fmt.Sprintf("%s of %q (index: %s):\n%s",
 		strings.Title(queryType), symbol, indexName, strings.Join(lines, "\n")), nil
+}
+
+// a2aMultimodalHandler analyzes files using vision-capable LLMs.
+func (s *Server) a2aMultimodalHandler(ctx a2a.SkillContext) (string, error) {
+	if len(ctx.Files) == 0 && ctx.Query == "" {
+		return "", fmt.Errorf("provide a file path in the query or attach files")
+	}
+
+	ollamaHost := s.config.OllamaHost
+	if ollamaHost == "" {
+		ollamaHost = "http://localhost:11434"
+	}
+	model := s.config.MultimodalModel
+	if model == "" {
+		model = "gemma4"
+	}
+
+	// If files are attached, process them directly.
+	if len(ctx.Files) > 0 {
+		var results []string
+		for _, f := range ctx.Files {
+			results = append(results, fmt.Sprintf("[%s] Content provided via attachment", f.Name))
+		}
+		return strings.Join(results, "\n"), nil
+	}
+
+	// Otherwise, treat query as a file path.
+	filePath := strings.TrimSpace(ctx.Query)
+
+	// Use multimodal processor.
+	proc := multimodal.NewProcessor(ollamaHost, model)
+	result := proc.ProcessFile(filePath)
+	if result.Error != nil {
+		return "", fmt.Errorf("analysis failed: %v", result.Error)
+	}
+
+	return fmt.Sprintf("Analysis of %s (%v):\n\n%s",
+		filePath, result.MediaType, result.Description), nil
 }

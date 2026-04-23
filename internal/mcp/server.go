@@ -36,6 +36,7 @@ type Server struct {
 	searcherLRU []string       // tracks access order: most recent at end
 	memPool     *mcpMemoryPool // Memory Engine: generic Entity/RELATES_TO graph
 	blockMem    *blockMemPool  // BBolt hierarchical memory blocks (pkg/memory)
+	gPool       *graphPool     // Community detection graph pool (treesitter only)
 }
 
 // NewServer initializes a new MCP server that exposes Gleann capabilities using the SDK.
@@ -104,6 +105,14 @@ func NewServer(cfg Config) *Server {
 	s.AddTool(srv.buildDeleteEntityTool(), srv.handleDeleteEntity)
 	s.AddTool(srv.buildTraverseKGTool(), srv.handleTraverseKG)
 
+	// Graph stats + symbols_in_file — available without treesitter.
+	s.AddTool(srv.buildGraphStatsTool(), srv.handleGraphStats)
+	s.AddTool(srv.buildSymbolsInFileTool(), srv.handleSymbolsInFile)
+
+	// Community detection tools — require treesitter build tag.
+	srv.initGraphPool()
+	srv.registerGraphTools()
+
 	// Register generic index list resource
 	s.AddResource(mcp.Resource{
 		URI:         "gleann://indexes",
@@ -139,6 +148,7 @@ func (s *Server) Close() {
 	if s.blockMem != nil {
 		s.blockMem.close()
 	}
+	s.closeGraphPool()
 }
 
 func (s *Server) getSearcher(name string) (*gleann.LeannSearcher, error) {
@@ -764,6 +774,126 @@ func (s *Server) handleImpact(ctx context.Context, request mcp.CallToolRequest) 
 
 	total := len(impact.DirectCallers) + len(impact.TransitiveCallers)
 	sb.WriteString(fmt.Sprintf("\nTotal: %d affected symbols, %d affected files\n", total, len(impact.AffectedFiles)))
+
+	return mcp.NewToolResultText(sb.String()), nil
+}
+
+// --- Graph Stats Tool ---
+
+func (s *Server) buildGraphStatsTool() mcp.Tool {
+	return mcp.Tool{
+		Name:        "gleann_graph_stats",
+		Description: "Get statistics about the code graph for an index: file count, symbol count, edge counts by type.",
+		InputSchema: mcp.ToolInputSchema{
+			Type: "object",
+			Properties: map[string]interface{}{
+				"index": map[string]interface{}{
+					"type":        "string",
+					"description": "Name of the index to query",
+				},
+			},
+			Required: []string{"index"},
+		},
+	}
+}
+
+func (s *Server) handleGraphStats(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	args, ok := request.Params.Arguments.(map[string]interface{})
+	if !ok {
+		return mcp.NewToolResultError("invalid arguments format"), nil
+	}
+
+	indexName, _ := args["index"].(string)
+	if indexName == "" {
+		return mcp.NewToolResultError("index is required"), nil
+	}
+
+	searcher, err := s.getSearcher(indexName)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("Error loading index %q: %v", indexName, err)), nil
+	}
+
+	db := searcher.GraphDB()
+	if db == nil {
+		return mcp.NewToolResultError(fmt.Sprintf("Graph database not available for index %q", indexName)), nil
+	}
+
+	stats, err := db.Stats()
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("Failed to get graph stats: %v", err)), nil
+	}
+
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("Graph Statistics — %s\n\n", indexName))
+	sb.WriteString(fmt.Sprintf("  Files:           %d\n", stats.Files))
+	sb.WriteString(fmt.Sprintf("  Symbols:         %d\n", stats.Symbols))
+	sb.WriteString(fmt.Sprintf("  Call edges:      %d\n", stats.CallEdges))
+	sb.WriteString(fmt.Sprintf("  Declare edges:   %d\n", stats.DeclareEdges))
+	sb.WriteString(fmt.Sprintf("  Implements edges: %d\n", stats.ImplementsEdges))
+
+	return mcp.NewToolResultText(sb.String()), nil
+}
+
+// --- Symbols In File Tool ---
+
+func (s *Server) buildSymbolsInFileTool() mcp.Tool {
+	return mcp.Tool{
+		Name:        "gleann_symbols_in_file",
+		Description: "List all symbols (functions, methods, types) defined in a specific source file. Useful for understanding file contents without reading the full source.",
+		InputSchema: mcp.ToolInputSchema{
+			Type: "object",
+			Properties: map[string]interface{}{
+				"index": map[string]interface{}{
+					"type":        "string",
+					"description": "Name of the index to query",
+				},
+				"file_path": map[string]interface{}{
+					"type":        "string",
+					"description": "Path to the source file (relative to project root)",
+				},
+			},
+			Required: []string{"index", "file_path"},
+		},
+	}
+}
+
+func (s *Server) handleSymbolsInFile(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	args, ok := request.Params.Arguments.(map[string]interface{})
+	if !ok {
+		return mcp.NewToolResultError("invalid arguments format"), nil
+	}
+
+	indexName, _ := args["index"].(string)
+	filePath, _ := args["file_path"].(string)
+
+	if indexName == "" || filePath == "" {
+		return mcp.NewToolResultError("index and file_path are required"), nil
+	}
+
+	searcher, err := s.getSearcher(indexName)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("Error loading index %q: %v", indexName, err)), nil
+	}
+
+	db := searcher.GraphDB()
+	if db == nil {
+		return mcp.NewToolResultError(fmt.Sprintf("Graph database not available for index %q", indexName)), nil
+	}
+
+	symbols, err := db.SymbolsInFile(filePath)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("Error querying symbols: %v", err)), nil
+	}
+
+	if len(symbols) == 0 {
+		return mcp.NewToolResultText(fmt.Sprintf("No symbols found in file %q (index: %s)", filePath, indexName)), nil
+	}
+
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("Symbols in %s (%d found):\n\n", filePath, len(symbols)))
+	for _, sym := range symbols {
+		sb.WriteString(fmt.Sprintf("  [%s] %s\n", sym.Kind, sym.FQN))
+	}
 
 	return mcp.NewToolResultText(sb.String()), nil
 }

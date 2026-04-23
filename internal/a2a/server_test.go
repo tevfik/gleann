@@ -54,8 +54,8 @@ func TestAgentCard(t *testing.T) {
 	if card.Version != "test-1.0" {
 		t.Errorf("expected version=test-1.0, got %s", card.Version)
 	}
-	if len(card.Skills) != 4 {
-		t.Errorf("expected 4 skills, got %d", len(card.Skills))
+	if len(card.Skills) != 8 {
+		t.Errorf("expected 8 skills, got %d", len(card.Skills))
 	}
 	if len(card.SupportedInterfaces) != 1 {
 		t.Fatalf("expected 1 interface, got %d", len(card.SupportedInterfaces))
@@ -279,8 +279,8 @@ func TestDefaultAgentCard(t *testing.T) {
 	if card.SupportedInterfaces[0].URL != "http://myhost:9090/a2a/v1" {
 		t.Errorf("unexpected URL: %s", card.SupportedInterfaces[0].URL)
 	}
-	if len(card.Skills) != 4 {
-		t.Errorf("expected 4 skills, got %d", len(card.Skills))
+	if len(card.Skills) != 8 {
+		t.Errorf("expected 8 skills, got %d", len(card.Skills))
 	}
 }
 
