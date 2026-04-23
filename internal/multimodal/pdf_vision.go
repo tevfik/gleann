@@ -312,9 +312,9 @@ func CleanupPDFPages(pages []PDFPageResult) {
 
 // TableExtractionResult holds structured table data extracted from a page image.
 type TableExtractionResult struct {
-	PageNum  int      `json:"page_num"`
-	Tables   []Table  `json:"tables"`
-	RawText  string   `json:"raw_text"` // VLM's raw description
+	PageNum int     `json:"page_num"`
+	Tables  []Table `json:"tables"`
+	RawText string  `json:"raw_text"` // VLM's raw description
 }
 
 // Table represents a single extracted table.
@@ -468,11 +468,11 @@ type ChartExtractionResult struct {
 
 // Chart represents a single extracted chart/figure.
 type Chart struct {
-	Type        string            `json:"type"`         // "bar", "line", "pie", "scatter", "diagram", "other"
-	Title       string            `json:"title"`        // chart title
-	Description string            `json:"description"`  // detailed description
-	DataPoints  []ChartDataPoint  `json:"data_points"`  // extracted data if possible
-	Labels      []string          `json:"labels"`       // axis labels or legend items
+	Type        string           `json:"type"`        // "bar", "line", "pie", "scatter", "diagram", "other"
+	Title       string           `json:"title"`       // chart title
+	Description string           `json:"description"` // detailed description
+	DataPoints  []ChartDataPoint `json:"data_points"` // extracted data if possible
+	Labels      []string         `json:"labels"`      // axis labels or legend items
 }
 
 // ChartDataPoint represents a single data point from a chart.
@@ -589,17 +589,17 @@ func parseChartsFromDescription(desc string) []Chart {
 
 // FaithfulnessResult holds content faithfulness analysis results.
 type FaithfulnessResult struct {
-	Score           float64          `json:"score"`            // 0-100 overall faithfulness
-	OmissionCount   int              `json:"omission_count"`   // content in source but missing from extraction
-	HallucinCount   int              `json:"hallucination_count"` // content in extraction but not in source
-	TotalChecks     int              `json:"total_checks"`
-	Details         []FaithfulnessCheck `json:"details"`
+	Score         float64             `json:"score"`               // 0-100 overall faithfulness
+	OmissionCount int                 `json:"omission_count"`      // content in source but missing from extraction
+	HallucinCount int                 `json:"hallucination_count"` // content in extraction but not in source
+	TotalChecks   int                 `json:"total_checks"`
+	Details       []FaithfulnessCheck `json:"details"`
 }
 
 // FaithfulnessCheck represents a single content faithfulness check.
 type FaithfulnessCheck struct {
-	Rule     string `json:"rule"`     // what was checked
-	Type     string `json:"type"`     // "omission" or "hallucination"
+	Rule     string `json:"rule"` // what was checked
+	Type     string `json:"type"` // "omission" or "hallucination"
 	Passed   bool   `json:"passed"`
 	Evidence string `json:"evidence"` // relevant text snippet
 }
