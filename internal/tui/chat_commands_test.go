@@ -185,7 +185,9 @@ func TestHandleDetachCommand_Empty(t *testing.T) {
 
 func TestHandleDetachCommand_NotFound(t *testing.T) {
 	m := newTestChatModel(t)
-	m.attachedFiles = []string{"/a/b.txt"}
+	dir := t.TempDir()
+	p := filepath.Join(dir, "b.txt")
+	m.attachedFiles = []string{p}
 	result := m.handleDetachCommand("nonexistent.txt")
 	if !strings.Contains(result, "Not found") {
 		t.Errorf("expected not found: %s", result)
@@ -194,19 +196,24 @@ func TestHandleDetachCommand_NotFound(t *testing.T) {
 
 func TestHandleDetachCommand_ByAbsPath(t *testing.T) {
 	m := newTestChatModel(t)
-	m.attachedFiles = []string{"/a/b.txt", "/c/d.txt"}
-	result := m.handleDetachCommand("/a/b.txt")
+	dir := t.TempDir()
+	p1 := filepath.Join(dir, "b.txt")
+	p2 := filepath.Join(dir, "d.txt")
+	m.attachedFiles = []string{p1, p2}
+	result := m.handleDetachCommand(p1)
 	if !strings.Contains(result, "Detached") {
 		t.Errorf("expected detached: %s", result)
 	}
-	if len(m.attachedFiles) != 1 || m.attachedFiles[0] != "/c/d.txt" {
+	if len(m.attachedFiles) != 1 || m.attachedFiles[0] != p2 {
 		t.Error("wrong file removed")
 	}
 }
 
 func TestHandleDetachCommand_ByBaseName(t *testing.T) {
 	m := newTestChatModel(t)
-	m.attachedFiles = []string{"/long/path/to/file.txt"}
+	dir := t.TempDir()
+	p := filepath.Join(dir, "file.txt")
+	m.attachedFiles = []string{p}
 	result := m.handleDetachCommand("file.txt")
 	if !strings.Contains(result, "Detached") {
 		t.Errorf("expected detached via basename: %s", result)

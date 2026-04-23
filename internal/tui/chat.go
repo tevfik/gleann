@@ -699,6 +699,40 @@ func (m ChatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.viewport.SetContent(m.renderMessages())
 				m.viewport.GotoBottom()
 				return m, nil
+
+			case strings.HasPrefix(input, "/pdf "):
+				path := strings.TrimSpace(strings.TrimPrefix(input, "/pdf "))
+				result := m.handlePDFCommand(path)
+				m.messages = append(m.messages, chatMsg{role: "system", content: result})
+				m.textarea.Reset()
+				m.viewport.SetContent(m.renderMessages())
+				m.viewport.GotoBottom()
+				return m, nil
+
+			case input == "/pdf":
+				result := m.handlePDFCommand("")
+				m.messages = append(m.messages, chatMsg{role: "system", content: result})
+				m.textarea.Reset()
+				m.viewport.SetContent(m.renderMessages())
+				m.viewport.GotoBottom()
+				return m, nil
+
+			case strings.HasPrefix(input, "/graph "):
+				symbol := strings.TrimSpace(strings.TrimPrefix(input, "/graph "))
+				result := m.handleGraphCommand(symbol)
+				m.messages = append(m.messages, chatMsg{role: "system", content: result})
+				m.textarea.Reset()
+				m.viewport.SetContent(m.renderMessages())
+				m.viewport.GotoBottom()
+				return m, nil
+
+			case input == "/graph":
+				result := m.handleGraphCommand("")
+				m.messages = append(m.messages, chatMsg{role: "system", content: result})
+				m.textarea.Reset()
+				m.viewport.SetContent(m.renderMessages())
+				m.viewport.GotoBottom()
+				return m, nil
 			}
 
 			// Send message to LLM with streaming.
@@ -2404,4 +2438,106 @@ func (m *ChatModel) handleVideoCommand(path string) string {
 	return fmt.Sprintf("🎬 Queued `%s` (%s, %d MB). Send your next message to analyze it.\n"+
 		"⚠ Requires Gemma4 or another video-capable model.",
 		filepath.Base(absPath), ext[1:], info.Size()/(1024*1024))
+}
+
+// handlePDFCommand queues a PDF for vision-based analysis on the next message.
+func (m *ChatModel) handlePDFCommand(path string) string {
+	if path == "" {
+		return "**Usage:** `/pdf <filepath>`\n\n" +
+			"Queues a PDF document for your **next** message.\n" +
+			"Each page is rendered and sent to the multimodal LLM.\n\n" +
+			"**Requires** a vision-capable model (e.g. Gemma4).\n\n" +
+			"**Example:**\n```\n/pdf docs/architecture.pdf\nSummarize this document\n```"
+	}
+
+	absPath := path
+	if !filepath.IsAbs(path) {
+		if wd, err := os.Getwd(); err == nil {
+			absPath = filepath.Join(wd, path)
+		}
+	}
+
+	info, err := os.Stat(absPath)
+	if err != nil {
+		return fmt.Sprintf("⚠ PDF not found: %s", err)
+	}
+	if info.IsDir() {
+		return "⚠ Path is a directory, not a PDF file."
+	}
+
+	ext := strings.ToLower(filepath.Ext(absPath))
+	if ext != ".pdf" {
+		return fmt.Sprintf("⚠ Not a PDF file: `%s`. Use /pdf with .pdf files only.", ext)
+	}
+
+	// Check file size (max 50MB for PDF).
+	if info.Size() > 50*1024*1024 {
+		return "⚠ PDF too large (max 50 MB)."
+	}
+
+	data, err := os.ReadFile(absPath)
+	if err != nil {
+		return fmt.Sprintf("⚠ Read error: %s", err)
+	}
+
+	encoded := base64.StdEncoding.EncodeToString(data)
+	m.pendingImages = append(m.pendingImages, encoded)
+
+	return fmt.Sprintf("📄 Queued `%s` (%d KB). Send your next message to analyze it.\n"+
+		"⚠ Requires a vision-capable model (e.g. Gemma4).",
+		filepath.Base(absPath), info.Size()/1024)
+}
+
+// handleGraphCommand performs a quick symbol lookup showing callers and callees.
+func (m *ChatModel) handleGraphCommand(symbol string) string {
+	if symbol == "" {
+		return "**Usage:** `/graph <symbol>`\n\n" +
+			"Look up a symbol in the code graph.\n" +
+			"Shows callers, callees, and file location.\n\n" +
+			"**Examples:**\n```\n/graph handleSearch\n/graph pkg.MyStruct.Method\n```"
+	}
+
+	// Get GraphDB from the searcher.
+	searcher := m.chat.GetSearcher()
+	ls, ok := searcher.(*gleann.LeannSearcher)
+	if !ok {
+		return "⚠ Graph lookup requires a single index (not multi-index mode)."
+	}
+
+	db := ls.GraphDB()
+	if db == nil {
+		return "⚠ No graph database available. Build index with `--graph` flag."
+	}
+
+	callees, ceErr := db.Callees(symbol)
+	callers, crErr := db.Callers(symbol)
+
+	if ceErr != nil && crErr != nil {
+		return fmt.Sprintf("⚠ Symbol `%s` not found in graph.", symbol)
+	}
+
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("**Graph: %s**\n\n", symbol))
+
+	if len(callers) > 0 {
+		sb.WriteString(fmt.Sprintf("**Callers** (%d):\n", len(callers)))
+		for _, c := range callers {
+			sb.WriteString(fmt.Sprintf("  ← `%s` (%s)\n", c.FQN, c.Kind))
+		}
+	} else {
+		sb.WriteString("**Callers:** none\n")
+	}
+
+	sb.WriteString("\n")
+
+	if len(callees) > 0 {
+		sb.WriteString(fmt.Sprintf("**Callees** (%d):\n", len(callees)))
+		for _, c := range callees {
+			sb.WriteString(fmt.Sprintf("  → `%s` (%s)\n", c.FQN, c.Kind))
+		}
+	} else {
+		sb.WriteString("**Callees:** none\n")
+	}
+
+	return sb.String()
 }

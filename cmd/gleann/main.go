@@ -37,6 +37,8 @@ func main() {
 		cmdMemory(args)
 	case "mcp":
 		cmdMCP()
+	case "multimodal":
+		cmdMultimodal(args)
 	case "tui":
 		cmdTUI()
 	case "install":
@@ -181,6 +183,13 @@ gleann has three intelligence pillars that work together:
   gleann config <show|path|edit|validate>  Manage configuration
   gleann completion <bash|zsh|fish>     Shell completion script
   gleann version                        Show version
+
+── Multimodal Analysis ───────────────────────────────────────────────
+
+  gleann multimodal analyze <file>      Analyze a PDF, image, or video with vision LLM
+  gleann multimodal analyze <dir>       Batch analyze all multimodal files in a directory
+    --model <model>                     Ollama model (default: auto-detect or gemma4)
+    --host <url>                        Ollama host (default: http://localhost:11434)
 
   Server env vars:
     GLEANN_RATE_LIMIT=60     Requests/sec per IP (token bucket)
