@@ -212,3 +212,20 @@ bench-faiss:
 vet:
 	go vet ./...
 	@echo "✅ go vet passed"
+
+# ── ParseBench CI targets ────────────────────────────────────────────────────
+.PHONY: bench-parse
+bench-parse:
+	@echo "📊 Running ParseBench (requires gleann-plugin-marker on :8766)..."
+	go test ./tests/benchmarks/ -run TestParseBench -v -timeout 600s -count=1
+	@echo "📄 Results: tests/e2e/results/parsebench_results.md"
+
+.PHONY: bench-plugins
+bench-plugins:
+	@echo "📊 Running Plugin Benchmark..."
+	go test ./tests/benchmarks/ -run TestPluginBenchmark -v -timeout 300s -count=1
+	@echo "📄 Results: tests/e2e/results/plugin_benchmark.md"
+
+.PHONY: bench-all
+bench-all: bench-faiss bench-plugins bench-parse
+	@echo "✅ All benchmarks complete"
