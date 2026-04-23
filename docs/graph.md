@@ -176,3 +176,100 @@ Graph indexing was optimized using **KuzuDB CSV Bulk Load** (`COPY FROM`) instea
 | **CSV Bulk Load (COPY FROM)** | **84 ms** | Current approach |
 
 FK integrity is enforced by filtering CALLS edges — only symbol-to-symbol references within the indexed codebase are stored (cross-package / stdlib calls are discarded).
+
+## Risk Scoring
+
+Quantifies how risky it is to change a given symbol by combining three graph metrics into a composite score [0, 1]:
+
+| Metric | Weight | How it's computed |
+|--------|--------|-------------------|
+| Centrality | 35% | PageRank score (normalized) |
+| Coupling | 30% | Fan-in × Fan-out (normalized) |
+| Blast Radius | 35% | BFS traversal weighted by callers' PageRank |
+
+```bash
+# CLI
+gleann graph risk --index my-code --top 20
+
+# API
+curl -X POST http://localhost:8080/graph -d '{
+  "index": "my-code",
+  "query_type": "risk",
+  "top_k": 20
+}'
+```
+
+Each symbol gets a risk level: `critical` (≥0.8), `high` (≥0.6), `medium` (≥0.3), `low` (<0.3).
+
+`FileRiskSummary` aggregates per-symbol scores to file level (max score per file), useful for identifying the riskiest files in the codebase.
+
+**Configuration:**
+
+```go
+cfg := community.DefaultRiskConfig()
+cfg.CentralityWeight  = 0.35
+cfg.CouplingWeight    = 0.30
+cfg.BlastRadiusWeight = 0.35
+cfg.MaxBlastDepth     = 3   // BFS depth for blast radius
+cfg.DampingFactor     = 0.85
+cfg.Iterations        = 30
+```
+
+## Repository Map (Repo Map)
+
+Generates a compact, token-budgeted text summary of the most important symbols in the codebase, ranked by PageRank. Designed for LLM context injection — gives the model a high-level overview of the codebase structure without consuming the full context window.
+
+```bash
+# CLI
+gleann graph map --index my-code --top-k 30 --max-tokens 2000
+```
+
+Output example:
+```
+## Repository Map (by importance)
+
+### pkg/gleann/search.go
+- function `Search`
+- function `HybridSearch`
+
+### internal/graph/kuzu/kuzu.go
+- function `BuildGraph`
+- method `Query`
+```
+
+**Configuration:**
+
+```go
+cfg := community.DefaultRepoMapConfig()
+cfg.TopK      = 30    // Top symbols to include
+cfg.MaxTokens = 2000  // Token budget (approximate)
+```
+
+The map is grouped by file and sorted by total PageRank score, providing a natural "table of contents" for any codebase.
+
+## Incremental Graph Update
+
+When files change, gleann can incrementally update both the vector index and the graph without a full rebuild:
+
+```bash
+# Watch mode: auto-detect changes and incrementally update
+gleann index watch my-code --docs ./src --graph --interval 5
+```
+
+The incremental pipeline:
+1. Detects changed/deleted files via hash comparison (vault tracker)
+2. Removes old passages and graph entries for changed sources
+3. Re-chunks and re-indexes only the affected files
+4. Falls back to full rebuild if incremental update fails (e.g., FAISS backend)
+
+This enables near-instant index updates during active development.
+
+## Smart Context Injection
+
+Combines repo map + graph-augmented search for optimal LLM context:
+
+1. **Repo map** provides high-level codebase overview (top-K symbols by PageRank)
+2. **Graph search** provides structural context (callers/callees for each result)
+3. **Vector search** provides semantic context (relevant passages)
+
+The three are combined within a token budget, prioritizing the most relevant information. Used automatically when `--graph` is enabled for search and chat.
