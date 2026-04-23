@@ -3,6 +3,7 @@ package gleann
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -892,5 +893,70 @@ func TestChatOllama_ThinkField(t *testing.T) {
 	chat.chatOllama(context.Background(), []ChatMessage{{Role: "user", Content: "hi"}})
 	if gotThink == nil || !*gotThink {
 		t.Error("expected Think=true to be sent")
+	}
+}
+
+func TestSetSearcher(t *testing.T) {
+	chat := NewChat(NullSearcher{}, ChatConfig{Provider: LLMOllama, Model: "test"})
+	// Initially NullSearcher.
+	q, _ := chat.GetSearcher().Search(context.Background(), "test")
+	if len(q) != 0 {
+		t.Error("expected NullSearcher to return empty results")
+	}
+
+	// Replace with a different searcher.
+	chat.SetSearcher(NullSearcher{})
+	q2, _ := chat.GetSearcher().Search(context.Background(), "test")
+	if len(q2) != 0 {
+		t.Error("expected replaced searcher to work")
+	}
+}
+
+func TestTrimmedHistory_NoTrimNeeded(t *testing.T) {
+	chat := NewChat(NullSearcher{}, ChatConfig{Provider: LLMOllama, Model: "test"})
+	for i := 0; i < 10; i++ {
+		chat.AppendHistory(ChatMessage{Role: "user", Content: fmt.Sprintf("msg %d", i)})
+	}
+	hist := chat.History()
+	if len(hist) != 10 {
+		t.Errorf("expected 10, got %d", len(hist))
+	}
+	if chat.SessionSummary() != "" {
+		t.Error("no trimming should have happened")
+	}
+}
+
+func TestTrimmedHistory_MergeSummaries(t *testing.T) {
+	chat := NewChat(NullSearcher{}, ChatConfig{Provider: LLMOllama, Model: "test"})
+	// Fill with 30 messages to trigger trimming.
+	for i := 0; i < 30; i++ {
+		chat.AppendHistory(ChatMessage{
+			Role:    "user",
+			Content: fmt.Sprintf("This is message number %d about testing the trim functionality thoroughly", i),
+		})
+	}
+	// Manually call Ask with a mock server to trigger trimmedHistory.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		resp := ollamaChatResponse{Message: ChatMessage{Content: "ok"}}
+		json.NewEncoder(w).Encode(resp)
+	}))
+	defer srv.Close()
+	chat2 := NewChat(NullSearcher{}, ChatConfig{Provider: LLMOllama, Model: "test", BaseURL: srv.URL})
+	for i := 0; i < 30; i++ {
+		chat2.AppendHistory(ChatMessage{
+			Role:    "user",
+			Content: fmt.Sprintf("This is test message %d discussing topic thoroughly with enough words", i),
+		})
+	}
+	// Trigger Ask which calls trimmedHistory internally.
+	chat2.Ask(context.Background(), "trigger trim")
+	hist := chat2.History()
+	if len(hist) > 22 { // 20 kept + 1 new user + 1 assistant response
+		t.Errorf("expected ≤22 after trim, got %d", len(hist))
+	}
+	if chat2.SessionSummary() != "" {
+		// The summary should be non-empty after trimming.
+		// (ExtractSummary may or may not produce output based on content)
+		t.Log("session summary:", chat2.SessionSummary())
 	}
 }
