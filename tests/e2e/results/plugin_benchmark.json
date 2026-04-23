@@ -25,8 +25,8 @@
       "file": "benchmark_report.pdf",
       "format": "pdf",
       "backend": "markitdown-cli",
-      "latency_ms": 458,
-      "throughput_docs_per_sec": 2.183406113537118,
+      "latency_ms": 412,
+      "throughput_docs_per_sec": 2.4271844660194173,
       "sections": 0,
       "edges": 0,
       "max_heading_depth": 0,
@@ -107,8 +107,8 @@
       "file": "technical_report.docx",
       "format": "docx",
       "backend": "markitdown-cli",
-      "latency_ms": 395,
-      "throughput_docs_per_sec": 2.5316455696202533,
+      "latency_ms": 391,
+      "throughput_docs_per_sec": 2.557544757033248,
       "sections": 0,
       "edges": 0,
       "max_heading_depth": 0,
@@ -190,8 +190,8 @@
       "file": "benchmark_data.xlsx",
       "format": "xlsx",
       "backend": "markitdown-cli",
-      "latency_ms": 430,
-      "throughput_docs_per_sec": 2.3255813953488373,
+      "latency_ms": 455,
+      "throughput_docs_per_sec": 2.197802197802198,
       "sections": 0,
       "edges": 0,
       "max_heading_depth": 0,
@@ -252,8 +252,8 @@
       "file": "research_slides.pptx",
       "format": "pptx",
       "backend": "markitdown-cli",
-      "latency_ms": 396,
-      "throughput_docs_per_sec": 2.525252525252525,
+      "latency_ms": 412,
+      "throughput_docs_per_sec": 2.4271844660194173,
       "sections": 0,
       "edges": 0,
       "max_heading_depth": 0,
@@ -376,8 +376,8 @@
       "file": "benchmarks.csv",
       "format": "csv",
       "backend": "markitdown-cli",
-      "latency_ms": 418,
-      "throughput_docs_per_sec": 2.3923444976076556,
+      "latency_ms": 422,
+      "throughput_docs_per_sec": 2.3696682464454977,
       "sections": 0,
       "edges": 0,
       "max_heading_depth": 0,
@@ -428,7 +428,7 @@
       "formats_supported": 6
     },
     "markitdown-cli": {
-      "avg_latency_ms": 438,
+      "avg_latency_ms": 417,
       "avg_sections": 0,
       "avg_heading_detection_pct": 100,
       "avg_keyword_fidelity_pct": 100,
@@ -464,5 +464,5 @@
       "formats_supported": 4
     }
   },
-  "timestamp": "2026-04-23T09:34:03+03:00"
+  "timestamp": "2026-04-23T10:08:25+03:00"
 }

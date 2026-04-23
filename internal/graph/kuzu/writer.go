@@ -554,3 +554,52 @@ func DeleteDocumentChunksQuery(docVPath string) string {
 func DeleteDocumentQuery(docVPath string) string {
 	return fmt.Sprintf(`MATCH (d:Document {vpath: %q}) DETACH DELETE d`, docVPath)
 }
+
+// RemoveFileSymbols deletes all symbols declared by a file and their edges,
+// then deletes the file node itself. Used for incremental graph updates:
+// remove old data for changed files before re-indexing.
+func (g *DB) RemoveFileSymbols(filePath string) error {
+	// 1. Delete edges FROM symbols declared by this file.
+	cypher1 := fmt.Sprintf(
+		`MATCH (f:CodeFile {path: %q})-[:DECLARES]->(s:Symbol)-[r]->() DELETE r`,
+		filePath,
+	)
+	if err := g.exec(cypher1); err != nil {
+		// Ignore if no matches.
+		_ = err
+	}
+
+	// 2. Delete edges TO symbols declared by this file.
+	cypher2 := fmt.Sprintf(
+		`MATCH (f:CodeFile {path: %q})-[:DECLARES]->(s:Symbol)<-[r]-() DELETE r`,
+		filePath,
+	)
+	if err := g.exec(cypher2); err != nil {
+		_ = err
+	}
+
+	// 3. Delete DECLARES edges from this file.
+	cypher3 := fmt.Sprintf(
+		`MATCH (f:CodeFile {path: %q})-[r:DECLARES]->() DELETE r`,
+		filePath,
+	)
+	if err := g.exec(cypher3); err != nil {
+		_ = err
+	}
+
+	// 4. Delete the symbols themselves.
+	cypher4 := fmt.Sprintf(
+		`MATCH (s:Symbol {file: %q}) DELETE s`,
+		filePath,
+	)
+	if err := g.exec(cypher4); err != nil {
+		_ = err
+	}
+
+	// 5. Delete the file node.
+	cypher5 := fmt.Sprintf(
+		`MATCH (f:CodeFile {path: %q}) DELETE f`,
+		filePath,
+	)
+	return g.exec(cypher5)
+}

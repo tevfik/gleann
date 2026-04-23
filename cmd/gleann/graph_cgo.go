@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -120,6 +121,12 @@ func cmdGraph(args []string) {
 		return
 	case "hook":
 		cmdGraphHook(args[1:], config)
+		return
+	case "map":
+		cmdGraphMap(args[1:], config)
+		return
+	case "risk":
+		cmdGraphRisk(args[1:], config)
 		return
 	case "help", "--help":
 		printGraphUsage()
@@ -843,6 +850,211 @@ fi
 	}
 }
 
+// cmdGraphMap generates a compact repo map showing the most important symbols and files.
+func cmdGraphMap(args []string, config gleann.Config) {
+	indexName := getFlag(args, "--index")
+	if indexName == "" {
+		fmt.Fprintln(os.Stderr, "error: --index flag required")
+		os.Exit(1)
+	}
+
+	topN := 20
+	if n := getFlag(args, "--top"); n != "" {
+		fmt.Sscanf(n, "%d", &topN)
+	}
+
+	dbPath := filepath.Join(config.IndexDir, indexName+"_graph")
+	db, err := kgraph.Open(dbPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error opening graph db: %v\n", err)
+		os.Exit(1)
+	}
+	defer db.Close()
+
+	g := community.NewGraph()
+	loadGraphForViz(db, g)
+
+	nodes, edges := g.ExportForAnalysis()
+	if len(nodes) == 0 {
+		fmt.Println("⚠ No nodes in graph. Run: gleann index build <name> --docs <dir> --graph")
+		return
+	}
+
+	ranks := community.PageRank(nodes, edges, 0.85, 30)
+	top := community.TopRanked(ranks, topN)
+
+	// Group by file.
+	type fileGroup struct {
+		file  string
+		nodes []community.RankedNode
+	}
+	fileMap := make(map[string]*fileGroup)
+	nodeFileMap := make(map[string]string)
+	for _, n := range nodes {
+		nodeFileMap[n.ID] = n.File
+	}
+
+	for _, rn := range top {
+		f := nodeFileMap[rn.ID]
+		if f == "" {
+			f = rn.ID // file node
+		}
+		if fileMap[f] == nil {
+			fileMap[f] = &fileGroup{file: f}
+		}
+		fileMap[f].nodes = append(fileMap[f].nodes, rn)
+	}
+
+	// Sort files by total importance.
+	type fileSummary struct {
+		file       string
+		totalScore float64
+		nodes      []community.RankedNode
+	}
+	var files []fileSummary
+	for _, fg := range fileMap {
+		total := 0.0
+		for _, n := range fg.nodes {
+			total += n.Score
+		}
+		files = append(files, fileSummary{file: fg.file, totalScore: total, nodes: fg.nodes})
+	}
+	sort.Slice(files, func(i, j int) bool {
+		return files[i].totalScore > files[j].totalScore
+	})
+
+	fmt.Printf("🗺️  Repo Map — %s (top %d symbols by PageRank)\n\n", indexName, topN)
+
+	for _, fs := range files {
+		fmt.Printf("📄 %s\n", fs.file)
+		for _, n := range fs.nodes {
+			kind := nodeFileMap[n.ID]
+			if kind == n.ID {
+				continue // skip file nodes in their own group
+			}
+			bar := renderBar(n.Score, ranks)
+			fmt.Printf("   %s %-40s %s\n", bar, n.ID, formatScore(n.Score))
+		}
+	}
+
+	fmt.Printf("\n📊 Total: %d nodes, %d edges\n", len(nodes), len(edges))
+}
+
+func renderBar(score float64, allRanks map[string]float64) string {
+	maxRank := 0.0
+	for _, r := range allRanks {
+		if r > maxRank {
+			maxRank = r
+		}
+	}
+	if maxRank == 0 {
+		return "▏"
+	}
+	norm := score / maxRank
+	barLen := int(norm * 10)
+	if barLen < 1 {
+		barLen = 1
+	}
+	bars := "██████████"
+	if barLen > 10 {
+		barLen = 10
+	}
+	return bars[:barLen*3] // UTF-8 block char is 3 bytes
+}
+
+func formatScore(score float64) string {
+	if score >= 0.01 {
+		return fmt.Sprintf("%.4f", score)
+	}
+	return fmt.Sprintf("%.6f", score)
+}
+
+// cmdGraphRisk shows risk analysis for symbols in the graph.
+func cmdGraphRisk(args []string, config gleann.Config) {
+	indexName := getFlag(args, "--index")
+	if indexName == "" {
+		fmt.Fprintln(os.Stderr, "error: --index flag required")
+		os.Exit(1)
+	}
+
+	topN := 20
+	if n := getFlag(args, "--top"); n != "" {
+		fmt.Sscanf(n, "%d", &topN)
+	}
+
+	byFile := false
+	for _, a := range args {
+		if a == "--by-file" {
+			byFile = true
+		}
+	}
+
+	dbPath := filepath.Join(config.IndexDir, indexName+"_graph")
+	db, err := kgraph.Open(dbPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error opening graph db: %v\n", err)
+		os.Exit(1)
+	}
+	defer db.Close()
+
+	g := community.NewGraph()
+	loadGraphForViz(db, g)
+
+	nodes, edges := g.ExportForAnalysis()
+	if len(nodes) == 0 {
+		fmt.Println("⚠ No nodes in graph.")
+		return
+	}
+
+	cfg := community.DefaultRiskConfig()
+	allScores := community.ComputeRiskScores(nodes, edges, cfg)
+
+	if byFile {
+		fileSummary := community.FileRiskSummary(allScores)
+		if topN > len(fileSummary) {
+			topN = len(fileSummary)
+		}
+		fmt.Printf("🔥 File Risk Analysis — %s (top %d)\n\n", indexName, topN)
+		fmt.Printf("%-50s %-10s %-8s %s\n", "FILE", "RISK", "SCORE", "TOP SYMBOL")
+		fmt.Println(strings.Repeat("─", 90))
+		for _, rs := range fileSummary[:topN] {
+			icon := riskIcon(rs.RiskLevel)
+			fmt.Printf("%-50s %s %-10s %.4f   %s\n", truncStr(rs.File, 48), icon, rs.RiskLevel, rs.Score, rs.Name)
+		}
+	} else {
+		top := community.TopRisks(allScores, topN)
+		fmt.Printf("🔥 Symbol Risk Analysis — %s (top %d)\n\n", indexName, topN)
+		fmt.Printf("%-40s %-10s %-10s %-6s %-6s %-6s %s\n", "SYMBOL", "KIND", "RISK", "IN", "OUT", "BLAST", "SCORE")
+		fmt.Println(strings.Repeat("─", 100))
+		for _, rs := range top {
+			icon := riskIcon(rs.RiskLevel)
+			fmt.Printf("%-40s %-10s %s %-10s %-6d %-6d %-6d %.4f\n",
+				truncStr(rs.ID, 38), rs.Kind, icon, rs.RiskLevel,
+				rs.InDegree, rs.OutDegree, rs.BlastRadiusSize, rs.Score)
+		}
+	}
+}
+
+func riskIcon(level string) string {
+	switch level {
+	case "critical":
+		return "🔴"
+	case "high":
+		return "🟠"
+	case "medium":
+		return "🟡"
+	default:
+		return "🟢"
+	}
+}
+
+func truncStr(s string, max int) string {
+	if len(s) <= max {
+		return s
+	}
+	return s[:max-1] + "…"
+}
+
 func printGraphUsage() {
 	fmt.Println(`gleann graph — Code graph analysis & visualization
 
@@ -871,6 +1083,12 @@ Usage:
 
   gleann graph hook install|uninstall|status
       Manage git hooks for automatic graph rebuild on commit
+
+  gleann graph map         --index <name> [--top N]
+      Compact repo map: most important symbols by PageRank, grouped by file
+
+  gleann graph risk        --index <name> [--top N] [--by-file]
+      Risk analysis: centrality × coupling × blast radius scoring
 
 Requires: gleann index build <name> --docs <dir> --graph
 

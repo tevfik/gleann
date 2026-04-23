@@ -73,6 +73,11 @@ type LeannChat struct {
 	client        *http.Client
 	streamClient  *http.Client // No timeout; context handles cancellation for streaming
 	memoryContext string       // Compiled memory context for LLM injection (separate context window)
+
+	// Session continuity: accumulated summary of trimmed conversation history.
+	// When the sliding window drops old messages, they're summarized here
+	// so the LLM retains context from earlier in the conversation.
+	sessionSummary string
 }
 
 func (c *LeannChat) getStreamClient() *http.Client {
@@ -156,13 +161,16 @@ func (c *LeannChat) Ask(ctx context.Context, question string, opts ...SearchOpti
 		})
 	}
 
-	// Add conversation history (Sliding Window: Keep last N messages to prevent context overflow).
-	const historyLimit = 20 // 10 conversation turns (user + assistant)
-	startIdx := 0
-	if len(c.history) > historyLimit {
-		startIdx = len(c.history) - historyLimit
+	// Inject session summary for continuity across history trims.
+	if c.sessionSummary != "" {
+		messages = append(messages, ChatMessage{
+			Role:    "system",
+			Content: "Summary of earlier conversation: " + c.sessionSummary,
+		})
 	}
-	messages = append(messages, c.history[startIdx:]...)
+
+	// Add conversation history with auto-summarization of trimmed messages.
+	messages = append(messages, c.trimmedHistory()...)
 
 	messages = append(messages, ChatMessage{Role: "user", Content: userPrompt})
 
@@ -219,12 +227,14 @@ func (c *LeannChat) AskStream(ctx context.Context, question string, callback Str
 		})
 	}
 
-	const historyLimit = 20
-	startIdx := 0
-	if len(c.history) > historyLimit {
-		startIdx = len(c.history) - historyLimit
+	if c.sessionSummary != "" {
+		messages = append(messages, ChatMessage{
+			Role:    "system",
+			Content: "Summary of earlier conversation: " + c.sessionSummary,
+		})
 	}
-	messages = append(messages, c.history[startIdx:]...)
+
+	messages = append(messages, c.trimmedHistory()...)
 	messages = append(messages, ChatMessage{Role: "user", Content: userPrompt})
 
 	// Step 5: Stream the answer, collecting the full text.
@@ -299,12 +309,13 @@ func (c *LeannChat) AskWithImages(ctx context.Context, question string, images [
 	messages := []ChatMessage{
 		{Role: "system", Content: c.config.SystemPrompt},
 	}
-	const historyLimit = 20
-	startIdx := 0
-	if len(c.history) > historyLimit {
-		startIdx = len(c.history) - historyLimit
+	if c.sessionSummary != "" {
+		messages = append(messages, ChatMessage{
+			Role:    "system",
+			Content: "Summary of earlier conversation: " + c.sessionSummary,
+		})
 	}
-	messages = append(messages, c.history[startIdx:]...)
+	messages = append(messages, c.trimmedHistory()...)
 	messages = append(messages, ChatMessage{Role: "user", Content: userPrompt, Images: images})
 
 	answer, err := c.chat(ctx, messages)
@@ -369,12 +380,13 @@ func (c *LeannChat) AskStreamWithMedia(ctx context.Context, question string, med
 	messages := []ChatMessage{
 		{Role: "system", Content: c.config.SystemPrompt},
 	}
-	const historyLimit = 20
-	startIdx := 0
-	if len(c.history) > historyLimit {
-		startIdx = len(c.history) - historyLimit
+	if c.sessionSummary != "" {
+		messages = append(messages, ChatMessage{
+			Role:    "system",
+			Content: "Summary of earlier conversation: " + c.sessionSummary,
+		})
 	}
-	messages = append(messages, c.history[startIdx:]...)
+	messages = append(messages, c.trimmedHistory()...)
 	messages = append(messages, ChatMessage{Role: "user", Content: userPrompt, Images: images})
 
 	var fullAnswer strings.Builder
@@ -407,9 +419,10 @@ func (c *LeannChat) chatStream(ctx context.Context, messages []ChatMessage, call
 	}
 }
 
-// ClearHistory clears conversation history.
+// ClearHistory clears conversation history and session summary.
 func (c *LeannChat) ClearHistory() {
 	c.history = nil
+	c.sessionSummary = ""
 }
 
 // History returns the current chat history.
@@ -417,10 +430,63 @@ func (c *LeannChat) History() []ChatMessage {
 	return c.history
 }
 
+// SessionSummary returns the current session summary of trimmed history.
+func (c *LeannChat) SessionSummary() string {
+	return c.sessionSummary
+}
+
 // AppendHistory adds a message to the conversation history without
 // triggering a search or LLM call. Used to restore saved conversations.
 func (c *LeannChat) AppendHistory(msg ChatMessage) {
 	c.history = append(c.history, msg)
+}
+
+// SetSearcher replaces the active searcher at runtime.
+// This enables switching between single-index, multi-index, or session searchers
+// without recreating the LeannChat instance (preserves history and state).
+func (c *LeannChat) SetSearcher(s Searcher) {
+	c.searcher = s
+}
+
+// trimmedHistory returns the active history window and auto-summarizes any
+// trimmed messages for session continuity. Dropped messages get their key points
+// compressed into sessionSummary so the LLM retains context from earlier turns.
+func (c *LeannChat) trimmedHistory() []ChatMessage {
+	const historyLimit = 20 // 10 conversation turns (user + assistant)
+	if len(c.history) <= historyLimit {
+		return c.history
+	}
+
+	startIdx := len(c.history) - historyLimit
+	trimmed := c.history[:startIdx]
+
+	// Summarize the trimmed messages.
+	var sb strings.Builder
+	for _, msg := range trimmed {
+		if msg.Role == "user" || msg.Role == "assistant" {
+			sb.WriteString(msg.Content)
+			sb.WriteString(" ")
+		}
+	}
+	if sb.Len() > 0 {
+		newSummary := ExtractSummary(sb.String())
+		if newSummary != "" {
+			if c.sessionSummary != "" {
+				// Merge: re-summarize the combined old + new summary.
+				combined := c.sessionSummary + " " + newSummary
+				c.sessionSummary = ExtractSummary(combined)
+				if c.sessionSummary == "" {
+					c.sessionSummary = combined // fallback if re-summarization fails
+				}
+			} else {
+				c.sessionSummary = newSummary
+			}
+		}
+	}
+
+	// Trim the history array to free memory.
+	c.history = c.history[startIdx:]
+	return c.history
 }
 
 // SaveSession saves the current chat history to a JSON file.

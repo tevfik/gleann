@@ -152,6 +152,9 @@ type ChatModel struct {
 
 	// Attached files for session context.
 	attachedFiles []string // paths of attached files/dirs
+
+	// Multi-index: additional active indexes for concurrent search.
+	activeIndexes []string // names of additional active indexes (besides primary)
 }
 
 // NewChatModel creates a new chat TUI model.
@@ -434,7 +437,6 @@ func (m ChatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.viewport.SetContent(m.renderMessages())
 			m.viewport.GotoBottom()
 			return m, nil
-			return m, nil
 
 		case "ctrl+s":
 			// Toggle settings panel.
@@ -606,6 +608,15 @@ func (m ChatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case strings.HasPrefix(input, "/image "):
 				path := strings.TrimSpace(strings.TrimPrefix(input, "/image "))
 				result := m.handleImageCommand(path)
+				m.messages = append(m.messages, chatMsg{role: "system", content: result})
+				m.textarea.Reset()
+				m.viewport.SetContent(m.renderMessages())
+				m.viewport.GotoBottom()
+				return m, nil
+
+			case strings.HasPrefix(input, "/audio "):
+				path := strings.TrimSpace(strings.TrimPrefix(input, "/audio "))
+				result := m.handleAudioCommand(path)
 				m.messages = append(m.messages, chatMsg{role: "system", content: result})
 				m.textarea.Reset()
 				m.viewport.SetContent(m.renderMessages())
@@ -1863,6 +1874,58 @@ func (m *ChatModel) handleImageCommand(path string) string {
 		filepath.Base(absPath), ext[1:], info.Size()/1024)
 }
 
+// handleAudioCommand loads an audio file and queues it for multimodal LLM input.
+// Ollama uses the same "images" field for both images and audio (native multimodal).
+func (m *ChatModel) handleAudioCommand(path string) string {
+	if path == "" {
+		return "**Usage:** `/audio <filepath>`\n\n" +
+			"Queues an audio file for your **next** message. Supports: MP3, WAV, FLAC, OGG, M4A, AAC, OPUS\n\n" +
+			"**Requires** a multimodal model with audio support (e.g., Gemma4).\n\n" +
+			"**Example:**\n```\n/audio recordings/meeting.mp3\nSummarize this meeting\n```"
+	}
+
+	absPath := path
+	if !filepath.IsAbs(path) {
+		if wd, err := os.Getwd(); err == nil {
+			absPath = filepath.Join(wd, path)
+		}
+	}
+
+	info, err := os.Stat(absPath)
+	if err != nil {
+		return fmt.Sprintf("⚠ Audio file not found: %s", err)
+	}
+	if info.IsDir() {
+		return "⚠ Path is a directory, not an audio file."
+	}
+
+	ext := strings.ToLower(filepath.Ext(absPath))
+	validExts := map[string]bool{
+		".mp3": true, ".wav": true, ".flac": true, ".ogg": true,
+		".m4a": true, ".aac": true, ".opus": true, ".wma": true,
+	}
+	if !validExts[ext] {
+		return fmt.Sprintf("⚠ Unsupported audio format `%s`. Use MP3, WAV, FLAC, OGG, M4A, AAC, or OPUS.", ext)
+	}
+
+	// Check file size (max 50MB for audio).
+	if info.Size() > 50*1024*1024 {
+		return "⚠ Audio file too large (max 50 MB)."
+	}
+
+	data, err := os.ReadFile(absPath)
+	if err != nil {
+		return fmt.Sprintf("⚠ Read error: %s", err)
+	}
+
+	// Ollama uses the same "images" field for audio (native multimodal format).
+	encoded := base64.StdEncoding.EncodeToString(data)
+	m.pendingImages = append(m.pendingImages, encoded)
+
+	return fmt.Sprintf("🎵 Queued `%s` (%s, %d KB). Send your next message to analyze it.\n⚠ Requires Gemma4 or another audio-capable model.",
+		filepath.Base(absPath), ext[1:], info.Size()/1024)
+}
+
 // handleAttachCommand adds a file or directory to the session context.
 func (m *ChatModel) handleAttachCommand(args string) string {
 	if args == "" || args == "--list" {
@@ -1948,6 +2011,14 @@ func (m *ChatModel) handleDetachCommand(path string) string {
 
 // handleIndexCommand handles /index subcommands.
 func (m *ChatModel) handleIndexCommand(args string) string {
+	// Handle "add" and "remove" subcommands for multi-index.
+	if strings.HasPrefix(args, "add ") {
+		return m.handleIndexAdd(strings.TrimPrefix(args, "add "))
+	}
+	if strings.HasPrefix(args, "remove ") {
+		return m.handleIndexRemove(strings.TrimPrefix(args, "remove "))
+	}
+
 	if args == "" || args == "info" {
 		info := fmt.Sprintf("📊 **Index:** %s\n🤖 **Model:** %s\n🔤 **Embedding:** %s/%s",
 			m.indexName, m.modelName, m.embeddingProvider, m.embeddingModel)
@@ -1986,6 +2057,10 @@ func (m *ChatModel) handleIndexCommand(args string) string {
 				}
 			}
 			info += "\n\n**Switch:** `/index <name>` • **Details:** `/index info`"
+		info += "\n**Multi-index:** `/index add <name>` • `/index remove <name>`"
+		if len(m.activeIndexes) > 0 {
+			info += fmt.Sprintf("\n**Active indexes:** %s + %s", m.indexName, strings.Join(m.activeIndexes, ", "))
+		}
 		}
 		return info
 	}
@@ -2013,6 +2088,64 @@ func (m *ChatModel) handleIndexCommand(args string) string {
 
 	m.indexName = newIndex
 	return fmt.Sprintf("✅ Switched to index %q", newIndex)
+}
+
+// handleIndexAdd adds an additional index for concurrent multi-index search.
+func (m *ChatModel) handleIndexAdd(name string) string {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return "Usage: /index add <name>"
+	}
+	if name == m.indexName {
+		return fmt.Sprintf("⚠ %q is already the primary index.", name)
+	}
+	for _, n := range m.activeIndexes {
+		if n == name {
+			return fmt.Sprintf("⚠ %q is already active.", name)
+		}
+	}
+	cfg := LoadSavedConfig()
+	if cfg == nil || cfg.IndexDir == "" {
+		return "⚠ No index directory configured."
+	}
+	indexes, err := gleann.ListIndexes(cfg.IndexDir)
+	if err != nil {
+		return fmt.Sprintf("⚠ Error listing indexes: %s", err)
+	}
+	found := false
+	for _, idx := range indexes {
+		if idx.Name == name {
+			found = true
+			break
+		}
+	}
+	if !found {
+		return fmt.Sprintf("⚠ Index %q not found.", name)
+	}
+	m.activeIndexes = append(m.activeIndexes, name)
+	return fmt.Sprintf("➕ Added index %q. Queries now search: %s, %s",
+		name, m.indexName, strings.Join(m.activeIndexes, ", "))
+}
+
+// handleIndexRemove removes an index from the multi-index set.
+func (m *ChatModel) handleIndexRemove(name string) string {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return "Usage: /index remove <name>"
+	}
+	for i, n := range m.activeIndexes {
+		if n == name {
+			m.activeIndexes = append(m.activeIndexes[:i], m.activeIndexes[i+1:]...)
+			msg := fmt.Sprintf("➖ Removed index %q.", name)
+			if len(m.activeIndexes) > 0 {
+				msg += fmt.Sprintf(" Active: %s, %s", m.indexName, strings.Join(m.activeIndexes, ", "))
+			} else {
+				msg += fmt.Sprintf(" Querying only: %s", m.indexName)
+			}
+			return msg
+		}
+	}
+	return fmt.Sprintf("⚠ Index %q is not in the active set.", name)
 }
 
 // handleBudgetCommand shows token budget information.
