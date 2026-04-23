@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"strings"
 
 	"github.com/tevfik/gleann/modules/chunking"
 	"github.com/tevfik/gleann/pkg/gleann"
@@ -162,23 +161,4 @@ func formatSize(bytes int64) string {
 	}
 }
 
-// isCodeExtension returns true if the file extension is a recognized source code format.
-func isCodeExtension(ext string) bool {
-	codeExts := map[string]bool{
-		".go": true, ".py": true, ".js": true, ".ts": true, ".jsx": true, ".tsx": true,
-		".java": true, ".c": true, ".cpp": true, ".h": true, ".hpp": true,
-		".rs": true, ".rb": true, ".php": true, ".swift": true, ".kt": true, ".kts": true,
-		".cs": true, ".m": true, ".mm": true, ".lua": true, ".r": true,
-		".scala": true, ".sc": true, ".clj": true, ".ex": true, ".exs": true, ".erl": true, ".hs": true,
-		".ml": true, ".pl": true, ".sh": true, ".bash": true, ".zsh": true,
-		".fish": true, ".ps1": true, ".bat": true, ".cmd": true,
-		".sql": true, ".graphql": true, ".proto": true,
-		".yaml": true, ".yml": true, ".toml": true, ".ini": true,
-		".xml": true, ".html": true, ".css": true, ".scss": true, ".less": true,
-		".vue": true, ".svelte": true, ".astro": true,
-		".tf": true, ".hcl": true, ".nix": true,
-		".zig": true, ".nim": true, ".v": true, ".d": true,
-		".dart": true, ".groovy": true, ".gradle": true,
-	}
-	return codeExts[strings.ToLower(ext)]
-}
+

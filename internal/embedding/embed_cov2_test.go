@@ -2,18 +2,7 @@ package embedding
 
 import (
 	"testing"
-	"time"
 )
-
-// ── RecomputerAdapter ─────────────────────────────────────────
-
-func TestRecomputerAdapterCov2(t *testing.T) {
-	b := &Batcher{}
-	adapter := b.RecomputerAdapter()
-	if adapter == nil {
-		t.Fatal("expected non-nil adapter")
-	}
-}
 
 // ── GetModelTokenLimit (deeper branches) ──────────────────────
 
@@ -75,14 +64,5 @@ func TestTruncateToTokenLimitCov2_SmallMax(t *testing.T) {
 	result := TruncateToTokenLimit(text, 100)
 	if len(result) > 320 {
 		t.Fatal("should respect minimum token limit")
-	}
-}
-
-// ── NewBatcher edge cases ─────────────────────────────────────
-
-func TestNewBatcherCov2_Defaults(t *testing.T) {
-	b := NewBatcher(nil, 100*time.Millisecond, 32)
-	if b.maxBatch != 32 {
-		t.Fatalf("expected maxBatch=32, got %d", b.maxBatch)
 	}
 }

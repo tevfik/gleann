@@ -188,6 +188,18 @@ func (p *Processor) ProcessFile(path string) ProcessResult {
 		return result
 	}
 
+	// Video files: use ffmpeg frame extraction pipeline if available.
+	if result.MediaType == MediaTypeVideo {
+		analysis, err := p.AnalyzeVideo(path, DefaultFrameConfig())
+		if err == nil {
+			result.Description = analysis.Summary
+			CleanupFrames(analysis.Frames)
+			return result
+		}
+		// ffmpeg not available — fall through to naive base64 (images-only models
+		// won't handle raw video, but some models accept it).
+	}
+
 	// Read file and base64 encode it.
 	data, err := os.ReadFile(path)
 	if err != nil {

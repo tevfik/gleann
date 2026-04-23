@@ -304,13 +304,6 @@ func TestLogo(t *testing.T) {
 	}
 }
 
-func TestSmallLogo(t *testing.T) {
-	logo := SmallLogo()
-	if logo == "" {
-		t.Error("SmallLogo() returned empty")
-	}
-}
-
 // ── Index list model ───────────────────────────────────────────
 
 func TestIndexListModelEmpty(t *testing.T) {

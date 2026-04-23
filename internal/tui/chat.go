@@ -149,6 +149,7 @@ type ChatModel struct {
 	// Context budget tracking.
 	tokensSent     int // approximate tokens sent to LLM
 	tokensReceived int // approximate tokens received from LLM
+	contextLimit   int // model context window size (tokens, 0=unknown)
 
 	// Attached files for session context.
 	attachedFiles []string // paths of attached files/dirs
@@ -342,6 +343,7 @@ func NewChatModel(chat *gleann.LeannChat, indexName, modelName string) ChatModel
 		height:            24,
 		memoryMgr:         memMgr,
 		mouseEnabled:      true,
+		contextLimit:      estimateContextLimit(modelName),
 	}
 	// Initialize layout with defaults so View renders immediately.
 	m = m.relayout()
@@ -1237,57 +1239,6 @@ func (m *ChatModel) applySettings() {
 
 // ── Commands ───────────────────────────────────────────────────
 
-func (m ChatModel) askLLM(question string) tea.Cmd {
-	chat := m.chat
-	topK := m.topK
-	rerank := m.rerankEnabled
-	return func() tea.Msg {
-		answer, err := chat.Ask(context.Background(), question,
-			gleann.WithTopK(topK),
-			gleann.WithReranker(rerank))
-		return answerMsg{content: answer, err: err}
-	}
-}
-
-// askLLMStream performs RAG with streaming token delivery.
-func (m ChatModel) askLLMStream(question string) tea.Cmd {
-	chat := m.chat
-	topK := m.topK
-	rerank := m.rerankEnabled
-	memMgr := m.memoryMgr
-
-	return func() tea.Msg {
-		// Refresh memory context before each query.
-		if memMgr != nil {
-			if cw, err := memMgr.BuildContext(); err == nil {
-				rendered := cw.Render()
-				chat.SetMemoryContext(rendered)
-			}
-		}
-
-		// Create a channel for streaming communication.
-		tokenChan := make(chan string, 100)
-
-		// Start streaming goroutine.
-		go func() {
-			defer close(tokenChan)
-			err := chat.AskStream(context.Background(), question,
-				func(token string) {
-					tokenChan <- token
-				},
-				gleann.WithTopK(topK),
-				gleann.WithReranker(rerank))
-			if err != nil {
-				// Send error as a special token.
-				tokenChan <- "\x00ERROR:" + err.Error()
-			}
-		}()
-
-		// Return start message with the token channel.
-		return streamStartMsg{tokenChan: tokenChan}
-	}
-}
-
 // waitForToken waits for the next token from the channel.
 func waitForToken(ch <-chan string) tea.Cmd {
 	return func() tea.Msg {
@@ -1427,9 +1378,21 @@ func (m ChatModel) View() tea.View {
 	// Token budget badge.
 	budgetBadge := ""
 	if m.tokensSent > 0 || m.tokensReceived > 0 {
-		budgetBadge = lipgloss.NewStyle().
-			Foreground(ColorMuted).
-			Render(fmt.Sprintf(" • ~%dk tok", (m.tokensSent+m.tokensReceived)/1000))
+		total := m.tokensSent + m.tokensReceived
+		if m.contextLimit > 0 {
+			pct := total * 100 / m.contextLimit
+			color := ColorMuted
+			if pct >= 80 {
+				color = ColorAccent // warn color
+			}
+			budgetBadge = lipgloss.NewStyle().
+				Foreground(color).
+				Render(fmt.Sprintf(" • ~%dk/%dk tok (%d%%)", total/1000, m.contextLimit/1000, pct))
+		} else {
+			budgetBadge = lipgloss.NewStyle().
+				Foreground(ColorMuted).
+				Render(fmt.Sprintf(" • ~%dk tok", total/1000))
+		}
 	}
 	// Pending images indicator.
 	imageBadge := ""
@@ -2212,15 +2175,37 @@ func (m *ChatModel) handleIndexRemove(name string) string {
 func (m *ChatModel) handleBudgetCommand() string {
 	total := m.tokensSent + m.tokensReceived
 	histLen := len(m.chat.History())
-	return fmt.Sprintf("📊 **Token Budget (approximate)**\n"+
+
+	utilization := "unknown (no context limit set)"
+	if m.contextLimit > 0 {
+		pct := total * 100 / m.contextLimit
+		utilization = fmt.Sprintf("%d%% (%dk / %dk)", pct, total/1000, m.contextLimit/1000)
+	}
+
+	savings := ""
+	if m.tokensSent > 0 {
+		// Estimate savings from RAG vs raw context.
+		// Average file ~200 tokens, attached files represent raw context.
+		rawEstimate := len(m.attachedFiles) * 200 * histLen
+		if rawEstimate > 0 && rawEstimate > m.tokensSent {
+			savingsPct := (rawEstimate - m.tokensSent) * 100 / rawEstimate
+			savings = fmt.Sprintf("\n  RAG savings: ~%d%% (vs raw context)", savingsPct)
+		}
+	}
+
+	return fmt.Sprintf("📊 **Token Budget**\n"+
 		"  Sent: ~%d tokens\n"+
 		"  Received: ~%d tokens\n"+
 		"  Total: ~%d tokens\n"+
-		"  History: %d messages\n"+
+		"  Window: %s\n"+
+		"  History: %d messages (%d turns, trimmed at 20)\n"+
+		"  Session summary: %s\n"+
 		"  Pending images: %d\n"+
-		"  Attached files: %d",
-		m.tokensSent, m.tokensReceived, total, histLen,
-		len(m.pendingImages), len(m.attachedFiles))
+		"  Attached files: %d%s",
+		m.tokensSent, m.tokensReceived, total,
+		utilization, histLen, histLen/2,
+		truncStr(m.chat.SessionSummary(), 80),
+		len(m.pendingImages), len(m.attachedFiles), savings)
 }
 
 // askLLMStreamWithMedia performs streaming RAG, optionally with attached media.
@@ -2540,4 +2525,44 @@ func (m *ChatModel) handleGraphCommand(symbol string) string {
 	}
 
 	return sb.String()
+}
+
+// truncStr truncates a string to maxLen characters, appending "..." if truncated.
+func truncStr(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	if maxLen <= 3 {
+		return "..."
+	}
+	return s[:maxLen-3] + "..."
+}
+
+// estimateContextLimit returns a rough context window size in tokens based on model name.
+func estimateContextLimit(model string) int {
+	m := strings.ToLower(model)
+	switch {
+	case strings.Contains(m, "gpt-4o"), strings.Contains(m, "gpt-4-turbo"):
+		return 128000
+	case strings.Contains(m, "gpt-4"):
+		return 8192
+	case strings.Contains(m, "gpt-3.5"):
+		return 16384
+	case strings.Contains(m, "claude"):
+		return 200000
+	case strings.Contains(m, "gemma"):
+		return 8192
+	case strings.Contains(m, "llama3"):
+		return 8192
+	case strings.Contains(m, "mistral"), strings.Contains(m, "mixtral"):
+		return 32768
+	case strings.Contains(m, "qwen"):
+		return 32768
+	case strings.Contains(m, "deepseek"):
+		return 128000
+	case strings.Contains(m, "command-r"):
+		return 128000
+	default:
+		return 0 // unknown
+	}
 }

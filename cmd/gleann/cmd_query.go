@@ -103,6 +103,7 @@ func cmdInfo(args []string) {
 }
 
 func cmdAsk(args []string) {
+	tui.PrintSetupHint()
 	// If no args provided, show usage.
 	if len(args) == 0 {
 		fmt.Fprintln(os.Stderr, "usage: gleann ask [name[,name2,...]] [question] [flags]")

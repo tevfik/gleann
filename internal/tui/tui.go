@@ -56,27 +56,6 @@ func Run() error {
 	}
 }
 
-// RunOnboard runs the onboarding wizard standalone and returns the result.
-func RunOnboard() (*OnboardResult, error) {
-	var m OnboardModel
-	if cfg := LoadSavedConfig(); cfg != nil && cfg.Completed {
-		m = NewOnboardModelWithConfig(cfg)
-	} else {
-		m = NewOnboardModel()
-	}
-	p := tea.NewProgram(m)
-	result, err := p.Run()
-	if err != nil {
-		return nil, fmt.Errorf("onboard: %w", err)
-	}
-	ob := result.(OnboardModel)
-	if ob.Cancelled() {
-		return nil, nil
-	}
-	r := ob.Result()
-	return &r, nil
-}
-
 // RunOnboardWithPlugins runs the onboarding wizard and also returns whether
 // the user chose "Manage Plugins" from the settings menu.
 func RunOnboardWithPlugins() (*OnboardResult, bool, error) {

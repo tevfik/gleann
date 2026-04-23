@@ -78,7 +78,6 @@ func wrapLine(line string, width int) string {
 type StreamWriter struct {
 	width  int
 	col    int
-	buf    strings.Builder
 	output func(string)
 }
 

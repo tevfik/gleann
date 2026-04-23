@@ -1690,14 +1690,6 @@ func (m OnboardModel) installPath() string {
 	}
 }
 
-func modelNames(models []ModelInfo) []string {
-	names := make([]string, len(models))
-	for i, m := range models {
-		names[i] = m.Name
-	}
-	return names
-}
-
 // capitalize returns s with the first letter upper-cased.
 func capitalize(s string) string {
 	if s == "" {

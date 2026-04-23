@@ -32,12 +32,14 @@ func DefaultPDFConfig() PDFVisionConfig {
 
 // PDFPageResult holds the analysis of a single PDF page.
 type PDFPageResult struct {
-	PageNum     int    // 1-based page number.
-	ImagePath   string // Path to rendered page image.
-	Description string // VLM-generated description.
-	HasTable    bool   // Whether a table was detected.
-	HasChart    bool   // Whether a chart/figure was detected.
-	MarkerText  string // Text from marker plugin (if available).
+	PageNum     int                   // 1-based page number.
+	ImagePath   string                // Path to rendered page image.
+	Description string                // VLM-generated description.
+	HasTable    bool                  // Whether a table was detected.
+	HasChart    bool                  // Whether a chart/figure was detected.
+	Tables      *TableExtractionResult // Extracted tables (nil if no tables detected).
+	Charts      *ChartExtractionResult // Extracted charts (nil if no charts detected).
+	MarkerText  string                // Text from marker plugin (if available).
 	Error       error
 }
 
@@ -82,6 +84,10 @@ func (p *Processor) AnalyzePDF(pdfPath string, cfg PDFVisionConfig) (*PDFAnalysi
 		SourcePath: pdfPath,
 		TotalPages: len(pageImages),
 	}
+	// Ensure temp page images are cleaned up after processing.
+	defer func() {
+		CleanupPDFPages(analysis.Pages)
+	}()
 
 	// Process each page with VLM.
 	for i, imgPath := range pageImages {
@@ -117,6 +123,14 @@ func (p *Processor) AnalyzePDF(pdfPath string, cfg PDFVisionConfig) (*PDFAnalysi
 		result.Description = desc
 		result.HasTable = detectTableInDescription(desc)
 		result.HasChart = detectChartInDescription(desc)
+
+		// Extract structured tables/charts when detected.
+		if result.HasTable {
+			result.Tables, _ = p.ExtractTables(imgPath, pageNum)
+		}
+		if result.HasChart {
+			result.Charts, _ = p.ExtractCharts(imgPath, pageNum)
+		}
 		analysis.Pages = append(analysis.Pages, result)
 	}
 

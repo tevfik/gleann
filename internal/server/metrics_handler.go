@@ -3,7 +3,6 @@ package server
 import (
 	"fmt"
 	"net/http"
-	"sync"
 	"sync/atomic"
 	"time"
 )
@@ -24,7 +23,6 @@ type metrics struct {
 	deleteRequests      atomic.Int64
 	webhooksFired       atomic.Int64
 
-	mu        sync.RWMutex
 	startTime time.Time
 }
 
