@@ -160,3 +160,45 @@ How gleann compares to other context-optimization tools:
 | **gleann** | Semantic search + RAG + graph | TBD | Hybrid vector + graph retrieval |
 
 > gleann's advantage: all-in-one local binary with zero cloud dependency.
+
+---
+
+## BM25 Stress & Scale Benchmarks
+
+Validated via `go test ./tests/benchmarks/ -run "TestRecall|TestStress"`:
+
+| Operation | Corpus Size | Latency | Notes |
+|-----------|-------------|---------|-------|
+| BM25Adapter index | 50,000 passages | 390 ms | Full tokenize + index build |
+| PassageManager disk | 20,000 passages | 55.6 MB | ~2.8x raw text overhead |
+| Hybrid search (vector+BM25) | 5,000 | <100 ms | End-to-end with score merging |
+
+**Edge case coverage (all pass):**
+- Empty corpus searches
+- Single-document corpus
+- Common stop words only queries
+- Unicode / special character handling
+- Very long passage indexing (10K+ tokens)
+
+---
+
+## Graph Intelligence Benchmarks
+
+| Feature | Method | Performance | Notes |
+|---------|--------|-------------|-------|
+| PageRank | Power iteration (30 iter, d=0.85) | <10 ms / 5K nodes | Converges in ~20 iterations |
+| Community detection | Louvain | <50 ms / 5K nodes | Q > 0.4 = well-modularized |
+| Risk scoring | Centrality + Coupling + Blast | <15 ms / 5K nodes | Composite [0,1] score |
+| Repo map generation | PageRank + TopK + grouping | <5 ms / 5K nodes | Token-budgeted output |
+| Blast radius (BFS) | 3-hop BFS with PR weighting | <2 ms / query | Per-symbol impact analysis |
+
+---
+
+## Multi-Index Search
+
+| Indexes | Query Latency | Merge Strategy |
+|---------|---------------|----------------|
+| 2 indexes | ~2x single | Score-weighted interleave |
+| 5 indexes | ~5x single | Parallel search + merge |
+
+Multi-index queries (`gleann ask idx1,idx2 "question"`) search each index independently and merge results by relevance score.

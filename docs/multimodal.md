@@ -68,6 +68,87 @@ description, err := proc.ProcessFile("screenshot.png")
 // description: "The image shows a terminal window with..."
 ```
 
+## Video Frame Extraction
+
+gleann can extract keyframes from video files and analyze each frame with a multimodal model. Requires `ffmpeg` and `ffprobe`.
+
+```go
+import "github.com/tevfik/gleann/internal/multimodal"
+
+cfg := multimodal.DefaultFrameConfig()
+cfg.MaxFrames = 8    // Sample up to 8 frames
+cfg.Quality = 85     // JPEG quality
+
+proc := multimodal.NewProcessor("http://localhost:11434")
+analysis, err := proc.AnalyzeVideo("demo.mp4", cfg)
+// analysis.Duration   → video length in seconds
+// analysis.Frames     → extracted frame paths + timestamps
+// analysis.Descriptions → per-frame VLM descriptions
+// analysis.Summary    → combined narrative summary
+```
+
+The pipeline:
+1. Probes video duration via `ffprobe`
+2. Calculates FPS to evenly sample `MaxFrames` frames (capped at 1 fps)
+3. Extracts JPEG frames via `ffmpeg`
+4. Sends each frame to the multimodal model for description
+5. Combines per-frame descriptions into a timestamped summary
+
+## PDF Vision Pipeline
+
+Hybrid PDF processing: marker plugin for text → page rendering → VLM for tables/charts.
+
+```go
+cfg := multimodal.DefaultPDFConfig()
+cfg.DPI = 150       // Render resolution
+cfg.MaxPages = 0    // 0 = all pages
+cfg.UseMarker = true // Try gleann-plugin-marker first
+
+proc := multimodal.NewProcessor("http://localhost:11434")
+analysis, err := proc.AnalyzePDF("report.pdf", cfg)
+// analysis.TotalPages → number of pages
+// analysis.Pages[i].Description → VLM description
+// analysis.Pages[i].HasTable   → table detected
+// analysis.Pages[i].HasChart   → chart/figure detected
+// analysis.Pages[i].MarkerText → text from marker plugin
+```
+
+**Rendering backends** (at least one required):
+- `pdftoppm` (poppler-utils) — preferred
+- `mutool` (mupdf-tools) — fallback
+
+The pipeline:
+1. If `UseMarker` is true, attempt text extraction via gleann-plugin-marker
+2. Render each page to JPEG at configured DPI
+3. Send page images to VLM with a structured prompt
+4. Detect tables and charts from VLM response
+5. Combine marker text + VLM analysis per page
+
+## Audio Input
+
+Audio files can be processed in two ways:
+
+1. **Plugin-based transcription**: `gleann-plugin-sound` uses whisper.cpp for speech-to-text
+2. **Model-native**: Multimodal models with audio support (e.g., Gemma 4) process audio directly
+
+In the TUI, use `/audio` to attach audio files (50 MB limit).
+
+## Image Indexing
+
+`ProcessDirectory` scans a directory for multimodal files and generates text descriptions for vector indexing:
+
+```go
+proc := multimodal.NewProcessor("http://localhost:11434")
+items, err := proc.ProcessDirectory("./assets", nil, func(cur, total int, path string) {
+    fmt.Printf("[%d/%d] %s\n", cur, total, path)
+})
+// items[i].Source      → original file path
+// items[i].Text        → "[Image: photo.jpg]\n\nA screenshot showing..."
+// items[i].MediaType   → Image, Audio, or Video
+```
+
+This enables `gleann build` with `--multimodal-model` to include media descriptions in the vector index alongside text documents.
+
 ## Auto-Detection Flow
 
 When no model is explicitly configured:
