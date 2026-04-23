@@ -673,6 +673,32 @@ func (m ChatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.viewport.SetContent(m.renderMessages())
 				m.viewport.GotoBottom()
 				return m, nil
+
+			case strings.HasPrefix(input, "/script "):
+				task := strings.TrimSpace(strings.TrimPrefix(input, "/script "))
+				result := m.handleScriptCommand(task)
+				m.messages = append(m.messages, chatMsg{role: "system", content: result})
+				m.textarea.Reset()
+				m.viewport.SetContent(m.renderMessages())
+				m.viewport.GotoBottom()
+				return m, nil
+
+			case input == "/script":
+				result := m.handleScriptCommand("")
+				m.messages = append(m.messages, chatMsg{role: "system", content: result})
+				m.textarea.Reset()
+				m.viewport.SetContent(m.renderMessages())
+				m.viewport.GotoBottom()
+				return m, nil
+
+			case strings.HasPrefix(input, "/video "):
+				path := strings.TrimSpace(strings.TrimPrefix(input, "/video "))
+				result := m.handleVideoCommand(path)
+				m.messages = append(m.messages, chatMsg{role: "system", content: result})
+				m.textarea.Reset()
+				m.viewport.SetContent(m.renderMessages())
+				m.viewport.GotoBottom()
+				return m, nil
 			}
 
 			// Send message to LLM with streaming.
@@ -2239,4 +2265,143 @@ func (m ChatModel) askLLMStreamWithMedia(question string, images []string) tea.C
 
 		return streamStartMsg{tokenChan: tokenChan}
 	}
+}
+
+// handleScriptCommand implements script-first mode: ask the LLM to generate
+// an analysis script instead of answering directly. The script is saved to a
+// temp file for user review and optional execution.
+func (m *ChatModel) handleScriptCommand(task string) string {
+	if task == "" {
+		return "**Script-first mode** `/script <task>`\n\n" +
+			"Asks the LLM to generate a runnable script for your task.\n\n" +
+			"**Examples:**\n" +
+			"```\n" +
+			"/script analyze all Go files for unused exports\n" +
+			"/script find duplicate functions across packages\n" +
+			"/script count lines of code by language\n" +
+			"```\n\n" +
+			"The script is saved to a temp file. Review before running."
+	}
+
+	// Build a script-generation prompt.
+	prompt := fmt.Sprintf(
+		"Generate a self-contained bash script that performs this task:\n\n%s\n\n"+
+			"Requirements:\n"+
+			"- Use standard Unix tools (grep, awk, find, sort, etc.)\n"+
+			"- Include error handling (set -euo pipefail)\n"+
+			"- Add comments explaining each step\n"+
+			"- Print results to stdout in a readable format\n"+
+			"- Working directory: current directory\n"+
+			"- Output ONLY the script, no explanation before or after\n"+
+			"- Start with #!/bin/bash",
+		task,
+	)
+
+	answer, err := m.chat.Ask(context.Background(), prompt)
+	if err != nil {
+		return fmt.Sprintf("⚠ Script generation failed: %s", err)
+	}
+
+	// Extract the script from the response (strip markdown fences if present).
+	script := extractScript(answer)
+	if script == "" {
+		return "⚠ Could not extract a valid script from the response."
+	}
+
+	// Save to temp file.
+	tmpDir := os.TempDir()
+	scriptPath := filepath.Join(tmpDir, fmt.Sprintf("gleann-script-%d.sh", os.Getpid()))
+	if err := os.WriteFile(scriptPath, []byte(script), 0755); err != nil {
+		return fmt.Sprintf("⚠ Failed to save script: %s", err)
+	}
+
+	return fmt.Sprintf("📝 **Generated script** → `%s`\n\n```bash\n%s\n```\n\n"+
+		"**Review the script**, then run:\n```\nbash %s\n```",
+		scriptPath, script, scriptPath)
+}
+
+// extractScript pulls a bash script from LLM output, stripping markdown fences.
+func extractScript(text string) string {
+	// Try to find fenced code block.
+	if idx := strings.Index(text, "```bash"); idx >= 0 {
+		start := idx + len("```bash")
+		if end := strings.Index(text[start:], "```"); end >= 0 {
+			return strings.TrimSpace(text[start : start+end])
+		}
+	}
+	if idx := strings.Index(text, "```sh"); idx >= 0 {
+		start := idx + len("```sh")
+		if end := strings.Index(text[start:], "```"); end >= 0 {
+			return strings.TrimSpace(text[start : start+end])
+		}
+	}
+	if idx := strings.Index(text, "```"); idx >= 0 {
+		start := idx + len("```")
+		if end := strings.Index(text[start:], "```"); end >= 0 {
+			candidate := strings.TrimSpace(text[start : start+end])
+			if strings.HasPrefix(candidate, "#!/") || strings.HasPrefix(candidate, "set ") {
+				return candidate
+			}
+		}
+	}
+	// No fences — if it looks like a script, use it directly.
+	trimmed := strings.TrimSpace(text)
+	if strings.HasPrefix(trimmed, "#!/") {
+		return trimmed
+	}
+	return ""
+}
+
+// handleVideoCommand loads a video file and queues it for multimodal LLM input.
+// For models that support video natively (e.g., Gemma4), the file is sent as-is.
+// The video is base64 encoded and sent via the same images field Ollama uses.
+func (m *ChatModel) handleVideoCommand(path string) string {
+	if path == "" {
+		return "**Usage:** `/video <filepath>`\n\n" +
+			"Queues a video file for your **next** message.\n" +
+			"Supports: MP4, AVI, MKV, MOV, WEBM\n\n" +
+			"**Requires** a multimodal model with video support.\n\n" +
+			"**Example:**\n```\n/video demo.mp4\nWhat happens in this video?\n```"
+	}
+
+	absPath := path
+	if !filepath.IsAbs(path) {
+		if wd, err := os.Getwd(); err == nil {
+			absPath = filepath.Join(wd, path)
+		}
+	}
+
+	info, err := os.Stat(absPath)
+	if err != nil {
+		return fmt.Sprintf("⚠ Video file not found: %s", err)
+	}
+	if info.IsDir() {
+		return "⚠ Path is a directory, not a video file."
+	}
+
+	ext := strings.ToLower(filepath.Ext(absPath))
+	validExts := map[string]bool{
+		".mp4": true, ".avi": true, ".mkv": true,
+		".mov": true, ".webm": true, ".flv": true, ".wmv": true,
+	}
+	if !validExts[ext] {
+		return fmt.Sprintf("⚠ Unsupported video format `%s`. Use MP4, AVI, MKV, MOV, or WEBM.", ext)
+	}
+
+	// Check file size (max 100MB for video).
+	if info.Size() > 100*1024*1024 {
+		return "⚠ Video file too large (max 100 MB)."
+	}
+
+	data, err := os.ReadFile(absPath)
+	if err != nil {
+		return fmt.Sprintf("⚠ Read error: %s", err)
+	}
+
+	encoded := base64.StdEncoding.EncodeToString(data)
+	m.pendingImages = append(m.pendingImages, encoded)
+
+	return fmt.Sprintf("🎬 Queued `%s` (%s, %d MB). Send your next message to analyze it.\n"+
+		"⚠ Requires Gemma4 or another video-capable model.",
+		filepath.Base(absPath), ext[1:], info.Size()/(1024*1024))
 }

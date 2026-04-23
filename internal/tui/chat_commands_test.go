@@ -498,3 +498,142 @@ func TestClearResetsNewFields(t *testing.T) {
 		t.Error("clear should reset token counters")
 	}
 }
+
+// ── extractScript ──────────────────────────────────────────────
+
+func TestExtractScript_BashFence(t *testing.T) {
+	input := "Here's a script:\n```bash\n#!/bin/bash\necho hello\n```\nDone."
+	got := extractScript(input)
+	if !strings.HasPrefix(got, "#!/bin/bash") {
+		t.Errorf("expected script start, got: %s", got)
+	}
+	if !strings.Contains(got, "echo hello") {
+		t.Error("expected echo hello in script")
+	}
+}
+
+func TestExtractScript_ShFence(t *testing.T) {
+	input := "```sh\nset -euo pipefail\nls -la\n```"
+	got := extractScript(input)
+	if !strings.Contains(got, "set -euo pipefail") {
+		t.Errorf("expected script, got: %s", got)
+	}
+}
+
+func TestExtractScript_GenericFence(t *testing.T) {
+	input := "```\n#!/bin/bash\nfind . -name '*.go'\n```"
+	got := extractScript(input)
+	if !strings.HasPrefix(got, "#!/bin/bash") {
+		t.Errorf("expected shebang, got: %s", got)
+	}
+}
+
+func TestExtractScript_NoFence(t *testing.T) {
+	input := "#!/bin/bash\necho 'no fences'"
+	got := extractScript(input)
+	if got != input {
+		t.Errorf("expected raw script, got: %s", got)
+	}
+}
+
+func TestExtractScript_Empty(t *testing.T) {
+	got := extractScript("Just some text without any script")
+	if got != "" {
+		t.Errorf("expected empty, got: %s", got)
+	}
+}
+
+// ── handleScriptCommand ────────────────────────────────────────
+
+func TestHandleScriptCommand_Empty(t *testing.T) {
+	m := newTestChatModel(t)
+	result := m.handleScriptCommand("")
+	if !strings.Contains(result, "Script-first mode") {
+		t.Errorf("expected usage message, got: %s", result)
+	}
+}
+
+// ── handleVideoCommand ─────────────────────────────────────────
+
+func TestHandleVideoCommand_Empty(t *testing.T) {
+	m := newTestChatModel(t)
+	result := m.handleVideoCommand("")
+	if !strings.Contains(result, "Usage") {
+		t.Error("expected usage message")
+	}
+}
+
+func TestHandleVideoCommand_FileNotFound(t *testing.T) {
+	m := newTestChatModel(t)
+	result := m.handleVideoCommand("/nonexistent/video.mp4")
+	if !strings.Contains(result, "not found") {
+		t.Error("expected not found error")
+	}
+}
+
+func TestHandleVideoCommand_Directory(t *testing.T) {
+	m := newTestChatModel(t)
+	dir := t.TempDir()
+	result := m.handleVideoCommand(dir)
+	if !strings.Contains(result, "directory") {
+		t.Error("expected directory warning")
+	}
+}
+
+func TestHandleVideoCommand_UnsupportedFormat(t *testing.T) {
+	m := newTestChatModel(t)
+	f := filepath.Join(t.TempDir(), "video.txt")
+	os.WriteFile(f, []byte("fake"), 0644)
+	result := m.handleVideoCommand(f)
+	if !strings.Contains(result, "Unsupported") {
+		t.Errorf("expected unsupported format, got: %s", result)
+	}
+}
+
+func TestHandleVideoCommand_TooLarge(t *testing.T) {
+	m := newTestChatModel(t)
+	f := filepath.Join(t.TempDir(), "big.mp4")
+	fh, _ := os.Create(f)
+	fh.Truncate(101 * 1024 * 1024) // over 100MB limit
+	fh.Close()
+	result := m.handleVideoCommand(f)
+	if !strings.Contains(result, "too large") {
+		t.Errorf("expected size error, got: %s", result)
+	}
+}
+
+func TestHandleVideoCommand_Success(t *testing.T) {
+	m := newTestChatModel(t)
+	f := filepath.Join(t.TempDir(), "test.mp4")
+	data := []byte("fake-video-data")
+	os.WriteFile(f, data, 0644)
+	result := m.handleVideoCommand(f)
+	if !strings.Contains(result, "Queued") {
+		t.Errorf("expected Queued message, got: %s", result)
+	}
+	if len(m.pendingImages) != 1 {
+		t.Fatalf("expected 1 pending video, got %d", len(m.pendingImages))
+	}
+	decoded, err := base64.StdEncoding.DecodeString(m.pendingImages[0])
+	if err != nil {
+		t.Fatalf("base64 decode error: %v", err)
+	}
+	if string(decoded) != "fake-video-data" {
+		t.Errorf("decoded mismatch: %q", decoded)
+	}
+}
+
+func TestHandleVideoCommand_MultipleFormats(t *testing.T) {
+	validExts := []string{".avi", ".mkv", ".mov", ".webm", ".flv", ".wmv"}
+	for _, ext := range validExts {
+		t.Run(ext, func(t *testing.T) {
+			m := newTestChatModel(t)
+			f := filepath.Join(t.TempDir(), "video"+ext)
+			os.WriteFile(f, []byte("data"), 0644)
+			result := m.handleVideoCommand(f)
+			if !strings.Contains(result, "Queued") {
+				t.Errorf("expected Queued for %s, got: %s", ext, result)
+			}
+		})
+	}
+}
