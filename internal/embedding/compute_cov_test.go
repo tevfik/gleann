@@ -224,3 +224,66 @@ func TestNewComputer_LlamaCPPProvider(t *testing.T) {
 		t.Errorf("expected llamacpp provider, got %s", c.provider)
 	}
 }
+
+// ── Gemini/OpenAI provider branch coverage ────────────────────
+
+func TestNewComputer_GeminiDefaults(t *testing.T) {
+	t.Setenv("GEMINI_API_KEY", "test-gemini-key")
+	t.Setenv("GOOGLE_API_KEY", "")
+	c := NewComputer(Options{
+		Provider: ProviderGemini,
+		Model:    "text-embedding-004",
+	})
+	if c.provider != ProviderGemini {
+		t.Errorf("expected Gemini provider, got: %s", c.provider)
+	}
+	if c.baseURL != "https://generativelanguage.googleapis.com" {
+		t.Errorf("expected Gemini URL, got: %s", c.baseURL)
+	}
+	if c.apiKey != "test-gemini-key" {
+		t.Errorf("expected test-gemini-key, got: %s", c.apiKey)
+	}
+	if c.batchSize != 100 {
+		t.Errorf("expected batchSize=100 for external API, got: %d", c.batchSize)
+	}
+	if c.concurrency != 20 {
+		t.Errorf("expected concurrency=20, got: %d", c.concurrency)
+	}
+}
+
+func TestNewComputer_GeminiGoogleKeyFallback(t *testing.T) {
+	t.Setenv("GEMINI_API_KEY", "")
+	t.Setenv("GOOGLE_API_KEY", "google-fallback")
+	c := NewComputer(Options{
+		Provider: ProviderGemini,
+		Model:    "text-embedding-004",
+	})
+	if c.apiKey != "google-fallback" {
+		t.Errorf("expected GOOGLE_API_KEY fallback, got: %s", c.apiKey)
+	}
+}
+
+func TestNewComputer_LlamaCPPCrossContamination(t *testing.T) {
+	c := NewComputer(Options{
+		Provider: ProviderLlamaCPP,
+		Model:    "bge-m3",
+		BaseURL:  "http://localhost:11434",
+	})
+	if c.baseURL == "http://localhost:11434" {
+		t.Error("expected LlamaCPP to override Ollama host")
+	}
+}
+
+func TestNewComputer_OpenAIKeyFromEnv(t *testing.T) {
+	t.Setenv("OPENAI_API_KEY", "sk-test-key")
+	c := NewComputer(Options{
+		Provider: ProviderOpenAI,
+		Model:    "text-embedding-3-small",
+	})
+	if c.apiKey != "sk-test-key" {
+		t.Errorf("expected OpenAI key from env, got: %s", c.apiKey)
+	}
+	if c.batchSize != 100 {
+		t.Errorf("expected batchSize=100, got: %d", c.batchSize)
+	}
+}
