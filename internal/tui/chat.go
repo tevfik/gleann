@@ -2,8 +2,11 @@ package tui
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 	"math"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"charm.land/bubbles/v2/key"
@@ -136,6 +139,19 @@ type ChatModel struct {
 
 	// Memory system.
 	memoryMgr *memory.Manager
+
+	// Mouse capture toggle (Ctrl+M).
+	mouseEnabled bool
+
+	// Pending images for multimodal — queued by /image, consumed on next send.
+	pendingImages []string // base64-encoded
+
+	// Context budget tracking.
+	tokensSent     int // approximate tokens sent to LLM
+	tokensReceived int // approximate tokens received from LLM
+
+	// Attached files for session context.
+	attachedFiles []string // paths of attached files/dirs
 }
 
 // NewChatModel creates a new chat TUI model.
@@ -322,6 +338,7 @@ func NewChatModel(chat *gleann.LeannChat, indexName, modelName string) ChatModel
 		width:             80,
 		height:            24,
 		memoryMgr:         memMgr,
+		mouseEnabled:      true,
 	}
 	// Initialize layout with defaults so View renders immediately.
 	m = m.relayout()
@@ -358,6 +375,24 @@ func (m ChatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m = m.relayout()
 		return m, nil
 
+	case tea.MouseWheelMsg:
+		if !m.mouseEnabled {
+			return m, nil
+		}
+		mouse := msg.Mouse()
+		if mouse.Button == tea.MouseWheelUp {
+			m.viewport.ScrollUp(3)
+		} else if mouse.Button == tea.MouseWheelDown {
+			m.viewport.ScrollDown(3)
+		}
+		return m, nil
+
+	case tea.MouseClickMsg, tea.MouseReleaseMsg, tea.MouseMotionMsg:
+		if !m.mouseEnabled {
+			return m, nil
+		}
+		return m, nil
+
 	case tea.KeyPressMsg:
 		switch msg.String() {
 		case "ctrl+c":
@@ -386,6 +421,19 @@ func (m ChatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		case "pgdown", "ctrl+d":
 			m.viewport.HalfPageDown()
+			return m, nil
+
+		case "ctrl+m":
+			// Toggle mouse capture: ON = viewport scroll with wheel, OFF = native text selection.
+			m.mouseEnabled = !m.mouseEnabled
+			status := "Mouse OFF — select text with mouse, scroll with PgUp/PgDn"
+			if m.mouseEnabled {
+				status = "Mouse ON — scroll with mouse wheel, Shift+drag to select text"
+			}
+			m.messages = append(m.messages, chatMsg{role: "system", content: status})
+			m.viewport.SetContent(m.renderMessages())
+			m.viewport.GotoBottom()
+			return m, nil
 			return m, nil
 
 		case "ctrl+s":
@@ -428,9 +476,11 @@ func (m ChatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					role: "system",
 					content: "Commands: /clear • /settings • /history • /help • /quit\n" +
 						"Memory:   /remember <text> • /forget <query> • /memories • /new\n" +
-						"Shortcuts: ctrl+s settings • pgup/pgdn scroll • esc clear/back\n" +
-						"CLI: --role <name> • --format <fmt> • --continue • --continue-last • --title <t>\n" +
-						"Pipe: cat file | gleann ask <index> \"question\" • --raw • --quiet",
+						"Media:    /image <path> — queue image for next message\n" +
+						"Files:    /attach <path> — add file/dir to session context • /detach <path>\n" +
+						"Index:    /index <name> — switch index • /index info — show stats\n" +
+						"Budget:   /budget — show token usage\n" +
+						"Shortcuts: ctrl+s settings • ctrl+m mouse toggle • pgup/pgdn scroll • esc clear/back",
 				})
 				m.textarea.Reset()
 				m.viewport.SetContent(m.renderMessages())
@@ -540,6 +590,10 @@ func (m ChatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				// Start a fresh conversation thread.
 				m.messages = m.messages[:0]
 				m.chat.ClearHistory()
+				m.pendingImages = nil
+				m.attachedFiles = nil
+				m.tokensSent = 0
+				m.tokensReceived = 0
 				m.messages = append(m.messages, chatMsg{
 					role:    "system",
 					content: fmt.Sprintf("🆕 New conversation started — index %q, model: %s", m.indexName, m.modelName),
@@ -548,9 +602,70 @@ func (m ChatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.viewport.SetContent(m.renderMessages())
 				m.viewport.GotoBottom()
 				return m, nil
+
+			case strings.HasPrefix(input, "/image "):
+				path := strings.TrimSpace(strings.TrimPrefix(input, "/image "))
+				result := m.handleImageCommand(path)
+				m.messages = append(m.messages, chatMsg{role: "system", content: result})
+				m.textarea.Reset()
+				m.viewport.SetContent(m.renderMessages())
+				m.viewport.GotoBottom()
+				return m, nil
+
+			case strings.HasPrefix(input, "/attach "):
+				args := strings.TrimSpace(strings.TrimPrefix(input, "/attach "))
+				result := m.handleAttachCommand(args)
+				m.messages = append(m.messages, chatMsg{role: "system", content: result})
+				m.textarea.Reset()
+				m.viewport.SetContent(m.renderMessages())
+				m.viewport.GotoBottom()
+				return m, nil
+
+			case input == "/attach":
+				result := m.handleAttachCommand("")
+				m.messages = append(m.messages, chatMsg{role: "system", content: result})
+				m.textarea.Reset()
+				m.viewport.SetContent(m.renderMessages())
+				m.viewport.GotoBottom()
+				return m, nil
+
+			case strings.HasPrefix(input, "/detach "):
+				path := strings.TrimSpace(strings.TrimPrefix(input, "/detach "))
+				result := m.handleDetachCommand(path)
+				m.messages = append(m.messages, chatMsg{role: "system", content: result})
+				m.textarea.Reset()
+				m.viewport.SetContent(m.renderMessages())
+				m.viewport.GotoBottom()
+				return m, nil
+
+			case strings.HasPrefix(input, "/index "):
+				args := strings.TrimSpace(strings.TrimPrefix(input, "/index "))
+				result := m.handleIndexCommand(args)
+				m.messages = append(m.messages, chatMsg{role: "system", content: result})
+				m.textarea.Reset()
+				m.viewport.SetContent(m.renderMessages())
+				m.viewport.GotoBottom()
+				return m, nil
+
+			case input == "/index":
+				result := m.handleIndexCommand("")
+				m.messages = append(m.messages, chatMsg{role: "system", content: result})
+				m.textarea.Reset()
+				m.viewport.SetContent(m.renderMessages())
+				m.viewport.GotoBottom()
+				return m, nil
+
+			case input == "/budget":
+				result := m.handleBudgetCommand()
+				m.messages = append(m.messages, chatMsg{role: "system", content: result})
+				m.textarea.Reset()
+				m.viewport.SetContent(m.renderMessages())
+				m.viewport.GotoBottom()
+				return m, nil
 			}
 
 			// Send message to LLM with streaming.
+			// If we have pending images, use multimodal streaming.
 			m.messages = append(m.messages, chatMsg{role: "user", content: input})
 			m.textarea.Reset()
 			m.textarea.Blur()
@@ -563,7 +678,14 @@ func (m ChatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.viewport.SetContent(m.renderMessages())
 			m.viewport.GotoBottom()
 
-			return m, tea.Batch(m.spinner.Tick, m.askLLMStream(input))
+			// Track approximate token budget.
+			m.tokensSent += len(input) / 4 // rough char-to-token ratio
+
+			// Consume pending images if any.
+			images := m.pendingImages
+			m.pendingImages = nil
+
+			return m, tea.Batch(m.spinner.Tick, m.askLLMStreamWithMedia(input, images))
 		}
 
 	case streamStartMsg:
@@ -589,6 +711,8 @@ func (m ChatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case streamDoneMsg:
 		m.waiting = false
 		m.streamChan = nil
+		// Track approximate received tokens.
+		m.tokensReceived += m.streamingAnswer.Len() / 4
 		m.viewport.SetContent(m.renderMessages())
 		m.viewport.GotoBottom()
 		// Reset textarea to clear any ANSI escape codes that may have leaked.
@@ -1229,8 +1353,29 @@ func (m ChatModel) View() tea.View {
 	tempBadge := lipgloss.NewStyle().
 		Foreground(ColorAccent).
 		Render(fmt.Sprintf(" • t=%.1f", m.temperature))
+	// Token budget badge.
+	budgetBadge := ""
+	if m.tokensSent > 0 || m.tokensReceived > 0 {
+		budgetBadge = lipgloss.NewStyle().
+			Foreground(ColorMuted).
+			Render(fmt.Sprintf(" • ~%dk tok", (m.tokensSent+m.tokensReceived)/1000))
+	}
+	// Pending images indicator.
+	imageBadge := ""
+	if len(m.pendingImages) > 0 {
+		imageBadge = lipgloss.NewStyle().
+			Foreground(ColorAccent).
+			Render(fmt.Sprintf(" • 📷×%d", len(m.pendingImages)))
+	}
+	// Attached files indicator.
+	attachBadge := ""
+	if len(m.attachedFiles) > 0 {
+		attachBadge = lipgloss.NewStyle().
+			Foreground(ColorSecondary).
+			Render(fmt.Sprintf(" • 📎×%d", len(m.attachedFiles)))
+	}
 
-	b.WriteString(header + indexBadge + modelBadge + tempBadge + "\n")
+	b.WriteString(header + indexBadge + modelBadge + tempBadge + budgetBadge + imageBadge + attachBadge + "\n")
 	sep := lipgloss.NewStyle().Foreground(ColorMuted).Render(strings.Repeat("─", m.width-2))
 	b.WriteString(sep + "\n")
 
@@ -1257,10 +1402,20 @@ func (m ChatModel) View() tea.View {
 	b.WriteString("\n")
 
 	// Help.
-	help := HelpStyle.Render("  enter send • pgup/pgdn scroll • ctrl+s settings • esc clear/back")
+	mouseLabel := "mouse:off"
+	if m.mouseEnabled {
+		mouseLabel = "mouse:on"
+	}
+	help := HelpStyle.Render(fmt.Sprintf("  enter send • pgup/pgdn scroll • ctrl+s settings • ctrl+m %s • esc clear/back", mouseLabel))
 	b.WriteString(help)
 
-	return tea.NewView(b.String())
+	v := tea.NewView(b.String())
+	// Always use alt-screen. Mouse capture toggled by Ctrl+M.
+	v.AltScreen = true
+	if m.mouseEnabled {
+		v.MouseMode = tea.MouseModeCellMotion
+	}
+	return v
 }
 
 // renderScrollbar draws a minimal vertical scrollbar for the viewport.
@@ -1658,4 +1813,297 @@ func renderMarkdownContent(content string, width int) string {
 		return content
 	}
 	return strings.TrimSpace(rendered)
+}
+
+// ── Slash Command Handlers ─────────────────────────────────────
+
+// handleImageCommand loads an image file and queues it for multimodal LLM input.
+func (m *ChatModel) handleImageCommand(path string) string {
+	if path == "" {
+		return "**Usage:** `/image <filepath>`\n\n" +
+			"Queues an image for your **next** message. Supports: PNG, JPG, JPEG, GIF, WEBP\n\n" +
+			"**Example:**\n```\n/image docs/diagram.png\nExplain this architecture diagram\n```"
+	}
+
+	absPath := path
+	if !filepath.IsAbs(path) {
+		if wd, err := os.Getwd(); err == nil {
+			absPath = filepath.Join(wd, path)
+		}
+	}
+
+	info, err := os.Stat(absPath)
+	if err != nil {
+		return fmt.Sprintf("⚠ Image not found: %s", err)
+	}
+	if info.IsDir() {
+		return "⚠ Path is a directory, not an image file."
+	}
+
+	ext := strings.ToLower(filepath.Ext(absPath))
+	validExts := map[string]bool{".png": true, ".jpg": true, ".jpeg": true, ".gif": true, ".webp": true}
+	if !validExts[ext] {
+		return fmt.Sprintf("⚠ Unsupported format `%s`. Use PNG, JPG, GIF, or WEBP.", ext)
+	}
+
+	// Check file size (max 20MB).
+	if info.Size() > 20*1024*1024 {
+		return "⚠ Image too large (max 20 MB)."
+	}
+
+	data, err := os.ReadFile(absPath)
+	if err != nil {
+		return fmt.Sprintf("⚠ Read error: %s", err)
+	}
+
+	encoded := base64.StdEncoding.EncodeToString(data)
+	m.pendingImages = append(m.pendingImages, encoded)
+
+	return fmt.Sprintf("📷 Queued `%s` (%s, %d KB). Send your next message to analyze it.",
+		filepath.Base(absPath), ext[1:], info.Size()/1024)
+}
+
+// handleAttachCommand adds a file or directory to the session context.
+func (m *ChatModel) handleAttachCommand(args string) string {
+	if args == "" || args == "--list" {
+		if len(m.attachedFiles) == 0 {
+			return "No files attached.\n\n" +
+				"**Usage:** `/attach <file-or-dir>` — add to session context\n" +
+				"`/attach --list` — list attached files\n" +
+				"`/attach --clear` — remove all\n" +
+				"`/detach <path>` — remove one"
+		}
+		var sb strings.Builder
+		sb.WriteString(fmt.Sprintf("📎 Attached files (%d):\n", len(m.attachedFiles)))
+		for _, f := range m.attachedFiles {
+			sb.WriteString(fmt.Sprintf("  • %s\n", f))
+		}
+		return sb.String()
+	}
+
+	if args == "--clear" {
+		count := len(m.attachedFiles)
+		m.attachedFiles = nil
+		return fmt.Sprintf("🗑 Cleared %d attached file(s).", count)
+	}
+
+	absPath := args
+	if !filepath.IsAbs(args) {
+		if wd, err := os.Getwd(); err == nil {
+			absPath = filepath.Join(wd, args)
+		}
+	}
+
+	info, err := os.Stat(absPath)
+	if err != nil {
+		return fmt.Sprintf("⚠ Path not found: %s", err)
+	}
+
+	// Check for duplicates.
+	for _, f := range m.attachedFiles {
+		if f == absPath {
+			return fmt.Sprintf("⚠ Already attached: %s", absPath)
+		}
+	}
+
+	m.attachedFiles = append(m.attachedFiles, absPath)
+
+	if info.IsDir() {
+		// Count files in directory.
+		count := 0
+		_ = filepath.Walk(absPath, func(_ string, fi os.FileInfo, _ error) error {
+			if fi != nil && !fi.IsDir() {
+				count++
+			}
+			return nil
+		})
+		return fmt.Sprintf("📎 Attached directory `%s` (%d files). Content will be included as context.", filepath.Base(absPath), count)
+	}
+
+	return fmt.Sprintf("📎 Attached `%s` (%d KB). Content will be included as context.",
+		filepath.Base(absPath), info.Size()/1024)
+}
+
+// handleDetachCommand removes a file from the session context.
+func (m *ChatModel) handleDetachCommand(path string) string {
+	if path == "" {
+		return "Usage: /detach <path>"
+	}
+
+	absPath := path
+	if !filepath.IsAbs(path) {
+		if wd, err := os.Getwd(); err == nil {
+			absPath = filepath.Join(wd, path)
+		}
+	}
+
+	for i, f := range m.attachedFiles {
+		if f == absPath || filepath.Base(f) == path {
+			m.attachedFiles = append(m.attachedFiles[:i], m.attachedFiles[i+1:]...)
+			return fmt.Sprintf("🗑 Detached: %s", filepath.Base(f))
+		}
+	}
+	return fmt.Sprintf("⚠ Not found in attached files: %s", path)
+}
+
+// handleIndexCommand handles /index subcommands.
+func (m *ChatModel) handleIndexCommand(args string) string {
+	if args == "" || args == "info" {
+		info := fmt.Sprintf("📊 **Index:** %s\n🤖 **Model:** %s\n🔤 **Embedding:** %s/%s",
+			m.indexName, m.modelName, m.embeddingProvider, m.embeddingModel)
+
+		if args == "info" {
+			// Try to get more details from the index metadata.
+			idxDir := ""
+			if cfg := LoadSavedConfig(); cfg != nil {
+				idxDir = cfg.IndexDir
+			}
+			if idxDir != "" {
+				indexes, err := gleann.ListIndexes(idxDir)
+				if err == nil {
+					for _, idx := range indexes {
+						if idx.Name == m.indexName {
+							info += fmt.Sprintf("\n📦 **Vectors:** %d\n📐 **Dimensions:** %d\n🏗 **Backend:** %s\n📅 **Created:** %s",
+								idx.NumPassages, idx.Dimensions, idx.Backend, idx.CreatedAt.Format("2006-01-02"))
+							break
+						}
+					}
+				}
+			}
+		} else {
+			// List available indexes.
+			if cfg := LoadSavedConfig(); cfg != nil && cfg.IndexDir != "" {
+				indexes, err := gleann.ListIndexes(cfg.IndexDir)
+				if err == nil && len(indexes) > 0 {
+					info += "\n\n**Available indexes:**"
+					for _, idx := range indexes {
+						marker := "  "
+						if idx.Name == m.indexName {
+							marker = "▸ "
+						}
+						info += fmt.Sprintf("\n%s%s (%d vectors)", marker, idx.Name, idx.NumPassages)
+					}
+				}
+			}
+			info += "\n\n**Switch:** `/index <name>` • **Details:** `/index info`"
+		}
+		return info
+	}
+
+	// Switch to a different index.
+	newIndex := args
+	cfg := LoadSavedConfig()
+	if cfg == nil || cfg.IndexDir == "" {
+		return "⚠ No index directory configured."
+	}
+	indexes, err := gleann.ListIndexes(cfg.IndexDir)
+	if err != nil {
+		return fmt.Sprintf("⚠ Error listing indexes: %s", err)
+	}
+	found := false
+	for _, idx := range indexes {
+		if idx.Name == newIndex {
+			found = true
+			break
+		}
+	}
+	if !found {
+		return fmt.Sprintf("⚠ Index %q not found. Use `/index` to list available indexes.", newIndex)
+	}
+
+	m.indexName = newIndex
+	return fmt.Sprintf("✅ Switched to index %q", newIndex)
+}
+
+// handleBudgetCommand shows token budget information.
+func (m *ChatModel) handleBudgetCommand() string {
+	total := m.tokensSent + m.tokensReceived
+	histLen := len(m.chat.History())
+	return fmt.Sprintf("📊 **Token Budget (approximate)**\n"+
+		"  Sent: ~%d tokens\n"+
+		"  Received: ~%d tokens\n"+
+		"  Total: ~%d tokens\n"+
+		"  History: %d messages\n"+
+		"  Pending images: %d\n"+
+		"  Attached files: %d",
+		m.tokensSent, m.tokensReceived, total, histLen,
+		len(m.pendingImages), len(m.attachedFiles))
+}
+
+// askLLMStreamWithMedia performs streaming RAG, optionally with attached media.
+func (m ChatModel) askLLMStreamWithMedia(question string, images []string) tea.Cmd {
+	chat := m.chat
+	topK := m.topK
+	rerank := m.rerankEnabled
+	memMgr := m.memoryMgr
+	attachedFiles := m.attachedFiles
+
+	return func() tea.Msg {
+		// Refresh memory context before each query.
+		if memMgr != nil {
+			if cw, err := memMgr.BuildContext(); err == nil {
+				rendered := cw.Render()
+				chat.SetMemoryContext(rendered)
+			}
+		}
+
+		// Build context from attached files.
+		if len(attachedFiles) > 0 {
+			var extraCtx strings.Builder
+			extraCtx.WriteString("\n\n--- Attached Files Context ---\n")
+			for _, f := range attachedFiles {
+				info, err := os.Stat(f)
+				if err != nil {
+					continue
+				}
+				if info.IsDir() {
+					_ = filepath.Walk(f, func(path string, fi os.FileInfo, _ error) error {
+						if fi == nil || fi.IsDir() || fi.Size() > 512*1024 {
+							return nil
+						}
+						data, err := os.ReadFile(path)
+						if err != nil {
+							return nil
+						}
+						rel, _ := filepath.Rel(f, path)
+						extraCtx.WriteString(fmt.Sprintf("\n=== %s ===\n%s\n", rel, string(data)))
+						return nil
+					})
+				} else if info.Size() <= 512*1024 {
+					data, err := os.ReadFile(f)
+					if err == nil {
+						extraCtx.WriteString(fmt.Sprintf("\n=== %s ===\n%s\n", filepath.Base(f), string(data)))
+					}
+				}
+			}
+			question = question + extraCtx.String()
+		}
+
+		tokenChan := make(chan string, 100)
+
+		go func() {
+			defer close(tokenChan)
+			var err error
+			if len(images) > 0 {
+				err = chat.AskStreamWithMedia(context.Background(), question, images,
+					func(token string) {
+						tokenChan <- token
+					},
+					gleann.WithTopK(topK),
+					gleann.WithReranker(rerank))
+			} else {
+				err = chat.AskStream(context.Background(), question,
+					func(token string) {
+						tokenChan <- token
+					},
+					gleann.WithTopK(topK),
+					gleann.WithReranker(rerank))
+			}
+			if err != nil {
+				tokenChan <- "\x00ERROR:" + err.Error()
+			}
+		}()
+
+		return streamStartMsg{tokenChan: tokenChan}
+	}
 }

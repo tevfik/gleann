@@ -56,6 +56,16 @@ type Block struct {
 	// Scope isolates the block to a specific context (e.g. conversation ID,
 	// session ID, or a named group). Empty string means global (visible everywhere).
 	Scope string `json:"scope,omitempty"`
+
+	// Validity scoring — Bayesian-inspired confidence tracking.
+	// Confirms counts how many times this fact was reinforced by new information.
+	Confirms int `json:"confirms,omitempty"`
+	// Conflicts counts how many times new information contradicted this block.
+	Conflicts int `json:"conflicts,omitempty"`
+	// AccessCount tracks how many times this block was retrieved/used.
+	AccessCount int `json:"access_count,omitempty"`
+	// LastAccessedAt tracks when this block was last retrieved.
+	LastAccessedAt *time.Time `json:"last_accessed_at,omitempty"`
 }
 
 // IsExpired returns true if the block has passed its expiration date.

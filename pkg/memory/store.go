@@ -156,6 +156,30 @@ func (s *Store) Delete(id string) error {
 	})
 }
 
+// Update persists changes to an existing block.
+func (s *Store) Update(block *Block) error {
+	// Check short-term.
+	for i := range s.shortTerm {
+		if s.shortTerm[i].ID == block.ID {
+			s.shortTerm[i] = *block
+			return nil
+		}
+	}
+
+	// Update in BBolt.
+	return s.db.Update(func(tx *bolt.Tx) error {
+		b := tx.Bucket(bucketBlocks)
+		if b.Get([]byte(block.ID)) == nil {
+			return fmt.Errorf("block not found: %s", block.ID)
+		}
+		data, err := json.Marshal(block)
+		if err != nil {
+			return err
+		}
+		return b.Put([]byte(block.ID), data)
+	})
+}
+
 // List returns all blocks for a given tier, sorted by creation time (newest first).
 // If tier is empty, returns all blocks across all tiers.
 func (s *Store) List(tier Tier) ([]Block, error) {

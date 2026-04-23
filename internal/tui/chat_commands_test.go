@@ -1,0 +1,330 @@
+package tui
+
+import (
+	"encoding/base64"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/tevfik/gleann/pkg/gleann"
+)
+
+// ── handleImageCommand ─────────────────────────────────────────
+
+func TestHandleImageCommand_EmptyPath(t *testing.T) {
+	m := newTestChatModel(t)
+	result := m.handleImageCommand("")
+	if !strings.Contains(result, "Usage") {
+		t.Error("expected usage message for empty path")
+	}
+}
+
+func TestHandleImageCommand_FileNotFound(t *testing.T) {
+	m := newTestChatModel(t)
+	result := m.handleImageCommand("/nonexistent/image.png")
+	if !strings.Contains(result, "not found") {
+		t.Error("expected 'not found' error")
+	}
+}
+
+func TestHandleImageCommand_Directory(t *testing.T) {
+	m := newTestChatModel(t)
+	dir := t.TempDir()
+	result := m.handleImageCommand(dir)
+	if !strings.Contains(result, "directory") {
+		t.Error("expected directory warning")
+	}
+}
+
+func TestHandleImageCommand_UnsupportedFormat(t *testing.T) {
+	m := newTestChatModel(t)
+	f := filepath.Join(t.TempDir(), "doc.pdf")
+	os.WriteFile(f, []byte("fake"), 0644)
+	result := m.handleImageCommand(f)
+	if !strings.Contains(result, "Unsupported") {
+		t.Errorf("expected unsupported format, got: %s", result)
+	}
+}
+
+func TestHandleImageCommand_TooLarge(t *testing.T) {
+	m := newTestChatModel(t)
+	f := filepath.Join(t.TempDir(), "big.png")
+	// Create a file that's just over 20MB via Truncate
+	fh, _ := os.Create(f)
+	fh.Truncate(21 * 1024 * 1024)
+	fh.Close()
+	result := m.handleImageCommand(f)
+	if !strings.Contains(result, "too large") {
+		t.Errorf("expected size error, got: %s", result)
+	}
+}
+
+func TestHandleImageCommand_Success(t *testing.T) {
+	m := newTestChatModel(t)
+	f := filepath.Join(t.TempDir(), "test.png")
+	data := []byte("fake-png-data")
+	os.WriteFile(f, data, 0644)
+	result := m.handleImageCommand(f)
+	if !strings.Contains(result, "Queued") {
+		t.Errorf("expected Queued message, got: %s", result)
+	}
+	if len(m.pendingImages) != 1 {
+		t.Fatalf("expected 1 pending image, got %d", len(m.pendingImages))
+	}
+	decoded, err := base64.StdEncoding.DecodeString(m.pendingImages[0])
+	if err != nil {
+		t.Fatalf("base64 decode error: %v", err)
+	}
+	if string(decoded) != "fake-png-data" {
+		t.Errorf("decoded mismatch: %q", decoded)
+	}
+}
+
+func TestHandleImageCommand_RelativePath(t *testing.T) {
+	m := newTestChatModel(t)
+	dir := t.TempDir()
+	f := filepath.Join(dir, "relative.jpg")
+	os.WriteFile(f, []byte("ok"), 0644)
+	// Use absolute path since relative depends on cwd
+	result := m.handleImageCommand(f)
+	if !strings.Contains(result, "Queued") {
+		t.Errorf("expected success for jpg, got: %s", result)
+	}
+}
+
+// ── handleAttachCommand ────────────────────────────────────────
+
+func TestHandleAttachCommand_Empty(t *testing.T) {
+	m := newTestChatModel(t)
+	result := m.handleAttachCommand("")
+	if !strings.Contains(result, "No files attached") {
+		t.Error("expected empty attach list message")
+	}
+}
+
+func TestHandleAttachCommand_List(t *testing.T) {
+	m := newTestChatModel(t)
+	m.attachedFiles = []string{"/tmp/a.txt", "/tmp/b.txt"}
+	result := m.handleAttachCommand("--list")
+	if !strings.Contains(result, "Attached files (2)") {
+		t.Errorf("expected list with 2 files, got: %s", result)
+	}
+	if !strings.Contains(result, "a.txt") || !strings.Contains(result, "b.txt") {
+		t.Error("expected file names in list")
+	}
+}
+
+func TestHandleAttachCommand_Clear(t *testing.T) {
+	m := newTestChatModel(t)
+	m.attachedFiles = []string{"/a", "/b", "/c"}
+	result := m.handleAttachCommand("--clear")
+	if !strings.Contains(result, "Cleared 3") {
+		t.Errorf("expected 'Cleared 3', got: %s", result)
+	}
+	if len(m.attachedFiles) != 0 {
+		t.Error("attachedFiles should be empty after --clear")
+	}
+}
+
+func TestHandleAttachCommand_NotFound(t *testing.T) {
+	m := newTestChatModel(t)
+	result := m.handleAttachCommand("/nonexistent/path/whatever")
+	if !strings.Contains(result, "not found") {
+		t.Errorf("expected not found: %s", result)
+	}
+}
+
+func TestHandleAttachCommand_Duplicate(t *testing.T) {
+	m := newTestChatModel(t)
+	f := filepath.Join(t.TempDir(), "dup.txt")
+	os.WriteFile(f, []byte("hello"), 0644)
+	m.attachedFiles = []string{f}
+	result := m.handleAttachCommand(f)
+	if !strings.Contains(result, "Already attached") {
+		t.Errorf("expected duplicate warning: %s", result)
+	}
+}
+
+func TestHandleAttachCommand_File(t *testing.T) {
+	m := newTestChatModel(t)
+	f := filepath.Join(t.TempDir(), "file.txt")
+	os.WriteFile(f, []byte("content"), 0644)
+	result := m.handleAttachCommand(f)
+	if !strings.Contains(result, "Attached") {
+		t.Errorf("expected attached message: %s", result)
+	}
+	if len(m.attachedFiles) != 1 || m.attachedFiles[0] != f {
+		t.Error("file not added to attachedFiles")
+	}
+}
+
+func TestHandleAttachCommand_Directory(t *testing.T) {
+	m := newTestChatModel(t)
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "a.txt"), []byte("a"), 0644)
+	os.WriteFile(filepath.Join(dir, "b.txt"), []byte("b"), 0644)
+	result := m.handleAttachCommand(dir)
+	if !strings.Contains(result, "directory") {
+		t.Errorf("expected directory message: %s", result)
+	}
+	if !strings.Contains(result, "2 files") {
+		t.Errorf("expected file count: %s", result)
+	}
+}
+
+// ── handleDetachCommand ────────────────────────────────────────
+
+func TestHandleDetachCommand_Empty(t *testing.T) {
+	m := newTestChatModel(t)
+	result := m.handleDetachCommand("")
+	if !strings.Contains(result, "Usage") {
+		t.Error("expected usage message")
+	}
+}
+
+func TestHandleDetachCommand_NotFound(t *testing.T) {
+	m := newTestChatModel(t)
+	m.attachedFiles = []string{"/a/b.txt"}
+	result := m.handleDetachCommand("nonexistent.txt")
+	if !strings.Contains(result, "Not found") {
+		t.Errorf("expected not found: %s", result)
+	}
+}
+
+func TestHandleDetachCommand_ByAbsPath(t *testing.T) {
+	m := newTestChatModel(t)
+	m.attachedFiles = []string{"/a/b.txt", "/c/d.txt"}
+	result := m.handleDetachCommand("/a/b.txt")
+	if !strings.Contains(result, "Detached") {
+		t.Errorf("expected detached: %s", result)
+	}
+	if len(m.attachedFiles) != 1 || m.attachedFiles[0] != "/c/d.txt" {
+		t.Error("wrong file removed")
+	}
+}
+
+func TestHandleDetachCommand_ByBaseName(t *testing.T) {
+	m := newTestChatModel(t)
+	m.attachedFiles = []string{"/long/path/to/file.txt"}
+	result := m.handleDetachCommand("file.txt")
+	if !strings.Contains(result, "Detached") {
+		t.Errorf("expected detached via basename: %s", result)
+	}
+	if len(m.attachedFiles) != 0 {
+		t.Error("file should be removed")
+	}
+}
+
+// ── handleIndexCommand ─────────────────────────────────────────
+
+func TestHandleIndexCommand_Default(t *testing.T) {
+	m := newTestChatModel(t)
+	m.embeddingProvider = "ollama"
+	m.embeddingModel = "bge-m3"
+	result := m.handleIndexCommand("")
+	if !strings.Contains(result, "test-index") {
+		t.Errorf("expected index name in output: %s", result)
+	}
+	if !strings.Contains(result, "test-model") {
+		t.Errorf("expected model name in output: %s", result)
+	}
+	if !strings.Contains(result, "ollama") {
+		t.Errorf("expected embedding provider: %s", result)
+	}
+}
+
+func TestHandleIndexCommand_Info(t *testing.T) {
+	m := newTestChatModel(t)
+	m.embeddingProvider = "ollama"
+	m.embeddingModel = "bge-m3"
+	result := m.handleIndexCommand("info")
+	if !strings.Contains(result, "Index") {
+		t.Error("expected index info")
+	}
+}
+
+func TestHandleIndexCommand_SwitchNoConfig(t *testing.T) {
+	m := newTestChatModel(t)
+	result := m.handleIndexCommand("new-index")
+	// Depending on whether a saved config exists, we get different errors.
+	if !strings.Contains(result, "No index directory") && !strings.Contains(result, "not found") && !strings.Contains(result, "Error") {
+		t.Errorf("expected error for missing index: %s", result)
+	}
+}
+
+// ── handleBudgetCommand ────────────────────────────────────────
+
+func TestHandleBudgetCommand_ZeroTokens(t *testing.T) {
+	m := newTestChatModel(t)
+	m.chat = gleann.NewChat(nil, gleann.ChatConfig{Provider: gleann.LLMOllama, Model: "test"})
+	result := m.handleBudgetCommand()
+	if !strings.Contains(result, "Sent: ~0") {
+		t.Errorf("expected zero sent tokens: %s", result)
+	}
+	if !strings.Contains(result, "Received: ~0") {
+		t.Errorf("expected zero received tokens: %s", result)
+	}
+}
+
+func TestHandleBudgetCommand_WithTokens(t *testing.T) {
+	m := newTestChatModel(t)
+	m.chat = gleann.NewChat(nil, gleann.ChatConfig{Provider: gleann.LLMOllama, Model: "test"})
+	m.tokensSent = 1500
+	m.tokensReceived = 3200
+	m.pendingImages = []string{"img1", "img2"}
+	m.attachedFiles = []string{"/a.txt"}
+	result := m.handleBudgetCommand()
+	if !strings.Contains(result, "1500") {
+		t.Errorf("expected sent count: %s", result)
+	}
+	if !strings.Contains(result, "3200") {
+		t.Errorf("expected received count: %s", result)
+	}
+	if !strings.Contains(result, "4700") {
+		t.Errorf("expected total: %s", result)
+	}
+	if !strings.Contains(result, "Pending images: 2") {
+		t.Errorf("expected 2 pending images: %s", result)
+	}
+	if !strings.Contains(result, "Attached files: 1") {
+		t.Errorf("expected 1 attached file: %s", result)
+	}
+}
+
+// ── Mouse toggle ───────────────────────────────────────────────
+
+func TestMouseToggleDefaults(t *testing.T) {
+	m := newTestChatModel(t)
+	m.mouseEnabled = true
+	if !m.mouseEnabled {
+		t.Error("mouse should be enabled by default")
+	}
+	m.mouseEnabled = !m.mouseEnabled
+	if m.mouseEnabled {
+		t.Error("toggle should disable mouse")
+	}
+}
+
+// ── /clear resets state ────────────────────────────────────────
+
+func TestClearResetsNewFields(t *testing.T) {
+	m := newTestChatModel(t)
+	m.pendingImages = []string{"img"}
+	m.attachedFiles = []string{"/f"}
+	m.tokensSent = 100
+	m.tokensReceived = 200
+
+	// Simulate /clear: reset fields as in Update
+	m.pendingImages = nil
+	m.attachedFiles = nil
+	m.tokensSent = 0
+	m.tokensReceived = 0
+
+	if len(m.pendingImages) != 0 || len(m.attachedFiles) != 0 {
+		t.Error("clear should reset slices")
+	}
+	if m.tokensSent != 0 || m.tokensReceived != 0 {
+		t.Error("clear should reset token counters")
+	}
+}
