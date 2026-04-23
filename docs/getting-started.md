@@ -2,21 +2,36 @@
 
 Get from zero to your first AI-powered search in under 5 minutes.
 
-## Fastest path: `gleann quickstart`
+## Fastest path: `gleann go`
 
-Already have gleann installed and Ollama running? Run one command inside any
-project directory and gleann indexes it, then prints your MCP connection config:
+Already have Ollama running? Run one command inside any project directory:
 
 ```bash
 cd ~/my-project
-gleann quickstart
+gleann go
 ```
 
-gleann autodetects your saved embedding config, builds the index, and outputs
-the exact snippet to paste into your `claude_desktop_config.json` or Cursor MCP
-settings. No flags required — every option can be overridden if needed:
+`gleann go` performs the entire setup automatically:
+
+1. **Detects** your Ollama instance and available models
+2. **Shows** the proposed configuration for confirmation
+3. **Pulls** any missing models (embedding + LLM)
+4. **Indexes** your current directory
+5. **Prints** next steps (MCP, chat, service)
+
+Every option can be overridden:
 
 ```bash
+gleann go --docs ./docs --name my-project --graph --host http://remote:11434
+gleann go --yes   # auto-confirm, no prompts
+```
+
+## Alternative: `gleann quickstart`
+
+If you already have gleann configured and just want to index a directory:
+
+```bash
+gleann quickstart
 gleann quickstart --docs ./docs --name my-project --graph
 ```
 
@@ -45,6 +60,8 @@ sudo mv gleann /usr/local/bin/   # or: mv gleann ~/.local/bin/
 ```
 
 ## Step 2: Start Ollama & Pull Models
+
+`gleann go` handles model pulling automatically. To do it manually:
 
 ```bash
 # Start Ollama (if not already running)
@@ -249,6 +266,9 @@ source <(gleann completion bash)
 | List indexes | `gleann index list` |
 | TUI | `gleann tui` |
 | API server | `gleann serve` |
+| Background server | `gleann service start` |
+| Auto-start on login | `gleann service install` |
+| Server status | `gleann service status` |
 | Health check | `gleann doctor` |
 | Help | `gleann help` |
 

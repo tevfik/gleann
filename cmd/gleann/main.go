@@ -47,6 +47,10 @@ func main() {
 		cmdSetup()
 	case "quickstart":
 		cmdQuickstart(args)
+	case "go":
+		cmdGo(args)
+	case "service":
+		cmdService(args)
 	case "doctor":
 		cmdDoctor()
 	case "tasks":
@@ -88,7 +92,10 @@ gleann has three intelligence pillars that work together:
 
 ── Getting Started ───────────────────────────────────────────────────
 
+  gleann go [--docs <dir>]               Zero to working in 90 seconds
   gleann quickstart [--name <name>] [--docs <dir>]   Index current dir & show next steps
+  gleann setup                           Interactive configuration wizard
+  gleann doctor                          System health check
 
 ── Document & Code Search ────────────────────────────────────────────
 
@@ -178,11 +185,21 @@ gleann has three intelligence pillars that work together:
   gleann benchmark --index <n> --docs <d>  Token reduction analysis
   gleann mcp                            MCP server (stdio, for AI editors)
   gleann tui                            Interactive TUI launcher
-  gleann setup  [--bootstrap]           Configuration wizard (quick or advanced)
-  gleann doctor                         Health check (config, Ollama, models)
   gleann config <show|path|edit|validate>  Manage configuration
   gleann completion <bash|zsh|fish>     Shell completion script
   gleann version                        Show version
+
+── Service Management ────────────────────────────────────────────────
+
+  gleann service install                Install as OS service (auto-start on login)
+  gleann service uninstall              Remove OS service
+  gleann service start [--addr :8080]   Start server in background
+  gleann service stop                   Stop running server
+  gleann service restart                Restart server
+  gleann service status                 Show server status
+  gleann service logs [--lines 50]      Show server logs
+
+  Platforms: Linux (systemd), macOS (launchd), Windows (Task Scheduler)
 
 ── Multimodal Analysis ───────────────────────────────────────────────
 

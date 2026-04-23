@@ -29,6 +29,12 @@ func cmdServe(args []string) {
 	config := getConfig(args)
 	applySavedConfig(&config, args)
 
+	// Ensure required models are available.
+	if !quiet {
+		autosetup.EnsureModels(config.OllamaHost, quiet,
+			config.EmbeddingModel, config.LLMModel)
+	}
+
 	addr := getFlag(args, "--addr")
 	if addr == "" {
 		addr = gleann.DefaultServerAddr
