@@ -32,14 +32,14 @@ func DefaultPDFConfig() PDFVisionConfig {
 
 // PDFPageResult holds the analysis of a single PDF page.
 type PDFPageResult struct {
-	PageNum     int                   // 1-based page number.
-	ImagePath   string                // Path to rendered page image.
-	Description string                // VLM-generated description.
-	HasTable    bool                  // Whether a table was detected.
-	HasChart    bool                  // Whether a chart/figure was detected.
+	PageNum     int                    // 1-based page number.
+	ImagePath   string                 // Path to rendered page image.
+	Description string                 // VLM-generated description.
+	HasTable    bool                   // Whether a table was detected.
+	HasChart    bool                   // Whether a chart/figure was detected.
 	Tables      *TableExtractionResult // Extracted tables (nil if no tables detected).
 	Charts      *ChartExtractionResult // Extracted charts (nil if no charts detected).
-	MarkerText  string                // Text from marker plugin (if available).
+	MarkerText  string                 // Text from marker plugin (if available).
 	Error       error
 }
 

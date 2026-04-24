@@ -1,6 +1,6 @@
 # Benchmarks & Performance Reports
 
-All benchmarks on Intel i9-13900H (20 threads), Go 1.22, Linux.
+All benchmarks on Intel i9-13900H (20 threads), Go 1.25, Linux.
 
 ## HNSW Search Performance
 
