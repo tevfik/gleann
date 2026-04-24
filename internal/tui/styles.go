@@ -148,5 +148,3 @@ func Logo() string {
 
 	return LogoStyle.Render(logo)
 }
-
-

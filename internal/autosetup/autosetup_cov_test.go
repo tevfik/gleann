@@ -9,7 +9,7 @@ func TestFormatDetectedConfig_Full(t *testing.T) {
 	dc := DetectedConfig{
 		OllamaRunning:  true,
 		OllamaHost:     "http://localhost:11434",
-		EmbeddingModel:  "bge-m3",
+		EmbeddingModel: "bge-m3",
 		LLMModel:       "llama3:8b",
 		RerankModel:    "bge-reranker-v2-m3",
 		IndexDir:       "~/.gleann/indexes",
@@ -38,7 +38,7 @@ func TestFormatDetectedConfig_NotRunning(t *testing.T) {
 	dc := DetectedConfig{
 		OllamaRunning:  false,
 		OllamaHost:     "http://localhost:11434",
-		EmbeddingModel:  "nomic-embed-text",
+		EmbeddingModel: "nomic-embed-text",
 		LLMModel:       "gemma2:2b",
 		IndexDir:       "~/.gleann/indexes",
 	}
@@ -56,10 +56,10 @@ func TestFormatDetectedConfig_NotRunning(t *testing.T) {
 
 func TestFormatDetectedConfig_Structure(t *testing.T) {
 	dc := DetectedConfig{
-		OllamaHost:    "http://custom:9999",
+		OllamaHost:     "http://custom:9999",
 		EmbeddingModel: "test-embed",
-		LLMModel:      "test-llm",
-		IndexDir:      "/custom/path",
+		LLMModel:       "test-llm",
+		IndexDir:       "/custom/path",
 	}
 	out := FormatDetectedConfig(dc)
 	// Should have box borders

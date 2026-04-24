@@ -41,5 +41,3 @@ func TestSysProcAttr(t *testing.T) {
 	attr := sysProcAttr()
 	_ = attr
 }
-
-
