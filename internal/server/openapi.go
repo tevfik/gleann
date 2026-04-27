@@ -15,7 +15,7 @@ func (s *Server) openAPISpec() map[string]any {
 		"openapi": "3.0.3",
 		"info": map[string]any{
 			"title":       "Gleann API",
-			"description": "Unified vector + graph search engine. Index, search, and query code and documents with HNSW, BM25, and KuzuDB graph.",
+			"description": "Unified vector + graph search engine. Index, search, and query code and documents with DiskANN, HNSW, FAISS, BM25, and KuzuDB graph.",
 			"version":     s.version,
 			"license": map[string]any{
 				"name": "MIT",
@@ -1139,6 +1139,11 @@ func (s *Server) openAPISpec() map[string]any {
 							"type":                 "object",
 							"additionalProperties": true,
 							"description":          "Default metadata for all items",
+						},
+						"backend": map[string]any{
+							"type":        "string",
+							"enum":        []string{"diskann", "hnsw", "faiss", "faiss-hybrid"},
+							"description": "Vector search backend (default: diskann)",
 						},
 					},
 				},

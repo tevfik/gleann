@@ -257,8 +257,8 @@ func TestOnboardIndexDirEnter(t *testing.T) {
 	m.phase = phaseIndexDir
 	result, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	om := result.(OnboardModel)
-	if om.phase != phaseMCP {
-		t.Errorf("phase = %d, want %d", om.phase, phaseMCP)
+	if om.phase != phaseBackend {
+		t.Errorf("phase = %d, want %d", om.phase, phaseBackend)
 	}
 }
 

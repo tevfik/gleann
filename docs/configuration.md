@@ -30,6 +30,7 @@ Location: `~/.gleann/config.json`
   "embedding_model": "bge-m3",
   "ollama_host": "http://localhost:11434",
   "index_dir": "~/.gleann/indexes",
+  "backend": "diskann",
   "llm_provider": "ollama",
   "llm_model": "llama3.2",
   "quiet": false,
@@ -55,6 +56,7 @@ Location: `~/.gleann/config.json`
 | `openai_key` | — | OpenAI API key (if using openai provider) |
 | `openai_base_url` | — | Custom OpenAI-compatible API base URL |
 | `index_dir` | `~/.gleann/indexes` | Root directory for all index data. Each named index `<name>` creates `<name>/` (RAG), `<name>_graph/` (code graph), and `<name>_memory/` (Memory Engine) sub-directories here |
+| `backend` | `diskann` | Vector search backend: `diskann`, `hnsw`, `faiss`, `faiss-hybrid` |
 | `llm_provider` | `ollama` | Provider for ask/chat: `ollama`, `openai`, `anthropic` |
 | `llm_model` | `llama3.2` | LLM model for ask/chat commands |
 | `quiet` | `false` | Suppress status messages globally |
@@ -93,6 +95,7 @@ CLI flags override both defaults and config file values.
 
 ```bash
 --index-dir <dir>       # Index storage directory
+--backend <backend>     # Vector backend: diskann (default), hnsw, faiss, faiss-hybrid
 --chunk-size <n>        # Chunk size in tokens (default: 512)
 --chunk-overlap <n>     # Chunk overlap in tokens (default: 50)
 --graph                 # Build AST code graph
@@ -125,6 +128,44 @@ gleann conversations --show-last           # Show the most recent conversation
 gleann conversations --delete <id> [id...] # Delete specific conversations
 gleann conversations --delete-older-than 30d  # Delete old conversations
 ```
+
+## Vector Backends
+
+Gleann supports four vector search backends, selectable via config (`backend` field) or `gleann setup`:
+
+| Backend | Default | CGo Required | Description |
+|---------|---------|-------------|-------------|
+| `diskann` | **Yes** | No | Pure-Go Vamana graph with PQ prefiltering. Disk-resident search using ~2.7x less RAM than HNSW for large datasets. Recommended for production and large corpora. |
+| `hnsw` | No | No | Pure-Go HNSW. Fast in-memory search, good for smaller datasets (<100k vectors). |
+| `faiss` | No | Yes | C FAISS via CGo. SIMD-accelerated with IVF_FLAT, IVF_PQ, and IVF_SQ8 index types. Best throughput with GPU/AVX2 hardware. |
+| `faiss-hybrid` | No | Build only | FAISS builds the index (requires CGo at build time), but search is pure Go. No CGo needed at query time. |
+
+### DiskANN Configuration
+
+DiskANN parameters can be tuned in the config file under `diskann_config`:
+
+```json
+{
+  "backend": "diskann",
+  "diskann_config": {
+    "r": 64,
+    "l": 100,
+    "alpha": 1.2,
+    "pq_dim": 32,
+    "pq_train_size": 10000,
+    "l_search": 100
+  }
+}
+```
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `r` | `64` | Max out-degree of the Vamana graph |
+| `l` | `100` | Candidate list size during build |
+| `alpha` | `1.2` | Pruning parameter (>1.0 = denser graph, higher recall) |
+| `pq_dim` | `32` | Number of PQ sub-quantizers for prefiltering |
+| `pq_train_size` | `10000` | Vectors sampled for PQ codebook training |
+| `l_search` | `100` | Candidate list size during search (higher = better recall, slower) |
 
 ## Recommended Models
 

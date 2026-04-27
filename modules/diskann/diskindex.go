@@ -20,13 +20,13 @@ import (
 // vs HNSW in-memory: ~(M*2*4 + dims*4) bytes/node. For M=32, dims=128: ~768 bytes/node.
 type DiskIndex struct {
 	// Header
-	NumNodes   int64
-	Dims       int
-	R          int // max out-degree
-	Medoid     int64
-	PQM        int // number of sub-quantizers
-	PQK        int // centroids per sub-quantizer
-	PQSubDim   int // sub-vector dimensionality
+	NumNodes int64
+	Dims     int
+	R        int // max out-degree
+	Medoid   int64
+	PQM      int // number of sub-quantizers
+	PQK      int // centroids per sub-quantizer
+	PQSubDim int // sub-vector dimensionality
 
 	// Graph topology: neighbors[i] has neighborOffsets[i]..neighborOffsets[i+1] entries.
 	NeighborOffsets []int64

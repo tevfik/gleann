@@ -729,7 +729,7 @@ func TestIVFAutoNList(t *testing.T) {
 
 func TestIVFNeedsTrainAndIsIVF(t *testing.T) {
 	tests := []struct {
-		indexType  string
+		indexType string
 		isIVF     bool
 		needTrain bool
 	}{
