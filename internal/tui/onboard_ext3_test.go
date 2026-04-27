@@ -341,10 +341,11 @@ func TestVisibleStepExt3(t *testing.T) {
 		{phaseRerankFetching, 7},
 		{phaseRerankModel, 8},
 		{phaseIndexDir, 9},
-		{phaseMCP, 10},
-		{phaseServer, 11},
-		{phaseSummary, 12},
-		{phaseInstall, 13},
+		{phaseBackend, 10},
+		{phaseMCP, 11},
+		{phaseServer, 12},
+		{phaseSummary, 13},
+		{phaseInstall, 14},
 	}
 	for _, tt := range tests {
 		m := NewOnboardModel()
@@ -605,9 +606,9 @@ func TestViewShowsProgressBar(t *testing.T) {
 	m.height = 24
 	m.phase = phaseEmbProvider
 	v := m.View()
-	// Progress bar shows "1/13".
-	if !strings.Contains(v.Content, "1/13") {
-		t.Error("should show step 1/13 in progress bar")
+	// Progress bar shows "1/14".
+	if !strings.Contains(v.Content, "1/14") {
+		t.Error("should show step 1/14 in progress bar")
 	}
 }
 
@@ -617,8 +618,8 @@ func TestViewProgressBarSummaryFull(t *testing.T) {
 	m.height = 24
 	m.phase = phaseSummary
 	v := m.View()
-	if !strings.Contains(v.Content, "12/13") {
-		t.Error("should show step 12/13")
+	if !strings.Contains(v.Content, "13/14") {
+		t.Error("should show step 13/14")
 	}
 }
 

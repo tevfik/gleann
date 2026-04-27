@@ -34,6 +34,7 @@ const (
 	phaseRerankFetching                    // spinner: fetching reranker models
 	phaseRerankModel                       // select: reranker model
 	phaseIndexDir                          // text input: index directory
+	phaseBackend                           // select: vector backend
 	phaseMCP                               // toggle: enable MCP server?
 	phaseServer                            // toggle: enable REST API server?
 	phaseSummary                           // summary & confirm
@@ -42,7 +43,7 @@ const (
 )
 
 // totalVisibleSteps for the progress bar (skip fetching phases).
-const totalVisibleSteps = 13
+const totalVisibleSteps = 14
 
 // ── Messages ───────────────────────────────────────────────────
 
@@ -76,6 +77,9 @@ type OnboardResult struct {
 	Temperature  float64 `json:"temperature,omitempty"`
 	MaxTokens    int     `json:"max_tokens,omitempty"`
 	TopK         int     `json:"top_k,omitempty"`
+
+	// Vector backend.
+	Backend string `json:"backend,omitempty"`
 
 	// Install options (set during setup, consumed by caller).
 	InstallPath        string `json:"install_path,omitempty"`
@@ -165,6 +169,10 @@ type OnboardModel struct {
 	installOptions   []string
 	installOptionIdx int
 
+	// Backend selector.
+	backendOptions   []string
+	backendOptionIdx int
+
 	// MCP.
 	mcpEnabled   bool
 	mcpOptions   []string // MCP on/off labels
@@ -198,6 +206,7 @@ func settingsMenuItems() []settingsItem {
 		{"Reranker", phaseReranker},
 		{"Reranker Model", phaseRerankModel},
 		{"Index Directory", phaseIndexDir},
+		{"Vector Backend", phaseBackend},
 		{"MCP Server", phaseMCP},
 		{"REST API Server", phaseServer},
 		{"Install / Uninstall", phaseInstall},
@@ -268,6 +277,8 @@ func NewOnboardModel() OnboardModel {
 		indexDirInput:     indexDir,
 		rerankOptions:     []string{"Skip (no reranking)", "Enable reranker"},
 		rerankOptionIdx:   0,
+		backendOptions:    []string{"DiskANN (recommended — disk-efficient, low RAM)", "HNSW (in-memory, fast)", "FAISS (SIMD-accelerated, requires CGo)", "FAISS-Hybrid (FAISS build + Go search)"},
+		backendOptionIdx:  0,
 		mcpOptions:        []string{"Disable MCP server", "Enable MCP server"},
 		mcpOptionIdx:      0,
 		serverOptions:     []string{"Disable REST API server", "Enable REST API server"},
@@ -804,9 +815,30 @@ func (m OnboardModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 				m.phase = phaseMenu
 				return m, nil
 			}
+			m.phase = phaseBackend
+			return m, nil
+		}
+
+	// ── Backend selector ──
+	case phaseBackend:
+		switch key {
+		case "up", "k":
+			if m.backendOptionIdx > 0 {
+				m.backendOptionIdx--
+			}
+		case "down", "j":
+			if m.backendOptionIdx < len(m.backendOptions)-1 {
+				m.backendOptionIdx++
+			}
+		case "enter":
+			if m.menuMode {
+				m.phase = phaseMenu
+				return m, nil
+			}
 			m.phase = phaseMCP
 			return m, nil
 		}
+		return m, nil
 
 	// ── MCP server toggle ──
 	case phaseMCP:
@@ -940,7 +972,8 @@ func (m OnboardModel) prevPhase() int {
 		phaseRerankFetching: phaseReranker,
 		phaseRerankModel:    phaseReranker,
 		phaseIndexDir:       phaseReranker,
-		phaseMCP:            phaseIndexDir,
+		phaseBackend:        phaseIndexDir,
+		phaseMCP:            phaseBackend,
 		phaseServer:         phaseMCP,
 		phaseSummary:        phaseServer,
 		phaseInstall:        phaseSummary,
@@ -1039,6 +1072,7 @@ func (m *OnboardModel) buildResult() {
 		RerankEnabled:      m.rerankEnabled,
 		RerankModel:        rerankModel,
 		IndexDir:           m.indexDirInput.Value(),
+		Backend:            m.selectedBackend(),
 		InstallPath:        m.installPath(),
 		InstallCompletions: m.installOptionIdx >= 1 && m.installOptionIdx <= 2,
 		MCPEnabled:         m.mcpEnabled,
@@ -1231,8 +1265,19 @@ func (m OnboardModel) View() tea.View {
 			"Where to store indexes?",
 			&m.indexDirInput))
 
+	case phaseBackend:
+		b.WriteString(m.renderSelect("9", "Vector Backend",
+			"Select the vector search backend.\nDiskANN uses ~2.7x less RAM than HNSW for large datasets.",
+			m.backendOptions, m.backendOptionIdx,
+			[]string{
+				"Pure-Go Vamana graph — PQ prefiltering, disk-resident, low RAM",
+				"Pure-Go HNSW — fast in-memory, good for smaller datasets",
+				"C FAISS via CGo — SIMD-accelerated, IVF/PQ/SQ8 index types",
+				"FAISS build + Go search — best of both, no CGo at query time",
+			}))
+
 	case phaseMCP:
-		b.WriteString(m.renderSelect("9", "MCP Server",
+		b.WriteString(m.renderSelect("10", "MCP Server",
 			"Enable MCP (Model Context Protocol) for AI editors like Claude Code & VS Code Copilot.\nRun with: gleann mcp",
 			m.mcpOptions, m.mcpOptionIdx,
 			[]string{
@@ -1241,7 +1286,7 @@ func (m OnboardModel) View() tea.View {
 			}))
 
 	case phaseServer:
-		b.WriteString(m.renderSelect("10", "REST API Server",
+		b.WriteString(m.renderSelect("11", "REST API Server",
 			"Enable the REST API server for programmatic access.\nRun with: gleann serve --addr "+m.serverAddrInput.Value(),
 			m.serverOptions, m.serverOptionIdx,
 			[]string{
@@ -1253,7 +1298,7 @@ func (m OnboardModel) View() tea.View {
 		b.WriteString(m.renderSummary())
 
 	case phaseInstall:
-		b.WriteString(m.renderSelect("12", "Install / Uninstall",
+		b.WriteString(m.renderSelect("13", "Install / Uninstall",
 			"Install gleann to your PATH, or uninstall a previous installation.",
 			m.installOptions, m.installOptionIdx,
 			[]string{
@@ -1453,14 +1498,16 @@ func (m OnboardModel) visibleStep() int {
 		return 8
 	case phaseIndexDir:
 		return 9
-	case phaseMCP:
+	case phaseBackend:
 		return 10
-	case phaseServer:
+	case phaseMCP:
 		return 11
-	case phaseSummary:
+	case phaseServer:
 		return 12
-	case phaseInstall:
+	case phaseSummary:
 		return 13
+	case phaseInstall:
+		return 14
 	}
 	return 1
 }
@@ -1649,8 +1696,14 @@ func (m OnboardModel) renderSummary() string {
 	} else {
 		rows = append(rows, row{"Reranker", "disabled"})
 	}
+	backendNames := []string{"diskann", "hnsw", "faiss", "faiss-hybrid"}
+	backendName := "diskann"
+	if m.backendOptionIdx < len(backendNames) {
+		backendName = backendNames[m.backendOptionIdx]
+	}
 	rows = append(rows,
 		row{"Index Directory", m.indexDirInput.Value()},
+		row{"Vector Backend", backendName},
 	)
 	if m.mcpEnabled {
 		rows = append(rows, row{"MCP Server", "enabled"})
@@ -1678,6 +1731,14 @@ func (m OnboardModel) renderSummary() string {
 }
 
 // ── Utilities ──────────────────────────────────────────────────
+
+func (m OnboardModel) selectedBackend() string {
+	names := []string{"diskann", "hnsw", "faiss", "faiss-hybrid"}
+	if m.backendOptionIdx < len(names) {
+		return names[m.backendOptionIdx]
+	}
+	return "diskann"
+}
 
 func (m OnboardModel) installPath() string {
 	switch m.installOptionIdx {

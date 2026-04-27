@@ -93,10 +93,10 @@ func TestVisibleStep(t *testing.T) {
 		{phaseRerankFetching, 7},
 		{phaseRerankModel, 8},
 		{phaseIndexDir, 9},
-		{phaseMCP, 10},
-		{phaseServer, 11},
-		{phaseSummary, 12},
-		{phaseInstall, 13},
+		{phaseMCP, 11},
+		{phaseServer, 12},
+		{phaseSummary, 13},
+		{phaseInstall, 14},
 	}
 	for _, tt := range tests {
 		m.phase = tt.phase
