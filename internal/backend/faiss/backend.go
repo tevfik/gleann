@@ -52,45 +52,73 @@ type Builder struct {
 }
 
 func (b *Builder) Build(ctx context.Context, embeddings [][]float32) ([]byte, error) {
+	m := b.config.HNSWConfig.M
+	if m <= 0 {
+		m = 32
+	}
+	index, err := buildFAISSIndex(embeddings, m, b.config.FAISSConfig)
+	if err != nil {
+		return nil, err
+	}
+	defer C.faiss_Index_free(index)
+	return serializeIndex(index)
+}
+
+// buildFAISSIndex creates a FAISS index and adds the given embeddings.
+// Supports HNSW (default), HNSW+PQ, and HNSW+SQ8 via FAISSConfig.IndexType.
+// The caller must free the returned index with C.faiss_Index_free.
+func buildFAISSIndex(embeddings [][]float32, m int, fc gleann.FAISSConfig) (*C.FaissIndex, error) {
 	if len(embeddings) == 0 {
 		return nil, fmt.Errorf("no embeddings to build index from")
 	}
 
 	dim := len(embeddings[0])
 	n := len(embeddings)
-
-	// Flatten vectors into a contiguous C array.
 	flat := flattenVectors(embeddings)
 
-	// Determine M from config.
-	m := b.config.HNSWConfig.M
-	if m <= 0 {
-		m = 32
-	}
-
-	// Create HNSW index via index_factory: "HNSW{M}"
-	desc := fmt.Sprintf("HNSW%d", m)
+	// Build the FAISS index factory description string.
+	desc := indexFactoryDesc(m, fc)
 	cDesc := C.CString(desc)
 	defer C.free(unsafe.Pointer(cDesc))
 
 	var index *C.FaissIndex
 	rc := C.faiss_index_factory(&index, C.int(dim), cDesc, C.METRIC_L2)
 	if rc != 0 {
-		return nil, fmt.Errorf("faiss_index_factory failed: rc=%d", rc)
+		return nil, fmt.Errorf("faiss_index_factory(%q) failed: rc=%d", desc, rc)
 	}
-	defer C.faiss_Index_free(index)
 
-	// Set efConstruction via training (FAISS sets it during build).
-	// FAISS HNSW builds the graph during add(), not train().
+	// PQ/SQ indexes need a training step before add.
+	if fc.NeedsTrain() {
+		rc = C.faiss_Index_train(index, C.idx_t(n), (*C.float)(unsafe.Pointer(&flat[0])))
+		if rc != 0 {
+			C.faiss_Index_free(index)
+			return nil, fmt.Errorf("faiss_Index_train(%q) failed: rc=%d", desc, rc)
+		}
+	}
 
-	// Add vectors.
 	rc = C.faiss_Index_add(index, C.idx_t(n), (*C.float)(unsafe.Pointer(&flat[0])))
 	if rc != 0 {
+		C.faiss_Index_free(index)
 		return nil, fmt.Errorf("faiss_Index_add failed: rc=%d", rc)
 	}
 
-	// Serialize to memory — no temp files.
-	return serializeIndex(index)
+	return index, nil
+}
+
+// indexFactoryDesc returns the FAISS index_factory description string.
+func indexFactoryDesc(m int, fc gleann.FAISSConfig) string {
+	switch fc.IndexType {
+	case "hnsw_pq":
+		pqDim := fc.PQSubDim
+		if pqDim <= 0 {
+			pqDim = 16
+		}
+		return fmt.Sprintf("HNSW%d,PQ%d", m, pqDim)
+	case "hnsw_sq8":
+		return fmt.Sprintf("HNSW%d,SQ8", m)
+	default: // "hnsw" or ""
+		return fmt.Sprintf("HNSW%d", m)
+	}
 }
 
 func (b *Builder) AddVectors(ctx context.Context, indexData []byte, embeddings [][]float32, startID int64) ([]byte, error) {
@@ -222,6 +250,11 @@ func (s *Searcher) Close() error {
 }
 
 // ──────────────────── Helpers ────────────────────
+
+// FreeIndex frees a FAISS index. Exported for use in tests.
+func FreeIndex(index *C.FaissIndex) {
+	C.faiss_Index_free(index)
+}
 
 // flattenVectors converts [][]float32 to a contiguous []float32 for C.
 func flattenVectors(vecs [][]float32) []float32 {
