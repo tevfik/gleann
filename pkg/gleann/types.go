@@ -129,6 +129,9 @@ type Config struct {
 	// HNSW-specific parameters
 	HNSWConfig HNSWConfig `json:"hnsw_config,omitempty"`
 
+	// FAISS-specific parameters (used when Backend is "faiss" or "faiss-hybrid").
+	FAISSConfig FAISSConfig `json:"faiss_config,omitempty"`
+
 	// Search parameters
 	SearchConfig SearchConfig `json:"search_config,omitempty"`
 
@@ -189,6 +192,30 @@ type HNSWConfig struct {
 
 	// PruneKeepFraction is the fraction of embeddings to keep (default: 0.0 = keep none).
 	PruneKeepFraction float64 `json:"prune_keep_fraction"`
+}
+
+// FAISSConfig holds FAISS-specific parameters for the CGo backend.
+type FAISSConfig struct {
+	// IndexType selects the FAISS index structure.
+	//   "hnsw"     — HNSW flat (default, full precision).
+	//   "hnsw_pq"  — HNSW with Product Quantization (compressed storage, slight recall loss).
+	//   "hnsw_sq8" — HNSW with Scalar Quantization to 8-bit (4x compression, minimal recall loss).
+	IndexType string `json:"index_type,omitempty"`
+
+	// PQSubDim is the PQ sub-vector dimension. Each code occupies PQSubDim bytes.
+	// Only used when IndexType is "hnsw_pq". Default: 16.
+	PQSubDim int `json:"pq_sub_dim,omitempty"`
+}
+
+// NeedsTrain reports whether the FAISS index type requires an explicit
+// training step before adding vectors. Flat HNSW does not; PQ and SQ do.
+func (fc FAISSConfig) NeedsTrain() bool {
+	switch fc.IndexType {
+	case "hnsw_pq", "hnsw_sq8":
+		return true
+	default:
+		return false
+	}
 }
 
 // SearchConfig holds search-specific parameters.

@@ -1,0 +1,4 @@
+# FAISS C++ dev headers (vendored for CGo hybrid build).
+# Download with: git clone --depth 1 --branch v1.9.0 https://github.com/facebookresearch/faiss.git /tmp/faiss && cp -r /tmp/faiss/faiss/{*.h,impl/,utils/,invlists/} internal/backend/faiss/include/faiss/
+*
+!.gitignore

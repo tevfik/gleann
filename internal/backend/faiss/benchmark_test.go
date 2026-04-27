@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	_ "github.com/tevfik/gleann/pkg/backends"
+	"github.com/tevfik/gleann/modules/hnsw"
 	"github.com/tevfik/gleann/pkg/gleann"
 )
 
@@ -73,15 +73,17 @@ func TestFAISSvsPureGo(t *testing.T) {
 			faissSearcher.Close()
 
 			// ─── Pure Go HNSW ───
-			goConfig := gleann.DefaultConfig()
-			goConfig.Backend = "hnsw"
-			goConfig.HNSWConfig.M = 32
-			goConfig.HNSWConfig.EfConstruction = 200
-			goConfig.HNSWConfig.PruneEmbeddings = false
-			goConfig.HNSWConfig.UseMmap = false
-
-			goFactory := gleann.MustGetBackend("hnsw")
-			goBuilder := goFactory.NewBuilder(goConfig)
+			hnswCfg := hnsw.Config{
+				HNSWConfig: hnsw.HNSWConfig{
+					M:               32,
+					EfConstruction:  200,
+					EfSearch:        128,
+					PruneEmbeddings: false,
+					UseMmap:         false,
+				},
+			}
+			hnswFactory := &hnsw.Factory{}
+			goBuilder := hnswFactory.NewBuilder(hnswCfg)
 			goStart := time.Now()
 			goData, err := goBuilder.Build(ctx, embeddings)
 			if err != nil {
@@ -89,8 +91,8 @@ func TestFAISSvsPureGo(t *testing.T) {
 			}
 			goBuildTime := time.Since(goStart)
 
-			goSearcher := goFactory.NewSearcher(goConfig)
-			goMeta := gleann.IndexMeta{Dimensions: cfg.dim, Backend: "hnsw"}
+			goSearcher := hnswFactory.NewSearcher(hnswCfg)
+			goMeta := hnsw.IndexMeta{Dimensions: cfg.dim, Backend: "hnsw"}
 			if err := goSearcher.Load(ctx, goData, goMeta); err != nil {
 				t.Fatalf("Go load: %v", err)
 			}

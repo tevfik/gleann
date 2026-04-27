@@ -148,6 +148,68 @@ Reference benchmark for evaluating gleann's document parsing pipeline quality. B
 
 ---
 
+## FAISS CGo vs Pure Go HNSW
+
+FAISS backend uses CGo + libfaiss with SIMD (AVX2/SSE) acceleration. Requires `-tags faiss` build tag.
+Run with: `go test -v -tags faiss -run TestFAISSvsPureGo -timeout 300s ./internal/backend/faiss/`
+
+### Build Speed
+
+| Config | FAISS (CGo) | Pure Go | Speedup |
+|--------|------------|---------|---------|
+| 1K × 64d | 4ms | 91ms | **22.8x** |
+| 1K × 128d | 6ms | 165ms | **27.5x** |
+| 5K × 128d | 33ms | 1.48s | **44.8x** |
+| 5K × 384d | 72ms | 3.2s | **44.4x** |
+
+### Search Speed
+
+| Config | FAISS (CGo) | Pure Go | Speedup |
+|--------|------------|---------|---------|
+| 1K × 64d | 190µs | 465µs | **2.4x** |
+| 1K × 128d | 335µs | 780µs | **2.3x** |
+| 5K × 128d | 1.2ms | 3.8ms | **3.2x** |
+| 5K × 384d | 3.9ms | 35.2ms | **9.0x** |
+
+> FAISS advantage grows with dimensionality due to SIMD-vectorized distance computation.
+
+### Recall@10 (vs Brute Force, efSearch=128, M=32)
+
+| Config | FAISS | Pure Go |
+|--------|-------|---------|
+| 1K × 64d | 99.2% | 98.8% |
+| 5K × 128d | 98.8% | 96.7% |
+| 5K × 384d | 98.4% | 96.5% |
+
+### Trade-offs
+
+| Feature | FAISS CGo | Hybrid (`faiss-hybrid`) | Pure Go HNSW |
+|---------|-----------|-------------------------|-------------|
+| Build speed | **45x** faster | **13-24x** faster | Baseline |
+| Embedding pruning | ❌ | ✅ (87%+ savings) | ✅ (87%+ savings) |
+| SearchWithRecompute | ❌ | ✅ | ✅ |
+| Mmap search | ❌ | ✅ | ✅ |
+| Vector removal | ❌ (rebuild) | ❌ (rebuild) | ✅ (incremental) |
+| Batch search | ✅ (native) | ❌ | ❌ |
+| Cross-compile | ❌ (needs libfaiss) | ❌ (needs libfaiss) | ✅ |
+| Best for | High-throughput server | Fast build + compact storage | Edge/single-binary |
+
+### Hybrid Backend (`faiss-hybrid`)
+
+Uses FAISS SIMD for index construction, then extracts the graph topology and converts to CSR format with embedding pruning. Search uses the pure-Go HNSW backend with full recompute support.
+
+Run with: `go test -v -tags faiss -run TestHybridComparison ./internal/backend/faiss/`
+
+| Config | FAISS Build | Hybrid Build | Go Build | Hybrid vs Go | Hybrid Size | FAISS Size |
+|--------|------------|-------------|----------|-------------|-------------|------------|
+| 1K × 64d | 11ms | 28ms | 645ms | **23x** faster | 610 KB | 515 KB |
+| 1K × 128d | 31ms | 44ms | 808ms | **18x** faster | 621 KB | 765 KB |
+| 5K × 128d | 119ms | 528ms | 10.4s | **20x** faster | 2.3 MB | 3.3 MB |
+
+Recall: Hybrid achieves **100% recall@10** (vs 99.9% for FAISS). Overlap between hybrid and FAISS results: 99.9%.
+
+---
+
 ## Context Efficiency Comparison
 
 How gleann compares to other context-optimization tools:
