@@ -132,6 +132,9 @@ type Config struct {
 	// FAISS-specific parameters (used when Backend is "faiss" or "faiss-hybrid").
 	FAISSConfig FAISSConfig `json:"faiss_config,omitempty"`
 
+	// DiskANN-specific parameters (used when Backend is "diskann").
+	DiskANNConfig DiskANNConfig `json:"diskann_config,omitempty"`
+
 	// Search parameters
 	SearchConfig SearchConfig `json:"search_config,omitempty"`
 
@@ -239,6 +242,36 @@ func (fc FAISSConfig) IsIVF() bool {
 	default:
 		return false
 	}
+}
+
+// DiskANNConfig holds DiskANN (Vamana) backend parameters.
+type DiskANNConfig struct {
+	// R is the max out-degree per node. Default: 64.
+	R int `json:"r,omitempty"`
+
+	// L is the candidate list size during build. Default: 100.
+	L int `json:"l,omitempty"`
+
+	// Alpha controls the robust prune diversity (1.0=greedy, >1.0=diverse). Default: 1.2.
+	Alpha float64 `json:"alpha,omitempty"`
+
+	// PQDim is the number of PQ sub-quantizers. Default: auto (dims/4).
+	PQDim int `json:"pq_dim,omitempty"`
+
+	// PQCentroids is centroids per sub-quantizer (≤256). Default: 256.
+	PQCentroids int `json:"pq_centroids,omitempty"`
+
+	// SearchL is the candidate list size during search. Default: 100.
+	SearchL int `json:"search_l,omitempty"`
+
+	// SearchPQRerank is how many PQ candidates to rerank. Default: 2*TopK.
+	SearchPQRerank int `json:"search_pq_rerank,omitempty"`
+
+	// DistanceMetric selects distance function ("l2" or "cosine"). Default: "l2".
+	DistanceMetric string `json:"distance_metric,omitempty"`
+
+	// UseMmap enables memory-mapped raw vector access. Default: true.
+	UseMmap bool `json:"use_mmap,omitempty"`
 }
 
 // SearchConfig holds search-specific parameters.

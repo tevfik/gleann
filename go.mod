@@ -17,6 +17,7 @@ require (
 	github.com/smacker/go-tree-sitter v0.0.0-20240827094217-dd81d9e9be82
 	github.com/tevfik/gleann/modules/bm25 v0.0.0-20260303190343-2b5861edadac
 	github.com/tevfik/gleann/modules/chunking v0.0.0-20260303190343-2b5861edadac
+	github.com/tevfik/gleann/modules/diskann v0.0.0-00010101000000-000000000000
 	github.com/tevfik/gleann/modules/hnsw v0.0.0-20260303190343-2b5861edadac
 	github.com/xuri/excelize/v2 v2.10.1
 	go.etcd.io/bbolt v1.4.3
@@ -78,3 +79,5 @@ replace github.com/tevfik/gleann/modules/hnsw => ./modules/hnsw
 replace github.com/tevfik/gleann/modules/bm25 => ./modules/bm25
 
 replace github.com/tevfik/gleann/modules/chunking => ./modules/chunking
+
+replace github.com/tevfik/gleann/modules/diskann => ./modules/diskann
