@@ -67,6 +67,7 @@ $(BINARY_FULL):
 	@mkdir -p $(BUILD_DIR)
 	CGO_ENABLED=1 \
 	CGO_CFLAGS="-w $(OMP_CFLAGS)" \
+	CGO_CXXFLAGS="-w $(OMP_CFLAGS)" \
 	CGO_LDFLAGS="$(RPATH_FLAGS) -L$(FAISS_LIB_DIR) -lfaiss_c -lfaiss $(OMP_LDFLAGS)" \
 	go build -tags "faiss treesitter" -ldflags "$(LDFLAGS)" -o $(BINARY_FULL) $(CMD)
 	@echo "✅ Built $(BINARY_FULL)"
