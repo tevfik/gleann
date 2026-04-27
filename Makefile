@@ -26,9 +26,15 @@ UNAME_S := $(shell uname -s)
 ifeq ($(UNAME_S),Darwin)
     RPATH_FLAGS := -Wl,-rpath,@loader_path
     SO_EXT      := dylib
+    # macOS AppleClang doesn't ship omp.h; Homebrew libomp provides it.
+    OMP_PREFIX  := $(shell brew --prefix libomp 2>/dev/null)
+    OMP_CFLAGS  := $(if $(OMP_PREFIX),-I$(OMP_PREFIX)/include,)
+    OMP_LDFLAGS := $(if $(OMP_PREFIX),-L$(OMP_PREFIX)/lib -lomp,)
 else
     RPATH_FLAGS := -Wl,-rpath,\$$ORIGIN
     SO_EXT      := so
+    OMP_CFLAGS  :=
+    OMP_LDFLAGS :=
 endif
 
 # ── Default target ──────────────────────────────────────────────────────────
@@ -60,8 +66,8 @@ $(BINARY_FULL):
 	@echo "🔧 Building $(BINARY_FULL) with FAISS + tree-sitter..."
 	@mkdir -p $(BUILD_DIR)
 	CGO_ENABLED=1 \
-	CGO_CFLAGS="-w" \
-	CGO_LDFLAGS="$(RPATH_FLAGS) -L$(FAISS_LIB_DIR) -lfaiss_c -lfaiss" \
+	CGO_CFLAGS="-w $(OMP_CFLAGS)" \
+	CGO_LDFLAGS="$(RPATH_FLAGS) -L$(FAISS_LIB_DIR) -lfaiss_c -lfaiss $(OMP_LDFLAGS)" \
 	go build -tags "faiss treesitter" -ldflags "$(LDFLAGS)" -o $(BINARY_FULL) $(CMD)
 	@echo "✅ Built $(BINARY_FULL)"
 
