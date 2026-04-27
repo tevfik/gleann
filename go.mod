@@ -13,6 +13,7 @@ require (
 	github.com/ledongthuc/pdf v0.0.0-20250511090121-5959a4027728
 	github.com/mark3labs/mcp-go v0.44.1
 	github.com/mattn/go-isatty v0.0.20
+	github.com/philippgille/chromem-go v0.7.0
 	github.com/smacker/go-tree-sitter v0.0.0-20240827094217-dd81d9e9be82
 	github.com/tevfik/gleann/modules/bm25 v0.0.0-20260303190343-2b5861edadac
 	github.com/tevfik/gleann/modules/chunking v0.0.0-20260303190343-2b5861edadac
