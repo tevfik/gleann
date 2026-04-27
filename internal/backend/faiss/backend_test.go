@@ -591,3 +591,162 @@ func TestSerializeDeserializeRoundtrip(t *testing.T) {
 		t.Errorf("re-serialized size mismatch: %d vs %d", len(data), len(data2))
 	}
 }
+
+// ──────────────────── IVF Index Types ────────────────────
+
+func ivfConfig(indexType string) gleann.Config {
+	c := gleann.DefaultConfig()
+	c.Backend = "faiss"
+	c.FAISSConfig.IndexType = indexType
+	c.FAISSConfig.NList = 4 // small for test data
+	c.FAISSConfig.NProbe = 4
+	return c
+}
+
+func TestIVFFlatBuildSearch(t *testing.T) {
+	config := ivfConfig("ivf_flat")
+	builder := &Builder{config: config}
+
+	dims := 32
+	rng := rand.New(rand.NewSource(42))
+	embeddings := randomVectors(rng, 200, dims)
+
+	ctx := context.Background()
+	data, err := builder.Build(ctx, embeddings)
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	if len(data) == 0 {
+		t.Fatal("expected non-empty index data")
+	}
+
+	searcher := &Searcher{config: config}
+	meta := gleann.IndexMeta{Dimensions: dims, Backend: "faiss"}
+	if err := searcher.Load(ctx, data, meta); err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	defer searcher.Close()
+
+	ids, dists, err := searcher.Search(ctx, embeddings[0], 5)
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	if len(ids) == 0 {
+		t.Error("expected results")
+	}
+	// Self-search should return the query vector itself.
+	if ids[0] != 0 {
+		t.Logf("IVF_Flat: nearest ID=%d (expected 0)", ids[0])
+	}
+	if dists[0] > 1e-4 {
+		t.Errorf("IVF_Flat: self-distance=%f, expected near-zero", dists[0])
+	}
+}
+
+func TestIVFPQBuildSearch(t *testing.T) {
+	config := ivfConfig("ivf_pq")
+	config.FAISSConfig.PQSubDim = 8
+	builder := &Builder{config: config}
+
+	dims := 32 // must be divisible by PQSubDim
+	rng := rand.New(rand.NewSource(42))
+	embeddings := randomVectors(rng, 500, dims) // PQ needs ≥256 training points
+
+	ctx := context.Background()
+	data, err := builder.Build(ctx, embeddings)
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+
+	searcher := &Searcher{config: config}
+	meta := gleann.IndexMeta{Dimensions: dims, Backend: "faiss"}
+	if err := searcher.Load(ctx, data, meta); err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	defer searcher.Close()
+
+	ids, _, err := searcher.Search(ctx, embeddings[0], 5)
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	if len(ids) == 0 {
+		t.Error("expected results from IVF+PQ search")
+	}
+}
+
+func TestIVFSQ8BuildSearch(t *testing.T) {
+	config := ivfConfig("ivf_sq8")
+	builder := &Builder{config: config}
+
+	dims := 32
+	rng := rand.New(rand.NewSource(42))
+	embeddings := randomVectors(rng, 200, dims)
+
+	ctx := context.Background()
+	data, err := builder.Build(ctx, embeddings)
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+
+	searcher := &Searcher{config: config}
+	meta := gleann.IndexMeta{Dimensions: dims, Backend: "faiss"}
+	if err := searcher.Load(ctx, data, meta); err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	defer searcher.Close()
+
+	ids, _, err := searcher.Search(ctx, embeddings[0], 5)
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	if len(ids) == 0 {
+		t.Error("expected results from IVF+SQ8 search")
+	}
+}
+
+func TestIVFAutoNList(t *testing.T) {
+	// When NList is 0, buildFAISSIndex should auto-calculate it.
+	config := gleann.DefaultConfig()
+	config.Backend = "faiss"
+	config.FAISSConfig.IndexType = "ivf_flat"
+	config.FAISSConfig.NList = 0 // auto
+	config.FAISSConfig.NProbe = 4
+
+	builder := &Builder{config: config}
+
+	dims := 16
+	rng := rand.New(rand.NewSource(42))
+	embeddings := randomVectors(rng, 100, dims)
+
+	data, err := builder.Build(context.Background(), embeddings)
+	if err != nil {
+		t.Fatalf("build with auto-nlist: %v", err)
+	}
+	if len(data) == 0 {
+		t.Error("expected non-empty index data")
+	}
+}
+
+func TestIVFNeedsTrainAndIsIVF(t *testing.T) {
+	tests := []struct {
+		indexType  string
+		isIVF     bool
+		needTrain bool
+	}{
+		{"hnsw", false, false},
+		{"hnsw_pq", false, true},
+		{"hnsw_sq8", false, true},
+		{"ivf_flat", true, true},
+		{"ivf_pq", true, true},
+		{"ivf_sq8", true, true},
+	}
+	for _, tt := range tests {
+		fc := gleann.FAISSConfig{IndexType: tt.indexType}
+		if fc.IsIVF() != tt.isIVF {
+			t.Errorf("%s: IsIVF()=%v, want %v", tt.indexType, fc.IsIVF(), tt.isIVF)
+		}
+		if fc.NeedsTrain() != tt.needTrain {
+			t.Errorf("%s: NeedsTrain()=%v, want %v", tt.indexType, fc.NeedsTrain(), tt.needTrain)
+		}
+	}
+}

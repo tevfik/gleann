@@ -21,6 +21,7 @@ import "C"
 import (
 	"context"
 	"fmt"
+	"math"
 	"sync"
 	"unsafe"
 
@@ -65,7 +66,7 @@ func (b *Builder) Build(ctx context.Context, embeddings [][]float32) ([]byte, er
 }
 
 // buildFAISSIndex creates a FAISS index and adds the given embeddings.
-// Supports HNSW (default), HNSW+PQ, and HNSW+SQ8 via FAISSConfig.IndexType.
+// Supports HNSW, HNSW+PQ, HNSW+SQ8, IVF+Flat, IVF+PQ, IVF+SQ8.
 // The caller must free the returned index with C.faiss_Index_free.
 func buildFAISSIndex(embeddings [][]float32, m int, fc gleann.FAISSConfig) (*C.FaissIndex, error) {
 	if len(embeddings) == 0 {
@@ -75,6 +76,18 @@ func buildFAISSIndex(embeddings [][]float32, m int, fc gleann.FAISSConfig) (*C.F
 	dim := len(embeddings[0])
 	n := len(embeddings)
 	flat := flattenVectors(embeddings)
+
+	// Auto-calculate IVF nlist if not set: sqrt(N), clamped to [1, N].
+	if fc.IsIVF() && fc.NList <= 0 {
+		nlist := int(math.Sqrt(float64(n)))
+		if nlist < 1 {
+			nlist = 1
+		}
+		if nlist > n {
+			nlist = n
+		}
+		fc.NList = nlist
+	}
 
 	// Build the FAISS index factory description string.
 	desc := indexFactoryDesc(m, fc)
@@ -107,15 +120,26 @@ func buildFAISSIndex(embeddings [][]float32, m int, fc gleann.FAISSConfig) (*C.F
 
 // indexFactoryDesc returns the FAISS index_factory description string.
 func indexFactoryDesc(m int, fc gleann.FAISSConfig) string {
+	nlist := fc.NList
+	if nlist <= 0 {
+		nlist = 100 // sensible default, overridden at build time
+	}
+	pqDim := fc.PQSubDim
+	if pqDim <= 0 {
+		pqDim = 16
+	}
+
 	switch fc.IndexType {
 	case "hnsw_pq":
-		pqDim := fc.PQSubDim
-		if pqDim <= 0 {
-			pqDim = 16
-		}
 		return fmt.Sprintf("HNSW%d,PQ%d", m, pqDim)
 	case "hnsw_sq8":
 		return fmt.Sprintf("HNSW%d,SQ8", m)
+	case "ivf_flat":
+		return fmt.Sprintf("IVF%d,Flat", nlist)
+	case "ivf_pq":
+		return fmt.Sprintf("IVF%d,PQ%d", nlist, pqDim)
+	case "ivf_sq8":
+		return fmt.Sprintf("IVF%d,SQ8", nlist)
 	default: // "hnsw" or ""
 		return fmt.Sprintf("HNSW%d", m)
 	}
@@ -179,16 +203,32 @@ func (s *Searcher) Load(ctx context.Context, indexData []byte, meta gleann.Index
 	}
 	s.index = newIndex
 
-	// Set efSearch via ParameterSpace (FAISS default is 16, which gives poor recall).
-	efSearch := s.config.HNSWConfig.EfSearch
-	if efSearch <= 0 {
-		efSearch = 128
-	}
+	// Set search parameters via ParameterSpace.
 	var ps *C.FaissParameterSpace
 	if C.faiss_ParameterSpace_new(&ps) == 0 {
-		cParam := C.CString("efSearch")
-		C.faiss_ParameterSpace_set_index_parameter(ps, s.index, cParam, C.double(efSearch))
-		C.free(unsafe.Pointer(cParam))
+		// HNSW: efSearch (default is 16, which gives poor recall).
+		// Only set for HNSW-based indexes (not pure IVF).
+		if !s.config.FAISSConfig.IsIVF() {
+			efSearch := s.config.HNSWConfig.EfSearch
+			if efSearch <= 0 {
+				efSearch = 128
+			}
+			cParam := C.CString("efSearch")
+			C.faiss_ParameterSpace_set_index_parameter(ps, s.index, cParam, C.double(efSearch))
+			C.free(unsafe.Pointer(cParam))
+		}
+
+		// IVF: nprobe (number of partitions to visit).
+		if s.config.FAISSConfig.IsIVF() {
+			nprobe := s.config.FAISSConfig.NProbe
+			if nprobe <= 0 {
+				nprobe = 10
+			}
+			cNprobe := C.CString("nprobe")
+			C.faiss_ParameterSpace_set_index_parameter(ps, s.index, cNprobe, C.double(nprobe))
+			C.free(unsafe.Pointer(cNprobe))
+		}
+
 		C.faiss_ParameterSpace_free(ps)
 	}
 

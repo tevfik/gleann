@@ -197,21 +197,44 @@ type HNSWConfig struct {
 // FAISSConfig holds FAISS-specific parameters for the CGo backend.
 type FAISSConfig struct {
 	// IndexType selects the FAISS index structure.
-	//   "hnsw"     — HNSW flat (default, full precision).
-	//   "hnsw_pq"  — HNSW with Product Quantization (compressed storage, slight recall loss).
-	//   "hnsw_sq8" — HNSW with Scalar Quantization to 8-bit (4x compression, minimal recall loss).
+	//   "hnsw"      — HNSW flat (default, full precision).
+	//   "hnsw_pq"   — HNSW with Product Quantization (compressed storage, slight recall loss).
+	//   "hnsw_sq8"  — HNSW with Scalar Quantization to 8-bit (4x compression, minimal recall loss).
+	//   "ivf_flat"  — IVF (Inverted File) with flat quantizer. Partitioned search for large datasets.
+	//   "ivf_pq"    — IVF with Product Quantization. Best for 100K+ vectors with memory constraints.
+	//   "ivf_sq8"   — IVF with Scalar Quantization. Good balance of speed, accuracy, and memory.
 	IndexType string `json:"index_type,omitempty"`
 
 	// PQSubDim is the PQ sub-vector dimension. Each code occupies PQSubDim bytes.
-	// Only used when IndexType is "hnsw_pq". Default: 16.
+	// Used when IndexType is "hnsw_pq" or "ivf_pq". Default: 16.
 	PQSubDim int `json:"pq_sub_dim,omitempty"`
+
+	// NList is the number of Voronoi cells (partitions) for IVF indexes.
+	// Higher values = more partitions = faster search but slower build.
+	// Default: sqrt(N) where N is the number of vectors.
+	NList int `json:"nlist,omitempty"`
+
+	// NProbe is the number of partitions to search at query time.
+	// Higher values = better recall but slower search.
+	// Default: min(NList, 10).
+	NProbe int `json:"nprobe,omitempty"`
 }
 
 // NeedsTrain reports whether the FAISS index type requires an explicit
-// training step before adding vectors. Flat HNSW does not; PQ and SQ do.
+// training step before adding vectors. Flat HNSW does not; PQ, SQ, and IVF do.
 func (fc FAISSConfig) NeedsTrain() bool {
 	switch fc.IndexType {
-	case "hnsw_pq", "hnsw_sq8":
+	case "hnsw_pq", "hnsw_sq8", "ivf_flat", "ivf_pq", "ivf_sq8":
+		return true
+	default:
+		return false
+	}
+}
+
+// IsIVF reports whether the index type uses Inverted File partitioning.
+func (fc FAISSConfig) IsIVF() bool {
+	switch fc.IndexType {
+	case "ivf_flat", "ivf_pq", "ivf_sq8":
 		return true
 	default:
 		return false
