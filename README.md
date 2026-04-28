@@ -36,7 +36,7 @@ The result is a highly portable system that boots in milliseconds, respects your
 - **Markdown Rendering**: Beautiful terminal markdown output via glamour. Disable with `--raw`.
 - **Word-wrap**: Terminal-aware word wrapping with `--word-wrap N` for streaming output.
 - **LLM Title Summarization**: Auto-generated conversation titles via LLM when no title is provided.
-- **Embedding Cache**: Content-hash keyed cache avoids recomputing embeddings for unchanged chunks during rebuilds.
+- **Embedding Cache**: Two-tier cache (L1: otter in-memory ≤50k vectors; L2: disk keyed by SHA-256). L2 hits are promoted to L1; unchanged chunks skip recompute entirely during rebuilds.
 - **Pipe-Friendly**: Full stdin/pipe support (`cat file | gleann ask index "review"`), auto-raw mode when stdout is piped, `--quiet` for scripting.
 - **No-Cache / No-Limit**: `--no-cache` skips conversation save, `--no-limit` removes token cap for unlimited output.
 - **`.gleannignore`**: Gitignore-style patterns to exclude files during index builds.

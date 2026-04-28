@@ -19,12 +19,16 @@ git s# Architecture & Design
 │  (LLM Q&A)       │  Stdin · Pipe · Raw · Quiet                       │
 │  + retry logic    │  ↑ memory context injected as system message     │
 ├───────────────────┴──────────────────────────────────────────────────┤
-│  Retry Layer  (pkg/retry — exponential backoff for transient errors) │
+│  Retry Layer  (pkg/retry — exponential backoff + circuit breaker via failsafe-go)        │
+│  ├── DefaultResilienceConfig  (3 retries, 2s→30s backoff, CB opens at 5 failures, 5 min) │
+│  └── EmbeddingResilienceConfig  (5 retries, 10 min, higher CB threshold for GPU pressure) │
 ├──────────────────────────────────────────────────────────────────────┤
 │  A2A Protocol Layer  (internal/a2a — Agent-to-Agent communication)   │
 │  ├── Agent Card   (/.well-known/agent-card.json)                     │
 │  ├── Skills       (semantic-search, ask-rag, code-analysis, memory)  │
 │  ├── Skill Router (keyword match → scoring-based fallback)           │
+│  ├── Task FSM     (qmuntal/stateless — 6 states: SUBMITTED/WORKING/  │
+│  │                 COMPLETED/FAILED/CANCELED/INPUT_REQUIRED)         │
 │  └── Task Store   (in-memory, bounded at 1000)                       │
 ├──────────────────────────────────────────────────────────────────────┤
 │  Unified Memory API  (internal/server/unified_memory_handler.go)     │
@@ -58,13 +62,19 @@ git s# Architecture & Design
 ├──────────────────────────────────────────────────────────────────────┤
 │  Background Task Manager  (internal/background)                      │
 │  ├── Worker Pool   (bounded, default 2 workers)                      │
-│  ├── Task Lifecycle (queued → running → completed/failed)            │
+│  ├── Task FSM      (qmuntal/stateless — 5 states: QUEUED/RUNNING/    │
+│  │                  COMPLETED/FAILED/CANCELLED; direct QUEUED→CANCELLED) │
 │  ├── Progress Tracking  (real-time 0.0–1.0 + messages)               │
 │  ├── Auto-Index    (fsnotify watcher → incremental vector update)    │
 │  └── CLI: gleann tasks  · REST: GET /api/tasks                       │
 ├──────────────────────────────────────────────────────────────────────┤
 │  Auto-Bootstrap  (internal/autosetup)                                │
 │  └── Detects Ollama, picks best models, creates config automatically │
+├──────────────────────────────────────────────────────────────────────┤
+│  Event Bus  (internal/eventbus — Watermill GoChannel pub/sub)        │
+│  ├── 16 typed topics: index lifecycle, search, memory, tasks, A2A,   │
+│  │    plugin load/unload/error                                        │
+│  └── Decoupled consumers: plugins, TUI, metrics — no import cycles   │
 ├──────────────────────────────────────────────────────────────────────┤
 │  Multimodal Layer  (internal/multimodal)                             │
 │  ├── Media Detection  (image/audio/video classification)             │
@@ -223,7 +233,7 @@ External Agent (e.g. Yaver, Claude)
 | Long-term Memory (BBolt blocks) | — | ✅ (short/medium/long tiers, auto-injection) |
 | Rate Limiting | — | ✅ (per-IP token bucket, 429) |
 | Request Timeouts | — | ✅ (per-path context deadline, 504) |
-| Retry Logic | — | ✅ (exponential backoff for LLM/embedding calls) |
+| Retry Logic | — | ✅ (failsafe-go: exponential backoff + circuit breaker, per-call timeout) |
 | Batch Query (MCP) | — | ✅ (`gleann_batch_ask` — 10 concurrent questions) |
 | Background Maintenance | — | ✅ (auto-promote blocks, prune expired) |
 | Sleep-Time Compute | — | ✅ (Letta-inspired background reflection on conversations) |
