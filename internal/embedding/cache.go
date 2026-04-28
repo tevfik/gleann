@@ -12,27 +12,32 @@ import (
 	"path/filepath"
 	"sync"
 
+	"github.com/maypok86/otter/v2"
 	gleann "github.com/tevfik/gleann/pkg/gleann"
 )
 
-// CachedComputer wraps an EmbeddingComputer with a disk-based cache.
-// Cache entries are keyed by SHA-256(model + text) and stored as raw
-// float32 slices encoded in little-endian binary.
+// CachedComputer wraps an EmbeddingComputer with a two-tier cache:
+// L1: otter in-memory cache (hot, zero I/O)
+// L2: disk-based SHA-256 keyed files (cold, persists across restarts)
 type CachedComputer struct {
 	inner gleann.EmbeddingComputer
 	dir   string // cache directory
 	mu    sync.RWMutex
 	hits  int
 	total int
+	l1    *otter.Cache[string, []float32] // hot in-memory cache
 }
 
 // CacheOptions configures the embedding cache.
 type CacheOptions struct {
 	// Dir is the cache directory (default: ~/.gleann/cache/embeddings/).
 	Dir string
+	// MemoryCacheSize is the max number of vectors in the L1 in-memory cache.
+	// Default: 50000 (~200MB for 1024-dim float32 vectors).
+	MemoryCacheSize int
 }
 
-// NewCachedComputer wraps an existing EmbeddingComputer with caching.
+// NewCachedComputer wraps an existing EmbeddingComputer with 2-tier caching.
 func NewCachedComputer(inner gleann.EmbeddingComputer, opts CacheOptions) *CachedComputer {
 	dir := opts.Dir
 	if dir == "" {
@@ -40,13 +45,27 @@ func NewCachedComputer(inner gleann.EmbeddingComputer, opts CacheOptions) *Cache
 		dir = filepath.Join(home, ".gleann", "cache", "embeddings")
 	}
 	_ = os.MkdirAll(dir, 0o755)
+
+	memSize := opts.MemoryCacheSize
+	if memSize <= 0 {
+		memSize = 50000
+	}
+	l1, err := otter.New[string, []float32](&otter.Options[string, []float32]{
+		MaximumSize: memSize,
+	})
+	if err != nil {
+		// Non-fatal: fall back to disk-only cache.
+		l1 = nil
+	}
+
 	return &CachedComputer{
 		inner: inner,
 		dir:   dir,
+		l1:    l1,
 	}
 }
 
-// Compute computes embeddings, returning cached results where available.
+// Compute computes embeddings using 2-tier cache: L1 (memory) → L2 (disk) → compute.
 func (c *CachedComputer) Compute(ctx context.Context, texts []string) ([][]float32, error) {
 	if len(texts) == 0 {
 		return nil, nil
@@ -59,11 +78,29 @@ func (c *CachedComputer) Compute(ctx context.Context, texts []string) ([][]float
 	model := c.inner.ModelName()
 	c.mu.RUnlock()
 
-	// Check cache for each text.
+	// Check cache for each text: L1 (otter) → L2 (disk).
 	for i, text := range texts {
 		key := cacheKey(model, text)
+
+		// L1: in-memory cache.
+		if c.l1 != nil {
+			if vec, ok := c.l1.GetIfPresent(key); ok {
+				result[i] = vec
+				c.mu.Lock()
+				c.hits++
+				c.total++
+				c.mu.Unlock()
+				continue
+			}
+		}
+
+		// L2: disk cache.
 		if vec, err := c.loadFromDisk(key); err == nil {
 			result[i] = vec
+			// Promote to L1.
+			if c.l1 != nil {
+				c.l1.Set(key, vec)
+			}
 			c.mu.Lock()
 			c.hits++
 			c.total++
@@ -92,12 +129,15 @@ func (c *CachedComputer) Compute(ctx context.Context, texts []string) ([][]float
 		return nil, err
 	}
 
-	// Store computed results in cache and fill result.
+	// Store computed results in L1 + L2 caches and fill result.
 	for j, idx := range uncached {
 		if j < len(computed) {
 			result[idx] = computed[j]
 			key := cacheKey(model, texts[idx])
 			_ = c.saveToDisk(key, computed[j])
+			if c.l1 != nil {
+				c.l1.Set(key, computed[j])
+			}
 		}
 	}
 
@@ -143,8 +183,11 @@ func (c *CachedComputer) HitRate() float64 {
 	return float64(c.hits) / float64(c.total) * 100
 }
 
-// ClearCache removes all cached embeddings.
+// ClearCache removes all cached embeddings from both L1 and L2.
 func (c *CachedComputer) ClearCache() error {
+	if c.l1 != nil {
+		c.l1.InvalidateAll()
+	}
 	return os.RemoveAll(c.dir)
 }
 

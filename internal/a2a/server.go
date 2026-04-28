@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/qmuntal/stateless"
 )
 
 // ── A2A Data Model (HTTP+JSON binding, v1.0) ───────────────────
@@ -81,6 +82,9 @@ type Task struct {
 	Status    TaskStatus `json:"status"`
 	Artifacts []Artifact `json:"artifacts,omitempty"`
 	History   []Message  `json:"history,omitempty"`
+
+	// fsm governs lifecycle transitions (not serialized).
+	fsm *stateless.StateMachine `json:"-"`
 }
 
 // TaskStatus holds the current state and optional status message.
@@ -220,16 +224,27 @@ func (s *Server) handleSendMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Create task.
+	// Create task with FSM-validated lifecycle.
 	now := time.Now().UTC().Format(time.RFC3339)
 	task := &Task{
 		ID:        uuid.New().String(),
 		ContextID: uuid.New().String(),
 		Status: TaskStatus{
-			State:     TaskStateWorking,
+			State:     TaskStateSubmitted,
 			Timestamp: now,
 		},
 		History: []Message{req.Message},
+		fsm:     NewTaskFSM(TaskStateSubmitted),
+	}
+
+	// SUBMITTED → WORKING (FSM-validated).
+	if err := TaskFSMTransition(task.fsm, TaskStateWorking); err != nil {
+		writeA2AError(w, http.StatusInternalServerError, "INTERNAL", "task fsm: "+err.Error())
+		return
+	}
+	task.Status = TaskStatus{
+		State:     TaskStateWorking,
+		Timestamp: time.Now().UTC().Format(time.RFC3339),
 	}
 
 	// Execute synchronously (blocking mode — default per spec).
@@ -240,6 +255,8 @@ func (s *Server) handleSendMessage(w http.ResponseWriter, r *http.Request) {
 	})
 
 	if err != nil {
+		// WORKING → FAILED (FSM-validated).
+		_ = TaskFSMTransition(task.fsm, TaskStateFailed)
 		task.Status = TaskStatus{
 			State:     TaskStateFailed,
 			Timestamp: time.Now().UTC().Format(time.RFC3339),
@@ -250,6 +267,8 @@ func (s *Server) handleSendMessage(w http.ResponseWriter, r *http.Request) {
 			},
 		}
 	} else {
+		// WORKING → COMPLETED (FSM-validated).
+		_ = TaskFSMTransition(task.fsm, TaskStateCompleted)
 		task.Status = TaskStatus{
 			State:     TaskStateCompleted,
 			Timestamp: time.Now().UTC().Format(time.RFC3339),
