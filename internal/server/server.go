@@ -15,6 +15,7 @@ import (
 
 	"github.com/tevfik/gleann/internal/background"
 	"github.com/tevfik/gleann/internal/embedding"
+	"github.com/tevfik/gleann/internal/eventbus"
 	"github.com/tevfik/gleann/pkg/conversations"
 	"github.com/tevfik/gleann/pkg/gleann"
 	"github.com/tevfik/gleann/pkg/memory"
@@ -38,7 +39,27 @@ type Server struct {
 	blockMem    *memory.Manager     // BBolt hierarchical memory blocks (pkg/memory)
 	bgManager   *background.Manager // Background task manager
 	autoIndexer *background.AutoIndexer
+	bus         *eventbus.Bus // In-process pub/sub for lifecycle events
 	stopCh      chan struct{} // closed on Stop() to signal background goroutines
+}
+
+// publish is a nil-safe helper that emits an event on the bus.
+// Errors are silently ignored — eventbus is best-effort instrumentation,
+// not a control-flow primitive.
+func (s *Server) publish(topic string, payload map[string]any) {
+	if s == nil || s.bus == nil {
+		return
+	}
+	_ = s.bus.Publish(topic, payload)
+}
+
+// Bus returns the server's event bus (nil if not initialized).
+// Callers may Subscribe to receive lifecycle events.
+func (s *Server) Bus() *eventbus.Bus {
+	if s == nil {
+		return nil
+	}
+	return s.bus
 }
 
 // NewServer creates a new REST API server.
@@ -64,6 +85,7 @@ func NewServer(config gleann.Config, addr, version string) *Server {
 		graphPool:  newGraphDBPool(config.IndexDir),
 		memoryPool: newMemoryPool(config.IndexDir),
 		bgManager:  background.NewManager(2),
+		bus:        eventbus.New(64, nil),
 	}
 }
 
@@ -174,6 +196,9 @@ func (s *Server) Stop(ctx context.Context) error {
 	}
 	s.stopMemoryPool(ctx)
 	s.closeBlockMem()
+	if s.bus != nil {
+		_ = s.bus.Close()
+	}
 	return s.server.Shutdown(ctx)
 }
 
@@ -343,6 +368,13 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	serverMetrics.RecordSearch(time.Since(start), false)
+	s.publish(eventbus.TopicSearchCompleted, map[string]any{
+		"index":    name,
+		"query":    req.Query,
+		"top_k":    req.TopK,
+		"results":  len(results),
+		"query_ms": time.Since(start).Milliseconds(),
+	})
 
 	writeJSON(w, http.StatusOK, searchResponse{
 		Results: results,
@@ -535,13 +567,26 @@ func (s *Server) handleBuild(w http.ResponseWriter, r *http.Request) {
 	}
 
 	start := time.Now()
+	s.publish(eventbus.TopicIndexStarted, map[string]any{
+		"index": name,
+		"count": len(items),
+	})
 	if err := builder.Build(r.Context(), name, items); err != nil {
 		serverMetrics.RecordBuild(time.Since(start), true)
+		s.publish(eventbus.TopicIndexFailed, map[string]any{
+			"index": name,
+			"error": err.Error(),
+		})
 		writeError(w, http.StatusInternalServerError, "build failed: "+err.Error())
 		return
 	}
 	buildDuration := time.Since(start)
 	serverMetrics.RecordBuild(buildDuration, false)
+	s.publish(eventbus.TopicIndexCompleted, map[string]any{
+		"index":    name,
+		"count":    len(items),
+		"build_ms": buildDuration.Milliseconds(),
+	})
 
 	// Clear cached searcher.
 	s.mu.Lock()
