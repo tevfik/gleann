@@ -122,34 +122,6 @@ func TestComputeSingle_UnsupportedProvider(t *testing.T) {
 
 // Batcher RecomputerAdapter test removed — requires Server which needs real embedding backend
 
-// mockCovComputer is a minimal mock for testing.
-type mockCovComputer struct {
-	dims       int
-	embeddings [][]float32
-}
-
-func (m *mockCovComputer) Compute(_ context.Context, texts []string) ([][]float32, error) {
-	result := make([][]float32, len(texts))
-	for i := range texts {
-		if i < len(m.embeddings) {
-			result[i] = m.embeddings[i]
-		} else {
-			result[i] = make([]float32, m.dims)
-		}
-	}
-	return result, nil
-}
-
-func (m *mockCovComputer) ComputeSingle(_ context.Context, text string) ([]float32, error) {
-	if len(m.embeddings) > 0 {
-		return m.embeddings[0], nil
-	}
-	return make([]float32, m.dims), nil
-}
-
-func (m *mockCovComputer) Dimensions() int   { return m.dims }
-func (m *mockCovComputer) ModelName() string { return "mock-cov-model" }
-
 // ── TruncateToTokenLimit additional ─────────────────────────────
 
 func TestTruncateToTokenLimit_LongText(t *testing.T) {

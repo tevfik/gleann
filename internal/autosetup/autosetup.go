@@ -225,7 +225,7 @@ func PullModel(host, model string, progressFn func(status string, completed, tot
 
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("Ollama pull failed (HTTP %d): %s", resp.StatusCode, string(respBody))
+		return fmt.Errorf("ollama pull failed (HTTP %d): %s", resp.StatusCode, string(respBody))
 	}
 
 	scanner := bufio.NewScanner(resp.Body)

@@ -71,7 +71,7 @@ func fetchOllamaModels(host string) ([]ModelInfo, error) {
 		if readErr != nil {
 			body = []byte("(body unreadable)")
 		}
-		return nil, fmt.Errorf("Ollama returned %d: %s", resp.StatusCode, string(body))
+		return nil, fmt.Errorf("ollama returned %d: %s", resp.StatusCode, string(body))
 	}
 
 	var result ollamaTagsResponse

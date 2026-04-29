@@ -289,9 +289,7 @@ func NewChatModel(chat *gleann.LeannChat, indexName, modelName string) ChatModel
 	// Build role list from built-in registry + config roles.
 	roleNames := []string{"(none)"}
 	reg := roles.DefaultRegistry()
-	for _, name := range reg.List() {
-		roleNames = append(roleNames, name)
-	}
+	roleNames = append(roleNames, reg.List()...)
 	if savedCfg != nil && savedCfg.Roles != nil {
 		for name := range savedCfg.Roles {
 			// Avoid duplicates.
@@ -1037,11 +1035,6 @@ func (m ChatModel) viewHistory() string {
 	b.WriteString("\n")
 	b.WriteString(TitleStyle.Render(" 📂 Conversation History "))
 	b.WriteString("\n\n")
-
-	panelW := 70
-	if m.width > 10 && m.width-10 < panelW {
-		panelW = m.width - 10
-	}
 
 	if len(m.historyItems) == 0 {
 		b.WriteString("  No saved conversations.\n")

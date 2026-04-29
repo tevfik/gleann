@@ -11,6 +11,7 @@ func TestPlatformByName(t *testing.T) {
 		p := platformByName(name)
 		if p == nil {
 			t.Errorf("platformByName(%q) returned nil", name)
+			continue
 		}
 		if p.Name != name {
 			t.Errorf("platformByName(%q).Name = %q", name, p.Name)

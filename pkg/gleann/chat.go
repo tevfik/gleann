@@ -764,6 +764,9 @@ func (c *LeannChat) chatOpenAI(ctx context.Context, messages []ChatMessage) (str
 		}
 		body, err = json.Marshal(reqBody)
 	}
+	if err != nil {
+		return "", fmt.Errorf("marshal openai request: %w", err)
+	}
 
 	url := c.config.BaseURL + "/v1/chat/completions"
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
@@ -901,6 +904,9 @@ func (c *LeannChat) chatAnthropic(ctx context.Context, messages []ChatMessage) (
 			Temperature: c.config.Temperature,
 		}
 		body, err = json.Marshal(reqBody)
+	}
+	if err != nil {
+		return "", fmt.Errorf("marshal anthropic request: %w", err)
 	}
 
 	url := c.config.BaseURL + "/v1/messages"

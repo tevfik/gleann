@@ -522,19 +522,6 @@ export const GleannPlugin = async ({ project, client, $, directory, worktree }) 
 };
 `
 
-// openCodeJSON is the base opencode.json written when one doesn't exist.
-const openCodeJSON = `{
-  "$schema": "https://opencode.ai/config.json",
-  "mcp": {
-    "gleann": {
-      "type": "local",
-      "command": ["gleann", "mcp"],
-      "enabled": true
-    }
-  }
-}
-`
-
 func installOpenCode(dir, home string) error {
 	// 1. AGENTS.md
 	agentsPath := filepath.Join(dir, "AGENTS.md")
