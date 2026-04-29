@@ -157,6 +157,9 @@ func (s *Server) Start() error {
 	// Unified memory API (orchestrates blocks + graph + vector).
 	s.mountUnifiedMemory(mux)
 
+	// Knowledge Packs (curated reference data: crops, pests, regional facts...).
+	s.mountPacks(mux)
+
 	s.server = &http.Server{
 		Addr:         s.addr,
 		Handler:      withMiddleware(mux),
