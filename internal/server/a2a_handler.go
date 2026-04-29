@@ -262,7 +262,21 @@ func (s *Server) a2aCodeHandler(ctx a2a.SkillContext) (string, error) {
 		lines = append(lines, fmt.Sprintf("  - %s (%s)", n.FQN, n.Kind))
 	}
 	return fmt.Sprintf("%s of %q (index: %s):\n%s",
-		strings.Title(queryType), symbol, indexName, strings.Join(lines, "\n")), nil
+		titleASCII(queryType), symbol, indexName, strings.Join(lines, "\n")), nil
+}
+
+// titleASCII upper-cases the first byte of an ASCII string. Replaces the
+// deprecated strings.Title which mishandles Unicode word boundaries; we only
+// ever feed it short ASCII tokens like "deps" or "callers".
+func titleASCII(s string) string {
+	if s == "" {
+		return s
+	}
+	b := []byte(s)
+	if b[0] >= 'a' && b[0] <= 'z' {
+		b[0] -= 'a' - 'A'
+	}
+	return string(b)
 }
 
 // a2aMultimodalHandler analyzes files using vision-capable LLMs.

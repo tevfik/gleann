@@ -65,10 +65,7 @@ func (e *MetadataFilterEngine) Match(metadata map[string]any) bool {
 		}
 	}
 
-	if e.Logic == "or" {
-		return false
-	}
-	return true
+	return e.Logic != "or"
 }
 
 // FilterResults filters search results based on metadata filters.
