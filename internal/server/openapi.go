@@ -38,6 +38,7 @@ func (s *Server) openAPISpec() map[string]any {
 			{"name": "webhooks", "description": "Webhook notification management"},
 			{"name": "metrics", "description": "Prometheus-compatible metrics"},
 			{"name": "proxy", "description": "OpenAI-compatible RAG proxy (model: \"gleann/<index>\")"},
+			{"name": "packs", "description": "Knowledge Packs — domain-specific readonly datasets (crops, pests, varieties, …) served as versioned YAML bundles"},
 		},
 		"paths": map[string]any{
 			"/health": map[string]any{
@@ -1046,6 +1047,171 @@ func (s *Server) openAPISpec() map[string]any {
 					},
 				},
 			},
+
+			// ── Knowledge Packs ────────────────────────────────────────────────────
+			"/api/packs": map[string]any{
+				"get": map[string]any{
+					"tags":        []string{"packs"},
+					"summary":     "List knowledge packs",
+					"operationId": "listPacks",
+					"parameters": []map[string]any{
+						{
+							"name": "app", "in": "query", "required": false,
+							"schema":      map[string]any{"type": "string"},
+							"description": "Filter packs by app_hint (e.g. `ekiyo`).",
+						},
+					},
+					"responses": map[string]any{
+						"200": map[string]any{
+							"description": "Pack list",
+							"content": map[string]any{
+								"application/json": map[string]any{
+									"schema": map[string]any{
+										"type": "object",
+										"properties": map[string]any{
+											"packs": map[string]any{"type": "array", "items": refSchema("PackManifest")},
+											"count": map[string]any{"type": "integer"},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			"/api/packs/{id}": map[string]any{
+				"get": map[string]any{
+					"tags":        []string{"packs"},
+					"summary":     "Get pack manifest",
+					"operationId": "getPack",
+					"parameters": []map[string]any{
+						{"name": "id", "in": "path", "required": true, "schema": map[string]any{"type": "string"}, "description": "Pack ID (e.g. `crops-tr`)"},
+					},
+					"responses": map[string]any{
+						"200": map[string]any{
+							"description": "Pack manifest",
+							"content": map[string]any{
+								"application/json": map[string]any{"schema": refSchema("PackManifest")},
+							},
+						},
+						"304": map[string]any{"description": "Not modified (ETag matched)"},
+						"404": map[string]any{"description": "Pack not found"},
+					},
+				},
+			},
+			"/api/packs/{id}/data": map[string]any{
+				"get": map[string]any{
+					"tags":        []string{"packs"},
+					"summary":     "Get full pack contents",
+					"description": "Returns the manifest and the full items array. Clients can use `If-None-Match` with the previously received `ETag` to avoid re-downloading unchanged packs.",
+					"operationId": "getPackData",
+					"parameters": []map[string]any{
+						{"name": "id", "in": "path", "required": true, "schema": map[string]any{"type": "string"}, "description": "Pack ID"},
+					},
+					"responses": map[string]any{
+						"200": map[string]any{
+							"description": "Manifest + items",
+							"content": map[string]any{
+								"application/json": map[string]any{
+									"schema": map[string]any{
+										"type": "object",
+										"properties": map[string]any{
+											"manifest": refSchema("PackManifest"),
+											"items": map[string]any{
+												"type":  "array",
+												"items": map[string]any{"type": "object", "additionalProperties": true},
+											},
+										},
+									},
+								},
+							},
+						},
+						"304": map[string]any{"description": "Not modified (ETag matched)"},
+						"404": map[string]any{"description": "Pack not found"},
+					},
+				},
+			},
+			"/api/packs/{id}/items/{slug}": map[string]any{
+				"get": map[string]any{
+					"tags":        []string{"packs"},
+					"summary":     "Get single item by slug",
+					"operationId": "getPackItem",
+					"parameters": []map[string]any{
+						{"name": "id", "in": "path", "required": true, "schema": map[string]any{"type": "string"}, "description": "Pack ID"},
+						{"name": "slug", "in": "path", "required": true, "schema": map[string]any{"type": "string"}, "description": "Item slug (e.g. `pepper_capia`)"},
+					},
+					"responses": map[string]any{
+						"200": map[string]any{
+							"description": "Item object",
+							"content": map[string]any{
+								"application/json": map[string]any{
+									"schema": map[string]any{"type": "object", "additionalProperties": true},
+								},
+							},
+						},
+						"304": map[string]any{"description": "Not modified (ETag matched)"},
+						"404": map[string]any{"description": "Pack or item not found"},
+					},
+				},
+			},
+			"/api/packs/{id}/search": map[string]any{
+				"get": map[string]any{
+					"tags":        []string{"packs"},
+					"summary":     "Search pack items",
+					"description": "Case-insensitive substring search across the fields listed in `pack.yaml search.fields`.",
+					"operationId": "searchPackItems",
+					"parameters": []map[string]any{
+						{"name": "id", "in": "path", "required": true, "schema": map[string]any{"type": "string"}, "description": "Pack ID"},
+						{"name": "q", "in": "query", "required": true, "schema": map[string]any{"type": "string"}, "description": "Search query"},
+						{"name": "n", "in": "query", "required": false, "schema": map[string]any{"type": "integer", "default": 20}, "description": "Max results"},
+					},
+					"responses": map[string]any{
+						"200": map[string]any{
+							"description": "Search results",
+							"content": map[string]any{
+								"application/json": map[string]any{
+									"schema": map[string]any{
+										"type": "object",
+										"properties": map[string]any{
+											"results": map[string]any{
+												"type":  "array",
+												"items": map[string]any{"type": "object", "additionalProperties": true},
+											},
+											"count": map[string]any{"type": "integer"},
+											"query": map[string]any{"type": "string"},
+										},
+									},
+								},
+							},
+						},
+						"404": map[string]any{"description": "Pack not found"},
+					},
+				},
+			},
+			"/api/packs/reload": map[string]any{
+				"post": map[string]any{
+					"tags":        []string{"packs"},
+					"summary":     "Reload all packs from disk",
+					"description": "Rescans `GLEANN_PACKS_DIR` and replaces the in-memory registry. No downtime — existing requests continue to completion before the registry is swapped.",
+					"operationId": "reloadPacks",
+					"responses": map[string]any{
+						"200": map[string]any{
+							"description": "Reload succeeded",
+							"content": map[string]any{
+								"application/json": map[string]any{
+									"schema": map[string]any{
+										"type": "object",
+										"properties": map[string]any{
+											"loaded": map[string]any{"type": "integer", "description": "Number of packs now in registry"},
+										},
+									},
+								},
+							},
+						},
+						"500": map[string]any{"description": "Reload failed — see server logs"},
+					},
+				},
+			},
 		},
 		"components": map[string]any{
 			"schemas": map[string]any{
@@ -1721,6 +1887,40 @@ func (s *Server) openAPISpec() map[string]any {
 						"created_at": map[string]any{"type": "string", "format": "date-time"},
 						"started_at": map[string]any{"type": "string", "format": "date-time"},
 						"ended_at":   map[string]any{"type": "string", "format": "date-time"},
+					},
+				},
+				"PackManifest": map[string]any{
+					"type":        "object",
+					"description": "Knowledge pack manifest as declared in pack.yaml.",
+					"properties": map[string]any{
+						"id":             map[string]any{"type": "string", "description": "Unique pack identifier (e.g. `crops-tr`)"},
+						"version":        map[string]any{"type": "string", "description": "Semantic version string"},
+						"schema_version": map[string]any{"type": "integer", "description": "Pack schema version (bumped on breaking manifest changes)"},
+						"locale":         map[string]any{"type": "string", "description": "BCP 47 language tag (e.g. `tr`)"},
+						"title":          map[string]any{"type": "string", "description": "Human-readable display name"},
+						"description":    map[string]any{"type": "string"},
+						"tier":           map[string]any{"type": "string", "enum": []string{"free", "premium"}, "description": "Access tier"},
+						"content_files":  map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "YAML data file names relative to pack directory"},
+						"etag":           map[string]any{"type": "string", "description": "SHA-256[:12] of manifest + all content bytes — changes whenever the pack changes"},
+						"search": map[string]any{
+							"type": "object",
+							"properties": map[string]any{
+								"fields":   map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Item fields used for substring search"},
+								"semantic": map[string]any{"type": "boolean", "description": "Whether semantic (vector) search is available for this pack"},
+							},
+						},
+						"app_hints": map[string]any{
+							"type": "array",
+							"items": map[string]any{
+								"type": "object",
+								"properties": map[string]any{
+									"app":       map[string]any{"type": "string"},
+									"required":  map[string]any{"type": "boolean"},
+									"auto_load": map[string]any{"type": "boolean"},
+								},
+							},
+							"description": "Per-app metadata hints (required, auto_load, etc.)",
+						},
 					},
 				},
 			},
