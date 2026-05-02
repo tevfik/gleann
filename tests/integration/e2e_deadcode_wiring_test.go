@@ -46,6 +46,7 @@ func TestE2E_HybridSearch_CLIWiring(t *testing.T) {
 	}
 
 	searcher := gleann.NewSearcher(config, embedder)
+	defer searcher.Close()
 
 	// Wire BM25 just like the CLI does after --hybrid flag.
 	scorer := gleann.NewBM25Adapter()
@@ -91,6 +92,7 @@ func TestE2E_HybridSearch_BM25IndexedCount(t *testing.T) {
 	builder.Build(ctx, "bm25-count", items)
 
 	searcher := gleann.NewSearcher(config, embedder)
+	defer searcher.Close()
 	adapter := gleann.NewBM25Adapter()
 	searcher.SetScorer(adapter)
 

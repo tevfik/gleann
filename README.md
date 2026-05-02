@@ -2,24 +2,22 @@
 
 [![Release](https://github.com/tevfik/gleann/actions/workflows/release.yml/badge.svg?event=push)](https://github.com/tevfik/gleann/actions/workflows/release.yml)
 
-**A lightweight, brutally fast, and highly flexible AI/RAG workspace and autonomous agent framework built with Go. Inspired by the academic excellence of the Leann RAG backend, engineered for daily terminal use.**
+**A lightweight, high-performance AI/RAG workspace and autonomous agent framework implemented in Go. Inspired by the Leann RAG backend architecture, designed for terminal environments.**
 
 > 🤖 **Note:** This project, including its documentation, was developed with the assistance of AI.
 ---
 
-## The Story and Inspiration (Why Gleann?)
+## Project Context and Motivation
 
-Gleann was born out of a personal need to automate daily engineering workflows and power smooth analysis of massive codebases and personal documents—all from the comfort of the terminal.
+Gleann was developed to automate engineering workflows and facilitate the analysis of codebases and technical documents within terminal environments.
 
-The core motivation for this project is the visionary [Leann](https://github.com/yichuan-w/LEANN) project. Leann is a remarkable academic work that introduced a high-performance RAG backend architecture designed for efficient indexing and retrieval. We owe a great debt to the original Leann authors for their groundbreaking approach to selective recomputation and vector retrieval.
+The architecture is inspired by the [Leann](https://github.com/yichuan-w/LEANN) project, which introduced a high-performance RAG backend architecture designed for efficient indexing and retrieval. We acknowledge the original Leann authors for their approach to selective recomputation and vector retrieval.
 
-While Leann provides a powerful RAG engine, it is primarily an academic backend. Deploying it typically requires a substantial Python/Node environment (taking up roughly 8.5 GB of space) and a complex set of dependencies. As an engineer who lives in the shell, I needed something more self-contained: an end-to-end assistant where the LLM, plugin system, and RAG storage operate as a single, zero-dependency unit.
+While Leann provides a robust RAG engine, deploying it typically requires a Python/Node environment and a set of external dependencies. Gleann aims to provide a self-contained environment where the LLM, plugin system, and RAG storage operate as a consolidated, zero-dependency unit.
 
-Gleann was built as a lightweight, Go-native tribute to Leann’s vision.
+Built as a Go-native implementation of core RAG concepts, Gleann features a compact architecture. It incorporates an agent layer based on ReAct (Reasoning and Acting) patterns and provides direct LLM integration.
 
-By leveraging Go’s compiled, concurrent speed, I rebuilt the core RAG concepts into a compact architecture. On top of that foundation, I added an agent layer based on ReAct (Reasoning and Acting) logic and direct LLM integration.
-
-The result is a highly portable system that boots in milliseconds, respects your RAM, and manages your entire AI workload from a single, lightweight binary.
+The system is optimized for fast initialization and low memory utilization, managing AI workloads via a single compiled binary.
 
 ## Key Features
 
@@ -33,7 +31,7 @@ The result is a highly portable system that boots in milliseconds, respects your
 - **Multi-Index Chat**: Ask questions across multiple indexes simultaneously with `gleann ask docs,code "question"`. Results are merged by relevance score.
 - **Conversations**: Persistent conversation history with `--continue`, `--continue-last`, `--title`. Manage via `gleann chat --list / --show / --delete`.
 - **Roles & Format Control**: Named system prompt roles (`--role code`, `--role shell`) and output format control (`--format json`, `--format markdown`). Custom roles in config.
-- **Markdown Rendering**: Beautiful terminal markdown output via glamour. Disable with `--raw`.
+- **Markdown Rendering**: Terminal markdown rendering via glamour. Disable with `--raw`.
 - **Word-wrap**: Terminal-aware word wrapping with `--word-wrap N` for streaming output.
 - **LLM Title Summarization**: Auto-generated conversation titles via LLM when no title is provided.
 - **Embedding Cache**: Two-tier cache (L1: otter in-memory ≤50k vectors; L2: disk keyed by SHA-256). L2 hits are promoted to L1; unchanged chunks skip recompute entirely during rebuilds.
@@ -52,18 +50,18 @@ The result is a highly portable system that boots in milliseconds, respects your
 - **Unified Memory API**: Single `POST /api/memory/ingest` + `POST /api/memory/recall` interface that orchestrates block memory, knowledge graph, and vector search in parallel.
 - **Multimodal Detection**: Automatically detects and uses multimodal Ollama models (Gemma4, Qwen3-VL, LLaVA) for processing images, audio, and video.
 - **Background Task Manager**: Monitor long-running operations (indexing, memory consolidation) with progress tracking via `GET /api/tasks`.
-- **Zero-Config Auto-Bootstrap**: `gleann serve` detects Ollama, picks the best models, and creates a config file automatically — zero setup required.
-- **`gleann go` — One-Command Onboarding**: Detect environment → confirm → pull missing models → index — zero to working in 90 seconds.
+- **Auto-Bootstrap**: `gleann serve` detects Ollama, selects models, and creates an initial config file without manual intervention.
+- **`gleann go` — Onboarding Tool**: Detects environment, pulls required models, and builds initial indexes via an automated workflow.
 - **Cross-Platform Service Management**: `gleann service install/start/stop/status` manages a background server via systemd (Linux), launchd (macOS), or Task Scheduler (Windows).
-- **Auto Model Pull**: Missing Ollama models are automatically pulled with streaming progress — no manual `ollama pull` needed.
-- **Tiered Model Strategy**: Quick-start mode uses lightweight models (nomic-embed-text, 270 MB) for fast onboarding, with upgrade path to larger models.
-- **Sleek and Fast Terminal Interface (TUI)**: A keyboard-centric, fluid interface that brings your documents and code to life directly in your shell.
+- **Auto Model Management**: Missing models are automatically retrieved with progress tracking.
+- **Tiered Model Strategy**: Defaults to lightweight models for fast initialization, with the ability to configure larger models for advanced use cases.
+- **Terminal User Interface (TUI)**: A keyboard-centric interface for interacting with indexed data and executing AI operations directly from the shell.
 
 ## Documentation
 
 Detailed guides:
 
-- **[Getting Started](docs/getting-started.md)** — Zero to first search in 5 minutes
+- **[Getting Started](docs/getting-started.md)** — Initial setup and configuration guide
 - **[Cookbook](docs/cookbook.md)** — Real-world usage recipes
 - [Architecture & Design](docs/architecture.md) — Internals, module structure, data flow
 - [Configuration](docs/configuration.md) — Config file, CLI flags, recommended models
