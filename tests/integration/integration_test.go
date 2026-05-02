@@ -125,6 +125,7 @@ func TestBuildAndSearch(t *testing.T) {
 
 	// Search.
 	searcher := gleann.NewSearcher(config, embedder)
+	defer searcher.Close()
 	if err := searcher.Load(ctx, "test-index"); err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -185,6 +186,7 @@ func TestBuildFromTexts(t *testing.T) {
 
 	// Search.
 	searcher := gleann.NewSearcher(config, embedder)
+	defer searcher.Close()
 	if err := searcher.Load(ctx, "text-index"); err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -269,6 +271,7 @@ func TestHybridSearchWithBM25(t *testing.T) {
 	}
 
 	searcher := gleann.NewSearcher(config, embedder)
+	defer searcher.Close()
 	scorer := gleann.NewBM25Adapter()
 	searcher.SetScorer(scorer)
 
@@ -367,6 +370,7 @@ func TestEndToEndSearchQuality(t *testing.T) {
 	}
 
 	searcher := gleann.NewSearcher(config, embedder)
+	defer searcher.Close()
 	if err := searcher.Load(ctx, "quality-test"); err != nil {
 		t.Fatalf("Load: %v", err)
 	}

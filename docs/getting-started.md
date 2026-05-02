@@ -1,8 +1,8 @@
 # Getting Started with Gleann
 
-Get from zero to your first AI-powered search in under 5 minutes.
+This guide provides the initial setup and configuration steps for Gleann.
 
-## Fastest path: `gleann go`
+## Automated Setup: `gleann go`
 
 Already have Ollama running? Run one command inside any project directory:
 
