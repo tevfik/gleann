@@ -13,6 +13,20 @@
 
 ---
 
+## Why Gleann?
+
+🔒 **Privacy first** — every embedding and inference call runs locally via Ollama or llama.cpp. Your data never leaves your machine.
+
+⚡ **Single binary** — no Python virtualenv, no Node.js runtime, no Docker required. One `go install` and you're done.
+
+🤖 **MCP-native** — one command (`gleann install`) wires the knowledge base into Claude Code, Cursor, Windsurf, Codex, Gemini CLI, OpenCode, and GitHub Copilot CLI simultaneously.
+
+🧠 **Code intelligence, not just text search** — AST-aware chunking, call-graph traversal, and blast-radius analysis give LLMs structural code context that plain vector search cannot provide.
+
+📦 **Portable** — indexes live in `~/.gleann/indexes/`. Copy the folder between machines and your entire knowledge base travels with you.
+
+---
+
 ## Project Context and Motivation
 
 Gleann was developed to automate engineering workflows and facilitate the analysis of codebases and technical documents within terminal environments.
@@ -24,6 +38,22 @@ While Leann provides a robust RAG engine, deploying it typically requires a Pyth
 Built as a Go-native implementation of core RAG concepts, Gleann features a compact architecture. It incorporates an agent layer based on ReAct (Reasoning and Acting) patterns and provides direct LLM integration.
 
 The system is optimized for fast initialization and low memory utilization, managing AI workloads via a single compiled binary.
+
+### Gleann vs LEANN — side by side
+
+| | [LEANN](https://github.com/yichuan-w/LEANN) | Gleann |
+|---|---|---|
+| **Language** | Python | Go |
+| **Deploy** | `pip install` + venv | Single static binary |
+| **Core innovation** | Graph-based selective recomputation (97% less storage) | Full-stack AI assistant — RAG + code graph + memory + MCP server in one binary |
+| **Vector backends** | HNSW, DiskANN | HNSW, DiskANN, FAISS |
+| **Code analysis** | AST-aware chunking | AST call-graph, callers/callees, impact analysis, community detection |
+| **Long-term memory** | — | Tiered BBolt blocks (short / medium / long), auto-injected into every prompt |
+| **Agent protocol** | MCP client (reads from servers) | MCP **server** (exposes tools) + Google A2A protocol |
+| **Privacy** | Local-first | Local-first |
+| **Platforms** | Linux, macOS, Windows (WSL) | Linux, macOS, Windows (native) |
+
+Both projects share the same foundational idea — graph-based ANN indices + selective recomputation — but optimise for different trade-offs: LEANN minimises storage overhead for massive personal-data corpora, while Gleann maximises developer ergonomics and AI-editor integration.
 
 ## Key Features
 
@@ -62,6 +92,20 @@ The system is optimized for fast initialization and low memory utilization, mana
 - **Auto Model Management**: Missing models are automatically retrieved with progress tracking.
 - **Tiered Model Strategy**: Defaults to lightweight models for fast initialization, with the ability to configure larger models for advanced use cases.
 - **Terminal User Interface (TUI)**: A keyboard-centric interface for interacting with indexed data and executing AI operations directly from the shell.
+
+## Index anything
+
+Gleann indexes any directory of files. The type of content determines which capabilities unlock:
+
+| Source | Command | What you get |
+|--------|---------|-------------|
+| **Markdown / TXT** | `gleann index build docs --docs ./docs` | Semantic search, RAG Q&A, summaries |
+| **Source code** | `gleann index build code --docs ./src --graph` | Semantic search **+** AST call graph, callers/callees, blast-radius |
+| **PDF / DOCX / XLSX** | `gleann index build docs --docs ./papers` | Requires [gleann-plugin-docs](https://github.com/tevfik/gleann-plugin-docs) (MarkItDown) |
+| **Audio / Video** | `gleann index build media --docs ./recordings` | Requires [gleann-plugin-sound](https://github.com/tevfik/gleann-plugin-sound) (whisper.cpp) |
+| **Multiple indexes** | `gleann ask docs,code "how does auth work?"` | Fan-out query, results merged by score |
+
+Exclude files with `.gleannignore` (same syntax as `.gitignore`).
 
 ## Documentation
 
