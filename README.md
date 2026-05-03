@@ -1,6 +1,5 @@
 # gleann
 
-[![Release](https://github.com/tevfik/gleann/actions/workflows/release.yml/badge.svg?event=push)](https://github.com/tevfik/gleann/actions/workflows/release.yml)
 [![CI](https://github.com/tevfik/gleann/actions/workflows/ci.yml/badge.svg)](https://github.com/tevfik/gleann/actions/workflows/ci.yml)
 [![Go Report Card](https://goreportcard.com/badge/github.com/tevfik/gleann)](https://goreportcard.com/report/github.com/tevfik/gleann)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
@@ -55,7 +54,7 @@ The system is optimized for fast initialization and low memory utilization, mana
 - **Multimodal Detection**: Automatically detects and uses multimodal Ollama models (Gemma4, Qwen3-VL, LLaVA) for processing images, audio, and video.
 - **Background Task Manager**: Monitor long-running operations (indexing, memory consolidation) with progress tracking via `GET /api/tasks`.
 - **Auto-Bootstrap**: `gleann serve` detects Ollama, selects models, and creates an initial config file without manual intervention.
-- **`gleann go` — Onboarding Tool**: Detects environment, pulls required models, and builds initial indexes via an automated workflow.
+- **`gleann setup --auto` — Zero-Friction Onboarding Tool**: Detects environment, pulls required models, and builds initial indexes via an automated workflow.
 - **Cross-Platform Service Management**: `gleann service install/start/stop/status` manages a background server via systemd (Linux), launchd (macOS), or Task Scheduler (Windows).
 - **Auto Model Management**: Missing models are automatically retrieved with progress tracking.
 - **Tiered Model Strategy**: Defaults to lightweight models for fast initialization, with the ability to configure larger models for advanced use cases.
