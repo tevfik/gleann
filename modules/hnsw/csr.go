@@ -532,16 +532,16 @@ func (csr *CSRGraph) ToGraphWithDistance(distFunc DistanceFunc) *Graph {
 
 // StorageStats returns statistics about CSR storage.
 type StorageStats struct {
-	NumNodes            int64
-	NumLevels           int
-	TotalEdges          int64
-	StoredEmbeddings    int
-	PrunedEmbeddings    int64
-	GraphSizeBytes      int64
-	EmbeddingSizeBytes  int64
-	TotalSizeBytes      int64
-	CompressionRatio    float64
-	OriginalSizeBytes   int64
+	NumNodes           int64
+	NumLevels          int
+	TotalEdges         int64
+	StoredEmbeddings   int
+	PrunedEmbeddings   int64
+	GraphSizeBytes     int64
+	EmbeddingSizeBytes int64
+	TotalSizeBytes     int64
+	CompressionRatio   float64
+	OriginalSizeBytes  int64
 }
 
 // Stats computes storage statistics for the CSR graph.
@@ -564,10 +564,10 @@ func (csr *CSRGraph) Stats() StorageStats {
 
 	graphSize := int64(0)
 	for _, level := range csr.Levels {
-		graphSize += 8                                     // numNodes
-		graphSize += int64(len(level.NodeOffsets)) * 8     // offsets
-		graphSize += 8                                     // numNeighbors
-		graphSize += int64(len(level.Neighbors)) * 8       // neighbors
+		graphSize += 8                                 // numNodes
+		graphSize += int64(len(level.NodeOffsets)) * 8 // offsets
+		graphSize += 8                                 // numNeighbors
+		graphSize += int64(len(level.Neighbors)) * 8   // neighbors
 	}
 	stats.GraphSizeBytes = headerSize + idMapSize + graphSize
 

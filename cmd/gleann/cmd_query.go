@@ -104,96 +104,16 @@ func cmdInfo(args []string) {
 
 func cmdAsk(args []string) {
 	tui.PrintSetupHint()
-	// If no args provided, show usage.
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "usage: gleann ask [name[,name2,...]] [question] [flags]")
-		fmt.Fprintln(os.Stderr, "")
-		fmt.Fprintln(os.Stderr, "Index name is optional. If omitted, will use:")
-		fmt.Fprintln(os.Stderr, "  - Index from --continue/--continue-last conversation, or")
-		fmt.Fprintln(os.Stderr, "  - Interactive selection if multiple indexes exist, or")
-		fmt.Fprintln(os.Stderr, "  - The only index if exactly one exists")
-		fmt.Fprintln(os.Stderr, "  - No index (pure LLM, no RAG) if none exist")
-		fmt.Fprintln(os.Stderr, "")
-		fmt.Fprintln(os.Stderr, "Flags:")
-		fmt.Fprintln(os.Stderr, "  --interactive        Start interactive chat session")
-		fmt.Fprintln(os.Stderr, "  --agent              Use ReAct agent with read_full_document tool")
-		fmt.Fprintln(os.Stderr, "  --continue ID        Continue a previous conversation")
-		fmt.Fprintln(os.Stderr, "  --continue-last      Continue the most recent conversation")
-		fmt.Fprintln(os.Stderr, "  --title TITLE        Set conversation title")
-		fmt.Fprintln(os.Stderr, "  --role ROLE          Use a named role (e.g. code, shell, explain)")
-		fmt.Fprintln(os.Stderr, "  --format FORMAT      Output format: json, markdown, raw")
-		fmt.Fprintln(os.Stderr, "  --attach FILE        Attach image/audio file (can repeat; requires multimodal model)")
-		fmt.Fprintln(os.Stderr, "  --raw                Output raw text (no formatting); auto-enabled when piped")
-		fmt.Fprintln(os.Stderr, "  --quiet              Suppress status messages")
-		fmt.Fprintln(os.Stderr, "  --word-wrap N        Wrap output at N columns (default: terminal width)")
-		fmt.Fprintln(os.Stderr, "  --no-cache           Do not save conversation")
-		fmt.Fprintln(os.Stderr, "  --no-limit           Remove token limit (unlimited output)")
-		os.Exit(1)
+		printCmdAskUsage()
 	}
 
 	config := getConfig(args)
 	applySavedConfig(&config, args)
 
-	// Collect all non-flag positional arguments.
-	var positional []string
-	var attachFiles []string
-	flagsWithValue := map[string]bool{
-		"--continue": true, "--title": true, "--role": true, "--format": true,
-		"--word-wrap": true, "--llm-model": true, "--llm-provider": true,
-		"--rerank-model": true, "--top-k": true, "--metric": true,
-		"--model": true, "--provider": true, "--host": true,
-		"--attach": true,
-	}
-	for i := 0; i < len(args); i++ {
-		if args[i] == "--attach" && i+1 < len(args) {
-			i++
-			attachFiles = append(attachFiles, args[i])
-			continue
-		}
-		if strings.HasPrefix(args[i], "--") {
-			if flagsWithValue[args[i]] && i+1 < len(args) {
-				i++ // skip flag value
-			}
-			continue
-		}
-		positional = append(positional, args[i])
-	}
+	positional, attachFiles := extractPositionalArgs(args)
 
-	// Determine index name vs question from positional args.
-	// Strategy: check if first positional arg is a known index name.
-	var name string
-	var questionWords []string
-
-	if len(positional) > 0 {
-		candidate := positional[0]
-		// Check if candidate matches an existing index.
-		isIndex := false
-		if indexes, err := gleann.ListIndexes(config.IndexDir); err == nil {
-			for _, idx := range indexes {
-				if idx.Name == candidate {
-					isIndex = true
-					break
-				}
-				// Also check comma-separated multi-index (e.g. "code,docs").
-				for _, part := range strings.Split(candidate, ",") {
-					if idx.Name == part {
-						isIndex = true
-						break
-					}
-				}
-			}
-		}
-
-		if isIndex {
-			name = candidate
-			questionWords = positional[1:]
-		} else {
-			// First arg is not an index → treat all positional as question.
-			questionWords = positional
-		}
-	}
-
-	question := strings.Join(questionWords, " ")
+	name, question := resolveIndexAndQuestion(positional, config)
 
 	// Stdin/pipe support: if stdin is piped, read it and prepend to question.
 	if !isatty.IsTerminal(os.Stdin.Fd()) && !isatty.IsCygwinTerminal(os.Stdin.Fd()) {
@@ -225,51 +145,7 @@ func cmdAsk(args []string) {
 
 	// Resolve index name if not provided explicitly.
 	convStore := conversations.DefaultStore()
-	if name == "" {
-		// Option 1: Load from --continue or --continue-last.
-		if contID := getFlag(args, "--continue"); contID != "" {
-			conv, err := convStore.Load(contID)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "error loading conversation: %v\n", err)
-				os.Exit(1)
-			}
-			if len(conv.Indexes) > 0 {
-				name = strings.Join(conv.Indexes, ",")
-			}
-		} else if hasFlag(args, "--continue-last") {
-			conv, err := convStore.Latest()
-			if err == nil && conv != nil && len(conv.Indexes) > 0 {
-				name = strings.Join(conv.Indexes, ",")
-			}
-		}
-
-		// Option 2: If still no index, list available indexes and pick.
-		if name == "" {
-			indexes, err := gleann.ListIndexes(config.IndexDir)
-			if err == nil && len(indexes) == 1 {
-				// Single index → auto-select.
-				name = indexes[0].Name
-				if !quiet {
-					fmt.Fprintf(os.Stderr, "Using index: %s\n", name)
-				}
-			} else if err == nil && len(indexes) > 1 {
-				// Multiple indexes → interactive selection.
-				fmt.Fprintln(os.Stderr, "Available indexes:")
-				for i, idx := range indexes {
-					fmt.Fprintf(os.Stderr, "  %d. %s (%d passages, %s)\n", i+1, idx.Name, idx.NumPassages, idx.Backend)
-				}
-				fmt.Fprint(os.Stderr, "\nSelect index (1-", len(indexes), "): ")
-				var choice int
-				_, err := fmt.Scanf("%d", &choice)
-				if err != nil || choice < 1 || choice > len(indexes) {
-					fmt.Fprintln(os.Stderr, "error: invalid selection")
-					os.Exit(1)
-				}
-				name = indexes[choice-1].Name
-			}
-			// No indexes → will run in pure LLM mode (no RAG context).
-		}
-	}
+	name = resolveIndexName(name, args, config, quiet, convStore)
 
 	if err := initLlamaCPP(context.Background(), &config); err != nil {
 		fmt.Fprintf(os.Stderr, "error initializing llamacpp: %v\n", err)
@@ -335,78 +211,7 @@ func cmdAsk(args []string) {
 	}
 	defer searcher.Close()
 
-	// Build chat config.
-	chatConfig := gleann.DefaultChatConfig()
-	// Apply saved config LLM settings.
-	if config.LLMProvider != "" {
-		chatConfig.Provider = gleann.LLMProvider(config.LLMProvider)
-	}
-	if config.LLMModel != "" {
-		chatConfig.Model = config.LLMModel
-	}
-	if config.OllamaHost != "" {
-		chatConfig.BaseURL = config.OllamaHost
-	}
-	if config.OpenAIAPIKey != "" {
-		chatConfig.APIKey = config.OpenAIAPIKey
-	}
-	if config.OpenAIBaseURL != "" && chatConfig.Provider == gleann.LLMOpenAI {
-		chatConfig.BaseURL = config.OpenAIBaseURL
-	}
-	// CLI flags override saved config.
-	if llmModel := getFlag(args, "--llm-model"); llmModel != "" {
-		chatConfig.Model = llmModel
-	}
-	if llmProvider := getFlag(args, "--llm-provider"); llmProvider != "" {
-		chatConfig.Provider = gleann.LLMProvider(llmProvider)
-	}
-
-	// Apply role system prompt.
-	// Check saved config roles first, then fall back to built-in registry.
-	savedCfg := tui.LoadSavedConfig()
-	if roleName := getFlag(args, "--role"); roleName != "" {
-		var prompt string
-		if savedCfg != nil && savedCfg.Roles != nil {
-			if lines, ok := savedCfg.Roles[roleName]; ok {
-				prompt = strings.Join(lines, "\n")
-			}
-		}
-		if prompt == "" {
-			reg := roles.DefaultRegistry()
-			p, err := reg.SystemPrompt(roleName)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "error: %v\n", err)
-				os.Exit(1)
-			}
-			prompt = p
-		}
-		chatConfig.SystemPrompt = prompt
-	}
-
-	// Apply format system message.
-	// Check config format_text first, then fall back to built-in messages.
-	if format := getFlag(args, "--format"); format != "" {
-		formatKey := strings.ToLower(format)
-		formatMsg := ""
-		if savedCfg != nil && savedCfg.FormatText != nil {
-			if msg, ok := savedCfg.FormatText[formatKey]; ok {
-				formatMsg = msg
-			}
-		}
-		if formatMsg == "" {
-			switch formatKey {
-			case "json":
-				formatMsg = "Respond ONLY with valid JSON. No markdown, no explanation."
-			case "markdown", "md":
-				formatMsg = "Format your response as well-structured Markdown."
-			case "raw", "text":
-				formatMsg = "Respond in plain text with no formatting."
-			default:
-				formatMsg = fmt.Sprintf("Respond in %s format.", format)
-			}
-		}
-		chatConfig.SystemPrompt = chatConfig.SystemPrompt + "\n\n" + formatMsg
-	}
+	chatConfig := buildChatConfig(args, config)
 
 	applyLlamaChatOverride(&chatConfig)
 	chat := gleann.NewChat(searcher, chatConfig)
@@ -764,4 +569,202 @@ func buildSummarizer(chatCfg gleann.ChatConfig, config gleann.Config) *conversat
 		BaseURL:  chatCfg.BaseURL,
 		APIKey:   chatCfg.APIKey,
 	}
+}
+
+func printCmdAskUsage() {
+	fmt.Fprintln(os.Stderr, "usage: gleann ask [name[,name2,...]] [question] [flags]")
+	fmt.Fprintln(os.Stderr, "")
+	fmt.Fprintln(os.Stderr, "Index name is optional. If omitted, will use:")
+	fmt.Fprintln(os.Stderr, "  - Index from --continue/--continue-last conversation, or")
+	fmt.Fprintln(os.Stderr, "  - Interactive selection if multiple indexes exist, or")
+	fmt.Fprintln(os.Stderr, "  - The only index if exactly one exists")
+	fmt.Fprintln(os.Stderr, "  - No index (pure LLM, no RAG) if none exist")
+	fmt.Fprintln(os.Stderr, "")
+	fmt.Fprintln(os.Stderr, "Flags:")
+	fmt.Fprintln(os.Stderr, "  --interactive        Start interactive chat session")
+	fmt.Fprintln(os.Stderr, "  --agent              Use ReAct agent with read_full_document tool")
+	fmt.Fprintln(os.Stderr, "  --continue ID        Continue a previous conversation")
+	fmt.Fprintln(os.Stderr, "  --continue-last      Continue the most recent conversation")
+	fmt.Fprintln(os.Stderr, "  --title TITLE        Set conversation title")
+	fmt.Fprintln(os.Stderr, "  --role ROLE          Use a named role (e.g. code, shell, explain)")
+	fmt.Fprintln(os.Stderr, "  --format FORMAT      Output format: json, markdown, raw")
+	fmt.Fprintln(os.Stderr, "  --attach FILE        Attach image/audio file (can repeat; requires multimodal model)")
+	fmt.Fprintln(os.Stderr, "  --raw                Output raw text (no formatting); auto-enabled when piped")
+	fmt.Fprintln(os.Stderr, "  --quiet              Suppress status messages")
+	fmt.Fprintln(os.Stderr, "  --word-wrap N        Wrap output at N columns (default: terminal width)")
+	fmt.Fprintln(os.Stderr, "  --no-cache           Do not save conversation")
+	fmt.Fprintln(os.Stderr, "  --no-limit           Remove token limit (unlimited output)")
+	os.Exit(1)
+}
+
+func extractPositionalArgs(args []string) ([]string, []string) {
+	var positional []string
+	var attachFiles []string
+	flagsWithValue := map[string]bool{
+		"--continue": true, "--title": true, "--role": true, "--format": true,
+		"--word-wrap": true, "--llm-model": true, "--llm-provider": true,
+		"--rerank-model": true, "--top-k": true, "--metric": true,
+		"--model": true, "--provider": true, "--host": true,
+		"--attach": true,
+	}
+	for i := 0; i < len(args); i++ {
+		if args[i] == "--attach" && i+1 < len(args) {
+			i++
+			attachFiles = append(attachFiles, args[i])
+			continue
+		}
+		if strings.HasPrefix(args[i], "--") {
+			if flagsWithValue[args[i]] && i+1 < len(args) {
+				i++ // skip flag value
+			}
+			continue
+		}
+		positional = append(positional, args[i])
+	}
+	return positional, attachFiles
+}
+
+func resolveIndexAndQuestion(positional []string, config gleann.Config) (string, string) {
+	var name string
+	var questionWords []string
+
+	if len(positional) > 0 {
+		candidate := positional[0]
+		isIndex := false
+		if indexes, err := gleann.ListIndexes(config.IndexDir); err == nil {
+			for _, idx := range indexes {
+				if idx.Name == candidate {
+					isIndex = true
+					break
+				}
+				for _, part := range strings.Split(candidate, ",") {
+					if idx.Name == part {
+						isIndex = true
+						break
+					}
+				}
+			}
+		}
+
+		if isIndex {
+			name = candidate
+			questionWords = positional[1:]
+		} else {
+			questionWords = positional
+		}
+	}
+
+	question := strings.Join(questionWords, " ")
+	return name, question
+}
+
+func resolveIndexName(name string, args []string, config gleann.Config, quiet bool, convStore *conversations.Store) string {
+	if name != "" {
+		return name
+	}
+	if contID := getFlag(args, "--continue"); contID != "" {
+		conv, err := convStore.Load(contID)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error loading conversation: %v\n", err)
+			os.Exit(1)
+		}
+		if len(conv.Indexes) > 0 {
+			return strings.Join(conv.Indexes, ",")
+		}
+	} else if hasFlag(args, "--continue-last") {
+		conv, err := convStore.Latest()
+		if err == nil && conv != nil && len(conv.Indexes) > 0 {
+			return strings.Join(conv.Indexes, ",")
+		}
+	}
+	indexes, err := gleann.ListIndexes(config.IndexDir)
+	if err == nil && len(indexes) == 1 {
+		if !quiet {
+			fmt.Fprintf(os.Stderr, "Using index: %s\n", indexes[0].Name)
+		}
+		return indexes[0].Name
+	} else if err == nil && len(indexes) > 1 {
+		fmt.Fprintln(os.Stderr, "Available indexes:")
+		for i, idx := range indexes {
+			fmt.Fprintf(os.Stderr, "  %d. %s (%d passages, %s)\n", i+1, idx.Name, idx.NumPassages, idx.Backend)
+		}
+		fmt.Fprint(os.Stderr, "\nSelect index (1-", len(indexes), "): ")
+		var choice int
+		_, err := fmt.Scanf("%d", &choice)
+		if err != nil || choice < 1 || choice > len(indexes) {
+			fmt.Fprintln(os.Stderr, "error: invalid selection")
+			os.Exit(1)
+		}
+		return indexes[choice-1].Name
+	}
+	return ""
+}
+
+func buildChatConfig(args []string, config gleann.Config) gleann.ChatConfig {
+	chatConfig := gleann.DefaultChatConfig()
+	if config.LLMProvider != "" {
+		chatConfig.Provider = gleann.LLMProvider(config.LLMProvider)
+	}
+	if config.LLMModel != "" {
+		chatConfig.Model = config.LLMModel
+	}
+	if config.OllamaHost != "" {
+		chatConfig.BaseURL = config.OllamaHost
+	}
+	if config.OpenAIAPIKey != "" {
+		chatConfig.APIKey = config.OpenAIAPIKey
+	}
+	if config.OpenAIBaseURL != "" && chatConfig.Provider == gleann.LLMOpenAI {
+		chatConfig.BaseURL = config.OpenAIBaseURL
+	}
+	if llmModel := getFlag(args, "--llm-model"); llmModel != "" {
+		chatConfig.Model = llmModel
+	}
+	if llmProvider := getFlag(args, "--llm-provider"); llmProvider != "" {
+		chatConfig.Provider = gleann.LLMProvider(llmProvider)
+	}
+
+	savedCfg := tui.LoadSavedConfig()
+	if roleName := getFlag(args, "--role"); roleName != "" {
+		var prompt string
+		if savedCfg != nil && savedCfg.Roles != nil {
+			if lines, ok := savedCfg.Roles[roleName]; ok {
+				prompt = strings.Join(lines, "\n")
+			}
+		}
+		if prompt == "" {
+			reg := roles.DefaultRegistry()
+			p, err := reg.SystemPrompt(roleName)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "error: %v\n", err)
+				os.Exit(1)
+			}
+			prompt = p
+		}
+		chatConfig.SystemPrompt = prompt
+	}
+
+	if format := getFlag(args, "--format"); format != "" {
+		formatKey := strings.ToLower(format)
+		formatMsg := ""
+		if savedCfg != nil && savedCfg.FormatText != nil {
+			if msg, ok := savedCfg.FormatText[formatKey]; ok {
+				formatMsg = msg
+			}
+		}
+		if formatMsg == "" {
+			switch formatKey {
+			case "json":
+				formatMsg = "Respond ONLY with valid JSON. No markdown, no explanation."
+			case "markdown", "md":
+				formatMsg = "Format your response as well-structured Markdown."
+			case "raw", "text":
+				formatMsg = "Respond in plain text with no formatting."
+			default:
+				formatMsg = fmt.Sprintf("Respond in %s format.", format)
+			}
+		}
+		chatConfig.SystemPrompt = chatConfig.SystemPrompt + "\n\n" + formatMsg
+	}
+	return chatConfig
 }

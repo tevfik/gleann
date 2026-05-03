@@ -5,8 +5,6 @@ import (
 	"context"
 	"fmt"
 	"sync"
-
-	
 )
 
 // Factory creates HNSW backend builders and searchers.
