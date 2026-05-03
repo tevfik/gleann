@@ -1,6 +1,10 @@
 # gleann
 
 [![Release](https://github.com/tevfik/gleann/actions/workflows/release.yml/badge.svg?event=push)](https://github.com/tevfik/gleann/actions/workflows/release.yml)
+[![CI](https://github.com/tevfik/gleann/actions/workflows/ci.yml/badge.svg)](https://github.com/tevfik/gleann/actions/workflows/ci.yml)
+[![Go Report Card](https://goreportcard.com/badge/github.com/tevfik/gleann)](https://goreportcard.com/report/github.com/tevfik/gleann)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Go Reference](https://pkg.go.dev/badge/github.com/tevfik/gleann.svg)](https://pkg.go.dev/github.com/tevfik/gleann)
 
 **A lightweight, high-performance AI/RAG workspace and autonomous agent framework implemented in Go. Inspired by the Leann RAG backend architecture, designed for terminal environments.**
 
@@ -82,6 +86,14 @@ Detailed guides:
 
 ## Installation
 
+### Go Install (Recommended)
+
+The easiest way to install Gleann is via `go install`:
+
+```bash
+go install github.com/tevfik/gleann/cmd/gleann@latest
+```
+
 ### One-Liner Install (Linux / macOS)
 
 ```bash
@@ -153,13 +165,13 @@ sudo make install
 
 ```bash
 # Zero-friction onboarding: detect Ollama → auto-configure → pull models → index
-gleann go
+gleann setup --auto
 
 # Or with specific options
-gleann go --docs ./my-project --name my-project --yes
+gleann setup --auto --docs ./my-project --name my-project --yes
 ```
 
-`gleann go` detects your environment, shows the configuration for confirmation, pulls any missing models automatically, indexes your current directory, and prints next steps.
+`gleann setup --auto` detects your environment, shows the configuration for confirmation, pulls any missing models automatically, indexes your current directory, and prints next steps.
 
 ### Background Service
 

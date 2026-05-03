@@ -44,11 +44,11 @@ func main() {
 	case "install":
 		cmdInstall(args)
 	case "setup":
-		cmdSetup()
-	case "quickstart":
-		cmdQuickstart(args)
-	case "go":
-		cmdGo(args)
+		cmdSetup(args)
+	case "quickstart", "go":
+		fmt.Fprintln(os.Stderr, "Warning: 'gleann go' and 'gleann quickstart' are deprecated.")
+		fmt.Fprintln(os.Stderr, "Please use 'gleann setup --auto' for zero-friction onboarding.")
+		os.Exit(1)
 	case "service":
 		cmdService(args)
 	case "doctor":
@@ -92,8 +92,7 @@ gleann has three intelligence pillars that work together:
 
 ── Getting Started ───────────────────────────────────────────────────
 
-  gleann go [--docs <dir>]               Zero to working in 90 seconds
-  gleann quickstart [--name <name>] [--docs <dir>]   Index current dir & show next steps
+  gleann setup --auto [--docs <dir>]     Zero to working in 90 seconds
   gleann setup                           Interactive configuration wizard
   gleann doctor                          System health check
 
