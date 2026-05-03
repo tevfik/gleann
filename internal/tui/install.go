@@ -454,7 +454,7 @@ _gleann() {
         cword=$COMP_CWORD
     fi
 
-    local commands="go index search ask serve graph chat memory mcp tui install quickstart setup doctor tasks benchmark config service completion version help"
+    local commands="setup index search ask serve graph chat memory mcp tui install doctor tasks benchmark config service completion version help"
     
     # Command-specific flags
     local index_flags="--path --model --provider --backend --batch-size --concurrency --chunk-size --chunk-overlap --extensions --ignore --ollama-host --anthropic-api-key --openai-api-key --json"
@@ -657,9 +657,8 @@ _gleann() {
         'memory:Long-term memory management'
         'tui:Launch interactive TUI'
         'install:Install gleann for AI platforms'
-        'quickstart:Index current dir & show next steps'
-        'setup:Run configuration wizard'
-        'doctor:Check system health'
+        'setup:Interactive configuration wizard'
+        'doctor:System health check'
         'tasks:View background tasks (requires serve)'
         'benchmark:Token reduction analysis'
         'config:Manage configuration'
@@ -720,14 +719,6 @@ _gleann() {
                         '--index[Index name]:index:' \
                         '--index-dir[Index storage directory]:directory:_files -/'
                     ;;
-                go)
-                    _arguments \
-                        '--docs[Documents directory]:directory:_files -/' \
-                        '--name[Index name]:name:' \
-                        '--graph[Build AST graph]' \
-                        '--yes[Auto-confirm]' \
-                        '--host[Ollama host URL]:host:'
-                    ;;
                 service)
                     local -a service_cmds
                     service_cmds=(install uninstall start stop restart status logs)
@@ -752,7 +743,6 @@ func FishCompletion() string {
 complete -c gleann -f
 
 # Commands
-complete -c gleann -n '__fish_use_subcommand' -a 'go' -d 'Zero-friction onboarding'
 complete -c gleann -n '__fish_use_subcommand' -a 'build' -d 'Build a search index'
 complete -c gleann -n '__fish_use_subcommand' -a 'search' -d 'Search an index'
 complete -c gleann -n '__fish_use_subcommand' -a 'ask' -d 'Ask a question (RAG Q&A)'
@@ -767,9 +757,8 @@ complete -c gleann -n '__fish_use_subcommand' -a 'mcp' -d 'Start MCP server (std
 complete -c gleann -n '__fish_use_subcommand' -a 'memory' -d 'Long-term memory management'
 complete -c gleann -n '__fish_use_subcommand' -a 'tui' -d 'Launch interactive TUI'
 complete -c gleann -n '__fish_use_subcommand' -a 'install' -d 'Install gleann for AI platforms'
-complete -c gleann -n '__fish_use_subcommand' -a 'quickstart' -d 'Index current dir & show next steps'
-complete -c gleann -n '__fish_use_subcommand' -a 'setup' -d 'Run configuration wizard'
-complete -c gleann -n '__fish_use_subcommand' -a 'doctor' -d 'Check system health'
+complete -c gleann -n '__fish_use_subcommand' -a 'setup' -d 'Interactive configuration wizard'
+complete -c gleann -n '__fish_use_subcommand' -a 'doctor' -d 'System health check'
 complete -c gleann -n '__fish_use_subcommand' -a 'tasks' -d 'View background tasks'
 complete -c gleann -n '__fish_use_subcommand' -a 'benchmark' -d 'Token reduction analysis'
 complete -c gleann -n '__fish_use_subcommand' -a 'config' -d 'Manage configuration'

@@ -2,16 +2,16 @@
 
 This guide provides the initial setup and configuration steps for Gleann.
 
-## Automated Setup: `gleann go`
+## Automated Setup: `gleann setup --auto`
 
 Already have Ollama running? Run one command inside any project directory:
 
 ```bash
 cd ~/my-project
-gleann go
+gleann setup --auto
 ```
 
-`gleann go` performs the entire setup automatically:
+`gleann setup --auto` performs the entire setup automatically:
 
 1. **Detects** your Ollama instance and available models
 2. **Shows** the proposed configuration for confirmation
@@ -22,20 +22,11 @@ gleann go
 Every option can be overridden:
 
 ```bash
-gleann go --docs ./docs --name my-project --graph --host http://remote:11434
-gleann go --yes   # auto-confirm, no prompts
+gleann setup --auto --docs ./docs --name my-project --graph --host http://remote:11434
+gleann setup --auto --yes   # auto-confirm, no prompts
 ```
 
-## Alternative: `gleann quickstart`
-
-If you already have gleann configured and just want to index a directory:
-
-```bash
-gleann quickstart
-gleann quickstart --docs ./docs --name my-project --graph
-```
-
-For first-time setup continue with the steps below.
+For first-time setup or advanced configuration, continue with the steps below.
 
 ---
 
@@ -61,7 +52,7 @@ sudo mv gleann /usr/local/bin/   # or: mv gleann ~/.local/bin/
 
 ## Step 2: Start Ollama & Pull Models
 
-`gleann go` handles model pulling automatically. To do it manually:
+`gleann setup --auto` handles model pulling automatically. To do it manually:
 
 ```bash
 # Start Ollama (if not already running)

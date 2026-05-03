@@ -64,7 +64,7 @@ These are deliberate public-API surface and should not be removed.
 
 ## Awesome-Go Readiness Checklist
 - [x] Stable, semantic public API
-- [x] Comprehensive README with quickstart
+- [x] Comprehensive README with setup instructions
 - [x] LICENSE present (MIT)
 - [x] CI-friendly tests (`go test ./...` works without external deps in short mode)
 - [x] `go.mod` with current Go version
