@@ -78,3 +78,12 @@ jobs:
             go build -o /dev/null ./cmd/gleann/
           fi
         shell: bash
+
+  # ── Documentation Drift Check ────────────────────────────────
+  doc-drift:
+    name: Doc Drift
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run doc-drift detector
+        run: bash scripts/doc-drift.sh
