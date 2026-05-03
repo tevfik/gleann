@@ -1726,7 +1726,7 @@ func (m OnboardModel) handleBackendKeys(key string) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m *OnboardModel) handleMCPKeys(key string) (tea.Model, tea.Cmd) {
+func (m OnboardModel) handleMCPKeys(key string) (tea.Model, tea.Cmd) {
 	switch key {
 	case "up", "k":
 		if m.mcpOptionIdx > 0 {
@@ -1748,7 +1748,7 @@ func (m *OnboardModel) handleMCPKeys(key string) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m *OnboardModel) handleServerKeys(key string) (tea.Model, tea.Cmd) {
+func (m OnboardModel) handleServerKeys(key string) (tea.Model, tea.Cmd) {
 	switch key {
 	case "up", "k":
 		if m.serverOptionIdx > 0 {
@@ -1770,7 +1770,7 @@ func (m *OnboardModel) handleServerKeys(key string) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m *OnboardModel) handleInstallKeys(key string) (tea.Model, tea.Cmd) {
+func (m OnboardModel) handleInstallKeys(key string) (tea.Model, tea.Cmd) {
 	switch key {
 	case "up", "k":
 		if m.installOptionIdx > 0 {
