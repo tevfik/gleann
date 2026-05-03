@@ -8,6 +8,9 @@
 **A lightweight, high-performance AI/RAG workspace and autonomous agent framework implemented in Go. Inspired by the Leann RAG backend architecture, designed for terminal environments.**
 
 > 🤖 **Note:** This project, including its documentation, was developed with the assistance of AI.
+
+![Gleann terminal demo — index AI docs, semantic search, RAG Q&A, long-term memory, MCP setup](scripts/demo/gleann-demo.gif)
+
 ---
 
 ## Project Context and Motivation
