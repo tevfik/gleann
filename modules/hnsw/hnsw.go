@@ -56,9 +56,9 @@ type Graph struct {
 
 // Node represents a single node in the HNSW graph.
 type Node struct {
-	ID        int64
-	Vector    []float32
-	Level     int
+	ID     int64
+	Vector []float32
+	Level  int
 	// Neighbors at each level. neighbors[level] = list of neighbor IDs.
 	Neighbors [][]int64
 }
@@ -403,14 +403,14 @@ func (g *Graph) searchLevel(query []float32, entryID int64, ef, level int) []Can
 
 	// candidates is a min-heap of candidates (ordered by distance, ascending).
 	candidates := &candidateHeap{
-		items:  []Candidate{{ID: entryID, Distance: entryDist}},
-		isMin:  true,
+		items: []Candidate{{ID: entryID, Distance: entryDist}},
+		isMin: true,
 	}
 
 	// results is a max-heap of results (ordered by distance, descending).
 	results := &candidateHeap{
-		items:  []Candidate{{ID: entryID, Distance: entryDist}},
-		isMin:  false,
+		items: []Candidate{{ID: entryID, Distance: entryDist}},
+		isMin: false,
 	}
 
 	for candidates.Len() > 0 {

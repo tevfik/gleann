@@ -454,285 +454,9 @@ func (m ChatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 
 			// Slash commands.
-			switch {
-			case input == "/quit" || input == "/exit":
-				m.quitting = true
-				return m, tea.Quit
-
-			case input == "/clear":
-				m.messages = m.messages[:1]
-				m.chat.ClearHistory()
-				m.textarea.Reset()
-				m.viewport.SetContent(m.renderMessages())
-				m.viewport.GotoBottom()
-				return m, nil
-
-			case input == "/settings":
-				m.showSettings = true
-				m.textarea.Reset()
-				m.textarea.Blur()
-				return m, nil
-
-			case input == "/help":
-				m.messages = append(m.messages, chatMsg{
-					role: "system",
-					content: "Commands: /clear • /settings • /history • /help • /quit\n" +
-						"Memory:   /remember <text> • /forget <query> • /memories • /new\n" +
-						"Media:    /image <path> — queue image for next message\n" +
-						"Files:    /attach <path> — add file/dir to session context • /detach <path>\n" +
-						"Index:    /index <name> — switch index • /index info — show stats\n" +
-						"Budget:   /budget — show token usage\n" +
-						"Shortcuts: ctrl+s settings • ctrl+m mouse toggle • pgup/pgdn scroll • esc clear/back",
-				})
-				m.textarea.Reset()
-				m.viewport.SetContent(m.renderMessages())
-				m.viewport.GotoBottom()
-				return m, nil
-
-			case input == "/history":
-				store := conversations.DefaultStore()
-				items, err := store.List()
-				if err != nil || len(items) == 0 {
-					m.messages = append(m.messages, chatMsg{
-						role:    "system",
-						content: "No saved conversations found.",
-					})
-					m.textarea.Reset()
-					m.viewport.SetContent(m.renderMessages())
-					m.viewport.GotoBottom()
-					return m, nil
-				}
-				m.historyItems = items
-				m.historyCursor = 0
-				m.showHistory = true
-				m.textarea.Reset()
-				m.textarea.Blur()
-				return m, nil
-
-			case strings.HasPrefix(input, "/remember "):
-				text := strings.TrimPrefix(input, "/remember ")
-				text = strings.TrimSpace(text)
-				if text == "" || m.memoryMgr == nil {
-					msg := "Usage: /remember <important information>"
-					if m.memoryMgr == nil {
-						msg = "⚠ Memory system unavailable"
-					}
-					m.messages = append(m.messages, chatMsg{role: "system", content: msg})
-				} else {
-					block, err := m.memoryMgr.Remember(text)
-					if err != nil {
-						m.messages = append(m.messages, chatMsg{role: "system", content: "⚠ Error: " + err.Error()})
-					} else {
-						m.messages = append(m.messages, chatMsg{
-							role:    "system",
-							content: fmt.Sprintf("✅ Remembered [%s]: %s", block.ID[:8], text),
-						})
-					}
-				}
-				m.textarea.Reset()
-				m.viewport.SetContent(m.renderMessages())
-				m.viewport.GotoBottom()
-				return m, nil
-
-			case strings.HasPrefix(input, "/forget "):
-				query := strings.TrimPrefix(input, "/forget ")
-				query = strings.TrimSpace(query)
-				if query == "" || m.memoryMgr == nil {
-					msg := "Usage: /forget <query or ID>"
-					if m.memoryMgr == nil {
-						msg = "⚠ Memory system unavailable"
-					}
-					m.messages = append(m.messages, chatMsg{role: "system", content: msg})
-				} else {
-					count, err := m.memoryMgr.Forget(query)
-					if err != nil {
-						m.messages = append(m.messages, chatMsg{role: "system", content: "⚠ " + err.Error()})
-					} else {
-						m.messages = append(m.messages, chatMsg{
-							role:    "system",
-							content: fmt.Sprintf("🗑 Forgot %d memory block(s) matching %q", count, query),
-						})
-					}
-				}
-				m.textarea.Reset()
-				m.viewport.SetContent(m.renderMessages())
-				m.viewport.GotoBottom()
-				return m, nil
-
-			case input == "/memories":
-				if m.memoryMgr == nil {
-					m.messages = append(m.messages, chatMsg{role: "system", content: "⚠ Memory system unavailable"})
-				} else {
-					blocks, err := m.memoryMgr.List("")
-					if err != nil || len(blocks) == 0 {
-						m.messages = append(m.messages, chatMsg{role: "system", content: "No memories stored."})
-					} else {
-						var sb strings.Builder
-						sb.WriteString(fmt.Sprintf("🧠 Memories (%d):\n", len(blocks)))
-						for _, b := range blocks {
-							label := b.Label
-							if len(label) > 12 {
-								label = label[:12]
-							}
-							content := b.Content
-							if len(content) > 60 {
-								content = content[:57] + "..."
-							}
-							sb.WriteString(fmt.Sprintf("  [%s] %-8s %-12s %s\n", b.ID[:8], b.Tier, label, content))
-						}
-						m.messages = append(m.messages, chatMsg{role: "system", content: sb.String()})
-					}
-				}
-				m.textarea.Reset()
-				m.viewport.SetContent(m.renderMessages())
-				m.viewport.GotoBottom()
-				return m, nil
-
-			case input == "/new":
-				// Start a fresh conversation thread.
-				m.messages = m.messages[:0]
-				m.chat.ClearHistory()
-				m.pendingImages = nil
-				m.attachedFiles = nil
-				m.tokensSent = 0
-				m.tokensReceived = 0
-				m.messages = append(m.messages, chatMsg{
-					role:    "system",
-					content: fmt.Sprintf("🆕 New conversation started — index %q, model: %s", m.indexName, m.modelName),
-				})
-				m.textarea.Reset()
-				m.viewport.SetContent(m.renderMessages())
-				m.viewport.GotoBottom()
-				return m, nil
-
-			case strings.HasPrefix(input, "/image "):
-				path := strings.TrimSpace(strings.TrimPrefix(input, "/image "))
-				result := m.handleImageCommand(path)
-				m.messages = append(m.messages, chatMsg{role: "system", content: result})
-				m.textarea.Reset()
-				m.viewport.SetContent(m.renderMessages())
-				m.viewport.GotoBottom()
-				return m, nil
-
-			case strings.HasPrefix(input, "/audio "):
-				path := strings.TrimSpace(strings.TrimPrefix(input, "/audio "))
-				result := m.handleAudioCommand(path)
-				m.messages = append(m.messages, chatMsg{role: "system", content: result})
-				m.textarea.Reset()
-				m.viewport.SetContent(m.renderMessages())
-				m.viewport.GotoBottom()
-				return m, nil
-
-			case strings.HasPrefix(input, "/attach "):
-				args := strings.TrimSpace(strings.TrimPrefix(input, "/attach "))
-				result := m.handleAttachCommand(args)
-				m.messages = append(m.messages, chatMsg{role: "system", content: result})
-				m.textarea.Reset()
-				m.viewport.SetContent(m.renderMessages())
-				m.viewport.GotoBottom()
-				return m, nil
-
-			case input == "/attach":
-				result := m.handleAttachCommand("")
-				m.messages = append(m.messages, chatMsg{role: "system", content: result})
-				m.textarea.Reset()
-				m.viewport.SetContent(m.renderMessages())
-				m.viewport.GotoBottom()
-				return m, nil
-
-			case strings.HasPrefix(input, "/detach "):
-				path := strings.TrimSpace(strings.TrimPrefix(input, "/detach "))
-				result := m.handleDetachCommand(path)
-				m.messages = append(m.messages, chatMsg{role: "system", content: result})
-				m.textarea.Reset()
-				m.viewport.SetContent(m.renderMessages())
-				m.viewport.GotoBottom()
-				return m, nil
-
-			case strings.HasPrefix(input, "/index "):
-				args := strings.TrimSpace(strings.TrimPrefix(input, "/index "))
-				result := m.handleIndexCommand(args)
-				m.messages = append(m.messages, chatMsg{role: "system", content: result})
-				m.textarea.Reset()
-				m.viewport.SetContent(m.renderMessages())
-				m.viewport.GotoBottom()
-				return m, nil
-
-			case input == "/index":
-				result := m.handleIndexCommand("")
-				m.messages = append(m.messages, chatMsg{role: "system", content: result})
-				m.textarea.Reset()
-				m.viewport.SetContent(m.renderMessages())
-				m.viewport.GotoBottom()
-				return m, nil
-
-			case input == "/budget":
-				result := m.handleBudgetCommand()
-				m.messages = append(m.messages, chatMsg{role: "system", content: result})
-				m.textarea.Reset()
-				m.viewport.SetContent(m.renderMessages())
-				m.viewport.GotoBottom()
-				return m, nil
-
-			case strings.HasPrefix(input, "/script "):
-				task := strings.TrimSpace(strings.TrimPrefix(input, "/script "))
-				result := m.handleScriptCommand(task)
-				m.messages = append(m.messages, chatMsg{role: "system", content: result})
-				m.textarea.Reset()
-				m.viewport.SetContent(m.renderMessages())
-				m.viewport.GotoBottom()
-				return m, nil
-
-			case input == "/script":
-				result := m.handleScriptCommand("")
-				m.messages = append(m.messages, chatMsg{role: "system", content: result})
-				m.textarea.Reset()
-				m.viewport.SetContent(m.renderMessages())
-				m.viewport.GotoBottom()
-				return m, nil
-
-			case strings.HasPrefix(input, "/video "):
-				path := strings.TrimSpace(strings.TrimPrefix(input, "/video "))
-				result := m.handleVideoCommand(path)
-				m.messages = append(m.messages, chatMsg{role: "system", content: result})
-				m.textarea.Reset()
-				m.viewport.SetContent(m.renderMessages())
-				m.viewport.GotoBottom()
-				return m, nil
-
-			case strings.HasPrefix(input, "/pdf "):
-				path := strings.TrimSpace(strings.TrimPrefix(input, "/pdf "))
-				result := m.handlePDFCommand(path)
-				m.messages = append(m.messages, chatMsg{role: "system", content: result})
-				m.textarea.Reset()
-				m.viewport.SetContent(m.renderMessages())
-				m.viewport.GotoBottom()
-				return m, nil
-
-			case input == "/pdf":
-				result := m.handlePDFCommand("")
-				m.messages = append(m.messages, chatMsg{role: "system", content: result})
-				m.textarea.Reset()
-				m.viewport.SetContent(m.renderMessages())
-				m.viewport.GotoBottom()
-				return m, nil
-
-			case strings.HasPrefix(input, "/graph "):
-				symbol := strings.TrimSpace(strings.TrimPrefix(input, "/graph "))
-				result := m.handleGraphCommand(symbol)
-				m.messages = append(m.messages, chatMsg{role: "system", content: result})
-				m.textarea.Reset()
-				m.viewport.SetContent(m.renderMessages())
-				m.viewport.GotoBottom()
-				return m, nil
-
-			case input == "/graph":
-				result := m.handleGraphCommand("")
-				m.messages = append(m.messages, chatMsg{role: "system", content: result})
-				m.textarea.Reset()
-				m.viewport.SetContent(m.renderMessages())
-				m.viewport.GotoBottom()
-				return m, nil
+			m2, cmd2, handled := m.handleSlashCommand(input)
+			if handled {
+				return m2, cmd2
 			}
 
 			// Send message to LLM with streaming.
@@ -2558,4 +2282,287 @@ func estimateContextLimit(model string) int {
 	default:
 		return 0 // unknown
 	}
+}
+
+func (m ChatModel) handleSlashCommand(input string) (tea.Model, tea.Cmd, bool) {
+	switch {
+	case input == "/quit" || input == "/exit":
+		m.quitting = true
+		return m, tea.Quit, true
+
+	case input == "/clear":
+		m.messages = m.messages[:1]
+		m.chat.ClearHistory()
+		m.textarea.Reset()
+		m.viewport.SetContent(m.renderMessages())
+		m.viewport.GotoBottom()
+		return m, nil, true
+
+	case input == "/settings":
+		m.showSettings = true
+		m.textarea.Reset()
+		m.textarea.Blur()
+		return m, nil, true
+
+	case input == "/help":
+		m.messages = append(m.messages, chatMsg{
+			role: "system",
+			content: "Commands: /clear • /settings • /history • /help • /quit\n" +
+				"Memory:   /remember <text> • /forget <query> • /memories • /new\n" +
+				"Media:    /image <path> — queue image for next message\n" +
+				"Files:    /attach <path> — add file/dir to session context • /detach <path>\n" +
+				"Index:    /index <name> — switch index • /index info — show stats\n" +
+				"Budget:   /budget — show token usage\n" +
+				"Shortcuts: ctrl+s settings • ctrl+m mouse toggle • pgup/pgdn scroll • esc clear/back",
+		})
+		m.textarea.Reset()
+		m.viewport.SetContent(m.renderMessages())
+		m.viewport.GotoBottom()
+		return m, nil, true
+
+	case input == "/history":
+		store := conversations.DefaultStore()
+		items, err := store.List()
+		if err != nil || len(items) == 0 {
+			m.messages = append(m.messages, chatMsg{
+				role:    "system",
+				content: "No saved conversations found.",
+			})
+			m.textarea.Reset()
+			m.viewport.SetContent(m.renderMessages())
+			m.viewport.GotoBottom()
+			return m, nil, true
+		}
+		m.historyItems = items
+		m.historyCursor = 0
+		m.showHistory = true
+		m.textarea.Reset()
+		m.textarea.Blur()
+		return m, nil, true
+
+	case strings.HasPrefix(input, "/remember "):
+		text := strings.TrimPrefix(input, "/remember ")
+		text = strings.TrimSpace(text)
+		if text == "" || m.memoryMgr == nil {
+			msg := "Usage: /remember <important information>"
+			if m.memoryMgr == nil {
+				msg = "⚠ Memory system unavailable"
+			}
+			m.messages = append(m.messages, chatMsg{role: "system", content: msg})
+		} else {
+			block, err := m.memoryMgr.Remember(text)
+			if err != nil {
+				m.messages = append(m.messages, chatMsg{role: "system", content: "⚠ Error: " + err.Error()})
+			} else {
+				m.messages = append(m.messages, chatMsg{
+					role:    "system",
+					content: fmt.Sprintf("✅ Remembered [%s]: %s", block.ID[:8], text),
+				})
+			}
+		}
+		m.textarea.Reset()
+		m.viewport.SetContent(m.renderMessages())
+		m.viewport.GotoBottom()
+		return m, nil, true
+
+	case strings.HasPrefix(input, "/forget "):
+		query := strings.TrimPrefix(input, "/forget ")
+		query = strings.TrimSpace(query)
+		if query == "" || m.memoryMgr == nil {
+			msg := "Usage: /forget <query or ID>"
+			if m.memoryMgr == nil {
+				msg = "⚠ Memory system unavailable"
+			}
+			m.messages = append(m.messages, chatMsg{role: "system", content: msg})
+		} else {
+			count, err := m.memoryMgr.Forget(query)
+			if err != nil {
+				m.messages = append(m.messages, chatMsg{role: "system", content: "⚠ " + err.Error()})
+			} else {
+				m.messages = append(m.messages, chatMsg{
+					role:    "system",
+					content: fmt.Sprintf("🗑 Forgot %d memory block(s) matching %q", count, query),
+				})
+			}
+		}
+		m.textarea.Reset()
+		m.viewport.SetContent(m.renderMessages())
+		m.viewport.GotoBottom()
+		return m, nil, true
+
+	case input == "/memories":
+		if m.memoryMgr == nil {
+			m.messages = append(m.messages, chatMsg{role: "system", content: "⚠ Memory system unavailable"})
+		} else {
+			blocks, err := m.memoryMgr.List("")
+			if err != nil || len(blocks) == 0 {
+				m.messages = append(m.messages, chatMsg{role: "system", content: "No memories stored."})
+			} else {
+				var sb strings.Builder
+				sb.WriteString(fmt.Sprintf("🧠 Memories (%d):\n", len(blocks)))
+				for _, b := range blocks {
+					label := b.Label
+					if len(label) > 12 {
+						label = label[:12]
+					}
+					content := b.Content
+					if len(content) > 60 {
+						content = content[:57] + "..."
+					}
+					sb.WriteString(fmt.Sprintf("  [%s] %-8s %-12s %s\n", b.ID[:8], b.Tier, label, content))
+				}
+				m.messages = append(m.messages, chatMsg{role: "system", content: sb.String()})
+			}
+		}
+		m.textarea.Reset()
+		m.viewport.SetContent(m.renderMessages())
+		m.viewport.GotoBottom()
+		return m, nil, true
+
+	case input == "/new":
+		m.messages = m.messages[:0]
+		m.chat.ClearHistory()
+		m.pendingImages = nil
+		m.attachedFiles = nil
+		m.tokensSent = 0
+		m.tokensReceived = 0
+		m.messages = append(m.messages, chatMsg{
+			role:    "system",
+			content: fmt.Sprintf("🆕 New conversation started — index %q, model: %s", m.indexName, m.modelName),
+		})
+		m.textarea.Reset()
+		m.viewport.SetContent(m.renderMessages())
+		m.viewport.GotoBottom()
+		return m, nil, true
+
+	case strings.HasPrefix(input, "/image "):
+		path := strings.TrimSpace(strings.TrimPrefix(input, "/image "))
+		result := m.handleImageCommand(path)
+		m.messages = append(m.messages, chatMsg{role: "system", content: result})
+		m.textarea.Reset()
+		m.viewport.SetContent(m.renderMessages())
+		m.viewport.GotoBottom()
+		return m, nil, true
+
+	case strings.HasPrefix(input, "/audio "):
+		path := strings.TrimSpace(strings.TrimPrefix(input, "/audio "))
+		result := m.handleAudioCommand(path)
+		m.messages = append(m.messages, chatMsg{role: "system", content: result})
+		m.textarea.Reset()
+		m.viewport.SetContent(m.renderMessages())
+		m.viewport.GotoBottom()
+		return m, nil, true
+
+	case strings.HasPrefix(input, "/attach "):
+		args := strings.TrimSpace(strings.TrimPrefix(input, "/attach "))
+		result := m.handleAttachCommand(args)
+		m.messages = append(m.messages, chatMsg{role: "system", content: result})
+		m.textarea.Reset()
+		m.viewport.SetContent(m.renderMessages())
+		m.viewport.GotoBottom()
+		return m, nil, true
+
+	case input == "/attach":
+		result := m.handleAttachCommand("")
+		m.messages = append(m.messages, chatMsg{role: "system", content: result})
+		m.textarea.Reset()
+		m.viewport.SetContent(m.renderMessages())
+		m.viewport.GotoBottom()
+		return m, nil, true
+
+	case strings.HasPrefix(input, "/detach "):
+		path := strings.TrimSpace(strings.TrimPrefix(input, "/detach "))
+		result := m.handleDetachCommand(path)
+		m.messages = append(m.messages, chatMsg{role: "system", content: result})
+		m.textarea.Reset()
+		m.viewport.SetContent(m.renderMessages())
+		m.viewport.GotoBottom()
+		return m, nil, true
+
+	case strings.HasPrefix(input, "/index "):
+		args := strings.TrimSpace(strings.TrimPrefix(input, "/index "))
+		result := m.handleIndexCommand(args)
+		m.messages = append(m.messages, chatMsg{role: "system", content: result})
+		m.textarea.Reset()
+		m.viewport.SetContent(m.renderMessages())
+		m.viewport.GotoBottom()
+		return m, nil, true
+
+	case input == "/index":
+		result := m.handleIndexCommand("")
+		m.messages = append(m.messages, chatMsg{role: "system", content: result})
+		m.textarea.Reset()
+		m.viewport.SetContent(m.renderMessages())
+		m.viewport.GotoBottom()
+		return m, nil, true
+
+	case input == "/budget":
+		result := m.handleBudgetCommand()
+		m.messages = append(m.messages, chatMsg{role: "system", content: result})
+		m.textarea.Reset()
+		m.viewport.SetContent(m.renderMessages())
+		m.viewport.GotoBottom()
+		return m, nil, true
+
+	case strings.HasPrefix(input, "/script "):
+		task := strings.TrimSpace(strings.TrimPrefix(input, "/script "))
+		result := m.handleScriptCommand(task)
+		m.messages = append(m.messages, chatMsg{role: "system", content: result})
+		m.textarea.Reset()
+		m.viewport.SetContent(m.renderMessages())
+		m.viewport.GotoBottom()
+		return m, nil, true
+
+	case input == "/script":
+		result := m.handleScriptCommand("")
+		m.messages = append(m.messages, chatMsg{role: "system", content: result})
+		m.textarea.Reset()
+		m.viewport.SetContent(m.renderMessages())
+		m.viewport.GotoBottom()
+		return m, nil, true
+
+	case strings.HasPrefix(input, "/video "):
+		path := strings.TrimSpace(strings.TrimPrefix(input, "/video "))
+		result := m.handleVideoCommand(path)
+		m.messages = append(m.messages, chatMsg{role: "system", content: result})
+		m.textarea.Reset()
+		m.viewport.SetContent(m.renderMessages())
+		m.viewport.GotoBottom()
+		return m, nil, true
+
+	case strings.HasPrefix(input, "/pdf "):
+		path := strings.TrimSpace(strings.TrimPrefix(input, "/pdf "))
+		result := m.handlePDFCommand(path)
+		m.messages = append(m.messages, chatMsg{role: "system", content: result})
+		m.textarea.Reset()
+		m.viewport.SetContent(m.renderMessages())
+		m.viewport.GotoBottom()
+		return m, nil, true
+
+	case input == "/pdf":
+		result := m.handlePDFCommand("")
+		m.messages = append(m.messages, chatMsg{role: "system", content: result})
+		m.textarea.Reset()
+		m.viewport.SetContent(m.renderMessages())
+		m.viewport.GotoBottom()
+		return m, nil, true
+
+	case strings.HasPrefix(input, "/graph "):
+		symbol := strings.TrimSpace(strings.TrimPrefix(input, "/graph "))
+		result := m.handleGraphCommand(symbol)
+		m.messages = append(m.messages, chatMsg{role: "system", content: result})
+		m.textarea.Reset()
+		m.viewport.SetContent(m.renderMessages())
+		m.viewport.GotoBottom()
+		return m, nil, true
+
+	case input == "/graph":
+		result := m.handleGraphCommand("")
+		m.messages = append(m.messages, chatMsg{role: "system", content: result})
+		m.textarea.Reset()
+		m.viewport.SetContent(m.renderMessages())
+		m.viewport.GotoBottom()
+		return m, nil, true
+	}
+	return m, nil, false
 }

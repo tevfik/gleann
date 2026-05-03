@@ -488,168 +488,19 @@ func (m OnboardModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 
 	// ── Settings Menu ──
 	case phaseMenu:
-		switch key {
-		case "up", "k":
-			if m.menuCursor > 0 {
-				m.menuCursor--
-			}
-		case "down", "j":
-			if m.menuCursor < len(m.menuItems)-1 {
-				m.menuCursor++
-			}
-		case "enter":
-			item := m.menuItems[m.menuCursor]
-			if item.phase == phaseSummary {
-				// "Save & Exit" — build result and quit.
-				m.buildResult()
-				m.done = true
-				return m, tea.Quit
-			}
-			if item.phase == phasePlugins {
-				// "Manage Plugins" — exit wizard and open plugin manager.
-				m.buildResult()
-				m.openPlugins = true
-				m.done = true
-				return m, tea.Quit
-			}
-			// Jump to the selected phase.
-			target := item.phase
-			// For host/key, detect the right sub-phase based on provider.
-			if target == phaseEmbHost {
-				if m.embProviders[m.embProviderIdx] == "openai" {
-					target = phaseEmbAPIKey
-				}
-			}
-			if target == phaseLLMHost {
-				prov := m.llmProviders[m.llmProviderIdx]
-				if prov == "openai" || prov == "anthropic" {
-					target = phaseLLMAPIKey
-				}
-			}
-			// For models that need fetching first.
-			if target == phaseEmbModel {
-				m.phase = phaseEmbFetching
-				return m, m.fetchEmbModels()
-			}
-			if target == phaseLLMModel {
-				m.phase = phaseLLMFetching
-				return m, m.fetchLLMModels()
-			}
-			if target == phaseRerankModel {
-				if !m.rerankEnabled {
-					target = phaseReranker
-				} else {
-					m.phase = phaseRerankFetching
-					return m, m.fetchRerankModels()
-				}
-			}
-			m.phase = target
-			m.focusActiveInput()
-			return m, nil
-		}
-		return m, nil
+		return m.handleMenuKeys(key)
 
 	// ── Quick vs Advanced Setup ──
 	case phaseQuickOrAdv:
-		switch key {
-		case "up", "k":
-			if m.quickAdvOptionIdx > 0 {
-				m.quickAdvOptionIdx--
-			}
-		case "down", "j":
-			if m.quickAdvOptionIdx < len(m.quickAdvOptions)-1 {
-				m.quickAdvOptionIdx++
-			}
-		case "enter":
-			if m.quickAdvOptionIdx == 0 {
-				// Quick Setup: auto-detect Ollama, pick best models, save, done.
-				m.buildResult() // defaults
-				host := m.embHostInput.Value()
-				if ollamaReachable(host) {
-					models, err := fetchModels("ollama", host, "")
-					if err == nil && len(models) > 0 {
-						pickBestModels(&m.result, models)
-					}
-				}
-				m.result.Completed = true
-				m.done = true
-				return m, tea.Quit
-			}
-			// Advanced Setup: proceed to full wizard.
-			m.phase = phaseEmbProvider
-			m.focusActiveInput()
-		}
-		return m, nil
+		return m.handleQuickAdvKeys(key)
 
 	// ── Embedding provider select ──
 	case phaseEmbProvider:
-		switch key {
-		case "up", "k":
-			if m.embProviderIdx > 0 {
-				m.embProviderIdx--
-			}
-		case "down", "j":
-			if m.embProviderIdx < len(m.embProviders)-1 {
-				m.embProviderIdx++
-			}
-		case "enter":
-			if m.menuMode {
-				m.phase = phaseMenu
-				return m, nil
-			}
-			prov := m.embProviders[m.embProviderIdx]
-			if prov == "ollama" {
-				m.embHostInput.SetValue(gleann.DefaultOllamaHost)
-				m.embHostInput.Focus()
-				m.phase = phaseEmbHost
-				return m, textinput.Blink
-			} else if prov == "llamacpp" {
-				m.phase = phaseEmbFetching
-				return m, m.fetchEmbModels()
-			}
-			m.embKeyInput.Focus()
-			m.phase = phaseEmbAPIKey
-			return m, textinput.Blink
-		}
-		return m, nil
+		return m.handleEmbProviderKeys(key)
 
 	// ── LLM provider select ──
 	case phaseLLMProvider:
-		switch key {
-		case "up", "k":
-			if m.llmProviderIdx > 0 {
-				m.llmProviderIdx--
-			}
-		case "down", "j":
-			if m.llmProviderIdx < len(m.llmProviders)-1 {
-				m.llmProviderIdx++
-			}
-		case "enter":
-			if m.menuMode {
-				m.phase = phaseMenu
-				return m, nil
-			}
-			prov := m.llmProviders[m.llmProviderIdx]
-			embProv := m.embProviders[m.embProviderIdx]
-			// If same provider as embedding → reuse host/key, skip to fetch.
-			if prov == embProv {
-				m.phase = phaseLLMFetching
-				return m, m.fetchLLMModels()
-			}
-			if prov == "ollama" {
-				m.llmHostInput.SetValue(gleann.DefaultOllamaHost)
-				m.llmHostInput.Focus()
-				m.phase = phaseLLMHost
-				return m, textinput.Blink
-			} else if prov == "llamacpp" {
-				m.phase = phaseLLMFetching
-				return m, m.fetchLLMModels()
-			}
-			m.llmKeyInput.Focus()
-			m.phase = phaseLLMAPIKey
-			return m, textinput.Blink
-		}
-		return m, nil
+		return m.handleLLMProviderKeys(key)
 
 	// ── Text inputs ──
 	case phaseEmbHost:
@@ -692,121 +543,19 @@ func (m OnboardModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 
 	// ── Embedding model select ──
 	case phaseEmbModel:
-		switch key {
-		case "tab":
-			m.embShowAll = !m.embShowAll
-			m.embModelIdx = 0
-			if m.embShowAll {
-				m.embModels = m.embAllModels
-			} else {
-				m.embModels = filterEmbeddingModels(m.embAllModels)
-			}
-		case "up", "k":
-			if m.embModelIdx > 0 {
-				m.embModelIdx--
-			}
-		case "down", "j":
-			if m.embModelIdx < len(m.embModels)-1 {
-				m.embModelIdx++
-			}
-		case "enter":
-			if m.menuMode {
-				m.phase = phaseMenu
-			} else {
-				m.phase = phaseLLMProvider
-			}
-		}
-		return m, nil
+		return m.handleEmbModelKeys(key)
 
 	// ── LLM model select ──
 	case phaseLLMModel:
-		switch key {
-		case "tab":
-			m.llmShowAll = !m.llmShowAll
-			m.llmModelIdx = 0
-			if m.llmShowAll {
-				m.llmModels = m.llmAllModels
-			} else {
-				m.llmModels = filterLLMModels(m.llmAllModels)
-			}
-		case "up", "k":
-			if m.llmModelIdx > 0 {
-				m.llmModelIdx--
-			}
-		case "down", "j":
-			if m.llmModelIdx < len(m.llmModels)-1 {
-				m.llmModelIdx++
-			}
-		case "enter":
-			if m.menuMode {
-				m.phase = phaseMenu
-			} else {
-				m.phase = phaseReranker
-			}
-		}
-		return m, nil
+		return m.handleLLMModelKeys(key)
 
 	// ── Reranker toggle ──
 	case phaseReranker:
-		switch key {
-		case "up", "k":
-			if m.rerankOptionIdx > 0 {
-				m.rerankOptionIdx--
-			}
-		case "down", "j":
-			if m.rerankOptionIdx < len(m.rerankOptions)-1 {
-				m.rerankOptionIdx++
-			}
-		case "enter":
-			if m.rerankOptionIdx == 1 {
-				// Enable reranker → fetch available models from Ollama.
-				m.rerankEnabled = true
-				m.phase = phaseRerankFetching
-				return m, m.fetchRerankModels()
-			} else {
-				// Skip reranker.
-				m.rerankEnabled = false
-				if m.menuMode {
-					m.phase = phaseMenu
-					return m, nil
-				}
-				m.indexDirInput.Focus()
-				m.phase = phaseIndexDir
-				return m, textinput.Blink
-			}
-		}
-		return m, nil
+		return m.handleRerankerKeys(key)
 
 	// ── Reranker model select ──
 	case phaseRerankModel:
-		switch key {
-		case "tab":
-			// Toggle between filtered and all models.
-			m.rerankShowAll = !m.rerankShowAll
-			if m.rerankShowAll {
-				m.rerankModels = m.rerankAllModels
-			} else {
-				m.rerankModels = filterRerankerModels(m.rerankAllModels)
-			}
-			m.rerankModelIdx = 0
-		case "up", "k":
-			if m.rerankModelIdx > 0 {
-				m.rerankModelIdx--
-			}
-		case "down", "j":
-			if m.rerankModelIdx < len(m.rerankModels)-1 {
-				m.rerankModelIdx++
-			}
-		case "enter":
-			if m.menuMode {
-				m.phase = phaseMenu
-				return m, nil
-			}
-			m.indexDirInput.Focus()
-			m.phase = phaseIndexDir
-			return m, textinput.Blink
-		}
-		return m, nil
+		return m.handleRerankModelKeys(key)
 
 	// ── Index dir ──
 	case phaseIndexDir:
@@ -821,68 +570,15 @@ func (m OnboardModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 
 	// ── Backend selector ──
 	case phaseBackend:
-		switch key {
-		case "up", "k":
-			if m.backendOptionIdx > 0 {
-				m.backendOptionIdx--
-			}
-		case "down", "j":
-			if m.backendOptionIdx < len(m.backendOptions)-1 {
-				m.backendOptionIdx++
-			}
-		case "enter":
-			if m.menuMode {
-				m.phase = phaseMenu
-				return m, nil
-			}
-			m.phase = phaseMCP
-			return m, nil
-		}
-		return m, nil
+		return m.handleBackendKeys(key)
 
 	// ── MCP server toggle ──
 	case phaseMCP:
-		switch key {
-		case "up", "k":
-			if m.mcpOptionIdx > 0 {
-				m.mcpOptionIdx--
-			}
-		case "down", "j":
-			if m.mcpOptionIdx < len(m.mcpOptions)-1 {
-				m.mcpOptionIdx++
-			}
-		case "enter":
-			m.mcpEnabled = m.mcpOptionIdx == 1
-			if m.menuMode {
-				m.phase = phaseMenu
-				return m, nil
-			}
-			m.phase = phaseServer
-			return m, nil
-		}
-		return m, nil
+		return m.handleMCPKeys(key)
 
 	// ── REST API server toggle ──
 	case phaseServer:
-		switch key {
-		case "up", "k":
-			if m.serverOptionIdx > 0 {
-				m.serverOptionIdx--
-			}
-		case "down", "j":
-			if m.serverOptionIdx < len(m.serverOptions)-1 {
-				m.serverOptionIdx++
-			}
-		case "enter":
-			m.serverEnabled = m.serverOptionIdx == 1
-			if m.menuMode {
-				m.phase = phaseMenu
-				return m, nil
-			}
-			m.phase = phaseSummary
-			return m, nil
-		}
-		return m, nil
+		return m.handleServerKeys(key)
 
 	// ── Summary ──
 	case phaseSummary:
@@ -893,31 +589,166 @@ func (m OnboardModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 
 	// ── Install ──
 	case phaseInstall:
-		switch key {
-		case "up", "k":
-			if m.installOptionIdx > 0 {
-				m.installOptionIdx--
-			}
-		case "down", "j":
-			if m.installOptionIdx < len(m.installOptions)-1 {
-				m.installOptionIdx++
-			}
-		case "enter":
-			if m.menuMode {
-				// In menu mode, install/uninstall is a standalone action.
-				m.buildResult()
-				m.done = true
-				return m, tea.Quit
-			}
-			m.buildResult()
-			m.done = true
-			return m, tea.Quit
-		}
-		return m, nil
+		return m.handleInstallKeys(key)
 	}
 
 	// Fallback: update active input.
 	return m.updateActiveInput(msg)
+}
+
+func (m OnboardModel) handleMenuKeys(key string) (tea.Model, tea.Cmd) {
+	switch key {
+	case "up", "k":
+		if m.menuCursor > 0 {
+			m.menuCursor--
+		}
+	case "down", "j":
+		if m.menuCursor < len(m.menuItems)-1 {
+			m.menuCursor++
+		}
+	case "enter":
+		item := m.menuItems[m.menuCursor]
+		if item.phase == phaseSummary {
+			m.buildResult()
+			m.done = true
+			return m, tea.Quit
+		}
+		if item.phase == phasePlugins {
+			m.buildResult()
+			m.openPlugins = true
+			m.done = true
+			return m, tea.Quit
+		}
+		target := item.phase
+		if target == phaseEmbHost && m.embProviders[m.embProviderIdx] == "openai" {
+			target = phaseEmbAPIKey
+		}
+		if target == phaseLLMHost {
+			prov := m.llmProviders[m.llmProviderIdx]
+			if prov == "openai" || prov == "anthropic" {
+				target = phaseLLMAPIKey
+			}
+		}
+		if target == phaseEmbModel {
+			m.phase = phaseEmbFetching
+			return m, m.fetchEmbModels()
+		}
+		if target == phaseLLMModel {
+			m.phase = phaseLLMFetching
+			return m, m.fetchLLMModels()
+		}
+		if target == phaseRerankModel {
+			if !m.rerankEnabled {
+				target = phaseReranker
+			} else {
+				m.phase = phaseRerankFetching
+				return m, m.fetchRerankModels()
+			}
+		}
+		m.phase = target
+		m.focusActiveInput()
+		return m, nil
+	}
+	return m, nil
+}
+
+func (m OnboardModel) handleQuickAdvKeys(key string) (tea.Model, tea.Cmd) {
+	switch key {
+	case "up", "k":
+		if m.quickAdvOptionIdx > 0 {
+			m.quickAdvOptionIdx--
+		}
+	case "down", "j":
+		if m.quickAdvOptionIdx < len(m.quickAdvOptions)-1 {
+			m.quickAdvOptionIdx++
+		}
+	case "enter":
+		if m.quickAdvOptionIdx == 0 {
+			m.buildResult()
+			host := m.embHostInput.Value()
+			if ollamaReachable(host) {
+				models, err := fetchModels("ollama", host, "")
+				if err == nil && len(models) > 0 {
+					pickBestModels(&m.result, models)
+				}
+			}
+			m.result.Completed = true
+			m.done = true
+			return m, tea.Quit
+		}
+		m.phase = phaseEmbProvider
+		m.focusActiveInput()
+	}
+	return m, nil
+}
+
+func (m OnboardModel) handleEmbProviderKeys(key string) (tea.Model, tea.Cmd) {
+	switch key {
+	case "up", "k":
+		if m.embProviderIdx > 0 {
+			m.embProviderIdx--
+		}
+	case "down", "j":
+		if m.embProviderIdx < len(m.embProviders)-1 {
+			m.embProviderIdx++
+		}
+	case "enter":
+		if m.menuMode {
+			m.phase = phaseMenu
+			return m, nil
+		}
+		prov := m.embProviders[m.embProviderIdx]
+		if prov == "ollama" {
+			m.embHostInput.SetValue(gleann.DefaultOllamaHost)
+			m.embHostInput.Focus()
+			m.phase = phaseEmbHost
+			return m, textinput.Blink
+		} else if prov == "llamacpp" {
+			m.phase = phaseEmbFetching
+			return m, m.fetchEmbModels()
+		}
+		m.embKeyInput.Focus()
+		m.phase = phaseEmbAPIKey
+		return m, textinput.Blink
+	}
+	return m, nil
+}
+
+func (m OnboardModel) handleLLMProviderKeys(key string) (tea.Model, tea.Cmd) {
+	switch key {
+	case "up", "k":
+		if m.llmProviderIdx > 0 {
+			m.llmProviderIdx--
+		}
+	case "down", "j":
+		if m.llmProviderIdx < len(m.llmProviders)-1 {
+			m.llmProviderIdx++
+		}
+	case "enter":
+		if m.menuMode {
+			m.phase = phaseMenu
+			return m, nil
+		}
+		prov := m.llmProviders[m.llmProviderIdx]
+		embProv := m.embProviders[m.embProviderIdx]
+		if prov == embProv {
+			m.phase = phaseLLMFetching
+			return m, m.fetchLLMModels()
+		}
+		if prov == "ollama" {
+			m.llmHostInput.SetValue(gleann.DefaultOllamaHost)
+			m.llmHostInput.Focus()
+			m.phase = phaseLLMHost
+			return m, textinput.Blink
+		} else if prov == "llamacpp" {
+			m.phase = phaseLLMFetching
+			return m, m.fetchLLMModels()
+		}
+		m.llmKeyInput.Focus()
+		m.phase = phaseLLMAPIKey
+		return m, textinput.Blink
+	}
+	return m, nil
 }
 
 func (m *OnboardModel) updateActiveInput(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -1757,4 +1588,207 @@ func capitalize(s string) string {
 		return s
 	}
 	return strings.ToUpper(s[:1]) + s[1:]
+}
+
+func (m OnboardModel) handleEmbModelKeys(key string) (tea.Model, tea.Cmd) {
+	switch key {
+	case "tab":
+		m.embShowAll = !m.embShowAll
+		m.embModelIdx = 0
+		if m.embShowAll {
+			m.embModels = m.embAllModels
+		} else {
+			m.embModels = filterEmbeddingModels(m.embAllModels)
+		}
+	case "up", "k":
+		if m.embModelIdx > 0 {
+			m.embModelIdx--
+		}
+	case "down", "j":
+		if m.embModelIdx < len(m.embModels)-1 {
+			m.embModelIdx++
+		}
+	case "enter":
+		if m.menuMode {
+			m.phase = phaseMenu
+		} else {
+			m.phase = phaseLLMProvider
+		}
+	}
+	return m, nil
+}
+
+func (m OnboardModel) handleLLMModelKeys(key string) (tea.Model, tea.Cmd) {
+	switch key {
+	case "tab":
+		m.llmShowAll = !m.llmShowAll
+		m.llmModelIdx = 0
+		if m.llmShowAll {
+			m.llmModels = m.llmAllModels
+		} else {
+			m.llmModels = filterLLMModels(m.llmAllModels)
+		}
+	case "up", "k":
+		if m.llmModelIdx > 0 {
+			m.llmModelIdx--
+		}
+	case "down", "j":
+		if m.llmModelIdx < len(m.llmModels)-1 {
+			m.llmModelIdx++
+		}
+	case "enter":
+		if m.menuMode {
+			m.phase = phaseMenu
+		} else {
+			m.phase = phaseReranker
+		}
+	}
+	return m, nil
+}
+
+func (m OnboardModel) handleRerankerKeys(key string) (tea.Model, tea.Cmd) {
+	switch key {
+	case "up", "k":
+		if m.rerankOptionIdx > 0 {
+			m.rerankOptionIdx--
+		}
+	case "down", "j":
+		if m.rerankOptionIdx < len(m.rerankOptions)-1 {
+			m.rerankOptionIdx++
+		}
+	case "enter":
+		if m.rerankOptionIdx == 1 {
+			m.rerankEnabled = true
+			m.phase = phaseRerankFetching
+			return m, m.fetchRerankModels()
+		} else {
+			m.rerankEnabled = false
+			if m.menuMode {
+				m.phase = phaseMenu
+				return m, nil
+			}
+			m.indexDirInput.Focus()
+			m.phase = phaseIndexDir
+			return m, textinput.Blink
+		}
+	}
+	return m, nil
+}
+
+func (m OnboardModel) handleRerankModelKeys(key string) (tea.Model, tea.Cmd) {
+	switch key {
+	case "tab":
+		m.rerankShowAll = !m.rerankShowAll
+		if m.rerankShowAll {
+			m.rerankModels = m.rerankAllModels
+		} else {
+			m.rerankModels = filterRerankerModels(m.rerankAllModels)
+		}
+		m.rerankModelIdx = 0
+	case "up", "k":
+		if m.rerankModelIdx > 0 {
+			m.rerankModelIdx--
+		}
+	case "down", "j":
+		if m.rerankModelIdx < len(m.rerankModels)-1 {
+			m.rerankModelIdx++
+		}
+	case "enter":
+		if m.menuMode {
+			m.phase = phaseMenu
+			return m, nil
+		}
+		m.indexDirInput.Focus()
+		m.phase = phaseIndexDir
+		return m, textinput.Blink
+	}
+	return m, nil
+}
+
+func (m OnboardModel) handleBackendKeys(key string) (tea.Model, tea.Cmd) {
+	switch key {
+	case "up", "k":
+		if m.backendOptionIdx > 0 {
+			m.backendOptionIdx--
+		}
+	case "down", "j":
+		if m.backendOptionIdx < len(m.backendOptions)-1 {
+			m.backendOptionIdx++
+		}
+	case "enter":
+		if m.menuMode {
+			m.phase = phaseMenu
+			return m, nil
+		}
+		m.phase = phaseMCP
+		return m, nil
+	}
+	return m, nil
+}
+
+func (m *OnboardModel) handleMCPKeys(key string) (tea.Model, tea.Cmd) {
+	switch key {
+	case "up", "k":
+		if m.mcpOptionIdx > 0 {
+			m.mcpOptionIdx--
+		}
+	case "down", "j":
+		if m.mcpOptionIdx < len(m.mcpOptions)-1 {
+			m.mcpOptionIdx++
+		}
+	case "enter":
+		m.mcpEnabled = m.mcpOptionIdx == 1
+		if m.menuMode {
+			m.phase = phaseMenu
+			return m, nil
+		}
+		m.phase = phaseServer
+		return m, nil
+	}
+	return m, nil
+}
+
+func (m *OnboardModel) handleServerKeys(key string) (tea.Model, tea.Cmd) {
+	switch key {
+	case "up", "k":
+		if m.serverOptionIdx > 0 {
+			m.serverOptionIdx--
+		}
+	case "down", "j":
+		if m.serverOptionIdx < len(m.serverOptions)-1 {
+			m.serverOptionIdx++
+		}
+	case "enter":
+		m.serverEnabled = m.serverOptionIdx == 1
+		if m.menuMode {
+			m.phase = phaseMenu
+			return m, nil
+		}
+		m.phase = phaseSummary
+		return m, nil
+	}
+	return m, nil
+}
+
+func (m *OnboardModel) handleInstallKeys(key string) (tea.Model, tea.Cmd) {
+	switch key {
+	case "up", "k":
+		if m.installOptionIdx > 0 {
+			m.installOptionIdx--
+		}
+	case "down", "j":
+		if m.installOptionIdx < len(m.installOptions)-1 {
+			m.installOptionIdx++
+		}
+	case "enter":
+		if m.menuMode {
+			m.buildResult()
+			m.done = true
+			return m, tea.Quit
+		}
+		m.buildResult()
+		m.done = true
+		return m, tea.Quit
+	}
+	return m, nil
 }

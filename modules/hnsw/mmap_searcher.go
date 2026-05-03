@@ -5,8 +5,6 @@ import (
 	"fmt"
 	"sort"
 	"sync"
-
-	
 )
 
 // MmapSearcher implements BackendSearcher directly on a memory-mapped graph.

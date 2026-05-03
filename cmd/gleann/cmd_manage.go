@@ -92,5 +92,3 @@ func cmdTUI() {
 		os.Exit(1)
 	}
 }
-
-

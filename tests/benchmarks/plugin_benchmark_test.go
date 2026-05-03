@@ -119,14 +119,14 @@ type benchResult struct {
 	HierarchyAccuracy int `json:"hierarchy_accuracy_pct"` // subsection edges / total section edges
 
 	// Content
-	WordCount          int `json:"word_count"`
-	CharCount          int `json:"char_count"`
-	MarkdownBytes      int `json:"markdown_bytes"`
-	HeadingDetectionPct int `json:"heading_detection_pct"`
-	KeywordFidelityPct  int `json:"keyword_fidelity_pct"`
-	TableDetected      bool `json:"table_detected"`
-	CodeBlockCount     int  `json:"code_block_count"`
-	LinkCount          int  `json:"link_count"`
+	WordCount           int  `json:"word_count"`
+	CharCount           int  `json:"char_count"`
+	MarkdownBytes       int  `json:"markdown_bytes"`
+	HeadingDetectionPct int  `json:"heading_detection_pct"`
+	KeywordFidelityPct  int  `json:"keyword_fidelity_pct"`
+	TableDetected       bool `json:"table_detected"`
+	CodeBlockCount      int  `json:"code_block_count"`
+	LinkCount           int  `json:"link_count"`
 
 	// Errors
 	Error string `json:"error,omitempty"`
@@ -352,7 +352,7 @@ func extractViaPlugin(pluginURL, filePath string) (*gleann.PluginResult, error) 
 
 type backendDef struct {
 	Name       string
-	Layer      string                                          // "-1", "0", "1a", "1b"
+	Layer      string // "-1", "0", "1a", "1b"
 	ExtractFn  func(filePath string) (*gleann.PluginResult, error)
 	Extensions map[string]bool // supported extensions
 }
