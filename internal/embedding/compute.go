@@ -29,6 +29,7 @@ const (
 	ProviderLlamaCPP Provider = "llamacpp"
 	ProviderOpenAI   Provider = "openai"
 	ProviderGemini   Provider = "gemini"
+	ProviderNative   Provider = "native"
 )
 
 // Computer computes embeddings using a specified provider.
@@ -207,6 +208,8 @@ func (c *Computer) Compute(ctx context.Context, texts []string) ([][]float32, er
 					embeddings, err = c.computeOpenAI(ctx, batch)
 				case ProviderGemini:
 					embeddings, err = c.computeGemini(ctx, batch)
+				case ProviderNative:
+					embeddings, err = c.computeNative(ctx, batch)
 				default:
 					return fmt.Errorf("unsupported provider: %s", c.provider)
 				}

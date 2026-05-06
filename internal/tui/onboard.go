@@ -268,7 +268,7 @@ func NewOnboardModel() OnboardModel {
 		phase:             phaseQuickOrAdv,
 		quickAdvOptions:   []string{"⚡ Quick Setup (auto-detect, 30 seconds)", "🔧 Advanced Setup (full control, all options)"},
 		quickAdvOptionIdx: 0,
-		embProviders:      []string{"ollama", "openai", "llamacpp"},
+		embProviders:      buildEmbProviders(),
 		llmProviders:      []string{"ollama", "openai", "anthropic", "llamacpp"},
 		embHostInput:      embHost,
 		embKeyInput:       embKey,
@@ -277,7 +277,7 @@ func NewOnboardModel() OnboardModel {
 		indexDirInput:     indexDir,
 		rerankOptions:     []string{"Skip (no reranking)", "Enable reranker"},
 		rerankOptionIdx:   0,
-		backendOptions:    []string{"DiskANN (recommended — disk-efficient, low RAM)", "HNSW (in-memory, fast)", "FAISS (SIMD-accelerated, requires CGo)", "FAISS-Hybrid (FAISS build + Go search)"},
+		backendOptions:    buildBackendOptions(),
 		backendOptionIdx:  0,
 		mcpOptions:        []string{"Disable MCP server", "Enable MCP server"},
 		mcpOptionIdx:      0,
@@ -288,6 +288,29 @@ func NewOnboardModel() OnboardModel {
 		installOptionIdx:  0,
 		spinner:           sp,
 	}
+}
+
+func buildBackendOptions() []string {
+	opts := []string{
+		"DiskANN (recommended — disk-efficient, low RAM)",
+		"HNSW (in-memory, fast)",
+	}
+	if gleann.IsFaissSupported() {
+		opts = append(opts, "FAISS (SIMD-accelerated, requires CGo)")
+		opts = append(opts, "FAISS-Hybrid (FAISS build + Go search)")
+	} else {
+		opts = append(opts, "FAISS (not available in this build)")
+		opts = append(opts, "FAISS-Hybrid (not available in this build)")
+	}
+	return opts
+}
+
+func buildEmbProviders() []string {
+	providers := []string{"ollama", "openai", "llamacpp"}
+	if gleann.IsNativeSupported() {
+		providers = append(providers, "native")
+	}
+	return providers
 }
 
 // buildInstallOptions returns platform-specific install choices.
@@ -706,6 +729,14 @@ func (m OnboardModel) handleEmbProviderKeys(key string) (tea.Model, tea.Cmd) {
 		} else if prov == "llamacpp" {
 			m.phase = phaseEmbFetching
 			return m, m.fetchEmbModels()
+		} else if prov == "native" {
+			// Skip fetching and host, go to LLM.
+			if m.menuMode {
+				m.phase = phaseMenu
+				return m, nil
+			}
+			m.phase = phaseLLMProvider
+			return m, nil
 		}
 		m.embKeyInput.Focus()
 		m.phase = phaseEmbAPIKey
@@ -874,6 +905,9 @@ func (m *OnboardModel) buildResult() {
 	} else if m.existingCfg != nil && m.existingCfg.EmbeddingModel != "" {
 		embModel = m.existingCfg.EmbeddingModel
 	}
+	if m.embProviders[m.embProviderIdx] == "native" {
+		embModel = "all-MiniLM-L6-v2"
+	}
 	llmModel := "llama3.2"
 	if len(m.llmModels) > 0 && m.llmModelIdx < len(m.llmModels) {
 		if m.llmProviders[m.llmProviderIdx] == "llamacpp" {
@@ -914,8 +948,8 @@ func (m *OnboardModel) buildResult() {
 		Completed:          true,
 	}
 
-	// Clean up fields if it was repurposed for llamacpp.
-	if m.result.EmbeddingProvider == "llamacpp" {
+	// Clean up fields if it was repurposed for llamacpp or native.
+	if m.result.EmbeddingProvider == "llamacpp" || m.result.EmbeddingProvider == "native" {
 		m.result.OllamaHost = ""
 	}
 	if m.result.LLMProvider == "llamacpp" {
@@ -1004,14 +1038,20 @@ func (m OnboardModel) View() tea.View {
 			}))
 
 	case phaseEmbProvider:
+		options := m.embProviders
+		descriptions := []string{
+			"Local models via Ollama (free, private)",
+			"OpenAI embedding API (cloud)",
+			"Embedded llama.cpp server (local, isolated)",
+		}
+		if gleann.IsNativeSupported() {
+			descriptions = append(descriptions, "Native engine (Candle/Rust — fast, no dependencies)")
+		}
+
 		b.WriteString(m.renderSelect("1", "Embedding Provider",
 			"Where should gleann compute embeddings?",
-			m.embProviders, m.embProviderIdx,
-			[]string{
-				"Local models via Ollama (free, private)",
-				"OpenAI embedding API (cloud)",
-				"Embedded llama.cpp server (local, isolated)",
-			}))
+			options, m.embProviderIdx,
+			descriptions))
 
 	case phaseEmbHost:
 		if m.embProviders[m.embProviderIdx] == "llamacpp" {
@@ -1507,6 +1547,8 @@ func (m OnboardModel) renderSummary() string {
 	}
 	if m.embProviders[m.embProviderIdx] == "ollama" {
 		rows = append(rows, row{"Ollama Host", m.embHostInput.Value()})
+	} else if m.embProviders[m.embProviderIdx] == "native" {
+		rows = append(rows, row{"Native Engine", "Enabled (Rust/Candle)"})
 	} else {
 		mask := m.embKeyInput.Value()
 		if len(mask) > 8 {
@@ -1718,6 +1760,12 @@ func (m OnboardModel) handleBackendKeys(key string) (tea.Model, tea.Cmd) {
 	case "enter":
 		if m.menuMode {
 			m.phase = phaseMenu
+			return m, nil
+		}
+		// If FAISS is not available but selected, prevent advancing.
+		selected := m.selectedBackend()
+		if (selected == "faiss" || selected == "faiss-hybrid") && !gleann.IsFaissSupported() {
+			m.fetchErr = "FAISS is not supported in this build. Use HNSW or DiskANN."
 			return m, nil
 		}
 		m.phase = phaseMCP

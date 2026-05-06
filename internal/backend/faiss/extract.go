@@ -3,7 +3,7 @@
 package faiss
 
 /*
-#cgo CXXFLAGS: -I${SRCDIR}/include -I/usr/local/include -std=c++17
+#cgo CXXFLAGS: -I${SRCDIR}/include -std=c++17
 #include "faiss_graph.h"
 #include <stdlib.h>
 */
