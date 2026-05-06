@@ -58,7 +58,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
-        tags: ["", "treesitter"]
+        tags: ["", "treesitter", "native"]
         exclude:
           # treesitter (CGo) requires C toolchain — skip on Windows for now
           - os: windows-latest
@@ -71,6 +71,14 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: "1.25"
+
+      - name: Set up Rust (for native tag)
+        if: matrix.tags == 'native'
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+          override: true
 
       - name: Build
         run: |
