@@ -63,6 +63,8 @@ jobs:
           # treesitter (CGo) requires C toolchain — skip on Windows for now
           - os: windows-latest
             tags: treesitter
+          - os: windows-latest
+            tags: native
 
     steps:
       - uses: actions/checkout@v4
@@ -80,10 +82,17 @@ jobs:
           toolchain: stable
           override: true
 
+      - name: Build Rust Core (for native tag)
+        if: matrix.tags == 'native'
+        run: cd ext/gleann-core-rs && cargo build --release
+
       - name: Build
         run: |
           if [ -n "${{ matrix.tags }}" ]; then
-            go build -tags ${{ matrix.tags }} -o /dev/null ./cmd/gleann/
+            # Add RPATH for Linux to find the shared library during build-time checks if needed
+            # (though -o /dev/null might skip some runtime checks, ld still needs the lib)
+            export CGO_LDFLAGS="-L$(pwd)/ext/gleann-core-rs/target/release"
+            go build -tags "${{ matrix.tags }}" -o /dev/null ./cmd/gleann/
           else
             go build -o /dev/null ./cmd/gleann/
           fi
