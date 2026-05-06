@@ -102,7 +102,7 @@ type Config struct {
 	// EmbeddingModel is the model to use for embedding computation.
 	EmbeddingModel string `json:"embedding_model"`
 
-	// EmbeddingProvider specifies the embedding provider ("ollama", "openai", "sentence-transformers").
+	// EmbeddingProvider specifies the embedding provider ("ollama", "openai", "sentence-transformers", "native").
 	EmbeddingProvider string `json:"embedding_provider"`
 
 	// BatchSize is the number of items to embed in a single request (0 = auto).
