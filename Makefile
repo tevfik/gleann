@@ -17,9 +17,17 @@ CMD         := ./cmd/gleann
 VERSION     ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 LDFLAGS     := -s -w -X main.version=$(VERSION)
 INSTALL_DIR ?= /usr/local/bin
+REPO_ROOT   := $(CURDIR)
 
 # FAISS shared lib locations (set from environment or default)
 FAISS_LIB_DIR ?= /usr/local/lib
+# Detect working FAISS headers in user cache as a fallback if system headers are broken
+UV_FAISS_INC := $(HOME)/.cache/uv/archive-v0/T5fKlhKLCEJN-Xxjg_sNe/include
+ifneq ($(wildcard $(UV_FAISS_INC)/faiss/IndexHNSW.h),)
+    FAISS_INC_DIR ?= $(UV_FAISS_INC)
+else
+    FAISS_INC_DIR ?= /usr/local/include
+endif
 
 # Platform detection
 UNAME_S := $(shell uname -s)
@@ -58,18 +66,33 @@ $(BUILD_DIR)/gleann-cgo:
 	CGO_ENABLED=1 CGO_CFLAGS="-w" go build -tags "treesitter" -ldflags "$(LDFLAGS)" -o $(BINARY) $(CMD)
 	@echo "✅ Built $(BINARY) (with CGo and tree-sitter)"
 
+# build-native — local dev build with embedded Rust native engine
+.PHONY: build-native
+build-native: build-rust-core
+	@echo "🔧 Building Go binary with native tags..."
+	@mkdir -p $(BUILD_DIR)
+	cp ext/gleann-core-rs/target/release/libgleann_core_rs.so $(BUILD_DIR)/
+	CGO_ENABLED=1 go build -tags "native" -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/gleann-native $(CMD)
+	@echo "✅ Built $(BUILD_DIR)/gleann-native"
+
+.PHONY: build-rust-core
+build-rust-core:
+	@echo "🔧 Building Rust core..."
+	cd ext/gleann-core-rs && cargo build --release
+
 # ── FAISS + Tree-sitter build ──────────────────────────────────────────────
 .PHONY: full
 full: $(BINARY_FULL)
 
-$(BINARY_FULL):
-	@echo "🔧 Building $(BINARY_FULL) with FAISS + tree-sitter..."
+$(BINARY_FULL): build-rust-core
+	@echo "🔧 Building $(BINARY_FULL) with FAISS + tree-sitter + native..."
 	@mkdir -p $(BUILD_DIR)
+	cp ext/gleann-core-rs/target/release/libgleann_core_rs.so $(BUILD_DIR)/
 	CGO_ENABLED=1 \
-	CGO_CFLAGS="-w $(OMP_CFLAGS)" \
-	CGO_CXXFLAGS="-w $(OMP_CFLAGS)" \
-	CGO_LDFLAGS="$(RPATH_FLAGS) -L$(FAISS_LIB_DIR) -lfaiss_c -lfaiss $(OMP_LDFLAGS)" \
-	go build -tags "faiss treesitter" -ldflags "$(LDFLAGS)" -o $(BINARY_FULL) $(CMD)
+	CGO_CFLAGS="-w $(OMP_CFLAGS) -I$(FAISS_INC_DIR) $(CGO_CFLAGS)" \
+	CGO_CXXFLAGS="-w $(OMP_CFLAGS) -I$(FAISS_INC_DIR) $(CGO_CXXFLAGS)" \
+	CGO_LDFLAGS="$(RPATH_FLAGS) -L$(FAISS_LIB_DIR) -lfaiss_c -lfaiss $(OMP_LDFLAGS) -L$(BUILD_DIR) -lgleann_core_rs" \
+	go build -tags "faiss treesitter native" -ldflags "$(LDFLAGS)" -o $(BINARY_FULL) $(CMD)
 	@echo "✅ Built $(BINARY_FULL)"
 
 # ── Install ─────────────────────────────────────────────────────────────────

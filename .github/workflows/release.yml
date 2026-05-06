@@ -103,8 +103,8 @@ jobs:
 
 
   # ── FAISS + Tree-sitter build (Linux & macOS, requires CGo) ──
-  release-faiss:
-    name: Build FAISS (${{ matrix.suffix }})
+  release-full:
+    name: Build Full (FAISS + Native) (${{ matrix.suffix }})
     needs: test
     runs-on: ${{ matrix.os }}
     strategy:
@@ -127,6 +127,13 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: "1.25"
+
+      - name: Set up Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+          override: true
 
       - name: Install FAISS Dependencies
         shell: bash
@@ -214,7 +221,7 @@ jobs:
             echo "version=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Build gleann-full (FAISS + Tree-sitter)
+      - name: Build gleann-full (FAISS + Tree-sitter + Native)
         env:
           CGO_ENABLED: "1"
           GOOS: ${{ matrix.goos }}
@@ -232,7 +239,14 @@ jobs:
           cp build/gleann-full "${SUFFIX}"
           cp /usr/local/lib/libfaiss_c.* . 2>/dev/null || true
           cp /usr/local/lib/libfaiss.*   . 2>/dev/null || true
-          tar czf "dist/${SUFFIX}.tar.gz" "${SUFFIX}" libfaiss*.so libfaiss*.dylib 2>/dev/null || true
+          cp build/libgleann_core_rs.* . 2>/dev/null || true
+          
+          # Use different archive extensions based on OS
+          if [ "$RUNNER_OS" == "Linux" ]; then
+            tar czf "dist/${SUFFIX}.tar.gz" "${SUFFIX}" libfaiss*.so libgleann_core_rs.so 2>/dev/null || true
+          elif [ "$RUNNER_OS" == "macOS" ]; then
+            tar czf "dist/${SUFFIX}.tar.gz" "${SUFFIX}" libfaiss*.dylib libgleann_core_rs.dylib 2>/dev/null || true
+          fi
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
@@ -244,7 +258,7 @@ jobs:
   # ── Only publish to GitHub Releases for tags ──
   publish-release:
     name: Publish Release
-    needs: [release-pure, release-faiss]
+    needs: [release-pure, release-full]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:
