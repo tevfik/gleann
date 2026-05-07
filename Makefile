@@ -71,7 +71,7 @@ $(BUILD_DIR)/gleann-cgo:
 build-native: build-rust-core
 	@echo "🔧 Building Go binary with native tags..."
 	@mkdir -p $(BUILD_DIR)
-	cp ext/gleann-core-rs/target/release/libgleann_core_rs.so $(BUILD_DIR)/
+	cp ext/gleann-core-rs/target/release/libgleann_core_rs.$(SO_EXT) $(BUILD_DIR)/
 	CGO_ENABLED=1 go build -tags "native" -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/gleann-native $(CMD)
 	@echo "✅ Built $(BUILD_DIR)/gleann-native"
 
@@ -87,7 +87,7 @@ full: $(BINARY_FULL)
 $(BINARY_FULL): build-rust-core
 	@echo "🔧 Building $(BINARY_FULL) with FAISS + tree-sitter + native..."
 	@mkdir -p $(BUILD_DIR)
-	cp ext/gleann-core-rs/target/release/libgleann_core_rs.so $(BUILD_DIR)/
+	cp ext/gleann-core-rs/target/release/libgleann_core_rs.$(SO_EXT) $(BUILD_DIR)/
 	CGO_ENABLED=1 \
 	CGO_CFLAGS="-w $(OMP_CFLAGS) -I$(FAISS_INC_DIR) $(CGO_CFLAGS)" \
 	CGO_CXXFLAGS="-w $(OMP_CFLAGS) -I$(FAISS_INC_DIR) $(CGO_CXXFLAGS)" \
