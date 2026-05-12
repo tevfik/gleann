@@ -25,8 +25,8 @@
       "file": "benchmark_report.pdf",
       "format": "pdf",
       "backend": "markitdown-cli",
-      "latency_ms": 339,
-      "throughput_docs_per_sec": 2.949852507374631,
+      "latency_ms": 701,
+      "throughput_docs_per_sec": 1.4265335235378032,
       "sections": 0,
       "edges": 0,
       "max_heading_depth": 0,
@@ -45,8 +45,8 @@
       "file": "benchmark_report.pdf",
       "format": "pdf",
       "backend": "plugin-docs",
-      "latency_ms": 0,
-      "throughput_docs_per_sec": 0,
+      "latency_ms": 2000,
+      "throughput_docs_per_sec": 0.5,
       "sections": 0,
       "edges": 0,
       "max_heading_depth": 0,
@@ -60,7 +60,7 @@
       "table_detected": false,
       "code_block_count": 0,
       "link_count": 0,
-      "error": "plugin not running at http://localhost:8765: Get \"http://localhost:8765/health\": dial tcp 127.0.0.1:8765: connect: connection refused"
+      "error": "plugin not running at http://localhost:8765: Get \"http://localhost:8765/health\": context deadline exceeded (Client.Timeout exceeded while awaiting headers)"
     },
     {
       "file": "benchmark_report.pdf",
@@ -107,8 +107,8 @@
       "file": "technical_report.docx",
       "format": "docx",
       "backend": "markitdown-cli",
-      "latency_ms": 354,
-      "throughput_docs_per_sec": 2.824858757062147,
+      "latency_ms": 332,
+      "throughput_docs_per_sec": 3.0120481927710845,
       "sections": 0,
       "edges": 0,
       "max_heading_depth": 0,
@@ -128,8 +128,8 @@
       "file": "technical_report.docx",
       "format": "docx",
       "backend": "plugin-docs",
-      "latency_ms": 0,
-      "throughput_docs_per_sec": 0,
+      "latency_ms": 2001,
+      "throughput_docs_per_sec": 0.49975012493753124,
       "sections": 0,
       "edges": 0,
       "max_heading_depth": 0,
@@ -143,7 +143,7 @@
       "table_detected": false,
       "code_block_count": 0,
       "link_count": 0,
-      "error": "plugin not running at http://localhost:8765: Get \"http://localhost:8765/health\": dial tcp 127.0.0.1:8765: connect: connection refused"
+      "error": "plugin not running at http://localhost:8765: Get \"http://localhost:8765/health\": context deadline exceeded (Client.Timeout exceeded while awaiting headers)"
     },
     {
       "file": "technical_report.docx",
@@ -190,8 +190,8 @@
       "file": "benchmark_data.xlsx",
       "format": "xlsx",
       "backend": "markitdown-cli",
-      "latency_ms": 284,
-      "throughput_docs_per_sec": 3.5211267605633805,
+      "latency_ms": 421,
+      "throughput_docs_per_sec": 2.375296912114014,
       "sections": 0,
       "edges": 0,
       "max_heading_depth": 0,
@@ -211,8 +211,8 @@
       "file": "benchmark_data.xlsx",
       "format": "xlsx",
       "backend": "plugin-docs",
-      "latency_ms": 0,
-      "throughput_docs_per_sec": 0,
+      "latency_ms": 508,
+      "throughput_docs_per_sec": 1.968503937007874,
       "sections": 0,
       "edges": 0,
       "max_heading_depth": 0,
@@ -226,7 +226,7 @@
       "table_detected": false,
       "code_block_count": 0,
       "link_count": 0,
-      "error": "plugin not running at http://localhost:8765: Get \"http://localhost:8765/health\": dial tcp 127.0.0.1:8765: connect: connection refused"
+      "error": "plugin request: Post \"http://localhost:8765/convert\": dial tcp 127.0.0.1:8765: connect: connection refused"
     },
     {
       "file": "research_slides.pptx",
@@ -252,8 +252,8 @@
       "file": "research_slides.pptx",
       "format": "pptx",
       "backend": "markitdown-cli",
-      "latency_ms": 322,
-      "throughput_docs_per_sec": 3.1055900621118013,
+      "latency_ms": 310,
+      "throughput_docs_per_sec": 3.225806451612903,
       "sections": 0,
       "edges": 0,
       "max_heading_depth": 0,
@@ -376,8 +376,8 @@
       "file": "benchmarks.csv",
       "format": "csv",
       "backend": "markitdown-cli",
-      "latency_ms": 309,
-      "throughput_docs_per_sec": 3.236245954692557,
+      "latency_ms": 341,
+      "throughput_docs_per_sec": 2.932551319648094,
       "sections": 0,
       "edges": 0,
       "max_heading_depth": 0,
@@ -428,7 +428,7 @@
       "formats_supported": 6
     },
     "markitdown-cli": {
-      "avg_latency_ms": 324,
+      "avg_latency_ms": 521,
       "avg_sections": 0,
       "avg_heading_detection_pct": 100,
       "avg_keyword_fidelity_pct": 100,
@@ -464,5 +464,5 @@
       "formats_supported": 4
     }
   },
-  "timestamp": "2026-05-03T10:58:45+03:00"
+  "timestamp": "2026-05-12T11:53:28+03:00"
 }

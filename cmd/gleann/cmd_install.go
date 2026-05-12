@@ -117,6 +117,108 @@ var platforms = []Platform{
 		Install:   installCopilot,
 		Uninstall: uninstallCopilot,
 	},
+	{
+		Name:        "windsurf",
+		Description: "Windsurf IDE (.windsurf/rules + MCP config)",
+		Detect: func(dir, home string) bool {
+			_, err := os.Stat(filepath.Join(dir, ".windsurf"))
+			return err == nil
+		},
+		Install:   installWindsurf,
+		Uninstall: uninstallWindsurf,
+	},
+	{
+		Name:        "cline",
+		Description: "Cline / Roo Code (.clinerules + MCP config)",
+		Detect: func(dir, home string) bool {
+			_, err := os.Stat(filepath.Join(dir, ".clinerules"))
+			if err == nil {
+				return true
+			}
+			_, err = os.Stat(filepath.Join(dir, ".cline"))
+			return err == nil
+		},
+		Install:   installCline,
+		Uninstall: uninstallCline,
+	},
+	{
+		Name:        "amp",
+		Description: "Amp (AGENTS.md + MCP config)",
+		Detect: func(dir, home string) bool {
+			_, err := os.Stat(filepath.Join(dir, ".amp"))
+			return err == nil
+		},
+		Install:   installAmp,
+		Uninstall: uninstallAmp,
+	},
+	{
+		Name:        "kiro",
+		Description: "Kiro IDE (.kiro/rules + MCP config)",
+		Detect: func(dir, home string) bool {
+			_, err := os.Stat(filepath.Join(dir, ".kiro"))
+			return err == nil
+		},
+		Install:   installKiro,
+		Uninstall: uninstallKiro,
+	},
+	{
+		Name:        "amazonq",
+		Description: "Amazon Q Developer (AGENTS.md + MCP config)",
+		Detect: func(dir, home string) bool {
+			_, err := os.Stat(filepath.Join(dir, ".amazonq"))
+			if err == nil {
+				return true
+			}
+			_, err = os.Stat(filepath.Join(home, ".amazonq"))
+			return err == nil
+		},
+		Install:   installAmazonQ,
+		Uninstall: uninstallAmazonQ,
+	},
+	{
+		Name:        "continue",
+		Description: "Continue (AGENTS.md + .continue/config.json MCP)",
+		Detect: func(dir, home string) bool {
+			_, err := os.Stat(filepath.Join(dir, ".continue"))
+			if err == nil {
+				return true
+			}
+			_, err = os.Stat(filepath.Join(home, ".continue"))
+			return err == nil
+		},
+		Install:   installContinue,
+		Uninstall: uninstallContinue,
+	},
+	{
+		Name:        "zed",
+		Description: "Zed IDE (~/.config/zed/settings.json MCP)",
+		Detect: func(dir, home string) bool {
+			_, err := os.Stat(filepath.Join(home, ".config", "zed"))
+			return err == nil
+		},
+		Install:   installZed,
+		Uninstall: uninstallZed,
+	},
+	{
+		Name:        "neovim",
+		Description: "Neovim (AGENTS.md + MCP via avante/codecompanion)",
+		Detect: func(dir, home string) bool {
+			_, err := os.Stat(filepath.Join(home, ".config", "nvim"))
+			return err == nil
+		},
+		Install:   installNeovim,
+		Uninstall: uninstallNeovim,
+	},
+	{
+		Name:        "jetbrains",
+		Description: "JetBrains IDEs (AGENTS.md + .junie/guidelines.md)",
+		Detect: func(dir, home string) bool {
+			_, err := os.Stat(filepath.Join(dir, ".idea"))
+			return err == nil
+		},
+		Install:   installJetBrains,
+		Uninstall: uninstallJetBrains,
+	},
 }
 
 func platformByName(name string) *Platform {
@@ -1011,6 +1113,181 @@ func installCopilot(dir, home string) error {
 
 func uninstallCopilot(dir, home string) error {
 	return os.Remove(filepath.Join(home, ".copilot", "skills", "gleann", "SKILL.md"))
+}
+
+// ─── Windsurf ─────────────────────────────────────────────────────────────────
+
+func installWindsurf(dir, home string) error {
+	rulesDir := filepath.Join(dir, ".windsurf", "rules")
+	if err := os.MkdirAll(rulesDir, 0o755); err != nil {
+		return fmt.Errorf("creating .windsurf/rules: %w", err)
+	}
+	rulesPath := filepath.Join(rulesDir, "gleann.md")
+	if err := os.WriteFile(rulesPath, []byte(cursorRulesContent), 0o644); err != nil {
+		return fmt.Errorf("writing rules: %w", err)
+	}
+	fmt.Printf("  • %s\n", rulesPath)
+	return nil
+}
+
+func uninstallWindsurf(dir, home string) error {
+	return os.Remove(filepath.Join(dir, ".windsurf", "rules", "gleann.md"))
+}
+
+// ─── Cline / Roo Code ────────────────────────────────────────────────────────
+
+func installCline(dir, home string) error {
+	agentsPath := filepath.Join(dir, "AGENTS.md")
+	if err := appendOrCreateFile(agentsPath, agentsMDSection, "gleann: Code Intelligence"); err != nil {
+		return fmt.Errorf("writing AGENTS.md: %w", err)
+	}
+	fmt.Printf("  • %s\n", agentsPath)
+
+	mcpPath := filepath.Join(dir, ".cline", "mcp.json")
+	clineMCP := `{
+  "mcpServers": {
+    "gleann": {
+      "command": "gleann",
+      "args": ["mcp"]
+    }
+  }
+}
+`
+	clineDir := filepath.Join(dir, ".cline")
+	if err := os.MkdirAll(clineDir, 0o755); err != nil {
+		return fmt.Errorf("creating .cline: %w", err)
+	}
+	if err := writeJSONIfAbsent(mcpPath, clineMCP); err != nil {
+		return fmt.Errorf("writing mcp.json: %w", err)
+	}
+	fmt.Printf("  • %s\n", mcpPath)
+	return nil
+}
+
+func uninstallCline(dir, home string) error {
+	_ = os.Remove(filepath.Join(dir, ".cline", "mcp.json"))
+	return removeSection(filepath.Join(dir, "AGENTS.md"), "## gleann: Code Intelligence", "\n---")
+}
+
+// ─── Amp ──────────────────────────────────────────────────────────────────────
+
+func installAmp(dir, home string) error {
+	agentsPath := filepath.Join(dir, "AGENTS.md")
+	if err := appendOrCreateFile(agentsPath, agentsMDSection, "gleann: Code Intelligence"); err != nil {
+		return fmt.Errorf("writing AGENTS.md: %w", err)
+	}
+	fmt.Printf("  • %s\n", agentsPath)
+	return nil
+}
+
+func uninstallAmp(dir, home string) error {
+	return removeSection(filepath.Join(dir, "AGENTS.md"), "## gleann: Code Intelligence", "\n---")
+}
+
+// ─── Kiro ─────────────────────────────────────────────────────────────────────
+
+func installKiro(dir, home string) error {
+	rulesDir := filepath.Join(dir, ".kiro", "rules")
+	if err := os.MkdirAll(rulesDir, 0o755); err != nil {
+		return fmt.Errorf("creating .kiro/rules: %w", err)
+	}
+	rulesPath := filepath.Join(rulesDir, "gleann.md")
+	if err := os.WriteFile(rulesPath, []byte(cursorRulesContent), 0o644); err != nil {
+		return fmt.Errorf("writing rules: %w", err)
+	}
+	fmt.Printf("  • %s\n", rulesPath)
+	return nil
+}
+
+func uninstallKiro(dir, home string) error {
+	return os.Remove(filepath.Join(dir, ".kiro", "rules", "gleann.md"))
+}
+
+// ─── Amazon Q ─────────────────────────────────────────────────────────────────
+
+func installAmazonQ(dir, home string) error {
+	agentsPath := filepath.Join(dir, "AGENTS.md")
+	if err := appendOrCreateFile(agentsPath, agentsMDSection, "gleann: Code Intelligence"); err != nil {
+		return fmt.Errorf("writing AGENTS.md: %w", err)
+	}
+	fmt.Printf("  • %s\n", agentsPath)
+	return nil
+}
+
+func uninstallAmazonQ(dir, home string) error {
+	return removeSection(filepath.Join(dir, "AGENTS.md"), "## gleann: Code Intelligence", "\n---")
+}
+
+// ─── Continue ─────────────────────────────────────────────────────────────────
+
+func installContinue(dir, home string) error {
+	agentsPath := filepath.Join(dir, "AGENTS.md")
+	if err := appendOrCreateFile(agentsPath, agentsMDSection, "gleann: Code Intelligence"); err != nil {
+		return fmt.Errorf("writing AGENTS.md: %w", err)
+	}
+	fmt.Printf("  • %s\n", agentsPath)
+	return nil
+}
+
+func uninstallContinue(dir, home string) error {
+	return removeSection(filepath.Join(dir, "AGENTS.md"), "## gleann: Code Intelligence", "\n---")
+}
+
+// ─── Zed ──────────────────────────────────────────────────────────────────────
+
+func installZed(dir, home string) error {
+	agentsPath := filepath.Join(dir, "AGENTS.md")
+	if err := appendOrCreateFile(agentsPath, agentsMDSection, "gleann: Code Intelligence"); err != nil {
+		return fmt.Errorf("writing AGENTS.md: %w", err)
+	}
+	fmt.Printf("  • %s\n", agentsPath)
+	return nil
+}
+
+func uninstallZed(dir, home string) error {
+	return removeSection(filepath.Join(dir, "AGENTS.md"), "## gleann: Code Intelligence", "\n---")
+}
+
+// ─── Neovim ───────────────────────────────────────────────────────────────────
+
+func installNeovim(dir, home string) error {
+	agentsPath := filepath.Join(dir, "AGENTS.md")
+	if err := appendOrCreateFile(agentsPath, agentsMDSection, "gleann: Code Intelligence"); err != nil {
+		return fmt.Errorf("writing AGENTS.md: %w", err)
+	}
+	fmt.Printf("  • %s\n", agentsPath)
+	return nil
+}
+
+func uninstallNeovim(dir, home string) error {
+	return removeSection(filepath.Join(dir, "AGENTS.md"), "## gleann: Code Intelligence", "\n---")
+}
+
+// ─── JetBrains ────────────────────────────────────────────────────────────────
+
+func installJetBrains(dir, home string) error {
+	agentsPath := filepath.Join(dir, "AGENTS.md")
+	if err := appendOrCreateFile(agentsPath, agentsMDSection, "gleann: Code Intelligence"); err != nil {
+		return fmt.Errorf("writing AGENTS.md: %w", err)
+	}
+	fmt.Printf("  • %s\n", agentsPath)
+
+	// Junie guidelines.md
+	junieDir := filepath.Join(dir, ".junie")
+	if err := os.MkdirAll(junieDir, 0o755); err != nil {
+		return fmt.Errorf("creating .junie: %w", err)
+	}
+	guidelinesPath := filepath.Join(junieDir, "guidelines.md")
+	if err := appendOrCreateFile(guidelinesPath, agentsMDSection, "gleann: Code Intelligence"); err != nil {
+		return fmt.Errorf("writing guidelines.md: %w", err)
+	}
+	fmt.Printf("  • %s\n", guidelinesPath)
+	return nil
+}
+
+func uninstallJetBrains(dir, home string) error {
+	_ = os.Remove(filepath.Join(dir, ".junie", "guidelines.md"))
+	return removeSection(filepath.Join(dir, "AGENTS.md"), "## gleann: Code Intelligence", "\n---")
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────

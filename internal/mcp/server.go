@@ -109,6 +109,11 @@ func NewServer(cfg Config) *Server {
 	s.AddTool(srv.buildGraphStatsTool(), srv.handleGraphStats)
 	s.AddTool(srv.buildSymbolsInFileTool(), srv.handleSymbolsInFile)
 
+	// Shell compression + mode-aware file read + token gain tracking.
+	s.AddTool(srv.buildShellTool(), srv.handleShell)
+	s.AddTool(srv.buildReadTool(), srv.handleRead)
+	s.AddTool(srv.buildGainTool(), srv.handleGain)
+
 	// Community detection tools — require treesitter build tag.
 	srv.initGraphPool()
 	srv.registerGraphTools()
