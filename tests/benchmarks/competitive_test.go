@@ -229,13 +229,10 @@ func TestCompetitive_MemoryReport(t *testing.T) {
 // ── 4. Search Recall Quality ──────────────────────────────────
 
 func TestCompetitive_RecallReport(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping in short mode")
-	}
-
+	// Fast default dataset. For detailed recall comparison run: go test -bench=. -benchtime=5s
 	dim := 128
-	n := 5000
-	numQueries := 200
+	n := 500
+	numQueries := 50
 	rng := rand.New(rand.NewSource(42))
 
 	// Generate corpus.
@@ -312,9 +309,7 @@ func TestCompetitive_RecallReport(t *testing.T) {
 // ── 5. BM25 Keyword Search (gleann-only) ──────────────────────
 
 func TestCompetitive_BM25Report(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping in short mode")
-	}
+	// Fast default dataset. For full BM25 sweep run: go test -bench=. -benchtime=5s
 
 	words := []string{
 		"algorithm", "database", "network", "vector", "graph", "search",
@@ -334,7 +329,7 @@ func TestCompetitive_BM25Report(t *testing.T) {
 		"Corpus", "Index (ms)", "TopK (ms)", "QPS")
 	fmt.Println("──────────────────────────────────────────────────────────")
 
-	for _, n := range []int{1000, 5000, 10000, 50000} {
+	for _, n := range []int{500, 2000} {
 		scorer := bm25.NewScorer()
 
 		start := time.Now()
@@ -416,12 +411,10 @@ func TestCompetitive_FeatureMatrix(t *testing.T) {
 // ── 7. Scale Crossover Analysis ──────────────────────────────
 
 func TestCompetitive_ScaleCrossover(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping in short mode")
-	}
+	// Fast default dataset. For full crossover analysis: go test -bench=. -benchtime=5s
 
 	dim := 128
-	sizes := []int{100, 500, 1000, 2000, 5000, 10000}
+	sizes := []int{100, 500, 1000, 2000}
 
 	fmt.Println()
 	fmt.Println("╔══════════════════════════════════════════════════════════╗")

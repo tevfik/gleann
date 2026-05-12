@@ -10,6 +10,57 @@ import (
 	"github.com/tevfik/gleann/pkg/retry"
 )
 
+// ── Resilience config tests ───────────────────────────────────────────────
+
+func TestDefaultResilienceConfig(t *testing.T) {
+	cfg := retry.DefaultResilienceConfig()
+	if cfg.MaxRetries <= 0 {
+		t.Errorf("expected positive MaxRetries, got %d", cfg.MaxRetries)
+	}
+	if cfg.CallTimeout <= 0 {
+		t.Errorf("expected positive CallTimeout, got %v", cfg.CallTimeout)
+	}
+}
+
+func TestEmbeddingResilienceConfig(t *testing.T) {
+	cfg := retry.EmbeddingResilienceConfig()
+	def := retry.DefaultResilienceConfig()
+	// Embedding config should have a longer timeout than the default.
+	if cfg.CallTimeout <= def.CallTimeout {
+		t.Errorf("expected embedding timeout > default timeout; got %v <= %v", cfg.CallTimeout, def.CallTimeout)
+	}
+	if cfg.MaxRetries <= def.MaxRetries {
+		t.Errorf("expected embedding MaxRetries >= default; got %d < %d", cfg.MaxRetries, def.MaxRetries)
+	}
+}
+
+func TestNewExecutor_SuccessOnFirstAttempt(t *testing.T) {
+	cfg := retry.DefaultResilienceConfig()
+	exec := retry.NewExecutor[string](cfg)
+
+	result, err := exec.Get(func() (string, error) {
+		return "ok", nil
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result != "ok" {
+		t.Errorf("expected 'ok', got %q", result)
+	}
+}
+
+func TestNewVoidExecutor_SuccessOnFirstAttempt(t *testing.T) {
+	cfg := retry.DefaultResilienceConfig()
+	exec := retry.NewVoidExecutor(cfg)
+
+	_, err := exec.Get(func() (any, error) {
+		return nil, nil
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 func TestDo_SuccessOnFirstAttempt(t *testing.T) {
 	calls := 0
 	err := retry.Do(context.Background(), retry.DefaultPolicy(), func() error {
