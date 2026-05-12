@@ -151,11 +151,11 @@ func BenchmarkCSRSerialize(b *testing.B) {
 // ---- Storage Reduction Report ----
 
 func TestStorageReductionReport(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping benchmark in short mode")
-	}
-	dims := []int{64, 128, 384, 768}
-	ns := []int{100, 1000, 5000}
+	// Use a small matrix so the test completes quickly in all CI modes.
+	// The full 768-dim × 5000-vector matrix is reserved for the Go benchmark
+	// functions below (run with: go test -bench=BenchmarkStorageReduction).
+	dims := []int{64, 128, 384}
+	ns := []int{100, 1000}
 
 	fmt.Println("\n=== gleann-go Storage Reduction Report ===")
 	fmt.Println()
@@ -300,11 +300,9 @@ func BenchmarkEndToEndPipeline(b *testing.B) {
 // ---- Memory Usage Report ----
 
 func TestMemoryUsageReport(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping benchmark in short mode")
-	}
-	dims := []int{128, 384, 768}
-	ns := []int{1000, 5000}
+	// Keep dataset small so go test ./... finishes quickly. Full sweep: go test -bench=.
+	dims := []int{128, 384}
+	ns := []int{100, 500}
 
 	fmt.Println("\n=== gleann-go Memory Usage Report ===")
 	fmt.Println()
@@ -350,12 +348,10 @@ func TestMemoryUsageReport(t *testing.T) {
 // ---- Latency Report ----
 
 func TestSearchLatencyReport(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping benchmark in short mode")
-	}
+	// Keep dataset small so go test ./... finishes quickly. Full sweep: go test -bench=.
 	dims := 128
-	ns := []int{1000, 5000}
-	efs := []int{32, 64, 128, 256}
+	ns := []int{500}
+	efs := []int{32, 64}
 
 	fmt.Println("\n=== gleann-go Search Latency Report ===")
 	fmt.Println()
@@ -395,12 +391,10 @@ func TestSearchLatencyReport(t *testing.T) {
 // ---- Comparison with Brute Force ----
 
 func TestBruteForceComparison(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping benchmark in short mode")
-	}
+	// Keep dataset small so go test ./... finishes quickly. Full sweep: go test -bench=.
 	dim := 128
-	n := 5000
-	numQueries := 100
+	n := 500
+	numQueries := 50
 	rng := rand.New(rand.NewSource(42))
 
 	vectors := make([][]float32, n)
