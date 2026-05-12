@@ -1,14 +1,13 @@
 # Community: code
 
-**3 symbols** | Cohesion: 0.333
+**2 symbols** | Cohesion: 0.500
 
 ## Symbols
 
 | Symbol | Kind |
 |--------|------|
-| `code.TokenBucket_part2` | class |
-| `code.min` | function |
-| `code.sleep` | function |
+| `code.Lock` | function |
+| `code.SlidingWindowCounter_part1` | class |
 
 ---
 [← Back to Index](index.md)

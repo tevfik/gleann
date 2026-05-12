@@ -42,13 +42,13 @@ func NewShellCompressor() *ShellCompressor {
 
 // CompressResult holds compressed output and statistics.
 type CompressResult struct {
-	Output       string `json:"output"`
-	RawBytes     int    `json:"raw_bytes"`
-	CompBytes    int    `json:"compressed_bytes"`
-	Ratio        float64 `json:"ratio"`
-	PatternUsed  string `json:"pattern_used,omitempty"`
-	RawTokens    int    `json:"raw_tokens_est"`
-	CompTokens   int    `json:"compressed_tokens_est"`
+	Output      string  `json:"output"`
+	RawBytes    int     `json:"raw_bytes"`
+	CompBytes   int     `json:"compressed_bytes"`
+	Ratio       float64 `json:"ratio"`
+	PatternUsed string  `json:"pattern_used,omitempty"`
+	RawTokens   int     `json:"raw_tokens_est"`
+	CompTokens  int     `json:"compressed_tokens_est"`
 }
 
 // Compress detects the tool/sub-command from cmdLine and applies matching

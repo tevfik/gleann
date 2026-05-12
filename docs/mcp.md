@@ -19,6 +19,15 @@ gleann install --platform gemini
 gleann install --platform claw      # OpenClaw
 gleann install --platform aider
 gleann install --platform copilot   # GitHub Copilot CLI
+gleann install --platform windsurf  # Windsurf IDE
+gleann install --platform cline     # Cline / Roo Code
+gleann install --platform amp       # Amp
+gleann install --platform kiro      # Kiro IDE
+gleann install --platform amazonq   # Amazon Q Developer
+gleann install --platform continue  # Continue
+gleann install --platform zed       # Zed IDE
+gleann install --platform neovim    # Neovim (avante/codecompanion)
+gleann install --platform jetbrains # JetBrains IDEs (.junie)
 
 # List all supported platforms and detection status
 gleann install --list
@@ -40,6 +49,15 @@ gleann install uninstall --platform cursor
 | **claw** | `AGENTS.md` · `~/.openclaw/skills/gleann/SKILL.md` | Always-on skill |
 | **aider** | `AGENTS.md` | Always-on AGENTS.md |
 | **copilot** | `~/.copilot/skills/gleann/SKILL.md` | CLI skill |
+| **windsurf** | `.windsurf/rules/gleann.md` · `.windsurf/mcp.json` | Rules + MCP config |
+| **cline** | `.clinerules` · `.cline/mcp.json` | Rules + MCP config |
+| **amp** | `AGENTS.md` · `.amp/mcp.json` | MCP config |
+| **kiro** | `.kiro/rules/gleann.md` · `.kiro/mcp.json` | Rules + MCP config |
+| **amazonq** | `AGENTS.md` · `.amazonq/mcp.json` | MCP config |
+| **continue** | `AGENTS.md` · `.continue/config.json` | MCP config block |
+| **zed** | `~/.config/zed/settings.json` | MCP config |
+| **neovim** | `AGENTS.md` | MCP instructions |
+| **jetbrains** | `AGENTS.md` · `.junie/guidelines.md` | Guidelines + MCP |
 
 ### OpenCode in depth
 
@@ -171,6 +189,26 @@ gives agents persistent knowledge across sessions.
 | Tool | Description |
 |------|-------------|
 | `gleann_batch_ask` | Run 1–10 questions concurrently against a single index, returning all answers in one response |
+
+### Context-Intelligence Tools
+
+Token-saving utilities that help agents work smarter with large codebases.
+
+| Tool | Description |
+|------|-------------|
+| `gleann_shell` | Compress noisy CLI output (git, npm, go, docker, cargo) before injecting into context. Reports compression ratio and token savings. |
+| `gleann_read` | Read a file using one of 10 context-aware modes (`full`, `map`, `signatures`, `diff`, `entropy`, `lines:N`, `task`, `reference`, `aggressive`, `auto`). Saves 60–90% of tokens vs. raw cat. |
+| `gleann_gain` | Report accumulated token gain across the current MCP session — useful for budget tracking. |
+
+**Example: compress git log output**
+```json
+{ "cmd": "git log --stat -20", "output": "<long git log here>" }
+```
+
+**Example: read only function signatures from a Go file**
+```json
+{ "path": "/path/to/server.go", "mode": "signatures" }
+```
 
 ---
 

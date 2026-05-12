@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"math"
 	"strings"
 
 	"github.com/mark3labs/mcp-go/mcp"
@@ -399,6 +400,29 @@ func (s *Server) handleSearch(ctx context.Context, request mcp.CallToolRequest) 
 
 	if len(results) == 0 {
 		return mcp.NewToolResultText("No relevant memory fragments found."), nil
+	}
+
+	// Apply Context Field Theory (Φ) re-ranking when graph context is requested.
+	// Build lightweight signals from graph structure data if available.
+	if _, ok := args["graph_context"].(bool); ok {
+		cft := gleann.DefaultContextField()
+		signalMap := make(map[string]gleann.ContextSignal, len(results))
+		for _, r := range results {
+			source, _ := r.Metadata["source"].(string)
+			structScore := 0.0
+			if r.GraphContext != nil {
+				// Degree centrality proxy: normalise caller+callee count.
+				deg := len(r.GraphContext.Symbols)
+				if deg > 0 {
+					structScore = math.Min(1.0, float64(deg)/10.0)
+				}
+			}
+			signalMap[source] = gleann.ContextSignal{
+				SemanticScore:  float64(r.Score),
+				StructureScore: structScore,
+			}
+		}
+		results = cft.EnrichSearchResults(results, signalMap)
 	}
 
 	var sb strings.Builder

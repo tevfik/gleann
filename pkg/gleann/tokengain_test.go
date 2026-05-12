@@ -8,7 +8,7 @@ func TestEstimateTokens(t *testing.T) {
 		expect int
 	}{
 		{"", 0},
-		{"hi", 1},       // 2 chars → ceil(2/4) = 1
+		{"hi", 1},          // 2 chars → ceil(2/4) = 1
 		{"hello world", 3}, // 11 chars → ceil(11/4) = 3
 		{"a", 1},
 	}
