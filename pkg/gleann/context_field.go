@@ -11,7 +11,7 @@ import (
 // Inspired by lean-ctx's multi-factor scoring, it evaluates file/symbol
 // relevance using four dimensions:
 //
-//   Φ(x) = α·Recency(x) + β·Frequency(x) + γ·Proximity(x) + δ·Structure(x)
+//	Φ(x) = α·Recency(x) + β·Frequency(x) + γ·Proximity(x) + δ·Structure(x)
 //
 // Each factor is normalised to [0, 1] and weighted by configurable coefficients.
 type ContextFieldTheory struct {
@@ -56,9 +56,9 @@ type ContextSignal struct {
 
 // PhiResult holds a scored item.
 type PhiResult struct {
-	ID    string  `json:"id"`
-	Phi   float64 `json:"phi"`
-	Raw   ContextSignal `json:"-"`
+	ID  string        `json:"id"`
+	Phi float64       `json:"phi"`
+	Raw ContextSignal `json:"-"`
 }
 
 // ScoreItem computes the Φ score for a single context signal.
@@ -94,8 +94,8 @@ func (cft *ContextFieldTheory) EnrichSearchResults(results []SearchResult, signa
 	now := time.Now()
 
 	type enriched struct {
-		result SearchResult
-		phi    float64
+		result   SearchResult
+		phi      float64
 		combined float64
 	}
 

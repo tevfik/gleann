@@ -19,7 +19,7 @@
 
 ⚡ **Single binary** — no Python virtualenv, no Node.js runtime, no Docker required. One `go install` and you're done.
 
-🤖 **MCP-native** — one command (`gleann install`) wires the knowledge base into Claude Code, Cursor, Windsurf, Codex, Gemini CLI, OpenCode, and GitHub Copilot CLI simultaneously.
+🤖 **MCP-native** — one command (`gleann install`) wires the knowledge base into 17 AI editors and agents: Claude Code, Cursor, Windsurf, Cline, Kiro, Amazon Q, Zed, JetBrains, Neovim, Codex, Gemini CLI, OpenCode, Amp, Continue, Aider, OpenClaw, and GitHub Copilot CLI.
 
 🧠 **Code intelligence, not just text search** — AST-aware chunking, call-graph traversal, and blast-radius analysis give LLMs structural code context that plain vector search cannot provide.
 
@@ -56,11 +56,15 @@ The system is optimized for fast initialization and low memory utilization, mana
 Both projects share the same foundational idea — graph-based ANN indices + selective recomputation — but optimise for different trade-offs: LEANN minimises storage overhead for massive personal-data corpora, while Gleann maximises developer ergonomics and AI-editor integration.
 
 ## Key Features
-
+- **Context Field Theory (Φ Scoring)**: MCP search results are re-ranked using a multi-factor Φ score — recency (1hr half-life decay), frequency, graph proximity, and structural degree centrality.
+- **10 File Read Modes**: Smart file reading for LLM agents: `map`, `signatures`, `entropy`, `diff`, `task`, `reference`, `aggressive`, `lines:N`, `auto`, and `full`. Saves 60–90% of context-window tokens.
+- **Shell Output Compression**: 95+ tool-specific regex patterns (Git, Go, NPM, Docker, Cargo) collapse noisy terminal output before it enters the LLM context window.
+- **17 Agent & IDE Platforms**: `gleann install` auto-detects and configures OpenCode, Claude Code, Cursor, Codex, Gemini CLI, Windsurf, Cline/Roo, Amp, Kiro, Amazon Q, Continue, Zed, Neovim, JetBrains, OpenClaw, Aider, and GitHub Copilot CLI.
+- **Token Gain Tracking**: `gleann_gain` MCP tool reports cumulative token savings across a session, enabling budget-aware agent loops.
 - **Academic Vision, Full-Fledged Agent**: Built on the shoulders of Leann's RAG architecture to create an autonomous assistant where LLM, vector/graph DBs, and plugins unite in one Go app.
 - **Zero-Config Extractive Summarization**: High-density sentences are extracted algorithmically during build time, bypassing LLMs and enabling zero-latency "Smart Summaries".
 - **Flexible Intelligence (Local or Cloud)**: Run LLMs 100% locally via llama.cpp for total privacy, or connect to any OpenAI-compatible API for high-reasoning tasks.
-- **Advanced RAG (Faiss / HNSW & Kuzu Graph DB)**: Indexes documents and code semantically (vector) and relationally (graph), not just via simple keyword matching.
+- **Advanced RAG (Faiss / HNSW & Graph DB)**: Indexes documents and code semantically (vector) and relationally (graph), not just via simple keyword matching.
 - **Smart Chunking (Tree-sitter)**: Intelligent AST-aware partitioning preserves the structural integrity of your code functions and classes.
 - **Graph-Augmented Search**: Search results are enriched with callers/callees from the AST graph, giving LLMs structural code context alongside semantic matches.
 - **Impact Analysis**: Blast radius analysis via BFS traversal — find all direct and transitive callers of any symbol and the files they belong to.

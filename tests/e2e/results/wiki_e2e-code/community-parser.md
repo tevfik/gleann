@@ -6,8 +6,13 @@
 
 | Symbol | Kind |
 |--------|------|
-| `code.CyclomaticComplexity` | function |
-| `strings.Count` | function |
+| `code.FilterByKind` | function |
+| `code.append` | function |
+
+## External Connections
+
+- `code.parseTypeScript` ↔ `code.append`
+- `code.parseGo` ↔ `code.append`
 
 ---
 [← Back to Index](index.md)

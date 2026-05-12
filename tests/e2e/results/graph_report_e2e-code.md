@@ -1,6 +1,6 @@
 # Graph Report: e2e-code
 
-Generated: 2026-04-13 19:38:34
+Generated: 2026-05-12 13:26:19
 
 ## Summary
 
@@ -8,8 +8,8 @@ Generated: 2026-04-13 19:38:34
 |--------|-------|
 | Nodes | 139 |
 | Edges | 189 |
-| Communities | 26 |
-| Modularity (Q) | 0.5444 |
+| Communities | 24 |
+| Modularity (Q) | 0.5783 |
 | God Nodes | 20 |
 | Cross-Community Edges | 20 |
 
@@ -30,17 +30,17 @@ These symbols have an unusually high number of connections, making them central 
 | 7 | `code.parseGo` | function | 2 | 7 | 9 |
 | 8 | `code.parseTypeScript` | function | 2 | 7 | 9 |
 | 9 | `code._InMemoryStore` | class | 2 | 6 | 8 |
-| 10 | `code.DistributedRateLimiter` | class | 1 | 6 | 7 |
-| 11 | `code.parsePython` | function | 2 | 5 | 7 |
-| 12 | `code.extractGoFuncName` | function | 2 | 5 | 7 |
-| 13 | `code.generateId` | function | 2 | 5 | 7 |
+| 10 | `code.generateId` | function | 2 | 5 | 7 |
+| 11 | `code.DistributedRateLimiter` | class | 1 | 6 | 7 |
+| 12 | `code.parsePython` | function | 2 | 5 | 7 |
+| 13 | `code.extractGoFuncName` | function | 2 | 5 | 7 |
 | 14 | `code.PersistentQueue_part4` | class | 1 | 5 | 6 |
 | 15 | `strings.TrimSpace` | function | 6 | 0 | 6 |
 | 16 | `code.extractTSFuncName` | function | 2 | 3 | 5 |
-| 17 | `code.Parser.Parse` | method | 1 | 4 | 5 |
-| 18 | `code.TokenBucket_part1` | class | 1 | 4 | 5 |
-| 19 | `code.monotonic` | function | 5 | 0 | 5 |
-| 20 | `code.TokenBucket_part2` | class | 1 | 4 | 5 |
+| 17 | `code.TokenBucket_part1` | class | 1 | 4 | 5 |
+| 18 | `code.append` | function | 5 | 0 | 5 |
+| 19 | `code.TokenBucket_part2` | class | 1 | 4 | 5 |
+| 20 | `code.PersistentQueue_part1` | class | 1 | 4 | 5 |
 
 > **Tip:** God nodes are potential coupling hotspots. If a god node changes, many dependents may be affected.
 
@@ -96,34 +96,32 @@ Detected via the Louvain algorithm. Each community represents a group of tightly
 - `code._InMemoryStore::incr`
 - ... and 1 more
 
-### Community 2: code (6 nodes, cohesion=0.167)
+### Community 2: code (10 nodes, cohesion=0.111)
 
 - `code.PersistentQueue_part3`
+- `code.PersistentQueue_part4`
+- `code.clearInterval`
+- `code.delete`
+- `code.get`
 - `code.pow`
 - `code.random`
 - `code.reEnqueueExpiredMessages`
 - `code.receive`
 - `code.setInterval`
 
-### Community 3: code (6 nodes, cohesion=0.167)
+### Community 3: code (9 nodes, cohesion=0.139)
 
-- `code.from`
-- `code.generateId`
-- `code.getRandomValues`
-- `code.join`
-- `code.padStart`
-- `code.toString`
+- `code.PersistentQueue_part1`
+- `code.PersistentQueue_part2`
+- `code.add`
+- `code.emit`
+- `code.entries`
+- `code.has`
+- `code.now`
+- `code.push`
+- `code.set`
 
-### Community 4: parser (6 nodes, cohesion=0.050)
-
-- `code.LangGo`
-- `code.Language`
-- `code.New`
-- `code.Parser`
-- `code.Symbol`
-- `parser.go`
-
-### Community 5: code (6 nodes, cohesion=0.167)
+### Community 4: code (6 nodes, cohesion=0.167)
 
 - `code.DistributedRateLimiter`
 - `code.expire`
@@ -132,68 +130,74 @@ Detected via the Louvain algorithm. Each community represents a group of tightly
 - `code.max`
 - `code.time`
 
-### Community 6: code (6 nodes, cohesion=0.167)
+### Community 5: code (6 nodes, cohesion=0.167)
+
+- `code.from`
+- `code.generateId`
+- `code.getRandomValues`
+- `code.join`
+- `code.padStart`
+- `code.toString`
+
+### Community 6: parser (6 nodes, cohesion=0.050)
+
+- `code.LangGo`
+- `code.Language`
+- `code.New`
+- `code.Parser`
+- `code.Symbol`
+- `parser.go`
+
+### Community 7: code (5 nodes, cohesion=0.200)
 
 - `code.LeakyBucket`
 - `code._leak`
 - `code.deque`
-- `code.len`
 - `code.popleft`
 - `code.range`
 
-### Community 7: code (5 nodes, cohesion=0.200)
-
-- `code.PersistentQueue_part2`
-- `code.add`
-- `code.entries`
-- `code.has`
-- `code.push`
-
-### Community 8: code (5 nodes, cohesion=0.200)
+### Community 8: code (4 nodes, cohesion=0.250)
 
 - `code._InMemoryStore`
 - `code._evict_expired`
-- `code.get`
 - `code.items`
 - `code.pop`
 
-### Community 9: code (4 nodes, cohesion=0.250)
-
-- `code.TokenBucket_part1`
-- `code._refill`
-- `code.field`
-- `code.min`
-
-### Community 10: code (4 nodes, cohesion=0.250)
-
-- `code.PersistentQueue_part4`
-- `code.clearInterval`
-- `code.delete`
-- `code.emit`
-
-### Community 11: code (3 nodes, cohesion=0.333)
-
-- `code.TokenBucket_part2`
-- `code.monotonic`
-- `code.sleep`
-
-### Community 12: parser (3 nodes, cohesion=0.500)
-
-- `code.extractTSFuncName`
-- `code.parseTypeScript`
-- `strings.HasPrefix`
-
-### Community 13: code (3 nodes, cohesion=0.333)
-
-- `code.PersistentQueue_part1`
-- `code.now`
-- `code.set`
-
-### Community 14: code (3 nodes, cohesion=0.333)
+### Community 9: code (3 nodes, cohesion=0.333)
 
 - `code.SlidingWindowCounter_part2`
 - `code._advance_window_if_needed`
 - `code._estimate_count`
+
+### Community 10: code (3 nodes, cohesion=0.333)
+
+- `code.TokenBucket_part2`
+- `code._refill`
+- `code.sleep`
+
+### Community 11: parser (3 nodes, cohesion=0.333)
+
+- `code.extractTSFuncName`
+- `code.len`
+- `strings.IndexAny`
+
+### Community 12: parser (3 nodes, cohesion=0.500)
+
+- `code.extractGoFuncName`
+- `code.parseGo`
+- `strings.HasPrefix`
+
+### Community 13: code (3 nodes, cohesion=0.333)
+
+- `code.Lock`
+- `code.SlidingWindowCounter_part1`
+- `code.monotonic`
+
+### Community 14: code (3 nodes, cohesion=0.333)
+
+- `code.TokenBucket_part1`
+- `code.field`
+- `code.min`
 
 ### Community 15: parser (3 nodes, cohesion=0.500)
 
@@ -203,54 +207,44 @@ Detected via the Louvain algorithm. Each community represents a group of tightly
 
 ### Community 16: strings (3 nodes, cohesion=0.333)
 
-- `code.parseGo`
+- `code.parseTypeScript`
 - `strings.Contains`
 - `strings.Split`
 
 ### Community 17: code (2 nodes, cohesion=0.500)
 
-- `code.Lock`
-- `code.SlidingWindowCounter_part1`
-
-### Community 18: parser (2 nodes, cohesion=0.500)
-
-- `code.extractGoFuncName`
-- `strings.IndexAny`
-
-### Community 19: parser (2 nodes, cohesion=0.500)
-
 - `code.CountSymbols`
 - `code.make`
 
-### Community 20: parser (2 nodes, cohesion=0.500)
-
-- `code.CyclomaticComplexity`
-- `strings.Count`
-
-### Community 21: parser (2 nodes, cohesion=0.500)
-
-- `code.extractTSClassName`
-- `strings.Index`
-
-### Community 22: parser (2 nodes, cohesion=0.500)
+### Community 18: parser (2 nodes, cohesion=0.500)
 
 - `code.Parser.Parse`
 - `fmt.Errorf`
 
-### Community 23: parser (2 nodes, cohesion=0.500)
+### Community 19: parser (2 nodes, cohesion=0.500)
+
+- `code.CyclomaticComplexity`
+- `strings.Count`
+
+### Community 20: parser (2 nodes, cohesion=0.500)
+
+- `code.extractTSClassName`
+- `strings.Index`
+
+### Community 21: parser (2 nodes, cohesion=0.500)
+
+- `code.FilterByKind`
+- `code.append`
+
+### Community 22: parser (2 nodes, cohesion=0.500)
 
 - `code.extractGoTypeName`
 - `strings.TrimPrefix`
 
-### Community 24: queue (2 nodes, cohesion=0.500)
+### Community 23: code (2 nodes, cohesion=0.500)
 
 - `code.CircularBuffer`
 - `code.fill`
-
-### Community 25: parser (2 nodes, cohesion=0.500)
-
-- `code.FilterByKind`
-- `code.append`
 
 ## Cross-Community Edges (Surprising Connections)
 
@@ -259,26 +253,26 @@ Ranked by composite score: cross-community edges involving different packages sc
 
 | From | To | Communities | Score |
 |------|----|------------|-------|
-| `code.PersistentQueue_part3` | `code.set` | 2 → 13 | 1.20 |
-| `code.extractGoFuncName` | `code.parseGo` | 18 → 16 | 1.00 |
-| `code.extractTSClassName` | `strings.TrimSpace` | 21 → 15 | 1.80 |
-| `code.PersistentQueue_part1` | `code.emit` | 13 → 10 | 1.00 |
-| `code.parseTypeScript` | `strings.Contains` | 12 → 16 | 1.80 |
-| `code.parseTypeScript` | `strings.TrimSpace` | 12 → 15 | 1.50 |
-| `code.parseTypeScript` | `strings.Split` | 12 → 16 | 1.80 |
-| `code.parseTypeScript` | `code.Parser.Parse` | 12 → 22 | 1.80 |
-| `code.parseTypeScript` | `code.append` | 12 → 25 | 1.20 |
-| `code.TokenBucket_part2` | `code._refill` | 11 → 9 | 1.00 |
-| `code._InMemoryStore` | `code.Lock` | 8 → 17 | 1.20 |
-| `code.DistributedRateLimiter` | `code._InMemoryStore` | 5 → 8 | 1.00 |
-| `strings.IndexAny` | `code.extractTSFuncName` | 18 → 12 | 1.80 |
-| `code.len` | `code.extractTSFuncName` | 6 → 12 | 1.20 |
-| `code.parsePython` | `code.Parser.Parse` | 15 → 22 | 1.80 |
-| `code.LeakyBucket` | `code.int` | 6 → 5 | 1.00 |
-| `code.LeakyBucket` | `code.monotonic` | 6 → 11 | 1.20 |
-| `code.LeakyBucket` | `code.append` | 6 → 25 | 1.20 |
-| `code.LeakyBucket` | `code.Lock` | 6 → 17 | 1.20 |
+| `code.parseGo` | `code.extractGoTypeName` | 12 → 22 | 1.20 |
+| `strings.HasPrefix` | `code.extractTSFuncName` | 12 → 11 | 1.50 |
+| `code.TokenBucket_part1` | `code.monotonic` | 14 → 13 | 1.00 |
+| `code.min` | `code.TokenBucket_part2` | 14 → 10 | 1.20 |
+| `code.extractGoFuncName` | `strings.IndexAny` | 12 → 11 | 1.50 |
+| `code.extractGoFuncName` | `strings.Index` | 12 → 20 | 1.80 |
+| `code.extractGoFuncName` | `strings.TrimPrefix` | 12 → 22 | 1.80 |
+| `code.extractGoFuncName` | `strings.TrimSpace` | 12 → 15 | 1.50 |
+| `code.PersistentQueue_part4` | `code.now` | 2 → 3 | 1.00 |
+| `code.TokenBucket_part2` | `code.monotonic` | 10 → 13 | 1.00 |
+| `strings.TrimSpace` | `code.extractTSClassName` | 15 → 20 | 1.80 |
+| `strings.TrimSpace` | `code.parseGo` | 15 → 12 | 1.50 |
+| `strings.TrimSpace` | `code.parseTypeScript` | 15 → 16 | 1.50 |
+| `code.emit` | `code.PersistentQueue_part3` | 3 → 2 | 1.00 |
+| `code.emit` | `code.PersistentQueue_part4` | 3 → 2 | 1.00 |
+| `strings.Index` | `code.extractGoTypeName` | 20 → 22 | 1.50 |
+| `code.PersistentQueue_part3` | `code.now` | 2 → 3 | 1.00 |
 | `code.parsePython` | `strings.Split` | 15 → 16 | 1.50 |
+| `code.parsePython` | `code.Parser.Parse` | 15 → 18 | 1.50 |
+| `strings.HasPrefix` | `code.parsePython` | 12 → 15 | 1.50 |
 
 > **Tip:** Many cross-community edges between the same two communities may indicate they should be merged, or there's a missing abstraction layer.
 
@@ -289,5 +283,5 @@ Based on graph structure, these questions may reveal useful insights:
 1. What would break if `queue.ts` (degree 39) were refactored?
 2. Is `rate_limiter.py` a genuine hub or should it be split into smaller interfaces?
 3. Why do communities 'queue' and 'rate_limiter' share cross-module edges?
-4. What is the relationship between `code.PersistentQueue_part3` and `code.set` (surprising cross-community edge)?
+4. What is the relationship between `code.parseGo` and `code.extractGoTypeName` (surprising cross-community edge)?
 

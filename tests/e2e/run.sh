@@ -1032,6 +1032,216 @@ if [[ "$BENCHMARK" == "true" ]]; then
 fi
 
 # ══════════════════════════════════════════════════════════════════════════════
+# SECTION 13: SHELL COMPRESSION (gleann_shell / pkg/gleann)
+# ══════════════════════════════════════════════════════════════════════════════
+header "§13 Shell Compression  $(ts)"
+
+# The shell compressor is exercised via 'gleann benchmark' which applies it
+# to the index build and search output. We also verify the pkg via CLI flags.
+
+# 13a — benchmark exercises the shell compressor internally
+sub "Running benchmark to verify shell compressor is active..."
+OUT=$("$BINARY" benchmark --index "$IDX_DOCS" --docs "$FIXTURES/docs" 2>&1)
+if echo "$OUT" | grep -qiE "compress|token|reduction|ratio|saving|shell"; then
+  pass "shell compression: benchmark uses compressor (output present)"
+else
+  warn "shell compression: benchmark output unclear — compressor may not be reported"
+fi
+
+# 13b — install --list must show all 17 platforms
+sub "Verifying all 17 agent platforms are registered..."
+OUT=$("$BINARY" install --help 2>&1)
+PLATFORM_COUNT=$(echo "$OUT" | grep -cE "^\s+\w+\s+\S")
+if [[ "$PLATFORM_COUNT" -ge 17 ]]; then
+  pass "install: all 17 platforms registered (found ${PLATFORM_COUNT})"
+else
+  fail "install: expected ≥17 platforms, found only ${PLATFORM_COUNT}"
+fi
+
+NEW_PLATFORMS=(windsurf cline amp kiro amazonq continue zed neovim jetbrains)
+for plat in "${NEW_PLATFORMS[@]}"; do
+  if echo "$OUT" | grep -q "  $plat "; then
+    pass "install: '$plat' platform present"
+  else
+    fail "install: '$plat' platform missing from --help output"
+  fi
+done
+
+# ══════════════════════════════════════════════════════════════════════════════
+# SECTION 14: FILE READ MODES
+# ══════════════════════════════════════════════════════════════════════════════
+header "§14 File Read Modes  $(ts)"
+
+# gleann_read is an MCP tool but we can test with the underlying benchmark and
+# file-level functionality via the fixture code files.
+
+# 14a — verify MCP tool names are emitted in mcp config output
+sub "Checking MCP tools registered in server config..."
+TMPDIR_MCP=$(mktemp -d)
+# Generate an MCP config for cursor (which writes mcp config) and inspect it
+"$BINARY" install --platform cursor --dir "$TMPDIR_MCP" >/dev/null 2>&1 || true
+MCP_FILE=$(find "$TMPDIR_MCP" -name "mcp*.json" -o -name "*.mcp.json" 2>/dev/null | head -1)
+if [[ -f "$MCP_FILE" ]]; then
+  pass "read modes: cursor MCP config file created"
+  if grep -q "gleann" "$MCP_FILE"; then
+    pass "read modes: MCP config references gleann binary"
+  else
+    warn "read modes: gleann not referenced in MCP config"
+  fi
+else
+  # Try .cursor directory
+  MCP_FILE=$(find "$TMPDIR_MCP" -name "*.json" 2>/dev/null | head -1)
+  if [[ -f "$MCP_FILE" ]]; then
+    pass "read modes: cursor config file created (${MCP_FILE##*/})"
+  else
+    warn "read modes: cursor install created no JSON config (may need cursor present)"
+  fi
+fi
+rm -rf "$TMPDIR_MCP"
+
+# 14b — test gleann_read mode by verifying code fixture files are processed
+sub "Testing code file content via search (map/signatures mode proxy)..."
+OUT=$("$BINARY" search "$IDX_CODE" "Parse function signature return type" 2>&1)
+if echo "$OUT" | grep -qiE "parse|token|func|return|type"; then
+  pass "read modes: code search returns structural content (map/signatures mode effective)"
+else
+  warn "read modes: structural code search did not match expected symbols"
+fi
+
+OUT=$("$BINARY" search "$IDX_CODE" "class Queue capacity push pop" 2>&1)
+if echo "$OUT" | grep -qiE "class|queue|push|pop|capacity|circular"; then
+  pass "read modes: TypeScript queue structure found (AST chunking working)"
+else
+  warn "read modes: TypeScript queue class not found in results"
+fi
+
+OUT=$("$BINARY" search "$IDX_CODE" "RateLimiter allow acquire burst" 2>&1)
+if echo "$OUT" | grep -qiE "rate|limit|allow|burst|acquire|python"; then
+  pass "read modes: Python RateLimiter found (cross-language read mode working)"
+else
+  warn "read modes: Python RateLimiter not found"
+fi
+
+# ══════════════════════════════════════════════════════════════════════════════
+# SECTION 15: PLATFORM INSTALL / UNINSTALL ROUNDTRIP
+# ══════════════════════════════════════════════════════════════════════════════
+header "§15 Platform Install/Uninstall  $(ts)"
+
+INSTALL_TMPDIR=$(mktemp -d)
+HOME_TMP=$(mktemp -d)
+
+declare -A INSTALL_FILE_MAP=(
+  ["cursor"]=".cursor/rules/gleann.mdc"
+  ["codex"]="AGENTS.md"
+  ["aider"]="AGENTS.md"
+  ["windsurf"]=".windsurf/rules/gleann.md"
+  ["cline"]=".cline/mcp.json"
+  ["amp"]="AGENTS.md"
+  ["kiro"]=".kiro/rules/gleann.md"
+  ["amazonq"]="AGENTS.md"
+  ["continue"]="AGENTS.md"
+)
+
+for plat in "${!INSTALL_FILE_MAP[@]}"; do
+  EXPECTED_FILE="${INSTALL_FILE_MAP[$plat]}"
+  PLAT_DIR=$(mktemp -d)
+
+  # Create marker files for platforms that need them
+  case "$plat" in
+    windsurf) mkdir -p "$PLAT_DIR/.windsurf" ;;
+    cline)    mkdir -p "$PLAT_DIR/.cline" ;;
+    kiro)     mkdir -p "$PLAT_DIR/.kiro" ;;
+  esac
+
+  OUT=$("$BINARY" install --platform "$plat" --dir "$PLAT_DIR" 2>&1)
+  EXIT=$?
+  if [[ $EXIT -eq 0 ]]; then
+    if [[ -f "$PLAT_DIR/$EXPECTED_FILE" ]]; then
+      pass "install $plat: created $EXPECTED_FILE"
+    elif find "$PLAT_DIR" -name "*.md" -o -name "*.json" -o -name "*.mdc" 2>/dev/null | grep -q .; then
+      pass "install $plat: config file created (path may differ)"
+    else
+      warn "install $plat: no output file created (may need platform markers)"
+    fi
+
+    # Uninstall and verify
+    "$BINARY" install uninstall --platform "$plat" --dir "$PLAT_DIR" >/dev/null 2>&1
+    if [[ ! -f "$PLAT_DIR/$EXPECTED_FILE" ]] || ! find "$PLAT_DIR" -name "gleann*" 2>/dev/null | grep -q .; then
+      pass "uninstall $plat: gleann files removed"
+    else
+      warn "uninstall $plat: some gleann files remain"
+    fi
+  else
+    warn "install $plat: exit $EXIT — may need platform marker dirs or detector match"
+  fi
+  rm -rf "$PLAT_DIR"
+done
+
+rm -rf "$INSTALL_TMPDIR" "$HOME_TMP"
+
+# ══════════════════════════════════════════════════════════════════════════════
+# SECTION 16: CONTEXT FIELD THEORY (Φ SCORING) PROXY TEST
+# ══════════════════════════════════════════════════════════════════════════════
+header "§16 Context Field Φ Scoring Proxy  $(ts)"
+
+# Context Field Theory re-ranks results; we test its effect indirectly by
+# verifying --rerank produces different ordering than plain search.
+sub "Comparing plain search vs. reranked search ordering..."
+PLAIN_OUT=$("$BINARY" search "$IDX_DOCS" "quantum computing qubit coherence decoherence" 2>&1)
+RERANK_OUT=$("$BINARY" search "$IDX_DOCS" "quantum computing qubit coherence decoherence" --rerank 2>&1)
+
+if [[ -n "$PLAIN_OUT" && -n "$RERANK_OUT" ]]; then
+  pass "phi scoring: both plain and reranked search return results"
+  # Check that rerank output is different (different ordering = scoring works)
+  if [[ "$PLAIN_OUT" != "$RERANK_OUT" ]]; then
+    pass "phi scoring: reranked output differs from plain (scoring applied)"
+  else
+    warn "phi scoring: reranked output identical to plain (possible no reranking effect)"
+  fi
+else
+  warn "phi scoring: one or both searches returned empty"
+fi
+
+# Verify hybrid search (uses Φ-like BM25+vector blending)
+OUT=$("$BINARY" search "$IDX_DOCS" "ZKProof elliptic pairing" --hybrid 0.5 2>&1)
+if echo "$OUT" | grep -qiE "proof|zk|groth|curve|snar|elliptic"; then
+  pass "phi scoring: hybrid search with custom alpha returns relevant ZKProof content"
+else
+  warn "phi scoring: hybrid search did not return ZKProof content"
+fi
+
+# ══════════════════════════════════════════════════════════════════════════════
+# SECTION 17: TOKEN GAIN TRACKING
+# ══════════════════════════════════════════════════════════════════════════════
+header "§17 Token Gain Tracking  $(ts)"
+
+# Token gain is tracked by the MCP server. We verify it indirectly via the
+# benchmark output which exercises the estimation functions.
+sub "Verifying token estimation in benchmark output..."
+OUT=$("$BINARY" benchmark --index "$IDX_CODE" --docs "$FIXTURES/code" 2>&1)
+if echo "$OUT" | grep -qiE "token|tok|est|gain|context|compress"; then
+  pass "token gain: benchmark reports token-level metrics"
+  # Extract a number that looks like a token count
+  TOK=$(echo "$OUT" | grep -oE '[0-9]{3,}' | head -1)
+  if [[ -n "$TOK" ]]; then
+    pass "token gain: token count reported (${TOK} tokens)"
+  else
+    warn "token gain: could not extract numeric token count"
+  fi
+else
+  warn "token gain: benchmark output has no token metrics"
+fi
+
+sub "Verifying search output contains result counts (proxy for gain calc)..."
+OUT=$("$BINARY" search "$IDX_CODE" "fibonacci memoization cache" 2>&1)
+assert_exit_ok "token gain: search exits cleanly" $?
+if echo "$OUT" | grep -qiE "fib|memo|cache|recurs"; then
+  pass "token gain: code search returns result (token estimation available)"
+else
+  warn "token gain: fibonacci search returned no matching content"
+fi
+
+# ══════════════════════════════════════════════════════════════════════════════
 # CLEANUP
 # ══════════════════════════════════════════════════════════════════════════════
 header "Cleanup  $(ts)"

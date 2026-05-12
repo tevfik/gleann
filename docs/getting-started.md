@@ -197,12 +197,31 @@ gleann install
 gleann install --platform opencode
 gleann install --platform claude
 gleann install --platform cursor
+gleann install --platform windsurf   # Windsurf IDE
+gleann install --platform cline      # Cline / Roo Code
+gleann install --platform amp        # Amp
+gleann install --platform kiro       # Kiro IDE
+gleann install --platform amazonq    # Amazon Q Developer
+gleann install --platform continue   # Continue
+gleann install --platform zed        # Zed IDE
+gleann install --platform neovim     # Neovim
+gleann install --platform jetbrains  # JetBrains IDEs
 
-# See all supported platforms
+# See all 17 supported platforms
 gleann install --list
 ```
 
 This writes `AGENTS.md`, MCP config, and platform-specific hooks automatically.
+
+### MCP Token-Saving Tools (available to all platforms)
+
+Once installed, AI agents gain access to three additional utility tools:
+
+| MCP Tool | Purpose |
+|----------|---------|
+| `gleann_shell` | Compress noisy CLI output (git, npm, go, docker) by 60–95% before injecting into context |
+| `gleann_read` | Read files in smart modes: `map`, `signatures`, `entropy`, `diff`, `auto`, etc. Saves 60–90% tokens |
+| `gleann_gain` | Report total token savings accumulated in the current session |
 
 ## Step 9: Explore Further
 
@@ -254,6 +273,8 @@ source <(gleann completion bash)
 | Memory store | `gleann memory remember "<fact>"` |
 | Memory recall | `gleann memory list` |
 | Install for AI editor | `gleann install [--platform <name>]` |
+| Install (all 17 platforms) | `gleann install --list` |
+| Read file (smart mode) | `gleann_read` (MCP tool: `mode=signatures\|map\|entropy\|auto`) |
 | List indexes | `gleann index list` |
 | TUI | `gleann tui` |
 | API server | `gleann serve` |
