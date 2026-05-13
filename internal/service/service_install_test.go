@@ -138,6 +138,7 @@ func TestInstall_DefaultsBinaryAndAddr(t *testing.T) {
 func TestStart_DefaultsAndAlreadyRunning(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)
+	t.Setenv("USERPROFILE", tmp)
 
 	gleannD := filepath.Join(tmp, ".gleann")
 	if err := os.MkdirAll(gleannD, 0o755); err != nil {
@@ -169,6 +170,7 @@ func TestTaskSchedulerInstalled_SafeWhenAbsent(t *testing.T) {
 func TestGleannDir_HomeOverride(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)
+	t.Setenv("USERPROFILE", tmp)
 	got := gleannDir()
 	if !strings.HasPrefix(got, tmp) {
 		t.Errorf("expected gleannDir to start with %s, got %s", tmp, got)
