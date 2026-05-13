@@ -309,3 +309,42 @@ Or via `traverse_knowledge_graph` MCP tool directly inside Cursor / Claude:
   "depth": 2
 }
 ```
+
+---
+
+## Hierarchical Project Scope (path-style memory)
+
+Scopes can be **path-style** (`org/project/repo` or `yaver-go/social/feature-x`).
+When you query for a deep scope, the manager automatically pulls in **every
+ancestor scope plus global memories**:
+
+| Block scope                       | Visible when querying `yaver-go/social/feature-x` |
+|-----------------------------------|---------------------------------------------------|
+| `""` (global)                     | ✅ |
+| `yaver-go`                        | ✅ |
+| `yaver-go/social`                 | ✅ |
+| `yaver-go/social/feature-x`       | ✅ |
+| `yaver-go/coder`                  | ❌ (sibling branch) |
+| `different-project`               | ❌ |
+
+**Asymmetric inheritance** — children inherit parent context, but a parent
+query never pulls in descendant blocks (so a project-wide review is not
+polluted by feature-specific notes).
+
+### Example
+
+```bash
+# Add a project-wide convention (visible to every sub-scope below it)
+gleann memory add long "We use conventional commits" --scope "yaver-go"
+
+# Add a feature-specific note
+gleann memory add short "Issue #42 needs Turkish translation" \
+  --scope "yaver-go/social/feature-x"
+
+# Build context for the feature scope -> sees BOTH facts
+gleann memory ctx --scope "yaver-go/social/feature-x" --query "commit message?"
+```
+
+Flat (single-segment) scopes still behave exactly as before — the change
+is fully backwards-compatible. The hierarchy is implemented at the filter
+layer (`scopeAncestors`) so no schema migration is needed.
