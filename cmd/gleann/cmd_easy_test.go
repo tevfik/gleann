@@ -35,6 +35,7 @@ func captureStdout(t *testing.T, fn func()) string {
 func TestCmdConfigPath_PrintsPath(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)
+	t.Setenv("USERPROFILE", tmp)
 	out := captureStdout(t, func() { cmdConfigPath() })
 	want := filepath.Join(tmp, ".gleann", "config.json")
 	if !strings.Contains(out, want) {
