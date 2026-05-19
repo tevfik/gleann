@@ -11,6 +11,7 @@ import (
 	"context"
 	"net/http"
 
+	"github.com/tevfik/gleann/internal/embedding"
 	"github.com/tevfik/gleann/pkg/gleann"
 )
 
@@ -39,10 +40,18 @@ type TraverseResponse struct {
 
 // ── Stub memory pool ──────────────────────────────────────────────────────────
 
-type memoryPool struct{}
+// SyncerFactory stub — not used in !treesitter builds.
+type SyncerFactory func(name string) interface{}
+
+type memoryPool struct {
+	syncerFactory SyncerFactory // always nil in stub builds
+}
 
 func newMemoryPool(_ string) *memoryPool { return &memoryPool{} }
 func (p *memoryPool) closeAll()          {}
+
+// initMemorySyncer is a no-op in !treesitter builds.
+func (s *Server) initMemorySyncer(_ gleann.Config, _ *embedding.Computer) {}
 
 // ── Stub HTTP handlers ────────────────────────────────────────────────────────
 

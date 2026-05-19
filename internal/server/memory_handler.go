@@ -44,16 +44,21 @@ type TraverseResponse struct {
 
 // ── Memory DB pool ────────────────────────────────────────────────────────────
 
+// SyncerFactory creates a VectorSyncer for a given index name.
+// Return nil to disable vector synchronisation for that index.
+type SyncerFactory func(name string) kgraph.VectorSyncer
+
 // memoryPool caches open MemoryService instances per logical index name.
 // Each Memory Engine database is stored under <indexDir>/<name>_memory.
 //
 // KuzuDB is an embedded database — only one DB object per directory is allowed
 // at a time.  The pool ensures connections are reused.
 type memoryPool struct {
-	mu      sync.RWMutex
-	handles map[string]*kgraph.MemoryService
-	dbs     map[string]*kgraph.DB
-	dir     string
+	mu            sync.RWMutex
+	handles       map[string]*kgraph.MemoryService
+	dbs           map[string]*kgraph.DB
+	dir           string
+	syncerFactory SyncerFactory // optional; nil disables vector sync
 }
 
 func newMemoryPool(indexDir string) *memoryPool {
@@ -87,7 +92,11 @@ func (p *memoryPool) get(name string) (*kgraph.MemoryService, error) {
 		return nil, fmt.Errorf("open memory db %q: %w", dbPath, err)
 	}
 
-	svc := kgraph.NewMemoryService(db, nil /* no vector syncer for now */)
+	var syncer kgraph.VectorSyncer
+	if p.syncerFactory != nil {
+		syncer = p.syncerFactory(name)
+	}
+	svc := kgraph.NewMemoryService(db, syncer)
 	p.dbs[name] = db
 	p.handles[name] = svc
 	return svc, nil

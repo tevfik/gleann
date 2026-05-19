@@ -76,17 +76,26 @@ func NewServer(config gleann.Config, addr, version string) *Server {
 		version = "dev"
 	}
 
-	return &Server{
+	memPool := newMemoryPool(config.IndexDir)
+
+	s := &Server{
 		config:     config,
 		embedder:   embedder,
 		searchers:  make(map[string]*gleann.LeannSearcher),
 		addr:       addr,
 		version:    version,
 		graphPool:  newGraphDBPool(config.IndexDir),
-		memoryPool: newMemoryPool(config.IndexDir),
+		memoryPool: memPool,
 		bgManager:  background.NewManager(2),
 		bus:        eventbus.New(64, nil),
 	}
+
+	// Wire the VectorSyncer factory so that Memory Engine entities are
+	// automatically reflected in the HNSW+BM25 vector index.
+	// This is a no-op in !treesitter builds.
+	s.initMemorySyncer(config, embedder)
+
+	return s
 }
 
 // Start starts the server.

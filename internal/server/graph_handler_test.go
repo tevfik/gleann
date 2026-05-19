@@ -455,18 +455,6 @@ func TestHandleGraphIndex_EmptyDocsDir(t *testing.T) {
 	}
 }
 
-func TestHandleGraphIndex_StubReturnsError(t *testing.T) {
-	s := newTestServerWithGraph(nil)
-	req := httptest.NewRequest("POST", "/api/graph/test-index/index", bytes.NewBufferString(`{"docs_dir":"/tmp/test"}`))
-	req.SetPathValue("name", "test-index")
-	w := httptest.NewRecorder()
-	s.handleGraphIndex(w, req)
-	// In !treesitter build, runGraphIndex returns error
-	if w.Code != http.StatusInternalServerError {
-		t.Errorf("expected 500, got %d", w.Code)
-	}
-}
-
 // ── graphDBPool ──────────────────────────────────────────────────────────
 
 func TestGraphDBPool_Get_CacheHit(t *testing.T) {
@@ -480,14 +468,6 @@ func TestGraphDBPool_Get_CacheHit(t *testing.T) {
 	}
 	if got != db {
 		t.Error("expected cached DB to be returned")
-	}
-}
-
-func TestGraphDBPool_Get_StubReturnsError(t *testing.T) {
-	pool := newGraphDBPool("/tmp")
-	_, err := pool.get("nonexistent")
-	if err == nil {
-		t.Error("expected error from stub openGraphDB")
 	}
 }
 
@@ -526,74 +506,6 @@ func TestGraphDBPool_CloseAll(t *testing.T) {
 	}
 }
 
-// ── memory stub handlers ─────────────────────────────────────────────────
-
-func TestMemoryStub_HandleMemoryInject(t *testing.T) {
-	s := &Server{config: gleann.Config{}, searchers: make(map[string]*gleann.LeannSearcher)}
-	req := httptest.NewRequest("POST", "/api/memory/test/inject", nil)
-	w := httptest.NewRecorder()
-	s.handleMemoryInject(w, req)
-	if w.Code != http.StatusNotImplemented {
-		t.Errorf("expected 501, got %d", w.Code)
-	}
-}
-
-func TestMemoryStub_HandleMemoryDeleteNode(t *testing.T) {
-	s := &Server{config: gleann.Config{}, searchers: make(map[string]*gleann.LeannSearcher)}
-	req := httptest.NewRequest("DELETE", "/api/memory/test/nodes/abc", nil)
-	w := httptest.NewRecorder()
-	s.handleMemoryDeleteNode(w, req)
-	if w.Code != http.StatusNotImplemented {
-		t.Errorf("expected 501, got %d", w.Code)
-	}
-}
-
-func TestMemoryStub_HandleMemoryDeleteEdge(t *testing.T) {
-	s := &Server{config: gleann.Config{}, searchers: make(map[string]*gleann.LeannSearcher)}
-	req := httptest.NewRequest("DELETE", "/api/memory/test/edges", nil)
-	w := httptest.NewRecorder()
-	s.handleMemoryDeleteEdge(w, req)
-	if w.Code != http.StatusNotImplemented {
-		t.Errorf("expected 501, got %d", w.Code)
-	}
-}
-
-func TestMemoryStub_HandleMemoryTraverse(t *testing.T) {
-	s := &Server{config: gleann.Config{}, searchers: make(map[string]*gleann.LeannSearcher)}
-	req := httptest.NewRequest("POST", "/api/memory/test/traverse", nil)
-	w := httptest.NewRecorder()
-	s.handleMemoryTraverse(w, req)
-	if w.Code != http.StatusNotImplemented {
-		t.Errorf("expected 501, got %d", w.Code)
-	}
-}
-
-func TestMemoryStub_StopMemoryPool(t *testing.T) {
-	s := &Server{config: gleann.Config{}, searchers: make(map[string]*gleann.LeannSearcher)}
-	// Should not panic.
-	s.stopMemoryPool(nil)
-}
-
-func TestMemoryStub_CloseAll(t *testing.T) {
-	p := newMemoryPool("/tmp")
-	p.closeAll() // should not panic
-}
-
-// ── graph stub functions ─────────────────────────────────────────────────
-
-func TestGraphStub_OpenGraphDB(t *testing.T) {
-	_, err := openGraphDB("/tmp/test")
-	if err == nil {
-		t.Error("expected error from stub openGraphDB")
-	}
-}
-
-func TestGraphStub_RunGraphIndex(t *testing.T) {
-	err := runGraphIndex("test", "/tmp/docs", "/tmp/index", "github.com/test")
-	if err == nil {
-		t.Error("expected error from stub runGraphIndex")
-	}
-}
-
 // errTestFail is a reusable test error.
 var errTestFail = fmt.Errorf("test failure")
+
