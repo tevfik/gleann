@@ -29,10 +29,11 @@ import (
 // mcpMemoryPool caches MemoryService instances per index name within an MCP
 // server session.  Each database is stored at <indexDir>/<name>_memory.
 type mcpMemoryPool struct {
-	mu       sync.RWMutex
-	services map[string]*kgraph.MemoryService
-	dbs      map[string]*kgraph.DB
-	dir      string
+	mu            sync.RWMutex
+	services      map[string]*kgraph.MemoryService
+	dbs           map[string]*kgraph.DB
+	dir           string
+	syncerFactory func(name string) kgraph.VectorSyncer // optional
 }
 
 func newMCPMemoryPool(indexDir string) *mcpMemoryPool {
@@ -65,7 +66,11 @@ func (p *mcpMemoryPool) get(name string) (*kgraph.MemoryService, error) {
 		return nil, fmt.Errorf("open memory db %q: %w", dbPath, err)
 	}
 
-	svc = kgraph.NewMemoryService(db, nil /* no vector syncer */)
+	var syncer kgraph.VectorSyncer
+	if p.syncerFactory != nil {
+		syncer = p.syncerFactory(name)
+	}
+	svc = kgraph.NewMemoryService(db, syncer)
 	p.dbs[name] = db
 	p.services[name] = svc
 	return svc, nil

@@ -56,7 +56,7 @@ func New(db *kuzu.DB, module, root string) *Indexer {
 // IndexFile parses one source file and writes its symbols and edges into KuzuDB
 // using a single transaction.
 func (idx *Indexer) IndexFile(absPath, source string) error {
-	f, syms, decls, calls, err := idx.indexFileOnConn(absPath, source)
+	f, syms, decls, calls, impls, refs, err := idx.indexFileOnConn(absPath, source)
 	if err != nil {
 		return err
 	}
@@ -139,6 +139,16 @@ func (idx *Indexer) IndexFile(absPath, source string) error {
 			return err
 		}
 	}
+	if len(impls) > 0 {
+		if err := doCopy("IMPLEMENTS", func(p string) error { return kuzu.WriteImplementsCSV(p, impls) }); err != nil {
+			return err
+		}
+	}
+	if len(refs) > 0 {
+		if err := doCopy("REFERENCES", func(p string) error { return kuzu.WriteReferencesCSV(p, refs) }); err != nil {
+			return err
+		}
+	}
 
 	return nil
 }
@@ -147,7 +157,7 @@ func (idx *Indexer) IndexFile(absPath, source string) error {
 // It extracts all File, Symbol, Declares and Calls structs and returns them.
 // It also extracts rationale comments (WHY, NOTE, HACK, TODO, IMPORTANT, FIXME)
 // and attaches them to nearby symbols' Doc field for design-rationale knowledge.
-func (idx *Indexer) indexFileOnConn(absPath, source string) (file *kuzu.FileNode, symbols []kuzu.SymbolNode, declares []kuzu.EdgeDeclares, calls []kuzu.EdgeCalls, err error) {
+func (idx *Indexer) indexFileOnConn(absPath, source string) (file *kuzu.FileNode, symbols []kuzu.SymbolNode, declares []kuzu.EdgeDeclares, calls []kuzu.EdgeCalls, impls []kuzu.EdgeImplements, refs []kuzu.EdgeReferences, err error) {
 	lang := string(chunking.DetectLanguage(absPath))
 	relPath := idx.relPath(absPath)
 
@@ -189,6 +199,12 @@ func (idx *Indexer) indexFileOnConn(absPath, source string) (file *kuzu.FileNode
 			symbols = append(symbols, nodes...)
 			calls = append(calls, edges...)
 		}
+
+		// Collect IMPLEMENTS + REFERENCES edges for Go files.
+		implEdges, refEdges, extraSyms := collectGoImplementsEdges(idx, relPath, source, chunks)
+		impls = append(impls, implEdges...)
+		refs = append(refs, refEdges...)
+		symbols = append(symbols, extraSyms...)
 	} else {
 		nodes, edges, nodeErr := collectTSCallQueries(idx, absPath, relPath, source, chunks)
 		if nodeErr != nil {
@@ -199,7 +215,7 @@ func (idx *Indexer) indexFileOnConn(absPath, source string) (file *kuzu.FileNode
 		}
 	}
 
-	return fileNode, symbols, declares, calls, nil
+	return fileNode, symbols, declares, calls, impls, refs, nil
 }
 
 // IndexDir recursively indexes all supported source files under root.
@@ -213,6 +229,8 @@ func (idx *Indexer) IndexDir(root string) error {
 		symbols  []kuzu.SymbolNode
 		declares []kuzu.EdgeDeclares
 		calls    []kuzu.EdgeCalls
+		impls    []kuzu.EdgeImplements
+		refs     []kuzu.EdgeReferences
 	}
 	docChan := make(chan docResult, 64)
 
@@ -225,12 +243,12 @@ func (idx *Indexer) IndexDir(root string) error {
 				case <-ctx.Done():
 					return ctx.Err()
 				default:
-					f, syms, decls, calls, err := idx.indexFileOnConn(j.path, j.src)
+					f, syms, decls, calls, impls, refs, err := idx.indexFileOnConn(j.path, j.src)
 					if err != nil {
 						return err
 					}
 					select {
-					case docChan <- docResult{f, syms, decls, calls}:
+					case docChan <- docResult{f, syms, decls, calls, impls, refs}:
 					case <-ctx.Done():
 						return ctx.Err()
 					}
@@ -245,6 +263,8 @@ func (idx *Indexer) IndexDir(root string) error {
 	var allSymbols []kuzu.SymbolNode
 	var allDeclares []kuzu.EdgeDeclares
 	var allCalls []kuzu.EdgeCalls
+	var allImpls []kuzu.EdgeImplements
+	var allRefs []kuzu.EdgeReferences
 	docDone := make(chan struct{})
 
 	go func() {
@@ -255,6 +275,8 @@ func (idx *Indexer) IndexDir(root string) error {
 			allSymbols = append(allSymbols, res.symbols...)
 			allDeclares = append(allDeclares, res.declares...)
 			allCalls = append(allCalls, res.calls...)
+			allImpls = append(allImpls, res.impls...)
+			allRefs = append(allRefs, res.refs...)
 		}
 		close(docDone)
 	}()
@@ -341,7 +363,31 @@ func (idx *Indexer) IndexDir(root string) error {
 	}
 	allCalls = uniqueCalls
 
-	log.Printf("[INFO] AST Indexing extracted uniquely: %d files, %d symbols, %d declares, %d calls", len(allFiles), len(allSymbols), len(allDeclares), len(allCalls))
+	// Deduplicate IMPLEMENTS edges (both endpoints must exist).
+	uniqueImpls := make([]kuzu.EdgeImplements, 0, len(allImpls))
+	seenImpls := make(map[string]bool)
+	for _, i := range allImpls {
+		key := i.ImplFQN + "->" + i.IfaceFQN
+		if !seenImpls[key] && seenSymbols[i.ImplFQN] && seenSymbols[i.IfaceFQN] {
+			seenImpls[key] = true
+			uniqueImpls = append(uniqueImpls, i)
+		}
+	}
+	allImpls = uniqueImpls
+
+	// Deduplicate REFERENCES edges (both endpoints must exist).
+	uniqueRefs := make([]kuzu.EdgeReferences, 0, len(allRefs))
+	seenRefs := make(map[string]bool)
+	for _, r := range allRefs {
+		key := r.RefererFQN + "->" + r.RefereeFQN
+		if !seenRefs[key] && seenSymbols[r.RefererFQN] && seenSymbols[r.RefereeFQN] {
+			seenRefs[key] = true
+			uniqueRefs = append(uniqueRefs, r)
+		}
+	}
+	allRefs = uniqueRefs
+
+	log.Printf("[INFO] AST Indexing extracted uniquely: %d files, %d symbols, %d declares, %d calls, %d implements, %d references", len(allFiles), len(allSymbols), len(allDeclares), len(allCalls), len(allImpls), len(allRefs))
 
 	// Serialize writes via mutex to prevent KuzuDB concurrent transaction errors
 	idx.writeMu.Lock()
@@ -396,6 +442,16 @@ func (idx *Indexer) IndexDir(root string) error {
 			return err
 		}
 	}
+	if len(allImpls) > 0 {
+		if err := doCopy("IMPLEMENTS", func(p string) error { return kuzu.WriteImplementsCSV(p, allImpls) }); err != nil {
+			return err
+		}
+	}
+	if len(allRefs) > 0 {
+		if err := doCopy("REFERENCES", func(p string) error { return kuzu.WriteReferencesCSV(p, allRefs) }); err != nil {
+			return err
+		}
+	}
 
 	txDuration := time.Since(startTx)
 	if txDuration > 100*time.Millisecond {
@@ -431,6 +487,8 @@ func (idx *Indexer) IndexFiles(files []string) error {
 		symbols  []kuzu.SymbolNode
 		declares []kuzu.EdgeDeclares
 		calls    []kuzu.EdgeCalls
+		impls    []kuzu.EdgeImplements
+		refs     []kuzu.EdgeReferences
 	}
 
 	// Parse all files concurrently.
@@ -450,11 +508,11 @@ func (idx *Indexer) IndexFiles(files []string) error {
 			if err != nil {
 				return fmt.Errorf("read %s: %w", absPath, err)
 			}
-			f, syms, decls, calls, err := idx.indexFileOnConn(absPath, string(src))
+			f, syms, decls, calls, impls, refs, err := idx.indexFileOnConn(absPath, string(src))
 			if err != nil {
 				return err
 			}
-			results[i] = docResult{f, syms, decls, calls}
+			results[i] = docResult{f, syms, decls, calls, impls, refs}
 			return nil
 		})
 	}
@@ -467,6 +525,8 @@ func (idx *Indexer) IndexFiles(files []string) error {
 	var allSymbols []kuzu.SymbolNode
 	var allDeclares []kuzu.EdgeDeclares
 	var allCalls []kuzu.EdgeCalls
+	var allImpls []kuzu.EdgeImplements
+	var allRefs []kuzu.EdgeReferences
 	for _, res := range results {
 		if res.file != nil {
 			allFiles = append(allFiles, *res.file)
@@ -474,6 +534,8 @@ func (idx *Indexer) IndexFiles(files []string) error {
 		allSymbols = append(allSymbols, res.symbols...)
 		allDeclares = append(allDeclares, res.declares...)
 		allCalls = append(allCalls, res.calls...)
+		allImpls = append(allImpls, res.impls...)
+		allRefs = append(allRefs, res.refs...)
 	}
 
 	// Deduplicate symbols.
@@ -511,8 +573,32 @@ func (idx *Indexer) IndexFiles(files []string) error {
 	}
 	allCalls = uniqueCalls
 
-	log.Printf("[INFO] Incremental graph: re-indexing %d files (%d symbols, %d declares, %d calls)",
-		len(allFiles), len(allSymbols), len(allDeclares), len(allCalls))
+	// Deduplicate IMPLEMENTS edges.
+	seenImpls := make(map[string]bool, len(allImpls))
+	uniqueImpls := make([]kuzu.EdgeImplements, 0, len(allImpls))
+	for _, i := range allImpls {
+		key := i.ImplFQN + "->" + i.IfaceFQN
+		if !seenImpls[key] && seenSymbols[i.ImplFQN] && seenSymbols[i.IfaceFQN] {
+			seenImpls[key] = true
+			uniqueImpls = append(uniqueImpls, i)
+		}
+	}
+	allImpls = uniqueImpls
+
+	// Deduplicate REFERENCES edges.
+	seenRefs := make(map[string]bool, len(allRefs))
+	uniqueRefs := make([]kuzu.EdgeReferences, 0, len(allRefs))
+	for _, r := range allRefs {
+		key := r.RefererFQN + "->" + r.RefereeFQN
+		if !seenRefs[key] && seenSymbols[r.RefererFQN] && seenSymbols[r.RefereeFQN] {
+			seenRefs[key] = true
+			uniqueRefs = append(uniqueRefs, r)
+		}
+	}
+	allRefs = uniqueRefs
+
+	log.Printf("[INFO] Incremental graph: re-indexing %d files (%d symbols, %d declares, %d calls, %d implements, %d references)",
+		len(allFiles), len(allSymbols), len(allDeclares), len(allCalls), len(allImpls), len(allRefs))
 
 	// Write to KuzuDB: delete old data per file, then insert new.
 	idx.writeMu.Lock()
@@ -564,6 +650,16 @@ func (idx *Indexer) IndexFiles(files []string) error {
 	}
 	if len(allCalls) > 0 {
 		if err := doCopy("CALLS", func(p string) error { return kuzu.WriteCallsCSV(p, allCalls) }); err != nil {
+			return err
+		}
+	}
+	if len(allImpls) > 0 {
+		if err := doCopy("IMPLEMENTS", func(p string) error { return kuzu.WriteImplementsCSV(p, allImpls) }); err != nil {
+			return err
+		}
+	}
+	if len(allRefs) > 0 {
+		if err := doCopy("REFERENCES", func(p string) error { return kuzu.WriteReferencesCSV(p, allRefs) }); err != nil {
 			return err
 		}
 	}

@@ -72,6 +72,9 @@ func NewServer(cfg Config) *Server {
 		blockMem:  &blockMemPool{},
 	}
 
+	// Wire VectorSyncer factory (build-tag gated; no-op when !treesitter).
+	srv.wireMemorySyncer(cfg, glCfg, embedder)
+
 	// Register tools natively with the SDK
 	s.AddTool(srv.buildSearchTool(), srv.handleSearch)
 	s.AddTool(srv.buildSearchMultiTool(), srv.handleSearchMulti)

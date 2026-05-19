@@ -143,7 +143,7 @@ test-faiss:
 
 .PHONY: test-treesitter
 test-treesitter:
-	go test -tags "cgo treesitter" -count=1 -timeout 60s ./modules/chunking/...
+	cd modules/chunking && go test -tags "cgo treesitter" -count=1 -timeout 60s ./...
 
 # test-e2e — run Go integration E2E tests. Requires Ollama running.
 .PHONY: test-e2e

@@ -58,6 +58,9 @@ func generateScaleGraph(n, numClusters, edgesPerNode int) *Graph {
 }
 
 func TestScaleBenchmarkReport(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping scale benchmark report in short mode")
+	}
 	sizes := []struct {
 		nodes    int
 		clusters int

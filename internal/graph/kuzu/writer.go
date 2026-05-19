@@ -243,6 +243,63 @@ func WriteCallsCSV(path string, edges []EdgeCalls) error {
 	return w.Error()
 }
 
+// EdgeImplements represents an IMPLEMENTS relationship (FROM Symbol TO Symbol).
+// e.g. MyStruct IMPLEMENTS io.Reader.
+type EdgeImplements struct {
+	ImplFQN  string // implementor (struct/type)
+	IfaceFQN string // interface
+}
+
+// EdgeReferences represents a REFERENCES relationship (FROM Symbol TO Symbol).
+// e.g. MyFunc REFERENCES SomeType (uses it as parameter, field, return, etc.)
+type EdgeReferences struct {
+	RefererFQN string // the symbol that references
+	RefereeFQN string // the symbol being referenced
+	Confidence string // "extracted", "inferred"
+}
+
+// WriteImplementsCSV writes a list of EdgeImplements to a CSV file.
+func WriteImplementsCSV(path string, edges []EdgeImplements) error {
+	f, err := os.Create(path)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	w := csv.NewWriter(f)
+	if err := w.Write([]string{"from", "to"}); err != nil {
+		return err
+	}
+	for _, e := range edges {
+		if err := w.Write([]string{e.ImplFQN, e.IfaceFQN}); err != nil {
+			return err
+		}
+	}
+	w.Flush()
+	return w.Error()
+}
+
+// WriteReferencesCSV writes a list of EdgeReferences to a CSV file.
+func WriteReferencesCSV(path string, edges []EdgeReferences) error {
+	f, err := os.Create(path)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	w := csv.NewWriter(f)
+	if err := w.Write([]string{"from", "to"}); err != nil {
+		return err
+	}
+	for _, e := range edges {
+		if err := w.Write([]string{e.RefererFQN, e.RefereeFQN}); err != nil {
+			return err
+		}
+	}
+	w.Flush()
+	return w.Error()
+}
+
 // ─── Hierarchical Graph Types ────────────────────────────────────────────────────
 
 // FolderNode represents a structural folder.

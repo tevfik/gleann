@@ -77,7 +77,7 @@ else
 fi
 
 # 2.2 Run chunking tests
-if go test ./modules/chunking/ -count=1 -timeout 30s >/dev/null 2>&1; then
+if (cd modules/chunking && go test -count=1 -timeout 30s) >/dev/null 2>&1; then
     pass "modules/chunking tests"
 else
     fail "modules/chunking tests"
@@ -274,7 +274,7 @@ header "7. MarkdownChunker E2E"
 # ═══════════════════════════════════════════════════════════════
 
 # 7.1 Run markdown chunker tests
-CHUNKER_OUTPUT=$(go test ./modules/chunking/ -run "TestChunkDocument|TestChunkMarkdown|TestParseMarkdownHeadings|TestBuildContextHeader" -count=1 -v 2>&1)
+CHUNKER_OUTPUT=$(cd modules/chunking && go test -run "TestChunkDocument|TestChunkMarkdown|TestParseMarkdownHeadings|TestBuildContextHeader" -count=1 -v 2>&1)
 
 for test_name in "TestChunkDocument_Basic" "TestChunkDocument_HierarchyBreadcrumb" \
     "TestChunkDocument_MetadataFields" "TestChunkDocument_LargeSection" \
@@ -481,8 +481,13 @@ TEST_PKGS=$(go test ./... -list '.*' 2>/dev/null | grep -c "^Test" || echo 0)
 echo -e "  Found $TEST_PKGS test functions across workspace"
 
 # Run all tests
-FULL_TEST_OUTPUT=$(go test ./pkg/gleann/ ./modules/chunking/ ./tests/integration/ -count=1 -timeout 120s 2>&1)
-FULL_TEST_EXIT=$?
+FULL_TEST_OUTPUT_MAIN=$(go test ./pkg/gleann/ ./tests/integration/ -count=1 -timeout 120s 2>&1)
+MAIN_EXIT=$?
+FULL_TEST_OUTPUT_CHUNK=$(cd modules/chunking && go test -count=1 -timeout 60s 2>&1)
+CHUNK_EXIT=$?
+FULL_TEST_OUTPUT="${FULL_TEST_OUTPUT_MAIN}
+${FULL_TEST_OUTPUT_CHUNK}"
+FULL_TEST_EXIT=$((MAIN_EXIT + CHUNK_EXIT))
 
 if [[ $FULL_TEST_EXIT -eq 0 ]]; then
     pass "Full test suite passed"
