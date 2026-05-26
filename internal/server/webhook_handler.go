@@ -61,12 +61,12 @@ func (s *Server) handleRegisterWebhook(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "events is required (e.g. [\"build_complete\", \"index_deleted\"])")
 		return
 	}
-
-	wh := Webhook{
-		URL:    req.URL,
-		Events: req.Events,
-		Secret: req.Secret,
+	if err := validateWebhookURL(req.URL); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
 	}
+
+	wh := Webhook(req)
 
 	globalWebhooks.mu.Lock()
 	globalWebhooks.webhooks = append(globalWebhooks.webhooks, wh)

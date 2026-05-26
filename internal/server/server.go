@@ -777,8 +777,8 @@ func writeError(w http.ResponseWriter, status int, message string) {
 }
 
 func withMiddleware(next http.Handler) http.Handler {
-	// Chain: rate limiter → timeout → CORS/logging.
-	return rateLimitMiddleware(timeoutMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	// Chain: body-limit → rate limiter → timeout → CORS/logging.
+	return bodyLimitMiddleware(rateLimitMiddleware(timeoutMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// CORS.
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
@@ -797,5 +797,5 @@ func withMiddleware(next http.Handler) http.Handler {
 		if !strings.Contains(r.URL.Path, "health") {
 			log.Printf("%s %s %s", r.Method, r.URL.Path, time.Since(start))
 		}
-	})))
+	}))))
 }

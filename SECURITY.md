@@ -38,6 +38,8 @@ Gleann is designed as a **local-first** tool. Key security notes:
 |--------|------------|
 | Prompt injection in indexed documents | Search results are returned as structured JSON; downstream LLM consumers (yaver, opencode, etc.) are responsible for treating retrieved content as untrusted. |
 | Path traversal in `gleann build --docs` | The ingestion walker resolves symlinks and refuses to follow paths outside the chosen root. |
+| Webhook SSRF | `POST /api/webhooks` rejects non-http(s) schemes and hostnames resolving to loopback / link-local / private ranges (incl. 169.254.169.254). Override for trusted internal deployments with `GLEANN_WEBHOOK_ALLOW_PRIVATE=1`. |
+| Request body memory exhaustion | All POST/PUT/PATCH bodies are capped (default 16 MiB) via `http.MaxBytesReader`; tune via `GLEANN_MAX_BODY_BYTES` (0 disables). |
 | Untrusted plugin execution | Plugins are launched as separate HTTP processes; the user explicitly enables each one in `~/.gleann/plugins.json`. |
 | KuzuDB CGo memory safety | Pinned to upstream tagged release; the embedded DB only opens databases in `~/.gleann/indexes/`. |
 | Vulnerable Go stdlib / 3rd-party | `govulncheck` is run on each release; latest report in [`security/govulncheck.txt`](security/govulncheck.txt). |

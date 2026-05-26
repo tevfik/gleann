@@ -61,6 +61,8 @@ These variables configure the REST API server (`gleann serve`).
 | `GLEANN_TIMEOUT_SEARCH_S` | `30` | Timeout in seconds for `/search` endpoints |
 | `GLEANN_TIMEOUT_BUILD_S` | `600` | Timeout in seconds for `/build` endpoints |
 | `GLEANN_TIMEOUT_DEFAULT_S` | `60` | Default timeout in seconds for all other endpoints |
+| `GLEANN_MAX_BODY_BYTES` | `16777216` | Maximum POST/PUT/PATCH body size in bytes (16 MiB default; `0` disables the cap) |
+| `GLEANN_WEBHOOK_ALLOW_PRIVATE` | _(unset)_ | Set to `1` to allow webhook URLs whose hostname resolves to loopback / link-local / private addresses (off by default to block SSRF) |
 
 Rate-limited requests receive `429 Too Many Requests` with a `Retry-After: 1` header. Timed-out requests receive `504 Gateway Timeout`. The `/health` and `/metrics` endpoints bypass rate limiting. SSE streaming endpoints bypass the timeout middleware.
 
