@@ -57,6 +57,8 @@ func main() {
 		cmdTasks(args)
 	case "benchmark":
 		cmdBenchmark(args)
+	case "tokens":
+		cmdTokens(args)
 	case "config":
 		cmdConfig(args)
 	case "completion":
@@ -182,6 +184,7 @@ gleann has three intelligence pillars that work together:
   gleann serve  [--addr :8080]          REST API server (rate limiting, timeouts)
   gleann tasks                          View background tasks (requires serve)
   gleann benchmark --index <n> --docs <d>  Token reduction analysis
+  gleann tokens <file-or-dir>           Estimate tokens under different read modes
   gleann mcp                            MCP server (stdio, for AI editors)
   gleann tui                            Interactive TUI launcher
   gleann config <show|path|edit|validate>  Manage configuration

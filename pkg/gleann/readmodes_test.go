@@ -2,6 +2,7 @@ package gleann
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -287,7 +288,12 @@ func TestReadModeAggressive(t *testing.T) {
 // This is a comment
 /* Block comment */
 
-import "fmt"
+import (
+	"fmt"
+	"os"
+)
+
+import "net/http"
 
 func main() {
 
@@ -307,8 +313,17 @@ func main() {
 	if strings.Contains(result, "Block comment") {
 		t.Error("should strip block comments")
 	}
+	if strings.Contains(result, "package main") {
+		t.Error("should strip package declaration")
+	}
+	if strings.Contains(result, "import") {
+		t.Error("should strip imports")
+	}
+	if strings.Contains(result, "net/http") {
+		t.Error("should strip single-line imports")
+	}
 	if !strings.Contains(result, "fmt.Println") {
-		t.Error("should keep code")
+		t.Error("should keep functional code")
 	}
 }
 
@@ -511,5 +526,65 @@ impl Config {
 	}
 	if !strings.Contains(result, "pub fn new_config") {
 		t.Error("should find function")
+	}
+}
+
+func TestReadModeDiff(t *testing.T) {
+	// Create a temp directory for git repository
+	dir := t.TempDir()
+
+	// Check if git is available. If not, skip this test.
+	checkCmd := exec.Command("git", "version")
+	if err := checkCmd.Run(); err != nil {
+		t.Skip("git not installed, skipping diff test")
+	}
+
+	// Initialize git repo in the temp directory
+	runGit := func(args ...string) {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		if err := cmd.Run(); err != nil {
+			t.Fatalf("git %v failed: %v", args, err)
+		}
+	}
+
+	runGit("init")
+	runGit("config", "user.name", "Test User")
+	runGit("config", "user.email", "test@example.com")
+
+	filePath := filepath.Join(dir, "test.txt")
+	content1 := "line 1\nline 2\nline 3\n"
+	if err := os.WriteFile(filePath, []byte(content1), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	runGit("add", "test.txt")
+	runGit("commit", "-m", "initial commit")
+
+	content2 := "line 1\nline 2 modified\nline 3\n"
+	if err := os.WriteFile(filePath, []byte(content2), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := ReadFileWithMode(filePath, ReadModeOptions{Mode: ReadModeDiff})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !strings.Contains(result, "-line 2") || !strings.Contains(result, "+line 2 modified") {
+		t.Errorf("expected diff to show changes, got:\n%s", result)
+	}
+
+	untrackedPath := filepath.Join(dir, "untracked.txt")
+	if err := os.WriteFile(untrackedPath, []byte("untracked file content"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	untrackedResult, err := ReadFileWithMode(untrackedPath, ReadModeOptions{Mode: ReadModeDiff})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(untrackedResult, "untracked") {
+		t.Errorf("expected untracked file message, got:\n%s", untrackedResult)
 	}
 }

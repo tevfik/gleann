@@ -3,9 +3,11 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"time"
 
 	"github.com/tevfik/gleann/internal/tui"
 )
@@ -136,6 +138,47 @@ func cmdConfigValidate() {
 
 	if len(cfg.Roles) > 0 {
 		fmt.Printf("   Roles:     %d custom\n", len(cfg.Roles))
+	}
+
+	// Verify Index Directory accessibility.
+	idxDir := cfg.IndexDir
+	if idxDir != "" {
+		idxDir = filepath.Clean(idxDir)
+		info, err := os.Stat(idxDir)
+		if err != nil {
+			if os.IsNotExist(err) {
+				fmt.Printf("\n⚠️  Index Directory does not exist: %s\n   Hint: Run 'gleann setup' or create the directory.\n", idxDir)
+			} else {
+				fmt.Printf("\n⚠️  Index Directory error: %v\n", err)
+			}
+		} else if !info.IsDir() {
+			fmt.Printf("\n⚠️  Index Directory path is a file, not a directory: %s\n", idxDir)
+		} else {
+			// Check writeability
+			tempFile := filepath.Join(idxDir, ".gleann_write_test")
+			if err := os.WriteFile(tempFile, []byte("test"), 0o644); err != nil {
+				fmt.Printf("\n⚠️  Index Directory is not writeable: %v\n", err)
+			} else {
+				os.Remove(tempFile)
+			}
+		}
+	}
+
+	// Verify Ollama connectivity.
+	if cfg.EmbeddingProvider == "ollama" || cfg.LLMProvider == "ollama" {
+		host := cfg.OllamaHost
+		if host == "" {
+			host = "http://localhost:11434"
+		}
+		client := http.Client{
+			Timeout: 2 * time.Second,
+		}
+		resp, err := client.Get(host + "/api/tags")
+		if err != nil {
+			fmt.Printf("\n⚠️  Ollama service at %s is unreachable.\n   Hint: Make sure Ollama is running ('ollama serve') or check your network/host configuration.\n", host)
+		} else {
+			resp.Body.Close()
+		}
 	}
 }
 

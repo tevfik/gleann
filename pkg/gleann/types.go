@@ -152,6 +152,7 @@ type Config struct {
 	RateLimit       int    `json:"rate_limit,omitempty"`       // Sustained requests/sec per IP (default: 60)
 	RateBurst       int    `json:"rate_burst,omitempty"`       // Burst capacity per IP (default: 120)
 	BlockCharLimit  int    `json:"block_char_limit,omitempty"` // Default memory block character limit
+	TaskEvictionAgeHours int `json:"task_eviction_age_hours,omitempty"` // Hours before finished tasks are evicted (default: 24)
 }
 
 // DistanceMetric specifies the distance function for vector comparison.

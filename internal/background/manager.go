@@ -5,6 +5,8 @@ package background
 
 import (
 	"fmt"
+	"os"
+	"strconv"
 	"sync"
 	"time"
 )
@@ -47,17 +49,19 @@ type Task struct {
 
 // TaskFunc is a function that performs background work.
 // It receives a progress callback to report completion percentage.
+// type TaskFunc is defined as:
 type TaskFunc func(progress func(pct float64, msg string)) error
 
 // Manager manages background tasks with a bounded worker pool.
 type Manager struct {
-	mu      sync.RWMutex
-	tasks   map[string]*Task
-	queue   chan *taskEntry
-	nextID  int
-	stopCh  chan struct{}
-	stopped bool
-	workers int
+	mu          sync.RWMutex
+	tasks       map[string]*Task
+	queue       chan *taskEntry
+	nextID      int
+	stopCh      chan struct{}
+	stopped     bool
+	workers     int
+	evictionAge time.Duration
 }
 
 type taskEntry struct {
@@ -82,7 +86,43 @@ func NewManager(workers int) *Manager {
 	for i := 0; i < workers; i++ {
 		go m.worker()
 	}
+
+	// Start automatic task history cleanup scheduler.
+	go func() {
+		ticker := time.NewTicker(1 * time.Hour)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-m.stopCh:
+				return
+			case <-ticker.C:
+				m.Cleanup(m.getEvictionAge())
+			}
+		}
+	}()
+
 	return m
+}
+
+// SetEvictionAge sets the task history eviction age dynamically.
+func (m *Manager) SetEvictionAge(d time.Duration) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.evictionAge = d
+}
+
+func (m *Manager) getEvictionAge() time.Duration {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.evictionAge > 0 {
+		return m.evictionAge
+	}
+	if v := os.Getenv("GLEANN_TASK_EVICTION_AGE_H"); v != "" {
+		if h, err := strconv.Atoi(v); err == nil && h > 0 {
+			return time.Duration(h) * time.Hour
+		}
+	}
+	return 24 * time.Hour
 }
 
 // Submit adds a new task to the queue and returns its ID.

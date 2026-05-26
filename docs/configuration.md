@@ -20,6 +20,18 @@ This interactive TUI guides you through:
 - Index directory
 - Plugin installation
 
+## Config Validation
+
+To verify the structure and validity of your config file and perform connection diagnostics, run:
+
+```bash
+gleann config validate
+```
+
+This command parses `~/.gleann/config.json`, displays active providers/models/directories, and runs checks to:
+- Verify that the configured `index_dir` exists and is writeable.
+- Verify connectivity to the Ollama service (if selected as provider) and print hints if unreachable.
+
 ## Config File
 
 Location: `~/.gleann/config.json`
@@ -211,14 +223,15 @@ Each request gets a context deadline based on its endpoint. Timed-out requests r
 | `GLEANN_TIMEOUT_BUILD_S` | `600` (10 min) | `/build` |
 | `GLEANN_TIMEOUT_DEFAULT_S` | `60` | All other endpoints |
 
-### Background Maintenance
+### Background Maintenance & Tasks
 
-A background scheduler periodically promotes medium-term memory blocks to long-term and prunes expired entries.
+A background scheduler periodically promotes medium-term memory blocks to long-term, prunes expired entries, and cleans up completed/failed background tasks.
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `GLEANN_MAINTENANCE_ENABLED` | `true` | Set to `false` or `0` to disable |
-| `GLEANN_MAINTENANCE_INTERVAL_H` | `24` | Hours between maintenance runs |
+| Variable | Config Key | Default | Description |
+|----------|------------|---------|-------------|
+| `GLEANN_MAINTENANCE_ENABLED` | `maintenance_enabled` | `true` | Set to `false` or `0` to disable maintenance |
+| `GLEANN_MAINTENANCE_INTERVAL_H` | `maintenance_interval_h` | `24` | Hours between maintenance runs |
+| `GLEANN_TASK_EVICTION_AGE_H` | `task_eviction_age_hours` | `24` | Hours before finished background tasks are evicted from memory history |
 
 ### Sleep-Time Compute (Letta-inspired)
 
