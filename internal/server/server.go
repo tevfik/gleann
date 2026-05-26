@@ -78,6 +78,11 @@ func NewServer(config gleann.Config, addr, version string) *Server {
 
 	memPool := newMemoryPool(config.IndexDir)
 
+	bgMgr := background.NewManager(2)
+	if config.TaskEvictionAgeHours > 0 {
+		bgMgr.SetEvictionAge(time.Duration(config.TaskEvictionAgeHours) * time.Hour)
+	}
+
 	s := &Server{
 		config:     config,
 		embedder:   embedder,
@@ -86,7 +91,7 @@ func NewServer(config gleann.Config, addr, version string) *Server {
 		version:    version,
 		graphPool:  newGraphDBPool(config.IndexDir),
 		memoryPool: memPool,
-		bgManager:  background.NewManager(2),
+		bgManager:  bgMgr,
 		bus:        eventbus.New(64, nil),
 	}
 

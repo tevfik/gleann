@@ -2,13 +2,16 @@ package gleann
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"math"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 )
 
 // ReadMode defines how a file is read and presented to the LLM.
@@ -294,15 +297,43 @@ func extractDiff(filePath string) (string, error) {
 		return "", fmt.Errorf("abs path: %w", err)
 	}
 
-	// Check if file is tracked by git
 	dir := filepath.Dir(absPath)
 	base := filepath.Base(absPath)
-	_ = dir
-	_ = base
 
-	// We can't easily shell out here without os/exec, so return a placeholder.
-	// In MCP integration, the actual git diff is run via the MCP handler.
-	return fmt.Sprintf("# diff mode requires git context for %s\n# Use gleann_read with mode=diff via MCP", filepath.Base(filePath)), nil
+	// Check if git is available and if this directory is in a git worktree.
+	// Use a 3-second context deadline to avoid hanging the server.
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	checkCmd := exec.CommandContext(ctx, "git", "rev-parse", "--is-inside-work-tree")
+	checkCmd.Dir = dir
+	if err := checkCmd.Run(); err != nil {
+		return fmt.Sprintf("# diff mode requires git context for %s\n# This file is not inside a git repository or git is not installed.", base), nil
+	}
+
+	// Check if file is untracked in git.
+	statusCmd := exec.CommandContext(ctx, "git", "status", "--porcelain", "--", base)
+	statusCmd.Dir = dir
+	statusOut, _ := statusCmd.Output()
+	if strings.HasPrefix(string(statusOut), "??") {
+		// Untracked files have no diff history, so we show an explanation.
+		return fmt.Sprintf("# File %s is untracked in git.\n# Use full mode or track the file to see diffs.", base), nil
+	}
+
+	// Run git diff HEAD -- <base> to get both staged and unstaged differences.
+	diffCmd := exec.CommandContext(ctx, "git", "diff", "HEAD", "--", base)
+	diffCmd.Dir = dir
+	diffOut, err := diffCmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("git diff failed: %w", err)
+	}
+
+	diffStr := string(diffOut)
+	if trimmed := strings.TrimSpace(diffStr); trimmed == "" {
+		return fmt.Sprintf("# No changes detected in git for %s", base), nil
+	}
+
+	return diffStr, nil
 }
 
 // extractHighEntropy returns lines with high information density.
@@ -644,11 +675,12 @@ func extractReferences(filePath, content string) string {
 	return strings.Join(result, "\n")
 }
 
-// extractAggressive strips all comments, blank lines, and non-essential content.
+// extractAggressive strips all comments, blank lines, imports, and non-essential content.
 func extractAggressive(content string) string {
 	scanner := bufio.NewScanner(strings.NewReader(content))
 	var result []string
 	inBlockComment := false
+	inImportBlock := false
 
 	for scanner.Scan() {
 		line := scanner.Text()
@@ -677,6 +709,28 @@ func extractAggressive(content string) string {
 
 		// Skip doc comments
 		if strings.HasPrefix(trimmed, "///") || strings.HasPrefix(trimmed, "/**") {
+			continue
+		}
+
+		// Skip package declarations (Go-specific boilerplate)
+		if strings.HasPrefix(trimmed, "package ") {
+			continue
+		}
+
+		// Skip multi-line import blocks (Go-specific)
+		if trimmed == "import (" {
+			inImportBlock = true
+			continue
+		}
+		if inImportBlock {
+			if trimmed == ")" {
+				inImportBlock = false
+			}
+			continue
+		}
+
+		// Skip single-line imports (Go, Python, JS/TS)
+		if strings.HasPrefix(trimmed, "import ") || strings.HasPrefix(trimmed, "import \"") || strings.HasPrefix(trimmed, "from ") {
 			continue
 		}
 

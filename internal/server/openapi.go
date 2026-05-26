@@ -1173,7 +1173,7 @@ func (s *Server) openAPISpec() map[string]any {
 									"schema": map[string]any{
 										"type": "object",
 										"properties": map[string]any{
-											"results": map[string]any{
+											"items": map[string]any{
 												"type":  "array",
 												"items": map[string]any{"type": "object", "additionalProperties": true},
 											},
@@ -1202,7 +1202,8 @@ func (s *Server) openAPISpec() map[string]any {
 									"schema": map[string]any{
 										"type": "object",
 										"properties": map[string]any{
-											"loaded": map[string]any{"type": "integer", "description": "Number of packs now in registry"},
+											"reloaded": map[string]any{"type": "boolean", "description": "True if reload succeeded"},
+											"count":    map[string]any{"type": "integer", "description": "Number of packs now in registry"},
 										},
 									},
 								},

@@ -175,3 +175,27 @@ func TestStopIdempotent(t *testing.T) {
 	m.Stop()
 	m.Stop() // Should not panic.
 }
+
+func TestEvictionAge(t *testing.T) {
+	m := NewManager(1)
+	defer m.Stop()
+
+	// Default
+	if age := m.getEvictionAge(); age != 24*time.Hour {
+		t.Errorf("expected default 24h, got %v", age)
+	}
+
+	// Set explicitly
+	m.SetEvictionAge(6 * time.Hour)
+	if age := m.getEvictionAge(); age != 6*time.Hour {
+		t.Errorf("expected 6h, got %v", age)
+	}
+
+	// Env var fallback
+	m2 := NewManager(1)
+	defer m2.Stop()
+	t.Setenv("GLEANN_TASK_EVICTION_AGE_H", "12")
+	if age := m2.getEvictionAge(); age != 12*time.Hour {
+		t.Errorf("expected 12h from env var, got %v", age)
+	}
+}

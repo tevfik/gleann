@@ -64,12 +64,13 @@ These variables configure the REST API server (`gleann serve`).
 
 Rate-limited requests receive `429 Too Many Requests` with a `Retry-After: 1` header. Timed-out requests receive `504 Gateway Timeout`. The `/health` and `/metrics` endpoints bypass rate limiting. SSE streaming endpoints bypass the timeout middleware.
 
-## Memory Maintenance (Server Mode)
+## Background Tasks & Maintenance (Server Mode)
 
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `GLEANN_MAINTENANCE_ENABLED` | `true` | Enable background maintenance scheduler (`false` or `0` to disable) |
 | `GLEANN_MAINTENANCE_INTERVAL_H` | `24` | Hours between maintenance runs (promotes medium→long, prunes expired blocks) |
+| `GLEANN_TASK_EVICTION_AGE_H` | `24` | Hours before finished (completed/failed) background tasks are evicted from memory history |
 
 ## Sleep-Time Compute (Letta-inspired)
 
