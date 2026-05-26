@@ -244,6 +244,23 @@ Monitor and manage long-running background operations (indexing, memory consolid
 | GET | `/api/tasks/{id}` | Get task status by ID |
 | DELETE | `/api/tasks` | Cleanup completed/failed tasks older than 1 hour |
 
+### Knowledge Packs
+
+Domain-specific read-only datasets (crops, pests, regional facts, …) shipped as versioned YAML bundles
+and mounted at startup from `$GLEANN_PACKS_DIR` (default `<IndexDir>/packs`).
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/packs` | List all loaded packs (id, version, item count) |
+| GET | `/api/packs/{id}` | Get pack manifest (metadata, schema, license) |
+| GET | `/api/packs/{id}/data` | Return all items from the pack |
+| GET | `/api/packs/{id}/items/{slug}` | Fetch a single item by slug |
+| GET | `/api/packs/{id}/search?q=` | Full-text search inside the pack |
+| POST | `/api/packs/reload` | Re-scan the packs directory and reload manifests |
+
+Knowledge packs are immutable once loaded. To update a pack, drop the
+new version into the packs directory and call `POST /api/packs/reload`.
+
 ## Examples
 
 ### Search
