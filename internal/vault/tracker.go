@@ -42,11 +42,11 @@ func DefaultDBPath() string {
 
 // NewTracker initializes a new bbolt hash tracker.
 func NewTracker(dbPath string) (*Tracker, error) {
-	db, err := bbolt.Open(dbPath, 0644, &bbolt.Options{Timeout: 1 * time.Second})
+	db, err := bbolt.Open(dbPath, 0644, &bbolt.Options{Timeout: 5 * time.Second})
 	if err != nil {
 		// If it's an old SQLite database or corrupted, remove it and try again.
 		os.Remove(dbPath)
-		db, err = bbolt.Open(dbPath, 0644, &bbolt.Options{Timeout: 1 * time.Second})
+		db, err = bbolt.Open(dbPath, 0644, &bbolt.Options{Timeout: 5 * time.Second})
 		if err != nil {
 			return nil, fmt.Errorf("open bbolt after recreate: %w", err)
 		}

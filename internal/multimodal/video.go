@@ -207,3 +207,26 @@ func CleanupFrames(frames []ExtractedFrame) {
 		os.RemoveAll(dir)
 	}
 }
+
+// extractFirstFrame extracts a single frame from a video/animated-image file
+// and returns the temp file path of a PNG. Caller must os.Remove the result.
+// Returns an error if ffmpeg is not installed or the extraction fails.
+func extractFirstFrame(path string) (string, error) {
+	if _, err := exec.LookPath("ffmpeg"); err != nil {
+		return "", fmt.Errorf("ffmpeg not found")
+	}
+	tmp, err := os.CreateTemp("", "gleann-frame-*.png")
+	if err != nil {
+		return "", fmt.Errorf("temp file: %w", err)
+	}
+	out := tmp.Name()
+	tmp.Close()
+
+	// -frames:v 1 = grab one frame; -y = overwrite without prompt.
+	cmd := exec.Command("ffmpeg", "-y", "-i", path, "-frames:v", "1", out)
+	if combined, err := cmd.CombinedOutput(); err != nil {
+		os.Remove(out)
+		return "", fmt.Errorf("ffmpeg first-frame: %w\n%s", err, string(combined))
+	}
+	return out, nil
+}

@@ -117,6 +117,28 @@ Rate-limited requests receive `429 Too Many Requests` with a `Retry-After: 1` he
 |----------|---------|-------------|
 | `GLEANN_PLUGIN_OWNER` | — | Default GitHub owner for plugin downloads |
 
+## CLI ↔ Server Coordination
+
+When a `gleann serve` instance is running, the bbolt memory store holds an exclusive write lock that blocks other CLI invocations (`remember`, `forget`, `list`, `search`, `clear`, `add`, `stats`). To avoid this contention, those commands first probe a local server and, if reachable, route through its REST API instead of opening the bbolt file directly.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `GLEANN_REMOTE_ADDR` | `http://localhost:8080` | Base URL of a running `gleann serve` instance. Set to `off` (or empty) to disable REST auto-routing and always open the local bbolt store |
+
+When the auto-probe succeeds, affected commands print a `(via running server)` tag so it is obvious which path serviced the request.
+
+## Graph Storage Resilience
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `GLEANN_KUZU_AUTOREPAIR` | `1` (enabled) | When KuzuDB fails to open an existing on-disk database, automatically rename the corrupt directory to `<path>.corrupted-<unix-ts>` and recreate a fresh database. Set to `0` to disable auto-quarantine and surface the original open error instead. **Note**: quarantined data is retained on disk for manual recovery; nothing is deleted |
+
+## LLM Context Window
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `GLEANN_OLLAMA_NUM_CTX` | `32768` (only when `--no-limit` / `max_tokens=0`) | Force the `num_ctx` value sent to Ollama. When the user requests unbounded generation (`--no-limit`), Gleann widens the context window to avoid silent truncation of large RAG payloads. Set to a smaller value to cap VRAM usage; setting it in budgeted mode (`max_tokens>0`) also overrides the model default |
+
 ## Docker Example
 
 ```yaml

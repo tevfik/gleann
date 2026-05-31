@@ -43,6 +43,38 @@ type ChatConfig struct {
 // DefaultChatTimeout is the default HTTP timeout for LLM chat requests.
 const DefaultChatTimeout = 10 * time.Minute
 
+// DefaultOllamaContextWindow is the num_ctx used when --no-limit is in effect
+// (MaxTokens <= 0). The model's metadata may impose a smaller cap; Ollama
+// silently truncates in that case. Override via GLEANN_OLLAMA_NUM_CTX.
+const DefaultOllamaContextWindow = 32768
+
+// ollamaContextWindow returns the num_ctx to send to Ollama, or 0 to omit
+// the option entirely. When maxTokens > 0 the caller is in budgeted mode
+// and we leave num_ctx unset (model default). When the user asked for an
+// unlimited generation (--no-limit → maxTokens == 0) we widen the context
+// window so a large RAG payload does not silently truncate.
+func ollamaContextWindow(maxTokens int) int {
+	if maxTokens > 0 {
+		// Honour an explicit env override even in budgeted mode.
+		if v := os.Getenv("GLEANN_OLLAMA_NUM_CTX"); v != "" {
+			var n int
+			_, _ = fmt.Sscanf(v, "%d", &n)
+			if n > 0 {
+				return n
+			}
+		}
+		return 0
+	}
+	if v := os.Getenv("GLEANN_OLLAMA_NUM_CTX"); v != "" {
+		var n int
+		_, _ = fmt.Sscanf(v, "%d", &n)
+		if n > 0 {
+			return n
+		}
+	}
+	return DefaultOllamaContextWindow
+}
+
 // DefaultChatConfig returns default chat configuration.
 func DefaultChatConfig() ChatConfig {
 	return ChatConfig{
@@ -627,6 +659,9 @@ func (c *LeannChat) chatOllama(ctx context.Context, messages []ChatMessage) (str
 	if c.config.MaxTokens > 0 {
 		reqBody.Options["num_predict"] = c.config.MaxTokens
 	}
+	if ctxWin := ollamaContextWindow(c.config.MaxTokens); ctxWin > 0 {
+		reqBody.Options["num_ctx"] = ctxWin
+	}
 
 	body, err := json.Marshal(reqBody)
 	if err != nil {
@@ -970,6 +1005,9 @@ func (c *LeannChat) chatOllamaStream(ctx context.Context, messages []ChatMessage
 	}
 	if c.config.MaxTokens > 0 {
 		reqBody.Options["num_predict"] = c.config.MaxTokens
+	}
+	if ctxWin := ollamaContextWindow(c.config.MaxTokens); ctxWin > 0 {
+		reqBody.Options["num_ctx"] = ctxWin
 	}
 
 	body, err := json.Marshal(reqBody)

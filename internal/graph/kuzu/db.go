@@ -13,7 +13,10 @@ package kuzu
 
 import (
 	"fmt"
+	"log"
+	"os"
 	"path/filepath"
+	"time"
 
 	kuzu "github.com/kuzudb/go-kuzu"
 )
@@ -50,21 +53,52 @@ func ExecOn(conn *kuzu.Connection, cypher string) error {
 
 // Open opens (or creates) a KuzuDB database at the given directory path.
 // Pass an empty string to use in-memory mode.
+//
+// Corrupted on-disk databases are automatically quarantined (renamed to
+// <dir>.corrupted-<unix-ts>) and a fresh database is created in their place,
+// unless GLEANN_KUZU_AUTOREPAIR=0 is set. This recovers from upstream
+// crashes that leave behind a half-written WAL/header.
 func Open(dir string) (*DB, error) {
-	var (
-		db  *kuzu.Database
-		err error
-	)
 	if dir == "" {
-		db, err = kuzu.OpenInMemoryDatabase(kuzu.DefaultSystemConfig())
-	} else {
-		dbPath := filepath.Clean(dir)
-		db, err = kuzu.OpenDatabase(dbPath, kuzu.DefaultSystemConfig())
-	}
-	if err != nil {
-		return nil, fmt.Errorf("kuzu open: %w", err)
+		db, err := kuzu.OpenInMemoryDatabase(kuzu.DefaultSystemConfig())
+		if err != nil {
+			return nil, fmt.Errorf("kuzu open: %w", err)
+		}
+		return finishOpen(db)
 	}
 
+	dbPath := filepath.Clean(dir)
+	db, err := kuzu.OpenDatabase(dbPath, kuzu.DefaultSystemConfig())
+	if err == nil {
+		return finishOpen(db)
+	}
+	openErr := fmt.Errorf("kuzu open: %w", err)
+
+	// Best-effort auto-repair: only attempt when the directory actually
+	// exists (so a missing-path error is surfaced as-is) and the user has
+	// not opted out.
+	if os.Getenv("GLEANN_KUZU_AUTOREPAIR") == "0" {
+		return nil, openErr
+	}
+	if info, statErr := os.Stat(dbPath); statErr != nil || !info.IsDir() {
+		return nil, openErr
+	}
+
+	quarantine := fmt.Sprintf("%s.corrupted-%d", dbPath, time.Now().Unix())
+	log.Printf("[WARN] kuzu: open failed (%v); quarantining %s -> %s and re-creating", err, dbPath, quarantine)
+	if renameErr := os.Rename(dbPath, quarantine); renameErr != nil {
+		return nil, fmt.Errorf("%w; auto-repair failed: %v", openErr, renameErr)
+	}
+	db, err = kuzu.OpenDatabase(dbPath, kuzu.DefaultSystemConfig())
+	if err != nil {
+		return nil, fmt.Errorf("kuzu open after quarantine: %w", err)
+	}
+	return finishOpen(db)
+}
+
+// finishOpen attaches a connection and initialises the schema. Called from
+// every Open path so the in-memory and on-disk branches stay symmetric.
+func finishOpen(db *kuzu.Database) (*DB, error) {
 	conn, err := kuzu.OpenConnection(db)
 	if err != nil {
 		db.Close()

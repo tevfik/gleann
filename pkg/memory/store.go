@@ -43,7 +43,7 @@ func OpenStore(path string) (*Store, error) {
 		return nil, fmt.Errorf("mkdir %s: %w", dir, err)
 	}
 
-	db, err := bolt.Open(path, 0o600, &bolt.Options{Timeout: 2 * time.Second})
+	db, err := bolt.Open(path, 0o600, &bolt.Options{Timeout: 5 * time.Second})
 	if err != nil {
 		return nil, fmt.Errorf("open memory db: %w", err)
 	}
