@@ -70,6 +70,7 @@ func TestPluginIntegration_AudioVisionAutoWire(t *testing.T) {
 	// --- write a temp registry --------------------------------------
 	tmpHome := t.TempDir()
 	t.Setenv("HOME", tmpHome)
+	t.Setenv("USERPROFILE", tmpHome)
 	t.Setenv("GLEANN_AUDIO_PLUGIN_URL", "")
 	t.Setenv("GLEANN_VISION_PLUGIN_URL", "")
 
