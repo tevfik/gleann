@@ -34,6 +34,15 @@ func TrainPQ(vectors [][]float32, m, k int) (*PQCodebook, error) {
 		return nil, fmt.Errorf("no training vectors")
 	}
 	dims := len(vectors[0])
+	if m <= 0 {
+		return nil, fmt.Errorf("m (number of sub-quantizers) must be > 0, got %d", m)
+	}
+	if k <= 0 {
+		return nil, fmt.Errorf("k (centroids per sub-quantizer) must be > 0, got %d", k)
+	}
+	if dims == 0 {
+		return nil, fmt.Errorf("vector dimensionality is 0")
+	}
 	if dims%m != 0 {
 		return nil, fmt.Errorf("dims (%d) must be divisible by m (%d)", dims, m)
 	}
