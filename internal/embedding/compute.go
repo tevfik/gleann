@@ -233,12 +233,24 @@ func (c *Computer) Compute(ctx context.Context, texts []string) ([][]float32, er
 							single, singleErr = c.computeOpenAI(ctx, []string{truncated})
 						case ProviderGemini:
 							single, singleErr = c.computeGemini(ctx, []string{truncated})
+						case ProviderNative:
+							single, singleErr = c.computeNative(ctx, []string{truncated})
+						default:
+							singleErr = fmt.Errorf("unsupported provider: %s", c.provider)
 						}
 
 						if singleErr != nil {
 							errOnce.Do(func() {
 								errMu.Lock()
 								firstErr = fmt.Errorf("compute text %d (retry): %w", startIdx+j, singleErr)
+								errMu.Unlock()
+							})
+							return
+						}
+						if len(single) == 0 {
+							errOnce.Do(func() {
+								errMu.Lock()
+								firstErr = fmt.Errorf("compute text %d (retry): provider %q returned 0 embeddings", startIdx+j, c.provider)
 								errMu.Unlock()
 							})
 							return

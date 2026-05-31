@@ -119,10 +119,13 @@ func (p *Processor) ProcessDirectory(dir string, skipExts []string, progressFn f
 				doneMu.Lock()
 				doneCount++
 				cur := doneCount
-				doneMu.Unlock()
 				if progressFn != nil {
+					// Invoke under the lock to keep callbacks serial and
+					// race-free: tests (and stdout) observe a single
+					// monotonically increasing `cur` without overlap.
 					progressFn(cur, len(files), j.path)
 				}
+				doneMu.Unlock()
 				if result.Error != nil {
 					fmt.Fprintf(os.Stderr, "warning: multimodal processing failed for %s: %v\n", j.path, result.Error)
 					results <- out{idx: j.idx, skip: true}

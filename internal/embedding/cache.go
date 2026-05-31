@@ -204,6 +204,11 @@ func cacheKey(model, text string) string {
 
 // saveToDisk writes a float32 vector to a cache file.
 func (c *CachedComputer) saveToDisk(key string, vec []float32) error {
+	if len(vec) == 0 {
+		// Refuse to persist empty vectors — they would poison the cache
+		// and cause cryptic zero-dim panics on the next run.
+		return fmt.Errorf("refusing to cache empty vector for key %s", key)
+	}
 	path := filepath.Join(c.dir, key+".bin")
 	buf := make([]byte, len(vec)*4)
 	for i, v := range vec {
@@ -218,6 +223,13 @@ func (c *CachedComputer) loadFromDisk(key string) ([]float32, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
+	}
+	if len(data) == 0 {
+		// Empty / truncated cache entry — pretend it doesn't exist so the
+		// caller recomputes. A previous broken run could have written zero
+		// bytes which would otherwise surface as zero-dim vectors and
+		// panic the backend.
+		return nil, fmt.Errorf("empty cache entry: %s", key)
 	}
 	if len(data)%4 != 0 {
 		return nil, fmt.Errorf("corrupt cache entry: %s", key)

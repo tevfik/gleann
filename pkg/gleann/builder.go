@@ -76,6 +76,22 @@ func (b *LeannBuilder) Build(ctx context.Context, name string, items []Item) err
 		return fmt.Errorf("compute embeddings: %w", err)
 	}
 
+	// Validate embeddings before handing off to the backend. Empty or
+	// zero-dimensional rows would otherwise surface as cryptic divide-by-zero
+	// panics inside PQ / graph construction (Bug #12).
+	if len(embeddings) == 0 {
+		return fmt.Errorf("embedder returned 0 vectors for %d texts", len(texts))
+	}
+	if len(embeddings[0]) == 0 {
+		return fmt.Errorf("embedder returned zero-dimensional vectors (model=%q); check provider configuration", b.embedder.ModelName())
+	}
+	expectedDim := len(embeddings[0])
+	for i, vec := range embeddings {
+		if len(vec) != expectedDim {
+			return fmt.Errorf("embedding row %d has %d dims, expected %d (text len=%d)", i, len(vec), expectedDim, len(texts[i]))
+		}
+	}
+
 	// Build index.
 	indexData, err := b.backend.Build(ctx, embeddings)
 	if err != nil {
