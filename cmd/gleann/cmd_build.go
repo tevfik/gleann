@@ -193,6 +193,10 @@ func readDocuments(dir string, chunkSize, chunkOverlap int, tracker *vault.Track
 	pluginManager, _ := gleann.NewPluginManager()
 	if pluginManager != nil {
 		defer pluginManager.Close()
+		// Auto-populate multimodal plugin URLs from the registry so that
+		// installing gleann-plugin-sound / gleann-plugin-vision is enough
+		// to enable transcription / vision enrichment without env vars.
+		pluginManager.ResolveMultimodalPluginEnv()
 	}
 
 	// Native extractor: pure-Go fallback for PDF, DOCX, XLSX, PPTX, CSV, HTML.
@@ -539,6 +543,7 @@ func readDocumentsForFiles(dir string, filePaths []string, chunkSize, chunkOverl
 	pluginManager, _ := gleann.NewPluginManager()
 	if pluginManager != nil {
 		defer pluginManager.Close()
+		pluginManager.ResolveMultimodalPluginEnv()
 	}
 	nativeExtractor := gleann.NewNativeExtractor()
 	ignoreMatcher := gleannignore.Load(dir)

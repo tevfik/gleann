@@ -12,17 +12,21 @@ import (
 
 // FrameExtractionConfig controls how frames are sampled from a video.
 type FrameExtractionConfig struct {
-	MaxFrames int     // Maximum number of frames to extract (default: 8).
-	FPS       float64 // Frames per second to sample (0 = auto-calculate from MaxFrames).
-	Width     int     // Resize width (0 = original).
-	Quality   int     // JPEG quality 1-100 (default: 85).
+	MaxFrames      int     // Maximum number of frames to extract (default: 8).
+	FPS            float64 // Frames per second to sample (0 = auto-calculate from MaxFrames).
+	Width          int     // Resize width (0 = original).
+	Quality        int     // JPEG quality 1-100 (default: 85).
+	SceneThreshold float64 // Bug #5: 0 = fixed-FPS, >0 = ffmpeg scene-change filter (0.3–0.5 typical).
 }
 
 // DefaultFrameConfig returns sensible defaults for frame extraction.
+// SceneThreshold defaults to 0.4 so meaningful cuts are preferred over
+// uniform sampling; set to 0 to revert to the legacy fixed-FPS behaviour.
 func DefaultFrameConfig() FrameExtractionConfig {
 	return FrameExtractionConfig{
-		MaxFrames: 8,
-		Quality:   85,
+		MaxFrames:      8,
+		Quality:        85,
+		SceneThreshold: 0.4,
 	}
 }
 
@@ -84,16 +88,40 @@ func ExtractFrames(videoPath string, cfg FrameExtractionConfig) ([]ExtractedFram
 
 	// Build ffmpeg command.
 	pattern := filepath.Join(outDir, "frame_%04d.jpg")
-	args := []string{
-		"-i", videoPath,
-		"-vf", fmt.Sprintf("fps=%.4f", fps),
-		"-q:v", strconv.Itoa((100 - cfg.Quality) * 31 / 100), // ffmpeg quality: 2=best, 31=worst
-		"-frames:v", strconv.Itoa(cfg.MaxFrames),
+
+	// Bug #5: prefer scene-change detection when configured. The vsync=vfr
+	// + select='gt(scene\,th)' pair yields visually distinct frames; we
+	// still cap with -frames:v to honour MaxFrames. If the source is too
+	// short or has no scene cuts, ffmpeg emits zero frames and we fall
+	// back to fixed-FPS sampling below.
+	var args []string
+	var usingScene bool
+	if cfg.SceneThreshold > 0 {
+		usingScene = true
+		filter := fmt.Sprintf("select='gt(scene\\,%.3f)'", cfg.SceneThreshold)
+		if cfg.Width > 0 {
+			filter = fmt.Sprintf("%s,scale=%d:-1", filter, cfg.Width)
+		}
+		args = []string{
+			"-i", videoPath,
+			"-vf", filter,
+			"-vsync", "vfr",
+			"-q:v", strconv.Itoa((100 - cfg.Quality) * 31 / 100),
+			"-frames:v", strconv.Itoa(cfg.MaxFrames),
+			pattern,
+		}
+	} else {
+		args = []string{
+			"-i", videoPath,
+			"-vf", fmt.Sprintf("fps=%.4f", fps),
+			"-q:v", strconv.Itoa((100 - cfg.Quality) * 31 / 100), // ffmpeg quality: 2=best, 31=worst
+			"-frames:v", strconv.Itoa(cfg.MaxFrames),
+		}
+		if cfg.Width > 0 {
+			args = append(args[:2], append([]string{"-vf", fmt.Sprintf("fps=%.4f,scale=%d:-1", fps, cfg.Width)}, args[4:]...)...)
+		}
+		args = append(args, pattern)
 	}
-	if cfg.Width > 0 {
-		args = append(args, "-vf", fmt.Sprintf("fps=%.4f,scale=%d:-1", fps, cfg.Width))
-	}
-	args = append(args, pattern)
 
 	cmd := exec.Command("ffmpeg", args...)
 	if out, err := cmd.CombinedOutput(); err != nil {
@@ -106,11 +134,22 @@ func ExtractFrames(videoPath string, cfg FrameExtractionConfig) ([]ExtractedFram
 		return nil, fmt.Errorf("read output dir: %w", err)
 	}
 
-	var frames []ExtractedFrame
-	for i, entry := range entries {
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".jpg") {
-			continue
+	var jpegEntries []os.DirEntry
+	for _, e := range entries {
+		if !e.IsDir() && strings.HasSuffix(e.Name(), ".jpg") {
+			jpegEntries = append(jpegEntries, e)
 		}
+	}
+
+	// Scene mode produced nothing useful — retry once with fixed FPS so we
+	// never silently return an empty result for users on static footage.
+	if usingScene && len(jpegEntries) == 0 {
+		cfg.SceneThreshold = 0
+		return ExtractFrames(videoPath, cfg)
+	}
+
+	var frames []ExtractedFrame
+	for i, entry := range jpegEntries {
 		timestamp := float64(i) / fps
 		frames = append(frames, ExtractedFrame{
 			Path:      filepath.Join(outDir, entry.Name()),

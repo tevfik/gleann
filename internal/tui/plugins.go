@@ -61,32 +61,40 @@ type pluginInfo struct {
 // knownPlugins is the built-in catalog of available plugins.
 var knownPlugins = []pluginInfo{
 	{
-		Name:               "gleann-docs",
+		Name:               "gleann-plugin-docs",
 		Icon:               "📄",
-		Description:        "Document extraction (PDF, DOCX, XLSX, PPTX)",
+		Description:        "Document extraction via markitdown/docling (fast, broad format coverage). Best default for mixed corpora.",
 		RepoURL:            "https://github.com/tevfik/gleann-plugin-docs",
 		Language:           "python (markitdown, docling)",
 		Extensions:         []string{".pdf", ".docx", ".xlsx", ".pptx", ".csv"},
 		RequiresMarkitdown: true,
 	},
 	{
-		Name:        "gleann-marker",
+		Name:        "gleann-plugin-marker",
 		Icon:        "🖊️",
-		Description: "High-accuracy extraction via marker-pdf (PDF, DOCX, images)",
+		Description: "High-accuracy PDF/image extraction via marker-pdf + surya OCR. Heavier than docs; pick it for table-rich PDFs and scanned documents.",
 		RepoURL:     "https://github.com/tevfik/gleann-plugin-marker",
 		Language:    "python (marker-pdf, surya OCR)",
 		Extensions:  []string{".pdf", ".docx", ".xlsx", ".pptx", ".epub", ".html", ".png", ".jpg"},
 	},
 	{
-		Name:        "gleann-sound",
+		Name:        "gleann-plugin-sound",
 		Icon:        "🔊",
-		Description: "Speech-to-text extraction (WAV, MP3, FLAC)",
+		Description: "Speech-to-text via whisper.cpp / ONNX. Auto-discovered by the multimodal pipeline.",
 		RepoURL:     "https://github.com/tevfik/gleann-plugin-sound",
-		Language:    "go",
-		Extensions:  []string{".wav", ".mp3", ".flac", ".ogg"},
+		Language:    "go (whisper.cpp / onnxruntime)",
+		Extensions:  []string{".wav", ".mp3", ".flac", ".ogg", ".m4a", ".webm", ".mp4", ".mkv"},
 		HasSettings: true,
-		// The binary is named gleann-sound (matches the repo root binary).
-		SettingsCmd: []string{"gleann-sound", "tui"},
+		// The installed binary is named gleann-plugin-sound.
+		SettingsCmd: []string{"gleann-plugin-sound", "tui"},
+	},
+	{
+		Name:        "gleann-plugin-vision",
+		Icon:        "👁️",
+		Description: "Computer-vision enrichment: perceptual hash (CLIP slot), OCR via Tesseract, EXIF, lexicon entities. Auto-discovered by the multimodal pipeline.",
+		RepoURL:     "https://github.com/tevfik/gleann-plugin-vision",
+		Language:    "go (tesseract optional, exiftool optional)",
+		Extensions:  []string{".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".tiff"},
 	},
 }
 
@@ -171,6 +179,7 @@ type PluginModel struct {
 	statuses      []pluginStatus
 	markitdown    markitdownStatus
 	registry      *gleann.PluginRegistry
+	manager       *gleann.PluginManager
 	cursor        int
 	state         pluginScreenState
 	width         int
@@ -200,6 +209,9 @@ func (m *PluginModel) refreshStatuses() {
 	} else {
 		m.registry = &gleann.PluginRegistry{}
 	}
+	if mgr, err := gleann.NewPluginManager(); err == nil {
+		m.manager = mgr
+	}
 
 	for i, info := range m.plugins {
 		m.statuses[i] = m.checkPluginStatus(info)
@@ -213,21 +225,46 @@ func (m *PluginModel) checkPluginStatus(info pluginInfo) pluginStatus {
 		return statusNotInstalled
 	}
 
+	// Accept legacy short-form names (e.g. "gleann-sound" → "gleann-plugin-sound")
+	// so plugins installed before the v2 rename are still recognised.
+	aliases := map[string][]string{
+		"gleann-plugin-docs":   {"gleann-docs"},
+		"gleann-plugin-marker": {"gleann-marker"},
+		"gleann-plugin-sound":  {"gleann-sound"},
+		"gleann-plugin-vision": {"gleann-vision"},
+	}
+	candidates := append([]string{info.Name}, aliases[info.Name]...)
+
 	for _, p := range m.registry.Plugins {
-		if p.Name == info.Name {
-			// Check if it's running (health check).
-			if p.URL != "" {
-				return statusInstalled
+		matched := false
+		for _, c := range candidates {
+			if p.Name == c {
+				matched = true
+				break
 			}
-			return statusInstalled
 		}
+		if !matched {
+			continue
+		}
+		if p.URL != "" {
+			if m.manager != nil {
+				if h, err := m.manager.PingPlugin(&p); err == nil && h != nil {
+					if h.Ready || h.Status == "ok" {
+						return statusRunning
+					}
+				}
+			}
+		}
+		return statusInstalled
 	}
 
 	// Check if the plugin dir exists in ~/.gleann/plugins/.
 	home, _ := os.UserHomeDir()
-	pluginDir := filepath.Join(home, ".gleann", "plugins", info.Name)
-	if _, err := os.Stat(pluginDir); err == nil {
-		return statusInstalled
+	for _, c := range candidates {
+		pluginDir := filepath.Join(home, ".gleann", "plugins", c)
+		if _, err := os.Stat(pluginDir); err == nil {
+			return statusInstalled
+		}
 	}
 
 	return statusNotInstalled

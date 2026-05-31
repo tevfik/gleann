@@ -43,6 +43,8 @@ func main() {
 		cmdTUI()
 	case "install":
 		cmdInstall(args)
+	case "plugin", "plugins":
+		cmdPlugin(args)
 	case "setup":
 		cmdSetup(args)
 	case "quickstart", "go":
