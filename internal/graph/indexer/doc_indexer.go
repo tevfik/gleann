@@ -104,6 +104,15 @@ func (di *DocIndexer) WriteGraphBatch(docs []*DocGraphInput) error {
 		}
 	}
 
+	// Phase 2b: dedupe by primary key. The same vpath/heading-id can appear
+	// twice in a single batch when (a) the caller passes the same path
+	// twice, or (b) folder extraction emits the parent for every document.
+	// Kuzu's COPY FROM enforces PRIMARY KEY uniqueness and aborts the whole
+	// batch on the first duplicate, so we MUST collapse here.
+	allFolders = dedupeFolders(allFolders)
+	allDocs = dedupeDocs(allDocs)
+	allHeadings = dedupeHeadings(allHeadings)
+
 	// Phase 3: CSV bulk load.
 	doCopy := func(tableName string, writeFunc func(p string) error) error {
 		tmp, err := os.CreateTemp("", "kuzu_doc_batch_"+tableName+"_*.csv")
@@ -249,4 +258,61 @@ func getInt64(m map[string]any, key string) int64 {
 		}
 	}
 	return 0
+}
+
+// --- dedupe helpers (PRIMARY KEY uniqueness for Kuzu COPY FROM) ---
+
+// dedupeFolders removes duplicate Folder nodes by VPath, keeping the first
+// occurrence. Folder extraction can legitimately repeat the same parent path
+// across many sibling documents in a single batch.
+func dedupeFolders(in []kuzu.FolderNode) []kuzu.FolderNode {
+	if len(in) < 2 {
+		return in
+	}
+	seen := make(map[string]struct{}, len(in))
+	out := make([]kuzu.FolderNode, 0, len(in))
+	for _, n := range in {
+		if _, ok := seen[n.VPath]; ok {
+			continue
+		}
+		seen[n.VPath] = struct{}{}
+		out = append(out, n)
+	}
+	return out
+}
+
+// dedupeDocs removes duplicate Document nodes by VPath. Without this, indexing
+// the same path twice in one batch — or two callers stacking work on the same
+// vpath — would abort the whole COPY FROM with a duplicate-primary-key error.
+func dedupeDocs(in []kuzu.DocumentNode) []kuzu.DocumentNode {
+	if len(in) < 2 {
+		return in
+	}
+	seen := make(map[string]struct{}, len(in))
+	out := make([]kuzu.DocumentNode, 0, len(in))
+	for _, n := range in {
+		if _, ok := seen[n.VPath]; ok {
+			continue
+		}
+		seen[n.VPath] = struct{}{}
+		out = append(out, n)
+	}
+	return out
+}
+
+// dedupeHeadings removes duplicate Heading nodes by ID.
+func dedupeHeadings(in []kuzu.HeadingNode) []kuzu.HeadingNode {
+	if len(in) < 2 {
+		return in
+	}
+	seen := make(map[string]struct{}, len(in))
+	out := make([]kuzu.HeadingNode, 0, len(in))
+	for _, n := range in {
+		if _, ok := seen[n.ID]; ok {
+			continue
+		}
+		seen[n.ID] = struct{}{}
+		out = append(out, n)
+	}
+	return out
 }

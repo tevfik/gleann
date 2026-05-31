@@ -14,6 +14,13 @@ func isOutputTTY() bool {
 	return isatty.IsTerminal(os.Stdout.Fd()) || isatty.IsCygwinTerminal(os.Stdout.Fd())
 }
 
+// isInputTTY returns true if stdin is connected to a terminal.
+// Interactive subcommands (gleann tui, setup wizard) require both stdin and
+// stdout to be TTYs — bubbletea cannot allocate a raw terminal otherwise.
+func isInputTTY() bool {
+	return isatty.IsTerminal(os.Stdin.Fd()) || isatty.IsCygwinTerminal(os.Stdin.Fd())
+}
+
 // stderrf prints to stderr unless --quiet is set.
 func stderrf(args []string, format string, a ...any) {
 	if hasFlag(args, "--quiet") {

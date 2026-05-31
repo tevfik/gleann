@@ -196,8 +196,24 @@ func (p *Processor) ProcessFile(path string) ProcessResult {
 			CleanupFrames(analysis.Frames)
 			return result
 		}
-		// ffmpeg not available — fall through to naive base64 (images-only models
-		// won't handle raw video, but some models accept it).
+		// ffmpeg not available — return a clean error instead of sending raw
+		// video bytes to a vision-only model (which would return Ollama 500
+		// "unknown format" and waste a 120s timeout).
+		result.Error = fmt.Errorf("video indexing requires ffmpeg (%w); install ffmpeg or pass --skip-multimodal to ignore videos", err)
+		return result
+	}
+
+	// Animated GIFs are technically MediaTypeImage but Ollama's vision
+	// models accept only static frames. Try to extract the first frame via
+	// ffmpeg; if ffmpeg is missing, return a graceful error.
+	if result.MediaType == MediaTypeImage && strings.EqualFold(filepath.Ext(path), ".gif") {
+		if frame, err := extractFirstFrame(path); err == nil {
+			defer os.Remove(frame)
+			path = frame // process the single-frame PNG below
+		} else {
+			result.Error = fmt.Errorf("animated GIF indexing requires ffmpeg (%w); install ffmpeg or convert to PNG/JPG", err)
+			return result
+		}
 	}
 
 	// Read file and base64 encode it.

@@ -133,9 +133,12 @@ func openMemoryManager() *memory.Manager {
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error opening memory store: %v\n", err)
 		if strings.Contains(err.Error(), "timeout") {
-			fmt.Fprintln(os.Stderr, "hint: is 'gleann serve' running? It holds the memory database lock.")
-			fmt.Fprintln(os.Stderr, "      Use the REST API instead: http://localhost:8080/api/blocks")
-			fmt.Fprintln(os.Stderr, "      Or stop the server:  pkill -f 'gleann serve'")
+			fmt.Fprintln(os.Stderr, "hint: another process is holding the memory database lock.")
+			fmt.Fprintln(os.Stderr, "      Common cause: 'gleann serve' is running. Most memory subcommands")
+			fmt.Fprintln(os.Stderr, "      auto-route through the running server's REST API; if you see this")
+			fmt.Fprintln(os.Stderr, "      message, check it is reachable: curl http://localhost:8080/health")
+			fmt.Fprintln(os.Stderr, "      (override the discovery URL with GLEANN_REMOTE_ADDR=<url>, or set")
+			fmt.Fprintln(os.Stderr, "      GLEANN_REMOTE_ADDR=off to force direct bbolt access).")
 		}
 		os.Exit(1)
 	}
@@ -176,6 +179,20 @@ func cmdMemoryRemember(args []string) {
 		os.Exit(1)
 	}
 
+	// Prefer running server (avoids bbolt lock collision with `gleann serve`).
+	if rc := remoteMemoryClient(); rc != nil {
+		if label == "" {
+			label = "note"
+		}
+		block, err := rc.Add(memory.TierLong, label, content, tags)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error (remote): %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("✅ Remembered [%s]: %s  (via running server)\n", block.ID[:8], truncateStr(content, 80))
+		return
+	}
+
 	mgr := openMemoryManager()
 	defer mgr.Close()
 
@@ -205,6 +222,16 @@ func cmdMemoryForget(args []string) {
 
 	query := strings.Join(args, " ")
 
+	if rc := remoteMemoryClient(); rc != nil {
+		count, err := rc.Forget(query)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error (remote): %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("🗑  Forgot %d memory block(s) matching %q  (via running server)\n", count, query)
+		return
+	}
+
 	mgr := openMemoryManager()
 	defer mgr.Close()
 
@@ -230,10 +257,15 @@ func cmdMemoryList(args []string) {
 		tier = t
 	}
 
-	mgr := openMemoryManager()
-	defer mgr.Close()
-
-	blocks, err := mgr.List(tier)
+	var blocks []memory.Block
+	var err error
+	if rc := remoteMemoryClient(); rc != nil {
+		blocks, err = rc.List(tier)
+	} else {
+		mgr := openMemoryManager()
+		defer mgr.Close()
+		blocks, err = mgr.List(tier)
+	}
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
@@ -280,10 +312,15 @@ func cmdMemorySearch(args []string) {
 	query := strings.Join(args, " ")
 	asJSON := hasFlag(args, "--json")
 
-	mgr := openMemoryManager()
-	defer mgr.Close()
-
-	blocks, err := mgr.Search(query)
+	var blocks []memory.Block
+	var err error
+	if rc := remoteMemoryClient(); rc != nil {
+		blocks, err = rc.Search(query)
+	} else {
+		mgr := openMemoryManager()
+		defer mgr.Close()
+		blocks, err = mgr.Search(query)
+	}
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
@@ -310,15 +347,34 @@ func cmdMemorySearch(args []string) {
 }
 
 func cmdMemoryClear(args []string) {
-	mgr := openMemoryManager()
-	defer mgr.Close()
-
+	var tier memory.Tier
 	if tierStr := getFlag(args, "--tier"); tierStr != "" {
-		tier, err := memory.ParseTier(tierStr)
+		t, err := memory.ParseTier(tierStr)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 			os.Exit(1)
 		}
+		tier = t
+	}
+
+	if rc := remoteMemoryClient(); rc != nil {
+		count, err := rc.Clear(tier)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error (remote): %v\n", err)
+			os.Exit(1)
+		}
+		if tier != "" {
+			fmt.Printf("🗑  Cleared %d memory block(s) from tier %q  (via running server)\n", count, tier)
+		} else {
+			fmt.Printf("🗑  Cleared %d memory block(s) from all tiers  (via running server)\n", count)
+		}
+		return
+	}
+
+	mgr := openMemoryManager()
+	defer mgr.Close()
+
+	if tier != "" {
 		count, err := mgr.Clear(tier)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
@@ -375,6 +431,16 @@ func cmdMemoryAdd(args []string) {
 		os.Exit(1)
 	}
 
+	if rc := remoteMemoryClient(); rc != nil {
+		block, err := rc.Add(tier, label, content, tags)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error (remote): %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("✅ Added to %s [%s]: %s  (via running server)\n", tier, block.ID[:8], truncateStr(content, 80))
+		return
+	}
+
 	mgr := openMemoryManager()
 	defer mgr.Close()
 
@@ -388,6 +454,21 @@ func cmdMemoryAdd(args []string) {
 }
 
 func cmdMemoryStats() {
+	if rc := remoteMemoryClient(); rc != nil {
+		stats, err := rc.Stats()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error (remote): %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Println("🧠 Memory Statistics (via running server):")
+		fmt.Printf("  Short-term:  %d blocks (in-memory)\n", stats.ShortTermCount)
+		fmt.Printf("  Medium-term: %d blocks (BBolt)\n", stats.MediumTermCount)
+		fmt.Printf("  Long-term:   %d blocks (BBolt)\n", stats.LongTermCount)
+		fmt.Printf("  Total:       %d blocks\n", stats.TotalCount)
+		fmt.Printf("  Disk size:   %s\n", formatMemSize(stats.DiskSizeBytes))
+		return
+	}
+
 	mgr := openMemoryManager()
 	defer mgr.Close()
 

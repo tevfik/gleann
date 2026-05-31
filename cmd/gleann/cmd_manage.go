@@ -87,6 +87,17 @@ func cmdRemove(args []string) {
 }
 
 func cmdTUI() {
+	// bubbletea needs an interactive terminal on BOTH stdin and stdout.
+	// Without this guard the program panics or produces unreadable output
+	// in non-TTY contexts (cron, CI, `gleann tui | cat`, `TERM=` exports).
+	if !isInputTTY() || !isOutputTTY() {
+		fmt.Fprintln(os.Stderr, "gleann tui requires an interactive terminal (stdin and stdout must be a TTY).")
+		fmt.Fprintln(os.Stderr, "If you are running in CI or over a pipe, use these non-interactive commands instead:")
+		fmt.Fprintln(os.Stderr, "  gleann setup --auto              # zero-prompt setup")
+		fmt.Fprintln(os.Stderr, "  gleann ask <index> \"question\"   # one-shot Q&A")
+		fmt.Fprintln(os.Stderr, "  gleann serve                     # REST API + Swagger UI")
+		os.Exit(1)
+	}
 	if err := tui.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
