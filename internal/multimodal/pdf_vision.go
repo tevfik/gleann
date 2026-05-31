@@ -2,9 +2,12 @@
 package multimodal
 
 import (
+	"bytes"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
+	"mime/multipart"
 	"net/http"
 	"os"
 	"os/exec"
@@ -16,17 +19,19 @@ import (
 
 // PDFVisionConfig controls the PDF vision pipeline.
 type PDFVisionConfig struct {
-	DPI       int  // Render DPI for PDF pages (default: 150).
-	MaxPages  int  // Max pages to process (0 = all).
-	UseMarker bool // Try gleann-plugin-marker first, VLM fallback for tables/charts.
+	DPI        int  // Render DPI for PDF pages (default: 150).
+	MaxPages   int  // Max pages to process (0 = all).
+	UseMarker  bool // Try gleann-plugin-marker first, VLM fallback for tables/charts.
+	MarkerOnly bool // Bug #6: when marker returns text for a page, skip the VLM entirely.
 }
 
 // DefaultPDFConfig returns sensible defaults.
 func DefaultPDFConfig() PDFVisionConfig {
 	return PDFVisionConfig{
-		DPI:       150,
-		MaxPages:  0,
-		UseMarker: true,
+		DPI:        150,
+		MaxPages:   0,
+		UseMarker:  true,
+		MarkerOnly: os.Getenv("GLEANN_PDF_MARKER_ONLY") == "1",
 	}
 }
 
@@ -100,6 +105,14 @@ func (p *Processor) AnalyzePDF(pdfPath string, cfg PDFVisionConfig) (*PDFAnalysi
 		// Include marker text if available.
 		if text, ok := markerPages[pageNum]; ok {
 			result.MarkerText = text
+			// Bug #6: when marker covers the page, the VLM round-trip is
+			// pure waste — the description fields are populated from the
+			// marker text and we skip the Ollama call entirely.
+			if cfg.MarkerOnly && strings.TrimSpace(text) != "" {
+				result.Description = text
+				analysis.Pages = append(analysis.Pages, result)
+				continue
+			}
 		}
 
 		// Send page image to VLM for analysis.
@@ -253,9 +266,17 @@ func collectPageImages(dir string) ([]string, error) {
 // tryMarkerExtraction attempts to get text from the gleann-plugin-marker.
 // Returns a map of page_number -> text. Non-blocking: returns nil on failure.
 func tryMarkerExtraction(pdfPath string) map[int]string {
-	// Check if marker plugin is running.
-	client := &http.Client{Timeout: 5 * time.Second}
-	resp, err := client.Get("http://localhost:5001/health")
+	// Bug #6: use the env-configured marker URL (default 8766 — matches the
+	// real gleann-plugin-marker install) and actually upload the PDF via
+	// the standard /convert multipart endpoint.
+	url := os.Getenv("GLEANN_MARKER_PLUGIN_URL")
+	if url == "" {
+		url = "http://localhost:8766"
+	}
+	url = strings.TrimRight(url, "/")
+
+	healthClient := &http.Client{Timeout: 1 * time.Second}
+	resp, err := healthClient.Get(url + "/health")
 	if err != nil {
 		return nil
 	}
@@ -264,18 +285,53 @@ func tryMarkerExtraction(pdfPath string) map[int]string {
 		return nil
 	}
 
-	// Send PDF to marker.
 	file, err := os.Open(pdfPath)
 	if err != nil {
 		return nil
 	}
 	defer file.Close()
 
-	// Use multipart form upload.
-	// For simplicity, we'll skip the full multipart implementation
-	// and return nil — the VLM will handle everything.
-	// Full marker integration would use the /convert endpoint.
-	return nil
+	body := &bytes.Buffer{}
+	writer := multipart.NewWriter(body)
+	part, err := writer.CreateFormFile("file", filepath.Base(pdfPath))
+	if err != nil {
+		return nil
+	}
+	if _, err := io.Copy(part, file); err != nil {
+		return nil
+	}
+	if err := writer.Close(); err != nil {
+		return nil
+	}
+
+	req, err := http.NewRequest(http.MethodPost, url+"/convert", body)
+	if err != nil {
+		return nil
+	}
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+
+	client := &http.Client{Timeout: 5 * time.Minute}
+	cResp, err := client.Do(req)
+	if err != nil {
+		return nil
+	}
+	defer cResp.Body.Close()
+	if cResp.StatusCode != http.StatusOK {
+		return nil
+	}
+	respData, _ := io.ReadAll(cResp.Body)
+
+	// Marker returns full-document markdown plus per-page metadata. We do
+	// not currently get reliable per-page splits from the plugin, so we
+	// publish the entire markdown under page 1 — callers can detect that
+	// shape and use MarkerOnly mode to short-circuit the VLM pass.
+	var parsed struct {
+		Markdown string `json:"markdown"`
+	}
+	if err := json.Unmarshal(respData, &parsed); err != nil || parsed.Markdown == "" {
+		return nil
+	}
+	return map[int]string{1: parsed.Markdown}
 }
 
 // pdfPagePrompt generates a prompt for analyzing a PDF page image.

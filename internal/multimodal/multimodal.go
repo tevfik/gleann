@@ -154,10 +154,12 @@ func applyModelHeuristics(caps *ModelCapabilities) {
 type Processor struct {
 	OllamaHost string
 	Model      string
+	Lang       string // "en" (default) or "tr" — Bug #10
 }
 
 // NewProcessor creates a multimodal processor.
 // If model is empty, it tries to auto-detect from GLEANN_MULTIMODAL_MODEL env.
+// Language defaults to GLEANN_MULTIMODAL_LANG ("en" if unset).
 func NewProcessor(ollamaHost, model string) *Processor {
 	if model == "" {
 		model = os.Getenv("GLEANN_MULTIMODAL_MODEL")
@@ -165,7 +167,11 @@ func NewProcessor(ollamaHost, model string) *Processor {
 	if ollamaHost == "" {
 		ollamaHost = "http://localhost:11434"
 	}
-	return &Processor{OllamaHost: ollamaHost, Model: model}
+	lang := strings.ToLower(os.Getenv("GLEANN_MULTIMODAL_LANG"))
+	if lang != "tr" {
+		lang = "en"
+	}
+	return &Processor{OllamaHost: ollamaHost, Model: model, Lang: lang}
 }
 
 // ProcessResult holds the output of multimodal processing.
@@ -188,12 +194,50 @@ func (p *Processor) ProcessFile(path string) ProcessResult {
 		return result
 	}
 
+	// Bug #3: content-hash cache. We compute the fingerprint once (per file
+	// + model + prompt-version + lang) and short-circuit on hit. Videos and
+	// GIFs are intentionally fingerprinted on the source path so that the
+	// derived frames re-use the same cache slot across runs.
+	fp, _ := fileFingerprint(path, p.Model, p.Lang)
+	if cd, ok := loadCached(fp); ok {
+		result.Description = cd.Description
+		return result
+	}
+
+	// Bug #1: audio files are routed to a dedicated transcription plugin
+	// (e.g. gleann-plugin-sound running whisper.cpp) when GLEANN_AUDIO_PLUGIN_URL
+	// is configured. The fallback (Ollama VLM) only works for the small set
+	// of audio-capable vision models (Gemma 4) and produces unusable
+	// transcripts for the rest.
+	if result.MediaType == MediaTypeAudio {
+		if url := os.Getenv("GLEANN_AUDIO_PLUGIN_URL"); url != "" {
+			if text, err := transcribeViaPlugin(url, path); err == nil {
+				result.Description = text
+				storeCached(fp, cachedDescription{Description: text, MediaType: int(result.MediaType), Model: p.Model, Lang: p.Lang})
+				return result
+			} else {
+				result.Error = fmt.Errorf("audio plugin transcription failed: %w", err)
+				return result
+			}
+		}
+		// No plugin: emit a clear error rather than blindly POSTing a base64
+		// audio payload to a non-audio-capable vision model (which would
+		// silently return rubbish).
+		caps := ModelCapabilities{Name: p.Model}
+		applyModelHeuristics(&caps)
+		if !caps.Audio {
+			result.Error = fmt.Errorf("audio file %q requires either GLEANN_AUDIO_PLUGIN_URL (whisper plugin) or an audio-capable model (e.g. gemma4)", filepath.Base(path))
+			return result
+		}
+	}
+
 	// Video files: use ffmpeg frame extraction pipeline if available.
 	if result.MediaType == MediaTypeVideo {
 		analysis, err := p.AnalyzeVideo(path, DefaultFrameConfig())
 		if err == nil {
 			result.Description = analysis.Summary
 			CleanupFrames(analysis.Frames)
+			storeCached(fp, cachedDescription{Description: result.Description, MediaType: int(result.MediaType), Model: p.Model, Lang: p.Lang})
 			return result
 		}
 		// ffmpeg not available — return a clean error instead of sending raw
@@ -231,7 +275,7 @@ func (p *Processor) ProcessFile(path string) ProcessResult {
 
 	encoded := base64.StdEncoding.EncodeToString(data)
 
-	prompt := descriptionPrompt(result.MediaType, filepath.Base(path))
+	prompt := p.descriptionPrompt(result.MediaType, filepath.Base(path))
 
 	// Call Ollama /api/chat with image/audio data.
 	reqBody := map[string]interface{}{
@@ -272,6 +316,7 @@ func (p *Processor) ProcessFile(path string) ProcessResult {
 	}
 
 	result.Description = chatResp.Message.Content
+	storeCached(fp, cachedDescription{Description: result.Description, MediaType: int(result.MediaType), Model: p.Model, Lang: p.Lang})
 	return result
 }
 
@@ -280,8 +325,32 @@ func (p *Processor) CanProcess(path string) bool {
 	return p.Model != "" && IsMultimodal(path)
 }
 
-// descriptionPrompt returns an appropriate prompt for the media type.
+// descriptionPrompt is a back-compat wrapper used by older tests and any
+// external callers. Defaults to English; new code should prefer the
+// method on *Processor which honours the configured locale.
 func descriptionPrompt(mt MediaType, filename string) string {
+	return (&Processor{Lang: "en"}).descriptionPrompt(mt, filename)
+}
+
+// descriptionPrompt returns an appropriate prompt for the media type.
+// Bug #10: respect Processor.Lang to issue Turkish prompts when requested.
+func (p *Processor) descriptionPrompt(mt MediaType, filename string) string {
+	if p.Lang == "tr" {
+		switch mt {
+		case MediaTypeImage:
+			return fmt.Sprintf("Bu görseli ayrıntılı olarak Türkçe açıkla. "+
+				"Gördüğün metinleri, diyagramları, grafikleri ve görsel "+
+				"öğeleri belirt. Dosya adı: %s", filename)
+		case MediaTypeAudio:
+			return fmt.Sprintf("Bu ses içeriğini Türkçe transkript ederek açıkla. "+
+				"Konuşma, müzik veya çevre seslerini ayırt et. Dosya adı: %s", filename)
+		case MediaTypeVideo:
+			return fmt.Sprintf("Bu video içeriğini Türkçe açıkla. Görsel öğeleri, "+
+				"varsa metin/konuşmayı ve konuyu özetle. Dosya adı: %s", filename)
+		default:
+			return fmt.Sprintf("Bu dosyanın içeriğini Türkçe açıkla. Dosya adı: %s", filename)
+		}
+	}
 	switch mt {
 	case MediaTypeImage:
 		return fmt.Sprintf("Describe this image in detail. Include any text, diagrams, charts, or visual elements you can identify. Filename: %s", filename)

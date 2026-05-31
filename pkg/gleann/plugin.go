@@ -18,6 +18,15 @@ import (
 // DefaultPluginTimeout is the default HTTP timeout for plugin requests in seconds.
 const DefaultPluginTimeout = 120
 
+// Well-known capability names. Plugins declare these in their /info.capabilities
+// list and in their entry in ~/.gleann/plugins.json. The core dispatch
+// (FindByCapability) is keyed on the exact string match.
+const (
+	CapDocumentExtraction = "document-extraction"
+	CapAudioTranscription = "audio-transcription"
+	CapVisionExtraction   = "vision-extraction"
+)
+
 // Plugin defines a registered Gleann plugin
 type Plugin struct {
 	Name         string   `json:"name"`
@@ -26,7 +35,24 @@ type Plugin struct {
 	Capabilities []string `json:"capabilities"`
 	Extensions   []string `json:"extensions"`
 	Timeout      int      `json:"timeout,omitempty"` // HTTP timeout in seconds (0 = DefaultPluginTimeout)
+
+	// Version of the plugin binary/package as reported by its own install
+	// step (e.g. "0.2.0"). Empty for plugins built before schema v2.
+	Version string `json:"version,omitempty"`
+
+	// SchemaVersion of the plugin HTTP protocol this entry was built
+	// against. The manager refuses to call schema versions newer than
+	// MaxSupportedSchemaVersion to avoid silent JSON-shape mismatches.
+	SchemaVersion int `json:"schema_version,omitempty"`
+
+	// Priority orders multiple plugins that claim the same capability+ext.
+	// Higher wins. Zero (default) preserves legacy first-match behaviour.
+	Priority int `json:"priority,omitempty"`
 }
+
+// MaxSupportedSchemaVersion is the highest plugin protocol version this
+// build of Gleann knows how to parse.
+const MaxSupportedSchemaVersion = 2
 
 // PluginRegistry holds the currently discovered plugins
 type PluginRegistry struct {
@@ -104,6 +130,149 @@ var deprecatedMediaExts = map[string]bool{
 	".bmp": true, ".tiff": true, ".svg": true,
 	".mp3": true, ".wav": true, ".flac": true, ".ogg": true,
 	".m4a": true, ".aac": true, ".wma": true, ".opus": true,
+}
+
+// FindByCapability returns the highest-priority plugin advertising `cap`
+// that also supports `ext` (when `ext` is non-empty). Ties are broken by
+// registration order so the legacy first-match behaviour is preserved for
+// plugins that don't set Priority. SchemaVersion is respected: plugins
+// declaring a version newer than MaxSupportedSchemaVersion are skipped.
+func (m *PluginManager) FindByCapability(cap, ext string) *Plugin {
+	if m == nil || m.Registry == nil {
+		return nil
+	}
+	ext = strings.ToLower(ext)
+	var best *Plugin
+	bestPrio := -1 << 30
+	for i := range m.Registry.Plugins {
+		p := &m.Registry.Plugins[i]
+		if p.SchemaVersion > MaxSupportedSchemaVersion {
+			continue
+		}
+		hasCap := false
+		for _, c := range p.Capabilities {
+			if c == cap {
+				hasCap = true
+				break
+			}
+		}
+		if !hasCap {
+			continue
+		}
+		if ext != "" && len(p.Extensions) > 0 {
+			matched := false
+			for _, e := range p.Extensions {
+				if strings.ToLower(e) == ext {
+					matched = true
+					break
+				}
+			}
+			if !matched {
+				continue
+			}
+		}
+		if p.Priority > bestPrio {
+			best = p
+			bestPrio = p.Priority
+		}
+	}
+	return best
+}
+
+// PluginInfo mirrors the JSON returned by a plugin's GET /info endpoint.
+type PluginInfo struct {
+	Name          string   `json:"name"`
+	Version       string   `json:"version"`
+	SchemaVersion int      `json:"schema_version"`
+	Capabilities  []string `json:"capabilities"`
+	Extensions    []string `json:"extensions"`
+}
+
+// ResolveMultimodalPluginEnv populates the GLEANN_AUDIO_PLUGIN_URL and
+// GLEANN_VISION_PLUGIN_URL environment variables from the plugin registry
+// if the user has not already set them. This is what makes plugin
+// installation "just work" with `gleann build` — once gleann-plugin-sound
+// or gleann-plugin-vision is registered, no extra config is needed.
+//
+// Existing env values always win (so users can still override or set
+// "off" to disable). Returns the URLs that were chosen (empty if none).
+func (m *PluginManager) ResolveMultimodalPluginEnv() (audioURL, visionURL string) {
+	if m == nil || m.Registry == nil {
+		return "", ""
+	}
+	audioURL = os.Getenv("GLEANN_AUDIO_PLUGIN_URL")
+	if audioURL == "" {
+		if p := m.FindByCapability(CapAudioTranscription, ""); p != nil && p.URL != "" {
+			audioURL = p.URL
+			_ = os.Setenv("GLEANN_AUDIO_PLUGIN_URL", audioURL)
+		}
+	}
+	visionURL = os.Getenv("GLEANN_VISION_PLUGIN_URL")
+	if visionURL == "" {
+		if p := m.FindByCapability(CapVisionExtraction, ""); p != nil && p.URL != "" {
+			visionURL = p.URL
+			_ = os.Setenv("GLEANN_VISION_PLUGIN_URL", visionURL)
+		}
+	}
+	return audioURL, visionURL
+}
+
+// FetchPluginInfo issues a GET /info to the plugin and returns the parsed
+// metadata. Used by the TUI and `gleann doctor` to report the live version
+// and schema_version of a running plugin (vs the registry snapshot).
+func (m *PluginManager) FetchPluginInfo(p *Plugin) (*PluginInfo, error) {
+	if p == nil || p.URL == "" {
+		return nil, fmt.Errorf("plugin has no URL")
+	}
+	url := strings.TrimRight(p.URL, "/") + "/info"
+	client := &http.Client{Timeout: 2 * time.Second}
+	resp, err := client.Get(url)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("plugin /info returned %d", resp.StatusCode)
+	}
+	var info PluginInfo
+	if err := json.NewDecoder(resp.Body).Decode(&info); err != nil {
+		return nil, fmt.Errorf("decode /info: %w", err)
+	}
+	return &info, nil
+}
+
+// PluginHealth is a tiny subset of the plugin /health response that the
+// core needs. Plugins are free to add extra fields.
+type PluginHealth struct {
+	Status        string `json:"status"`
+	Ready         bool   `json:"ready"`
+	SchemaVersion int    `json:"schema_version"`
+	Version       string `json:"version"`
+}
+
+// PingPlugin issues a GET /health with a short timeout and returns the
+// parsed response. Used by the TUI to render "● Running" vs "● Installed".
+func (m *PluginManager) PingPlugin(p *Plugin) (*PluginHealth, error) {
+	if p == nil || p.URL == "" {
+		return nil, fmt.Errorf("plugin has no URL")
+	}
+	url := strings.TrimRight(p.URL, "/") + "/health"
+	client := &http.Client{Timeout: 500 * time.Millisecond}
+	resp, err := client.Get(url)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("plugin /health returned %d", resp.StatusCode)
+	}
+	var h PluginHealth
+	// Best-effort decode; older plugins may return a different shape.
+	_ = json.NewDecoder(resp.Body).Decode(&h)
+	if h.Status == "" {
+		h.Status = "ok"
+	}
+	return &h, nil
 }
 
 // FindDocumentExtractor returns the first plugin capable of extracting the given extension.
