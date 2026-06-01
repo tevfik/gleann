@@ -64,7 +64,7 @@ var knownPlugins = []pluginInfo{
 		Name:               "gleann-plugin-docs",
 		Icon:               "📄",
 		Description:        "Document extraction via markitdown/docling (fast, broad format coverage). Best default for mixed corpora.",
-		RepoURL:            "https://github.com/tevfik/gleann-plugin-docs",
+		RepoURL:            "https://github.com/tevfik/gleann-plugin-marker",
 		Language:           "python (markitdown, docling)",
 		Extensions:         []string{".pdf", ".docx", ".xlsx", ".pptx", ".csv"},
 		RequiresMarkitdown: true,
@@ -749,7 +749,7 @@ func setupPythonPluginWithProgress(pluginDir, name string, progress chan<- strin
 	progress <- "📝 Registering plugin..."
 	pythonBin := venvBinary(venvDir, "python")
 	mainPy := filepath.Join(pluginDir, "main.py")
-	registerCmd := exec.Command(pythonBin, mainPy, "--install")
+	registerCmd := exec.Command(pythonBin, mainPy, "--install", "--name", name)
 	registerCmd.Dir = pluginDir
 	if output, err := registerCmd.CombinedOutput(); err != nil {
 		return "", fmt.Errorf("register plugin: %s", string(output))
