@@ -3,7 +3,8 @@
 package faiss
 
 /*
-#cgo CFLAGS: -I/usr/local/include
+#cgo CFLAGS: -w -I/usr/local/include
+#cgo CXXFLAGS: -w -I/usr/local/include
 #cgo LDFLAGS: -L/usr/local/lib -lfaiss_c -lfaiss
 #cgo linux LDFLAGS: -lstdc++ -lgomp -lopenblas -lm
 #cgo darwin LDFLAGS: -lc++ -framework Accelerate

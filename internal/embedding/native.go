@@ -3,6 +3,8 @@
 package embedding
 
 /*
+#cgo CFLAGS: -w
+#cgo CXXFLAGS: -w
 #cgo LDFLAGS: -L../../ext/gleann-core-rs/target/release -lgleann_core_rs
 #include "../../ext/gleann-core-rs/include/gleann_core.h"
 #include <stdlib.h>

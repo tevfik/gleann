@@ -1044,6 +1044,17 @@ func (c *LeannChat) chatOllamaStream(ctx context.Context, messages []ChatMessage
 		return fmt.Errorf("POST %s returned %d: %s", url, resp.StatusCode, bodyStr)
 	}
 
+	contentType := resp.Header.Get("Content-Type")
+	if strings.Contains(contentType, "application/json") && !strings.Contains(contentType, "x-ndjson") {
+		var chunk ollamaStreamChunk
+		if err := json.NewDecoder(resp.Body).Decode(&chunk); err == nil {
+			if chunk.Message.Content != "" {
+				callback(chunk.Message.Content)
+			}
+			return nil
+		}
+	}
+
 	// Ollama streams NDJSON: one JSON object per line.
 	scanner := bufio.NewScanner(resp.Body)
 	// Increase buffer for large JSON lines.
@@ -1126,6 +1137,25 @@ func (c *LeannChat) chatOpenAIStream(ctx context.Context, messages []ChatMessage
 			respBody = []byte("(body unreadable)")
 		}
 		return fmt.Errorf("POST %s returned %d: %s", url, resp.StatusCode, string(respBody))
+	}
+
+	contentType := resp.Header.Get("Content-Type")
+	if strings.Contains(contentType, "application/json") && !strings.Contains(contentType, "text/event-stream") {
+		var response struct {
+			Choices []struct {
+				Message struct {
+					Content string `json:"content"`
+				} `json:"message"`
+			} `json:"choices"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&response); err == nil {
+			for _, choice := range response.Choices {
+				if choice.Message.Content != "" {
+					callback(choice.Message.Content)
+				}
+			}
+			return nil
+		}
 	}
 
 	// OpenAI sends SSE: "data: {json}\n\n" lines, ending with "data: [DONE]".
@@ -1229,6 +1259,24 @@ func (c *LeannChat) chatAnthropicStream(ctx context.Context, messages []ChatMess
 			respBody = []byte("(body unreadable)")
 		}
 		return fmt.Errorf("POST %s returned %d: %s", url, resp.StatusCode, string(respBody))
+	}
+
+	contentType := resp.Header.Get("Content-Type")
+	if strings.Contains(contentType, "application/json") && !strings.Contains(contentType, "text/event-stream") {
+		var response struct {
+			Content []struct {
+				Type string `json:"type"`
+				Text string `json:"text"`
+			} `json:"content"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&response); err == nil {
+			for _, item := range response.Content {
+				if item.Type == "text" && item.Text != "" {
+					callback(item.Text)
+				}
+			}
+			return nil
+		}
 	}
 
 	// Anthropic sends SSE: "event: content_block_delta\ndata: {...}\n\n".

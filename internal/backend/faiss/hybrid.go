@@ -3,6 +3,8 @@
 package faiss
 
 /*
+#cgo CFLAGS: -w -I/usr/local/include
+#cgo CXXFLAGS: -w -I/usr/local/include
 #include <faiss/c_api/Index_c.h>
 */
 import "C"
