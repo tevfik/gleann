@@ -336,19 +336,20 @@ func tryMarkerExtraction(pdfPath string) map[int]string {
 
 // pdfPagePrompt generates a prompt for analyzing a PDF page image.
 func pdfPagePrompt(pageNum int, markerText string) string {
-	base := fmt.Sprintf("Analyze this PDF page (page %d). ", pageNum)
-	base += "Identify and describe:\n"
-	base += "1. Any tables — extract the data in markdown table format\n"
-	base += "2. Any charts or figures — describe the data they represent\n"
-	base += "3. Key text content and headings\n"
-	base += "4. Any diagrams or visual elements\n\n"
-	base += "Format your response with clear sections for each element found."
+	var b strings.Builder
+	fmt.Fprintf(&b, "Analyze this PDF page (page %d). ", pageNum)
+	b.WriteString("Identify and describe:\n")
+	b.WriteString("1. Any tables — extract the data in markdown table format\n")
+	b.WriteString("2. Any charts or figures — describe the data they represent\n")
+	b.WriteString("3. Key text content and headings\n")
+	b.WriteString("4. Any diagrams or visual elements\n\n")
+	b.WriteString("Format your response with clear sections for each element found.")
 
 	if markerText != "" {
-		base += fmt.Sprintf("\n\nText extraction from this page (may have formatting errors):\n%s", markerText)
+		fmt.Fprintf(&b, "\n\nText extraction from this page (may have formatting errors):\n%s", markerText)
 	}
 
-	return base
+	return b.String()
 }
 
 // detectTableInDescription checks if the VLM description mentions tables.

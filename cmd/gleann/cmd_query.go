@@ -141,7 +141,6 @@ func cmdAsk(args []string) {
 
 	interactive := hasFlag(args, "--interactive")
 	agentMode := hasFlag(args, "--agent")
-	useGraph := hasFlag(args, "--graph")
 
 	// Resolve index name if not provided explicitly.
 	convStore := conversations.DefaultStore()
@@ -154,61 +153,7 @@ func cmdAsk(args []string) {
 
 	ctx := context.Background()
 
-	// Create searcher: with index (RAG) or without (pure LLM).
-	var searcher gleann.Searcher
-	if name == "" {
-		// Pure LLM mode — no RAG context.
-		searcher = gleann.NullSearcher{}
-		if !quiet {
-			fmt.Fprintln(os.Stderr, "No index selected — running in pure LLM mode (no RAG context).")
-		}
-	} else {
-		embedder := embedding.NewComputer(embedding.Options{
-			Provider:    embedding.Provider(config.EmbeddingProvider),
-			Model:       config.EmbeddingModel,
-			BaseURL:     config.OllamaHost,
-			BatchSize:   config.BatchSize,
-			Concurrency: config.Concurrency,
-		})
-
-		// Parse index names (comma-separated for multi-index).
-		indexNames := strings.Split(name, ",")
-
-		if len(indexNames) == 1 {
-			s := gleann.NewSearcher(config, embedder)
-			if err := s.Load(ctx, indexNames[0]); err != nil {
-				fmt.Fprintf(os.Stderr, "error loading index: %v\n", err)
-				os.Exit(1)
-			}
-
-			// Set up reranker if --rerank is specified.
-			if hasFlag(args, "--rerank") {
-				rerankModel := getFlag(args, "--rerank-model")
-				if rerankModel == "" {
-					rerankModel = "bge-reranker-v2-m3"
-				}
-				rerankerCfg := gleann.RerankerConfig{
-					Provider: gleann.RerankerProvider(config.EmbeddingProvider),
-					Model:    rerankModel,
-					BaseURL:  config.OllamaHost,
-				}
-				s.SetReranker(gleann.NewReranker(rerankerCfg))
-				config.SearchConfig.UseReranker = true
-			}
-			// If --graph is set, enable graph context enrichment.
-			if useGraph {
-				config.SearchConfig.UseGraphContext = true
-			}
-			searcher = s
-		} else {
-			ms, err := gleann.LoadMultiSearcher(ctx, config, embedder, indexNames)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "error loading indexes: %v\n", err)
-				os.Exit(1)
-			}
-			searcher = ms
-		}
-	}
+	searcher := createAskSearcher(ctx, name, args, config, quiet)
 	defer searcher.Close()
 
 	chatConfig := buildChatConfig(args, config)
@@ -595,6 +540,59 @@ func printCmdAskUsage() {
 	fmt.Fprintln(os.Stderr, "  --no-cache           Do not save conversation")
 	fmt.Fprintln(os.Stderr, "  --no-limit           Remove token limit (unlimited output)")
 	os.Exit(1)
+}
+
+// createAskSearcher creates a Searcher based on the resolved index name and CLI args.
+func createAskSearcher(ctx context.Context, name string, args []string, config gleann.Config, quiet bool) gleann.Searcher {
+	if name == "" {
+		if !quiet {
+			fmt.Fprintln(os.Stderr, "No index selected — running in pure LLM mode (no RAG context).")
+		}
+		return gleann.NullSearcher{}
+	}
+
+	embedder := embedding.NewComputer(embedding.Options{
+		Provider:    embedding.Provider(config.EmbeddingProvider),
+		Model:       config.EmbeddingModel,
+		BaseURL:     config.OllamaHost,
+		BatchSize:   config.BatchSize,
+		Concurrency: config.Concurrency,
+	})
+
+	indexNames := strings.Split(name, ",")
+
+	if len(indexNames) == 1 {
+		s := gleann.NewSearcher(config, embedder)
+		if err := s.Load(ctx, indexNames[0]); err != nil {
+			fmt.Fprintf(os.Stderr, "error loading index: %v\n", err)
+			os.Exit(1)
+		}
+
+		if hasFlag(args, "--rerank") {
+			rerankModel := getFlag(args, "--rerank-model")
+			if rerankModel == "" {
+				rerankModel = "bge-reranker-v2-m3"
+			}
+			rerankerCfg := gleann.RerankerConfig{
+				Provider: gleann.RerankerProvider(config.EmbeddingProvider),
+				Model:    rerankModel,
+				BaseURL:  config.OllamaHost,
+			}
+			s.SetReranker(gleann.NewReranker(rerankerCfg))
+			config.SearchConfig.UseReranker = true
+		}
+		if hasFlag(args, "--graph") {
+			config.SearchConfig.UseGraphContext = true
+		}
+		return s
+	}
+
+	ms, err := gleann.LoadMultiSearcher(ctx, config, embedder, indexNames)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error loading indexes: %v\n", err)
+		os.Exit(1)
+	}
+	return ms
 }
 
 func extractPositionalArgs(args []string) ([]string, []string) {

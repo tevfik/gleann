@@ -6,6 +6,7 @@ import (
 	"math"
 	"math/rand"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 
@@ -334,11 +335,12 @@ func TestCompetitive_BM25Report(t *testing.T) {
 
 		start := time.Now()
 		for i := 0; i < n; i++ {
-			text := ""
+			var sb strings.Builder
 			for j := 0; j < 30; j++ {
-				text += words[rng.Intn(len(words))] + " "
+				sb.WriteString(words[rng.Intn(len(words))])
+				sb.WriteByte(' ')
 			}
-			scorer.AddDocument(int64(i), text)
+			scorer.AddDocument(int64(i), sb.String())
 		}
 		indexTime := time.Since(start)
 

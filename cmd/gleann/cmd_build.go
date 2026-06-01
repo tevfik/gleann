@@ -172,92 +172,18 @@ func buildIndex(name, docsDir string, config gleann.Config, embedder gleann.Embe
 }
 
 func readDocuments(dir string, chunkSize, chunkOverlap int, tracker *vault.Tracker, mmProcessor *multimodal.Processor) ([]gleann.Item, []*PluginDoc, error) {
-	type fileEntry struct {
-		path string
-		info os.FileInfo
-	}
-
-	binaryExts := map[string]bool{
-		".pdf": true, ".zip": true, ".tar": true, ".gz": true, ".bz2": true, ".xz": true, ".7z": true, ".rar": true,
-		".exe": true, ".bin": true, ".dll": true, ".so": true, ".dylib": true, ".o": true, ".a": true,
-		".png": true, ".jpg": true, ".jpeg": true, ".gif": true, ".bmp": true, ".ico": true, ".svg": true, ".webp": true,
-		".mp3": true, ".mp4": true, ".avi": true, ".mov": true, ".mkv": true, ".flv": true, ".wav": true, ".flac": true, ".ogg": true,
-		".woff": true, ".woff2": true, ".ttf": true, ".otf": true, ".eot": true,
-		".db": true, ".sqlite": true, ".sqlite3": true,
-		".pyc": true, ".class": true, ".jar": true, ".war": true,
-		".iso": true, ".img": true, ".dmg": true, ".deb": true, ".rpm": true,
-		".doc": true, ".docx": true, ".xls": true, ".xlsx": true, ".ppt": true, ".pptx": true,
-	}
-
 	// Load plugins once and manage their lifecycles
 	pluginManager, _ := gleann.NewPluginManager()
 	if pluginManager != nil {
 		defer pluginManager.Close()
-		// Auto-populate multimodal plugin URLs from the registry so that
-		// installing gleann-plugin-sound / gleann-plugin-vision is enough
-		// to enable transcription / vision enrichment without env vars.
 		pluginManager.ResolveMultimodalPluginEnv()
 	}
 
 	// Native extractor: pure-Go fallback for PDF, DOCX, XLSX, PPTX, CSV, HTML.
 	nativeExtractor := gleann.NewNativeExtractor()
 
-	// Load .gleannignore patterns (empty matcher if no file).
-	ignoreMatcher := gleannignore.Load(dir)
-
 	// Phase 1: collect eligible file paths (serial walk is fast — just syscalls).
-	var files []fileEntry
-	walkErr := filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return err
-		}
-		base := filepath.Base(path)
-
-		// Compute path relative to root dir for .gleannignore matching.
-		relPath, _ := filepath.Rel(dir, path)
-
-		if info.IsDir() {
-			if strings.HasPrefix(base, ".") && path != dir {
-				return filepath.SkipDir
-			}
-			if base == "node_modules" || base == "vendor" || base == "dist" || base == "build" || base == ".next" {
-				return filepath.SkipDir
-			}
-			// Check .gleannignore for directories.
-			if relPath != "." && ignoreMatcher.Match(relPath, true) {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-
-		if strings.HasPrefix(base, ".") {
-			return nil
-		}
-
-		// Check .gleannignore for files.
-		if ignoreMatcher.Match(relPath, false) {
-			return nil
-		}
-		ext := strings.ToLower(filepath.Ext(path))
-
-		// Check if a plugin or native extractor can handle this file.
-		hasPlugin := false
-		if pluginManager != nil && pluginManager.FindDocumentExtractor(ext) != nil {
-			hasPlugin = true
-		}
-		hasNative := nativeExtractor.CanHandle(ext)
-		hasMultimodal := mmProcessor != nil && mmProcessor.CanProcess(path)
-
-		if !hasPlugin && !hasNative && !hasMultimodal && binaryExts[ext] {
-			return nil
-		}
-		if !hasPlugin && !hasNative && !hasMultimodal && info.Size() > 1<<20 { // >1MB without handler
-			return nil
-		}
-
-		files = append(files, fileEntry{path: path, info: info})
-		return nil
-	})
+	files, walkErr := collectEligibleFiles(dir, pluginManager, nativeExtractor, mmProcessor)
 	if walkErr != nil {
 		return nil, nil, walkErr
 	}
@@ -530,6 +456,78 @@ func readDocuments(dir string, chunkSize, chunkOverlap int, tracker *vault.Track
 	}
 
 	return allItems, pluginDocs, nil
+}
+
+// fileEntry represents a file path and its info for indexing.
+type fileEntry struct {
+	path string
+	info os.FileInfo
+}
+
+// binaryExts lists file extensions that should be skipped unless a plugin or
+// native extractor can handle them.
+var binaryExts = map[string]bool{
+	".pdf": true, ".zip": true, ".tar": true, ".gz": true, ".bz2": true, ".xz": true, ".7z": true, ".rar": true,
+	".exe": true, ".bin": true, ".dll": true, ".so": true, ".dylib": true, ".o": true, ".a": true,
+	".png": true, ".jpg": true, ".jpeg": true, ".gif": true, ".bmp": true, ".ico": true, ".svg": true, ".webp": true,
+	".mp3": true, ".mp4": true, ".avi": true, ".mov": true, ".mkv": true, ".flv": true, ".wav": true, ".flac": true, ".ogg": true,
+	".woff": true, ".woff2": true, ".ttf": true, ".otf": true, ".eot": true,
+	".db": true, ".sqlite": true, ".sqlite3": true,
+	".pyc": true, ".class": true, ".jar": true, ".war": true,
+	".iso": true, ".img": true, ".dmg": true, ".deb": true, ".rpm": true,
+	".doc": true, ".docx": true, ".xls": true, ".xlsx": true, ".ppt": true, ".pptx": true,
+}
+
+// collectEligibleFiles walks dir and returns files eligible for indexing,
+// respecting .gleannignore, hidden dirs, and binary extensions.
+func collectEligibleFiles(dir string, pluginManager *gleann.PluginManager, nativeExtractor *gleann.NativeExtractor, mmProcessor *multimodal.Processor) ([]fileEntry, error) {
+	ignoreMatcher := gleannignore.Load(dir)
+
+	var files []fileEntry
+	err := filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		base := filepath.Base(path)
+		relPath, _ := filepath.Rel(dir, path)
+
+		if info.IsDir() {
+			if strings.HasPrefix(base, ".") && path != dir {
+				return filepath.SkipDir
+			}
+			if base == "node_modules" || base == "vendor" || base == "dist" || base == "build" || base == ".next" {
+				return filepath.SkipDir
+			}
+			if relPath != "." && ignoreMatcher.Match(relPath, true) {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+
+		if strings.HasPrefix(base, ".") {
+			return nil
+		}
+		if ignoreMatcher.Match(relPath, false) {
+			return nil
+		}
+
+		ext := strings.ToLower(filepath.Ext(path))
+
+		hasPlugin := pluginManager != nil && pluginManager.FindDocumentExtractor(ext) != nil
+		hasNative := nativeExtractor.CanHandle(ext)
+		hasMultimodal := mmProcessor != nil && mmProcessor.CanProcess(path)
+
+		if !hasPlugin && !hasNative && !hasMultimodal && binaryExts[ext] {
+			return nil
+		}
+		if !hasPlugin && !hasNative && !hasMultimodal && info.Size() > 1<<20 {
+			return nil
+		}
+
+		files = append(files, fileEntry{path: path, info: info})
+		return nil
+	})
+	return files, err
 }
 
 // readDocumentsForFiles reads and chunks only the specified files.
