@@ -1,6 +1,9 @@
 package roles
 
 import (
+	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -167,4 +170,63 @@ func TestLoadMessagePathTraversalSecurity(t *testing.T) {
 	} else if !strings.Contains(err.Error(), "outside allowed roles directory") {
 		t.Errorf("expected security error message, got: %v", err)
 	}
+}
+
+func TestLoadMessageAllowlist(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("remote content"))
+	}))
+	defer server.Close()
+
+	u, err := url.Parse(server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	host := u.Host
+
+	oldAllowed := AllowedDomains
+	defer func() { AllowedDomains = oldAllowed }()
+
+	t.Run("BlockedByDefault", func(t *testing.T) {
+		AllowedDomains = []string{}
+		_, err := LoadMessage(server.URL)
+		if err == nil {
+			t.Error("expected error for unauthorized domain, got none")
+		} else if !strings.Contains(err.Error(), "not in the allowed list") {
+			t.Errorf("unexpected error message: %v", err)
+		}
+	})
+
+	t.Run("AllowedExactMatch", func(t *testing.T) {
+		AllowedDomains = []string{host}
+		content, err := LoadMessage(server.URL)
+		if err != nil {
+			t.Fatalf("unexpected error for authorized domain: %v", err)
+		}
+		if content != "remote content" {
+			t.Errorf("expected 'remote content', got %q", content)
+		}
+	})
+
+	t.Run("AllowedSubdomain", func(t *testing.T) {
+		AllowedDomains = []string{"example.com"}
+
+		// We don't care if the fetch actually works here, just that it passes the security check.
+		_, err = LoadMessage("http://example.com/role")
+		if err != nil && strings.Contains(err.Error(), "not in the allowed list") {
+			t.Errorf("domain should have been allowed by allowlist: %v", err)
+		}
+
+		_, err = LoadMessage("http://sub.example.com/role")
+		if err != nil && strings.Contains(err.Error(), "not in the allowed list") {
+			t.Errorf("subdomain should have been allowed by allowlist: %v", err)
+		}
+
+		_, err = LoadMessage("http://notexample.com/role")
+		if err == nil {
+			t.Error("expected error for unauthorized domain")
+		} else if !strings.Contains(err.Error(), "not in the allowed list") {
+			t.Errorf("expected security error, got: %v", err)
+		}
+	})
 }

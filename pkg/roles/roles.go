@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -16,6 +17,15 @@ import (
 // RolesDir is the directory where local role files are stored.
 // It can be overridden in tests.
 var RolesDir = DefaultRolesDir()
+
+// AllowedDomains is a list of domains that are allowed for remote role loading.
+// If empty, no remote loading is allowed.
+var AllowedDomains = []string{}
+
+// SetAllowedDomains sets the list of allowed domains for remote role loading.
+func SetAllowedDomains(domains []string) {
+	AllowedDomains = domains
+}
 
 // DefaultRolesDir returns the platform-appropriate default roles directory.
 func DefaultRolesDir() string {
@@ -127,6 +137,23 @@ func (r *Registry) Add(name string, messages []string) {
 // Supports: plain text, file:// paths, https:// and http:// URLs.
 func LoadMessage(msg string) (string, error) {
 	if strings.HasPrefix(msg, "https://") || strings.HasPrefix(msg, "http://") {
+		u, err := url.Parse(msg)
+		if err != nil {
+			return "", fmt.Errorf("parse url %s: %w", msg, err)
+		}
+
+		allowed := false
+		for _, domain := range AllowedDomains {
+			if u.Host == domain || strings.HasSuffix(u.Host, "."+domain) {
+				allowed = true
+				break
+			}
+		}
+
+		if !allowed {
+			return "", fmt.Errorf("security: domain %q is not in the allowed list for remote roles", u.Host)
+		}
+
 		resp, err := http.Get(msg) //nolint:gosec,noctx
 		if err != nil {
 			return "", fmt.Errorf("fetch %s: %w", msg, err)
