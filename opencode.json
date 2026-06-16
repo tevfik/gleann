@@ -2,12 +2,18 @@
   "$schema": "https://opencode.ai/config.json",
   "mcp": {
     "gleann": {
+      "type": "local",
       "command": [
         "gleann",
         "mcp"
       ],
-      "enabled": true,
-      "type": "local"
+      "enabled": true
     }
+  },
+  "indexing": {
+    "provider": "ollama",
+    "model": "nomic-embed-text:latest",
+    "enabled": true,
+    "dimension": 768
   }
 }
