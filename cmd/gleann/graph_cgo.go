@@ -54,6 +54,18 @@ func buildGraphIndex(name, docsDir, indexDir string, pluginDocs []*PluginDoc, ch
 
 	// 1. AST code indexing.
 	idx := indexer.New(db, module, absDocsDir)
+
+	// Attach a content-hash store so incremental updates skip files whose
+	// on-disk content matches the previously indexed version. The store
+	// lives next to the KuzuDB directory so a single "delete index" wipes
+	// both in one go.
+	hashStore, hashErr := indexer.NewFileHashStore(indexer.DefaultHashStorePath(indexDir, name))
+	if hashErr != nil {
+		fmt.Fprintf(os.Stderr, "warning: file hash store unavailable, falling back to always re-parse: %v\n", hashErr)
+	} else {
+		idx.WithHashStore(hashStore)
+		defer idx.CloseHashStore()
+	}
 	if len(changedFiles) > 0 {
 		// Incremental mode: only re-index changed files.
 		fmt.Printf("🔄 Incremental graph update: %d changed files\n", len(changedFiles))

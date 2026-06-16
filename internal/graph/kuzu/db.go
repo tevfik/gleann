@@ -149,6 +149,7 @@ func (g *DB) initSchema() error {
 			line   INT64,
 			name   STRING,
 			doc    STRING,
+			weight DOUBLE DEFAULT 1.0,
 			PRIMARY KEY (fqn)
 		)`,
 

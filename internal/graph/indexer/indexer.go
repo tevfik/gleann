@@ -23,6 +23,7 @@ import (
 	"sync"
 	"time"
 
+	sitter "github.com/smacker/go-tree-sitter"
 	"golang.org/x/sync/errgroup"
 
 	"github.com/tevfik/gleann/internal/graph/kuzu"
@@ -31,11 +32,12 @@ import (
 
 // Indexer walks a codebase and populates a KuzuDB graph with AST relationships.
 type Indexer struct {
-	db      *kuzu.DB
-	chunker *chunking.ASTChunker
-	module  string     // Go module prefix, e.g. "github.com/tevfik/gleann"
-	root    string     // absolute root path used to derive relative package paths
-	writeMu sync.Mutex // Ensures only one KuzuDB write transaction occurs at a time
+	db        *kuzu.DB
+	chunker   *chunking.ASTChunker
+	module    string     // Go module prefix, e.g. "github.com/tevfik/gleann"
+	root      string     // absolute root path used to derive relative package paths
+	writeMu   sync.Mutex // Ensures only one KuzuDB write transaction occurs at a time
+	hashStore *FileHashStore // optional: persists per-file content hashes for incremental skip
 }
 
 // New creates a new Indexer.
@@ -51,6 +53,21 @@ func New(db *kuzu.DB, module, root string) *Indexer {
 		module:  strings.TrimSuffix(module, "/"),
 		root:    filepath.Clean(root),
 	}
+}
+
+// WithHashStore attaches a FileHashStore for incremental skip.
+// Returns the indexer for chaining. A nil store is a no-op.
+func (idx *Indexer) WithHashStore(store *FileHashStore) *Indexer {
+	idx.hashStore = store
+	return idx
+}
+
+// CloseHashStore closes the attached hash store, if any.
+func (idx *Indexer) CloseHashStore() error {
+	if idx.hashStore == nil {
+		return nil
+	}
+	return idx.hashStore.Close()
 }
 
 // IndexFile parses one source file and writes its symbols and edges into KuzuDB
@@ -157,14 +174,51 @@ func (idx *Indexer) IndexFile(absPath, source string) error {
 // It extracts all File, Symbol, Declares and Calls structs and returns them.
 // It also extracts rationale comments (WHY, NOTE, HACK, TODO, IMPORTANT, FIXME)
 // and attaches them to nearby symbols' Doc field for design-rationale knowledge.
+//
+// Performance: for non-Go languages, the source is parsed exactly once with
+// tree-sitter and the resulting *sitter.Tree is reused for both symbol
+// extraction (via the chunker) and CALLS extraction (via the S-expression
+// query). For Go, the native go/ast path is used (parse-once inside the
+// chunker) and collectGoCallQueries / collectGoImplementsEdges also re-use
+// that same AST node.
 func (idx *Indexer) indexFileOnConn(absPath, source string) (file *kuzu.FileNode, symbols []kuzu.SymbolNode, declares []kuzu.EdgeDeclares, calls []kuzu.EdgeCalls, impls []kuzu.EdgeImplements, refs []kuzu.EdgeReferences, err error) {
-	lang := string(chunking.DetectLanguage(absPath))
+	langEnum := chunking.DetectLanguage(absPath)
+	lang := string(langEnum)
 	relPath := idx.relPath(absPath)
 
 	fileNode := &kuzu.FileNode{Path: relPath, Lang: lang}
 
-	// Chunk to get symbols.
-	chunks := idx.chunker.ChunkCode(source, absPath)
+	// For non-Go languages, acquire the tree-sitter parser + tree ONCE
+	// and reuse it for both symbol and call extraction. For Go, the chunker
+	// uses go/ast internally and the call/implements extractors share that
+	// AST; no tree-sitter parse is needed.
+	var tsTree *sitter.Tree
+	var tsSource []byte
+	if langEnum != chunking.LangGo && chunking.IsTreeSitterLanguage(langEnum) {
+		parser, tree, src, ok := chunking.ParseTree(langEnum, source)
+		if !ok {
+			// Fall through to the legacy path: chunker.ChunkCode will try
+			// tree-sitter itself, but the call extractor will see no tree.
+			log.Printf("debug: tree-sitter parse unavailable for %s; relying on chunker fallback", absPath)
+		} else {
+			defer chunking.ReturnParser(langEnum, parser)
+			tsTree = tree
+			tsSource = src
+		}
+	}
+
+	// Symbol extraction. For non-Go we wrap the chunker call to feed it
+	// the same tree we already parsed; the chunker will recognise the
+	// pre-parsed tree via the package-internal entry point.
+	var chunks []chunking.CodeChunk
+	if tsTree != nil {
+		chunks = chunking.ChunkCodeWithTree(langEnum, absPath, source, tsTree, tsSource)
+		if chunks == nil {
+			chunks = idx.chunker.ChunkCode(source, absPath) // fallback
+		}
+	} else {
+		chunks = idx.chunker.ChunkCode(source, absPath)
+	}
 
 	// Extract rationale comments from source (WHY, NOTE, HACK, TODO, IMPORTANT, FIXME).
 	rationaleByLine := extractRationale(source)
@@ -178,20 +232,36 @@ func (idx *Indexer) indexFileOnConn(absPath, source string) (file *kuzu.FileNode
 		// Attach rationale comments that fall within or just before (within 3 lines) this symbol's range.
 		doc := attachRationale(rationaleByLine, ch.StartLine, ch.EndLine)
 
+		// Language-specific weight: interfaces, decorated functions, and
+		// traits get a higher score; ordinary helpers stay at 1.0.
+		// The hint is a derived signal: NodeType is the primary key,
+		// but the chunker collapses "decorated_definition" wrappers in
+		// Python into their inner "function_definition"/"class_definition",
+		// so we also probe the source bytes for "@" and language-specific
+		// visibility markers ("pub ", "abstract ", "export ") that would
+		// otherwise be lost in the symbol-only path.
+		hint := ch.NodeType
+		if hint == "" {
+			hint = symbolHintFromKind(ch.Name, ch.NodeType)
+		}
+		hint = detectSourceHint(langEnum, source, ch.StartLine, hint)
+		weight := applyHeuristics(langEnum, ch.NodeType, hint)
+
 		sym := kuzu.SymbolNode{
-			FQN:  fqn,
-			Kind: ch.NodeType,
-			File: relPath,
-			Line: int64(ch.StartLine),
-			Name: ch.Name,
-			Doc:  doc,
+			FQN:    fqn,
+			Kind:   ch.NodeType,
+			File:   relPath,
+			Line:   int64(ch.StartLine),
+			Name:   ch.Name,
+			Doc:    doc,
+			Weight: weight,
 		}
 		symbols = append(symbols, sym)
 		declares = append(declares, kuzu.EdgeDeclares{FilePath: relPath, SymbolFQN: fqn})
 	}
 
-	// Collect CALLS queries.
-	if strings.HasSuffix(absPath, ".go") {
+	// Collect CALLS / IMPLEMENTS / REFERENCES.
+	if langEnum == chunking.LangGo {
 		nodes, edges, nodeErr := collectGoCallQueries(idx, relPath, source, chunks)
 		if nodeErr != nil {
 			fmt.Fprintf(os.Stderr, "warn: call extraction failed for %s: %v\n", relPath, nodeErr)
@@ -200,13 +270,12 @@ func (idx *Indexer) indexFileOnConn(absPath, source string) (file *kuzu.FileNode
 			calls = append(calls, edges...)
 		}
 
-		// Collect IMPLEMENTS + REFERENCES edges for Go files.
 		implEdges, refEdges, extraSyms := collectGoImplementsEdges(idx, relPath, source, chunks)
 		impls = append(impls, implEdges...)
 		refs = append(refs, refEdges...)
 		symbols = append(symbols, extraSyms...)
-	} else {
-		nodes, edges, nodeErr := collectTSCallQueries(idx, absPath, relPath, source, chunks)
+	} else if tsTree != nil {
+		nodes, edges, nodeErr := collectTSCallQueries(idx, langEnum, relPath, tsTree, tsSource, chunks)
 		if nodeErr != nil {
 			fmt.Fprintf(os.Stderr, "warn: ts call extraction failed for %s: %v\n", relPath, nodeErr)
 		} else {
@@ -457,28 +526,78 @@ func (idx *Indexer) IndexDir(root string) error {
 	if txDuration > 100*time.Millisecond {
 		log.Printf("[SLOW] IndexDir batched db write, tx_duration=%v", txDuration)
 	}
+
+	// Full re-index wipes ALL code data; the hash store must be cleared
+	// in lockstep so the next incremental run starts from a clean slate.
+	if idx.hashStore != nil {
+		if err := idx.hashStore.Clear(); err != nil {
+			log.Printf("warning: FileHashStore.Clear after IndexDir: %v", err)
+		}
+	}
 	return nil
 }
 
 // IndexFiles incrementally re-indexes only the given files. For each file it:
-//  1. Deletes the old CodeFile + Symbol nodes (and their edges) from KuzuDB
-//  2. Re-parses the file's AST and writes fresh nodes + edges
+//  1. Consults the FileHashStore (if attached) to skip files whose content
+//     has not changed since the last successful write.
+//  2. Deletes the old CodeFile + Symbol nodes (and their edges) from KuzuDB.
+//  3. Re-parses the file's AST and writes fresh nodes + edges.
+//  4. Records the new content hash in the FileHashStore.
 //
-// This is much faster than IndexDir for large codebases where only a few files changed.
-// The caller is responsible for determining which files changed (e.g. via vault tracker hashes).
+// This is much faster than IndexDir for large codebases where only a few
+// files changed. The caller is responsible for determining which files
+// changed (e.g. via vault tracker hashes); IndexFiles then narrows that
+// list further by checking actual on-disk content hashes.
 func (idx *Indexer) IndexFiles(files []string) error {
 	if len(files) == 0 {
 		return nil
 	}
 
-	// Delta step: remove old symbols for changed files before re-indexing.
+	// Pre-filter: drop files whose on-disk content hash matches the
+	// persisted record. This is the single biggest perf win — an
+	// editor save that didn't change anything (whitespace, comment
+	// only, no-op touch) becomes a 64KB read + SHA-256 instead of
+	// a full parse + DB write.
+	type pending struct {
+		absPath string
+		relPath string
+		hash    string
+	}
+	var toReindex []pending
+	skipped := 0
 	for _, absPath := range files {
 		relPath, err := filepath.Rel(idx.root, absPath)
 		if err != nil {
 			relPath = absPath
 		}
-		if err := idx.db.RemoveFileSymbols(relPath); err != nil {
-			log.Printf("warning: RemoveFileSymbols(%s): %v", relPath, err)
+		if idx.hashStore != nil {
+			dirty, currentHash, _ := idx.hashStore.IsDirty(relPath, absPath)
+			if !dirty {
+				skipped++
+				continue
+			}
+			// File missing on disk → drop its stale record and skip.
+			if currentHash == "" {
+				_ = idx.hashStore.Remove(relPath)
+				skipped++
+				continue
+			}
+			toReindex = append(toReindex, pending{absPath, relPath, currentHash})
+		} else {
+			toReindex = append(toReindex, pending{absPath, relPath, ""})
+		}
+	}
+	if skipped > 0 {
+		log.Printf("[INFO] Incremental graph: skipped %d unchanged files (hash match)", skipped)
+	}
+	if len(toReindex) == 0 {
+		return nil
+	}
+
+	// Delta step: remove old symbols for changed files before re-indexing.
+	for _, p := range toReindex {
+		if err := idx.db.RemoveFileSymbols(p.relPath); err != nil {
+			log.Printf("warning: RemoveFileSymbols(%s): %v", p.relPath, err)
 		}
 	}
 
@@ -492,23 +611,23 @@ func (idx *Indexer) IndexFiles(files []string) error {
 	}
 
 	// Parse all files concurrently.
-	results := make([]docResult, len(files))
+	results := make([]docResult, len(toReindex))
 	g, ctx := errgroup.WithContext(context.Background())
 	g.SetLimit(runtime.NumCPU())
 
-	for i, absPath := range files {
-		i, absPath := i, absPath
+	for i, p := range toReindex {
+		i, p := i, p
 		g.Go(func() error {
 			select {
 			case <-ctx.Done():
 				return ctx.Err()
 			default:
 			}
-			src, err := os.ReadFile(absPath)
+			src, err := os.ReadFile(p.absPath)
 			if err != nil {
-				return fmt.Errorf("read %s: %w", absPath, err)
+				return fmt.Errorf("read %s: %w", p.absPath, err)
 			}
-			f, syms, decls, calls, impls, refs, err := idx.indexFileOnConn(absPath, string(src))
+			f, syms, decls, calls, impls, refs, err := idx.indexFileOnConn(p.absPath, string(src))
 			if err != nil {
 				return err
 			}
@@ -666,6 +785,30 @@ func (idx *Indexer) IndexFiles(files []string) error {
 
 	txDuration := time.Since(startTx)
 	log.Printf("[INFO] Incremental graph write complete: %d files in %v", len(allFiles), txDuration)
+
+	// Record the new content hashes so the next incremental run can skip
+	// these files. Done after a successful tx so a write failure doesn't
+	// leave a stale "indexed" record that would mask a real change.
+	if idx.hashStore != nil {
+		symbolCountByFile := make(map[string]int, len(allFiles))
+		for _, s := range allSymbols {
+			symbolCountByFile[s.File]++
+		}
+		for _, p := range toReindex {
+			info, statErr := os.Stat(p.absPath)
+			size := int64(0)
+			if statErr == nil {
+				size = info.Size()
+			}
+			lang := ""
+			if p.relPath != "" {
+				lang = string(chunking.DetectLanguage(p.absPath))
+			}
+			if err := idx.hashStore.Mark(p.relPath, p.hash, lang, size, symbolCountByFile[p.relPath]); err != nil {
+				log.Printf("warning: FileHashStore.Mark(%s): %v", p.relPath, err)
+			}
+		}
+	}
 	return nil
 }
 

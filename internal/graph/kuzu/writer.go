@@ -6,6 +6,7 @@ import (
 	"encoding/csv"
 	"fmt"
 	"os"
+	"strconv"
 
 	gokuzu "github.com/kuzudb/go-kuzu"
 )
@@ -17,13 +18,19 @@ type FileNode struct {
 }
 
 // SymbolNode represents any code symbol (function, type, struct, etc.).
+// Weight is a language-aware importance score in [0, 10]: 1.0 is neutral;
+// higher values indicate symbols that should rank first in RAG retrieval
+// and risk analysis (e.g. Java interfaces, Rust traits, Python decorated
+// functions). It is set at ingest time by heuristics.applyHeuristics
+// and consumed by community.ComputeRiskScores and any future reranker.
 type SymbolNode struct {
-	FQN  string // Fully Qualified Name, e.g. "github.com/foo/bar.MyFunc"
-	Kind string // "function" | "method" | "type" | "struct" | "interface" | "const" | "var"
-	File string // source file path
-	Line int64  // line number in source file
-	Name string // short name, e.g. "MyFunc"
-	Doc  string // documentation comment (optional)
+	FQN    string  // Fully Qualified Name, e.g. "github.com/foo/bar.MyFunc"
+	Kind   string  // "function" | "method" | "type" | "struct" | "interface" | "const" | "var"
+	File   string  // source file path
+	Line   int64   // line number in source file
+	Name   string  // short name, e.g. "MyFunc"
+	Doc    string  // documentation comment (optional)
+	Weight float64 // language-aware importance (default 1.0)
 }
 
 // EdgeDeclares represents a DECLARES relationship matching KuzuDB schema (FROM CodeFile TO Symbol).
@@ -48,12 +55,17 @@ func (g *DB) UpsertFile(path, lang string) error {
 	return g.exec(cypher)
 }
 
-// UpsertSymbol inserts or ignores a Symbol node.
+// UpsertSymbol inserts or ignores a Symbol node. The optional weight
+// defaults to 1.0 when the caller has not run it through heuristics.
 func (g *DB) UpsertSymbol(s SymbolNode) error {
+	w := s.Weight
+	if w == 0 {
+		w = 1.0
+	}
 	cypher := fmt.Sprintf(
 		`MERGE (sym:Symbol {fqn: %q})
-         ON CREATE SET sym.kind=%q, sym.file=%q, sym.line=%d, sym.name=%q, sym.doc=%q`,
-		s.FQN, s.Kind, s.File, s.Line, s.Name, s.Doc,
+         ON CREATE SET sym.kind=%q, sym.file=%q, sym.line=%d, sym.name=%q, sym.doc=%q, sym.weight=%f`,
+		s.FQN, s.Kind, s.File, s.Line, s.Name, s.Doc, w,
 	)
 	return g.exec(cypher)
 }
@@ -187,12 +199,17 @@ func WriteSymbolNodesCSV(path string, symbols []SymbolNode) error {
 	defer f.Close()
 
 	w := csv.NewWriter(f)
-	if err := w.Write([]string{"fqn", "kind", "file", "line", "name", "doc"}); err != nil {
+	if err := w.Write([]string{"fqn", "kind", "file", "line", "name", "doc", "weight"}); err != nil {
 		return err
 	}
 	for _, sym := range symbols {
+		weight := sym.Weight
+		if weight == 0 {
+			weight = 1.0
+		}
 		if err := w.Write([]string{
 			sym.FQN, sym.Kind, sym.File, fmt.Sprintf("%d", sym.Line), sym.Name, sym.Doc,
+			strconv.FormatFloat(weight, 'f', -1, 64),
 		}); err != nil {
 			return err
 		}

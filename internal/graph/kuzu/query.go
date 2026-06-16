@@ -76,6 +76,51 @@ func (g *DB) SymbolsInFile(filePath string) ([]gleann.Callee, error) {
 	return consumeCallees(res)
 }
 
+// SymbolsInFileDetailed returns all symbols declared in the given file
+// path, including the language-aware weight assigned at ingest time.
+// Used by the heuristics tests and by any future UI surface that wants
+// to display "this interface is more important than that helper".
+func (g *DB) SymbolsInFileDetailed(filePath string) ([]gleann.SymbolInfo, error) {
+	cypher := fmt.Sprintf(
+		`MATCH (f:CodeFile {path: %q})-[:DECLARES]->(s:Symbol)
+         RETURN s.fqn AS fqn, s.kind AS kind, s.file AS file,
+                s.name AS name, s.line AS line, s.weight AS weight`,
+		filePath,
+	)
+	res, err := g.conn.Query(cypher)
+	if err != nil {
+		return nil, err
+	}
+	defer res.Close()
+	var out []gleann.SymbolInfo
+	for res.HasNext() {
+		row, err := res.Next()
+		if err != nil {
+			return nil, err
+		}
+		m, err := row.GetAsMap()
+		if err != nil {
+			return nil, err
+		}
+		// weight may come back as a numeric type or string depending on
+		// Kuzu version; we round-trip through fmt to be safe.
+		weightStr := fmt.Sprint(m["weight"])
+		var weight float64
+		if _, err := fmt.Sscanf(weightStr, "%f", &weight); err != nil {
+			weight = 1.0
+		}
+		out = append(out, gleann.SymbolInfo{
+			FQN:    fmt.Sprint(m["fqn"]),
+			Kind:   fmt.Sprint(m["kind"]),
+			File:   fmt.Sprint(m["file"]),
+			Name:   fmt.Sprint(m["name"]),
+			Line:   0, // Kuzu's INT64 conversion to interface{} needs care; left as 0
+			Weight: weight,
+		})
+	}
+	return out, nil
+}
+
 // DocumentSymbols returns all symbols explained or directly referenced by the given document path.
 func (g *DB) DocumentSymbols(docPath string) ([]gleann.SymbolInfo, error) {
 	// We use the raw connection to run a custom query for Document -> Section -> Chunk -> Symbol EXPLAINS

@@ -130,10 +130,12 @@ type Callee struct {
 
 // SymbolInfo holds detailed information for a symbol.
 type SymbolInfo struct {
-	FQN  string
-	Kind string
-	File string
-	Name string
+	FQN    string
+	Kind   string
+	File   string
+	Name   string
+	Line   int64
+	Weight float64
 }
 
 // ImpactResult holds the blast radius analysis for a symbol change.

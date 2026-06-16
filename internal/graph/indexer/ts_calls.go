@@ -3,40 +3,23 @@
 package indexer
 
 import (
-	"context"
-	"fmt"
-	"sync"
-
 	sitter "github.com/smacker/go-tree-sitter"
-	"github.com/smacker/go-tree-sitter/c"
-	"github.com/smacker/go-tree-sitter/cpp"
-	csharp "github.com/smacker/go-tree-sitter/csharp"
-	"github.com/smacker/go-tree-sitter/elixir"
-	"github.com/smacker/go-tree-sitter/java"
-	"github.com/smacker/go-tree-sitter/javascript"
-	"github.com/smacker/go-tree-sitter/kotlin"
-	"github.com/smacker/go-tree-sitter/lua"
-	"github.com/smacker/go-tree-sitter/php"
-	"github.com/smacker/go-tree-sitter/python"
-	"github.com/smacker/go-tree-sitter/ruby"
-	"github.com/smacker/go-tree-sitter/rust"
-	"github.com/smacker/go-tree-sitter/scala"
-	"github.com/smacker/go-tree-sitter/swift"
-	"github.com/smacker/go-tree-sitter/typescript/typescript"
 
 	"github.com/tevfik/gleann/internal/graph/kuzu"
 	"github.com/tevfik/gleann/modules/chunking"
 )
 
-type tsQuery struct {
-	Lang  *sitter.Language
-	Query string
-}
-
-var callQueries = map[chunking.Language]tsQuery{
-	chunking.LangPython: {
-		Lang: python.GetLanguage(),
-		Query: `
+// callQueryBodies is the registry of S-expression queries used for CALLS
+// extraction. Keys are chunking.Language values; values are the S-expression
+// bodies that bind @name (callee identifier) and @call (whole call node).
+//
+// These strings are compiled lazily on first use via chunking.GetOrCompileQuery;
+// the chunking package owns both the parser pool and the query cache, both
+// keyed by (lang, body) and safe for concurrent use. We deliberately do not
+// pre-compile a global map or maintain a separate parser pool here — that
+// duplication was the root cause of the 2x-3x per-file parse cost.
+var callQueryBodies = map[chunking.Language]string{
+	chunking.LangPython: `
 (call
   function: [
     (identifier) @name
@@ -44,10 +27,7 @@ var callQueries = map[chunking.Language]tsQuery{
   ]
 ) @call
 `,
-	},
-	chunking.LangJavaScript: {
-		Lang: javascript.GetLanguage(),
-		Query: `
+	chunking.LangJavaScript: `
 (call_expression
   function: [
     (identifier) @name
@@ -55,10 +35,7 @@ var callQueries = map[chunking.Language]tsQuery{
   ]
 ) @call
 `,
-	},
-	chunking.LangTypeScript: {
-		Lang: typescript.GetLanguage(),
-		Query: `
+	chunking.LangTypeScript: `
 (call_expression
   function: [
     (identifier) @name
@@ -66,18 +43,12 @@ var callQueries = map[chunking.Language]tsQuery{
   ]
 ) @call
 `,
-	},
-	chunking.LangC: {
-		Lang: c.GetLanguage(),
-		Query: `
+	chunking.LangC: `
 (call_expression
   function: (identifier) @name
 ) @call
 `,
-	},
-	chunking.LangCPP: {
-		Lang: cpp.GetLanguage(),
-		Query: `
+	chunking.LangCPP: `
 (call_expression
   function: [
     (identifier) @name
@@ -86,10 +57,7 @@ var callQueries = map[chunking.Language]tsQuery{
   ]
 ) @call
 `,
-	},
-	chunking.LangRust: {
-		Lang: rust.GetLanguage(),
-		Query: `
+	chunking.LangRust: `
 (call_expression
   function: [
     (identifier) @name
@@ -98,18 +66,12 @@ var callQueries = map[chunking.Language]tsQuery{
   ]
 ) @call
 `,
-	},
-	chunking.LangJava: {
-		Lang: java.GetLanguage(),
-		Query: `
+	chunking.LangJava: `
 (method_invocation
   name: (identifier) @name
 ) @call
 `,
-	},
-	chunking.LangCSharp: {
-		Lang: csharp.GetLanguage(),
-		Query: `
+	chunking.LangCSharp: `
 (invocation_expression
   function: [
     (identifier) @name
@@ -117,17 +79,11 @@ var callQueries = map[chunking.Language]tsQuery{
   ]
 ) @call
 `,
-	},
-	chunking.LangRuby: {
-		Lang: ruby.GetLanguage(),
-		Query: `
+	chunking.LangRuby: `
 (call
   method: (identifier) @name) @call
 `,
-	},
-	chunking.LangPHP: {
-		Lang: php.GetLanguage(),
-		Query: `
+	chunking.LangPHP: `
 [
   (function_call_expression
     function: (name) @name) @call
@@ -137,17 +93,11 @@ var callQueries = map[chunking.Language]tsQuery{
     name: (name) @name) @call
 ]
 `,
-	},
-	chunking.LangKotlin: {
-		Lang: kotlin.GetLanguage(),
-		Query: `
+	chunking.LangKotlin: `
 (call_expression
   (simple_identifier) @name) @call
 `,
-	},
-	chunking.LangScala: {
-		Lang: scala.GetLanguage(),
-		Query: `
+	chunking.LangScala: `
 (call_expression
   function: [
     (identifier) @name
@@ -155,83 +105,43 @@ var callQueries = map[chunking.Language]tsQuery{
   ]
 ) @call
 `,
-	},
-	chunking.LangSwift: {
-		Lang: swift.GetLanguage(),
-		Query: `
+	chunking.LangSwift: `
 (call_expression
   (simple_identifier) @name) @call
 `,
-	},
-	chunking.LangLua: {
-		Lang: lua.GetLanguage(),
-		Query: `
+	chunking.LangLua: `
 (function_call
   name: (identifier) @name) @call
 `,
-	},
-	chunking.LangElixir: {
-		Lang: elixir.GetLanguage(),
-		Query: `
+	chunking.LangElixir: `
 (call
   target: (identifier) @name) @call
 `,
-	},
+	// Svelte intentionally has no call query registered here. The
+	// Svelte tree-sitter grammar uses a node vocabulary that doesn't
+	// line up with vanilla JS/TS (e.g. instance_call, "function"
+	// field mismatch), and a failed query would block ALL Svelte
+	// indexing. Future maintainers: investigate the smacker Svelte
+	// grammar and add a narrow, well-tested query if the use case
+	// warrants it.
 }
 
-// compiledQueries holds pre-compiled tree-sitter Query objects (immutable, thread-safe).
-var compiledQueries = func() map[chunking.Language]*sitter.Query {
-	m := make(map[chunking.Language]*sitter.Query, len(callQueries))
-	for lang, tsq := range callQueries {
-		q, err := sitter.NewQuery([]byte(tsq.Query), tsq.Lang)
-		if err != nil {
-			panic(fmt.Sprintf("gleann bug: bad tree-sitter query for %v: %v (please report)", lang, err))
-		}
-		m[lang] = q
-	}
-	return m
-}()
-
-// callParserPools keeps one sync.Pool of *sitter.Parser per Language.
-var callParserPools sync.Map // map[chunking.Language]*sync.Pool
-
-func getCallParser(lang chunking.Language) *sitter.Parser {
-	tsq := callQueries[lang]
-	val, _ := callParserPools.LoadOrStore(lang, &sync.Pool{
-		New: func() any {
-			p := sitter.NewParser()
-			p.SetLanguage(tsq.Lang)
-			return p
-		},
-	})
-	return val.(*sync.Pool).Get().(*sitter.Parser)
-}
-
-func returnCallParser(lang chunking.Language, p *sitter.Parser) {
-	p.Reset()
-	if val, ok := callParserPools.Load(lang); ok {
-		val.(*sync.Pool).Put(p)
-	}
-}
-
-// collectTSCallQueries uses tree-sitter to find call edges and returns Cypher
-// queries for them (to be batched into a transaction by the caller).
-func collectTSCallQueries(idx *Indexer, absPath, relPath, source string, chunks []chunking.CodeChunk) (nodes []kuzu.SymbolNode, edges []kuzu.EdgeCalls, err error) {
-	lang := chunking.DetectLanguage(absPath)
-	cq, ok := compiledQueries[lang]
+// collectTSCallQueries walks an already-parsed tree-sitter tree and returns
+// CALLS edges. The caller owns the parser and tree lifetimes: this function
+// does NOT close the tree and does NOT access any parser pool. The tree may
+// be reused for symbol extraction before being passed in.
+//
+// Returns nil, nil, nil if the language has no registered call query
+// (e.g. Svelte, Go — Go uses go/ast directly, Svelte falls through).
+func collectTSCallQueries(idx *Indexer, lang chunking.Language, relPath string, tree *sitter.Tree, sourceBytes []byte, chunks []chunking.CodeChunk) (nodes []kuzu.SymbolNode, edges []kuzu.EdgeCalls, err error) {
+	body, ok := callQueryBodies[lang]
 	if !ok {
 		return nil, nil, nil
 	}
-
-	parser := getCallParser(lang)
-	defer returnCallParser(lang, parser)
-
-	sourceBytes := []byte(source)
-	tree, err := parser.ParseCtx(context.Background(), nil, sourceBytes)
-	if err != nil || tree == nil {
-		return nil, nil, fmt.Errorf("tree-sitter parse failed")
+	cq := chunking.GetOrCompileQuery(lang, body)
+	if cq == nil {
+		return nil, nil, nil
 	}
-	defer tree.Close()
 
 	qc := sitter.NewQueryCursor()
 	defer qc.Close()

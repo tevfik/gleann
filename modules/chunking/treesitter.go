@@ -69,6 +69,14 @@ func returnParser(lang Language, p *sitter.Parser) {
 }
 
 // treeSitterLanguage returns the tree-sitter Language for a given Language enum.
+//
+// Note: Zig, PowerShell, and Julia currently have no binding in
+// github.com/smacker/go-tree-sitter. They are listed in the Language
+// enum so file-extension detection works, but they fall through to
+// the regex-based chunker in chunkByRegex. To add tree-sitter support
+// for them, drop a Go binding of the corresponding tree-sitter grammar
+// (community-maintained forks exist on GitHub) and import it here.
+// Tracked as a follow-up in the AST coverage roadmap.
 func treeSitterLanguage(lang Language) *sitter.Language {
 	switch lang {
 	case LangPython:
@@ -318,32 +326,63 @@ var nameFieldByNodeType = map[string]string{
 	"local_function_declaration": "name",
 }
 
+// ParseTree parses source with a pooled tree-sitter parser and returns the
+// resulting *sitter.Tree along with the source bytes. The caller MUST call
+// ReturnParser(lang, parser) when done. The tree's lifetime is independent
+// of the parser (it owns its own memory), so the caller may close the tree
+// or keep it alive across multiple extraction passes — useful when both
+// symbol extraction and call extraction need the same parse.
+//
+// Returns (nil, nil, false) if tree-sitter has no binding for the given
+// language.
+func ParseTree(lang Language, source string) (parser *sitter.Parser, tree *sitter.Tree, sourceBytes []byte, ok bool) {
+	tsLang := treeSitterLanguage(lang)
+	if tsLang == nil {
+		return nil, nil, nil, false
+	}
+	parser = getParser(lang)
+	sourceBytes = []byte(source)
+	t, err := parser.ParseCtx(context.Background(), nil, sourceBytes)
+	if err != nil || t == nil {
+		returnParser(lang, parser)
+		return nil, nil, nil, false
+	}
+	return parser, t, sourceBytes, true
+}
+
+// IsTreeSitterLanguage reports whether the given language has a tree-sitter
+// grammar binding registered in this build. Languages without bindings
+// (LangGo, plus any future enum additions) fall through to other strategies
+// (go/ast, regex).
+func IsTreeSitterLanguage(lang Language) bool {
+	return treeSitterLanguage(lang) != nil
+}
+
 // treeSitterChunk parses source code using tree-sitter and returns semantic chunks.
 // Returns nil if tree-sitter is not available or the language is unsupported.
 func treeSitterChunk(source, filename string, lang Language, config ASTChunkerConfig) []CodeChunk {
-	tsLang := treeSitterLanguage(lang)
-	if tsLang == nil {
+	parser, tree, sourceBytes, ok := ParseTree(lang, source)
+	if !ok {
+		return nil
+	}
+	defer returnParser(lang, parser)
+	defer tree.Close()
+	return treeSitterChunkFromTree(source, filename, lang, config, tree, sourceBytes)
+}
+
+// treeSitterChunkFromTree is the pure extraction step: given an already-parsed
+// tree and its source bytes, return semantic CodeChunks. It does NOT acquire
+// a parser, does NOT close the tree, and does NOT call ParseTree. This is the
+// hot-path entry point used by ChunkCodeWithTree so the indexer can reuse one
+// tree for both symbol and call extraction.
+func treeSitterChunkFromTree(source, filename string, lang Language, config ASTChunkerConfig, tree *sitter.Tree, sourceBytes []byte) []CodeChunk {
+	root := tree.RootNode()
+	if root == nil {
 		return nil
 	}
 
 	rules, ok := nodeTypeRules[lang]
 	if !ok {
-		return nil
-	}
-
-	// Get a pooled parser instead of allocating a new one per file.
-	parser := getParser(lang)
-	defer returnParser(lang, parser)
-
-	sourceBytes := []byte(source)
-	tree, err := parser.ParseCtx(context.Background(), nil, sourceBytes)
-	if err != nil || tree == nil {
-		return nil
-	}
-	defer tree.Close()
-
-	root := tree.RootNode()
-	if root == nil {
 		return nil
 	}
 
@@ -414,7 +453,7 @@ func treeSitterChunk(source, filename string, lang Language, config ASTChunkerCo
 			text := joinLines(lines, startLine-1, endLine)
 
 			// Extract outgoing `call_expression` nodes within this scope
-			calls := extractCalls(node, sourceBytes)
+			calls := extractCallsForLang(lang, node, sourceBytes)
 
 			collected = append(collected, astChunkInfo{
 				startLine: startLine,
@@ -579,6 +618,19 @@ func treeSitterChunk(source, filename string, lang Language, config ASTChunkerCo
 	return result
 }
 
+// ChunkCodeWithTree runs the tree-sitter chunker against an already-parsed
+// tree. It is the public entry point used by the graph indexer so that
+// symbol extraction and call extraction can share a single tree-sitter parse.
+// Returns nil if the language has no tree-sitter binding; the caller should
+// fall back to ASTChunker.ChunkCode in that case.
+func ChunkCodeWithTree(lang Language, filename, source string, tree *sitter.Tree, sourceBytes []byte) []CodeChunk {
+	if tree == nil {
+		return nil
+	}
+	cfg := DefaultASTChunkerConfig()
+	return treeSitterChunkFromTree(source, filename, lang, cfg, tree, sourceBytes)
+}
+
 // extractNodeName extracts a human-readable name from a tree-sitter AST node.
 func extractNodeName(node *sitter.Node, nodeType string, source []byte) string {
 	// Try the known field name first.
@@ -685,25 +737,160 @@ func sortChunksByLine(chunks []CodeChunk) {
 	}
 }
 
-// extractCalls recursively finds all function/method calls inside a node.
+// extractCalls walks the subtree under node and returns the names of
+// all call-like constructs (function calls, method invocations, etc.).
+//
+// It uses a single compiled tree-sitter query (built lazily via
+// GetOrCompileQuery) instead of a recursive Go DFS. For files with
+// 1000+ lines the cursor-driven approach is materially faster because
+// the query engine in C short-circuits unmatched branches without
+// paying the Go-call overhead per node.
+//
+// lang is the source language of `node`; it is used to pick the
+// grammar binding under which the query is compiled. If lang is
+// empty, the function falls back to a Go recursion so the call site
+// (chunking machinery) is never broken by a missing binding.
 func extractCalls(node *sitter.Node, source []byte) []string {
+	return extractCallsForLang(LangUnknown, node, source)
+}
+
+// extractCallsForLang walks the subtree under node and returns the names
+// of all call-like constructs (function calls, method invocations, etc.).
+//
+// It uses a single compiled tree-sitter query (built lazily via
+// GetOrCompileQuery) instead of a recursive Go DFS. For files with
+// 1000+ lines the cursor-driven approach is materially faster because
+// the query engine in C short-circuits unmatched branches without
+// paying the Go-call overhead per node.
+//
+// lang is the source language of `node`; it is used to pick the
+// grammar binding under which the query is compiled AND to select
+// the right S-expression (different grammars call their call nodes
+// "call", "call_expression", "method_invocation", etc.). If lang is
+// unknown, the function falls back to a Go recursion so the call
+// site is never broken by a missing binding or grammar mismatch.
+func extractCallsForLang(lang Language, node *sitter.Node, source []byte) []string {
 	if node == nil {
 		return nil
 	}
+	if lang == LangUnknown || lang == "" || treeSitterLanguage(lang) == nil {
+		return extractCallsDFS(node, source)
+	}
+	body, ok := callsQueryBodyFor(lang)
+	if !ok {
+		return extractCallsDFS(node, source)
+	}
+	q := GetOrCompileQuery(lang, body)
+	if q == nil {
+		return extractCallsDFS(node, source)
+	}
+	qc := sitter.NewQueryCursor()
+	defer qc.Close()
+	qc.Exec(q, node)
 
 	var calls []string
 	seen := make(map[string]bool)
+	for {
+		m, ok := qc.NextMatch()
+		if !ok {
+			break
+		}
+		m = qc.FilterPredicates(m, source)
+		for _, cap := range m.Captures {
+			if q.CaptureNameForId(cap.Index) == "callee" {
+				name := cap.Node.Content(source)
+				if name != "" && !seen[name] {
+					seen[name] = true
+					calls = append(calls, name)
+				}
+			}
+		}
+	}
+	return calls
+}
 
+// callsQueryBodyFor returns the S-expression body that captures
+// callee identifiers for the given language. The query body is
+// per-language because the call-like node types and field names
+// differ between grammars (e.g. Python's "call" vs JS's
+// "call_expression" vs Java's "method_invocation").
+func callsQueryBodyFor(lang Language) (string, bool) {
+	switch lang {
+	case LangPython:
+		return `
+(call function: (_) @callee)
+`, true
+	case LangElixir:
+		return `
+(call target: (_) @callee)
+`, true
+	case LangRuby:
+		// Ruby uses `(call ...)` with callee under "method".
+		return `
+(call method: (_) @callee)
+`, true
+	case LangJavaScript, LangTypeScript, LangVue, LangCPP, LangRust, LangObjectiveC:
+		// Most ECMAScript-family and C-family grammars expose the
+		// callee as the "function" field of call_expression. Svelte
+		// is intentionally NOT in this list: its tree-sitter grammar
+		// uses a different vocabulary for call-like nodes inside
+		// <script> blocks, and the Svelte-specific query lives in
+		// ts_calls.go (the indexer) as a narrower, optional shape.
+		// We keep Svelte out of the broad union so a single failure
+		// in its grammar doesn't break call extraction for the other
+		// JS-family languages.
+		return `
+(call_expression function: (_) @callee)
+`, true
+	case LangPHP:
+		// PHP has three call shapes depending on how the callee is
+		// accessed: bare function call, namespaced (`A::b()`), and
+		// method-on-object (`$a->b()`). The original tree-sitter call
+		// query in ts_calls.go uses the same alternation; we mirror it
+		// here so the chunker and the call extractor stay in sync.
+		return `
+[
+  (function_call_expression function: (_) @callee)
+  (scoped_call_expression   name:     (_) @callee)
+  (member_call_expression   name:     (_) @callee)
+]
+`, true
+	case LangJava:
+		return `
+(method_invocation name: (_) @callee)
+`, true
+	case LangCSharp:
+		return `
+(invocation_expression function: (_) @callee)
+`, true
+	case LangC:
+		return `
+(call_expression function: (_) @callee)
+`, true
+	case LangLua:
+		return `
+(function_call name: (_) @callee)
+`, true
+	}
+	return "", false
+}
+
+// extractCallsDFS is the original recursive implementation, retained
+// as a fallback for stub builds and as a safety net if a future
+// grammar rejects the union query.
+func extractCallsDFS(node *sitter.Node, source []byte) []string {
+	if node == nil {
+		return nil
+	}
+	var calls []string
+	seen := make(map[string]bool)
 	var walk func(n *sitter.Node)
 	walk = func(n *sitter.Node) {
 		if n == nil {
 			return
 		}
-
 		nodeType := n.Type()
-		// Most supported languages use "call_expression" or "call"
 		if nodeType == "call_expression" || nodeType == "call" {
-			// Usually the function being called is exposed as "function" field
 			funcNode := n.ChildByFieldName("function")
 			if funcNode != nil {
 				name := string(funcNode.Content(source))

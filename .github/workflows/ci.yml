@@ -35,9 +35,30 @@ jobs:
       - name: Vet
         run: go vet ./...
 
-      - name: Test (unit + integration)
+      - name: Test (unit + integration, default tags)
         timeout-minutes: 10
         run: go test -v -race -timeout 8m -coverprofile=coverage.out $(go list ./... | grep -v /tests/benchmarks)
+        shell: bash
+
+      - name: Test (unit, treesitter tag)
+        # Runs the indexer and kuzu packages that require CGo + the
+        # `treesitter` build tag. The default-tag run above silently
+        # skips these packages because every .go file inside them is
+        # build-tag-gated. We need this second pass to actually cover
+        # the AST/query/heuristics code paths.
+        if: matrix.os != 'windows-latest'
+        timeout-minutes: 10
+        run: CGO_ENABLED=1 go test -tags treesitter -race -timeout 8m -coverprofile=coverage-ts.out ./internal/graph/indexer/... ./internal/graph/kuzu/...
+        shell: bash
+
+      - name: Test (unit, treesitter tag — modules/chunking)
+        # modules/chunking is a separate Go module with its own go.mod.
+        # We test it from inside its own directory.
+        if: matrix.os != 'windows-latest'
+        timeout-minutes: 10
+        run: |
+          cd modules/chunking
+          CGO_ENABLED=1 go test -tags treesitter -race -timeout 8m -coverprofile=coverage-chunking.out ./...
         shell: bash
 
       - name: Upload coverage to Codecov
@@ -45,7 +66,7 @@ jobs:
         uses: codecov/codecov-action@v4
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
-          files: ./coverage.out
+          files: ./coverage.out,./coverage-ts.out,./modules/chunking/coverage-chunking.out
           fail_ci_if_error: false
           verbose: true
 
