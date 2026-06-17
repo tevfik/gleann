@@ -210,10 +210,12 @@ func NewChatModel(chat *gleann.LeannChat, indexName, modelName string) ChatModel
 	// Load saved settings.
 	savedCfg := LoadSavedConfig()
 
-	// Fetch dynamic models based on provider.
+	// Fetch dynamic models based on provider (skip if testing).
 	var allModels []ModelInfo
 	var err error
-	if savedCfg != nil && savedCfg.LLMProvider != "" {
+	if os.Getenv("GLEANN_TEST_MODE") == "true" {
+		err = fmt.Errorf("skipping model fetch in test mode")
+	} else if savedCfg != nil && savedCfg.LLMProvider != "" {
 		host := savedCfg.OllamaHost
 		key := savedCfg.OpenAIKey
 		if savedCfg.LLMProvider == "openai" {
@@ -277,10 +279,12 @@ func NewChatModel(chat *gleann.LeannChat, indexName, modelName string) ChatModel
 	chat.SetMaxTokens(maxTokens)
 	chat.SetSystemPrompt(systemPrompt)
 
-	// Initialize memory manager.
+	// Initialize memory manager (skip if testing).
 	var memMgr *memory.Manager
-	if mgr, err := memory.DefaultManager(); err == nil {
-		memMgr = mgr
+	if os.Getenv("GLEANN_TEST_MODE") != "true" {
+		if mgr, err := memory.DefaultManager(); err == nil {
+			memMgr = mgr
+		}
 	}
 
 	// Fetch available reranker models using the embedding provider from `savedCfg`.

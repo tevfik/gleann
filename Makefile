@@ -135,7 +135,8 @@ install-full: $(BINARY_FULL)
 # ── Tests ────────────────────────────────────────────────────────────────────
 .PHONY: test
 test:
-	go test -race -timeout 120s $$(go list ./... | grep -v /tests/benchmarks)
+	@mkdir -p build/test-home
+	GLEANN_TEST_MODE=true HOME=$(shell pwd)/build/test-home go test -race -timeout 120s $$(go list ./... | grep -v /tests/benchmarks)
 
 .PHONY: test-faiss
 test-faiss:
