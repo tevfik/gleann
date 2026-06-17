@@ -838,7 +838,12 @@ func setupGoPluginWithProgress(pluginDir, name string, progress chan<- string) (
 	}
 
 	progress <- fmt.Sprintf("🔨 Building Go binary from source (%s)...", buildTarget)
-	cmd := exec.Command("go", "build", "-o", binaryPath, "./"+buildTarget)
+	buildArgs := []string{"build", "-o", binaryPath}
+	if name == "gleann-plugin-sound" {
+		buildArgs = append(buildArgs, "-tags", "onnx")
+	}
+	buildArgs = append(buildArgs, "./"+buildTarget)
+	cmd := exec.Command("go", buildArgs...)
 	cmd.Dir = pluginDir
 	if output, err := cmd.CombinedOutput(); err != nil {
 		return "", fmt.Errorf("go build: %s", string(output))
