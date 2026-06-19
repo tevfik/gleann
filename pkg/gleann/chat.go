@@ -79,7 +79,7 @@ func ollamaContextWindow(maxTokens int) int {
 func DefaultChatConfig() ChatConfig {
 	return ChatConfig{
 		Provider:    LLMOllama,
-		Model:       "llama3.2:3b-instruct-q4_K_M",
+		Model:       "nemotron-3-nano:4b",
 		BaseURL:     DefaultOllamaHost,
 		Temperature: 0.7,
 		MaxTokens:   2048,
