@@ -44,7 +44,7 @@ Location: `~/.gleann/config.json`
   "index_dir": "~/.gleann/indexes",
   "backend": "diskann",
   "llm_provider": "ollama",
-  "llm_model": "llama3.2",
+  "llm_model": "nemotron-3-nano:4b",
   "quiet": false,
   "word_wrap": 0,
   "roles": {
@@ -70,7 +70,7 @@ Location: `~/.gleann/config.json`
 | `index_dir` | `~/.gleann/indexes` | Root directory for all index data. Each named index `<name>` creates `<name>/` (RAG), `<name>_graph/` (code graph), and `<name>_memory/` (Memory Engine) sub-directories here |
 | `backend` | `diskann` | Vector search backend: `diskann`, `hnsw`, `faiss`, `faiss-hybrid` |
 | `llm_provider` | `ollama` | Provider for ask/chat: `ollama`, `openai`, `anthropic` |
-| `llm_model` | `llama3.2` | LLM model for ask/chat commands |
+| `llm_model` | `nemotron-3-nano:4b` | LLM model for ask/chat commands |
 | `quiet` | `false` | Suppress status messages globally |
 | `word_wrap` | `0` | Wrap output at N columns (0 = terminal width) |
 | `roles` | — | Custom named roles (map of name → system prompt lines) |
@@ -193,7 +193,7 @@ DiskANN parameters can be tuned in the config file under `diskann_config`:
 
 | Model | VRAM | Quality | Notes |
 |-------|------|---------|-------|
-| `llama3.2` | 4GB | Good | Fast, small |
+| `nemotron-3-nano:4b` | 4GB | Good | Fast, default |
 | `phi-4:14b` | 10GB | Excellent | Best balance |
 | `qwen2.5:32b` | 20GB+ | Outstanding | If you have the VRAM |
 

@@ -3,6 +3,7 @@
 /gleann
 /gleann-server
 /gleann-mcp
+/gleann-full
 *.exe
 
 # Build

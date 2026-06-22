@@ -62,7 +62,9 @@ ollama serve &
 ollama pull bge-m3
 
 # Pull a chat model (~2 GB)
-ollama pull llama3.2:3b-instruct
+ollama pull nemotron-3-nano:4b
+
+# Or any other Ollama-compatible model (e.g., llama3.2, phi4, qwen2.5)
 ```
 
 ## Step 3: Configure Gleann

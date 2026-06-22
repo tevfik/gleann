@@ -5,8 +5,8 @@
       "file": "benchmark_report.pdf",
       "format": "pdf",
       "backend": "go-native",
-      "latency_ms": 2,
-      "throughput_docs_per_sec": 500,
+      "latency_ms": 1,
+      "throughput_docs_per_sec": 1000,
       "sections": 3,
       "edges": 3,
       "max_heading_depth": 2,
@@ -466,5 +466,5 @@
       "formats_supported": 4
     }
   },
-  "timestamp": "2026-06-19T20:13:16+03:00"
+  "timestamp": "2026-06-22T08:46:16+03:00"
 }

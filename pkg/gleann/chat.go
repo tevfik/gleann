@@ -43,6 +43,10 @@ type ChatConfig struct {
 // DefaultChatTimeout is the default HTTP timeout for LLM chat requests.
 const DefaultChatTimeout = 10 * time.Minute
 
+// DefaultModelName is the default LLM model name used across Gleann.
+// Update this to change the out-of-the-box experience.
+const DefaultModelName = "nemotron-3-nano:4b"
+
 // DefaultOllamaContextWindow is the num_ctx used when --no-limit is in effect
 // (MaxTokens <= 0). The model's metadata may impose a smaller cap; Ollama
 // silently truncates in that case. Override via GLEANN_OLLAMA_NUM_CTX.
@@ -79,7 +83,7 @@ func ollamaContextWindow(maxTokens int) int {
 func DefaultChatConfig() ChatConfig {
 	return ChatConfig{
 		Provider:    LLMOllama,
-		Model:       "nemotron-3-nano:4b",
+		Model:       DefaultModelName,
 		BaseURL:     DefaultOllamaHost,
 		Temperature: 0.7,
 		MaxTokens:   2048,

@@ -40,7 +40,8 @@ export OLLAMA_HOST=http://your-server:11434
 ollama pull bge-m3
 
 # Chat/ask model
-ollama pull llama3.2:3b-instruct
+ollama pull nemotron-3-nano:4b
+# or any other Ollama model
 
 # List available models
 ollama list

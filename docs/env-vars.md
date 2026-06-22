@@ -25,7 +25,7 @@ Useful for Docker, CI/CD, and environments where editing config files is impract
 | Variable | Config Key | Default | Description |
 |----------|-----------|---------|-------------|
 | `LLM_PROVIDER` | `llm_provider` | `ollama` | LLM provider: `ollama`, `openai`, `anthropic` |
-| `LLM_MODEL` | `llm_model` | `llama3.2` | LLM model for ask/chat |
+| `LLM_MODEL` | `llm_model` | `nemotron-3-nano:4b` | LLM model for ask/chat |
 | `OPENAI_API_KEY` | `openai_key` | — | OpenAI API key |
 | `OPENAI_BASE_URL` | `openai_base_url` | — | OpenAI-compatible API base URL |
 
@@ -152,7 +152,7 @@ services:
       EMBEDDING_PROVIDER: ollama
       EMBEDDING_MODEL: bge-m3
       LLM_PROVIDER: ollama
-      LLM_MODEL: llama3.2
+      LLM_MODEL: nemotron-3-nano:4b
     volumes:
       - gleann-data:/data/indexes
 ```

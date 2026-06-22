@@ -239,7 +239,7 @@ func NewChatModel(chat *gleann.LeannChat, indexName, modelName string) ChatModel
 		}
 	} else {
 		// Fallback to minimal defaults if unreachable
-		for _, common := range []string{"llama3.2", "gpt-4o", "claude-sonnet-4-20250514"} {
+		for _, common := range []string{"nemotron-3-nano:4b", "phi-4:14b", "qwen2.5:32b"} {
 			if common != modelName {
 				llmModels = append(llmModels, common)
 			}

@@ -521,7 +521,7 @@ func cmdMemorySummarize(args []string) {
 	savedCfg := tui.LoadSavedConfig()
 	sumCfg := memory.SummarizerConfig{
 		Provider: "ollama",
-		Model:    "llama3.2:3b-instruct-q4_K_M",
+		Model:    DefaultLLMModel,
 		BaseURL:  "http://localhost:11434",
 	}
 	if savedCfg != nil {
