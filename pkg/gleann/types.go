@@ -143,7 +143,7 @@ type Config struct {
 
 	// LLM settings
 	LLMProvider string `json:"llm_provider,omitempty"` // ollama, openai, anthropic
-	LLMModel    string `json:"llm_model,omitempty"`    // e.g. llama3.2, gpt-4o
+	LLMModel    string `json:"llm_model,omitempty"`    // e.g. nemotron-3-nano:4b, gpt-4o
 
 	// Server features (also configurable via env vars, which take precedence)
 	A2AEnabled      *bool  `json:"a2a_enabled,omitempty"`      // Enable A2A protocol (default: true)

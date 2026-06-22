@@ -421,7 +421,7 @@ func (m OnboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if m.llmProviders[m.llmProviderIdx] == "llamacpp" {
 					m.llmModels = []ModelInfo{{Name: "(Download .gguf model to ~/.gleann/models)", Tag: "Example: Llama-3-8B.gguf"}}
 				} else {
-					m.llmModels = []ModelInfo{{Name: "llama3.2"}, {Name: "gpt-4o"}, {Name: "claude-sonnet-4-20250514"}}
+					m.llmModels = []ModelInfo{{Name: "nemotron-3-nano:4b"}, {Name: "phi-4:14b"}, {Name: "qwen2.5:32b"}}
 				}
 				m.llmAllModels = m.llmModels
 				m.phase = phaseLLMModel
@@ -908,7 +908,7 @@ func (m *OnboardModel) buildResult() {
 	if m.embProviders[m.embProviderIdx] == "native" {
 		embModel = "all-MiniLM-L6-v2"
 	}
-	llmModel := "llama3.2"
+	llmModel := "nemotron-3-nano:4b"
 	if len(m.llmModels) > 0 && m.llmModelIdx < len(m.llmModels) {
 		if m.llmProviders[m.llmProviderIdx] == "llamacpp" {
 			llmModel = m.llmModels[m.llmModelIdx].Tag
@@ -1253,7 +1253,7 @@ func (m OnboardModel) settingsMenuValues() []string {
 		llmModel = m.llmModels[m.llmModelIdx].Name
 	}
 	if llmModel == "" {
-		llmModel = "llama3.2"
+		llmModel = "nemotron-3-nano:4b"
 	}
 
 	host := m.embHostInput.Value()
@@ -1532,7 +1532,7 @@ func (m OnboardModel) renderSummary() string {
 	if len(m.embModels) > 0 && m.embModelIdx < len(m.embModels) {
 		embModel = m.embModels[m.embModelIdx].Name
 	}
-	llmModel := "llama3.2"
+	llmModel := "nemotron-3-nano:4b"
 	if len(m.llmModels) > 0 && m.llmModelIdx < len(m.llmModels) {
 		llmModel = m.llmModels[m.llmModelIdx].Name
 	}

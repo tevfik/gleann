@@ -232,7 +232,7 @@ gleann has three intelligence pillars that work together:
     --graph                 Enrich results with code graph context
 
   LLM:
-    --llm-model <model>     LLM model (default: llama3.2)
+    --llm-model <model>     LLM model (default: nemotron-3-nano:4b)
     --llm-provider <prov>   ollama | openai | anthropic
     --role <role>           System prompt role (code, shell, explain, ...)
     --format <fmt>          Output format: json | markdown | raw
