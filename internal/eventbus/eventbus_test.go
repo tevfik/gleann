@@ -3,6 +3,7 @@ package eventbus
 import (
 	"context"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -61,7 +62,7 @@ func TestBus_MultipleSubscribers(t *testing.T) {
 	}
 
 	// Both subscribers should receive the message
-	count := 0
+	var count int32
 	var wg sync.WaitGroup
 	wg.Add(2)
 
@@ -69,14 +70,14 @@ func TestBus_MultipleSubscribers(t *testing.T) {
 		defer wg.Done()
 		msg := <-sub1
 		msg.Ack()
-		count++
+			atomic.AddInt32(&count, 1)
 	}()
 
 	go func() {
 		defer wg.Done()
 		msg := <-sub2
 		msg.Ack()
-		count++
+		atomic.AddInt32(&count, 1)
 	}()
 
 	wg.Wait()
