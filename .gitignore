@@ -4,6 +4,8 @@
 /gleann-server
 /gleann-mcp
 /gleann-full
+/gleann-faiss
+/gleann-test
 *.exe
 
 # Build
