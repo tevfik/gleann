@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 
 	gokuzu "github.com/kuzudb/go-kuzu"
 )
@@ -190,6 +191,25 @@ func WriteFileNodesCSV(path string, files []FileNode) error {
 	return w.Error()
 }
 
+// sanitizeCSVField aggressively removes or replaces characters that break Kuzu's CSV importer.
+// Kuzu does not fully support RFC 4180 escape sequences, so we must ensure fields contain
+// NO double-quotes, NO backslashes, NO commas (which would create fake columns), and NO newlines.
+func sanitizeCSVField(s string) string {
+	s = strings.ReplaceAll(s, "\n", " ")
+	s = strings.ReplaceAll(s, "\r", " ")
+	s = strings.ReplaceAll(s, "\t", " ")
+	// Remove commas to prevent fake column creation
+	s = strings.ReplaceAll(s, ",", ";")
+	// Remove backslashes to prevent escape-sequence misinterpretation
+	s = strings.ReplaceAll(s, `\`, "")
+	// Replace double-quotes with single-quotes
+	s = strings.ReplaceAll(s, `"`, `'`)
+	for strings.Contains(s, "  ") {
+		s = strings.ReplaceAll(s, "  ", " ")
+	}
+	return strings.TrimSpace(s)
+}
+
 // WriteSymbolNodesCSV writes a list of SymbolNode to a CSV file.
 func WriteSymbolNodesCSV(path string, symbols []SymbolNode) error {
 	f, err := os.Create(path)
@@ -208,7 +228,7 @@ func WriteSymbolNodesCSV(path string, symbols []SymbolNode) error {
 			weight = 1.0
 		}
 		if err := w.Write([]string{
-			sym.FQN, sym.Kind, sym.File, fmt.Sprintf("%d", sym.Line), sym.Name, sym.Doc,
+			sym.FQN, sym.Kind, sym.File, fmt.Sprintf("%d", sym.Line), sym.Name, sanitizeCSVField(sym.Doc),
 			strconv.FormatFloat(weight, 'f', -1, 64),
 		}); err != nil {
 			return err
@@ -419,7 +439,7 @@ func WriteDocumentNodesCSV(path string, docs []DocumentNode) error {
 		return err
 	}
 	for _, d := range docs {
-		if err := w.Write([]string{d.VPath, d.RPath, d.Name, d.Hash, d.Summary}); err != nil {
+		if err := w.Write([]string{sanitizeCSVField(d.VPath), sanitizeCSVField(d.RPath), sanitizeCSVField(d.Name), sanitizeCSVField(d.Hash), sanitizeCSVField(d.Summary)}); err != nil {
 			return err
 		}
 	}
@@ -441,7 +461,7 @@ func WriteHeadingNodesCSV(path string, headings []HeadingNode) error {
 	}
 	for _, h := range headings {
 		if err := w.Write([]string{
-			h.ID, h.Name, fmt.Sprintf("%d", h.Level),
+			sanitizeCSVField(h.ID), sanitizeCSVField(h.Name), fmt.Sprintf("%d", h.Level),
 		}); err != nil {
 			return err
 		}
