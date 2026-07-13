@@ -5,8 +5,8 @@
       "file": "benchmark_report.pdf",
       "format": "pdf",
       "backend": "go-native",
-      "latency_ms": 1,
-      "throughput_docs_per_sec": 1000,
+      "latency_ms": 7,
+      "throughput_docs_per_sec": 142.85714285714286,
       "sections": 3,
       "edges": 3,
       "max_heading_depth": 2,
@@ -46,8 +46,8 @@
       "file": "benchmark_report.pdf",
       "format": "pdf",
       "backend": "plugin-docs",
-      "latency_ms": 0,
-      "throughput_docs_per_sec": 0,
+      "latency_ms": 1,
+      "throughput_docs_per_sec": 1000,
       "sections": 0,
       "edges": 0,
       "max_heading_depth": 0,
@@ -336,8 +336,8 @@
       "file": "api_reference.html",
       "format": "html",
       "backend": "plugin-marker",
-      "latency_ms": 0,
-      "throughput_docs_per_sec": 0,
+      "latency_ms": 1,
+      "throughput_docs_per_sec": 1000,
       "sections": 0,
       "edges": 0,
       "max_heading_depth": 0,
@@ -418,7 +418,7 @@
   ],
   "summary": {
     "go-native": {
-      "avg_latency_ms": 1,
+      "avg_latency_ms": 2,
       "avg_sections": 5.666666666666667,
       "avg_heading_detection_pct": 100,
       "avg_keyword_fidelity_pct": 97.5,
@@ -466,5 +466,5 @@
       "formats_supported": 4
     }
   },
-  "timestamp": "2026-06-22T08:46:16+03:00"
+  "timestamp": "2026-07-03T15:06:35+03:00"
 }
