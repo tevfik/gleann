@@ -51,20 +51,26 @@ def fail_log(msg: str): print(f"  {C.RED}❌ FAIL{C.RESET} — {msg}", flush=Tru
 # LLM Query with retry + streaming
 # ---------------------------------------------------------------------------
 def query_llm(prompt: str, retries: int = MAX_RETRIES) -> str:
-    """Query Ollama with retry. Append code-only instruction."""
+    """Query Ollama with retry + streaming fallback. Append code-only instruction."""
     full_prompt = (
         "You are a code generation assistant. Respond with ONLY the requested code "
         "in a single fenced code block. No explanation, no markdown text outside the code block.\n\n"
         + prompt
     )
-    payload = json.dumps({
-        "model": LLM_MODEL,
-        "prompt": full_prompt,
-        "stream": False,
-        "options": {"temperature": 0.1}  # Deterministic output
-    }).encode()
 
     for attempt in range(retries + 1):
+        # Try streaming first (avoids timeout on slow/queued servers)
+        response = _query_streaming(full_prompt, OLLAMA_HOST, LLM_MODEL)
+        if response and "LLM_QUERY_FAILED" not in response:
+            return response
+
+        # Fallback: non-streaming with higher timeout
+        payload = json.dumps({
+            "model": LLM_MODEL,
+            "prompt": full_prompt,
+            "stream": False,
+            "options": {"temperature": 0.1}
+        }).encode()
         req = urllib.request.Request(
             f"{OLLAMA_HOST}/api/generate",
             data=payload,
@@ -72,12 +78,12 @@ def query_llm(prompt: str, retries: int = MAX_RETRIES) -> str:
             method="POST"
         )
         try:
-            with urllib.request.urlopen(req, timeout=120) as resp:
+            with urllib.request.urlopen(req, timeout=180) as resp:
                 data = json.loads(resp.read())
                 response = data.get("response", "").strip()
                 if response and "LLM_QUERY_FAILED" not in response:
                     return response
-                log(f"  (attempt {attempt+1}): empty response, retrying...")
+                log(f"  (attempt {attempt+1}): empty non-streaming response, retrying...")
         except urllib.error.URLError as e:
             log(f"  (attempt {attempt+1}): connection error ({e}), retrying...")
             time.sleep(3 * (attempt + 1))
@@ -86,6 +92,44 @@ def query_llm(prompt: str, retries: int = MAX_RETRIES) -> str:
             time.sleep(3 * (attempt + 1))
 
     return "LLM_QUERY_FAILED after retries"
+
+
+def _query_streaming(prompt: str, host: str, model: str) -> str:
+    """Stream response from Ollama chunk-by-chunk to avoid timeout."""
+    payload = json.dumps({
+        "model": model,
+        "prompt": prompt,
+        "stream": True,
+        "options": {"temperature": 0.1}
+    }).encode()
+    req = urllib.request.Request(
+        f"{host}/api/generate",
+        data=payload,
+        headers={"Content-Type": "application/json"},
+        method="POST"
+    )
+    try:
+        chunks = []
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            while True:
+                line = resp.readline()
+                if not line:
+                    break
+                line_str = line.decode('utf-8').strip()
+                if not line_str:
+                    continue
+                try:
+                    chunk = json.loads(line_str)
+                    text = chunk.get("response", "")
+                    if text:
+                        chunks.append(text)
+                    if chunk.get("done", False):
+                        break
+                except json.JSONDecodeError:
+                    continue
+        return "".join(chunks).strip()
+    except Exception:
+        return ""
 
 # ---------------------------------------------------------------------------
 # Aggressive code extraction
