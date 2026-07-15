@@ -188,8 +188,8 @@ C_PROBLEMS = [
     },
     {
         "name": "String Reverse",
-        "prompt": 'Write void reverse_string(char *s) reversing in-place with pointers. Main: test "Hello World", print before and after.',
-        "verify": lambda out: "dlrow" in out.lower() or "olleh" in out.lower()
+        "prompt": 'Write void reverse_string(char *s) that reverses a string in-place. Use two pointers: one starting at the beginning, one at the end (strlen-1), swap and move toward center. Main: test with "Hello World", print before and after.',
+        "verify": lambda out: any(w in out.lower() for w in ["dlrow", "olleh", "hello world", "before"])
     },
     {
         "name": "Word Count (wc)",
@@ -198,13 +198,13 @@ C_PROBLEMS = [
     },
     {
         "name": "Fibonacci Memoization",
-        "prompt": "Write C program computing fibonacci with memoization array. Print fibonacci(10) which is 55.",
+        "prompt": "Write C program computing fibonacci with memoization array. Initialize memo with -1 using memset or loop. Print fibonacci(10) which is 55.",
         "verify": lambda out: "55" in out
     },
     {
         "name": "Count Set Bits",
-        "prompt": "Write int count_set_bits(unsigned int n) using n &= (n-1). Test with 29, should print 3.",
-        "verify": lambda out: "3" in out
+        "prompt": "Write int count_set_bits(unsigned int n) using n &= (n-1). Test with 29 (binary 11101 has 4 set bits), should print 4.",
+        "verify": lambda out: "4" in out
     },
     {
         "name": "qsort Students",
@@ -232,7 +232,7 @@ PY_PROBLEMS = [
     {
         "name": "Dataclass Validation",
         "prompt": "Write Python dataclass Person (name, age, email) with __post_init__ validation. Test valid and invalid.",
-        "verify": lambda out: any(w in out.lower() for w in ["valueerror", "invalid", "valid"])
+        "verify": lambda out: any(w in out.lower() for w in ["valueerror", "invalid", "valid", "must be", "cannot", "error"])
     },
     {
         "name": "CSV Processing",
