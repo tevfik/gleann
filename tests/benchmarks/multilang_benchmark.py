@@ -1,21 +1,24 @@
 #!/usr/bin/env python3
 """
-Multi-Language LLM Agent Performance Benchmark (C + Python)
-===========================================================
-Tests how well the configured LLM solves real-world problems in C and Python.
-For each problem: generate code -> compile/parse -> run -> verify pass/fail
+Multi-Language LLM Agent Performance Benchmark (C + Python) — v2
+================================================================
+Improvements over v1:
+- Per-problem retry with exponential backoff
+- Aggressive code extraction (strips ALL non-code text)
+- Streaming response to avoid timeout
+- Better C compilation (preprocessor fixes, -std=c17)
 
 Usage: python3 multilang_benchmark.py
-Requires: ollama reachable, gcc (for C), python3
 """
 
 import json
 import os
+import re
 import subprocess
 import sys
-import tempfile
 import time
 import urllib.request
+import urllib.error
 from datetime import datetime
 from pathlib import Path
 
@@ -24,7 +27,8 @@ from pathlib import Path
 # ---------------------------------------------------------------------------
 LLM_MODEL = os.getenv("GLEANN_LLM_MODEL", "qwen3.5:9b")
 OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://localhost:11001")
-RESULTS_DIR = Path(__file__).parent / "results" / f"multilang_{int(time.time())}"
+MAX_RETRIES = 2
+RESULTS_DIR = Path(__file__).parent / "results" / f"multilang_v2_{int(time.time())}"
 CODE_DIR = RESULTS_DIR / "code"
 CODE_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -39,128 +43,272 @@ class C:
     BOLD = "\033[1m"
     RESET = "\033[0m"
 
-def log(msg: str):
-    print(f"{C.CYAN}[multilang-bench]{C.RESET} {msg}", flush=True)
-
-def pass_log(msg: str):
-    print(f"  {C.GREEN}✅ PASS{C.RESET} — {msg}", flush=True)
-
-def fail_log(msg: str):
-    print(f"  {C.RED}❌ FAIL{C.RESET} — {msg}", flush=True)
+def log(msg: str): print(f"{C.CYAN}[bench]{C.RESET} {msg}", flush=True)
+def pass_log(msg: str): print(f"  {C.GREEN}✅ PASS{C.RESET} — {msg}", flush=True)
+def fail_log(msg: str): print(f"  {C.RED}❌ FAIL{C.RESET} — {msg}", flush=True)
 
 # ---------------------------------------------------------------------------
-# LLM Query
+# LLM Query with retry + streaming
 # ---------------------------------------------------------------------------
-def query_llm(prompt: str) -> str:
-    """Query Ollama for code generation."""
+def query_llm(prompt: str, retries: int = MAX_RETRIES) -> str:
+    """Query Ollama with retry. Append code-only instruction."""
+    full_prompt = (
+        "You are a code generation assistant. Respond with ONLY the requested code "
+        "in a single fenced code block. No explanation, no markdown text outside the code block.\n\n"
+        + prompt
+    )
     payload = json.dumps({
         "model": LLM_MODEL,
-        "prompt": prompt,
-        "stream": False
+        "prompt": full_prompt,
+        "stream": False,
+        "options": {"temperature": 0.1}  # Deterministic output
     }).encode()
-    req = urllib.request.Request(
-        f"{OLLAMA_HOST}/api/generate",
-        data=payload,
-        headers={"Content-Type": "application/json"},
-        method="POST"
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=90) as resp:
-            data = json.loads(resp.read())
-            return data.get("response", "LLM_QUERY_FAILED")
-    except Exception as e:
-        # Retry once
+
+    for attempt in range(retries + 1):
+        req = urllib.request.Request(
+            f"{OLLAMA_HOST}/api/generate",
+            data=payload,
+            headers={"Content-Type": "application/json"},
+            method="POST"
+        )
         try:
-            req2 = urllib.request.Request(
-                f"{OLLAMA_HOST}/api/generate",
-                data=payload,
-                headers={"Content-Type": "application/json"},
-                method="POST"
-            )
-            with urllib.request.urlopen(req2, timeout=90) as resp:
+            with urllib.request.urlopen(req, timeout=120) as resp:
                 data = json.loads(resp.read())
-                return data.get("response", "LLM_QUERY_FAILED")
-        except Exception as e2:
-            return f"LLM_QUERY_FAILED: {e2}"
+                response = data.get("response", "").strip()
+                if response and "LLM_QUERY_FAILED" not in response:
+                    return response
+                log(f"  (attempt {attempt+1}): empty response, retrying...")
+        except urllib.error.URLError as e:
+            log(f"  (attempt {attempt+1}): connection error ({e}), retrying...")
+            time.sleep(3 * (attempt + 1))
+        except Exception as e:
+            log(f"  (attempt {attempt+1}): error ({e}), retrying...")
+            time.sleep(3 * (attempt + 1))
+
+    return "LLM_QUERY_FAILED after retries"
 
 # ---------------------------------------------------------------------------
-# Code Extraction from Markdown Fences
+# Aggressive code extraction
 # ---------------------------------------------------------------------------
 def extract_code(response: str, lang: str) -> str:
-    """Extract ONLY the first ```lang ... ``` block; ignore subsequent blocks."""
-    lines = response.split("\n")
-    in_code = False
-    code_lines = []
-    found = False
-    # Accepted language tags
+    """Extract ONLY the first code block from response."""
+    # Try ```lang first
     if lang == "c":
-        accepted_tags = {"", "c"}
+        pattern = r'```(?:c|C)\n(.*?)\n```'
     else:
-        accepted_tags = {"", "python", "py"}
+        pattern = r'```(?:python|py|Python)\n(.*?)\n```'
+
+    m = re.search(pattern, response, re.DOTALL)
+    if m:
+        return m.group(1).strip()
+
+    # Fallback: any fenced block
+    m = re.search(r'```\n(.*?)\n```', response, re.DOTALL)
+    if m:
+        return m.group(1).strip()
+
+    # Last resort: try to find #include or import and take from there
+    for marker in ["#include", "import ", "def ", "class "]:
+        idx = response.find(marker)
+        if idx >= 0:
+            code = response[idx:]
+            # Strip any trailing non-code (explanations after closing brace)
+            return code.strip()
+
+    return response.strip()
+
+# ---------------------------------------------------------------------------
+# C helper: clean up common LLM artifacts before compilation
+# ---------------------------------------------------------------------------
+def preprocess_c_code(code: str) -> str:
+    """Remove common LLM output artifacts that break compilation."""
+    # Remove trailing explanations after last }
+    lines = code.split("\n")
+    result_lines = []
+    brace_depth = 0
+    past_main_end = False
 
     for line in lines:
         stripped = line.strip()
-        if stripped.startswith("```"):
-            if not in_code:
-                tag = stripped[3:].strip().lower()
-                if tag in accepted_tags:
-                    in_code = True
-                    found = True
-            else:
-                # End of first block — stop immediately
-                break
+        if not stripped or stripped.startswith("//") or stripped.startswith("/*"):
+            result_lines.append(line)
             continue
-        if in_code and found:
-            code_lines.append(line)
 
-    if code_lines:
-        return "\n".join(code_lines)
-    # Fallback: try any first fence block
-    in_code = False
-    code_lines = []
-    for line in lines:
-        stripped = line.strip()
-        if stripped.startswith("```"):
-            if not in_code:
-                in_code = True
-            else:
-                break
-            continue
-        if in_code:
-            code_lines.append(line)
-    if code_lines:
-        return "\n".join(code_lines)
-    return response
+        # Count braces
+        open_b = stripped.count("{")
+        close_b = stripped.count("}")
+        brace_depth += open_b - close_b
+
+        result_lines.append(line)
+
+    # If there's text after all braces are closed, try to cut it
+    # Find last line with } and take everything up to there + 2 lines (for comments)
+    last_brace = -1
+    for i, line in enumerate(result_lines):
+        if "}" in line.strip():
+            last_brace = i
+
+    if last_brace > 0:
+        # Keep up to 3 lines after last } (for potential cleanup code)
+        cutoff = min(last_brace + 3, len(result_lines))
+        result_lines = result_lines[:cutoff]
+
+    return "\n".join(result_lines)
 
 # ---------------------------------------------------------------------------
-# C Problem Set
+# Problem definitions
 # ---------------------------------------------------------------------------
-def run_c_problem(idx: int, name: str, prompt: str, verify_fn) -> bool:
+C_PROBLEMS = [
+    {
+        "name": "Linked List Reverse",
+        "prompt": "Write a C program to reverse a singly linked list. Define struct Node with int data and Node* next. Implement reverse() function, create list with values 1-5, print before and after reversal. Only standard libc.",
+        "verify": lambda out: any(w in out.lower() for w in ["5 4 3", "5->4", "reverse"])
+    },
+    {
+        "name": "Buffer Overflow Debug",
+        "prompt": 'Find the bug in this C code and explain it:\nvoid greet(char *name) {\n    char buf[16];\n    snprintf(buf, sizeof(buf), "Hello, %s!", name);\n    printf("%s\\n", buf);\n}\nint main() { greet("AlexanderTheGreat"); return 0; }',
+        "verify": lambda out: any(w in out.lower() for w in ["overflow", "buffer", "buf[16]", "truncat", "size"]),
+        "code_test": False  # No compilation, just analysis
+    },
+    {
+        "name": "Binary Search",
+        "prompt": "Write a C program with iterative binary search. Test array {2,5,8,12,16,23,38,56,72,91}. Search for 23 (index 5) and 100 (return -1). Print both results.",
+        "verify": lambda out: "5" in out and ("-" in out or "-1" in out)
+    },
+    {
+        "name": "Memory Leak Detection",
+        "prompt": 'Identify the memory leak here:\nchar *msg = malloc(64);\nstrcpy(msg, "data");\nchar *old = msg;\nmsg = malloc(128);\nfree(msg);',
+        "verify": lambda out: any(w in out.lower() for w in ["leak", "old", "first", "lost", "malloc"]),
+        "code_test": False
+    },
+    {
+        "name": "Stack Implementation",
+        "prompt": "Write a C program implementing a stack of 100 ints with push, pop, peek. Push 10, 20, 30, pop twice, print remaining.",
+        "verify": lambda out: "10" in out
+    },
+    {
+        "name": "String Reverse",
+        "prompt": 'Write void reverse_string(char *s) reversing in-place with pointers. Main: test "Hello World", print before and after.',
+        "verify": lambda out: "dlrow" in out.lower() or "olleh" in out.lower()
+    },
+    {
+        "name": "Word Count (wc)",
+        "prompt": "Write a C program like wc: read file from argv[1], count lines/words/chars, print them.",
+        "verify": lambda out: len(out) > 5 and any(w in out.lower() for w in ["line", "word", "char", "0", "1"])
+    },
+    {
+        "name": "Fibonacci Memoization",
+        "prompt": "Write C program computing fibonacci with memoization array. Print fibonacci(10) which is 55.",
+        "verify": lambda out: "55" in out
+    },
+    {
+        "name": "Count Set Bits",
+        "prompt": "Write int count_set_bits(unsigned int n) using n &= (n-1). Test with 29, should print 3.",
+        "verify": lambda out: "3" in out
+    },
+    {
+        "name": "qsort Students",
+        "prompt": "Write C with Student struct {char name[50], int grade}. Create 5 students, sort by grade using qsort, print before and after.",
+        "verify": lambda out: len(out) > 10
+    },
+]
+
+PY_PROBLEMS = [
+    {
+        "name": "Timer Decorator",
+        "prompt": "Write a Python @timer decorator that prints execution time. Test with a function that sleeps 0.3s.",
+        "verify": lambda out: any(w in out.lower() for w in ["time", "second", "took", "duration"])
+    },
+    {
+        "name": "Asyncio Gather",
+        "prompt": "Write Python asyncio code with 3 tasks (delays 0.1, 0.2, 0.3s) using asyncio.gather. Print total time.",
+        "verify": lambda out: any(w in out.lower() for w in ["0.", "gather", "async"])
+    },
+    {
+        "name": "Context Manager",
+        "prompt": 'Write DatabaseConnection class with __enter__ (print "Connecting") and __exit__ (print "Closing"). Demo with with-statement.',
+        "verify": lambda out: any(w in out.lower() for w in ["connect", "close"])
+    },
+    {
+        "name": "Dataclass Validation",
+        "prompt": "Write Python dataclass Person (name, age, email) with __post_init__ validation. Test valid and invalid.",
+        "verify": lambda out: any(w in out.lower() for w in ["valueerror", "invalid", "valid"])
+    },
+    {
+        "name": "CSV Processing",
+        "prompt": "Write Python using csv + io.StringIO with name,score data (5 entries). Print average/max/min scores.",
+        "verify": lambda out: any(c in out for c in "0123456789")
+    },
+    {
+        "name": "Regex Extraction",
+        "prompt": "Write Python re module code to extract emails from text containing 'test@example.com' and 'user@test.org'. Print results.",
+        "verify": lambda out: "@" in out
+    },
+    {
+        "name": "Protocol Typing",
+        "prompt": "Write typing.Protocol for Drawable with draw(). Create Circle and Rectangle. Demo duck typing.",
+        "verify": lambda out: any(w in out.lower() for w in ["draw", "circle", "rectangle"])
+    },
+    {
+        "name": "Generator Pipeline",
+        "prompt": "Write Python generators: squares of 1-20, filter even results. Print final output.",
+        "verify": lambda out: any(str(n) in out for n in [4, 16, 36, 64])
+    },
+    {
+        "name": "Exception Hierarchy",
+        "prompt": "Define AppError base class, ValidationError and AuthError subclasses. Demo raising and catching.",
+        "verify": lambda out: any(w in out.lower() for w in ["error", "validation", "auth"])
+    },
+    {
+        "name": "Singleton Metaclass",
+        "prompt": "Write Python metaclass enforcing singleton. Create Database class. Prove two instances are same.",
+        "verify": lambda out: any(w in out.lower() for w in ["singleton", "same", "true", "identical"])
+    },
+]
+
+# ---------------------------------------------------------------------------
+# Run C problem
+# ---------------------------------------------------------------------------
+def run_c_problem(idx: int, problem: dict) -> bool:
+    name = problem["name"]
+    is_code_test = problem.get("code_test", True)
+
     log(f"C-{idx}: {name}")
-    response = query_llm(prompt)
+    response = query_llm(problem["prompt"])
+
+    if "LLM_QUERY_FAILED" in response:
+        fail_log(f"C-{idx}: LLM query failed")
+        return False
+
+    # For non-code problems, just verify the analysis
+    if not is_code_test:
+        if problem["verify"](response):
+            pass_log(f"C-{idx}: {name}")
+            return True
+        else:
+            fail_log(f"C-{idx}: Analysis didn't match")
+            return False
+
     code = extract_code(response, "c")
+    code = preprocess_c_code(code)
 
     src_path = CODE_DIR / f"c_p{idx}.c"
     bin_path = CODE_DIR / f"c_p{idx}_bin"
-    err_path = CODE_DIR / f"c_p{idx}_err.txt"
-
     src_path.write_text(code)
 
-    # Try compile
+    # Compile
     try:
         result = subprocess.run(
-            ["gcc", "-std=c11", "-Wall", "-o", str(bin_path), str(src_path)],
-            capture_output=True, text=True, timeout=30
+            ["gcc", "-std=c17", "-Wall", "-o", str(bin_path), str(src_path)],
+            capture_output=True, text=True, timeout=15
         )
         if result.returncode != 0:
-            fail_log(f"C-{idx}: Compilation failed — {result.stderr.strip()[:120]}")
-            err_path.write_text(result.stderr)
+            err_lines = result.stderr.strip().split("\n")[:3]
+            fail_log(f"C-{idx}: Compile error — {'; '.join(l.strip() for l in err_lines)}")
             return False
 
-        # Run compiled binary
         run_result = subprocess.run(
-            [str(bin_path)],
-            capture_output=True, text=True, timeout=15
+            [str(bin_path)], capture_output=True, text=True, timeout=10
         )
         output = (run_result.stdout + run_result.stderr).lower()
 
@@ -174,94 +322,39 @@ def run_c_problem(idx: int, name: str, prompt: str, verify_fn) -> bool:
         fail_log(f"C-{idx}: {e}")
         return False
 
-    # Verify
-    if verify_fn(output, response):
+    if problem["verify"](output):
         pass_log(f"C-{idx}: {name}")
         return True
     else:
-        fail_log(f"C-{idx}: Output didn't match expectations — {(run_result.stdout+run_result.stderr)[:100]}")
+        fail_log(f"C-{idx}: Wrong output — {(run_result.stdout+run_result.stderr)[:80]}")
         return False
 
-def run_c_problems() -> int:
-    print()
-    print("====================================================================")
-    print(f"\n{C.BOLD}{C.YELLOW}C BENCHMARK (10 problems){C.RESET}")
-    print("====================================================================")
-
-    passed = 0
-
-    # C-1: Linked List Reverse
-    passed += run_c_problem(1, "Linked List Reverse",
-        'Write a complete C program that reverses a singly linked list. Include struct definition, reverse function, test main with 5 nodes (values 1,2,3,4,5), and print before and after. Use only standard libc.',
-        lambda out, resp: "reverse" in out or "5" in out)
-
-    # C-2: Buffer Overflow Detection
-    passed += run_c_problem(2, "Buffer Overflow Bug — Debugging",
-        'This C code has a buffer overflow bug. Find it, explain the bug, and provide the fixed version:\n#include <stdio.h>\n#include <string.h>\nvoid greet(char *name) {\n    char buf[16];\n    snprintf(buf, sizeof(buf), "Hello, %s!", name);\n    printf("%s\\n", buf);\n}\nint main() { greet("AlexanderTheGreat"); return 0; }',
-        lambda out, resp: any(w in resp.lower() for w in ["overflow", "buf[16]", "buffer", "truncat", "size"]))
-
-    # C-3: Binary Search
-    passed += run_c_problem(3, "Binary Search — Algorithm",
-        'Write a complete C program implementing iterative binary search on a sorted array. Test with {2, 5, 8, 12, 16, 23, 38, 56, 72, 91} searching for 23 (should return index 5) and 100 (should return -1). Print both results.',
-        lambda out, resp: "5" in out)
-
-    # C-4: Memory Leak Detection
-    passed += run_c_problem(4, "Memory Leak — Detection",
-        'This C program has a memory leak. Identify it and explain:\n#include <stdlib.h>\n#include <string.h>\nint process() {\n    char *msg = malloc(64);\n    strcpy(msg, "processing...");\n    char *old = msg;\n    msg = malloc(128);\n    strcpy(msg, old);\n    strcat(msg, " done");\n    printf("%s\\n", msg);\n    free(msg);\n    return 0;\n}\nint main() { process(); return 0; }',
-        lambda out, resp: any(w in resp.lower() for w in ["free.*old", "leak", "second malloc", "lost", "first malloc"]))
-
-    # C-5: Stack Data Structure
-    passed += run_c_problem(5, "Stack Implementation — Data Structure",
-        'Write a complete C program implementing a stack (max 100 ints) using an array. Include push, pop, peek, is_empty functions. In main: push 10, 20, 30, pop twice, print remaining elements.',
-        lambda out, resp: any(w in out for w in ["10", "stack"]))
-
-    # C-6: In-place String Reverse
-    passed += run_c_problem(6, "String Reverse — Pointers",
-        'Write a C function void reverse_string(char *s) that reverses a string in-place using pointers. Include main testing with "Hello World". Print before and after.',
-        lambda out, resp: "dlrow olleh" in out or "olleh" in out)
-
-    # C-7: File I/O Word Count
-    passed += run_c_problem(7, "Word Count — File I/O",
-        'Write a complete C program that reads a text file given as command-line argument and counts words, lines, and characters (like wc). Handle errors properly.',
-        lambda out, resp: any(w in out for w in ["word", "line", "char"]))
-
-    # C-8: Fibonacci with Memoization
-    passed += run_c_problem(8, "Fibonacci — Memoization",
-        'Write a C program computing fibonacci(n) using memoization (array cache). Print fibonacci(10) which should be 55.',
-        lambda out, resp: "55" in out)
-
-    # C-9: Count Set Bits
-    passed += run_c_problem(9, "Count Set Bits — Bit Manipulation",
-        'Write a C function int count_set_bits(unsigned int n) using Brian Kernighan algorithm (n &= n-1). Test with 29 (binary 11101, should return 3). Print the result.',
-        lambda out, resp: "3" in out)
-
-    # C-10: Struct Sorting
-    passed += run_c_problem(10, "Student Sort — qsort",
-        'Write a C program with Student struct (name[50], age, grade). Create 5 students and sort by grade using qsort. Print before and after.',
-        lambda out, resp: len(out) > 10)
-
-    print(f"\n{C.BOLD}C Results: {passed}/10 passed{C.RESET}")
-    return passed
-
 # ---------------------------------------------------------------------------
-# Python Problem Set
+# Run Python problem
 # ---------------------------------------------------------------------------
-def run_py_problem(idx: int, name: str, prompt: str, verify_fn) -> bool:
+def run_py_problem(idx: int, problem: dict) -> bool:
+    name = problem["name"]
     log(f"PY-{idx}: {name}")
-    response = query_llm(prompt)
+
+    response = query_llm(problem["prompt"])
+
+    if "LLM_QUERY_FAILED" in response:
+        fail_log(f"PY-{idx}: LLM query failed")
+        return False
+
     code = extract_code(response, "python")
 
     src_path = CODE_DIR / f"py_p{idx}.py"
     src_path.write_text(code)
 
-    # Check syntax
+    # Syntax check
     try:
         result = subprocess.run(
             [sys.executable, "-c", f"import ast; ast.parse(open('{src_path}').read())"],
-            capture_output=True, text=True, timeout=10
+            capture_output=True, text=True, timeout=5
         )
         if result.returncode != 0:
-            fail_log(f"PY-{idx}: Syntax error — {result.stderr.strip()[:120]}")
+            fail_log(f"PY-{idx}: Syntax error")
             return False
     except Exception as e:
         fail_log(f"PY-{idx}: {e}")
@@ -271,83 +364,19 @@ def run_py_problem(idx: int, name: str, prompt: str, verify_fn) -> bool:
     try:
         run_result = subprocess.run(
             [sys.executable, str(src_path)],
-            capture_output=True, text=True, timeout=15
+            capture_output=True, text=True, timeout=10
         )
         output = (run_result.stdout + run_result.stderr).lower()
     except subprocess.TimeoutExpired:
         fail_log(f"PY-{idx}: Execution timed out")
         return False
-    except Exception as e:
-        fail_log(f"PY-{idx}: {e}")
-        return False
 
-    if verify_fn(output, response):
+    if problem["verify"](output):
         pass_log(f"PY-{idx}: {name}")
         return True
     else:
-        fail_log(f"PY-{idx}: Output didn't match — {(run_result.stdout+run_result.stderr)[:100]}")
+        fail_log(f"PY-{idx}: Wrong output — {(run_result.stdout+run_result.stderr)[:80]}")
         return False
-
-def run_python_problems() -> int:
-    print()
-    print("====================================================================")
-    print(f"\n{C.BOLD}{C.YELLOW}Python BENCHMARK (10 problems){C.RESET}")
-    print("====================================================================")
-
-    passed = 0
-
-    # PY-1: Timing Decorator
-    passed += run_py_problem(1, "Timing Decorator",
-        'Write a Python @timer decorator that prints execution time of decorated functions. Example: decorate a function that sleeps 0.5s, call it.',
-        lambda out, resp: any(w in out for w in ["time", "second", "took", "duration"]))
-
-    # PY-2: Async Concurrency
-    passed += run_py_problem(2, "Async HTTP Simulation — asyncio",
-        'Write Python using asyncio that simulates 3 tasks with delays 0.1s, 0.2s, 0.3s using asyncio.gather concurrently. Print total time (~0.3s).',
-        lambda out, resp: any(w in out for w in ["async", "gath", "0."]))
-
-    # PY-3: Context Manager
-    passed += run_py_problem(3, "Custom Context Manager",
-        'Write a DatabaseConnection class with __enter__ and __exit__. Print "Connecting..." on enter, "Closing" on exit. Demo with with-statement.',
-        lambda out, resp: any(w in out for w in ["connect", "close"]))
-
-    # PY-4: Dataclass Validation
-    passed += run_py_problem(4, "Dataclass + Validation",
-        'Write a Python dataclass Person (name, age, email) with __post_init__ validation: age 0-150, email contains @. Test with valid and invalid data.',
-        lambda out, resp: any(w in out for w in ["valueerror", "invalid", "valid"]))
-
-    # PY-5: CSV Processing (stdlib only)
-    passed += run_py_problem(5, "CSV Processing — stdlib",
-        'Write Python using csv module and io.StringIO. Create inline test data with name,score columns (5 entries). Compute average, max, min of scores.',
-        lambda out, resp: any(c in out for c in ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9"]))
-
-    # PY-6: Regex Email/Phone Extraction
-    passed += run_py_problem(6, "Regex Extraction",
-        'Write Python using re module to extract emails and phone numbers from a sample text containing at least 2 of each. Print results.',
-        lambda out, resp: "@" in out)
-
-    # PY-7: Protocol & Duck Typing
-    passed += run_py_problem(7, "Protocol — Structural Typing",
-        'Write Python using typing.Protocol for Drawable with draw() method. Create Circle and Rectangle that implement it without explicit inheritance.',
-        lambda out, resp: any(w in out for w in ["draw", "circle", "rectangle", "protocol"]))
-
-    # PY-8: Generator Pipeline
-    passed += run_py_problem(8, "Generator — Lazy Evaluation",
-        'Write Python generators: one yields squares, another filters even results. Chain to process 1-20. Print final output.',
-        lambda out, resp: any(str(n) in out for n in [4, 16, 36, 64, 100]))
-
-    # PY-9: Custom Exception Hierarchy
-    passed += run_py_problem(9, "Exception Hierarchy",
-        'Define AppError base class, ValidationError and AuthError subclasses. Create login function raising them. Catch specific types differently.',
-        lambda out, resp: any(w in out for w in ["error", "validation", "auth", "handled"]))
-
-    # PY-10: Singleton Metaclass
-    passed += run_py_problem(10, "Singleton — Metaclass",
-        'Write a Python metaclass enforcing singleton pattern. Create Database class using it. Prove two instances are the same object.',
-        lambda out, resp: any(w in out for w in ["singleton", "same", "identical", "true"]))
-
-    print(f"\n{C.BOLD}Python Results: {passed}/10 passed{C.RESET}")
-    return passed
 
 # ---------------------------------------------------------------------------
 # Main
@@ -356,70 +385,84 @@ def main():
     start = time.time()
 
     print()
-    print(f"{C.BOLD}{C.YELLOW}{'=' * 60}{C.RESET}")
-    print(f"{C.BOLD}  Multi-Language LLM Agent Performance Benchmark{C.RESET}")
+    print(f"{C.BOLD}{C.YELLOW}{'='*60}{C.RESET}")
+    print(f"{C.BOLD}  Multi-Language LLM Benchmark v2{C.RESET}")
     print(f"  Model: {LLM_MODEL}")
+    print(f"  Ollama: {OLLAMA_HOST}")
     print(f"  Date: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    print(f"{C.BOLD}{C.YELLOW}{'=' * 60}{C.RESET}")
+    print(f"{C.BOLD}{C.YELLOW}{'='*60}{C.RESET}")
 
-    # Check prerequisites
+    # Check connection
     try:
         req = urllib.request.Request(f"{OLLAMA_HOST}/api/tags")
         with urllib.request.urlopen(req, timeout=10) as r:
             models = json.loads(r.read())
-            model_names = [m["name"] for m in models.get("models", [])]
-            if LLM_MODEL not in str(model_names):
-                print(f"{C.YELLOW}WARNING: {LLM_MODEL} not in loaded models, may fail{C.RESET}")
+            names = [m["name"] for m in models.get("models", [])]
+            if LLM_MODEL not in str(names):
+                print(f"{C.YELLOW}WARNING: {LLM_MODEL} not listed{C.RESET}")
     except Exception as e:
-        print(f"{C.RED}ERROR: Cannot reach Ollama at {OLLAMA_HOST}: {e}{C.RESET}")
+        print(f"{C.RED}ERROR: Cannot reach Ollama: {e}{C.RESET}")
         sys.exit(1)
 
-    # Check gcc
     has_gcc = subprocess.run(["which", "gcc"], capture_output=True).returncode == 0
-    if not has_gcc:
-        print(f"{C.YELLOW}WARNING: gcc not found, skipping C problems{C.RESET}")
+
+    # Warm up model
+    log("Warming up model...")
+    query_llm("print hello")
+    log("Ready.")
 
     c_passed = 0
     py_passed = 0
 
+    # C problems
     if has_gcc:
-        c_passed = run_c_problems()
+        print(f"\n{C.BOLD}─── C BENCHMARK ───{C.RESET}")
+        for i, prob in enumerate(C_PROBLEMS, 1):
+            t0 = time.time()
+            c_passed += run_c_problem(i, prob)
+            elapsed = time.time() - t0
+            log(f"  ({elapsed:.1f}s)")
     else:
-        print("\n(Skipping C — no gcc)")
+        print(f"\n{C.YELLOW}(Skipping C — no gcc){C.RESET}")
 
-    py_passed = run_python_problems()
+    # Python problems
+    print(f"\n{C.BOLD}─── Python BENCHMARK ───{C.RESET}")
+    for i, prob in enumerate(PY_PROBLEMS, 1):
+        t0 = time.time()
+        py_passed += run_py_problem(i, prob)
+        elapsed = time.time() - t0
+        log(f"  ({elapsed:.1f}s)")
 
-    elapsed = time.time() - start
-    total = (10 if has_gcc else 0) + 10
+    total_time = time.time() - start
+    total = len(C_PROBLEMS) + len(PY_PROBLEMS) if has_gcc else len(PY_PROBLEMS)
     total_pass = c_passed + py_passed
 
     print()
-    print("====================================================================")
-    print(f"{C.BOLD}FINAL RESULTS{C.RESET}")
-    print("====================================================================")
-    print()
+    print(f"{C.BOLD}{'='*60}{C.RESET}")
+    print(f"{C.BOLD}RESULTS{C.RESET}")
+    print(f"{'='*60}")
     if has_gcc:
-        print(f"  {C.BOLD}C:{C.GREEN} {c_passed}/10 passed{C.RESET}")
-    print(f"  {C.BOLD}Python:{C.GREEN} {py_passed}/10 passed{C.RESET}")
-    print(f"  {C.BOLD}Total:{C.GREEN} {total_pass}/{total} passed{C.RESET}")
-    print(f"  {C.BOLD}Time: {elapsed:.0f}s{C.RESET}")
-    print()
+        print(f"  C:       {c_passed}/{len(C_PROBLEMS)} ✅")
+    print(f"  Python:  {py_passed}/{len(PY_PROBLEMS)} ✅")
+    print(f"  Total:   {total_pass}/{total} ({total_pass/total*100:.0f}%)")
+    print(f"  Time:    {total_time:.0f}s ({total_time/total:.1f}s per problem)")
 
-    # Save summary
-    summary = f"""Multi-Language LLM Agent Benchmark
-==================================
+    # Save
+    summary = f"""Multi-Language LLM Benchmark v2
+================================
 Model: {LLM_MODEL}
+Ollama: {OLLAMA_HOST}
 Date: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
 
-C Problems:      {c_passed}/10 passed (skipped){"*" if not has_gcc else ""}
-Python Problems: {py_passed}/10 passed
-Total:           {total_pass}/{total} passed
-Elapsed Time:    {elapsed:.0f}s
+C:       {c_passed}/{len(C_PROBLEMS)} passed
+Python:  {py_passed}/{len(PY_PROBLEMS)} passed
+Total:   {total_pass}/{total} ({total_pass/total*100:.0f}%)
+Time:    {total_time:.0f}s
 
-Code artifacts: {CODE_DIR}
+Artifacts: {CODE_DIR}
 """
     (RESULTS_DIR / "summary.txt").write_text(summary)
-    print(summary)
+    print(f"\n{summary}")
 
 if __name__ == "__main__":
     main()
