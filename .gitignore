@@ -63,3 +63,9 @@ e2e/indexes/
 
 # Local-only working notes (LOCAL_*.md moved here, gitignored).
 notes/
+
+# SE-Agent local files
+se-agent.yaml
+se/
+tests/benchmarks/multilang_benchmark.sh
+tests/benchmarks/results/
