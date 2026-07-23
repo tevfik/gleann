@@ -102,7 +102,11 @@ main() {
     if [ "${OS}" = "windows" ]; then
         EXT=".exe"
     fi
-    ASSET="${VARIANT}-${OS}-${ARCH}${EXT}"
+    ARCHIVE_EXT="tar.gz"
+    if [ "${OS}" = "windows" ]; then
+        ARCHIVE_EXT="zip"
+    fi
+    ASSET="${VARIANT}-${VERSION}-${OS}-${ARCH}.${ARCHIVE_EXT}"
     URL="${GITHUB_RELEASES}/download/${VERSION}/${ASSET}"
 
     # Install directory.
@@ -110,15 +114,53 @@ main() {
     mkdir -p "${INSTALL_DIR}"
 
     DEST="${INSTALL_DIR}/gleann${EXT}"
-    TMPFILE=$(mktemp)
-    trap 'rm -f "${TMPFILE}"' EXIT
+    TMPDIR=$(mktemp -d)
+    trap 'rm -rf "${TMPDIR}"' EXIT
 
     info "Downloading ${URL}..."
-    download "${URL}" "${TMPFILE}"
+    download "${URL}" "${TMPDIR}/${ASSET}"
 
-    mv "${TMPFILE}" "${DEST}"
+    # Extract archive
+    if [ "${ARCHIVE_EXT}" = "zip" ]; then
+        if command -v unzip >/dev/null 2>&1; then
+            unzip -q -d "${TMPDIR}/extracted" "${TMPDIR}/${ASSET}"
+        else
+            fail "unzip command not found. Install unzip and retry."
+        fi
+    else
+        mkdir -p "${TMPDIR}/extracted"
+        tar -xzf "${TMPDIR}/${ASSET}" -C "${TMPDIR}/extracted"
+    fi
+
+    # Find the binary (ignoring libraries)
+    BINARY_FILE=""
+    for f in "${TMPDIR}/extracted"/gleann*; do
+        case "$f" in
+            *.so|*.so.*|*.dylib|*.dll) ;;
+            *)
+                if [ -f "$f" ]; then
+                    BINARY_FILE="$f"
+                    break
+                fi
+                ;;
+        esac
+    done
+
+    if [ -z "${BINARY_FILE}" ]; then
+        fail "Could not find gleann binary in the downloaded archive."
+    fi
+
+    mv "${BINARY_FILE}" "${DEST}"
     chmod +x "${DEST}"
     log "Installed to ${DEST}"
+
+    # Copy libraries for full/FAISS variant
+    for lib in "${TMPDIR}/extracted"/*.so "${TMPDIR}/extracted"/*.dylib "${TMPDIR}/extracted"/*.dll; do
+        if [ -f "$lib" ]; then
+            mv "$lib" "${INSTALL_DIR}/"
+            log "Installed library: $(basename "$lib")"
+        fi
+    done
 
     # Check PATH.
     case ":${PATH}:" in
