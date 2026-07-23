@@ -201,6 +201,26 @@ func TestHandleBuildNoTexts(t *testing.T) {
 	}
 }
 
+func TestHandleUpdateIndexBadRequest(t *testing.T) {
+	s := &Server{
+		config:    gleann.DefaultConfig(),
+		searchers: make(map[string]*gleann.LeannSearcher),
+	}
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /api/indexes/{name}/update", s.handleUpdateIndex)
+
+	body, _ := json.Marshal(updateIndexRequest{})
+	req := httptest.NewRequest(http.MethodPost, "/api/indexes/test/update", bytes.NewReader(body))
+	w := httptest.NewRecorder()
+
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected 400, got %d", w.Code)
+	}
+}
+
 func TestWriteJSON(t *testing.T) {
 	w := httptest.NewRecorder()
 	writeJSON(w, http.StatusOK, map[string]string{"key": "value"})

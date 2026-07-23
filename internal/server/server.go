@@ -9,6 +9,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -114,6 +115,7 @@ func (s *Server) Start() error {
 	mux.HandleFunc("POST /api/indexes/{name}/search", s.handleSearch)
 	mux.HandleFunc("POST /api/indexes/{name}/ask", s.handleAsk)
 	mux.HandleFunc("POST /api/indexes/{name}/build", s.handleBuild)
+	mux.HandleFunc("POST /api/indexes/{name}/update", s.handleUpdateIndex)
 	mux.HandleFunc("DELETE /api/indexes/{name}", s.handleDeleteIndex)
 
 	// Multi-index search.
@@ -622,6 +624,78 @@ func (s *Server) handleBuild(w http.ResponseWriter, r *http.Request) {
 		"name":    name,
 		"count":   len(items),
 		"buildMs": buildDuration.Milliseconds(),
+	})
+}
+
+type updateIndexRequest struct {
+	Sources  []string      `json:"sources"`
+	DocsRoot string        `json:"docs_root,omitempty"`
+	Items    []gleann.Item `json:"items,omitempty"`
+}
+
+func (s *Server) handleUpdateIndex(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	if name == "" {
+		writeError(w, http.StatusBadRequest, "index name required")
+		return
+	}
+
+	var req updateIndexRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
+		return
+	}
+
+	if len(req.Sources) == 0 && len(req.Items) == 0 {
+		writeError(w, http.StatusBadRequest, "sources or items required for update")
+		return
+	}
+
+	items := req.Items
+
+	// If no explicit items were provided, read sources from disk under DocsRoot
+	if len(items) == 0 && req.DocsRoot != "" {
+		for _, src := range req.Sources {
+			fullPath := filepath.Join(req.DocsRoot, src)
+			content, err := os.ReadFile(fullPath)
+			if err != nil {
+				writeError(w, http.StatusBadRequest, fmt.Sprintf("read source file %s: %v", src, err))
+				return
+			}
+			meta := map[string]any{"source": src}
+			items = append(items, gleann.Item{
+				Text:     string(content),
+				Metadata: meta,
+			})
+		}
+	}
+
+	builder, err := gleann.NewBuilder(s.config, s.embedder)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "create builder: "+err.Error())
+		return
+	}
+
+	start := time.Now()
+	if err := builder.UpdateIndex(r.Context(), name, items, req.Sources); err != nil {
+		writeError(w, http.StatusInternalServerError, "update index failed: "+err.Error())
+		return
+	}
+
+	// Invalidate searcher cache for this index
+	s.mu.Lock()
+	if searcher, ok := s.searchers[name]; ok {
+		searcher.Close()
+		delete(s.searchers, name)
+	}
+	s.mu.Unlock()
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"status":          "ok",
+		"index":           name,
+		"updated_sources": req.Sources,
+		"items_count":     len(items),
+		"duration_ms":     time.Since(start).Milliseconds(),
 	})
 }
 
