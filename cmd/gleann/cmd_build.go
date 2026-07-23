@@ -495,7 +495,7 @@ func collectEligibleFiles(dir string, pluginManager *gleann.PluginManager, nativ
 			if strings.HasPrefix(base, ".") && path != dir {
 				return filepath.SkipDir
 			}
-			if base == "node_modules" || base == "vendor" || base == "dist" || base == "build" || base == ".next" {
+			if base == "node_modules" || base == "vendor" || base == "dist" || base == "build" || base == ".next" || base == ".venv" || base == "__pycache__" {
 				return filepath.SkipDir
 			}
 			if relPath != "." && ignoreMatcher.Match(relPath, true) {
@@ -886,16 +886,21 @@ func cmdWatch(args []string) {
 	}
 }
 
-// initMultimodalProcessor creates a multimodal processor if a model is available.
-// Priority: --multimodal-model flag > GLEANN_MULTIMODAL_MODEL env > auto-detect.
+// initMultimodalProcessor creates a multimodal processor only when explicitly
+// requested via --multimodal-model flag or GLEANN_MULTIMODAL_MODEL env var.
+// Auto-detect is disabled by default to avoid unintentional HTTP calls for
+// every media file in large projects (e.g., test wav files from SciPy).
+// Set model to "none" or "off" to explicitly disable even when auto-detect finds one.
 func initMultimodalProcessor(ollamaHost, flagModel string) *multimodal.Processor {
 	model := flagModel
 	if model == "" {
 		model = os.Getenv("GLEANN_MULTIMODAL_MODEL")
 	}
-	if model == "" {
-		model = multimodal.AutoDetectModel(ollamaHost)
+	// Explicitly disabled — no auto-detect fallback
+	if strings.EqualFold(model, "none") || strings.EqualFold(model, "off") || strings.EqualFold(model, "disable") {
+		return nil
 	}
+	// No auto-detect: only proceed if model is explicitly set
 	if model == "" {
 		return nil
 	}
