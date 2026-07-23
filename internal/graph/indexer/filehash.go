@@ -54,7 +54,7 @@ type FileHashStore struct {
 //
 //	indexDir/<name>_graph/file_hashes.db
 func DefaultHashStorePath(indexDir, name string) string {
-	return filepath.Join(indexDir, name+"_graph", "file_hashes.db")
+	return filepath.Join(indexDir, name+"_file_hashes.db")
 }
 
 // NewFileHashStore opens (or creates) a hash store at path.
