@@ -37,6 +37,12 @@ func cmdPlugin(args []string) {
 	switch args[0] {
 	case "list", "ls":
 		pluginList()
+	case "install", "add":
+		if len(args) < 2 {
+			fmt.Fprintln(os.Stderr, "usage: gleann plugin install <name>")
+			os.Exit(1)
+		}
+		pluginInstall(args[1:])
 	case "update", "upgrade":
 		pluginUpdate(args[1:])
 	case "info":
@@ -59,11 +65,12 @@ func pluginUsage() {
 
 Usage:
   gleann plugin list                Show registered plugins + live status
+  gleann plugin install <name>      Install & register plugin via CLI
   gleann plugin info <name>         Fetch live /info from a plugin
   gleann plugin update [name]       git pull + rebuild a plugin (all if omitted)
 
-Plugins are auto-discovered from ~/.gleann/plugins.json. Audio and vision
-plugins are auto-wired into the multimodal pipeline by capability.`)
+Plugins are auto-discovered from ~/.gleann/plugins.json. Audio and document
+plugins are auto-wired into the pipeline by capability.`)
 }
 
 func pluginList() {
@@ -225,4 +232,80 @@ func gitOutput(dir string, args ...string) (string, error) {
 	cmd.Dir = dir
 	out, err := cmd.Output()
 	return string(out), err
+}
+
+// pluginInstall clones and registers a plugin via CLI.
+func pluginInstall(names []string) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	reposDir := filepath.Join(home, ".gleann", "plugins", "_repos")
+	os.MkdirAll(reposDir, 0755)
+
+	knownRepos := map[string]string{
+		"gleann-plugin-marker": "https://github.com/tevfik/gleann-plugin-marker",
+		"gleann-plugin-docs":   "https://github.com/tevfik/gleann-plugin-marker",
+		"gleann-plugin-sound":  "https://github.com/tevfik/gleann-plugin-sound",
+		"marker":               "https://github.com/tevfik/gleann-plugin-marker",
+		"docs":                 "https://github.com/tevfik/gleann-plugin-marker",
+		"sound":                "https://github.com/tevfik/gleann-plugin-sound",
+	}
+
+	for _, name := range names {
+		fullName := name
+		if !strings.HasPrefix(fullName, "gleann-plugin-") {
+			fullName = "gleann-plugin-" + name
+		}
+		repoURL, ok := knownRepos[name]
+		if !ok {
+			repoURL = knownRepos[fullName]
+		}
+		if repoURL == "" {
+			if strings.HasPrefix(name, "http://") || strings.HasPrefix(name, "https://") || strings.HasPrefix(name, "git@") {
+				repoURL = name
+				parts := strings.Split(name, "/")
+				fullName = strings.TrimSuffix(parts[len(parts)-1], ".git")
+			} else {
+				fmt.Fprintf(os.Stderr, "Unknown plugin %q. Known plugins: gleann-plugin-marker, gleann-plugin-sound, gleann-plugin-docs or a git URL.\n", name)
+				continue
+			}
+		}
+
+		targetDir := filepath.Join(reposDir, fullName)
+		if _, err := os.Stat(targetDir); os.IsNotExist(err) {
+			// Also check workspace directory
+			wsDir := filepath.Join(home, ".openclaw", "workspace", fullName)
+			if _, wsErr := os.Stat(wsDir); wsErr == nil {
+				targetDir = wsDir
+			} else {
+				fmt.Printf("[install] Cloning %s into %s...\n", repoURL, targetDir)
+				if err := exec.Command("git", "clone", repoURL, targetDir).Run(); err != nil {
+					fmt.Fprintf(os.Stderr, "failed to clone %s: %v\n", repoURL, err)
+					continue
+				}
+			}
+		} else {
+			fmt.Printf("[install] Plugin repository already present at %s\n", targetDir)
+		}
+
+		// Run python main.py --install inside plugin directory if present
+		mainPy := filepath.Join(targetDir, "main.py")
+		if _, err := os.Stat(mainPy); err == nil {
+			venvPython := filepath.Join(targetDir, ".venv", "bin", "python")
+			if _, err := os.Stat(venvPython); os.IsNotExist(err) {
+				venvPython = "python3"
+			}
+			cmd := exec.Command(venvPython, "main.py", "--install")
+			cmd.Dir = targetDir
+			cmd.Stdout = os.Stdout
+			cmd.Stderr = os.Stderr
+			if err := cmd.Run(); err != nil {
+				fmt.Fprintf(os.Stderr, "failed to register plugin %s: %v\n", fullName, err)
+			} else {
+				fmt.Printf("✓ Plugin %s registered successfully!\n", fullName)
+			}
+		}
+	}
 }
