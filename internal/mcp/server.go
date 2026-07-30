@@ -122,6 +122,9 @@ func NewServer(cfg Config) *Server {
 	srv.initGraphPool()
 	srv.registerGraphTools()
 
+	// Register Prompts API templates
+	srv.registerPrompts()
+
 	// Register generic index list resource
 	s.AddResource(mcp.Resource{
 		URI:         "gleann://indexes",
