@@ -61,7 +61,7 @@ func NewServer(cfg Config) *Server {
 		BaseURL:  cfg.OllamaHost,
 	})
 
-	s := server.NewMCPServer("gleann-mcp", version)
+	s := server.NewMCPServer("gleann-mcp", version, server.WithRoots())
 
 	srv := &Server{
 		mcpServer: s,
@@ -124,6 +124,9 @@ func NewServer(cfg Config) *Server {
 
 	// Register Prompts API templates
 	srv.registerPrompts()
+
+	// Register Roots API handler
+	srv.registerRootsHandler()
 
 	// Register generic index list resource
 	s.AddResource(mcp.Resource{
