@@ -283,6 +283,15 @@ gleann chat my-docs
 gleann ask my-docs "Explain the architecture"
 gleann ask my-docs "Explain the architecture" --interactive
 
+# Deep Research / Swarm Mode (Search Agent -> Coding Agent)
+gleann ask my-docs "Write a refactoring plan" --swarm
+
+# Multimodal queries
+gleann ask my-docs "What does this diagram mean?" --image diagram.png
+
+# Native Structured Output (JSON)
+gleann ask my-docs "Extract all dependencies" --format json
+
 # Multi-index ask (comma-separated)
 gleann ask docs,code "How does auth work?"
 

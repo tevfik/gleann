@@ -1,0 +1,37 @@
+{
+  "timestamp": "2026-07-30T11:03:53+03:00",
+  "pass": 93,
+  "fail": 1,
+  "warn": 4,
+  "total": 94,
+  "metrics": {
+    "code_search_precision_pct": 0,
+    "e2e_fail": 1,
+    "e2e_pass": 93,
+    "e2e_skip": 1,
+    "e2e_warn": 4,
+    "graph_communities": "0",
+    "graph_god_nodes": "0",
+    "graph_modularity": "0",
+    "index_build_ms": 102,
+    "memory_add_ms": 35,
+    "memory_context_ms": 35,
+    "memory_search_ms": 35,
+    "search_avg_latency_ms": 54,
+    "search_precision_hit": 8,
+    "search_precision_pct": 100,
+    "search_precision_total": 8,
+    "search_query_1_ms": 55,
+    "search_query_2_ms": 53,
+    "search_query_3_ms": 63,
+    "search_query_4_ms": 54,
+    "search_query_5_ms": 52,
+    "search_query_6_ms": 53,
+    "search_query_7_ms": 51,
+    "search_query_8_ms": 51,
+    "search_total_latency_ms": 432
+  },
+  "weak_points": [
+    {"area": "failures", "value": 1, "threshold": 0, "note": "Any failure is a critical weak point"}
+  ]
+}

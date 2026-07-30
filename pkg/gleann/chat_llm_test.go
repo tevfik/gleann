@@ -146,6 +146,29 @@ func TestChatOllama_InvalidJSON(t *testing.T) {
 	}
 }
 
+func TestChatOllama_FormatJSON(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req ollamaChatRequest
+		json.NewDecoder(r.Body).Decode(&req)
+		
+		formatStr, ok := req.Format.(string)
+		if !ok || formatStr != "json" {
+			t.Errorf("expected format 'json', got %v", req.Format)
+		}
+		
+		resp := ollamaChatResponse{Message: ChatMessage{Content: "ok"}}
+		json.NewEncoder(w).Encode(resp)
+	}))
+	defer srv.Close()
+
+	chat := newTestChat(LLMOllama, srv.URL)
+	chat.config.Format = "json"
+	_, err := chat.chatOllama(context.Background(), []ChatMessage{{Role: "user", Content: "hi"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
 // --- chatOpenAI tests ---
 
 func TestChatOpenAI_Success(t *testing.T) {
@@ -356,6 +379,48 @@ func TestChatAnthropic_DefaultMaxTokens(t *testing.T) {
 	}
 	chat := NewChat(NullSearcher{}, cfg)
 	_, err := chat.chatAnthropic(context.Background(), []ChatMessage{
+		{Role: "user", Content: "hi"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestChatAnthropic_PromptCaching(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if v := r.Header.Get("anthropic-beta"); v != "prompt-caching-2024-07-31" {
+			t.Errorf("expected anthropic-beta header, got: %s", v)
+		}
+		var req anthropicRequest
+		json.NewDecoder(r.Body).Decode(&req)
+		
+		blocks, ok := req.System.([]interface{})
+		if !ok || len(blocks) == 0 {
+			t.Fatalf("expected system to be array of blocks, got %T", req.System)
+		}
+		
+		lastBlock := blocks[len(blocks)-1].(map[string]interface{})
+		cacheControl, ok := lastBlock["cache_control"].(map[string]interface{})
+		if !ok || cacheControl["type"] != "ephemeral" {
+			t.Errorf("expected cache_control type ephemeral")
+		}
+		
+		resp := anthropicResponse{Content: []struct {
+			Text string `json:"text"`
+		}{{Text: "cached ok"}}}
+		json.NewEncoder(w).Encode(resp)
+	}))
+	defer srv.Close()
+
+	cfg := ChatConfig{
+		Provider:     LLMAnthropic,
+		Model:        "claude-3-5-sonnet-20240620",
+		BaseURL:      srv.URL,
+		SystemPrompt: "Long system prompt for caching",
+	}
+	chat := NewChat(NullSearcher{}, cfg)
+	_, err := chat.chatAnthropic(context.Background(), []ChatMessage{
+		{Role: "system", Content: "Long system prompt for caching"},
 		{Role: "user", Content: "hi"},
 	})
 	if err != nil {

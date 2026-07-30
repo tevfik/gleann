@@ -411,6 +411,7 @@ type askRequest struct {
 	Role           string `json:"role,omitempty"`
 	ConversationID string `json:"conversation_id,omitempty"`
 	Stream         bool   `json:"stream,omitempty"`
+	Format         any    `json:"format,omitempty"`
 }
 
 type askResponse struct {
@@ -457,6 +458,9 @@ func (s *Server) handleAsk(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.SystemPrompt != "" {
 		chatConfig.SystemPrompt = req.SystemPrompt
+	}
+	if req.Format != nil {
+		chatConfig.Format = req.Format
 	}
 
 	// Resolve named role to system prompt.

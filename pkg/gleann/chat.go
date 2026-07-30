@@ -38,6 +38,7 @@ type ChatConfig struct {
 	SystemPrompt string        `json:"system_prompt,omitempty"`
 	Timeout      time.Duration `json:"timeout,omitempty"` // HTTP client timeout; 0 uses DefaultChatTimeout
 	Think        *bool         `json:"think,omitempty"`   // Ollama: nil=model default, false=disable thinking
+	Format       any           `json:"format,omitempty"`  // Native structured output (JSON schema/format)
 }
 
 // DefaultChatTimeout is the default HTTP timeout for LLM chat requests.
@@ -644,6 +645,7 @@ type ollamaChatRequest struct {
 	Stream   bool           `json:"stream"`
 	Options  map[string]any `json:"options,omitempty"`
 	Think    *bool          `json:"think,omitempty"`
+	Format   any            `json:"format,omitempty"`
 }
 
 type ollamaChatResponse struct {
@@ -656,6 +658,7 @@ func (c *LeannChat) chatOllama(ctx context.Context, messages []ChatMessage) (str
 		Messages: messages,
 		Stream:   false,
 		Think:    c.config.Think,
+		Format:   c.config.Format,
 		Options: map[string]any{
 			"temperature": c.config.Temperature,
 		},
@@ -729,18 +732,20 @@ type openAIMultimodalMessage struct {
 }
 
 type openAIChatRequest struct {
-	Model       string        `json:"model"`
-	Messages    []ChatMessage `json:"messages"`
-	Temperature float64       `json:"temperature,omitempty"`
-	MaxTokens   int           `json:"max_tokens,omitempty"`
+	Model          string        `json:"model"`
+	Messages       []ChatMessage `json:"messages"`
+	Temperature    float64       `json:"temperature,omitempty"`
+	MaxTokens      int           `json:"max_tokens,omitempty"`
+	ResponseFormat any           `json:"response_format,omitempty"`
 }
 
 // openAIMultimodalRequest uses interface{} messages to support mixed content.
 type openAIMultimodalRequest struct {
-	Model       string        `json:"model"`
-	Messages    []interface{} `json:"messages"`
-	Temperature float64       `json:"temperature,omitempty"`
-	MaxTokens   int           `json:"max_tokens,omitempty"`
+	Model          string        `json:"model"`
+	Messages       []interface{} `json:"messages"`
+	Temperature    float64       `json:"temperature,omitempty"`
+	MaxTokens      int           `json:"max_tokens,omitempty"`
+	ResponseFormat any           `json:"response_format,omitempty"`
 }
 
 type openAIChatResponse struct {
@@ -788,18 +793,20 @@ func (c *LeannChat) chatOpenAI(ctx context.Context, messages []ChatMessage) (str
 
 	if hasImages(messages) {
 		reqBody := openAIMultimodalRequest{
-			Model:       c.config.Model,
-			Messages:    toOpenAIMultimodalMessages(messages),
-			Temperature: c.config.Temperature,
-			MaxTokens:   c.config.MaxTokens,
+			Model:          c.config.Model,
+			Messages:       toOpenAIMultimodalMessages(messages),
+			Temperature:    c.config.Temperature,
+			MaxTokens:      c.config.MaxTokens,
+			ResponseFormat: c.config.Format,
 		}
 		body, err = json.Marshal(reqBody)
 	} else {
 		reqBody := openAIChatRequest{
-			Model:       c.config.Model,
-			Messages:    messages,
-			Temperature: c.config.Temperature,
-			MaxTokens:   c.config.MaxTokens,
+			Model:          c.config.Model,
+			Messages:       messages,
+			Temperature:    c.config.Temperature,
+			MaxTokens:      c.config.MaxTokens,
+			ResponseFormat: c.config.Format,
 		}
 		body, err = json.Marshal(reqBody)
 	}
@@ -847,7 +854,7 @@ func (c *LeannChat) chatOpenAI(ctx context.Context, messages []ChatMessage) (str
 type anthropicRequest struct {
 	Model       string        `json:"model"`
 	MaxTokens   int           `json:"max_tokens"`
-	System      string        `json:"system,omitempty"`
+	System      any           `json:"system,omitempty"`
 	Messages    []ChatMessage `json:"messages"`
 	Temperature float64       `json:"temperature,omitempty"`
 }
@@ -856,15 +863,16 @@ type anthropicRequest struct {
 type anthropicMultimodalRequest struct {
 	Model       string        `json:"model"`
 	MaxTokens   int           `json:"max_tokens"`
-	System      string        `json:"system,omitempty"`
+	System      any           `json:"system,omitempty"`
 	Messages    []interface{} `json:"messages"`
 	Temperature float64       `json:"temperature,omitempty"`
 }
 
 type anthropicContentBlock struct {
 	Type   string                `json:"type"`
-	Text   string                `json:"text,omitempty"`
-	Source *anthropicImageSource `json:"source,omitempty"`
+	Text         string                `json:"text,omitempty"`
+	Source       *anthropicImageSource `json:"source,omitempty"`
+	CacheControl map[string]any        `json:"cache_control,omitempty"`
 }
 
 type anthropicImageSource struct {
@@ -907,14 +915,20 @@ func toAnthropicMultimodalMessages(messages []ChatMessage) []interface{} {
 
 func (c *LeannChat) chatAnthropic(ctx context.Context, messages []ChatMessage) (string, error) {
 	// Extract system message.
-	var system string
+	var systemBlocks []anthropicContentBlock
 	var userMessages []ChatMessage
 	for _, m := range messages {
 		if m.Role == "system" {
-			system = m.Content
+			systemBlocks = append(systemBlocks, anthropicContentBlock{
+				Type: "text",
+				Text: m.Content,
+			})
 		} else {
 			userMessages = append(userMessages, m)
 		}
+	}
+	if len(systemBlocks) > 0 {
+		systemBlocks[len(systemBlocks)-1].CacheControl = map[string]any{"type": "ephemeral"}
 	}
 
 	maxTokens := c.config.MaxTokens
@@ -929,7 +943,7 @@ func (c *LeannChat) chatAnthropic(ctx context.Context, messages []ChatMessage) (
 		reqBody := anthropicMultimodalRequest{
 			Model:       c.config.Model,
 			MaxTokens:   maxTokens,
-			System:      system,
+			System:      systemBlocks,
 			Messages:    toAnthropicMultimodalMessages(userMessages),
 			Temperature: c.config.Temperature,
 		}
@@ -938,7 +952,7 @@ func (c *LeannChat) chatAnthropic(ctx context.Context, messages []ChatMessage) (
 		reqBody := anthropicRequest{
 			Model:       c.config.Model,
 			MaxTokens:   maxTokens,
-			System:      system,
+			System:      systemBlocks,
 			Messages:    userMessages,
 			Temperature: c.config.Temperature,
 		}
@@ -955,6 +969,7 @@ func (c *LeannChat) chatAnthropic(ctx context.Context, messages []ChatMessage) (
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("anthropic-version", "2023-06-01")
+	req.Header.Set("anthropic-beta", "prompt-caching-2024-07-31")
 	if c.config.APIKey != "" {
 		req.Header.Set("x-api-key", c.config.APIKey)
 	}

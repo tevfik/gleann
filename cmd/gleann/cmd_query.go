@@ -337,6 +337,44 @@ func cmdAsk(args []string) {
 		}
 		fmt.Println(answer)
 		saveConversation()
+	} else if hasFlag(args, "--swarm") {
+		fmt.Fprintf(os.Stderr, "🐝 Swarm Mode (index: %s, model: %s)\n", name, chatConfig.Model)
+		
+		// 1. Search Agent
+		fmt.Fprintln(os.Stderr, "  [Search Agent] Analyzing knowledge base...")
+		searchChat := gleann.NewChat(searcher, chatConfig)
+		searchChat.SetSystemPrompt("You are a Search Agent. Search the knowledge base and summarize the context relevant to the user's question. Focus on extracting accurate technical facts.")
+		searchAnswer, err := searchChat.Ask(ctx, question)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "search agent error: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Fprintln(os.Stderr, "  [Search Agent] Context retrieved and synthesized.")
+		
+		// 2. Coding Agent
+		fmt.Fprintln(os.Stderr, "  [Coding Agent] Generating final response...")
+		codeChat := gleann.NewChat(gleann.NullSearcher{}, chatConfig) // NullSearcher to skip second RAG call
+		codeChat.SetSystemPrompt("You are a Senior Coding Agent. Synthesize the context provided by the Search Agent and answer the user's question directly with well-formatted code or explanation. Do not mention that you received context.")
+		prompt := fmt.Sprintf("User Question: %s\n\nSearch Agent Context:\n%s", question, searchAnswer)
+		
+		err = codeChat.AskStream(ctx, prompt, func(token string) {
+			wrapper.Write(token)
+		})
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "\ncoding agent error: %v\n", err)
+			os.Exit(1)
+		}
+		
+		if !rawMode {
+			wrapper.Flush()
+			renderMarkdown()
+		}
+		fmt.Println()
+		
+		// Save for transparency
+		chat.AppendHistory(gleann.ChatMessage{Role: "user", Content: question})
+		chat.AppendHistory(gleann.ChatMessage{Role: "assistant", Content: "(Swarm Result)\n" + searchAnswer})
+		saveConversation()
 	} else {
 		fmt.Print("")
 		var err error
@@ -528,12 +566,14 @@ func printCmdAskUsage() {
 	fmt.Fprintln(os.Stderr, "Flags:")
 	fmt.Fprintln(os.Stderr, "  --interactive        Start interactive chat session")
 	fmt.Fprintln(os.Stderr, "  --agent              Use ReAct agent with read_full_document tool")
+	fmt.Fprintln(os.Stderr, "  --swarm              Use multi-agent Swarm routing (Search -> Coding)")
 	fmt.Fprintln(os.Stderr, "  --continue ID        Continue a previous conversation")
 	fmt.Fprintln(os.Stderr, "  --continue-last      Continue the most recent conversation")
 	fmt.Fprintln(os.Stderr, "  --title TITLE        Set conversation title")
 	fmt.Fprintln(os.Stderr, "  --role ROLE          Use a named role (e.g. code, shell, explain)")
 	fmt.Fprintln(os.Stderr, "  --format FORMAT      Output format: json, markdown, raw")
 	fmt.Fprintln(os.Stderr, "  --attach FILE        Attach image/audio file (can repeat; requires multimodal model)")
+	fmt.Fprintln(os.Stderr, "  --image FILE         Alias for --attach (attach image file)")
 	fmt.Fprintln(os.Stderr, "  --raw                Output raw text (no formatting); auto-enabled when piped")
 	fmt.Fprintln(os.Stderr, "  --quiet              Suppress status messages")
 	fmt.Fprintln(os.Stderr, "  --word-wrap N        Wrap output at N columns (default: terminal width)")
@@ -603,10 +643,10 @@ func extractPositionalArgs(args []string) ([]string, []string) {
 		"--word-wrap": true, "--llm-model": true, "--llm-provider": true,
 		"--rerank-model": true, "--top-k": true, "--metric": true,
 		"--model": true, "--provider": true, "--host": true,
-		"--attach": true,
+		"--attach": true, "--image": true,
 	}
 	for i := 0; i < len(args); i++ {
-		if args[i] == "--attach" && i+1 < len(args) {
+		if (args[i] == "--attach" || args[i] == "--image") && i+1 < len(args) {
 			i++
 			attachFiles = append(attachFiles, args[i])
 			continue
