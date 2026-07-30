@@ -18,7 +18,7 @@
 set +e
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-BINARY="${REPO_ROOT}/build/gleann-full"
+BINARY="${REPO_ROOT}/build/gleann"
 FIXTURES="${REPO_ROOT}/tests/e2e/fixtures"
 RESULTS_DIR="${REPO_ROOT}/tests/e2e/results"
 
@@ -212,7 +212,33 @@ mkdir -p "$RESULTS_DIR"
 if ollama_available; then
   pass "Ollama is reachable"
   HAS_LLM=true
+  
+  if [[ "$BENCHMARK" == "true" ]]; then
+    sub "Benchmark mode: checking minimum operating conditions (models)..."
+    host=$(cat ~/.gleann/config.json 2>/dev/null | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('ollama_host','http://localhost:11434'))" 2>/dev/null || echo "http://localhost:11434")
+    model=$(cat ~/.gleann/config.json 2>/dev/null | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('provider_model','llama3.2'))" 2>/dev/null || echo "llama3.2")
+    embed_model=$(cat ~/.gleann/config.json 2>/dev/null | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('embedding_model','nomic-embed-text'))" 2>/dev/null || echo "nomic-embed-text")
+    
+    for m in "$model" "$embed_model"; do
+      if ! curl -sf "${host}/api/tags" | grep -qi "\"name\":\"${m}"; then
+        warn "Model '$m' not found. Attempting to pull..."
+        curl -s -X POST "${host}/api/pull" -d "{\"name\":\"${m}\"}" >/dev/null
+        if curl -sf "${host}/api/tags" | grep -qi "\"name\":\"${m}"; then
+          pass "Successfully pulled model '$m'"
+        else
+          echo -e "${RED}Error: Failed to pull required model '$m'. Benchmark minimum conditions not met.${NC}"
+          exit 1
+        fi
+      else
+        pass "Model '$m' is available"
+      fi
+    done
+  fi
 else
+  if [[ "$BENCHMARK" == "true" ]]; then
+    echo -e "${RED}Error: Benchmark mode requires Ollama to be running. Minimum operating conditions not met.${NC}"
+    exit 1
+  fi
   warn "Ollama not reachable — LLM-dependent tests will be skipped"
   HAS_LLM=false
 fi

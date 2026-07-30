@@ -1,0 +1,7 @@
+{
+  "ragas": {
+    "status": "pass",
+    "faithfulness": 1,
+    "answer_relevancy": 0
+  }
+}
