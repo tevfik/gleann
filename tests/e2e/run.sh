@@ -1112,16 +1112,25 @@ if [[ -f "$MCP_FILE" ]]; then
   if grep -q "gleann" "$MCP_FILE"; then
     pass "read modes: MCP config references gleann binary"
   else
-    warn "read modes: gleann not referenced in MCP config"
+    fail "read modes: MCP config missing gleann reference"
   fi
 else
-  # Try .cursor directory
-  MCP_FILE=$(find "$TMPDIR_MCP" -name "*.json" 2>/dev/null | head -1)
-  if [[ -f "$MCP_FILE" ]]; then
-    pass "read modes: cursor config file created (${MCP_FILE##*/})"
-  else
-    warn "read modes: cursor install created no JSON config (may need cursor present)"
-  fi
+  fail "read modes: cursor MCP config missing"
+fi
+
+# 14b — verify MCP server JSON-RPC capabilities (Prompts & Roots API)
+sub "Checking MCP Server JSON-RPC capabilities..."
+INIT_REQ='{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{"roots":{"listChanged":true}},"clientInfo":{"name":"test-client","version":"1.0"}}}'
+MCP_OUT=$(echo "$INIT_REQ" | "$BINARY" mcp 2>/dev/null)
+if echo "$MCP_OUT" | grep -q '"prompts":'; then
+  pass "mcp: Server capabilities include Prompts API"
+else
+  fail "mcp: Server capabilities missing Prompts API"
+fi
+if echo "$MCP_OUT" | grep -q '"roots":'; then
+  pass "mcp: Server capabilities include Roots API"
+else
+  fail "mcp: Server capabilities missing Roots API"
 fi
 rm -rf "$TMPDIR_MCP"
 
