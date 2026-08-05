@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"charm.land/bubbles/v2/textarea"
+	"github.com/tevfik/gleann/pkg/gleann"
 )
 
 // ── adjustSetting ──────────────────────────────────────────────
@@ -414,15 +415,15 @@ func TestPluginStatusBadgeExt3(t *testing.T) {
 }
 
 func TestKnownPluginsNotEmptyExt3(t *testing.T) {
-	if len(knownPlugins) == 0 {
+	if len(gleann.FetchPluginCatalog()) == 0 {
 		t.Error("should have known plugins")
 	}
 }
 
 func TestPluginModelInitExt3(t *testing.T) {
 	m := PluginModel{
-		plugins:  knownPlugins,
-		statuses: make([]pluginStatus, len(knownPlugins)),
+		plugins:  gleann.FetchPluginCatalog(),
+		statuses: make([]pluginStatus, len(gleann.FetchPluginCatalog())),
 	}
 	cmd := m.Init()
 	if cmd != nil {

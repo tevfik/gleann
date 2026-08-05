@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"time"
 )
 
 // LeannSearcher performs search on built indexes.
@@ -594,4 +595,46 @@ func cosineSimilarity(a, b []float32) float32 {
 		return 0
 	}
 	return dot / denominator
+}
+
+// UpdateIndexMeta updates the metadata for an existing index on disk.
+func UpdateIndexMeta(indexDir string, name string, mutator func(meta *IndexMeta)) error {
+	metaPath := filepath.Join(indexDir, name, name+".meta.json")
+	data, err := os.ReadFile(metaPath)
+	if err != nil {
+		return fmt.Errorf("read meta: %w", err)
+	}
+
+	var meta IndexMeta
+	if err := json.Unmarshal(data, &meta); err != nil {
+		return fmt.Errorf("unmarshal meta: %w", err)
+	}
+
+	mutator(&meta)
+	meta.UpdatedAt = time.Now()
+
+	updatedData, err := json.MarshalIndent(meta, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal meta: %w", err)
+	}
+
+	if err := os.WriteFile(metaPath, updatedData, 0644); err != nil {
+		return fmt.Errorf("write meta: %w", err)
+	}
+
+	return nil
+}
+
+// GetIndexMeta returns the metadata for a specific index.
+func GetIndexMeta(indexDir, name string) (IndexMeta, error) {
+	metaPath := filepath.Join(indexDir, name, name+".meta.json")
+	data, err := os.ReadFile(metaPath)
+	if err != nil {
+		return IndexMeta{}, fmt.Errorf("read meta: %w", err)
+	}
+	var meta IndexMeta
+	if err := json.Unmarshal(data, &meta); err != nil {
+		return IndexMeta{}, fmt.Errorf("parse meta: %w", err)
+	}
+	return meta, nil
 }

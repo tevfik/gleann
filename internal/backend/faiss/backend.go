@@ -29,6 +29,13 @@ import (
 	"github.com/tevfik/gleann/pkg/gleann"
 )
 
+var (
+	// faissMu serializes all FAISS CGO calls that mutate state or allocate
+	// large structures. This prevents OpenBLAS/OpenMP from segfaulting
+	// when multiple goroutines (e.g. AutoIndexer + Web UI) trigger builds.
+	faissMu sync.Mutex
+)
+
 // Factory creates FAISS backend builders and searchers.
 type Factory struct{}
 
@@ -96,6 +103,10 @@ func buildFAISSIndex(embeddings [][]float32, m int, fc gleann.FAISSConfig) (*C.F
 	defer C.free(unsafe.Pointer(cDesc))
 
 	var index *C.FaissIndex
+	
+	faissMu.Lock()
+	defer faissMu.Unlock()
+
 	rc := C.faiss_index_factory(&index, C.int(dim), cDesc, C.METRIC_L2)
 	if rc != 0 {
 		return nil, fmt.Errorf("faiss_index_factory(%q) failed: rc=%d", desc, rc)
@@ -156,7 +167,10 @@ func (b *Builder) AddVectors(ctx context.Context, indexData []byte, embeddings [
 
 	flat := flattenVectors(embeddings)
 
+	faissMu.Lock()
 	rc := C.faiss_Index_add(index, C.idx_t(len(embeddings)), (*C.float)(unsafe.Pointer(&flat[0])))
+	faissMu.Unlock()
+	
 	if rc != 0 {
 		return nil, fmt.Errorf("faiss_Index_add failed: rc=%d", rc)
 	}

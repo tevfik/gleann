@@ -867,3 +867,40 @@ func truncate(s string, maxLen int) string {
 	}
 	return s[:maxLen] + "..."
 }
+
+// RenderPDFPageToBase64 renders a specific page of a PDF and returns it as a base64 string.
+func RenderPDFPageToBase64(pdfPath string, pageNum int, dpi int) (string, error) {
+	if dpi <= 0 {
+		dpi = 150
+	}
+	outDir, err := os.MkdirTemp("", "gleann-pdf-render-*")
+	if err != nil {
+		return "", err
+	}
+	defer os.RemoveAll(outDir)
+
+	var cmd *exec.Cmd
+	if path, err := exec.LookPath("pdftoppm"); err == nil {
+		cmd = exec.Command(path, "-jpeg", "-r", strconv.Itoa(dpi), "-f", strconv.Itoa(pageNum), "-l", strconv.Itoa(pageNum), pdfPath, filepath.Join(outDir, "page"))
+	} else if path, err := exec.LookPath("mutool"); err == nil {
+		cmd = exec.Command(path, "draw", "-o", filepath.Join(outDir, "page-%d.png"), "-r", strconv.Itoa(dpi), fmt.Sprintf("%d", pageNum), pdfPath)
+	} else {
+		return "", fmt.Errorf("no PDF renderer found: install poppler-utils (pdftoppm) or mupdf-tools (mutool)")
+	}
+
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return "", fmt.Errorf("pdf render failed: %w\n%s", err, string(out))
+	}
+
+	images, err := collectPageImages(outDir)
+	if err != nil || len(images) == 0 {
+		return "", fmt.Errorf("failed to collect rendered page image")
+	}
+
+	data, err := os.ReadFile(images[0])
+	if err != nil {
+		return "", err
+	}
+
+	return base64.StdEncoding.EncodeToString(data), nil
+}

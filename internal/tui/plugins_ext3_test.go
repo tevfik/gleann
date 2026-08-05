@@ -5,14 +5,15 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/tevfik/gleann/pkg/gleann"
 )
 
 // ── PluginModel Update ─────────────────────────────────────────
 
 func newTestPluginModel() PluginModel {
 	return PluginModel{
-		plugins:  knownPlugins,
-		statuses: make([]pluginStatus, len(knownPlugins)),
+		plugins:  gleann.FetchPluginCatalog(),
+		statuses: make([]pluginStatus, len(gleann.FetchPluginCatalog())),
 		width:    80,
 		height:   24,
 		state:    psMain,

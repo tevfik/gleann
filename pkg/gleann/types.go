@@ -72,6 +72,8 @@ type IndexMeta struct {
 	EmbeddingModel string    `json:"embedding_model"`
 	Dimensions     int       `json:"dimensions"`
 	NumPassages    int       `json:"num_passages"`
+	SourceDir      string    `json:"source_dir,omitempty"`
+	AutoWatch      bool      `json:"auto_watch,omitempty"`
 	CreatedAt      time.Time `json:"created_at"`
 	UpdatedAt      time.Time `json:"updated_at"`
 	Version        string    `json:"version"`

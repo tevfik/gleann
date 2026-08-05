@@ -234,11 +234,11 @@ type StreamCallback func(token string)
 // token-by-token through the callback. It behaves like Ask but delivers partial
 // results as they become available from the LLM provider.
 // The full assembled answer is also appended to conversation history.
-func (c *LeannChat) AskStream(ctx context.Context, question string, callback StreamCallback, opts ...SearchOption) error {
+func (c *LeannChat) AskStream(ctx context.Context, question string, callback StreamCallback, opts ...SearchOption) ([]SearchResult, error) {
 	// Step 1: Retrieve relevant context.
 	results, err := c.searcher.Search(ctx, question, opts...)
 	if err != nil {
-		return fmt.Errorf("search: %w", err)
+		return nil, fmt.Errorf("search: %w", err)
 	}
 
 	// Step 2: Build context from results.
@@ -282,7 +282,7 @@ func (c *LeannChat) AskStream(ctx context.Context, question string, callback Str
 	}
 
 	if err := c.chatStream(ctx, messages, wrappedCB); err != nil {
-		return fmt.Errorf("chat stream: %w", err)
+		return nil, fmt.Errorf("chat stream: %w", err)
 	}
 
 	// Save to history.
@@ -291,7 +291,7 @@ func (c *LeannChat) AskStream(ctx context.Context, question string, callback Str
 		ChatMessage{Role: "assistant", Content: fullAnswer.String()},
 	)
 
-	return nil
+	return results, nil
 }
 
 // LoadMediaFiles reads files from disk and returns base64-encoded strings.
@@ -369,7 +369,7 @@ func (c *LeannChat) AskWithImages(ctx context.Context, question string, images [
 
 // AskStreamWithMedia performs streaming RAG with attached media files.
 // Note: Audio files force non-streaming mode due to Ollama streaming+audio limitations.
-func (c *LeannChat) AskStreamWithMedia(ctx context.Context, question string, mediaFiles []string, callback StreamCallback, opts ...SearchOption) error {
+func (c *LeannChat) AskStreamWithMedia(ctx context.Context, question string, mediaFiles []string, callback StreamCallback, opts ...SearchOption) ([]SearchResult, error) {
 	// Detect if any file is audio — Ollama streaming doesn't process audio correctly.
 	hasAudio := false
 	for _, f := range mediaFiles {
@@ -384,20 +384,20 @@ func (c *LeannChat) AskStreamWithMedia(ctx context.Context, question string, med
 	if hasAudio {
 		answer, err := c.AskWithMedia(ctx, question, mediaFiles, opts...)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		callback(answer)
-		return nil
+		return nil, nil // non-streaming AskWithMedia doesn't easily expose results today without similar refactoring, returning nil for now
 	}
 
 	images, err := LoadMediaFiles(mediaFiles)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	results, searchErr := c.searcher.Search(ctx, question, opts...)
 	if searchErr != nil {
-		return fmt.Errorf("search: %w", searchErr)
+		return nil, fmt.Errorf("search: %w", searchErr)
 	}
 
 	var contextParts []string
@@ -432,14 +432,14 @@ func (c *LeannChat) AskStreamWithMedia(ctx context.Context, question string, med
 		callback(token)
 	}
 	if err := c.chatStream(ctx, messages, wrappedCB); err != nil {
-		return fmt.Errorf("chat stream: %w", err)
+		return nil, fmt.Errorf("chat stream: %w", err)
 	}
 
 	c.history = append(c.history,
 		ChatMessage{Role: "user", Content: question},
 		ChatMessage{Role: "assistant", Content: fullAnswer.String()},
 	)
-	return nil
+	return results, nil
 }
 
 // chatStream sends messages to the LLM provider and streams tokens via callback.
@@ -663,7 +663,7 @@ func (c *LeannChat) chatOllama(ctx context.Context, messages []ChatMessage) (str
 			"temperature": c.config.Temperature,
 		},
 	}
-	if c.config.MaxTokens > 0 {
+	if c.config.MaxTokens != 0 {
 		reqBody.Options["num_predict"] = c.config.MaxTokens
 	}
 	if ctxWin := ollamaContextWindow(c.config.MaxTokens); ctxWin > 0 {
@@ -1022,7 +1022,7 @@ func (c *LeannChat) chatOllamaStream(ctx context.Context, messages []ChatMessage
 			"temperature": c.config.Temperature,
 		},
 	}
-	if c.config.MaxTokens > 0 {
+	if c.config.MaxTokens != 0 {
 		reqBody.Options["num_predict"] = c.config.MaxTokens
 	}
 	if ctxWin := ollamaContextWindow(c.config.MaxTokens); ctxWin > 0 {
@@ -1360,4 +1360,50 @@ func formatResult(r SearchResult, idx int) string {
 	sb.WriteString("Content:\n")
 	sb.WriteString(r.Text)
 	return sb.String()
+}
+
+// AskStreamWithImages performs streaming RAG with pre-encoded base64 images.
+func (c *LeannChat) AskStreamWithImages(ctx context.Context, question string, images []string, callback StreamCallback, opts ...SearchOption) ([]SearchResult, error) {
+	results, searchErr := c.searcher.Search(ctx, question, opts...)
+	if searchErr != nil {
+		return nil, fmt.Errorf("search: %w", searchErr)
+	}
+
+	var contextParts []string
+	for i, r := range results {
+		contextParts = append(contextParts, formatResult(r, i+1))
+	}
+	contextText := strings.Join(contextParts, "\n\n")
+
+	userPrompt := fmt.Sprintf(
+		"The user has attached media file(s) (image or audio). Analyze the attached media first.\n\n"+
+			"Supporting document context (may or may not be relevant):\n%s\n\n"+
+			"Question: %s", contextText, question)
+
+	messages := []ChatMessage{
+		{Role: "system", Content: c.config.SystemPrompt},
+	}
+	if c.sessionSummary != "" {
+		messages = append(messages, ChatMessage{
+			Role:    "system",
+			Content: "Summary of earlier conversation: " + c.sessionSummary,
+		})
+	}
+	messages = append(messages, c.trimmedHistory()...)
+	messages = append(messages, ChatMessage{Role: "user", Content: userPrompt, Images: images})
+
+	var fullAnswer strings.Builder
+	wrappedCB := func(token string) {
+		fullAnswer.WriteString(token)
+		callback(token)
+	}
+	if err := c.chatStream(ctx, messages, wrappedCB); err != nil {
+		return nil, fmt.Errorf("chat stream: %w", err)
+	}
+
+	c.history = append(c.history,
+		ChatMessage{Role: "user", Content: question},
+		ChatMessage{Role: "assistant", Content: fullAnswer.String()},
+	)
+	return results, nil
 }

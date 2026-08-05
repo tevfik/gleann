@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -308,6 +309,34 @@ func (s *Server) a2aMultimodalHandler(ctx a2a.SkillContext) (string, error) {
 
 	// Use multimodal processor.
 	proc := multimodal.NewProcessor(ollamaHost, model)
+	
+	if strings.ToLower(filepath.Ext(filePath)) == ".pdf" {
+		analysis, err := proc.AnalyzePDF(filePath, multimodal.DefaultPDFConfig())
+		if err != nil {
+			return "", fmt.Errorf("PDF analysis failed: %v", err)
+		}
+		
+		var b strings.Builder
+		fmt.Fprintf(&b, "Analysis of PDF %s (%d pages):\n\n", filePath, analysis.TotalPages)
+		for _, page := range analysis.Pages {
+			fmt.Fprintf(&b, "--- Page %d ---\n", page.PageNum)
+			if page.HasTable {
+				fmt.Fprintln(&b, "[Table Detected]")
+			}
+			if page.HasChart {
+				fmt.Fprintln(&b, "[Chart Detected]")
+			}
+			fmt.Fprintln(&b, page.Description)
+			if page.Tables != nil {
+				for _, t := range page.Tables.Tables {
+					fmt.Fprintln(&b, t.Markdown)
+				}
+			}
+			fmt.Fprintln(&b)
+		}
+		return b.String(), nil
+	}
+
 	result := proc.ProcessFile(filePath)
 	if result.Error != nil {
 		return "", fmt.Errorf("analysis failed: %v", result.Error)

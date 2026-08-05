@@ -305,10 +305,10 @@ else
     fail "PluginModel type missing"
 fi
 
-if grep -qF -- "knownPlugins" internal/tui/plugins.go; then
-    pass "knownPlugins catalog exists"
+if grep -qF -- "FetchPluginCatalog" internal/tui/plugins.go; then
+    pass "FetchPluginCatalog integration exists"
 else
-    fail "knownPlugins catalog missing"
+    fail "FetchPluginCatalog integration missing"
 fi
 
 if grep -qF -- "ScreenPlugins" internal/tui/home.go; then

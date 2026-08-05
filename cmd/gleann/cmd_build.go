@@ -47,6 +47,9 @@ func cmdBuild(args []string) {
 
 	// Multimodal model for indexing media files (images, audio, video).
 	mmModel := getFlag(args, "--multimodal-model")
+	if mmModel == "" {
+		mmModel = config.MultimodalModel
+	}
 	mmProcessor := initMultimodalProcessor(config.OllamaHost, mmModel)
 
 	if err := initLlamaCPP(context.Background(), &config); err != nil {
@@ -102,6 +105,10 @@ func cmdBuild(args []string) {
 		os.Exit(1)
 	}
 
+	_ = gleann.UpdateIndexMeta(config.IndexDir, name, func(meta *gleann.IndexMeta) {
+		meta.SourceDir = docsDir
+	})
+
 	elapsed := time.Since(start)
 	fmt.Printf("✅ Vector Index %q built: %d passages in %s\n", name, len(items), elapsed.Round(time.Millisecond))
 
@@ -145,7 +152,7 @@ func cmdRebuild(args []string) {
 }
 
 func buildIndex(name, docsDir string, config gleann.Config, embedder gleann.EmbeddingComputer, tracker *vault.Tracker) []*PluginDoc {
-	mmProcessor := initMultimodalProcessor(config.OllamaHost, "")
+	mmProcessor := initMultimodalProcessor(config.OllamaHost, config.MultimodalModel)
 	items, pluginDocs, err := readDocuments(docsDir, config.ChunkConfig.ChunkSize, config.ChunkConfig.ChunkOverlap, tracker, mmProcessor)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error reading documents: %v\n", err)
@@ -167,6 +174,9 @@ func buildIndex(name, docsDir string, config gleann.Config, embedder gleann.Embe
 		fmt.Fprintf(os.Stderr, "error building: %v\n", err)
 		return nil
 	}
+	_ = gleann.UpdateIndexMeta(config.IndexDir, name, func(meta *gleann.IndexMeta) {
+		meta.SourceDir = docsDir
+	})
 	fmt.Printf("✅ Rebuilt %q: %d passages in %s\n", name, len(items), time.Since(start).Round(time.Millisecond))
 	return pluginDocs
 }
@@ -227,7 +237,7 @@ func readDocuments(dir string, chunkSize, chunkOverlap int, tracker *vault.Track
 
 				// If a plugin handles this extension, use structured extraction.
 				pluginSucceeded := false
-				if pluginManager != nil {
+				if pluginManager != nil && !(ext == ".pdf" && mmProcessor != nil) {
 					if plugin := pluginManager.FindDocumentExtractor(ext); plugin != nil {
 						pResult, perr := pluginManager.ProcessStructured(plugin, fe.path)
 						if perr != nil {
@@ -270,6 +280,69 @@ func readDocuments(dir string, chunkSize, chunkOverlap int, tracker *vault.Track
 							continue
 						}
 					}
+				}
+				
+				// Multimodal PDF Vision RAG extraction
+				if !pluginSucceeded && ext == ".pdf" && mmProcessor != nil {
+					pdfCfg := multimodal.DefaultPDFConfig()
+					analysis, perr := mmProcessor.AnalyzePDF(fe.path, pdfCfg)
+					if perr == nil && analysis != nil {
+						relPath, _ := filepath.Rel(dir, fe.path)
+						var items []gleann.Item
+						var fullMd strings.Builder
+						
+						for _, page := range analysis.Pages {
+							var pageMd strings.Builder
+							fmt.Fprintf(&pageMd, "--- Page %d ---\n", page.PageNum)
+							if page.Description != "" {
+								fmt.Fprintln(&pageMd, page.Description)
+							}
+							if page.MarkerText != "" {
+								fmt.Fprintln(&pageMd, page.MarkerText)
+							}
+							if page.Tables != nil {
+								for _, t := range page.Tables.Tables {
+									fmt.Fprintln(&pageMd, t.Markdown)
+								}
+							}
+							fullMd.WriteString(pageMd.String() + "\n")
+							
+							// Chunk this page specifically
+							mdChunks := mdChunker.ChunkMarkdown(pageMd.String(), relPath)
+							if len(mdChunks) == 0 {
+								items = append(items, gleann.Item{
+									Text: pageMd.String(),
+									Metadata: map[string]any{"source": relPath, "extractor": "vision_rag", "page": page.PageNum, "has_image": true},
+								})
+							} else {
+								for _, ch := range mdChunks {
+									ch.Metadata["source"] = relPath
+									ch.Metadata["extractor"] = "vision_rag"
+									ch.Metadata["page"] = page.PageNum
+									ch.Metadata["has_image"] = true
+									items = append(items, gleann.Item{
+										Text:     ch.Text,
+										Metadata: ch.Metadata,
+									})
+								}
+							}
+						}
+						
+						pResult := gleann.MarkdownToPluginResult(fullMd.String(), relPath)
+						if pResult != nil && (len(pResult.Nodes) > 0 || pResult.Markdown != "") {
+							pluginDocsMu.Lock()
+							pluginDocs = append(pluginDocs, &PluginDoc{
+								Result:     pResult,
+								SourcePath: relPath,
+							})
+							pluginDocsMu.Unlock()
+						}
+						
+						resCh <- result{items: items}
+						continue
+					}
+					// Fallback to native if AnalyzePDF fails
+					fmt.Fprintf(os.Stderr, "Warning: vision extraction failed for %s, falling back to native text: %v\n", filepath.Base(fe.path), perr)
 				}
 
 				// Try native extractor for binary document formats (PDF, DOCX, etc.).
@@ -572,7 +645,7 @@ func readDocumentsForFiles(dir string, filePaths []string, chunkSize, chunkOverl
 		ext := strings.ToLower(filepath.Ext(filePath))
 
 		// Plugin extraction.
-		if pluginManager != nil {
+		if pluginManager != nil && !(ext == ".pdf" && mmProcessor != nil) {
 			if plugin := pluginManager.FindDocumentExtractor(ext); plugin != nil {
 				pResult, perr := pluginManager.ProcessStructured(plugin, filePath)
 				if perr == nil {
@@ -589,6 +662,62 @@ func readDocumentsForFiles(dir string, filePaths []string, chunkSize, chunkOverl
 					continue
 				}
 			}
+		}
+
+		// Multimodal PDF Vision RAG extraction
+		if ext == ".pdf" && mmProcessor != nil {
+			pdfCfg := multimodal.DefaultPDFConfig()
+			analysis, perr := mmProcessor.AnalyzePDF(filePath, pdfCfg)
+			if perr == nil && analysis != nil {
+				var fullMd strings.Builder
+				
+				for _, page := range analysis.Pages {
+					var pageMd strings.Builder
+					fmt.Fprintf(&pageMd, "--- Page %d ---\n", page.PageNum)
+					if page.Description != "" {
+						fmt.Fprintln(&pageMd, page.Description)
+					}
+					if page.MarkerText != "" {
+						fmt.Fprintln(&pageMd, page.MarkerText)
+					}
+					if page.Tables != nil {
+						for _, t := range page.Tables.Tables {
+							fmt.Fprintln(&pageMd, t.Markdown)
+						}
+					}
+					fullMd.WriteString(pageMd.String() + "\n")
+					
+					// Chunk this page specifically
+					mdChunks := mdChunker.ChunkMarkdown(pageMd.String(), relPath)
+					if len(mdChunks) == 0 {
+						allItems = append(allItems, gleann.Item{
+							Text: pageMd.String(),
+							Metadata: map[string]any{"source": relPath, "extractor": "vision_rag", "page": page.PageNum, "has_image": true},
+						})
+					} else {
+						for _, ch := range mdChunks {
+							ch.Metadata["source"] = relPath
+							ch.Metadata["extractor"] = "vision_rag"
+							ch.Metadata["page"] = page.PageNum
+							ch.Metadata["has_image"] = true
+							allItems = append(allItems, gleann.Item{
+								Text:     ch.Text,
+								Metadata: ch.Metadata,
+							})
+						}
+					}
+				}
+				
+				pResult := gleann.MarkdownToPluginResult(fullMd.String(), relPath)
+				if pResult != nil && (len(pResult.Nodes) > 0 || pResult.Markdown != "") {
+					pluginDocs = append(pluginDocs, &PluginDoc{
+						Result:     pResult,
+						SourcePath: relPath,
+					})
+				}
+				continue
+			}
+			fmt.Fprintf(os.Stderr, "Warning: incremental vision extraction failed for %s, falling back to native text: %v\n", filepath.Base(filePath), perr)
 		}
 
 		// Native extraction (PDF, DOCX, etc.).
@@ -718,7 +847,7 @@ func incrementalBuildIndex(name, docsDir string, changedFiles []string, config g
 	}
 
 	// Read and chunk only the changed files.
-	mmProcessor := initMultimodalProcessor(config.OllamaHost, "")
+	mmProcessor := initMultimodalProcessor(config.OllamaHost, config.MultimodalModel)
 	items, pluginDocs, err := readDocumentsForFiles(docsDir, existingFiles,
 		config.ChunkConfig.ChunkSize, config.ChunkConfig.ChunkOverlap, tracker, mmProcessor)
 	if err != nil {

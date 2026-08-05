@@ -1,6 +1,6 @@
 # Community: rate_limiter
 
-**21 symbols** | Cohesion: 0.014
+**20 symbols** | Cohesion: 0.015
 
 ## Symbols
 
@@ -16,12 +16,11 @@
 | `code.SlidingWindowCounter::_advance_window_if_needed` | function |
 | `code.SlidingWindowCounter::_estimate_count` | function |
 | `code.SlidingWindowCounter::allow` | function |
+| `code.TokenBucket::TokenBucket` | class |
 | `code.TokenBucket::TokenBucket::__post_init__` | function |
 | `code.TokenBucket::TokenBucket::_refill` | function |
 | `code.TokenBucket::TokenBucket::acquire` | function |
 | `code.TokenBucket::TokenBucket::wait_and_acquire` | function |
-| `code.TokenBucket::TokenBucket_part1` | class |
-| `code.TokenBucket::TokenBucket_part2` | class |
 | `code._InMemoryStore::__init__` | function |
 | `code._InMemoryStore::_evict_expired` | function |
 | `code._InMemoryStore::expire` | function |

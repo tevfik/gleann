@@ -18,21 +18,15 @@ VERSION     ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo 
 LDFLAGS     := -s -w -X main.version=$(VERSION)
 INSTALL_DIR ?= /usr/local/bin
 REPO_ROOT   := $(CURDIR)
-
-# FAISS shared lib locations (set from environment or default)
-FAISS_LIB_DIR ?= /usr/local/lib
-# Detect working FAISS headers in user cache as a fallback if system headers are broken
-UV_FAISS_INC := $(HOME)/.cache/uv/archive-v0/T5fKlhKLCEJN-Xxjg_sNe/include
-ifneq ($(wildcard $(UV_FAISS_INC)/faiss/IndexHNSW.h),)
-    FAISS_INC_DIR ?= $(UV_FAISS_INC)
-else
-    FAISS_INC_DIR ?= /usr/local/include
-endif
+# FAISS shared lib locations
+FAISS_LIB_DIR ?= $(REPO_ROOT)/deps/faiss_install/lib
+FAISS_INC_DIR ?= $(REPO_ROOT)/deps/faiss_install/include
 
 # Platform detection
 UNAME_S := $(shell uname -s)
 ifeq ($(UNAME_S),Darwin)
     RPATH_FLAGS := -Wl,-rpath,@loader_path
+    ZNOW_FLAG   := 
     SO_EXT      := dylib
     # macOS AppleClang doesn't ship omp.h; Homebrew libomp provides it.
     OMP_PREFIX  := $(shell brew --prefix libomp 2>/dev/null)
@@ -40,6 +34,7 @@ ifeq ($(UNAME_S),Darwin)
     OMP_LDFLAGS := $(if $(OMP_PREFIX),-L$(OMP_PREFIX)/lib -lomp,)
 else
     RPATH_FLAGS := -Wl,-rpath,\$$ORIGIN
+    ZNOW_FLAG   := -Wl,-z,now
     SO_EXT      := so
     OMP_CFLAGS  :=
     OMP_LDFLAGS :=
@@ -50,9 +45,36 @@ endif
 all: $(BINARY)
 build: $(BINARY)
 
+# ── Web UI ──────────────────────────────────────────────────────────────────
+.PHONY: build-web prepare-assets
+
+build-web:
+	@echo "🎨 Building Web UI..."
+	@if command -v npm >/dev/null 2>&1; then \
+		echo "Found npm locally. Building..."; \
+		cd ui && npm install && npm run build; \
+	else \
+		echo "npm not found. Building using Docker (node:20-alpine)..."; \
+		docker run --rm -u $$(id -u):$$(id -g) -v $$(pwd):/app -w /app/ui node:20-alpine sh -c "npm ci && npm run build"; \
+	fi
+	@if [ ! -f ui/dist/index.html ]; then echo "❌ ui/dist/index.html missing! Build failed."; exit 1; fi
+	@echo "✅ Web UI built"
+
+prepare-assets:
+	@if [ "$(SKIP_WEB)" = "1" ]; then \
+		echo "⚠️  SKIP_WEB=1: Creating minimal placeholder for API-only build..."; \
+		mkdir -p internal/server/dist; \
+		echo '<!DOCTYPE html><html><body><h1>API-Only Mode</h1><p>Web UI not included in this build.</p></body></html>' > internal/server/dist/index.html; \
+	else \
+		$(MAKE) build-web; \
+		echo "📦 Copying web assets..."; \
+		rm -rf internal/server/dist; \
+		cp -r ui/dist internal/server/dist; \
+	fi
+
 # ── Pure Go build (respects CGO_ENABLED env var for cross-compilation) ─────────
 .PHONY: $(BINARY)
-$(BINARY):
+$(BINARY): prepare-assets
 	@mkdir -p $(BUILD_DIR)
 	go build -ldflags "$(LDFLAGS)" -o $(BINARY) $(CMD)
 	@echo "✅ Built $(BINARY)"
@@ -84,14 +106,15 @@ build-rust-core:
 .PHONY: full
 full: $(BINARY_FULL)
 
-$(BINARY_FULL): build-rust-core
+$(BINARY_FULL): build-rust-core prepare-assets
 	@echo "🔧 Building $(BINARY_FULL) with FAISS + tree-sitter + native..."
 	@mkdir -p $(BUILD_DIR)
 	cp ext/gleann-core-rs/target/release/libgleann_core_rs.$(SO_EXT) $(BUILD_DIR)/
+	cp $(FAISS_LIB_DIR)/libfaiss*.so* $(BUILD_DIR)/ || true
 	CGO_ENABLED=1 \
 	CGO_CFLAGS="-w $(OMP_CFLAGS) -I$(FAISS_INC_DIR) $(CGO_CFLAGS)" \
 	CGO_CXXFLAGS="-w $(OMP_CFLAGS) -I$(FAISS_INC_DIR) $(CGO_CXXFLAGS)" \
-	CGO_LDFLAGS="$(RPATH_FLAGS) -L$(FAISS_LIB_DIR) -lfaiss_c -lfaiss $(OMP_LDFLAGS) -L$(BUILD_DIR) -lgleann_core_rs" \
+	CGO_LDFLAGS="$(RPATH_FLAGS) $(ZNOW_FLAG) -L$(FAISS_LIB_DIR) -lfaiss_c -lfaiss $(OMP_LDFLAGS) -L$(BUILD_DIR) -lgleann_core_rs" \
 	go build -tags "faiss treesitter native" -ldflags "$(LDFLAGS)" -o $(BINARY_FULL) $(CMD)
 	@echo "✅ Built $(BINARY_FULL)"
 
@@ -103,6 +126,7 @@ USER_BIN_DIR ?= $(HOME)/.local/bin
 install-user: $(BINARY_FULL)
 	@mkdir -p $(USER_BIN_DIR)
 	install -m 0755 $(BINARY_FULL) $(USER_BIN_DIR)/gleann
+	cp $(BUILD_DIR)/*.so* $(USER_BIN_DIR)/ || true
 	@echo "✅ Installed gleann-full → $(USER_BIN_DIR)/gleann"
 	@echo "   Make sure $(USER_BIN_DIR) is in your PATH."
 

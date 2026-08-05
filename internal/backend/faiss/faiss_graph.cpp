@@ -12,6 +12,8 @@
 
 #include <cstdlib>
 #include <cstring>
+#include <typeinfo>
+#include <cstdio>
 
 extern "C" {
 #include "faiss_graph.h"
@@ -23,47 +25,59 @@ int gleann_faiss_extract_graph(FaissIndex *index, GleannFAISSRawHNSW *out) {
     std::memset(out, 0, sizeof(*out));
 
     /* Cast the opaque C handle to the underlying C++ object.
-       FAISS C API stores faiss::Index* behind FaissIndex*. */
+       FAISS C API stores faiss::Index* behind FaissIndex*.
+       We use static_cast instead of dynamic_cast because RTTI type_info
+       often mismatches across CGo and libfaiss.so boundaries, causing segfaults.
+       We guarantee in Go that ExtractTopology is only called on HNSW indexes. */
     auto *base = reinterpret_cast<faiss::Index *>(index);
-    auto *idx  = dynamic_cast<faiss::IndexHNSW *>(base);
-    if (!idx) return -1;   /* Not an HNSW index */
-
+    if (!base) return -1;
+    auto *idx  = static_cast<faiss::IndexHNSW *>(base);
+    if (!idx) return -1;
+    
     const auto &hnsw = idx->hnsw;
 
     /* ── Neighbors (storage_idx_t → int64) ────────────────────────── */
     out->neighbors_len = static_cast<int64_t>(hnsw.neighbors.size());
-    out->neighbors = static_cast<int64_t *>(
-        std::malloc(static_cast<size_t>(out->neighbors_len) * sizeof(int64_t)));
-    if (!out->neighbors) goto fail;
-    for (int64_t i = 0; i < out->neighbors_len; i++) {
-        out->neighbors[i] = static_cast<int64_t>(hnsw.neighbors[i]);
+    if (out->neighbors_len > 0) {
+        out->neighbors = static_cast<int64_t *>(
+            std::malloc(static_cast<size_t>(out->neighbors_len) * sizeof(int64_t)));
+        if (!out->neighbors) goto fail;
+        for (int64_t i = 0; i < out->neighbors_len; i++) {
+            out->neighbors[i] = static_cast<int64_t>(hnsw.neighbors[i]);
+        }
     }
 
     /* ── Offsets (size_t → int64) ─────────────────────────────────── */
     out->offsets_len = static_cast<int64_t>(hnsw.offsets.size());
-    out->offsets = static_cast<int64_t *>(
-        std::malloc(static_cast<size_t>(out->offsets_len) * sizeof(int64_t)));
-    if (!out->offsets) goto fail;
-    for (int64_t i = 0; i < out->offsets_len; i++) {
-        out->offsets[i] = static_cast<int64_t>(hnsw.offsets[i]);
+    if (out->offsets_len > 0) {
+        out->offsets = static_cast<int64_t *>(
+            std::malloc(static_cast<size_t>(out->offsets_len) * sizeof(int64_t)));
+        if (!out->offsets) goto fail;
+        for (int64_t i = 0; i < out->offsets_len; i++) {
+            out->offsets[i] = static_cast<int64_t>(hnsw.offsets[i]);
+        }
     }
 
     /* ── Levels (int → int32) ─────────────────────────────────────── */
     out->levels_len = static_cast<int64_t>(hnsw.levels.size());
-    out->levels = static_cast<int32_t *>(
-        std::malloc(static_cast<size_t>(out->levels_len) * sizeof(int32_t)));
-    if (!out->levels) goto fail;
-    for (int64_t i = 0; i < out->levels_len; i++) {
-        out->levels[i] = static_cast<int32_t>(hnsw.levels[i]);
+    if (out->levels_len > 0) {
+        out->levels = static_cast<int32_t *>(
+            std::malloc(static_cast<size_t>(out->levels_len) * sizeof(int32_t)));
+        if (!out->levels) goto fail;
+        for (int64_t i = 0; i < out->levels_len; i++) {
+            out->levels[i] = static_cast<int32_t>(hnsw.levels[i]);
+        }
     }
 
     /* ── Cumulative neighbor counts per level ─────────────────────── */
     out->cum_nneighbor_len = static_cast<int32_t>(hnsw.cum_nneighbor_per_level.size());
-    out->cum_nneighbor = static_cast<int32_t *>(
-        std::malloc(static_cast<size_t>(out->cum_nneighbor_len) * sizeof(int32_t)));
-    if (!out->cum_nneighbor) goto fail;
-    for (int32_t i = 0; i < out->cum_nneighbor_len; i++) {
-        out->cum_nneighbor[i] = static_cast<int32_t>(hnsw.cum_nneighbor_per_level[i]);
+    if (out->cum_nneighbor_len > 0) {
+        out->cum_nneighbor = static_cast<int32_t *>(
+            std::malloc(static_cast<size_t>(out->cum_nneighbor_len) * sizeof(int32_t)));
+        if (!out->cum_nneighbor) goto fail;
+        for (int32_t i = 0; i < out->cum_nneighbor_len; i++) {
+            out->cum_nneighbor[i] = static_cast<int32_t>(hnsw.cum_nneighbor_per_level[i]);
+        }
     }
 
     /* ── Scalars ──────────────────────────────────────────────────── */

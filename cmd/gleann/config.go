@@ -175,4 +175,12 @@ func applySavedConfig(config *gleann.Config, args []string) {
 	if getFlag(args, "--llm-model") == "" && savedCfg.LLMModel != "" {
 		config.LLMModel = savedCfg.LLMModel
 	}
+	// Backend from saved config.
+	if savedCfg.Backend != "" {
+		config.Backend = savedCfg.Backend
+	}
+	// Multimodal model — stored in OnboardResult via the shared JSON.
+	if savedCfg.MultimodalModel != "" {
+		config.MultimodalModel = savedCfg.MultimodalModel
+	}
 }

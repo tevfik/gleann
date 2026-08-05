@@ -32,6 +32,9 @@ type Store struct {
 
 // DefaultStorePath returns the default memory database path.
 func DefaultStorePath() string {
+	if env := os.Getenv("GLEANN_MEMORY_DIR"); env != "" {
+		return filepath.Join(env, "memory.db")
+	}
 	home, _ := os.UserHomeDir()
 	return filepath.Join(home, ".gleann", "memory", "memory.db")
 }

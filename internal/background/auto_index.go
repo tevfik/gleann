@@ -63,6 +63,13 @@ func (a *AutoIndexer) Watch(indexName, docsDir string) error {
 	return a.addDirRecursive(docsDir)
 }
 
+// Unwatch removes a directory from the auto-index watcher for the given index name.
+func (a *AutoIndexer) Unwatch(indexName string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	delete(a.config.Indexes, indexName)
+}
+
 // addDirRecursive adds a directory and its subdirectories to the fsnotify watcher.
 func (a *AutoIndexer) addDirRecursive(dir string) error {
 	return filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {

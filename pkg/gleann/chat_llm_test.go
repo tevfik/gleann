@@ -633,7 +633,7 @@ func TestAskStreamWithMedia_AudioFallsBackToNonStreaming(t *testing.T) {
 
 	chat := newTestChat(LLMOllama, srv.URL)
 	var tokens []string
-	err := chat.AskStreamWithMedia(context.Background(), "what do you hear?", []string{audioFile}, func(token string) {
+	_, err := chat.AskStreamWithMedia(context.Background(), "what do you hear?", []string{audioFile}, func(token string) {
 		tokens = append(tokens, token)
 	})
 	if err != nil {
@@ -746,7 +746,7 @@ func TestAskStream_OllamaIntegration(t *testing.T) {
 
 	chat := newTestChat(LLMOllama, srv.URL)
 	var tokens []string
-	err := chat.AskStream(context.Background(), "test question", func(token string) {
+	_, err := chat.AskStream(context.Background(), "test question", func(token string) {
 		tokens = append(tokens, token)
 	})
 	if err != nil {
@@ -783,7 +783,7 @@ func TestAskStream_OpenAIIntegration(t *testing.T) {
 	}
 	chat := NewChat(&chatMockSearcher{results: []SearchResult{{Text: "doc", Score: 0.9}}}, cfg)
 	var tokens []string
-	err := chat.AskStream(context.Background(), "test", func(token string) {
+	_, err := chat.AskStream(context.Background(), "test", func(token string) {
 		tokens = append(tokens, token)
 	})
 	if err != nil {
@@ -829,7 +829,7 @@ func TestAskStream_AnthropicIntegration(t *testing.T) {
 	}
 	chat := NewChat(&chatMockSearcher{results: []SearchResult{{Text: "doc", Score: 0.9}}}, cfg)
 	var tokens []string
-	err := chat.AskStream(context.Background(), "test", func(token string) {
+	_, err := chat.AskStream(context.Background(), "test", func(token string) {
 		tokens = append(tokens, token)
 	})
 	if err != nil {
@@ -862,7 +862,7 @@ func TestAskStreamWithMedia_ImageStreams(t *testing.T) {
 
 	chat := newTestChat(LLMOllama, srv.URL)
 	var tokens []string
-	err := chat.AskStreamWithMedia(context.Background(), "describe this", []string{imgFile}, func(token string) {
+	_, err := chat.AskStreamWithMedia(context.Background(), "describe this", []string{imgFile}, func(token string) {
 		tokens = append(tokens, token)
 	})
 	if err != nil {

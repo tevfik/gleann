@@ -6,13 +6,8 @@
 
 | Symbol | Kind |
 |--------|------|
-| `code.FilterByKind` | function |
-| `code.append` | function |
-
-## External Connections
-
-- `code.parseTypeScript` ↔ `code.append`
-- `code.parseGo` ↔ `code.append`
+| `code.CountSymbols` | function |
+| `code.make` | function |
 
 ---
 [← Back to Index](index.md)

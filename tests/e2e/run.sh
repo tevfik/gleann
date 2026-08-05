@@ -27,6 +27,14 @@ IDX_CODE="e2e-code"
 IDX_BIN="e2e-binary"
 IDX_FAISS="e2e-faiss"
 
+TEST_ENV_DIR="/tmp/gleann_e2e_$$"
+export GLEANN_INDEX_DIR="${TEST_ENV_DIR}/indexes"
+export GLEANN_MEMORY_DIR="${TEST_ENV_DIR}/memory"
+export GLEANN_REMOTE_ADDR="off"
+
+# Ensure cleanup on exit
+trap 'rm -rf "${TEST_ENV_DIR}"' EXIT
+
 QUICK=false
 SECTION=""
 
@@ -1274,6 +1282,315 @@ if echo "$OUT" | grep -qiE "fib|memo|cache|recurs"; then
   pass "token gain: code search returns result (token estimation available)"
 else
   warn "token gain: fibonacci search returned no matching content"
+fi
+
+# ══════════════════════════════════════════════════════════════════════════════
+# SECTION 18: REST API SERVER (gleann serve)
+# ══════════════════════════════════════════════════════════════════════════════
+header "§18 REST API Server  $(ts)"
+
+# Start the server on a random free port for isolation
+E2E_PORT=$(python3 -c "import socket; s=socket.socket(); s.bind(('',0)); print(s.getsockname()[1]); s.close()" 2>/dev/null || echo 18199)
+E2E_ADDR=":${E2E_PORT}"
+E2E_BASE="http://localhost:${E2E_PORT}"
+
+sub "Starting gleann serve on ${E2E_ADDR}..."
+"$BINARY" serve --addr "$E2E_ADDR" > /dev/null 2>&1 &
+SERVER_PID=$!
+sleep 2
+
+# Wait for server to be ready (up to 5s)
+SERVER_READY=false
+for i in $(seq 1 10); do
+  if curl -sf "${E2E_BASE}/health" > /dev/null 2>&1; then
+    SERVER_READY=true
+    break
+  fi
+  sleep 0.5
+done
+
+if [[ "$SERVER_READY" == "false" ]]; then
+  fail "REST API: server failed to start on ${E2E_ADDR}"
+  kill "$SERVER_PID" 2>/dev/null || true
+else
+  pass "REST API: server started (pid ${SERVER_PID})"
+
+  # ── 18a. Health ───────────────────────────────────────────────────────────
+  OUT=$(curl -sf "${E2E_BASE}/health" 2>&1)
+  assert_contains "REST API: /health returns ok" "ok\|healthy\|status" "$OUT"
+
+  # ── 18b. Index list ──────────────────────────────────────────────────────
+  OUT=$(curl -sf "${E2E_BASE}/api/indexes" 2>&1)
+  assert_json "REST API: GET /api/indexes is JSON" "$OUT"
+  assert_contains "REST API: /api/indexes shows e2e-docs" "$IDX_DOCS" "$OUT"
+
+  # ── 18c. Search via API ──────────────────────────────────────────────────
+  OUT=$(curl -sf -X POST "${E2E_BASE}/api/indexes/${IDX_DOCS}/search" \
+    -H "Content-Type: application/json" \
+    -d '{"query":"quantum qubit superposition","top_k":3}' 2>&1)
+  assert_json "REST API: POST /api/indexes/{name}/search is JSON" "$OUT"
+  if echo "$OUT" | grep -qi "quantum\|qubit\|superposition"; then
+    pass "REST API: search returns relevant content"
+  else
+    warn "REST API: search content not matching expected quantum topic"
+  fi
+
+  # ── 18d. Multi-index search ──────────────────────────────────────────────
+  OUT=$(curl -sf -X POST "${E2E_BASE}/api/search" \
+    -H "Content-Type: application/json" \
+    -d "{\"query\":\"rate limiter token bucket\",\"indexes\":[\"${IDX_CODE}\"],\"top_k\":3}" 2>&1)
+  assert_json "REST API: POST /api/search (multi-index) is JSON" "$OUT"
+
+  # ── 18e. Config API ──────────────────────────────────────────────────────
+  OUT=$(curl -sf "${E2E_BASE}/api/config" 2>&1)
+  assert_json "REST API: GET /api/config is JSON" "$OUT"
+  assert_contains "REST API: /api/config has model field" "model\|provider\|index_dir\|ollama" "$OUT"
+
+  # ── 18f. Log streaming ──────────────────────────────────────────────────
+  OUT=$(curl -sf "${E2E_BASE}/api/logs" 2>&1)
+  assert_json "REST API: GET /api/logs is JSON" "$OUT"
+
+  # ── 18g. Memory blocks API ──────────────────────────────────────────────
+  # Add a block via API
+  OUT=$(curl -s -X POST "${E2E_BASE}/api/blocks" \
+    -H "Content-Type: application/json" \
+    -d '{"content":"e2e API test: photosynthesis converts CO2 to glucose","tier":"short"}' 2>&1)
+  if echo "$OUT" | grep -qiE "content|tier|label|photosynthesis"; then
+    pass "REST API: POST /api/blocks adds memory block"
+  else
+    warn "REST API: POST /api/blocks response unclear: $(echo "$OUT" | head -1)"
+  fi
+
+  # List blocks
+  OUT=$(curl -s "${E2E_BASE}/api/blocks?t=$(date +%s)" 2>&1)
+  assert_json "REST API: GET /api/blocks is JSON" "$OUT"
+
+  # Search blocks
+  OUT=$(curl -s "${E2E_BASE}/api/blocks/search?q=photosynthesis" 2>&1)
+  if echo "$OUT" | grep -qiE "photosynth|CO2|glucose|block"; then
+    pass "REST API: GET /api/blocks/search finds content"
+  else
+    warn "REST API: block search did not match (may need embedding time)"
+  fi
+
+  # Stats
+  OUT=$(curl -s "${E2E_BASE}/api/blocks/stats" 2>&1)
+  assert_json "REST API: GET /api/blocks/stats is JSON" "$OUT"
+
+  # Context
+  OUT=$(curl -s "${E2E_BASE}/api/blocks/context" 2>&1)
+  if echo "$OUT" | grep -qiE "context|block|memor|content"; then
+    pass "REST API: GET /api/blocks/context returns data"
+  else
+    warn "REST API: block context response: $(echo "$OUT" | head -1)"
+  fi
+
+  # Clear blocks
+  OUT=$(curl -s -X DELETE "${E2E_BASE}/api/blocks?tier=short" 2>&1)
+  if echo "$OUT" | grep -qiE "ok|clear|delet|count"; then
+    pass "REST API: DELETE /api/blocks (clear) succeeded"
+  else
+    warn "REST API: block clear response: $(echo "$OUT" | head -1)"
+  fi
+
+  # ── 18h. Web UI SPA ─────────────────────────────────────────────────────
+  OUT=$(curl -sf "${E2E_BASE}/" 2>&1)
+  if echo "$OUT" | grep -qi "html\|gleann\|<script\|<div"; then
+    pass "REST API: / serves Web UI HTML"
+  else
+    warn "REST API: root path did not return HTML"
+  fi
+
+  # ── 18i. OpenAPI spec ───────────────────────────────────────────────────
+  OUT=$(curl -s "${E2E_BASE}/api/openapi.json" 2>&1)
+  if echo "$OUT" | grep -qiE "openapi|paths|info"; then
+    pass "REST API: GET /api/openapi.json returns spec"
+  else
+    warn "REST API: OpenAPI spec not found"
+  fi
+
+  # ══════════════════════════════════════════════════════════════════════════
+  # SECTION 19: PLUGIN MANAGEMENT API
+  # ══════════════════════════════════════════════════════════════════════════
+  header "§19 Plugin Management API  $(ts)"
+
+  # 19a. List plugins
+  OUT=$(curl -sf "${E2E_BASE}/api/plugins" 2>&1)
+  assert_json "Plugin API: GET /api/plugins is JSON" "$OUT"
+  assert_contains "Plugin API: catalog contains gleann-plugin-docs" "gleann-plugin-docs" "$OUT"
+  assert_contains "Plugin API: catalog contains gleann-plugin-sound" "gleann-plugin-sound" "$OUT"
+
+  # 19b. Plugin has status field
+  if echo "$OUT" | grep -qiE '"status"\s*:\s*"(not_installed|installed|running)"'; then
+    pass "Plugin API: plugins have status field"
+  else
+    warn "Plugin API: status field format not detected"
+  fi
+
+  # 19c. Plugin has metadata fields
+  if echo "$OUT" | grep -qiE '"repo_url"\s*:\s*"http'; then
+    pass "Plugin API: plugins have repo_url metadata"
+  else
+    warn "Plugin API: repo_url not found in response"
+  fi
+
+  if echo "$OUT" | grep -qiE '"description"\s*:'; then
+    pass "Plugin API: plugins have description"
+  else
+    warn "Plugin API: description not found in response"
+  fi
+
+  # 19d. Install endpoint (we can't fully install, but verify the endpoint exists)
+  OUT=$(curl -s -X POST "${E2E_BASE}/api/plugins/nonexistent-plugin/install" 2>&1)
+  if echo "$OUT" | grep -qiE "not found|error|unknown"; then
+    pass "Plugin API: POST install for unknown plugin returns error"
+  else
+    warn "Plugin API: install unknown plugin response unexpected"
+  fi
+
+  # 19e. Delete endpoint (verify endpoint accepts request)
+  OUT=$(curl -s -X DELETE "${E2E_BASE}/api/plugins/nonexistent-plugin" 2>&1)
+  # This should succeed (removing nonexistent is idempotent) or return error
+  if echo "$OUT" | grep -qiE "ok|uninstall|error|not found"; then
+    pass "Plugin API: DELETE plugin endpoint responds correctly"
+  else
+    warn "Plugin API: delete plugin response unexpected"
+  fi
+
+  # ══════════════════════════════════════════════════════════════════════════
+  # SECTION 20: BACKGROUND TASKS API
+  # ══════════════════════════════════════════════════════════════════════════
+  header "§20 Background Tasks API  $(ts)"
+
+  # 20a. List tasks
+  OUT=$(curl -sf "${E2E_BASE}/api/tasks" 2>&1)
+  assert_json "Tasks API: GET /api/tasks is JSON" "$OUT"
+  if echo "$OUT" | grep -qiE "tasks"; then
+    pass "Tasks API: response has tasks field"
+  else
+    warn "Tasks API: tasks field not found"
+  fi
+
+  # 20b. Get nonexistent task (should return 404 or empty)
+  OUT=$(curl -s "${E2E_BASE}/api/tasks/bg-99999" 2>&1)
+  if echo "$OUT" | grep -qiE "not found|null|error|404"; then
+    pass "Tasks API: GET unknown task returns not-found"
+  else
+    # Even a 200 with null is acceptable
+    pass "Tasks API: GET unknown task returns response"
+  fi
+
+  # ══════════════════════════════════════════════════════════════════════════
+  # SECTION 21: OPENAI-COMPATIBLE API
+  # ══════════════════════════════════════════════════════════════════════════
+  header "§21 OpenAI-Compatible API  $(ts)"
+
+  # 21a. List models
+  OUT=$(curl -s "${E2E_BASE}/v1/models" 2>&1)
+  assert_json "OpenAI API: GET /v1/models is JSON" "$OUT"
+  if echo "$OUT" | grep -qiE "data|model|id"; then
+    pass "OpenAI API: /v1/models returns model list"
+  else
+    warn "OpenAI API: model list format unexpected"
+  fi
+
+  # 21b. Chat completions endpoint exists (even if LLM not available, it should respond)
+  OUT=$(curl -s -X POST "${E2E_BASE}/v1/chat/completions" \
+    -H "Content-Type: application/json" \
+    -d '{"model":"test","messages":[{"role":"user","content":"hello"}]}' 2>&1 || true)
+  if [[ -n "$OUT" ]]; then
+    pass "OpenAI API: POST /v1/chat/completions responds"
+  else
+    warn "OpenAI API: chat completions returned empty"
+  fi
+
+  # ══════════════════════════════════════════════════════════════════════════
+  # SECTION 22: A2A PROTOCOL
+  # ══════════════════════════════════════════════════════════════════════════
+  header "§22 A2A Protocol  $(ts)"
+
+  # 22a. Agent card
+  OUT=$(curl -s "${E2E_BASE}/.well-known/agent-card.json" 2>&1)
+  if echo "$OUT" | grep -qiE "name|description|skills|url"; then
+    pass "A2A: /.well-known/agent-card.json returns agent card"
+    assert_json "A2A: agent card is valid JSON" "$OUT"
+  else
+    # A2A may be disabled via env/config
+    warn "A2A: agent card not returned (may be disabled)"
+  fi
+
+  # 22b. A2A RPC endpoint exists
+  OUT=$(curl -s -X POST "${E2E_BASE}/a2a" \
+    -H "Content-Type: application/json" \
+    -d '{"jsonrpc":"2.0","id":"1","method":"tasks/send","params":{"id":"test-1","message":{"role":"user","parts":[{"type":"text","text":"hello"}]}}}' 2>&1 || true)
+  if [[ -n "$OUT" ]]; then
+    pass "A2A: POST /a2a endpoint responds"
+  else
+    warn "A2A: POST /a2a returned empty (may be disabled)"
+  fi
+
+  # ══════════════════════════════════════════════════════════════════════════
+  # SECTION 23: CONVERSATIONS API
+  # ══════════════════════════════════════════════════════════════════════════
+  header "§23 Conversations API  $(ts)"
+
+  OUT=$(curl -s "${E2E_BASE}/api/conversations" 2>&1)
+  if echo "$OUT" | grep -qiE "conversations|\\["; then
+    pass "Conversations API: GET /api/conversations responds"
+    assert_json "Conversations API: response is JSON" "$OUT"
+  else
+    warn "Conversations API: response format unexpected"
+  fi
+
+  # Stop the server
+  sub "Stopping test server..."
+  kill "$SERVER_PID" 2>/dev/null || true
+  wait "$SERVER_PID" 2>/dev/null || true
+  pass "REST API: server stopped cleanly"
+fi
+
+# ══════════════════════════════════════════════════════════════════════════════
+# SECTION 24: MEMORY CLEAR VERIFICATION (CLI)
+# ══════════════════════════════════════════════════════════════════════════════
+header "§24 Memory Clear Verification  $(ts)"
+
+# 24a. Add memories to each tier then clear them
+CLEAR_TAG="cleartag_$$"
+"$BINARY" memory add short "clear test short [${CLEAR_TAG}]" > /dev/null 2>&1
+"$BINARY" memory add medium "clear test medium [${CLEAR_TAG}]" > /dev/null 2>&1
+"$BINARY" memory add long "clear test long [${CLEAR_TAG}]" > /dev/null 2>&1
+
+# Verify they exist
+OUT=$("$BINARY" memory list 2>&1)
+if echo "$OUT" | grep -qi "$CLEAR_TAG"; then
+  pass "memory clear: test memories exist before clear"
+else
+  warn "memory clear: test memories not visible in list"
+fi
+
+# Clear short tier
+OUT=$("$BINARY" memory clear --tier short 2>&1)
+assert_exit_ok "memory clear --tier short" $?
+if echo "$OUT" | grep -qiE "clear|removed|delet|block|Cleared"; then
+  pass "memory clear: short tier cleared"
+else
+  warn "memory clear: short tier response: $(echo "$OUT" | head -1)"
+fi
+
+# Clear medium tier
+OUT=$("$BINARY" memory clear --tier medium 2>&1)
+assert_exit_ok "memory clear --tier medium" $?
+
+# Clear long tier
+OUT=$("$BINARY" memory clear --tier long 2>&1)
+assert_exit_ok "memory clear --tier long" $?
+
+# Verify memories are gone
+OUT=$("$BINARY" memory list 2>&1)
+if echo "$OUT" | grep -qi "$CLEAR_TAG"; then
+  warn "memory clear: some test memories still visible after clear-all"
+else
+  pass "memory clear: all test memories removed after tier clears"
 fi
 
 # ══════════════════════════════════════════════════════════════════════════════

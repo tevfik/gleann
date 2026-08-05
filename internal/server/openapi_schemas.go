@@ -63,6 +63,7 @@ func openAPISchemasSearch() map[string]any {
 				"role":            map[string]any{"type": "string", "description": "Named role (e.g. 'code', 'shell', 'explain'). Resolves to a system prompt from the role registry."},
 				"conversation_id": map[string]any{"type": "string", "description": "Continue an existing conversation by ID. Restores message history."},
 				"stream":          map[string]any{"type": "boolean", "default": false, "description": "Enable SSE streaming. When true, response is text/event-stream with `data: {\"token\": \"...\"}` events, ending with `data: [DONE]`"},
+				"vision_rag":      map[string]any{"type": "boolean", "default": false, "description": "Enable Deep Vision RAG. When true, dynamically extracts specific page images from PDF context and passes them to the VLM during generation."},
 			},
 		},
 		"AskResponse": map[string]any{

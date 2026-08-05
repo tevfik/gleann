@@ -11,6 +11,7 @@
 
 ## External Connections
 
+- `code.parseGo` ↔ `code.Parser.Parse`
 - `code.Parser.Parse` ↔ `code.parsePython`
 
 ---

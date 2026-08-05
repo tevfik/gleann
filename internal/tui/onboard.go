@@ -81,6 +81,9 @@ type OnboardResult struct {
 	// Vector backend.
 	Backend string `json:"backend,omitempty"`
 
+	// Multimodal model (set via Web UI or config).
+	MultimodalModel string `json:"multimodal_model,omitempty"`
+
 	// Install options (set during setup, consumed by caller).
 	InstallPath        string `json:"install_path,omitempty"`
 	InstallCompletions bool   `json:"install_completions,omitempty"`

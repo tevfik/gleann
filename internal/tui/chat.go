@@ -21,6 +21,7 @@ import (
 	"github.com/tevfik/gleann/pkg/gleann"
 	"github.com/tevfik/gleann/pkg/memory"
 	"github.com/tevfik/gleann/pkg/roles"
+	"github.com/tevfik/gleann/internal/multimodal"
 )
 
 // ── Messages ───────────────────────────────────────────────────
@@ -1984,14 +1985,14 @@ func (m ChatModel) askLLMStreamWithMedia(question string, images []string) tea.C
 			defer close(tokenChan)
 			var err error
 			if len(images) > 0 {
-				err = chat.AskStreamWithMedia(context.Background(), question, images,
+				_, err = chat.AskStreamWithMedia(context.Background(), question, images,
 					func(token string) {
 						tokenChan <- token
 					},
 					gleann.WithTopK(topK),
 					gleann.WithReranker(rerank))
 			} else {
-				err = chat.AskStream(context.Background(), question,
+				_, err = chat.AskStream(context.Background(), question,
 					func(token string) {
 						tokenChan <- token
 					},
@@ -2181,17 +2182,16 @@ func (m *ChatModel) handlePDFCommand(path string) string {
 		return "⚠ PDF too large (max 50 MB)."
 	}
 
-	data, err := os.ReadFile(absPath)
+	encoded, err := multimodal.RenderPDFPageToBase64(absPath, 1, 150)
 	if err != nil {
-		return fmt.Sprintf("⚠ Read error: %s", err)
+		return fmt.Sprintf("⚠ PDF render error: %s", err)
 	}
 
-	encoded := base64.StdEncoding.EncodeToString(data)
 	m.pendingImages = append(m.pendingImages, encoded)
 
-	return fmt.Sprintf("📄 Queued `%s` (%d KB). Send your next message to analyze it.\n"+
+	return fmt.Sprintf("📄 Queued `%s` (Page 1) (%d KB). Send your next message to analyze it.\n"+
 		"⚠ Requires a vision-capable model (e.g. Gemma4).",
-		filepath.Base(absPath), info.Size()/1024)
+		filepath.Base(absPath), len(encoded)/1024)
 }
 
 // handleGraphCommand performs a quick symbol lookup showing callers and callees.

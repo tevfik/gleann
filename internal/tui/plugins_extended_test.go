@@ -1,10 +1,6 @@
 package tui
 
 import (
-	"archive/tar"
-	"archive/zip"
-	"bytes"
-	"compress/gzip"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -12,6 +8,7 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/tevfik/gleann/pkg/gleann"
 )
 
 func TestPluginOwner(t *testing.T) {
@@ -55,25 +52,6 @@ func TestPluginStatusBadge(t *testing.T) {
 	}
 }
 
-func TestParseGitHubURL(t *testing.T) {
-	tests := []struct {
-		url       string
-		wantOwner string
-		wantRepo  string
-	}{
-		{"https://github.com/tevfik/gleann-plugin-docs", "tevfik", "gleann-plugin-docs"},
-		{"https://github.com/tevfik/gleann-plugin-docs.git", "tevfik", "gleann-plugin-docs"},
-		{"git@github.com/tevfik/repo", "tevfik", "repo"},
-		{"invalid-url", "", ""},
-	}
-	for _, tt := range tests {
-		owner, repo := parseGitHubURL(tt.url)
-		if owner != tt.wantOwner || repo != tt.wantRepo {
-			t.Errorf("parseGitHubURL(%q) = (%q, %q), want (%q, %q)", tt.url, owner, repo, tt.wantOwner, tt.wantRepo)
-		}
-	}
-}
-
 func TestRepoName(t *testing.T) {
 	tests := []struct {
 		url  string
@@ -110,163 +88,6 @@ func TestFindPython3(t *testing.T) {
 	// Should be python or python3.
 	if got != "python" && got != "python3" {
 		t.Errorf("findPython3() = %q", got)
-	}
-}
-
-func TestFindGoBuildTarget(t *testing.T) {
-	tmpDir := t.TempDir()
-
-	// No Go files.
-	target, hasGo := findGoBuildTarget(tmpDir)
-	if hasGo {
-		t.Error("expected no Go files in empty dir")
-	}
-	if target != "." {
-		t.Errorf("target = %q, want '.'", target)
-	}
-
-	// Root Go file.
-	os.WriteFile(filepath.Join(tmpDir, "main.go"), []byte("package main"), 0644)
-	target, hasGo = findGoBuildTarget(tmpDir)
-	if !hasGo {
-		t.Error("expected Go files in root dir")
-	}
-	if target != "." {
-		t.Errorf("target = %q, want '.'", target)
-	}
-
-	// cmd/* layout.
-	tmpDir2 := t.TempDir()
-	cmdDir := filepath.Join(tmpDir2, "cmd", "myapp")
-	os.MkdirAll(cmdDir, 0755)
-	os.WriteFile(filepath.Join(cmdDir, "main.go"), []byte("package main"), 0644)
-	target, hasGo = findGoBuildTarget(tmpDir2)
-	if !hasGo {
-		t.Error("expected Go files in cmd/ layout")
-	}
-	if target != filepath.Join("cmd", "myapp") {
-		t.Errorf("target = %q", target)
-	}
-}
-
-func TestExtractBinaryFromTarGz(t *testing.T) {
-	// Create a tar.gz in memory with a binary file.
-	var buf bytes.Buffer
-	gw := gzip.NewWriter(&buf)
-	tw := tar.NewWriter(gw)
-
-	content := []byte("#!/bin/sh\necho hello")
-	hdr := &tar.Header{
-		Name: "dir/mybinary",
-		Mode: 0755,
-		Size: int64(len(content)),
-	}
-	tw.WriteHeader(hdr)
-	tw.Write(content)
-	tw.Close()
-	gw.Close()
-
-	destPath := filepath.Join(t.TempDir(), "mybinary")
-	err := extractBinaryFromTarGz(&buf, destPath, "mybinary")
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	data, err := os.ReadFile(destPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(data) != string(content) {
-		t.Errorf("content mismatch")
-	}
-}
-
-func TestExtractBinaryFromTarGz_NotFound(t *testing.T) {
-	var buf bytes.Buffer
-	gw := gzip.NewWriter(&buf)
-	tw := tar.NewWriter(gw)
-	tw.Close()
-	gw.Close()
-
-	err := extractBinaryFromTarGz(&buf, "/tmp/nope", "nonexistent")
-	if err == nil {
-		t.Error("expected error for missing binary")
-	}
-}
-
-func TestExtractBinaryFromZip(t *testing.T) {
-	// Create a zip in memory.
-	var buf bytes.Buffer
-	zw := zip.NewWriter(&buf)
-
-	content := []byte("binary-content")
-	w, _ := zw.Create("dir/mybinary")
-	w.Write(content)
-	zw.Close()
-
-	destPath := filepath.Join(t.TempDir(), "mybinary")
-	err := extractBinaryFromZip(&buf, destPath, "mybinary")
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	data, err := os.ReadFile(destPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(data) != string(content) {
-		t.Errorf("content mismatch")
-	}
-}
-
-func TestExtractBinaryFromZip_NotFound(t *testing.T) {
-	var buf bytes.Buffer
-	zw := zip.NewWriter(&buf)
-	zw.Close()
-
-	err := extractBinaryFromZip(&buf, "/tmp/nope", "nonexistent")
-	if err == nil {
-		t.Error("expected error for missing binary")
-	}
-}
-
-func TestExtractTarballToDir(t *testing.T) {
-	// Create tarball with prefix stripping.
-	var buf bytes.Buffer
-	gw := gzip.NewWriter(&buf)
-	tw := tar.NewWriter(gw)
-
-	// Simulate GitHub tarball: owner-repo-commit/file.go
-	files := map[string]string{
-		"owner-repo-abc123/":        "",
-		"owner-repo-abc123/main.go": "package main",
-		"owner-repo-abc123/go.mod":  "module test",
-	}
-	for name, content := range files {
-		if strings.HasSuffix(name, "/") {
-			tw.WriteHeader(&tar.Header{Name: name, Typeflag: tar.TypeDir, Mode: 0755})
-		} else {
-			hdr := &tar.Header{Name: name, Mode: 0644, Size: int64(len(content))}
-			tw.WriteHeader(hdr)
-			tw.Write([]byte(content))
-		}
-	}
-	tw.Close()
-	gw.Close()
-
-	destDir := filepath.Join(t.TempDir(), "extracted")
-	err := extractTarballToDir(&buf, destDir)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	// Verify files were extracted with prefix stripped.
-	data, err := os.ReadFile(filepath.Join(destDir, "main.go"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(data) != "package main" {
-		t.Errorf("content = %q", string(data))
 	}
 }
 
@@ -332,11 +153,11 @@ func TestMarshalJSON(t *testing.T) {
 func TestNewPluginModel(t *testing.T) {
 	// Doesn't crash even if plugin dir doesn't exist.
 	m := NewPluginModel()
-	if len(m.plugins) != len(knownPlugins) {
-		t.Errorf("expected %d plugins, got %d", len(knownPlugins), len(m.plugins))
+	if len(m.plugins) != len(gleann.FetchPluginCatalog()) {
+		t.Errorf("expected %d plugins, got %d", len(gleann.FetchPluginCatalog()), len(m.plugins))
 	}
-	if len(m.statuses) != len(knownPlugins) {
-		t.Errorf("expected %d statuses, got %d", len(knownPlugins), len(m.statuses))
+	if len(m.statuses) != len(gleann.FetchPluginCatalog()) {
+		t.Errorf("expected %d statuses, got %d", len(gleann.FetchPluginCatalog()), len(m.statuses))
 	}
 }
 
@@ -544,22 +365,5 @@ func TestLoadPluginConfigSummary(t *testing.T) {
 	}
 	if s["Model"] != "base.en" {
 		t.Errorf("Model = %q", s["Model"])
-	}
-}
-
-func TestKnownPlugins(t *testing.T) {
-	if len(knownPlugins) < 2 {
-		t.Errorf("expected at least 2 known plugins, got %d", len(knownPlugins))
-	}
-	for _, p := range knownPlugins {
-		if p.Name == "" {
-			t.Error("plugin has empty name")
-		}
-		if p.RepoURL == "" {
-			t.Error("plugin has empty RepoURL")
-		}
-		if len(p.Extensions) == 0 {
-			t.Errorf("plugin %s has no extensions", p.Name)
-		}
 	}
 }

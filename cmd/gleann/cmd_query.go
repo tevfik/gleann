@@ -305,7 +305,7 @@ func cmdAsk(args []string) {
 			}
 
 			fmt.Print("\nAssistant: ")
-			err := chat.AskStream(ctx, input, func(token string) {
+			_, err := chat.AskStream(ctx, input, func(token string) {
 				wrapper.Write(token)
 			})
 			if err != nil {
@@ -357,7 +357,7 @@ func cmdAsk(args []string) {
 		codeChat.SetSystemPrompt("You are a Senior Coding Agent. Synthesize the context provided by the Search Agent and answer the user's question directly with well-formatted code or explanation. Do not mention that you received context.")
 		prompt := fmt.Sprintf("User Question: %s\n\nSearch Agent Context:\n%s", question, searchAnswer)
 		
-		err = codeChat.AskStream(ctx, prompt, func(token string) {
+		_, err = codeChat.AskStream(ctx, prompt, func(token string) {
 			wrapper.Write(token)
 		})
 		if err != nil {
@@ -379,11 +379,11 @@ func cmdAsk(args []string) {
 		fmt.Print("")
 		var err error
 		if len(attachFiles) > 0 {
-			err = chat.AskStreamWithMedia(ctx, question, attachFiles, func(token string) {
+			_, err = chat.AskStreamWithMedia(ctx, question, attachFiles, func(token string) {
 				wrapper.Write(token)
 			})
 		} else {
-			err = chat.AskStream(ctx, question, func(token string) {
+			_, err = chat.AskStream(ctx, question, func(token string) {
 				wrapper.Write(token)
 			})
 		}

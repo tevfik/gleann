@@ -266,7 +266,7 @@ func (s *Server) streamChatCompletions(
 	}
 	lastMsg := messages[len(messages)-1]
 
-	err := chat.AskStream(r.Context(), lastMsg.Content, func(token string) {
+	_, err := chat.AskStream(r.Context(), lastMsg.Content, func(token string) {
 		sendChunk(token, nil)
 	})
 
@@ -418,4 +418,80 @@ func (s *Server) proxyLLMConfig() gleann.ChatConfig {
 	}
 
 	return cfg
+}
+
+// handleProxyModels handles GET /api/proxy/models?provider=X&host=Y&apikey=Z
+// It proxies the request to the target provider to fetch models, bypassing CORS.
+func (s *Server) handleProxyModels(w http.ResponseWriter, r *http.Request) {
+	provider := r.URL.Query().Get("provider")
+	host := r.URL.Query().Get("host")
+	apiKey := r.URL.Query().Get("apikey")
+
+	if provider == "ollama" {
+		if host == "" {
+			host = "http://localhost:11434"
+		}
+		resp, err := http.Get(strings.TrimSuffix(host, "/") + "/api/tags")
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		defer resp.Body.Close()
+		var data map[string]any
+		if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to decode ollama response")
+			return
+		}
+		
+		// Map ollama models to standard format
+		var models []string
+		if mList, ok := data["models"].([]any); ok {
+			for _, m := range mList {
+				if mObj, ok := m.(map[string]any); ok {
+					if name, ok := mObj["name"].(string); ok {
+						models = append(models, name)
+					}
+				}
+			}
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"models": models})
+		return
+	}
+
+	if provider == "openai" {
+		if host == "" {
+			host = "https://api.openai.com/v1"
+		}
+		req, _ := http.NewRequest("GET", strings.TrimSuffix(host, "/")+"/models", nil)
+		if apiKey != "" {
+			req.Header.Set("Authorization", "Bearer "+apiKey)
+		}
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		defer resp.Body.Close()
+		var data map[string]any
+		if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to decode openai response")
+			return
+		}
+		
+		// Map openai models to standard format
+		var models []string
+		if dataList, ok := data["data"].([]any); ok {
+			for _, m := range dataList {
+				if mObj, ok := m.(map[string]any); ok {
+					if id, ok := mObj["id"].(string); ok {
+						models = append(models, id)
+					}
+				}
+			}
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"models": models})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{"models": []string{}})
 }

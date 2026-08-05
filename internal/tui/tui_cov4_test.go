@@ -110,24 +110,6 @@ func TestCapitalizeCov4(t *testing.T) {
 
 // ── parseGitHubURL ────────────────────────────────────────────
 
-func TestParseGitHubURLCov4(t *testing.T) {
-	tests := []struct {
-		url       string
-		wantOwner string
-		wantRepo  string
-	}{
-		{"https://github.com/tevfik/gleann-plugin-docs", "tevfik", "gleann-plugin-docs"},
-		{"https://github.com/tevfik/gleann-plugin-docs.git", "tevfik", "gleann-plugin-docs"},
-		{"git@github.com:tevfik/gleann.git", "", ""}, // SSH format not supported
-		{"not-a-url", "", ""},
-	}
-	for _, tt := range tests {
-		owner, repo := parseGitHubURL(tt.url)
-		if owner != tt.wantOwner || repo != tt.wantRepo {
-			t.Errorf("parseGitHubURL(%q) = (%q, %q), want (%q, %q)", tt.url, owner, repo, tt.wantOwner, tt.wantRepo)
-		}
-	}
-}
 
 // ── pluginOwner ───────────────────────────────────────────────
 

@@ -374,43 +374,8 @@ func TestVenvBinaryCov3(t *testing.T) {
 
 // ── findGoBuildTarget ────────────────────────────────────────────────────────
 
-func TestFindGoBuildTarget_RootGoFiles(t *testing.T) {
-	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main"), 0o644)
-	path, found := findGoBuildTarget(dir)
-	if !found {
-		t.Fatal("expected found=true")
-	}
-	if path != "." {
-		t.Fatalf("expected '.', got %q", path)
-	}
-}
 
-func TestFindGoBuildTarget_CmdSubdir(t *testing.T) {
-	dir := t.TempDir()
-	cmdDir := filepath.Join(dir, "cmd", "myapp")
-	os.MkdirAll(cmdDir, 0o755)
-	os.WriteFile(filepath.Join(cmdDir, "main.go"), []byte("package main"), 0o644)
-	path, found := findGoBuildTarget(dir)
-	if !found {
-		t.Fatal("expected found=true")
-	}
-	if path != filepath.Join("cmd", "myapp") {
-		t.Fatalf("expected 'cmd/myapp', got %q", path)
-	}
-}
 
-func TestFindGoBuildTarget_NoGoFiles(t *testing.T) {
-	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "readme.md"), []byte("# readme"), 0o644)
-	path, found := findGoBuildTarget(dir)
-	if found {
-		t.Fatal("expected found=false")
-	}
-	if path != "." {
-		t.Fatalf("expected '.', got %q", path)
-	}
-}
 
 // ── extractBinaryFromTarGz ───────────────────────────────────────────────────
 
@@ -437,46 +402,8 @@ func createTestTarGz(t *testing.T, files map[string][]byte) *bytes.Buffer {
 	return &buf
 }
 
-func TestExtractBinaryFromTarGz_ExactMatch(t *testing.T) {
-	data := createTestTarGz(t, map[string][]byte{
-		"mybin": []byte("binary content"),
-	})
-	dest := filepath.Join(t.TempDir(), "mybin")
-	err := extractBinaryFromTarGz(data, dest, "mybin")
-	if err != nil {
-		t.Fatal(err)
-	}
-	content, _ := os.ReadFile(dest)
-	if string(content) != "binary content" {
-		t.Fatalf("unexpected: %s", content)
-	}
-}
 
-func TestExtractBinaryFromTarGz_PrefixMatch(t *testing.T) {
-	data := createTestTarGz(t, map[string][]byte{
-		"mybin-v1.0.0": []byte("versioned"),
-	})
-	dest := filepath.Join(t.TempDir(), "mybin")
-	err := extractBinaryFromTarGz(data, dest, "mybin")
-	if err != nil {
-		t.Fatal(err)
-	}
-	content, _ := os.ReadFile(dest)
-	if string(content) != "versioned" {
-		t.Fatalf("unexpected: %s", content)
-	}
-}
 
-func TestExtractBinaryFromTarGz_NotFoundCov3(t *testing.T) {
-	data := createTestTarGz(t, map[string][]byte{
-		"other": []byte("not matching"),
-	})
-	dest := filepath.Join(t.TempDir(), "mybin")
-	err := extractBinaryFromTarGz(data, dest, "mybin")
-	if err == nil {
-		t.Fatal("expected error for no matching binary")
-	}
-}
 
 // ── extractBinaryFromZip ─────────────────────────────────────────────────────
 
@@ -497,54 +424,10 @@ func createTestZip(t *testing.T, files map[string][]byte) *bytes.Buffer {
 	return &buf
 }
 
-func TestExtractBinaryFromZip_ExactMatch(t *testing.T) {
-	data := createTestZip(t, map[string][]byte{
-		"mybin": []byte("zip binary"),
-	})
-	dest := filepath.Join(t.TempDir(), "mybin")
-	err := extractBinaryFromZip(data, dest, "mybin")
-	if err != nil {
-		t.Fatal(err)
-	}
-	content, _ := os.ReadFile(dest)
-	if string(content) != "zip binary" {
-		t.Fatalf("unexpected: %s", content)
-	}
-}
 
-func TestExtractBinaryFromZip_NotFoundCov3(t *testing.T) {
-	data := createTestZip(t, map[string][]byte{
-		"other": []byte("not matching"),
-	})
-	dest := filepath.Join(t.TempDir(), "mybin")
-	err := extractBinaryFromZip(data, dest, "mybin")
-	if err == nil {
-		t.Fatal("expected error for no matching binary")
-	}
-}
 
 // ── extractTarballToDir ──────────────────────────────────────────────────────
 
-func TestExtractTarballToDir_Basic(t *testing.T) {
-	files := map[string][]byte{
-		"repo-abc123/main.go":     []byte("package main"),
-		"repo-abc123/lib/util.go": []byte("package lib"),
-	}
-	data := createTestTarGzWithDirs(t, files)
-	dest := t.TempDir()
-	err := extractTarballToDir(data, filepath.Join(dest, "out"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	// Check extracted files (prefix stripped).
-	mainContent, err := os.ReadFile(filepath.Join(dest, "out", "main.go"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(mainContent) != "package main" {
-		t.Fatalf("unexpected: %s", mainContent)
-	}
-}
 
 func createTestTarGzWithDirs(t *testing.T, files map[string][]byte) *bytes.Buffer {
 	t.Helper()

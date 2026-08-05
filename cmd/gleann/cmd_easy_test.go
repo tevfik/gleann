@@ -46,6 +46,7 @@ func TestCmdConfigPath_PrintsPath(t *testing.T) {
 func TestCmdConfigShow_NoConfig(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)
+	t.Setenv("USERPROFILE", tmp)
 	out := captureStdout(t, func() { cmdConfigShow() })
 	if !strings.Contains(out, "No configuration") {
 		t.Errorf("expected 'No configuration' message, got %q", out)
@@ -55,6 +56,7 @@ func TestCmdConfigShow_NoConfig(t *testing.T) {
 func TestCmdConfigValidate_NoFile(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)
+	t.Setenv("USERPROFILE", tmp)
 	out := captureStdout(t, func() { cmdConfigValidate() })
 	if !strings.Contains(out, "No config file found") {
 		t.Errorf("expected missing-file message, got %q", out)
@@ -64,6 +66,7 @@ func TestCmdConfigValidate_NoFile(t *testing.T) {
 func TestCmdConfigValidate_OK(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)
+	t.Setenv("USERPROFILE", tmp)
 	cfgDir := filepath.Join(tmp, ".gleann")
 	if err := os.MkdirAll(cfgDir, 0o755); err != nil {
 		t.Fatal(err)
@@ -82,6 +85,7 @@ func TestCmdConfigValidate_OK(t *testing.T) {
 func TestCmdConfig_DispatchShow(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)
+	t.Setenv("USERPROFILE", tmp)
 	out := captureStdout(t, func() { cmdConfig([]string{"show"}) })
 	if !strings.Contains(out, "No configuration") {
 		t.Errorf("dispatch to show failed, output=%q", out)
@@ -91,6 +95,7 @@ func TestCmdConfig_DispatchShow(t *testing.T) {
 func TestCmdConfig_DispatchPath(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)
+	t.Setenv("USERPROFILE", tmp)
 	out := captureStdout(t, func() { cmdConfig([]string{"path"}) })
 	if !strings.Contains(out, ".gleann") {
 		t.Errorf("dispatch to path failed, output=%q", out)
@@ -100,6 +105,7 @@ func TestCmdConfig_DispatchPath(t *testing.T) {
 func TestCmdConfig_DispatchValidate(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)
+	t.Setenv("USERPROFILE", tmp)
 	out := captureStdout(t, func() { cmdConfig([]string{"validate"}) })
 	if !strings.Contains(out, "No config file") {
 		t.Errorf("dispatch to validate failed, output=%q", out)
