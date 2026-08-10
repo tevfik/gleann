@@ -38,6 +38,7 @@ type Indexer struct {
 	root      string     // absolute root path used to derive relative package paths
 	writeMu   sync.Mutex // Ensures only one KuzuDB write transaction occurs at a time
 	hashStore *FileHashStore // optional: persists per-file content hashes for incremental skip
+	tracker   *ChangeTracker // tracks file mtimes for incremental indexing
 }
 
 // New creates a new Indexer.
@@ -52,6 +53,7 @@ func New(db *kuzu.DB, module, root string) *Indexer {
 		chunker: chunking.NewASTChunker(cfg),
 		module:  strings.TrimSuffix(module, "/"),
 		root:    filepath.Clean(root),
+		tracker: NewChangeTracker(),
 	}
 }
 
@@ -136,6 +138,7 @@ func (idx *Indexer) IndexFile(absPath, source string) error {
 		return nil
 	}
 
+	// (The rest of the doCopy calls stay the same)
 	if f != nil {
 		if err := doCopy("CodeFile", func(p string) error { return kuzu.WriteFileNodesCSV(p, []kuzu.FileNode{*f}) }); err != nil {
 			return err
@@ -166,6 +169,9 @@ func (idx *Indexer) IndexFile(absPath, source string) error {
 			return err
 		}
 	}
+
+	// Mark file as clean after successful indexing
+	idx.tracker.MarkClean(absPath)
 
 	return nil
 }
@@ -366,6 +372,12 @@ func (idx *Indexer) IndexDir(root string) error {
 			if !chunking.IsCodeSourceFile(path) {
 				return nil
 			}
+
+			// Incremental check: skip if file hasn't changed since last index.
+			if !idx.tracker.IsDirty(path) {
+				return nil
+			}
+
 			src, err := os.ReadFile(path)
 			if err != nil {
 				return fmt.Errorf("read %s: %w", path, err)

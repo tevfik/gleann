@@ -151,6 +151,7 @@ type Config struct {
 	A2AEnabled      *bool  `json:"a2a_enabled,omitempty"`      // Enable A2A protocol (default: true)
 	A2ABaseURL      string `json:"a2a_base_url,omitempty"`     // A2A Agent Card base URL
 	MultimodalModel string `json:"multimodal_model,omitempty"` // Multimodal Ollama model (e.g. gemma4)
+	Timezone        string `json:"timezone,omitempty"`         // Local timezone for reports and logs (e.g. "Europe/Istanbul")
 	RateLimit       int    `json:"rate_limit,omitempty"`       // Sustained requests/sec per IP (default: 60)
 	RateBurst       int    `json:"rate_burst,omitempty"`       // Burst capacity per IP (default: 120)
 	BlockCharLimit  int    `json:"block_char_limit,omitempty"` // Default memory block character limit

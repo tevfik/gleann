@@ -74,9 +74,19 @@ func (m *MemoryService) InjectEntities(ctx context.Context, payload gleann.Graph
 	}
 	defer conn.Close()
 
-	queries := make([]string, 0, len(payload.Nodes)+len(payload.Edges))
+	now := time.Now().UTC().Format(time.RFC3339)
 
-	// ── Node upserts ─────────────────────────────────────────────────────────
+	// 1. Temporal Archiving: Move current active version to Entity_Archive before updating.
+	for _, n := range payload.Nodes {
+		archiveQuery := fmt.Sprintf(
+			`MATCH (e:Entity {id: %q}) `+
+			`CREATE (a:Entity_Archive {id: e.id, version_id: %q, type: e.type, content: e.content, attributes: e.attributes, valid_to: %q})`,
+			n.ID, fmt.Sprintf("%d", time.Now().UnixNano()), now)
+		_ = execOnConn(conn, archiveQuery)
+	}
+
+	// 2. Standard Upserts (Active Table)
+	queries := make([]string, 0, len(payload.Nodes)+len(payload.Edges))
 	for i := range payload.Nodes {
 		n := &payload.Nodes[i]
 		attrsJSON, err := gleann.AttributesToJSON(n.Attributes)
@@ -86,11 +96,8 @@ func (m *MemoryService) InjectEntities(ctx context.Context, payload gleann.Graph
 		queries = append(queries, entityMergeQuery(n.ID, n.Type, n.Content, attrsJSON))
 	}
 
-	// ── Edge upserts ─────────────────────────────────────────────────────────
-	now := time.Now().UTC().Format(time.RFC3339)
 	for i := range payload.Edges {
 		e := &payload.Edges[i]
-		// Auto-inject temporal attributes.
 		if e.Attributes == nil {
 			e.Attributes = make(map[string]any)
 		}
@@ -100,17 +107,15 @@ func (m *MemoryService) InjectEntities(ctx context.Context, payload gleann.Graph
 		e.Attributes["updated_at"] = now
 		attrsJSON, err := gleann.AttributesToJSON(e.Attributes)
 		if err != nil {
-			return fmt.Errorf("inject entities: edge %q→%q attributes: %w", e.From, e.To, err)
+			return fmt.Errorf("inject entities: edge %q->%q attributes: %w", e.From, e.To, err)
 		}
 		queries = append(queries, relMergeQuery(e.From, e.To, e.RelationType, e.Weight, attrsJSON))
 	}
 
-	// Execute everything atomically — any failure triggers ROLLBACK.
 	if err := ExecTxOn(conn, queries); err != nil {
 		return fmt.Errorf("inject entities: transaction: %w", err)
 	}
 
-	// ── Optional vector synchronisation (runs after the DB commit) ────────────
 	if m.syncer != nil {
 		for i := range payload.Nodes {
 			n := &payload.Nodes[i]
@@ -122,7 +127,15 @@ func (m *MemoryService) InjectEntities(ctx context.Context, payload gleann.Graph
 			}
 		}
 	}
+	return nil
+}
 
+func execOnConn(conn *kuzu.Connection, query string) error {
+	res, err := conn.Query(query)
+	if err != nil {
+		return err
+	}
+	defer res.Close()
 	return nil
 }
 

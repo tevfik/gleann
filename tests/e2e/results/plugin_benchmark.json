@@ -233,8 +233,8 @@
       "file": "research_slides.pptx",
       "format": "pptx",
       "backend": "go-native",
-      "latency_ms": 1,
-      "throughput_docs_per_sec": 1000,
+      "latency_ms": 0,
+      "throughput_docs_per_sec": 0,
       "sections": 6,
       "edges": 6,
       "max_heading_depth": 2,
@@ -466,5 +466,5 @@
       "formats_supported": 4
     }
   },
-  "timestamp": "2026-08-02T15:48:06+03:00"
+  "timestamp": "2026-08-10T19:12:05+03:00"
 }
