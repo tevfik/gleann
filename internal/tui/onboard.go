@@ -35,15 +35,17 @@ const (
 	phaseRerankModel                       // select: reranker model
 	phaseIndexDir                          // text input: index directory
 	phaseBackend                           // select: vector backend
+	phaseA2A                               // toggle: enable A2A protocol?
 	phaseMCP                               // toggle: enable MCP server?
 	phaseServer                            // toggle: enable REST API server?
+	phaseCustomHFInput                     // text input: custom HF repo for gguf
 	phaseSummary                           // summary & confirm
 	phaseInstall                           // select: system install option
 	phasePlugins                           // navigate to plugin manager
 )
 
 // totalVisibleSteps for the progress bar (skip fetching phases).
-const totalVisibleSteps = 14
+const totalVisibleSteps = 15
 
 // ── Messages ───────────────────────────────────────────────────
 
@@ -72,6 +74,9 @@ type OnboardResult struct {
 	IndexDir          string `json:"index_dir"`
 	Completed         bool   `json:"completed"`
 
+	// LlamaCPP Config
+	LlamaCPPConfig gleann.LlamaCPPConfig `json:"llamacpp_config,omitempty"`
+
 	// Chat settings (persisted from settings panel).
 	SystemPrompt string  `json:"system_prompt,omitempty"`
 	Temperature  float64 `json:"temperature,omitempty"`
@@ -87,6 +92,9 @@ type OnboardResult struct {
 	// Install options (set during setup, consumed by caller).
 	InstallPath        string `json:"install_path,omitempty"`
 	InstallCompletions bool   `json:"install_completions,omitempty"`
+
+	// A2A Protocol integration.
+	A2AEnabled *bool `json:"a2a_enabled,omitempty"`
 
 	// MCP server integration.
 	MCPEnabled bool `json:"mcp_enabled,omitempty"`
@@ -176,6 +184,11 @@ type OnboardModel struct {
 	backendOptions   []string
 	backendOptionIdx int
 
+	// A2A
+	a2aEnabled   bool
+	a2aOptions   []string
+	a2aOptionIdx int
+
 	// MCP.
 	mcpEnabled   bool
 	mcpOptions   []string // MCP on/off labels
@@ -186,6 +199,10 @@ type OnboardModel struct {
 	serverOptions   []string
 	serverOptionIdx int
 	serverAddrInput textinput.Model
+	
+	// Custom HF Repo input.
+	customHFInput   textinput.Model
+	customHFForWhat string // "emb", "llm", or "reranker"
 
 	// Final result.
 	result OnboardResult
@@ -210,6 +227,7 @@ func settingsMenuItems() []settingsItem {
 		{"Reranker Model", phaseRerankModel},
 		{"Index Directory", phaseIndexDir},
 		{"Vector Backend", phaseBackend},
+		{"Agent-to-Agent (A2A)", phaseA2A},
 		{"MCP Server", phaseMCP},
 		{"REST API Server", phaseServer},
 		{"Install / Uninstall", phaseInstall},
@@ -267,6 +285,12 @@ func NewOnboardModel() OnboardModel {
 	serverAddr.CharLimit = 64
 	serverAddr.SetWidth(24)
 
+	// Custom HF Repo input.
+	customHF := textinput.New()
+	customHF.Placeholder = "e.g. repo/model-GGUF"
+	customHF.CharLimit = 256
+	customHF.SetWidth(44)
+
 	return OnboardModel{
 		phase:             phaseQuickOrAdv,
 		quickAdvOptions:   []string{"⚡ Quick Setup (auto-detect, 30 seconds)", "🔧 Advanced Setup (full control, all options)"},
@@ -282,11 +306,14 @@ func NewOnboardModel() OnboardModel {
 		rerankOptionIdx:   0,
 		backendOptions:    buildBackendOptions(),
 		backendOptionIdx:  0,
+		a2aOptions:        []string{"Disable A2A", "Enable A2A"},
+		a2aOptionIdx:      1,
 		mcpOptions:        []string{"Disable MCP server", "Enable MCP server"},
 		mcpOptionIdx:      0,
 		serverOptions:     []string{"Disable REST API server", "Enable REST API server"},
 		serverOptionIdx:   0,
 		serverAddrInput:   serverAddr,
+		customHFInput:     customHF,
 		installOptions:    buildInstallOptions(),
 		installOptionIdx:  0,
 		spinner:           sp,
@@ -374,6 +401,13 @@ func NewOnboardModelWithConfig(cfg *OnboardResult) OnboardModel {
 		m.rerankEnabled = true
 		m.rerankOptionIdx = 1
 	}
+	if cfg.A2AEnabled == nil || *cfg.A2AEnabled {
+		m.a2aEnabled = true
+		m.a2aOptionIdx = 1
+	} else {
+		m.a2aEnabled = false
+		m.a2aOptionIdx = 0
+	}
 	if cfg.MCPEnabled {
 		m.mcpEnabled = true
 		m.mcpOptionIdx = 1
@@ -412,9 +446,12 @@ func (m OnboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if msg.forReranker {
 				m.rerankEnabled = false
 				if m.embProviders[m.embProviderIdx] == "llamacpp" {
-					m.fetchErr = "No local .gguf models found for reranking. Download one to ~/.gleann/models"
-					m.rerankAllModels = []ModelInfo{{Name: "(Download .gguf model to ~/.gleann/models)", Tag: "Example: bge-reranker-v2-m3.gguf"}}
+					m.fetchErr = "No local .gguf models found. Select one to download to ~/.gleann/models"
+					m.rerankAllModels = []ModelInfo{
+						{Name: "(Download) bge-reranker-v2-m3", Tag: "bge-reranker-v2-m3-q4_k_m.gguf"},
+					}
 					m.rerankModels = m.rerankAllModels
+					m.rerankEnabled = true
 					m.phase = phaseRerankModel
 				} else {
 					m.fetchErr = "No reranker models found. Pull one with: ollama pull bge-reranker-v2-m3"
@@ -422,7 +459,13 @@ func (m OnboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			} else if msg.forLLM {
 				if m.llmProviders[m.llmProviderIdx] == "llamacpp" {
-					m.llmModels = []ModelInfo{{Name: "(Download .gguf model to ~/.gleann/models)", Tag: "Example: Llama-3-8B.gguf"}}
+					m.fetchErr = "No local .gguf models found. Select one to download to ~/.gleann/models"
+					m.llmModels = []ModelInfo{
+						{Name: "(Download) Qwen2.5-Coder-1.5B", Tag: "qwen2.5-coder-1.5b-instruct-q4_k_m.gguf"},
+						{Name: "(Download) Llama-3-8B-Instruct", Tag: "Meta-Llama-3-8B-Instruct-Q4_K_M.gguf"},
+						{Name: "(Download) Phi-3-Mini-4K", Tag: "Phi-3-mini-4k-instruct-q4.gguf"},
+						{Name: "(Custom) Enter HF Repo...", Tag: "custom"},
+					}
 				} else {
 					m.llmModels = []ModelInfo{{Name: "nemotron-3-nano:4b"}, {Name: "phi-4:14b"}, {Name: "qwen2.5:32b"}}
 				}
@@ -430,7 +473,12 @@ func (m OnboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.phase = phaseLLMModel
 			} else {
 				if m.embProviders[m.embProviderIdx] == "llamacpp" {
-					m.embModels = []ModelInfo{{Name: "(Download .gguf model to ~/.gleann/models)", Tag: "Example: bge-m3.gguf"}}
+					m.fetchErr = "No local .gguf models found. Select one to download to ~/.gleann/models"
+					m.embModels = []ModelInfo{
+						{Name: "(Download) BGE-M3 (Multilingual)", Tag: "bge-m3-q4_k_m.gguf"},
+						{Name: "(Download) Nomic-Embed-Text", Tag: "nomic-embed-text-v1.5.Q4_K_M.gguf"},
+						{Name: "(Custom) Enter HF Repo...", Tag: "custom"},
+					}
 				} else {
 					m.embModels = []ModelInfo{{Name: "bge-m3"}, {Name: "nomic-embed-text"}, {Name: "text-embedding-3-small"}}
 				}
@@ -444,14 +492,20 @@ func (m OnboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.rerankAllModels = msg.models
 			m.rerankModels = filterRerankerModels(msg.models)
 			if len(m.rerankModels) == 0 {
-				m.rerankEnabled = false
 				m.rerankOptionIdx = 0
 				if m.embProviders[m.embProviderIdx] == "llamacpp" {
-					m.fetchErr = "No local .gguf models found for reranking. Download one to ~/.gleann/models"
+					m.fetchErr = "No local .gguf models found. Select one to download to ~/.gleann/models"
+					m.rerankAllModels = []ModelInfo{
+						{Name: "(Download) bge-reranker-v2-m3", Tag: "bge-reranker-v2-m3-q4_k_m.gguf"},
+					}
+					m.rerankModels = m.rerankAllModels
+					m.rerankModelIdx = 0
+					m.phase = phaseRerankModel
 				} else {
+					m.rerankEnabled = false
 					m.fetchErr = "No reranker models found. Pull one first: ollama pull bge-reranker-v2-m3"
+					m.phase = phaseReranker
 				}
-				m.phase = phaseReranker
 			} else {
 				m.rerankModelIdx = 0
 				m.phase = phaseRerankModel
@@ -598,6 +652,40 @@ func (m OnboardModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case phaseBackend:
 		return m.handleBackendKeys(key)
 
+	case phaseA2A:
+		return m.handleA2AKeys(key)
+
+	case phaseCustomHFInput:
+		if key == "enter" {
+			repo := m.customHFInput.Value()
+			if repo == "" {
+				repo = "none/none"
+			}
+			if m.customHFForWhat == "emb" {
+				m.embModels[m.embModelIdx] = ModelInfo{Name: repo, Tag: repo}
+				if m.menuMode {
+					m.phase = phaseMenu
+				} else {
+					m.phase = phaseLLMProvider
+				}
+			} else if m.customHFForWhat == "llm" {
+				m.llmModels[m.llmModelIdx] = ModelInfo{Name: repo, Tag: repo}
+				if m.menuMode {
+					m.phase = phaseMenu
+				} else {
+					m.phase = phaseReranker
+				}
+			} else if m.customHFForWhat == "reranker" {
+				m.rerankModels[m.rerankModelIdx] = ModelInfo{Name: repo, Tag: repo}
+				if m.menuMode {
+					m.phase = phaseMenu
+				} else {
+					m.phase = phaseIndexDir
+				}
+			}
+			return m, nil
+		}
+
 	// ── MCP server toggle ──
 	case phaseMCP:
 		return m.handleMCPKeys(key)
@@ -646,11 +734,19 @@ func (m OnboardModel) handleMenuKeys(key string) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		}
 		target := item.phase
-		if target == phaseEmbHost && m.embProviders[m.embProviderIdx] == "openai" {
-			target = phaseEmbAPIKey
+		if target == phaseEmbHost {
+			if m.embProviders[m.embProviderIdx] == "llamacpp" || m.embProviders[m.embProviderIdx] == "native" {
+				return m, nil
+			}
+			if m.embProviders[m.embProviderIdx] == "openai" {
+				target = phaseEmbAPIKey
+			}
 		}
 		if target == phaseLLMHost {
 			prov := m.llmProviders[m.llmProviderIdx]
+			if prov == "llamacpp" {
+				return m, nil
+			}
 			if prov == "openai" || prov == "anthropic" {
 				target = phaseLLMAPIKey
 			}
@@ -729,18 +825,11 @@ func (m OnboardModel) handleEmbProviderKeys(key string) (tea.Model, tea.Cmd) {
 			m.embHostInput.Focus()
 			m.phase = phaseEmbHost
 			return m, textinput.Blink
-		} else if prov == "llamacpp" {
+		} else if prov == "llamacpp" || prov == "native" || prov == "sentence-transformers" {
 			m.phase = phaseEmbFetching
 			return m, m.fetchEmbModels()
-		} else if prov == "native" {
-			// Skip fetching and host, go to LLM.
-			if m.menuMode {
-				m.phase = phaseMenu
-				return m, nil
-			}
-			m.phase = phaseLLMProvider
-			return m, nil
 		}
+		// openai and other providers need API key
 		m.embKeyInput.Focus()
 		m.phase = phaseEmbAPIKey
 		return m, textinput.Blink
@@ -796,6 +885,10 @@ func (m *OnboardModel) updateActiveInput(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.llmHostInput, cmd = m.llmHostInput.Update(msg)
 	case phaseLLMAPIKey:
 		m.llmKeyInput, cmd = m.llmKeyInput.Update(msg)
+	case phaseServer:
+		m.serverAddrInput, cmd = m.serverAddrInput.Update(msg)
+	case phaseCustomHFInput:
+		m.customHFInput, cmd = m.customHFInput.Update(msg)
 	case phaseIndexDir:
 		m.indexDirInput, cmd = m.indexDirInput.Update(msg)
 	}
@@ -928,6 +1021,15 @@ func (m *OnboardModel) buildResult() {
 		rerankModel = m.existingCfg.RerankModel
 	}
 
+	var llamaCfg gleann.LlamaCPPConfig
+	if m.existingCfg != nil {
+		llamaCfg = m.existingCfg.LlamaCPPConfig
+	}
+	// If it's totally empty (first time), fill it with defaults
+	if llamaCfg.ModelStorageDir == "" {
+		llamaCfg = gleann.DefaultConfig().LlamaCPPConfig
+	}
+
 	m.result = OnboardResult{
 		EmbeddingProvider:  m.embProviders[m.embProviderIdx],
 		EmbeddingModel:     embModel,
@@ -943,12 +1045,14 @@ func (m *OnboardModel) buildResult() {
 		Backend:            m.selectedBackend(),
 		InstallPath:        m.installPath(),
 		InstallCompletions: m.installOptionIdx >= 1 && m.installOptionIdx <= 2,
+		A2AEnabled:         &m.a2aEnabled,
 		MCPEnabled:         m.mcpEnabled,
 		ServerEnabled:      m.serverEnabled,
 		ServerAddr:         m.serverAddrInput.Value(),
 		Uninstall:          m.installOptionIdx == 3 || m.installOptionIdx == 4,
 		UninstallData:      m.installOptionIdx == 4,
 		Completed:          true,
+		LlamaCPPConfig:     llamaCfg,
 	}
 
 	// Clean up fields if it was repurposed for llamacpp or native.
@@ -1135,39 +1239,17 @@ func (m OnboardModel) View() tea.View {
 			len(m.rerankAllModels) != len(m.rerankModels)))
 
 	case phaseIndexDir:
-		b.WriteString(m.renderInput("8", "Index Directory",
-			"Where to store indexes?",
-			&m.indexDirInput))
-
+		b.WriteString(m.renderInput("9", "Index Directory", "Absolute path to store vector/graph data", &m.indexDirInput))
 	case phaseBackend:
-		b.WriteString(m.renderSelect("9", "Vector Backend",
-			"Select the vector search backend.\nDiskANN uses ~2.7x less RAM than HNSW for large datasets.",
-			m.backendOptions, m.backendOptionIdx,
-			[]string{
-				"Pure-Go Vamana graph — PQ prefiltering, disk-resident, low RAM",
-				"Pure-Go HNSW — fast in-memory, good for smaller datasets",
-				"C FAISS via CGo — SIMD-accelerated, IVF/PQ/SQ8 index types",
-				"FAISS build + Go search — best of both, no CGo at query time",
-			}))
-
+		b.WriteString(m.renderSelect("10", "Vector Backend", "Select the vector indexing engine", m.backendOptions, m.backendOptionIdx, nil))
+	case phaseA2A:
+		b.WriteString(m.renderSelect("11", "Agent-to-Agent (A2A)", "Enable collaborative multi-agent protocol?", m.a2aOptions, m.a2aOptionIdx, nil))
 	case phaseMCP:
-		b.WriteString(m.renderSelect("10", "MCP Server",
-			"Enable MCP (Model Context Protocol) for AI editors like Claude Code & VS Code Copilot.\nRun with: gleann mcp",
-			m.mcpOptions, m.mcpOptionIdx,
-			[]string{
-				"Don't configure MCP — you can enable later via setup",
-				"Generate MCP config for Claude Code, VS Code, etc.",
-			}))
-
+		b.WriteString(m.renderSelect("12", "MCP Integration", "Enable Model Context Protocol server?", m.mcpOptions, m.mcpOptionIdx, nil))
 	case phaseServer:
-		b.WriteString(m.renderSelect("11", "REST API Server",
-			"Enable the REST API server for programmatic access.\nRun with: gleann serve --addr "+m.serverAddrInput.Value(),
-			m.serverOptions, m.serverOptionIdx,
-			[]string{
-				"Don't enable — you can start manually with 'gleann serve'",
-				"Save server preference and default listen address",
-			}))
-
+		b.WriteString(m.renderServerPhase())
+	case phaseCustomHFInput:
+		b.WriteString(m.renderInput(fmt.Sprintf("%d", m.customHFStepNum()), "Custom HF Model", "Enter HuggingFace ID (e.g. Qwen/Qwen2.5-Coder-1.5B-Instruct-GGUF)", &m.customHFInput))
 	case phaseSummary:
 		b.WriteString(m.renderSummary())
 
@@ -1295,11 +1377,6 @@ func (m OnboardModel) settingsMenuValues() []string {
 	reranker := "disabled"
 	if m.rerankEnabled {
 		reranker = "enabled"
-		if len(m.rerankModels) > 0 && m.rerankModelIdx < len(m.rerankModels) {
-			reranker = m.rerankModels[m.rerankModelIdx].Name
-		} else if cfg.RerankModel != "" {
-			reranker = cfg.RerankModel
-		}
 	}
 
 	rerankModel := ""
@@ -1321,6 +1398,13 @@ func (m OnboardModel) settingsMenuValues() []string {
 	if m.mcpEnabled {
 		mcpStatus = "enabled"
 	}
+	
+	backend := m.selectedBackend()
+	
+	a2aStatus := "disabled"
+	if m.a2aEnabled {
+		a2aStatus = "enabled"
+	}
 
 	serverStatus := "disabled"
 	if m.serverEnabled {
@@ -1337,6 +1421,8 @@ func (m OnboardModel) settingsMenuValues() []string {
 		reranker,     // Reranker
 		rerankModel,  // Reranker Model
 		indexDir,     // Index Directory
+		backend,      // Vector Backend
+		a2aStatus,    // Agent-to-Agent (A2A)
 		mcpStatus,    // MCP Server
 		serverStatus, // REST API Server
 		"",           // Install / Uninstall (no current value)
@@ -1374,14 +1460,18 @@ func (m OnboardModel) visibleStep() int {
 		return 9
 	case phaseBackend:
 		return 10
-	case phaseMCP:
+	case phaseA2A:
 		return 11
-	case phaseServer:
+	case phaseMCP:
 		return 12
-	case phaseSummary:
+	case phaseServer:
 		return 13
-	case phaseInstall:
+	case phaseCustomHFInput:
+		return m.customHFStepNum()
+	case phaseSummary:
 		return 14
+	case phaseInstall:
+		return 15
 	}
 	return 1
 }
@@ -1608,6 +1698,46 @@ func (m OnboardModel) renderSummary() string {
 
 // ── Utilities ──────────────────────────────────────────────────
 
+func (m OnboardModel) customHFStepNum() int {
+	if m.customHFForWhat == "emb" {
+		return 3
+	} else if m.customHFForWhat == "llm" {
+		return 6
+	}
+	return 8
+}
+
+func (m OnboardModel) renderServerPhase() string {
+	return m.renderSelect("13", "REST API Server",
+		"Enable the REST API server for programmatic access.\nRun with: gleann serve --addr "+m.serverAddrInput.Value(),
+		m.serverOptions, m.serverOptionIdx,
+		[]string{
+			"Don't enable — you can start manually with 'gleann serve'",
+			"Save server preference and default listen address",
+		})
+}
+
+func (m OnboardModel) handleA2AKeys(key string) (tea.Model, tea.Cmd) {
+	switch key {
+	case "up", "k", "left", "h":
+		if m.a2aOptionIdx > 0 {
+			m.a2aOptionIdx--
+		}
+	case "down", "j", "right", "l":
+		if m.a2aOptionIdx < len(m.a2aOptions)-1 {
+			m.a2aOptionIdx++
+		}
+	case "enter":
+		m.a2aEnabled = (m.a2aOptionIdx == 1)
+		if m.menuMode {
+			m.phase = phaseMenu
+		} else {
+			m.phase = phaseMCP
+		}
+	}
+	return m, nil
+}
+
 func (m OnboardModel) selectedBackend() string {
 	names := []string{"diskann", "hnsw", "faiss", "faiss-hybrid"}
 	if m.backendOptionIdx < len(names) {
@@ -1654,6 +1784,12 @@ func (m OnboardModel) handleEmbModelKeys(key string) (tea.Model, tea.Cmd) {
 			m.embModelIdx++
 		}
 	case "enter":
+		if len(m.embModels) > 0 && m.embModels[m.embModelIdx].Tag == "custom" {
+			m.customHFForWhat = "emb"
+			m.phase = phaseCustomHFInput
+			m.customHFInput.Focus()
+			return m, textinput.Blink
+		}
 		if m.menuMode {
 			m.phase = phaseMenu
 		} else {
@@ -1682,6 +1818,12 @@ func (m OnboardModel) handleLLMModelKeys(key string) (tea.Model, tea.Cmd) {
 			m.llmModelIdx++
 		}
 	case "enter":
+		if len(m.llmModels) > 0 && m.llmModels[m.llmModelIdx].Tag == "custom" {
+			m.customHFForWhat = "llm"
+			m.phase = phaseCustomHFInput
+			m.customHFInput.Focus()
+			return m, textinput.Blink
+		}
 		if m.menuMode {
 			m.phase = phaseMenu
 		} else {
@@ -1739,6 +1881,12 @@ func (m OnboardModel) handleRerankModelKeys(key string) (tea.Model, tea.Cmd) {
 			m.rerankModelIdx++
 		}
 	case "enter":
+		if len(m.rerankModels) > 0 && m.rerankModels[m.rerankModelIdx].Tag == "custom" {
+			m.customHFForWhat = "reranker"
+			m.phase = phaseCustomHFInput
+			m.customHFInput.Focus()
+			return m, textinput.Blink
+		}
 		if m.menuMode {
 			m.phase = phaseMenu
 			return m, nil

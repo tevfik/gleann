@@ -200,6 +200,10 @@ func (s *Server) Start() error {
 	mux.HandleFunc("POST /api/plugins/{name}/install", s.handleInstallPlugin)
 	mux.HandleFunc("DELETE /api/plugins/{name}", s.handleUninstallPlugin)
 
+	// Models
+	mux.HandleFunc("POST /api/models/download", s.handleDownloadModel)
+	mux.HandleFunc("GET /api/models/local", s.handleListLocalModels)
+
 	// Unified memory API (orchestrates blocks + graph + vector).
 	s.mountUnifiedMemory(mux)
 

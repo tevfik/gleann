@@ -8,6 +8,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -29,10 +30,18 @@ func cmdServe(args []string) {
 	config := getConfig(args)
 	applySavedConfig(&config, args)
 
-	// Ensure required models are available.
+	// Ensure required models are available in Ollama (skip for llamacpp/openai etc).
 	if !quiet {
-		autosetup.EnsureModels(config.OllamaHost, quiet,
-			config.EmbeddingModel, config.LLMModel)
+		var modelsToEnsure []string
+		if config.EmbeddingProvider == "ollama" && config.EmbeddingModel != "" {
+			modelsToEnsure = append(modelsToEnsure, config.EmbeddingModel)
+		}
+		if config.LLMProvider == "ollama" && config.LLMModel != "" {
+			modelsToEnsure = append(modelsToEnsure, config.LLMModel)
+		}
+		if len(modelsToEnsure) > 0 {
+			autosetup.EnsureModels(config.OllamaHost, quiet, modelsToEnsure...)
+		}
 	}
 
 	addr := getFlag(args, "--addr")
@@ -56,8 +65,24 @@ func cmdServe(args []string) {
 	}
 
 	if err := initLlamaCPP(context.Background(), &config); err != nil {
-		fmt.Fprintf(os.Stderr, "error initializing llamacpp: %v\n", err)
-		os.Exit(1)
+		fmt.Fprintf(os.Stderr, "⚠️  warning: failed to start embedded llamacpp: %v\n", err)
+		fmt.Fprintf(os.Stderr, "   Falling back to Ollama provider for missing models...\n")
+		if config.EmbeddingProvider == "llamacpp" {
+			config.EmbeddingProvider = "ollama"
+			if !strings.HasSuffix(config.EmbeddingModel, ".gguf") {
+				// E.g. nomic-embed-text:latest
+			} else {
+				config.EmbeddingModel = "nomic-embed-text"
+			}
+		}
+		if config.LLMProvider == "llamacpp" {
+			config.LLMProvider = "ollama"
+			if !strings.HasSuffix(config.LLMModel, ".gguf") {
+				// Keep it
+			} else {
+				config.LLMModel = "nemotron-3-nano:4b" // arbitrary fallback
+			}
+		}
 	}
 
 	srv := server.NewServer(config, addr, version)

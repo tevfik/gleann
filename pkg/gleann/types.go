@@ -93,6 +93,16 @@ func (m IndexMeta) MarshalJSON() ([]byte, error) {
 	})
 }
 
+// LlamaCPPConfig holds settings for the embedded / downloaded local engine.
+type LlamaCPPConfig struct {
+	AutoDownload    bool   `json:"auto_download"`     // Whether to automatically download missing models from HF
+	ModelStorageDir string `json:"model_storage_dir"` // Directory to store models (default: ~/.gleann/models)
+	RerankerHFRepo  string `json:"reranker_hf_repo"`  // e.g. "BARTOWSKI/bge-reranker-v2-m3-GGUF"
+	RerankerHFFile  string `json:"reranker_hf_file"`  // e.g. "bge-reranker-v2-m3-q4_k_m.gguf"
+	LLMHFRepo       string `json:"llm_hf_repo"`       // e.g. "Qwen/Qwen2.5-Coder-1.5B-Instruct-GGUF"
+	LLMHFFile       string `json:"llm_hf_file"`       // e.g. "qwen2.5-coder-1.5b-instruct-q4_k_m.gguf"
+}
+
 // Config holds configuration for building and searching indexes.
 type Config struct {
 	// IndexDir is the directory where indexes are stored.
@@ -142,6 +152,9 @@ type Config struct {
 
 	// Chunk parameters
 	ChunkConfig ChunkConfig `json:"chunk_config,omitempty"`
+
+	// Local Native Engine (llama.cpp) settings
+	LlamaCPPConfig LlamaCPPConfig `json:"llamacpp_config,omitempty"`
 
 	// LLM settings
 	LLMProvider string `json:"llm_provider,omitempty"` // ollama, openai, anthropic
@@ -334,6 +347,14 @@ func DefaultConfig() Config {
 			HybridAlpha: 0.7,
 		},
 		ChunkConfig: DefaultChunkConfig(),
+		LlamaCPPConfig: LlamaCPPConfig{
+			AutoDownload:    false,
+			ModelStorageDir: "~/.gleann/models",
+			RerankerHFRepo:  "BARTOWSKI/bge-reranker-v2-m3-GGUF",
+			RerankerHFFile:  "bge-reranker-v2-m3-q4_k_m.gguf",
+			LLMHFRepo:       "Qwen/Qwen2.5-Coder-1.5B-Instruct-GGUF",
+			LLMHFFile:       "qwen2.5-coder-1.5b-instruct-q4_k_m.gguf",
+		},
 	}
 }
 
