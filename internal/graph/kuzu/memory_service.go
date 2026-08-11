@@ -76,17 +76,20 @@ func (m *MemoryService) InjectEntities(ctx context.Context, payload gleann.Graph
 
 	now := time.Now().UTC().Format(time.RFC3339)
 
-	// 1. Temporal Archiving: Move current active version to Entity_Archive before updating.
+	// 1. Temporal Archiving: Move current active version to Entity_Archive before updating, and link them.
+	// We append this to the main queries slice to guarantee atomicity.
+	queries := make([]string, 0, len(payload.Nodes)*2+len(payload.Edges))
+	
 	for _, n := range payload.Nodes {
 		archiveQuery := fmt.Sprintf(
 			`MATCH (e:Entity {id: %q}) `+
-			`CREATE (a:Entity_Archive {id: e.id, version_id: %q, type: e.type, content: e.content, attributes: e.attributes, valid_to: %q})`,
+			`CREATE (a:Entity_Archive {id: e.id, version_id: %q, type: e.type, content: e.content, attributes: e.attributes, valid_to: %q}) `+
+			`CREATE (e)-[:PREVIOUS_VERSION]->(a)`,
 			n.ID, fmt.Sprintf("%d", time.Now().UnixNano()), now)
-		_ = execOnConn(conn, archiveQuery)
+		queries = append(queries, archiveQuery)
 	}
 
 	// 2. Standard Upserts (Active Table)
-	queries := make([]string, 0, len(payload.Nodes)+len(payload.Edges))
 	for i := range payload.Nodes {
 		n := &payload.Nodes[i]
 		attrsJSON, err := gleann.AttributesToJSON(n.Attributes)
@@ -127,15 +130,6 @@ func (m *MemoryService) InjectEntities(ctx context.Context, payload gleann.Graph
 			}
 		}
 	}
-	return nil
-}
-
-func execOnConn(conn *kuzu.Connection, query string) error {
-	res, err := conn.Query(query)
-	if err != nil {
-		return err
-	}
-	defer res.Close()
 	return nil
 }
 
