@@ -255,6 +255,20 @@ func (g *DB) initSchema() error {
 			weight        DOUBLE,
 			attributes    STRING
 		)`,
+		`CREATE NODE TABLE IF NOT EXISTS Entity_Archive(
+			archive_id STRING,
+			id         STRING,
+			version_id STRING,
+			type       STRING,
+			content    STRING,
+			attributes STRING,
+			valid_to   STRING,
+			PRIMARY KEY (archive_id)
+		)`,
+		`CREATE REL TABLE IF NOT EXISTS PREVIOUS_VERSION(
+			FROM Entity TO Entity_Archive,
+			MANY_MANY
+		)`,
 	}
 
 	for _, ddl := range ddls {
