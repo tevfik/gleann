@@ -37,7 +37,7 @@ jobs:
 
       - name: Test (unit + integration, default tags)
         timeout-minutes: 10
-        run: go test -v -race -timeout 8m -coverprofile=coverage.out $(go list ./... | grep -v /tests/benchmarks)
+        run: GOTOOLCHAIN=local go test -v -race -timeout 8m -coverprofile=coverage.out $(go list ./... | grep -v /tests/benchmarks)
         shell: bash
 
       - name: Test (unit, treesitter tag)
@@ -48,7 +48,7 @@ jobs:
         # the AST/query/heuristics code paths.
         if: matrix.os != 'windows-latest'
         timeout-minutes: 10
-        run: CGO_ENABLED=1 go test -tags treesitter -race -timeout 8m -coverprofile=coverage-ts.out ./internal/graph/indexer/... ./internal/graph/kuzu/...
+        run: GOTOOLCHAIN=local CGO_ENABLED=1 go test -tags treesitter -race -timeout 8m -coverprofile=coverage-ts.out ./internal/graph/indexer/... ./internal/graph/kuzu/...
         shell: bash
 
       - name: Test (unit, treesitter tag — modules/chunking)
@@ -58,7 +58,7 @@ jobs:
         timeout-minutes: 10
         run: |
           cd modules/chunking
-          CGO_ENABLED=1 go test -tags treesitter -race -timeout 8m -coverprofile=coverage-chunking.out ./...
+          GOTOOLCHAIN=local CGO_ENABLED=1 go test -tags treesitter -race -timeout 8m -coverprofile=coverage-chunking.out ./...
         shell: bash
 
       - name: Upload coverage to Codecov
