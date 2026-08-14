@@ -60,6 +60,12 @@ jobs:
         with:
           go-version: "1.25"
 
+      - name: Install Task
+        uses: arduino/setup-task@v2
+        with:
+          version: 3.x
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Determine version
         id: version
         # Use short commit hash if not a tag
@@ -76,7 +82,7 @@ jobs:
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: "0"
           VERSION: ${{ steps.version.outputs.version }}
-        run: make
+        run: task build
 
       - name: Compress binary
         run: |
@@ -127,6 +133,12 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: "1.25"
+
+      - name: Install Task
+        uses: arduino/setup-task@v2
+        with:
+          version: 3.x
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Set up Rust
         uses: actions-rs/toolchain@v1
@@ -229,7 +241,7 @@ jobs:
           LD_LIBRARY_PATH: "/usr/local/lib"
           VERSION: ${{ steps.version.outputs.version }}
           FAISS_LIB_DIR: "/usr/local/lib"
-        run: make full
+        run: task full
 
       - name: Rename and compress binary with shared libraries
         shell: bash
