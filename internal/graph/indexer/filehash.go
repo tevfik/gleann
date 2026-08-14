@@ -33,12 +33,12 @@ var (
 // IndexedFile records the content-hash state of one successfully indexed
 // source file. Persisted as JSON in bbolt.
 type IndexedFile struct {
-	Path         string `json:"path"`
-	Hash         string `json:"hash"`
-	IndexedAt    int64  `json:"indexed_at"`
-	Size         int64  `json:"size"`
-	SymbolCount  int    `json:"symbol_count"`
-	Lang         string `json:"lang"`
+	Path        string `json:"path"`
+	Hash        string `json:"hash"`
+	IndexedAt   int64  `json:"indexed_at"`
+	Size        int64  `json:"size"`
+	SymbolCount int    `json:"symbol_count"`
+	Lang        string `json:"lang"`
 }
 
 // FileHashStore is a per-index hash store backed by bbolt. Construct one

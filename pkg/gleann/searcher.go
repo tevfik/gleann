@@ -78,8 +78,8 @@ func (s *LeannSearcher) Load(ctx context.Context, name string) error {
 	if s.config.EmbeddingModel != "" && s.meta.EmbeddingModel != "" &&
 		s.config.EmbeddingModel != s.meta.EmbeddingModel {
 		log.Printf("⚠  WARNING: Index %q was built with embedding model %q (%d dims) "+
-			"but current config uses %q — search results may be incorrect. "+
-			"Rebuild with: gleann build %s --docs <dir>",
+			"but current config uses %q — search results will be incorrect! "+
+			"To migrate to the new model, run: gleann index rebuild %s --docs <dir>",
 			name, s.meta.EmbeddingModel, s.meta.Dimensions, s.config.EmbeddingModel, name)
 	}
 

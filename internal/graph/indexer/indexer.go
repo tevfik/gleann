@@ -34,9 +34,9 @@ import (
 type Indexer struct {
 	db        *kuzu.DB
 	chunker   *chunking.ASTChunker
-	module    string     // Go module prefix, e.g. "github.com/tevfik/gleann"
-	root      string     // absolute root path used to derive relative package paths
-	writeMu   sync.Mutex // Ensures only one KuzuDB write transaction occurs at a time
+	module    string         // Go module prefix, e.g. "github.com/tevfik/gleann"
+	root      string         // absolute root path used to derive relative package paths
+	writeMu   sync.Mutex     // Ensures only one KuzuDB write transaction occurs at a time
 	hashStore *FileHashStore // optional: persists per-file content hashes for incremental skip
 	tracker   *ChangeTracker // tracks file mtimes for incremental indexing
 }

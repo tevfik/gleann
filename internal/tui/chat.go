@@ -17,11 +17,11 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/glamour"
 
+	"github.com/tevfik/gleann/internal/multimodal"
 	"github.com/tevfik/gleann/pkg/conversations"
 	"github.com/tevfik/gleann/pkg/gleann"
 	"github.com/tevfik/gleann/pkg/memory"
 	"github.com/tevfik/gleann/pkg/roles"
-	"github.com/tevfik/gleann/internal/multimodal"
 )
 
 // ── Messages ───────────────────────────────────────────────────

@@ -62,7 +62,7 @@ Location: `~/.gleann/config.json`
 
 | Field | Default | Description |
 |-------|---------|-------------|
-| `embedding_provider` | `ollama` | Provider for embeddings: `ollama`, `openai` |
+| `embedding_provider` | `ollama` | Provider for embeddings: `ollama`, `openai`, `mock` (for testing) |
 | `embedding_model` | `bge-m3` | Embedding model name |
 | `ollama_host` | `http://localhost:11434` | Ollama server URL |
 | `openai_key` | — | OpenAI API key (if using openai provider) |
@@ -84,7 +84,7 @@ CLI flags override both defaults and config file values.
 
 ```bash
 --model <model>         # Embedding model (default: bge-m3)
---provider <provider>   # Embedding provider: ollama, openai
+--provider <provider>   # Embedding provider: ollama, openai, mock
 --host <url>            # Ollama host URL
 --batch-size <n>        # Embedding batch size
 --concurrency <n>       # Max concurrent embedding batches

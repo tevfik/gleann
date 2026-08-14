@@ -29,7 +29,7 @@ func NewNativeComputer(model string) *NativeComputer {
 		model: model,
 		ptr:   C.gleann_native_init(),
 	}
-	
+
 	// Ensure we free the Rust memory when this Go object is garbage collected
 	runtime.SetFinalizer(c, func(nc *NativeComputer) {
 		if nc.ptr != nil {
@@ -37,7 +37,7 @@ func NewNativeComputer(model string) *NativeComputer {
 			nc.ptr = nil
 		}
 	})
-	
+
 	return c
 }
 
@@ -78,7 +78,7 @@ func (c *NativeComputer) Compute(ctx context.Context, texts []string) ([][]float
 
 	// Convert flat C array to [][]float32
 	flatSlice := unsafe.Slice((*float32)(unsafe.Pointer(res.data)), total)
-	
+
 	embeddings := make([][]float32, rows)
 	for i := 0; i < rows; i++ {
 		embeddings[i] = make([]float32, cols)

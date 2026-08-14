@@ -134,22 +134,6 @@ func TestCopyDir(t *testing.T) {
 	}
 }
 
-func TestMarshalJSON(t *testing.T) {
-	// Use a nil-safe struct.
-	type testReg struct {
-		Name string `json:"name"`
-	}
-	// marshalJSON expects *gleann.PluginRegistry
-	// Test via direct JSON marshal to avoid import.
-	data, err := json.MarshalIndent(map[string]string{"test": "value"}, "", "  ")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(data), "test") {
-		t.Error("expected test in JSON output")
-	}
-}
-
 func TestNewPluginModel(t *testing.T) {
 	// Doesn't crash even if plugin dir doesn't exist.
 	m := NewPluginModel()

@@ -41,10 +41,10 @@ func TestSymbolHintFromKindDunderName(t *testing.T) {
 		{"__init__", "dunder"},
 		{"__call__", "dunder"},
 		{"__enter__", "dunder"},
-		{"_single", "function"},  // not dunder
+		{"_single", "function"}, // not dunder
 		{"regular", "function"},
-		{"__init_", "function"},  // only one underscore at end
-		{"_init__", "function"},  // only one underscore at start
+		{"__init_", "function"}, // only one underscore at end
+		{"_init__", "function"}, // only one underscore at start
 	}
 	for _, tc := range cases {
 		if got := symbolHintFromKind(tc.name, "function"); got != tc.want {

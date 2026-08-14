@@ -768,11 +768,6 @@ func (m PluginModel) viewResult() string {
 	return b.String()
 }
 
-// marshalJSON serializes the plugin registry to JSON.
-func marshalJSON(reg *gleann.PluginRegistry) ([]byte, error) {
-	return json.MarshalIndent(reg, "", "  ")
-}
-
 // findPython3 returns the Python 3 executable name for the current platform.
 // On Windows, "python3" is often not available; "python" is the standard name.
 func findPython3() string {

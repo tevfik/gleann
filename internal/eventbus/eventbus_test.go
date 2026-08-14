@@ -70,7 +70,7 @@ func TestBus_MultipleSubscribers(t *testing.T) {
 		defer wg.Done()
 		msg := <-sub1
 		msg.Ack()
-			atomic.AddInt32(&count, 1)
+		atomic.AddInt32(&count, 1)
 	}()
 
 	go func() {
@@ -159,8 +159,8 @@ func TestBus_LifecycleTopics(t *testing.T) {
 	sub, _ := bus.Subscribe(ctx, topic)
 
 	err := bus.Publish(topic, map[string]any{
-		"path":   "/tmp/test",
-		"files":  5,
+		"path":  "/tmp/test",
+		"files": 5,
 	})
 	if err != nil {
 		t.Fatalf("publish failed: %v", err)

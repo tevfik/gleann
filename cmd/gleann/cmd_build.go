@@ -281,7 +281,7 @@ func readDocuments(dir string, chunkSize, chunkOverlap int, tracker *vault.Track
 						}
 					}
 				}
-				
+
 				// Multimodal PDF Vision RAG extraction
 				if !pluginSucceeded && ext == ".pdf" && mmProcessor != nil {
 					pdfCfg := multimodal.DefaultPDFConfig()
@@ -290,7 +290,7 @@ func readDocuments(dir string, chunkSize, chunkOverlap int, tracker *vault.Track
 						relPath, _ := filepath.Rel(dir, fe.path)
 						var items []gleann.Item
 						var fullMd strings.Builder
-						
+
 						for _, page := range analysis.Pages {
 							var pageMd strings.Builder
 							fmt.Fprintf(&pageMd, "--- Page %d ---\n", page.PageNum)
@@ -306,12 +306,12 @@ func readDocuments(dir string, chunkSize, chunkOverlap int, tracker *vault.Track
 								}
 							}
 							fullMd.WriteString(pageMd.String() + "\n")
-							
+
 							// Chunk this page specifically
 							mdChunks := mdChunker.ChunkMarkdown(pageMd.String(), relPath)
 							if len(mdChunks) == 0 {
 								items = append(items, gleann.Item{
-									Text: pageMd.String(),
+									Text:     pageMd.String(),
 									Metadata: map[string]any{"source": relPath, "extractor": "vision_rag", "page": page.PageNum, "has_image": true},
 								})
 							} else {
@@ -327,7 +327,7 @@ func readDocuments(dir string, chunkSize, chunkOverlap int, tracker *vault.Track
 								}
 							}
 						}
-						
+
 						pResult := gleann.MarkdownToPluginResult(fullMd.String(), relPath)
 						if pResult != nil && (len(pResult.Nodes) > 0 || pResult.Markdown != "") {
 							pluginDocsMu.Lock()
@@ -337,7 +337,7 @@ func readDocuments(dir string, chunkSize, chunkOverlap int, tracker *vault.Track
 							})
 							pluginDocsMu.Unlock()
 						}
-						
+
 						resCh <- result{items: items}
 						continue
 					}
@@ -670,7 +670,7 @@ func readDocumentsForFiles(dir string, filePaths []string, chunkSize, chunkOverl
 			analysis, perr := mmProcessor.AnalyzePDF(filePath, pdfCfg)
 			if perr == nil && analysis != nil {
 				var fullMd strings.Builder
-				
+
 				for _, page := range analysis.Pages {
 					var pageMd strings.Builder
 					fmt.Fprintf(&pageMd, "--- Page %d ---\n", page.PageNum)
@@ -686,12 +686,12 @@ func readDocumentsForFiles(dir string, filePaths []string, chunkSize, chunkOverl
 						}
 					}
 					fullMd.WriteString(pageMd.String() + "\n")
-					
+
 					// Chunk this page specifically
 					mdChunks := mdChunker.ChunkMarkdown(pageMd.String(), relPath)
 					if len(mdChunks) == 0 {
 						allItems = append(allItems, gleann.Item{
-							Text: pageMd.String(),
+							Text:     pageMd.String(),
 							Metadata: map[string]any{"source": relPath, "extractor": "vision_rag", "page": page.PageNum, "has_image": true},
 						})
 					} else {
@@ -707,7 +707,7 @@ func readDocumentsForFiles(dir string, filePaths []string, chunkSize, chunkOverl
 						}
 					}
 				}
-				
+
 				pResult := gleann.MarkdownToPluginResult(fullMd.String(), relPath)
 				if pResult != nil && (len(pResult.Nodes) > 0 || pResult.Markdown != "") {
 					pluginDocs = append(pluginDocs, &PluginDoc{

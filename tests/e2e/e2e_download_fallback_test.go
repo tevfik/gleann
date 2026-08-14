@@ -32,7 +32,7 @@ func TestE2EDownloadAndFallback(t *testing.T) {
 	// For actual GGUF, we'll just download a few kilobytes to test the grab client.
 	testFile := "tiny-test.gguf"
 	destPath := filepath.Join(modelsDir, testFile)
-	
+
 	t.Log("Testing real grab/v3 download against huggingface...")
 	client := grab.NewClient()
 	// Just fetch an arbitrary tiny file from HF as a placeholder for a GGUF

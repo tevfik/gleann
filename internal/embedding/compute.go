@@ -30,6 +30,7 @@ const (
 	ProviderOpenAI   Provider = "openai"
 	ProviderGemini   Provider = "gemini"
 	ProviderNative   Provider = "native"
+	ProviderMock     Provider = "mock"
 )
 
 // Computer computes embeddings using a specified provider.
@@ -210,6 +211,8 @@ func (c *Computer) Compute(ctx context.Context, texts []string) ([][]float32, er
 					embeddings, err = c.computeGemini(ctx, batch)
 				case ProviderNative:
 					embeddings, err = c.computeNative(ctx, batch)
+				case ProviderMock:
+					embeddings, err = c.computeMock(ctx, batch)
 				default:
 					return fmt.Errorf("unsupported provider: %s", c.provider)
 				}
@@ -235,6 +238,8 @@ func (c *Computer) Compute(ctx context.Context, texts []string) ([][]float32, er
 							single, singleErr = c.computeGemini(ctx, []string{truncated})
 						case ProviderNative:
 							single, singleErr = c.computeNative(ctx, []string{truncated})
+						case ProviderMock:
+							single, singleErr = c.computeMock(ctx, []string{truncated})
 						default:
 							singleErr = fmt.Errorf("unsupported provider: %s", c.provider)
 						}
@@ -636,4 +641,16 @@ func isConnectionRefused(err error) bool {
 		}
 	}
 	return strings.Contains(err.Error(), "connection refused")
+}
+
+// --- Mock Provider ---
+
+func (c *Computer) computeMock(ctx context.Context, texts []string) ([][]float32, error) {
+	embeddings := make([][]float32, len(texts))
+	for i := range texts {
+		emb := make([]float32, 16)
+		emb[0] = 0.1
+		embeddings[i] = emb
+	}
+	return embeddings, nil
 }

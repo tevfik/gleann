@@ -6,8 +6,13 @@
 
 | Symbol | Kind |
 |--------|------|
-| `code.CountSymbols` | function |
-| `code.make` | function |
+| `code.Parser.Parse` | method |
+| `fmt.Errorf` | function |
+
+## External Connections
+
+- `code.parseTypeScript` ↔ `code.Parser.Parse`
+- `code.parseGo` ↔ `code.Parser.Parse`
 
 ---
 [← Back to Index](index.md)

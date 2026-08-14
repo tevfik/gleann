@@ -14,7 +14,7 @@ cd /tmp/faiss-src && mkdir build && cd build
 cmake .. -DFAISS_ENABLE_C_API=ON -DFAISS_ENABLE_GPU=OFF \
          -DBUILD_TESTING=OFF -DFAISS_ENABLE_PYTHON=OFF \
          -DCMAKE_BUILD_TYPE=Release
-make -j$(nproc) faiss faiss_c
+task deps:faiss
 
 # Install
 sudo cp -r c_api/libfaiss_c.a faiss/libfaiss.a /usr/local/lib/

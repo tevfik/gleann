@@ -632,280 +632,280 @@
       <data key="d1">function</data>
       <data key="d2">&lt;nil&gt;</data>
     </node>
-    <edge id="e0" source="code.CyclomaticComplexity" target="strings.Count">
+    <edge id="e0" source="code._leak" target="code.LeakyBucket">
       <data key="d3">CALLS</data>
     </edge>
-    <edge id="e1" source="code.SlidingWindowCounter" target="code.monotonic">
+    <edge id="e1" source="strings.TrimPrefix" target="code.extractGoFuncName">
       <data key="d3">CALLS</data>
     </edge>
-    <edge id="e2" source="code.SlidingWindowCounter" target="code._estimate_count">
+    <edge id="e2" source="strings.TrimPrefix" target="code.extractGoTypeName">
       <data key="d3">CALLS</data>
     </edge>
-    <edge id="e3" source="code.SlidingWindowCounter" target="code._advance_window_if_needed">
+    <edge id="e3" source="code.LeakyBucket" target="code.append">
       <data key="d3">CALLS</data>
     </edge>
-    <edge id="e4" source="code.SlidingWindowCounter" target="code.Lock">
+    <edge id="e4" source="code.LeakyBucket" target="code.int">
       <data key="d3">CALLS</data>
     </edge>
-    <edge id="e5" source="code.time" target="code.DistributedRateLimiter">
+    <edge id="e5" source="code.LeakyBucket" target="code.deque">
       <data key="d3">CALLS</data>
     </edge>
-    <edge id="e6" source="code.push" target="code.PersistentQueue">
+    <edge id="e6" source="code.LeakyBucket" target="code.popleft">
       <data key="d3">CALLS</data>
     </edge>
-    <edge id="e7" source="strings.Split" target="code.parseGo">
+    <edge id="e7" source="code.LeakyBucket" target="code.range">
       <data key="d3">CALLS</data>
     </edge>
-    <edge id="e8" source="strings.Split" target="code.parsePython">
+    <edge id="e8" source="code.LeakyBucket" target="code.Lock">
       <data key="d3">CALLS</data>
     </edge>
-    <edge id="e9" source="strings.Split" target="code.parseTypeScript">
+    <edge id="e9" source="code.LeakyBucket" target="code.monotonic">
       <data key="d3">CALLS</data>
     </edge>
-    <edge id="e10" source="code.has" target="code.PersistentQueue">
+    <edge id="e10" source="code.LeakyBucket" target="code.len">
       <data key="d3">CALLS</data>
     </edge>
-    <edge id="e11" source="code.join" target="code.generateId">
+    <edge id="e11" source="code.padStart" target="code.generateId">
       <data key="d3">CALLS</data>
     </edge>
-    <edge id="e12" source="code.parsePython" target="code.extractPyName">
+    <edge id="e12" source="code.extractTSFuncName" target="strings.IndexAny">
       <data key="d3">CALLS</data>
     </edge>
-    <edge id="e13" source="code.parsePython" target="code.Parser.Parse">
+    <edge id="e13" source="code.extractTSFuncName" target="strings.HasPrefix">
       <data key="d3">CALLS</data>
     </edge>
-    <edge id="e14" source="code.parsePython" target="code.append">
+    <edge id="e14" source="code.extractTSFuncName" target="code.parseTypeScript">
       <data key="d3">CALLS</data>
     </edge>
-    <edge id="e15" source="code.parsePython" target="strings.HasPrefix">
+    <edge id="e15" source="code.extractTSFuncName" target="code.len">
       <data key="d3">CALLS</data>
     </edge>
-    <edge id="e16" source="code.parsePython" target="strings.TrimSpace">
+    <edge id="e16" source="fmt.Errorf" target="code.Parser.Parse">
       <data key="d3">CALLS</data>
     </edge>
-    <edge id="e17" source="code._evict_expired" target="code._InMemoryStore">
+    <edge id="e17" source="code.pow" target="code.PersistentQueue">
       <data key="d3">CALLS</data>
     </edge>
-    <edge id="e18" source="code.CircularBuffer" target="code.fill">
+    <edge id="e18" source="code.time" target="code.DistributedRateLimiter">
       <data key="d3">CALLS</data>
     </edge>
-    <edge id="e19" source="strings.Contains" target="code.parseGo">
+    <edge id="e19" source="code._evict_expired" target="code._InMemoryStore">
       <data key="d3">CALLS</data>
     </edge>
-    <edge id="e20" source="strings.Contains" target="code.parseTypeScript">
+    <edge id="e20" source="code.items" target="code._InMemoryStore">
       <data key="d3">CALLS</data>
     </edge>
-    <edge id="e21" source="code.TokenBucket" target="code.sleep">
+    <edge id="e21" source="strings.HasPrefix" target="code.parseTypeScript">
       <data key="d3">CALLS</data>
     </edge>
-    <edge id="e22" source="code.TokenBucket" target="code._refill">
+    <edge id="e22" source="strings.HasPrefix" target="code.extractGoFuncName">
       <data key="d3">CALLS</data>
     </edge>
-    <edge id="e23" source="code.TokenBucket" target="code.min">
+    <edge id="e23" source="strings.HasPrefix" target="code.parseGo">
       <data key="d3">CALLS</data>
     </edge>
-    <edge id="e24" source="code.TokenBucket" target="code.monotonic">
+    <edge id="e24" source="strings.HasPrefix" target="code.parsePython">
       <data key="d3">CALLS</data>
     </edge>
-    <edge id="e25" source="code.TokenBucket" target="code.field">
+    <edge id="e25" source="code.pop" target="code._InMemoryStore">
       <data key="d3">CALLS</data>
     </edge>
-    <edge id="e26" source="code.get" target="code._InMemoryStore">
+    <edge id="e26" source="code.parseGo" target="strings.TrimSpace">
       <data key="d3">CALLS</data>
     </edge>
-    <edge id="e27" source="code.get" target="code.PersistentQueue">
+    <edge id="e27" source="code.parseGo" target="strings.Split">
       <data key="d3">CALLS</data>
     </edge>
-    <edge id="e28" source="strings.IndexAny" target="code.extractGoFuncName">
+    <edge id="e28" source="code.parseGo" target="code.extractGoTypeName">
       <data key="d3">CALLS</data>
     </edge>
-    <edge id="e29" source="strings.IndexAny" target="code.extractTSFuncName">
+    <edge id="e29" source="code.parseGo" target="code.extractGoFuncName">
       <data key="d3">CALLS</data>
     </edge>
-    <edge id="e30" source="code.now" target="code.PersistentQueue">
+    <edge id="e30" source="code.parseGo" target="code.Parser.Parse">
       <data key="d3">CALLS</data>
     </edge>
-    <edge id="e31" source="code.emit" target="code.PersistentQueue">
+    <edge id="e31" source="code.parseGo" target="strings.Contains">
       <data key="d3">CALLS</data>
     </edge>
-    <edge id="e32" source="code.entries" target="code.PersistentQueue">
+    <edge id="e32" source="code.parseGo" target="code.append">
       <data key="d3">CALLS</data>
     </edge>
-    <edge id="e33" source="code.LeakyBucket" target="code.append">
+    <edge id="e33" source="code.monotonic" target="code.TokenBucket">
       <data key="d3">CALLS</data>
     </edge>
-    <edge id="e34" source="code.LeakyBucket" target="code.range">
+    <edge id="e34" source="code.monotonic" target="code.SlidingWindowCounter">
       <data key="d3">CALLS</data>
     </edge>
-    <edge id="e35" source="code.LeakyBucket" target="code.int">
+    <edge id="e35" source="code.monotonic" target="code._InMemoryStore">
       <data key="d3">CALLS</data>
     </edge>
-    <edge id="e36" source="code.LeakyBucket" target="code.Lock">
+    <edge id="e36" source="code.extractGoFuncName" target="strings.IndexAny">
       <data key="d3">CALLS</data>
     </edge>
-    <edge id="e37" source="code.LeakyBucket" target="code.monotonic">
+    <edge id="e37" source="code.extractGoFuncName" target="strings.Index">
       <data key="d3">CALLS</data>
     </edge>
-    <edge id="e38" source="code.LeakyBucket" target="code._leak">
+    <edge id="e38" source="code.extractGoFuncName" target="strings.TrimSpace">
       <data key="d3">CALLS</data>
     </edge>
-    <edge id="e39" source="code.LeakyBucket" target="code.popleft">
+    <edge id="e39" source="code.clearInterval" target="code.PersistentQueue">
       <data key="d3">CALLS</data>
     </edge>
-    <edge id="e40" source="code.LeakyBucket" target="code.deque">
+    <edge id="e40" source="code.field" target="code.TokenBucket">
       <data key="d3">CALLS</data>
     </edge>
-    <edge id="e41" source="code.LeakyBucket" target="code.len">
+    <edge id="e41" source="code.incr" target="code.DistributedRateLimiter">
       <data key="d3">CALLS</data>
     </edge>
-    <edge id="e42" source="code.reEnqueueExpiredMessages" target="code.PersistentQueue">
+    <edge id="e42" source="code.CountSymbols" target="code.make">
       <data key="d3">CALLS</data>
     </edge>
-    <edge id="e43" source="code.getRandomValues" target="code.generateId">
+    <edge id="e43" source="strings.Contains" target="code.parseTypeScript">
       <data key="d3">CALLS</data>
     </edge>
-    <edge id="e44" source="code.extractGoFuncName" target="strings.Index">
+    <edge id="e44" source="code.SlidingWindowCounter" target="code._estimate_count">
       <data key="d3">CALLS</data>
     </edge>
-    <edge id="e45" source="code.extractGoFuncName" target="strings.TrimPrefix">
+    <edge id="e45" source="code.SlidingWindowCounter" target="code._advance_window_if_needed">
       <data key="d3">CALLS</data>
     </edge>
-    <edge id="e46" source="code.extractGoFuncName" target="strings.HasPrefix">
+    <edge id="e46" source="code.SlidingWindowCounter" target="code.Lock">
       <data key="d3">CALLS</data>
     </edge>
-    <edge id="e47" source="code.extractGoFuncName" target="strings.TrimSpace">
+    <edge id="e47" source="code.Lock" target="code._InMemoryStore">
       <data key="d3">CALLS</data>
     </edge>
-    <edge id="e48" source="code.extractGoFuncName" target="code.parseGo">
+    <edge id="e48" source="code.getRandomValues" target="code.generateId">
       <data key="d3">CALLS</data>
     </edge>
-    <edge id="e49" source="code.make" target="code.CountSymbols">
+    <edge id="e49" source="code.Parser.Parse" target="code.parseTypeScript">
       <data key="d3">CALLS</data>
     </edge>
-    <edge id="e50" source="code.max" target="code.DistributedRateLimiter">
+    <edge id="e50" source="code.Parser.Parse" target="code.parsePython">
       <data key="d3">CALLS</data>
     </edge>
-    <edge id="e51" source="code.generateId" target="code.PersistentQueue">
+    <edge id="e51" source="strings.Index" target="code.extractGoTypeName">
       <data key="d3">CALLS</data>
     </edge>
-    <edge id="e52" source="code.generateId" target="code.padStart">
+    <edge id="e52" source="strings.Index" target="code.extractPyName">
       <data key="d3">CALLS</data>
     </edge>
-    <edge id="e53" source="code.generateId" target="code.toString">
+    <edge id="e53" source="strings.Index" target="code.extractTSClassName">
       <data key="d3">CALLS</data>
     </edge>
-    <edge id="e54" source="code.generateId" target="code.from">
+    <edge id="e54" source="code.emit" target="code.PersistentQueue">
       <data key="d3">CALLS</data>
     </edge>
-    <edge id="e55" source="strings.HasPrefix" target="code.parseGo">
+    <edge id="e55" source="code.reEnqueueExpiredMessages" target="code.PersistentQueue">
       <data key="d3">CALLS</data>
     </edge>
-    <edge id="e56" source="strings.HasPrefix" target="code.parseTypeScript">
+    <edge id="e56" source="code.extractPyName" target="code.parsePython">
       <data key="d3">CALLS</data>
     </edge>
-    <edge id="e57" source="strings.HasPrefix" target="code.extractTSFuncName">
+    <edge id="e57" source="code.extractPyName" target="strings.TrimSpace">
       <data key="d3">CALLS</data>
     </edge>
-    <edge id="e58" source="code.len" target="code.extractTSFuncName">
+    <edge id="e58" source="strings.Count" target="code.CyclomaticComplexity">
       <data key="d3">CALLS</data>
     </edge>
-    <edge id="e59" source="code.parseGo" target="code.Parser.Parse">
+    <edge id="e59" source="code._InMemoryStore" target="code.DistributedRateLimiter">
       <data key="d3">CALLS</data>
     </edge>
-    <edge id="e60" source="code.parseGo" target="code.append">
+    <edge id="e60" source="code._InMemoryStore" target="code.get">
       <data key="d3">CALLS</data>
     </edge>
-    <edge id="e61" source="code.parseGo" target="strings.TrimSpace">
+    <edge id="e61" source="code.CircularBuffer" target="code.fill">
       <data key="d3">CALLS</data>
     </edge>
-    <edge id="e62" source="code.parseGo" target="code.extractGoTypeName">
+    <edge id="e62" source="code.add" target="code.PersistentQueue">
       <data key="d3">CALLS</data>
     </edge>
-    <edge id="e63" source="code.append" target="code.parseTypeScript">
+    <edge id="e63" source="code.receive" target="code.PersistentQueue">
       <data key="d3">CALLS</data>
     </edge>
-    <edge id="e64" source="code.append" target="code.FilterByKind">
+    <edge id="e64" source="code.join" target="code.generateId">
       <data key="d3">CALLS</data>
     </edge>
-    <edge id="e65" source="code.int" target="code.DistributedRateLimiter">
+    <edge id="e65" source="code.parseTypeScript" target="code.append">
       <data key="d3">CALLS</data>
     </edge>
-    <edge id="e66" source="code.random" target="code.PersistentQueue">
+    <edge id="e66" source="code.parseTypeScript" target="strings.TrimSpace">
       <data key="d3">CALLS</data>
     </edge>
-    <edge id="e67" source="code.receive" target="code.PersistentQueue">
+    <edge id="e67" source="code.parseTypeScript" target="strings.Split">
       <data key="d3">CALLS</data>
     </edge>
-    <edge id="e68" source="code.DistributedRateLimiter" target="code._InMemoryStore">
+    <edge id="e68" source="code.parseTypeScript" target="code.extractTSClassName">
       <data key="d3">CALLS</data>
     </edge>
-    <edge id="e69" source="code.DistributedRateLimiter" target="code.expire">
+    <edge id="e69" source="code.max" target="code.DistributedRateLimiter">
       <data key="d3">CALLS</data>
     </edge>
-    <edge id="e70" source="code.DistributedRateLimiter" target="code.incr">
+    <edge id="e70" source="code.PersistentQueue" target="code.setInterval">
       <data key="d3">CALLS</data>
     </edge>
-    <edge id="e71" source="code.items" target="code._InMemoryStore">
+    <edge id="e71" source="code.PersistentQueue" target="code.random">
       <data key="d3">CALLS</data>
     </edge>
-    <edge id="e72" source="code.Parser.Parse" target="code.parseTypeScript">
+    <edge id="e72" source="code.PersistentQueue" target="code.push">
       <data key="d3">CALLS</data>
     </edge>
-    <edge id="e73" source="code.Parser.Parse" target="fmt.Errorf">
+    <edge id="e73" source="code.PersistentQueue" target="code.has">
       <data key="d3">CALLS</data>
     </edge>
-    <edge id="e74" source="code.setInterval" target="code.PersistentQueue">
+    <edge id="e74" source="code.PersistentQueue" target="code.entries">
       <data key="d3">CALLS</data>
     </edge>
-    <edge id="e75" source="code.extractPyName" target="strings.Index">
+    <edge id="e75" source="code.PersistentQueue" target="code.now">
       <data key="d3">CALLS</data>
     </edge>
-    <edge id="e76" source="code.extractPyName" target="strings.TrimSpace">
+    <edge id="e76" source="code.PersistentQueue" target="code.delete">
       <data key="d3">CALLS</data>
     </edge>
-    <edge id="e77" source="code.Lock" target="code._InMemoryStore">
+    <edge id="e77" source="code.PersistentQueue" target="code.set">
       <data key="d3">CALLS</data>
     </edge>
-    <edge id="e78" source="code.PersistentQueue" target="code.pow">
+    <edge id="e78" source="code.PersistentQueue" target="code.generateId">
       <data key="d3">CALLS</data>
     </edge>
-    <edge id="e79" source="code.PersistentQueue" target="code.set">
+    <edge id="e79" source="code.PersistentQueue" target="code.get">
       <data key="d3">CALLS</data>
     </edge>
-    <edge id="e80" source="code.PersistentQueue" target="code.clearInterval">
+    <edge id="e80" source="code.parsePython" target="code.append">
       <data key="d3">CALLS</data>
     </edge>
-    <edge id="e81" source="code.PersistentQueue" target="code.add">
+    <edge id="e81" source="code.parsePython" target="strings.TrimSpace">
       <data key="d3">CALLS</data>
     </edge>
-    <edge id="e82" source="code.PersistentQueue" target="code.delete">
+    <edge id="e82" source="code.parsePython" target="strings.Split">
       <data key="d3">CALLS</data>
     </edge>
-    <edge id="e83" source="code.monotonic" target="code._InMemoryStore">
+    <edge id="e83" source="code.generateId" target="code.toString">
       <data key="d3">CALLS</data>
     </edge>
-    <edge id="e84" source="code.parseTypeScript" target="strings.TrimSpace">
+    <edge id="e84" source="code.generateId" target="code.from">
       <data key="d3">CALLS</data>
     </edge>
-    <edge id="e85" source="code.parseTypeScript" target="code.extractTSClassName">
+    <edge id="e85" source="code.int" target="code.DistributedRateLimiter">
       <data key="d3">CALLS</data>
     </edge>
-    <edge id="e86" source="code.parseTypeScript" target="code.extractTSFuncName">
+    <edge id="e86" source="code.sleep" target="code.TokenBucket">
       <data key="d3">CALLS</data>
     </edge>
-    <edge id="e87" source="code.extractGoTypeName" target="strings.Index">
+    <edge id="e87" source="code.FilterByKind" target="code.append">
       <data key="d3">CALLS</data>
     </edge>
-    <edge id="e88" source="code.extractGoTypeName" target="strings.TrimPrefix">
+    <edge id="e88" source="code.TokenBucket" target="code.min">
       <data key="d3">CALLS</data>
     </edge>
-    <edge id="e89" source="code.extractTSClassName" target="strings.Index">
+    <edge id="e89" source="code.TokenBucket" target="code._refill">
       <data key="d3">CALLS</data>
     </edge>
-    <edge id="e90" source="code.extractTSClassName" target="strings.TrimSpace">
+    <edge id="e90" source="strings.TrimSpace" target="code.extractTSClassName">
       <data key="d3">CALLS</data>
     </edge>
-    <edge id="e91" source="code._InMemoryStore" target="code.pop">
+    <edge id="e91" source="code.DistributedRateLimiter" target="code.expire">
       <data key="d3">CALLS</data>
     </edge>
   </graph>

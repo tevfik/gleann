@@ -241,7 +241,7 @@ func UninstallPlugin(name string) (string, error) {
 			}
 		}
 		reg.Plugins = filtered
-		
+
 		pluginFile := filepath.Join(home, ".gleann", "plugins.json")
 		b, _ := json.MarshalIndent(reg, "", "  ")
 		os.WriteFile(pluginFile, b, 0o644)

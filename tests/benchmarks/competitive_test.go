@@ -34,30 +34,6 @@ import (
 // External competitors (Qdrant, Weaviate, Chroma) are client-server
 // and cannot be benchmarked inline — see published numbers at bottom.
 
-// chromemEmbedder returns pre-computed vectors so we can benchmark
-// the search engine, not the embedding model.
-type chromemEmbedder struct {
-	dim     int
-	vectors map[string][]float32
-}
-
-func (e *chromemEmbedder) EmbedDocuments(_ context.Context, texts []string) ([][]float32, error) {
-	result := make([][]float32, len(texts))
-	for i, t := range texts {
-		if v, ok := e.vectors[t]; ok {
-			result[i] = v
-		}
-	}
-	return result, nil
-}
-
-func (e *chromemEmbedder) EmbedQuery(_ context.Context, text string) ([]float32, error) {
-	if v, ok := e.vectors[text]; ok {
-		return v, nil
-	}
-	return randomVectorF32(rand.New(rand.NewSource(0)), e.dim), nil
-}
-
 func randomVectorF32(rng *rand.Rand, dim int) []float32 {
 	v := make([]float32, dim)
 	norm := float32(0)

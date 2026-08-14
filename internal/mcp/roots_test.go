@@ -14,7 +14,7 @@ func TestHandleRootsListChanged_NoSession(t *testing.T) {
 		EmbeddingProvider: "mock",
 	}
 	server := NewServer(cfg)
-	
+
 	// Create a dummy notification
 	notif := mcp.JSONRPCNotification{
 		Notification: mcp.Notification{

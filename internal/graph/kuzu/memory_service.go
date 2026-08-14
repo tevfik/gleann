@@ -79,14 +79,14 @@ func (m *MemoryService) InjectEntities(ctx context.Context, payload gleann.Graph
 	// 1. Temporal Archiving: Move current active version to Entity_Archive before updating, and link them.
 	// We append this to the main queries slice to guarantee atomicity.
 	queries := make([]string, 0, len(payload.Nodes)*2+len(payload.Edges))
-	
+
 	for _, n := range payload.Nodes {
 		versionId := fmt.Sprintf("%d", time.Now().UnixNano())
 		archiveId := n.ID + "_" + versionId
 		archiveQuery := fmt.Sprintf(
 			`MATCH (e:Entity {id: %q}) `+
-			`CREATE (a:Entity_Archive {archive_id: %q, id: e.id, version_id: %q, type: e.type, content: e.content, attributes: e.attributes, valid_to: %q}) `+
-			`CREATE (e)-[:PREVIOUS_VERSION]->(a)`,
+				`CREATE (a:Entity_Archive {archive_id: %q, id: e.id, version_id: %q, type: e.type, content: e.content, attributes: e.attributes, valid_to: %q}) `+
+				`CREATE (e)-[:PREVIOUS_VERSION]->(a)`,
 			n.ID, archiveId, versionId, now)
 		queries = append(queries, archiveQuery)
 	}

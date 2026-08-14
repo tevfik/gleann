@@ -1,17 +1,12 @@
 package tui
 
 import (
-	"archive/tar"
-	"archive/zip"
-	"bytes"
-	"compress/gzip"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"runtime"
-	"strings"
 	"testing"
 )
 
@@ -373,105 +368,6 @@ func TestVenvBinaryCov3(t *testing.T) {
 }
 
 // ── findGoBuildTarget ────────────────────────────────────────────────────────
-
-
-
-
-// ── extractBinaryFromTarGz ───────────────────────────────────────────────────
-
-func createTestTarGz(t *testing.T, files map[string][]byte) *bytes.Buffer {
-	t.Helper()
-	var buf bytes.Buffer
-	gw := gzip.NewWriter(&buf)
-	tw := tar.NewWriter(gw)
-	for name, content := range files {
-		hdr := &tar.Header{
-			Name: name,
-			Mode: 0o755,
-			Size: int64(len(content)),
-		}
-		if err := tw.WriteHeader(hdr); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := tw.Write(content); err != nil {
-			t.Fatal(err)
-		}
-	}
-	tw.Close()
-	gw.Close()
-	return &buf
-}
-
-
-
-
-// ── extractBinaryFromZip ─────────────────────────────────────────────────────
-
-func createTestZip(t *testing.T, files map[string][]byte) *bytes.Buffer {
-	t.Helper()
-	var buf bytes.Buffer
-	zw := zip.NewWriter(&buf)
-	for name, content := range files {
-		fw, err := zw.Create(name)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if _, err := fw.Write(content); err != nil {
-			t.Fatal(err)
-		}
-	}
-	zw.Close()
-	return &buf
-}
-
-
-
-// ── extractTarballToDir ──────────────────────────────────────────────────────
-
-
-func createTestTarGzWithDirs(t *testing.T, files map[string][]byte) *bytes.Buffer {
-	t.Helper()
-	var buf bytes.Buffer
-	gw := gzip.NewWriter(&buf)
-	tw := tar.NewWriter(gw)
-	// Add dirs first.
-	dirs := map[string]bool{}
-	for name := range files {
-		// Use forward slashes explicitly (POSIX tar convention).
-		slashIdx := strings.LastIndex(name, "/")
-		var dir string
-		if slashIdx <= 0 {
-			dir = "."
-		} else {
-			dir = name[:slashIdx]
-		}
-		if dir != "." && !dirs[dir] {
-			dirs[dir] = true
-			tw.WriteHeader(&tar.Header{
-				Typeflag: tar.TypeDir,
-				Name:     dir + "/",
-				Mode:     0o755,
-			})
-		}
-	}
-	for name, content := range files {
-		hdr := &tar.Header{
-			Typeflag: tar.TypeReg,
-			Name:     name,
-			Mode:     0o644,
-			Size:     int64(len(content)),
-		}
-		if err := tw.WriteHeader(hdr); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := tw.Write(content); err != nil {
-			t.Fatal(err)
-		}
-	}
-	tw.Close()
-	gw.Close()
-	return &buf
-}
 
 // ── linkOrCopy ───────────────────────────────────────────────────────────────
 

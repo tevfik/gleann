@@ -49,8 +49,8 @@ const maxWeight = 2.0
 // a meaningful, comparable band across languages.
 var languageHeuristics = map[chunking.Language]map[string]float64{
 	chunking.LangJava: {
-		"interface_declaration": 0.5, // interfaces define the public contract
-		"abstract":              0.3, // abstract class or method
+		"interface_declaration":  0.5, // interfaces define the public contract
+		"abstract":               0.3, // abstract class or method
 		"annotation_declaration": 0.2,
 	},
 	chunking.LangKotlin: {
@@ -88,9 +88,9 @@ var languageHeuristics = map[chunking.Language]map[string]float64{
 		"open":                 0.2, // overridable / public
 	},
 	chunking.LangCPP: {
-		"virtual":    0.3, // overridable method
-		"abstract":   0.3,
-		"public":     0.1,
+		"virtual":  0.3, // overridable method
+		"abstract": 0.3,
+		"public":   0.1,
 	},
 	chunking.LangPHP: {
 		"interface_declaration": 0.5,
@@ -106,8 +106,8 @@ var languageHeuristics = map[chunking.Language]map[string]float64{
 		"struct":    0.2,
 	},
 	chunking.LangRuby: {
-		"module":  0.3,
-		"class":   0.2,
+		"module": 0.3,
+		"class":  0.2,
 	},
 	chunking.LangLua: {
 		// Lua has no strong "interface" concept; module-level functions

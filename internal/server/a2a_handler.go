@@ -309,13 +309,13 @@ func (s *Server) a2aMultimodalHandler(ctx a2a.SkillContext) (string, error) {
 
 	// Use multimodal processor.
 	proc := multimodal.NewProcessor(ollamaHost, model)
-	
+
 	if strings.ToLower(filepath.Ext(filePath)) == ".pdf" {
 		analysis, err := proc.AnalyzePDF(filePath, multimodal.DefaultPDFConfig())
 		if err != nil {
 			return "", fmt.Errorf("PDF analysis failed: %v", err)
 		}
-		
+
 		var b strings.Builder
 		fmt.Fprintf(&b, "Analysis of PDF %s (%d pages):\n\n", filePath, analysis.TotalPages)
 		for _, page := range analysis.Pages {

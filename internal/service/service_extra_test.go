@@ -9,7 +9,7 @@ import (
 )
 
 func TestInstall_UnsupportedPlatform(t *testing.T) {
-	// We cannot easily change runtime.GOOS, but we can test the logic 
+	// We cannot easily change runtime.GOOS, but we can test the logic
 	// if it were an unsupported platform. Since GOOS is a constant,
 	// this is mostly for coverage on other platforms or future-proofing.
 	if runtime.GOOS == "linux" || runtime.GOOS == "darwin" || runtime.GOOS == "windows" {

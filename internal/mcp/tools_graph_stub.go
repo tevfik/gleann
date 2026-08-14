@@ -8,6 +8,6 @@ package mcp
 // graphPool stub — the real implementation is in tools_graph.go.
 type graphPool struct{}
 
-func (s *Server) initGraphPool()      {}
+func (s *Server) initGraphPool()      { _ = s.gPool }
 func (s *Server) closeGraphPool()     {}
 func (s *Server) registerGraphTools() {}

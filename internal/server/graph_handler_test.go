@@ -508,4 +508,3 @@ func TestGraphDBPool_CloseAll(t *testing.T) {
 
 // errTestFail is a reusable test error.
 var errTestFail = fmt.Errorf("test failure")
-

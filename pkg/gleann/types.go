@@ -161,14 +161,14 @@ type Config struct {
 	LLMModel    string `json:"llm_model,omitempty"`    // e.g. nemotron-3-nano:4b, gpt-4o
 
 	// Server features (also configurable via env vars, which take precedence)
-	A2AEnabled      *bool  `json:"a2a_enabled,omitempty"`      // Enable A2A protocol (default: true)
-	A2ABaseURL      string `json:"a2a_base_url,omitempty"`     // A2A Agent Card base URL
-	MultimodalModel string `json:"multimodal_model,omitempty"` // Multimodal Ollama model (e.g. gemma4)
-	Timezone        string `json:"timezone,omitempty"`         // Local timezone for reports and logs (e.g. "Europe/Istanbul")
-	RateLimit       int    `json:"rate_limit,omitempty"`       // Sustained requests/sec per IP (default: 60)
-	RateBurst       int    `json:"rate_burst,omitempty"`       // Burst capacity per IP (default: 120)
-	BlockCharLimit  int    `json:"block_char_limit,omitempty"` // Default memory block character limit
-	TaskEvictionAgeHours int `json:"task_eviction_age_hours,omitempty"` // Hours before finished tasks are evicted (default: 24)
+	A2AEnabled           *bool  `json:"a2a_enabled,omitempty"`             // Enable A2A protocol (default: true)
+	A2ABaseURL           string `json:"a2a_base_url,omitempty"`            // A2A Agent Card base URL
+	MultimodalModel      string `json:"multimodal_model,omitempty"`        // Multimodal Ollama model (e.g. gemma4)
+	Timezone             string `json:"timezone,omitempty"`                // Local timezone for reports and logs (e.g. "Europe/Istanbul")
+	RateLimit            int    `json:"rate_limit,omitempty"`              // Sustained requests/sec per IP (default: 60)
+	RateBurst            int    `json:"rate_burst,omitempty"`              // Burst capacity per IP (default: 120)
+	BlockCharLimit       int    `json:"block_char_limit,omitempty"`        // Default memory block character limit
+	TaskEvictionAgeHours int    `json:"task_eviction_age_hours,omitempty"` // Hours before finished tasks are evicted (default: 24)
 }
 
 // DistanceMetric specifies the distance function for vector comparison.

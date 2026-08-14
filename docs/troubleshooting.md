@@ -127,7 +127,7 @@ gleann index rebuild my-code --docs ./src --prune
   ```
 - The full build (with tree-sitter) is required for AST parsing:
   ```bash
-  make build-full   # CGo build with tree-sitter support
+  task full   # CGo build with tree-sitter support
   ```
 
 ## Plugin Issues

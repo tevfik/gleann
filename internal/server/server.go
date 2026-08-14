@@ -1,7 +1,7 @@
 package server
+
 // Package server provides a REST API server for gleann.
 // This mirrors Python LEANN's FastAPI server with stdlib net/http.
-
 
 import (
 	"context"
@@ -330,7 +330,7 @@ func (s *Server) startAutoIndexer() {
 
 // --- Handlers ---
 
-	// handleWatch toggles watch state for an index
+// handleWatch toggles watch state for an index
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -483,13 +483,13 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 }
 
 type askRequest struct {
-	Question       string `json:"question"`
-	TopK           int    `json:"top_k,omitempty"`
-	LLMModel       string `json:"llm_model,omitempty"`
-	LLMProvider    string `json:"llm_provider,omitempty"`
-	SystemPrompt   string `json:"system_prompt,omitempty"`
-	Role           string `json:"role,omitempty"`
-	ConversationID string `json:"conversation_id,omitempty"`
+	Question       string   `json:"question"`
+	TopK           int      `json:"top_k,omitempty"`
+	LLMModel       string   `json:"llm_model,omitempty"`
+	LLMProvider    string   `json:"llm_provider,omitempty"`
+	SystemPrompt   string   `json:"system_prompt,omitempty"`
+	Role           string   `json:"role,omitempty"`
+	ConversationID string   `json:"conversation_id,omitempty"`
 	Stream         bool     `json:"stream,omitempty"`
 	VisionRAG      bool     `json:"vision_rag,omitempty"`
 	Images         []string `json:"images,omitempty"`
@@ -549,7 +549,7 @@ func (s *Server) handleAsk(w http.ResponseWriter, r *http.Request) {
 	if req.LLMProvider != "" {
 		chatConfig.Provider = gleann.LLMProvider(req.LLMProvider)
 	}
-	
+
 	// Remove default max tokens limit for server endpoints to prevent cutting off long responses
 	chatConfig.MaxTokens = -1
 
@@ -602,7 +602,7 @@ func (s *Server) handleAsk(w http.ResponseWriter, r *http.Request) {
 		if err == nil && meta.SourceDir != "" {
 			sources, _ := searcher.Search(r.Context(), req.Question, opts...)
 			renderedPages := make(map[string]bool)
-			
+
 			for _, src := range sources {
 				hasImg, _ := src.Metadata["has_image"].(bool)
 				if !hasImg {
@@ -639,7 +639,7 @@ func (s *Server) handleAsk(w http.ResponseWriter, r *http.Request) {
 	} else {
 		answer, errAsk = chat.Ask(r.Context(), req.Question, opts...)
 	}
-	
+
 	if errAsk != nil {
 		writeError(w, http.StatusInternalServerError, "ask failed: "+errAsk.Error())
 		return
@@ -692,7 +692,7 @@ func (s *Server) handleAskStream(w http.ResponseWriter, r *http.Request, chat *g
 	}
 	if req.VisionRAG {
 		sendStatus("Analysing documents for visual context...")
-		
+
 		meta, err := gleann.GetIndexMeta(s.config.IndexDir, indexName)
 		if err == nil && meta.SourceDir != "" {
 			sources, _ := chat.GetSearcher().Search(r.Context(), req.Question, opts...)
@@ -721,7 +721,7 @@ func (s *Server) handleAskStream(w http.ResponseWriter, r *http.Request, chat *g
 				}
 			}
 		}
-		
+
 		if len(visionImages) > 0 {
 			sendStatus(fmt.Sprintf("Sending %d image(s) to multimodal model...", len(visionImages)))
 		} else {
@@ -736,7 +736,7 @@ func (s *Server) handleAskStream(w http.ResponseWriter, r *http.Request, chat *g
 	} else {
 		sources, err = chat.AskStream(r.Context(), req.Question, callback, opts...)
 	}
-	
+
 	if err != nil {
 		errData, _ := json.Marshal(map[string]string{"error": err.Error()})
 		fmt.Fprintf(w, "data: %s\n\n", errData)
@@ -783,7 +783,7 @@ func (s *Server) handleAskStream(w http.ResponseWriter, r *http.Request, chat *g
 		CreatedAt: time.Now(),
 		UpdatedAt: time.Now(),
 	}
-	
+
 	if err := convStore.Save(conv); err == nil {
 		convData, _ := json.Marshal(map[string]string{"conversation_id": conv.ID})
 		fmt.Fprintf(w, "data: %s\n\n", convData)
@@ -1192,7 +1192,6 @@ func (s *Server) handleUpdateConfig(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	
 
 	s.mu.Lock()
 	s.config = newConfig
@@ -1203,7 +1202,7 @@ func (s *Server) handleUpdateConfig(w http.ResponseWriter, r *http.Request) {
 		APIKey:   newConfig.OpenAIAPIKey,
 	})
 	s.mu.Unlock()
-	
+
 	// Save to config file — merge with "completed" marker so auto-setup
 	// (EnsureConfig) won't overwrite user-saved settings on restart.
 	if home, err := os.UserHomeDir(); err == nil {
@@ -1369,7 +1368,6 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 
 	writeJSON(w, http.StatusOK, map[string]string{"status": "indexed", "file": header.Filename})
 }
-
 
 func (s *Server) handleWatch(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")

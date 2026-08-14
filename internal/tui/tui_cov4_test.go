@@ -110,7 +110,6 @@ func TestCapitalizeCov4(t *testing.T) {
 
 // ── parseGitHubURL ────────────────────────────────────────────
 
-
 // ── pluginOwner ───────────────────────────────────────────────
 
 func TestPluginOwnerCov4_Default(t *testing.T) {

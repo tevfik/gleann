@@ -121,7 +121,7 @@ func (s *Server) handleListLocalModels(w http.ResponseWriter, r *http.Request) {
 	}
 
 	modelsDir := filepath.Join(home, ".gleann", "models")
-	
+
 	var models []string
 	entries, err := os.ReadDir(modelsDir)
 	if err == nil {

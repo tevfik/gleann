@@ -103,7 +103,7 @@ func buildFAISSIndex(embeddings [][]float32, m int, fc gleann.FAISSConfig) (*C.F
 	defer C.free(unsafe.Pointer(cDesc))
 
 	var index *C.FaissIndex
-	
+
 	faissMu.Lock()
 	defer faissMu.Unlock()
 
@@ -170,7 +170,7 @@ func (b *Builder) AddVectors(ctx context.Context, indexData []byte, embeddings [
 	faissMu.Lock()
 	rc := C.faiss_Index_add(index, C.idx_t(len(embeddings)), (*C.float)(unsafe.Pointer(&flat[0])))
 	faissMu.Unlock()
-	
+
 	if rc != 0 {
 		return nil, fmt.Errorf("faiss_Index_add failed: rc=%d", rc)
 	}

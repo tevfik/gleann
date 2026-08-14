@@ -199,7 +199,7 @@ type OnboardModel struct {
 	serverOptions   []string
 	serverOptionIdx int
 	serverAddrInput textinput.Model
-	
+
 	// Custom HF Repo input.
 	customHFInput   textinput.Model
 	customHFForWhat string // "emb", "llm", or "reranker"
@@ -1398,9 +1398,9 @@ func (m OnboardModel) settingsMenuValues() []string {
 	if m.mcpEnabled {
 		mcpStatus = "enabled"
 	}
-	
+
 	backend := m.selectedBackend()
-	
+
 	a2aStatus := "disabled"
 	if m.a2aEnabled {
 		a2aStatus = "enabled"

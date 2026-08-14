@@ -442,7 +442,7 @@ func (s *Server) handleProxyModels(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, "failed to decode ollama response")
 			return
 		}
-		
+
 		// Map ollama models to standard format
 		var models []string
 		if mList, ok := data["models"].([]any); ok {
@@ -477,7 +477,7 @@ func (s *Server) handleProxyModels(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, "failed to decode openai response")
 			return
 		}
-		
+
 		// Map openai models to standard format
 		var models []string
 		if dataList, ok := data["data"].([]any); ok {

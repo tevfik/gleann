@@ -1,0 +1,242 @@
+version: '3'
+
+vars:
+  BUILD_DIR: build
+  BINARY: '{{.BUILD_DIR}}/gleann'
+  BINARY_FULL: '{{.BUILD_DIR}}/gleann-full'
+  CMD: ./cmd/gleann
+  VERSION:
+    sh: git describe --tags --always --dirty 2>/dev/null || echo "dev"
+  LDFLAGS: -s -w -X main.version={{.VERSION}}
+  INSTALL_DIR: /usr/local/bin
+  REPO_ROOT: '{{.USER_WORKING_DIR}}'
+  FAISS_LIB_DIR: '{{.REPO_ROOT}}/deps/faiss_install/lib'
+  FAISS_INC_DIR: '{{.REPO_ROOT}}/deps/faiss_install/include'
+  USER_BIN_DIR: '{{.HOME}}/.local/bin'
+  UNAME_S:
+    sh: uname -s
+  
+  # Platform detection logic
+  RPATH_FLAGS: '{{if eq .UNAME_S "Darwin"}}-Wl,-rpath,@loader_path{{else}}-Wl,-rpath,$ORIGIN{{end}}'
+  ZNOW_FLAG: '{{if eq .UNAME_S "Darwin"}}{{else}}-Wl,-z,now{{end}}'
+  SO_EXT: '{{if eq .UNAME_S "Darwin"}}dylib{{else}}so{{end}}'
+
+tasks:
+  default:
+    desc: Build pure Go binary (gleann)
+    cmds:
+      - task: build
+
+  build:
+    desc: Build pure Go binary (gleann)
+    deps: [prepare-assets]
+    cmds:
+      - mkdir -p {{.BUILD_DIR}}
+      - go build -ldflags "{{.LDFLAGS}}" -o {{.BINARY}} {{.CMD}}
+      - echo "✅ Built {{.BINARY}}"
+
+  build-web:
+    desc: Build Web UI
+    cmds:
+      - echo "🎨 Building Web UI..."
+      - |
+        if command -v npm >/dev/null 2>&1; then
+          echo "Found npm locally. Building..."
+          cd ui && npm install && npm run build
+        else
+          echo "npm not found. Building using Docker (node:20-alpine)..."
+          docker run --rm -u $(id -u):$(id -g) -v $(pwd):/app -w /app/ui node:20-alpine sh -c "npm ci && npm run build"
+        fi
+      - 'if [ ! -f ui/dist/index.html ]; then echo "❌ ui/dist/index.html missing! Build failed."; exit 1; fi'
+      - echo "✅ Web UI built"
+
+  prepare-assets:
+    desc: Prepare web assets for binary embedding
+    cmds:
+      - |
+        if [ "$SKIP_WEB" = "1" ]; then
+          echo "⚠️  SKIP_WEB=1: Creating minimal placeholder for API-only build..."
+          mkdir -p internal/server/dist
+          echo '<!DOCTYPE html><html><body><h1>API-Only Mode</h1><p>Web UI not included in this build.</p></body></html>' > internal/server/dist/index.html
+        else
+          task build-web
+          echo "📦 Copying web assets..."
+          rm -rf internal/server/dist
+          cp -r ui/dist internal/server/dist
+        fi
+
+  build-cgo:
+    desc: Local dev build with CGo + tree-sitter
+    cmds:
+      - mkdir -p {{.BUILD_DIR}}
+      - CGO_ENABLED=1 CGO_CFLAGS="-w" go build -tags "treesitter" -ldflags "{{.LDFLAGS}}" -o {{.BUILD_DIR}}/gleann-cgo {{.CMD}}
+      - echo "✅ Built {{.BUILD_DIR}}/gleann-cgo (with CGo and tree-sitter)"
+
+  build-rust-core:
+    desc: Build Rust core library
+    cmds:
+      - echo "🔧 Building Rust core..."
+      - cd ext/gleann-core-rs && cargo build --release
+
+  build-native:
+    desc: Local dev build with embedded Rust native engine
+    deps: [build-rust-core]
+    cmds:
+      - echo "🔧 Building Go binary with native tags..."
+      - mkdir -p {{.BUILD_DIR}}
+      - cp ext/gleann-core-rs/target/release/libgleann_core_rs.{{.SO_EXT}} {{.BUILD_DIR}}/
+      - CGO_ENABLED=1 go build -tags "native" -ldflags "{{.LDFLAGS}}" -o {{.BUILD_DIR}}/gleann-native {{.CMD}}
+      - echo "✅ Built {{.BUILD_DIR}}/gleann-native"
+
+  full:
+    desc: Build FAISS + tree-sitter binary (gleann-full)
+    deps: [build-rust-core, prepare-assets]
+    cmds:
+      - echo "🔧 Building {{.BINARY_FULL}} with FAISS + tree-sitter + native..."
+      - mkdir -p {{.BUILD_DIR}}
+      - cp ext/gleann-core-rs/target/release/libgleann_core_rs.{{.SO_EXT}} {{.BUILD_DIR}}/
+      - cp {{.FAISS_LIB_DIR}}/libfaiss*.so* {{.BUILD_DIR}}/ || true
+      - |
+        CGO_ENABLED=1 \
+        CGO_CFLAGS="-w -I{{.FAISS_INC_DIR}} $CGO_CFLAGS" \
+        CGO_CXXFLAGS="-w -I{{.FAISS_INC_DIR}} $CGO_CXXFLAGS" \
+        CGO_LDFLAGS="{{.RPATH_FLAGS}} {{.ZNOW_FLAG}} -L{{.FAISS_LIB_DIR}} -lfaiss_c -lfaiss -L{{.BUILD_DIR}} -lgleann_core_rs" \
+        go build -tags "faiss treesitter native" -ldflags "{{.LDFLAGS}}" -o {{.BINARY_FULL}} {{.CMD}}
+      - echo "✅ Built {{.BINARY_FULL}}"
+
+  install-user:
+    desc: Build gleann-full (FAISS) and install to ~/.local/bin/gleann
+    deps: [full]
+    cmds:
+      - mkdir -p {{.USER_BIN_DIR}}
+      - install -m 0755 {{.BINARY_FULL}} {{.USER_BIN_DIR}}/gleann
+      - cp {{.BUILD_DIR}}/*.so* {{.USER_BIN_DIR}}/ || true
+      - echo "✅ Installed gleann-full → {{.USER_BIN_DIR}}/gleann"
+      - echo "   Make sure {{.USER_BIN_DIR}} is in your PATH."
+
+  install-user-lite:
+    desc: Build plain gleann (no FAISS) and install to ~/.local/bin/gleann
+    deps: [build]
+    cmds:
+      - mkdir -p {{.USER_BIN_DIR}}
+      - install -m 0755 {{.BINARY}} {{.USER_BIN_DIR}}/gleann
+      - echo "✅ Installed gleann → {{.USER_BIN_DIR}}/gleann"
+
+  install:
+    desc: Install to /usr/local/bin (system-wide, needs sudo)
+    deps: [build]
+    cmds:
+      - install -m 0755 {{.BINARY}} {{.INSTALL_DIR}}/$(basename {{.BINARY}})
+      - echo "✅ Installed {{.BINARY}} → {{.INSTALL_DIR}}/$(basename {{.BINARY}})"
+
+  install-full:
+    desc: Install full version to /usr/local/bin
+    deps: [full]
+    cmds:
+      - install -m 0755 {{.BINARY_FULL}} {{.INSTALL_DIR}}/$(basename {{.BINARY_FULL}})
+      - |
+        for lib in {{.FAISS_LIB_DIR}}/libfaiss*.{{.SO_EXT}}*; do
+          if [ -f "$lib" ]; then
+            install -m 0755 "$lib" {{.INSTALL_DIR}}/
+            echo "  📦 Installed $(basename $lib) → {{.INSTALL_DIR}}/"
+          fi
+        done
+      - echo "✅ Installed {{.BINARY_FULL}} → {{.INSTALL_DIR}}/$(basename {{.BINARY_FULL}})"
+      - echo "   Run: {{.INSTALL_DIR}}/$(basename {{.BINARY_FULL}}) setup"
+
+  test:
+    desc: Run standard tests
+    cmds:
+      - mkdir -p build/test-home
+      - GLEANN_TEST_MODE=true HOME=$(pwd)/build/test-home go test -race -timeout 120s $(go list ./... | grep -v /tests/benchmarks | grep -v /build/)
+
+  test-faiss:
+    desc: Run FAISS backend tests
+    cmds:
+      - CGO_CFLAGS="$CGO_CFLAGS" CGO_CXXFLAGS="$CGO_CXXFLAGS" CGO_LDFLAGS="$CGO_LDFLAGS" go test -tags "cgo faiss" -count=1 -timeout 120s ./internal/backend/faiss/...
+
+  test-treesitter:
+    desc: Run treesitter backend tests
+    cmds:
+      - cd modules/chunking && go test -tags "cgo treesitter" -count=1 -timeout 60s ./...
+
+  test-e2e:
+    desc: Run Go integration E2E tests (Requires Ollama)
+    deps: [build]
+    cmds:
+      - echo "🧪 Running E2E tests (requires Ollama + markitdown)..."
+      - go test ./tests/integration/ -run TestE2E -v -count=1 -timeout 8m
+      - echo "✅ E2E tests passed"
+
+  test-e2e-plugins:
+    desc: Run E2E plugin bash tests
+    deps: [build]
+    cmds:
+      - echo "🧪 Running E2E plugin bash tests..."
+      - bash tests/e2e/plugin_test.sh
+      - echo "✅ E2E plugin tests passed"
+
+  test-e2e-full:
+    desc: Run full E2E bash suite against gleann-full binary
+    deps: [full]
+    cmds:
+      - echo "🧪 Running full E2E suite..."
+      - GLEANN_BIN={{.BINARY_FULL}} bash tests/e2e/run.sh
+      - echo "✅ Full E2E suite passed"
+
+  test-benchmark:
+    desc: Run E2E suite with benchmark scoring
+    deps: [full]
+    cmds:
+      - echo "🧪 Running E2E + benchmark..."
+      - bash tests/e2e/run.sh --benchmark
+      - echo "✅ Benchmark complete — results in tests/e2e/results/"
+
+  test-bench:
+    desc: Run Go performance benchmarks
+    cmds:
+      - go test -run=^$ -bench=. -benchmem -timeout 120s ./tests/benchmarks/
+
+  pre-commit:
+    desc: Run all local pre-commit checks
+    cmds:
+      - go vet ./...
+      - task test
+      - task test-e2e
+      - echo "✅ All pre-commit checks passed"
+
+  clean:
+    desc: Remove built binaries
+    cmds:
+      - rm -rf {{.BUILD_DIR}} dist/ gleann-test gleann-test-faiss
+      - echo "🧹 Cleaned"
+
+  release:
+    desc: Build all release artifacts into dist/
+    deps: [build, full]
+    cmds:
+      - mkdir -p dist
+      - tar czf dist/gleann-{{.VERSION}}-linux-amd64.tar.gz -C {{.BUILD_DIR}} $(basename {{.BINARY}})
+      - cp {{.FAISS_LIB_DIR}}/libfaiss_c.{{.SO_EXT}} {{.BUILD_DIR}}/ 2>/dev/null || true
+      - cp {{.FAISS_LIB_DIR}}/libfaiss.{{.SO_EXT}}   {{.BUILD_DIR}}/ 2>/dev/null || true
+      - cd {{.BUILD_DIR}} && tar czf ../dist/gleann-full-{{.VERSION}}-linux-amd64.tar.gz $(basename {{.BINARY_FULL}}) libfaiss*.{{.SO_EXT}} 2>/dev/null || true
+      - rm -f {{.BUILD_DIR}}/libfaiss*.{{.SO_EXT}}
+      - echo "📦 Release artifacts created in dist/"
+
+  docker:
+    desc: Build basic docker image
+    vars:
+      DOCKER_IMAGE: gleann
+      DOCKER_TAG: '{{.VERSION}}'
+    cmds:
+      - docker build -t {{.DOCKER_IMAGE}}:{{.DOCKER_TAG}} --build-arg VERSION={{.VERSION}} .
+      - echo "✅ Built {{.DOCKER_IMAGE}}:{{.DOCKER_TAG}}"
+
+  docker-full:
+    desc: Build full docker image
+    vars:
+      DOCKER_IMAGE: gleann
+      DOCKER_TAG: '{{.VERSION}}'
+    cmds:
+      - docker build -t {{.DOCKER_IMAGE}}-full:{{.DOCKER_TAG}} --build-arg VERSION={{.VERSION}} -f Dockerfile.full .
+      - echo "✅ Built {{.DOCKER_IMAGE}}-full:{{.DOCKER_TAG}}"

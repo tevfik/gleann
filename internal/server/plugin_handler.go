@@ -12,7 +12,7 @@ import (
 // GET /api/plugins
 func (s *Server) handleListPlugins(w http.ResponseWriter, r *http.Request) {
 	catalog := gleann.FetchPluginCatalog()
-	
+
 	installedPlugins, err := gleann.LoadPlugins()
 	if err != nil {
 		installedPlugins = &gleann.PluginRegistry{}
@@ -32,7 +32,7 @@ func (s *Server) handleListPlugins(w http.ResponseWriter, r *http.Request) {
 				break
 			}
 		}
-		
+
 		response = append(response, pluginResponse{
 			PluginMeta: meta,
 			Status:     status,
@@ -69,23 +69,23 @@ func (s *Server) handleInstallPlugin(w http.ResponseWriter, r *http.Request) {
 		background.TaskTypeCustom,
 		func(progress func(pct float64, msg string)) error {
 			progressCh := make(chan string, 100)
-			
+
 			var installErr error
 			var result string
-			
+
 			go func() {
 				defer close(progressCh)
 				result, installErr = gleann.InstallPlugin(*meta, progressCh)
 			}()
-			
+
 			for msg := range progressCh {
 				progress(0.5, msg) // approximate progress
 			}
-			
+
 			if installErr != nil {
 				return installErr
 			}
-			
+
 			progress(1.0, fmt.Sprintf("Completed: %s", result))
 			return nil
 		},

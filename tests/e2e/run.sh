@@ -18,7 +18,7 @@
 set +e
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-BINARY="${REPO_ROOT}/build/gleann"
+BINARY="${GLEANN_BIN:-${REPO_ROOT}/build/gleann}"
 FIXTURES="${REPO_ROOT}/tests/e2e/fixtures"
 RESULTS_DIR="${REPO_ROOT}/tests/e2e/results"
 
@@ -40,10 +40,12 @@ SECTION=""
 
 # ── Argument parsing ────────────────────────────────────────────────────────
 BENCHMARK=false
+MOCK_LLM=false
 for arg in "$@"; do
   case "$arg" in
     --quick)     QUICK=true ;;
     --benchmark) BENCHMARK=true ;;
+    --mock-llm)  MOCK_LLM=true ;;
     --help|-h)
       grep '^#' "${BASH_SOURCE[0]}" | head -20 | sed 's/^# \?//'
       exit 0 ;;
@@ -174,11 +176,13 @@ assert_file_exists() {
 }
 
 assert_exit_ok() {
-  local desc="$1" code="$2"
-  if [[ $code -eq 0 ]]; then
-    pass "$desc"
+  local msg="$1"
+  local code="$2"
+  if [ "$code" -eq 0 ]; then
+    pass "$msg"
   else
-    fail "$desc (exit code $code)"
+    fail "$msg (exit code $code)"
+    echo -e "${YELLOW}Output was: ${OUT}${NC}"
   fi
 }
 
@@ -216,8 +220,18 @@ bin_count=$(ls "$FIXTURES/binary"/*.{docx,xlsx,pptx,csv,html} 2>/dev/null | wc -
 pass "Fixture binary: ${bin_count} document files"
 
 mkdir -p "$RESULTS_DIR"
+mkdir -p ~/.gleann
 
-if ollama_available; then
+if [[ "$MOCK_LLM" == "true" ]]; then
+  echo '{"completed": true, "provider": "mock", "model": "mock", "embedding_provider": "mock", "embedding_model": "mock", "llm_provider": "mock"}' > ~/.gleann/config.json
+  pass "Mock LLM forced via --mock-llm flag"
+fi
+
+llm_provider=$(cat ~/.gleann/config.json 2>/dev/null | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('provider','ollama'))" 2>/dev/null || echo "ollama")
+if [[ "$llm_provider" == "mock" ]]; then
+  pass "Mock LLM provider is configured"
+  HAS_LLM=true
+elif ollama_available; then
   pass "Ollama is reachable"
   HAS_LLM=true
   

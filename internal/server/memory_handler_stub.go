@@ -47,7 +47,7 @@ type memoryPool struct {
 	syncerFactory SyncerFactory // always nil in stub builds
 }
 
-func newMemoryPool(_ string) *memoryPool { return &memoryPool{} }
+func newMemoryPool(_ string) *memoryPool { p := &memoryPool{}; _ = p.syncerFactory; return p }
 func (p *memoryPool) closeAll()          {}
 
 // initMemorySyncer is a no-op in !treesitter builds.

@@ -150,12 +150,12 @@ func TestChatOllama_FormatJSON(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var req ollamaChatRequest
 		json.NewDecoder(r.Body).Decode(&req)
-		
+
 		formatStr, ok := req.Format.(string)
 		if !ok || formatStr != "json" {
 			t.Errorf("expected format 'json', got %v", req.Format)
 		}
-		
+
 		resp := ollamaChatResponse{Message: ChatMessage{Content: "ok"}}
 		json.NewEncoder(w).Encode(resp)
 	}))
@@ -393,18 +393,18 @@ func TestChatAnthropic_PromptCaching(t *testing.T) {
 		}
 		var req anthropicRequest
 		json.NewDecoder(r.Body).Decode(&req)
-		
+
 		blocks, ok := req.System.([]interface{})
 		if !ok || len(blocks) == 0 {
 			t.Fatalf("expected system to be array of blocks, got %T", req.System)
 		}
-		
+
 		lastBlock := blocks[len(blocks)-1].(map[string]interface{})
 		cacheControl, ok := lastBlock["cache_control"].(map[string]interface{})
 		if !ok || cacheControl["type"] != "ephemeral" {
 			t.Errorf("expected cache_control type ephemeral")
 		}
-		
+
 		resp := anthropicResponse{Content: []struct {
 			Text string `json:"text"`
 		}{{Text: "cached ok"}}}

@@ -45,8 +45,12 @@ func cmdList(args []string) {
 
 	fmt.Printf("📚 Indexes (%d):\n\n", len(indexes))
 	for _, idx := range indexes {
-		fmt.Printf("  %-20s  %d passages  backend=%s  model=%s\n",
-			idx.Name, idx.NumPassages, idx.Backend, idx.EmbeddingModel)
+		mismatch := ""
+		if config.EmbeddingModel != "" && idx.EmbeddingModel != "" && config.EmbeddingModel != idx.EmbeddingModel {
+			mismatch = fmt.Sprintf(" (⚠ needs rebuild for %s)", config.EmbeddingModel)
+		}
+		fmt.Printf("  %-20s  %d passages  backend=%s  model=%s%s\n",
+			idx.Name, idx.NumPassages, idx.Backend, idx.EmbeddingModel, mismatch)
 	}
 }
 
@@ -339,7 +343,7 @@ func cmdAsk(args []string) {
 		saveConversation()
 	} else if hasFlag(args, "--swarm") {
 		fmt.Fprintf(os.Stderr, "🐝 Swarm Mode (index: %s, model: %s)\n", name, chatConfig.Model)
-		
+
 		// 1. Search Agent
 		fmt.Fprintln(os.Stderr, "  [Search Agent] Analyzing knowledge base...")
 		searchChat := gleann.NewChat(searcher, chatConfig)
@@ -350,13 +354,13 @@ func cmdAsk(args []string) {
 			os.Exit(1)
 		}
 		fmt.Fprintln(os.Stderr, "  [Search Agent] Context retrieved and synthesized.")
-		
+
 		// 2. Coding Agent
 		fmt.Fprintln(os.Stderr, "  [Coding Agent] Generating final response...")
 		codeChat := gleann.NewChat(gleann.NullSearcher{}, chatConfig) // NullSearcher to skip second RAG call
 		codeChat.SetSystemPrompt("You are a Senior Coding Agent. Synthesize the context provided by the Search Agent and answer the user's question directly with well-formatted code or explanation. Do not mention that you received context.")
 		prompt := fmt.Sprintf("User Question: %s\n\nSearch Agent Context:\n%s", question, searchAnswer)
-		
+
 		_, err = codeChat.AskStream(ctx, prompt, func(token string) {
 			wrapper.Write(token)
 		})
@@ -364,13 +368,13 @@ func cmdAsk(args []string) {
 			fmt.Fprintf(os.Stderr, "\ncoding agent error: %v\n", err)
 			os.Exit(1)
 		}
-		
+
 		if !rawMode {
 			wrapper.Flush()
 			renderMarkdown()
 		}
 		fmt.Println()
-		
+
 		// Save for transparency
 		chat.AppendHistory(gleann.ChatMessage{Role: "user", Content: question})
 		chat.AppendHistory(gleann.ChatMessage{Role: "assistant", Content: "(Swarm Result)\n" + searchAnswer})

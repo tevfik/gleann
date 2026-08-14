@@ -186,27 +186,27 @@ docker run -p 8080:8080 -v gleann-data:/data/indexes gleann-full serve
 # docker-compose (gleann + Ollama sidecar)
 docker-compose up -d
 
-# Or via Makefile
-make docker          # Build pure-Go image
-make docker-full     # Build CGo + tree-sitter image
-make docker-run      # Run with docker-compose
+# Or via Taskfile
+task docker          # Build pure-Go image
+task docker-full     # Build CGo + tree-sitter image
+task docker-run      # Run with docker-compose
 ```
 
 ### Install to PATH
 
 The setup wizard (`gleann setup` / `gleann tui` → Setup) installs the binary to `~/.local/bin` or `/usr/local/bin` with shell completions (bash, zsh, fish).
 
-You can also install via Makefile:
+You can also install via Taskfile:
 
 ```bash
 # Install gleann-full (FAISS + tree-sitter) to ~/.local/bin/gleann (recommended)
-make install-user
+task install-user
 
 # Install plain gleann (no FAISS, just tree-sitter) to ~/.local/bin/gleann
-make install-user-lite
+task install-user-lite
 
 # Install gleann to /usr/local/bin (system-wide, needs sudo)
-sudo make install
+sudo task install
 ```
 
 ## Usage

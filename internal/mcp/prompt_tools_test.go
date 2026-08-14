@@ -13,10 +13,10 @@ func TestRegisterPrompts(t *testing.T) {
 		EmbeddingProvider: "mock",
 	}
 	server := NewServer(cfg)
-	
+
 	// registerPrompts is called inside NewServer.
 	// We just verify they exist via the internal server structure or by triggering them manually.
-	
+
 	// Create mock requests
 	req1 := mcp.GetPromptRequest{}
 	req1.Params.Name = "gleann-deep-refactor"
