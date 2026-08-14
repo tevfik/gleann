@@ -24,11 +24,18 @@ func TestE2ECLI_IndexAndSearch(t *testing.T) {
 	}
 
 	// Check for gleann-full first, fallback to gleann
-	binaryPath := filepath.Join(repoRoot, "build", "gleann-full")
+	binaryNameFull := "gleann-full"
+	binaryNameLite := "gleann"
+	if os.Getenv("GOOS") == "windows" || filepath.Separator == '\\' {
+		binaryNameFull += ".exe"
+		binaryNameLite += ".exe"
+	}
+
+	binaryPath := filepath.Join(repoRoot, "build", binaryNameFull)
 	if _, err := os.Stat(binaryPath); os.IsNotExist(err) {
-		binaryPath = filepath.Join(repoRoot, "build", "gleann")
+		binaryPath = filepath.Join(repoRoot, "build", binaryNameLite)
 		if _, err := os.Stat(binaryPath); os.IsNotExist(err) {
-			t.Skipf("Gleann binary not found at %s. Please run 'make build' first.", binaryPath)
+			t.Skipf("Gleann binary not found at %s. Please run 'task build' first.", binaryPath)
 		}
 	}
 
