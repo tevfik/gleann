@@ -142,7 +142,7 @@ tasks:
           fi
         done
       - echo "✅ Installed {{.BINARY_FULL}} → {{.INSTALL_DIR}}/$(basename {{.BINARY_FULL}})"
-      - echo "   Run: {{.INSTALL_DIR}}/$(basename {{.BINARY_FULL}}) setup"
+      - 'echo "   Run: {{.INSTALL_DIR}}/$(basename {{.BINARY_FULL}}) setup"'
 
   test:
     desc: Run standard tests
