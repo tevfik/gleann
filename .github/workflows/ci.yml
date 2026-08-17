@@ -7,7 +7,7 @@ on:
     branches: [main]
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   # ── Cross-Platform Build & Test ──────────────────────────────
@@ -50,8 +50,13 @@ jobs:
         if: failure()
         run: |
           if [ -f test.log ]; then
-            echo "::error::--- FAILED TESTS SUMMARY ---"
-            awk '/^--- FAIL:/ {print} /^FAIL/ && $2 != "" {print}' test.log
+            git config --global user.name "github-actions"
+            git config --global user.email "github-actions@github.com"
+            git fetch
+            git checkout -b windows-test-log-${RUNNER_OS}
+            git add test.log
+            git commit -m "Add test log for ${RUNNER_OS}"
+            git push origin windows-test-log-${RUNNER_OS} -f
           fi
         shell: bash
 
