@@ -39,7 +39,11 @@ jobs:
         timeout-minutes: 10
         run: |
           set -o pipefail
-          GOTOOLCHAIN=local go test -v -race -timeout 8m -coverprofile=coverage.out $(go list ./... | grep -v /tests/benchmarks) | tee test.log
+          COVER_FLAG="-coverprofile=coverage.out"
+          if [ "$RUNNER_OS" == "Windows" ]; then
+            COVER_FLAG=""
+          fi
+          GOTOOLCHAIN=local go test -v -race -timeout 8m $COVER_FLAG $(go list ./... | grep -v /tests/benchmarks) | tee test.log
         shell: bash
 
       - name: Show failed tests
