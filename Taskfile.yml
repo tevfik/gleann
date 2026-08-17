@@ -100,7 +100,7 @@ tasks:
         CGO_ENABLED=1 \
         CGO_CFLAGS="-w -I{{.FAISS_INC_DIR}} $CGO_CFLAGS" \
         CGO_CXXFLAGS="-w -I{{.FAISS_INC_DIR}} $CGO_CXXFLAGS" \
-        CGO_LDFLAGS="{{.RPATH_FLAGS}} {{.ZNOW_FLAG}} -L{{.FAISS_LIB_DIR}} -lfaiss_c -lfaiss -L{{.BUILD_DIR}} -lgleann_core_rs" \
+        CGO_LDFLAGS="{{.RPATH_FLAGS}} {{.ZNOW_FLAG}} -L{{.FAISS_LIB_DIR}} -lfaiss_c -lfaiss -L{{.BUILD_DIR}} -lgleann_core_rs $CGO_LDFLAGS" \
         go build -tags "faiss treesitter native" -ldflags "{{.LDFLAGS}}" -o {{.BINARY_FULL}} {{.CMD}}
       - echo "✅ Built {{.BINARY_FULL}}"
 

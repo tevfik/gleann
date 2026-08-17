@@ -240,8 +240,12 @@ jobs:
           GOARCH: ${{ matrix.goarch }}
           LD_LIBRARY_PATH: "/usr/local/lib"
           VERSION: ${{ steps.version.outputs.version }}
-          FAISS_LIB_DIR: "/usr/local/lib"
-        run: task full
+        run: |
+          if [ "$RUNNER_OS" == "macOS" ]; then
+            export CGO_CXXFLAGS="-Xpreprocessor -fopenmp -I$(brew --prefix libomp)/include"
+            export CGO_LDFLAGS="-L$(brew --prefix libomp)/lib -lomp"
+          fi
+          task full FAISS_LIB_DIR=/usr/local/lib FAISS_INC_DIR=/usr/local/include
 
       - name: Rename and compress binary with shared libraries
         shell: bash
