@@ -37,7 +37,18 @@ jobs:
 
       - name: Test (unit + integration, default tags)
         timeout-minutes: 10
-        run: GOTOOLCHAIN=local go test -v -race -timeout 8m -coverprofile=coverage.out $(go list ./... | grep -v /tests/benchmarks)
+        run: |
+          set -o pipefail
+          GOTOOLCHAIN=local go test -v -race -timeout 8m -coverprofile=coverage.out $(go list ./... | grep -v /tests/benchmarks) | tee test.log
+        shell: bash
+
+      - name: Show failed tests
+        if: failure()
+        run: |
+          if [ -f test.log ]; then
+            echo "::error::--- FAILED TESTS SUMMARY ---"
+            awk '/^--- FAIL:/ {print} /^FAIL/ && $2 != "" {print}' test.log
+          fi
         shell: bash
 
       - name: Test (unit, treesitter tag)
