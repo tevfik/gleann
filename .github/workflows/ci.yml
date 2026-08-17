@@ -50,9 +50,21 @@ jobs:
         if: failure()
         run: |
           if [ -f test.log ]; then
-            echo "::error::--- TEST LOG TAIL ---%0A$(tail -n 100 test.log | sed ':a;N;$!ba;s/\n/%0A/g')"
+            echo "::group::Failed Tests Summary"
+            grep -E "^--- FAIL:|^FAIL" test.log || echo "No FAIL lines found in test.log"
+            echo "::endgroup::"
+            echo "::group::Last 200 lines of test.log"
+            tail -n 200 test.log
+            echo "::endgroup::"
           fi
         shell: bash
+
+      - name: Upload Test Log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-test-log-${{ matrix.os }}
+          path: test.log
 
       - name: Test (unit, treesitter tag)
         # Runs the indexer and kuzu packages that require CGo + the
