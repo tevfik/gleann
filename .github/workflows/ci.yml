@@ -46,19 +46,12 @@ jobs:
           GOTOOLCHAIN=local go test -v -race -timeout 8m $COVER_FLAG $(go list ./... | grep -v /tests/benchmarks) | tee test.log
         shell: bash
 
-      - name: Show failed tests
+      - name: Upload Test Log
         if: failure()
-        run: |
-          if [ -f test.log ]; then
-            git config --global user.name "github-actions"
-            git config --global user.email "github-actions@github.com"
-            git fetch
-            git checkout -b windows-test-log-${RUNNER_OS}
-            git add test.log
-            git commit -m "Add test log for ${RUNNER_OS}"
-            git push origin windows-test-log-${RUNNER_OS} -f
-          fi
-        shell: bash
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-test-log-${{ matrix.os }}
+          path: test.log
 
       - name: Test (unit, treesitter tag)
         # Runs the indexer and kuzu packages that require CGo + the
