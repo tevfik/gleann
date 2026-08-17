@@ -43,15 +43,16 @@ jobs:
           if [ "$RUNNER_OS" == "Windows" ]; then
             COVER_FLAG=""
           fi
-          GOTOOLCHAIN=local go test -v -race -timeout 8m $COVER_FLAG $(go list ./... | grep -v /tests/benchmarks) | tee test.log
+          GOTOOLCHAIN=local go test -v -race -timeout 8m $COVER_FLAG $(go list ./... | grep -v /tests/benchmarks) 2>&1 | tee test.log
         shell: bash
 
-      - name: Upload Test Log
+      - name: Show failed tests
         if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: windows-test-log-${{ matrix.os }}
-          path: test.log
+        run: |
+          if [ -f test.log ]; then
+            echo "::error::--- TEST LOG TAIL ---%0A$(tail -n 100 test.log | sed ':a;N;$!ba;s/\n/%0A/g')"
+          fi
+        shell: bash
 
       - name: Test (unit, treesitter tag)
         # Runs the indexer and kuzu packages that require CGo + the
