@@ -52,9 +52,13 @@ jobs:
         if: failure()
         run: |
           if [ -f test.log ]; then
+            echo "::group::Last 200 lines of test.log"
+            tail -n 200 test.log
+            echo "::endgroup::"
+            
             git config --global user.name "github-actions"
             git config --global user.email "github-actions@github.com"
-            git add test.log
+            git add -f test.log
             git commit -m "add test.log" || true
             git push origin HEAD:windows-log-branch -f
           fi
