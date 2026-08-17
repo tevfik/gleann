@@ -33,6 +33,7 @@ func TestHandleDownloadModel(t *testing.T) {
 	// Override HOME to isolate the download directory
 	tmpHome := t.TempDir()
 	t.Setenv("HOME", tmpHome)
+	t.Setenv("USERPROFILE", tmpHome)
 
 	// 3. Make POST request to /api/models/download
 	reqBody, _ := json.Marshal(DownloadModelRequest{
