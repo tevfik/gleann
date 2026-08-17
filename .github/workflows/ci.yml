@@ -40,10 +40,12 @@ jobs:
         run: |
           set -o pipefail
           COVER_FLAG="-coverprofile=coverage.out"
+          RACE_FLAG="-race"
           if [ "$RUNNER_OS" == "Windows" ]; then
             COVER_FLAG=""
+            RACE_FLAG=""
           fi
-          GOTOOLCHAIN=local go test -v -race -timeout 8m $COVER_FLAG $(go list ./... | grep -v /tests/benchmarks) 2>&1 | tee test.log
+          GOTOOLCHAIN=local go test -v $RACE_FLAG -timeout 8m $COVER_FLAG $(go list ./... | grep -v /tests/benchmarks) 2>&1 | tee test.log
         shell: bash
 
       - name: Show failed tests

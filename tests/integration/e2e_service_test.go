@@ -352,9 +352,6 @@ func TestE2E_Autosetup_DetectAllNormalMode(t *testing.T) {
 }
 
 func TestE2E_Autosetup_EnsureModelsFullCycle(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("skipping on windows due to silent crash in CI")
-	}
 	pullRequested := make(map[string]bool)
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -398,9 +395,6 @@ func TestE2E_Autosetup_EnsureModelsFullCycle(t *testing.T) {
 }
 
 func TestE2E_Autosetup_PullModelProgress(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("skipping on windows due to silent crash in CI")
-	}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/api/pull" && r.Method == "POST" {
 			w.Header().Set("Content-Type", "application/x-ndjson")
@@ -451,9 +445,6 @@ func TestE2E_Autosetup_PullModelProgress(t *testing.T) {
 }
 
 func TestE2E_Autosetup_PullModelNetworkError(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("skipping on windows due to silent crash in CI")
-	}
 	err := autosetup.PullModel("http://localhost:19999", "model", nil)
 	if err == nil {
 		t.Fatal("expected error for unreachable host")
