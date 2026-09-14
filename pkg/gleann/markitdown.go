@@ -107,14 +107,20 @@ func InstallMarkItDown() (string, error) {
 		return FindMarkItDown()
 	}
 
-	// Fallback: pip install --user.
+	// Fallback: pip install --user (with PEP 668 fallback).
 	for _, pip := range []string{"pip3", "pip"} {
 		if pipPath, err := exec.LookPath(pip); err == nil {
 			cmd := exec.Command(pipPath, "install", "--user", "markitdown")
 			cmd.Stdout = os.Stdout
 			cmd.Stderr = os.Stderr
 			if err := cmd.Run(); err != nil {
-				continue
+				// PEP 668 (externally managed environment) fallback on modern Ubuntu/Debian
+				cmdBreak := exec.Command(pipPath, "install", "--user", "--break-system-packages", "markitdown")
+				cmdBreak.Stdout = os.Stdout
+				cmdBreak.Stderr = os.Stderr
+				if errBreak := cmdBreak.Run(); errBreak != nil {
+					continue
+				}
 			}
 			return FindMarkItDown()
 		}

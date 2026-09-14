@@ -24,7 +24,7 @@
 Thumbs.db
 
 # Test
-coverage.out
+coverage*.out
 coverage.html
 *.test
 

@@ -1,0 +1,32 @@
+[
+  {
+    "name": "gleann-plugin-docs",
+    "icon": "📄",
+    "description": "Document extraction via markitdown/docling (fast, broad format coverage). Best default for mixed corpora.",
+    "repo_url": "https://github.com/tevfik/gleann-plugin-docs",
+    "language": "python (markitdown, docling)",
+    "extensions": [".pdf", ".docx", ".xlsx", ".pptx", ".csv"],
+    "requires_markitdown": true,
+    "version": "1.0.0"
+  },
+  {
+    "name": "gleann-plugin-marker",
+    "icon": "🖊️",
+    "description": "High-accuracy PDF/image extraction via marker-pdf + surya OCR. Heavier than docs; pick it for table-rich PDFs and scanned documents.",
+    "repo_url": "https://github.com/tevfik/gleann-plugin-marker",
+    "language": "python (marker-pdf, surya OCR)",
+    "extensions": [".pdf", ".docx", ".xlsx", ".pptx", ".epub", ".html", ".png", ".jpg"],
+    "version": "1.0.0"
+  },
+  {
+    "name": "gleann-plugin-sound",
+    "icon": "🔊",
+    "description": "Speech-to-text via whisper.cpp / ONNX. Auto-discovered by the multimodal pipeline.",
+    "repo_url": "https://github.com/tevfik/gleann-plugin-sound",
+    "language": "go (whisper.cpp / onnxruntime)",
+    "extensions": [".wav", ".mp3", ".flac", ".ogg", ".m4a", ".webm", ".mp4", ".mkv"],
+    "has_settings": true,
+    "settings_cmd": ["gleann-plugin-sound", "tui"],
+    "version": "1.0.0"
+  }
+]

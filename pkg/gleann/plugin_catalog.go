@@ -29,7 +29,7 @@ var defaultCatalog = []PluginMeta{
 		Name:               "gleann-plugin-docs",
 		Icon:               "📄",
 		Description:        "Document extraction via markitdown/docling (fast, broad format coverage). Best default for mixed corpora.",
-		RepoURL:            "https://github.com/tevfik/gleann-plugin-marker",
+		RepoURL:            "https://github.com/tevfik/gleann-plugin-docs",
 		Language:           "python (markitdown, docling)",
 		Extensions:         []string{".pdf", ".docx", ".xlsx", ".pptx", ".csv"},
 		RequiresMarkitdown: true,

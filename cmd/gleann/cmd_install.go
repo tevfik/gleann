@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/tevfik/gleann/internal/tui"
 )
 
 // Platform represents a supported AI coding platform.
@@ -237,6 +239,20 @@ func cmdInstall(args []string) {
 		return
 	}
 
+	// Binary installation directly from CLI
+	if hasFlag(args, "--user") || hasFlag(args, "--system") || (len(args) > 0 && (args[0] == "binary" || args[0] == "user" || args[0] == "system")) {
+		installPath := "~/.local/bin"
+		if hasFlag(args, "--system") || (len(args) > 0 && args[0] == "system") {
+			installPath = "/usr/local/bin"
+		}
+		tui.RunInstall(&tui.OnboardResult{
+			InstallPath:        installPath,
+			InstallCompletions: true,
+			MCPEnabled:         true,
+		})
+		return
+	}
+
 	dir := getFlag(args, "--dir")
 	if dir == "" {
 		var err error
@@ -323,18 +339,24 @@ func cmdInstall(args []string) {
 func printInstallUsage() {
 	fmt.Print(`Usage: gleann install [flags] [uninstall]
 
-Install or configure gleann integration for AI coding platforms.
+Install gleann binary & completions, or configure integration for AI coding platforms.
+
+Binary Installation:
+  gleann install --user            Install binary to ~/.local/bin + completions
+  gleann install --system          Install binary to /usr/local/bin (requires sudo)
+
+AI Platform Integration:
+  gleann install                   Auto-detect & install all present platforms
+  gleann install --platform <name> Install for a specific platform
+  gleann install uninstall         Remove platform integration files
+  gleann install --list            List supported platforms and auto-detection status
 
 Flags:
-  --platform <name>   Target a specific platform (default: auto-detect)
-  --dir <path>        Target directory (default: current directory)
-  --list              List supported platforms and auto-detection status
-
-Actions:
-  gleann install                   Auto-detect & install all present platforms
-  gleann install --platform X      Install for a specific platform X
-  gleann install uninstall         Auto-detect & uninstall from all present platforms
-  gleann install uninstall --platform X  Uninstall from platform X
+  --user              Install binary to ~/.local/bin (user-only)
+  --system            Install binary to /usr/local/bin (system-wide)
+  --platform <name>   Target a specific AI platform (default: auto-detect)
+  --dir <path>        Target directory for platform integration (default: cwd)
+  --list              List supported platforms
 
 Supported platforms:
 `)

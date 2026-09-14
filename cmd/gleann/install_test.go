@@ -166,3 +166,23 @@ func TestPrintInstallUsage(t *testing.T) {
 		t.Error("printInstallUsage produced no output")
 	}
 }
+
+func TestPrintUninstallUsage(t *testing.T) {
+	old := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+	printUninstallUsage()
+	w.Close()
+	os.Stdout = old
+	buf := make([]byte, 4096)
+	n, _ := r.Read(buf)
+	if n == 0 {
+		t.Error("printUninstallUsage produced no output")
+	}
+}
+
+func TestCmdUninstall_Help(t *testing.T) {
+	// Should not panic or exit.
+	cmdUninstall([]string{"--help"})
+}
+

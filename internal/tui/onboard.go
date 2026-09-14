@@ -1255,14 +1255,14 @@ func (m OnboardModel) View() tea.View {
 
 	case phaseInstall:
 		b.WriteString(m.renderSelect("13", "Install / Uninstall",
-			"Install gleann to your PATH, or uninstall a previous installation.",
+			"Install gleann to your PATH, or uninstall a previous installation.\n  CLI: gleann install --user | gleann install --system | gleann uninstall [--all]",
 			m.installOptions, m.installOptionIdx,
 			[]string{
 				"Don't install — run from current location",
-				"Copy binary + add bash/zsh/fish completions",
-				"Copy binary + add completions (requires sudo)",
-				"Remove binary from PATH & shell completions",
-				"Remove everything: binary, completions, config & indexes",
+				"Copy binary + add completions (CLI: gleann install --user)",
+				"Copy binary + add completions (requires sudo) (CLI: gleann install --system)",
+				"Remove binary from PATH & shell completions (CLI: gleann uninstall)",
+				"Remove everything: binary, completions, config & indexes (CLI: gleann uninstall --all)",
 			}))
 	}
 

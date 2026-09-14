@@ -43,6 +43,8 @@ func main() {
 		cmdTUI()
 	case "install":
 		cmdInstall(args)
+	case "uninstall":
+		cmdUninstall(args)
 	case "plugin", "plugins":
 		cmdPlugin(args)
 	case "setup":
@@ -135,12 +137,16 @@ gleann has three intelligence pillars that work together:
 
   Requires: gleann index build <name> --docs <dir> --graph
 
-── Platform Integration ──────────────────────────────────────────────
+── Installation & Integration ───────────────────────────────────────
 
+  gleann install --user             Install gleann binary to ~/.local/bin + completions
+  gleann install --system           Install gleann binary to /usr/local/bin (requires sudo)
   gleann install                    Auto-detect & install for AI platforms
   gleann install --platform <name>  Install for a specific platform
   gleann install --list             List supported platforms
   gleann install uninstall          Remove platform integration files
+  gleann uninstall                  Remove gleann binary & shell completions
+  gleann uninstall --all            Remove gleann binary, completions & ~/.gleann data
 
   Platforms: opencode, claude, cursor, codex, gemini, claw, aider, copilot
 

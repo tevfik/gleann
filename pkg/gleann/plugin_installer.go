@@ -137,8 +137,13 @@ func setupPythonPluginWithProgress(pluginDir, name string, progress chan<- strin
 	mainPy := filepath.Join(pluginDir, "main.py")
 	registerCmd := exec.Command(pythonBin, mainPy, "--install", "--name", name)
 	registerCmd.Dir = pluginDir
-	if output, err := registerCmd.CombinedOutput(); err != nil {
-		return "", fmt.Errorf("register plugin: %s", string(output))
+	if firstOutput, err := registerCmd.CombinedOutput(); err != nil {
+		// Fallback to plain --install if --name is not recognized (e.g. gleann-plugin-docs)
+		fallbackCmd := exec.Command(pythonBin, mainPy, "--install")
+		fallbackCmd.Dir = pluginDir
+		if fallbackOutput, fallbackErr := fallbackCmd.CombinedOutput(); fallbackErr != nil {
+			return "", fmt.Errorf("register plugin: %s (first attempt: %s)", string(fallbackOutput), string(firstOutput))
+		}
 	}
 	progress <- "✓ Plugin registered"
 
