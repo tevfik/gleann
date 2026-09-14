@@ -236,7 +236,7 @@ func (g *DB) initSchema() error {
 
 		// ── Memory Engine: generic Entity / RELATES_TO schema ──────────────
 		// These tables support the Knowledge Graph Memory Engine that external
-		// AI agents (e.g. Yaver, Claude) can read from and write to without
+		// AI agents (e.g. Cursor, Claude) can read from and write to without
 		// coupling to gleann's internal AST / document schemas.
 		`CREATE NODE TABLE IF NOT EXISTS Entity(
 			id         STRING,

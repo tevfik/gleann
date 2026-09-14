@@ -377,17 +377,17 @@ func (m *Manager) applyDefaults(block *Block) {
 // filterScope returns blocks that are global (Scope=="") or match the given scope.
 //
 // Hierarchical scope: when the query scope contains a "/" separator (e.g.
-// "yaver-go/social/feature-x"), the filter also returns blocks scoped to any
-// ancestor in the path ("yaver-go", "yaver-go/social"). This enables
+// "myorg/backend/feature-x"), the filter also returns blocks scoped to any
+// ancestor in the path ("myorg", "myorg/backend"). This enables
 // project/repo/branch-level memory inheritance: facts stored at a parent scope
 // are automatically visible to all descendants. Global blocks (Scope=="") are
 // always visible regardless of scope structure.
 //
 // Examples (query scope -> visible scopes):
 //
-//	"yaver-go/social/x" -> {"", "yaver-go", "yaver-go/social", "yaver-go/social/x"}
-//	"acme"              -> {"", "acme"}
-//	"" (no scope)       -> all blocks
+//	"myorg/backend/x" -> {"", "myorg", "myorg/backend", "myorg/backend/x"}
+//	"acme"            -> {"", "acme"}
+//	"" (no scope)     -> all blocks
 func filterScope(blocks []Block, scope string) []Block {
 	if scope == "" {
 		return blocks

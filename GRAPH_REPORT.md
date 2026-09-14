@@ -1,4 +1,4 @@
-# Graph Report: yaver-go
+# Graph Report: Target Codebase
 
 Generated: 2026-08-10 12:24:18
 
@@ -199,7 +199,7 @@ Detected via the Louvain algorithm. Each community represents a group of tightly
 - `fmt.Print`
 - `fmt.Printf`
 - `fmt.Println`
-- `yaver-chat.main`
+- `agent-chat.main`
 - `chattools.WithMemoryEngine`
 - `clarifier.New`
 - `handlers.TestSocialSession_UpdatePlan`
@@ -1113,8 +1113,8 @@ Detected via the Louvain algorithm. Each community represents a group of tightly
 - `a2a.Artifact`
 - `a2a.Client`
 - `a2a.Client.Available`
-- `a2a.DefaultYaverCard_part1`
-- `a2a.DefaultYaverCard_part2`
+- `a2a.DefaultAgentCard_part1`
+- `a2a.DefaultAgentCard_part2`
 - `a2a.ErrorResponse`
 - `a2a.Message`
 - `a2a.Part`
@@ -2383,9 +2383,9 @@ Detected via the Louvain algorithm. Each community represents a group of tightly
 
 ### Community 106: a2a_test (14 nodes, cohesion=0.167)
 
-- `a2a.DefaultYaverCard`
+- `a2a.DefaultAgentCard`
 - `a2a.NewServer`
-- `a2a.TestDefaultYaverCard`
+- `a2a.TestDefaultAgentCard`
 - `a2a.TestServer_AgentCard`
 - `a2a.TestServer_GetTask`
 - `a2a.TestServer_GetTask_NotFound`
@@ -3367,7 +3367,7 @@ Detected via the Louvain algorithm. Each community represents a group of tightly
 - `selfaudit.New`
 - `selfaudit.TestAuditor_AuditAnswer`
 - `selfaudit.TestAuditor_AuditCodeChange`
-- `e2e.TestE2EDORAMetricsYaverRepo_part2`
+- `e2e.TestE2EDORAMetricsAgentRepo_part2`
 - `e2e.TestE2ESelfAuditAnswer`
 - `e2e.TestE2ESelfAuditCodeChange`
 - `e2e.TestE2ESelfAuditLargePatch`
@@ -3710,7 +3710,7 @@ Detected via the Louvain algorithm. Each community represents a group of tightly
 - `config.SetupWizard.SetupVectorStore_part1`
 - `config.TestLoadExistingEnv_Missing`
 - `config.make`
-- `config.removeYaverCompletions`
+- `config.removeAgentCompletions`
 
 ### Community 200: verify (9 nodes, cohesion=0.033)
 
@@ -4591,7 +4591,7 @@ Detected via the Louvain algorithm. Each community represents a group of tightly
 ### Community 282: logger (7 nodes, cohesion=0.083)
 
 - `main.go`
-- `yaver.main`
+- `agent.main`
 - `ui.InstallPrettyLogger`
 - `ui.NewPrettyHandler`
 - `ui.PrettyHandler`
@@ -5145,7 +5145,7 @@ Detected via the Louvain algorithm. Each community represents a group of tightly
 - `handlers.MentionHandler.handleConflict_part1`
 - `git.New`
 - `git.TestNew_Invalid`
-- `e2e.TestE2EDORAMetricsYaverRepo_part1`
+- `e2e.TestE2EDORAMetricsAgentRepo_part1`
 
 ### Community 345: src (5 nodes, cohesion=0.200)
 
@@ -5776,7 +5776,7 @@ Detected via the Louvain algorithm. Each community represents a group of tightly
 - `extension.ts`
 - `src._internal`
 - `src.gap_14`
-- `src.yaverTerminal`
+- `src.agentTerminal`
 
 ### Community 430: codeparse (4 nodes, cohesion=0.250)
 
@@ -7306,7 +7306,7 @@ Detected via the Louvain algorithm. Each community represents a group of tightly
 ### Community 694: main (2 nodes, cohesion=0.150)
 
 - `main.go`
-- `yaver-chat.version`
+- `agent-chat.version`
 
 ### Community 695: codesearch_test (2 nodes, cohesion=0.500)
 
@@ -7421,7 +7421,7 @@ Detected via the Louvain algorithm. Each community represents a group of tightly
 ### Community 717: vscode_test (2 nodes, cohesion=0.500)
 
 - `cmd.TestVSCode_DefaultTasksShape`
-- `cmd.yaverTasks`
+- `cmd.agentTasks`
 
 ### Community 718: onboarding (2 nodes, cohesion=0.500)
 

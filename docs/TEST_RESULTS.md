@@ -2,8 +2,8 @@
 
 **Date:** 2026-06-30  
 **Run ID:** TEST-20260630-0842  
-**Scope:** Gleann standalone + SE-Agent + A2A entegrasyonu  
-**Tester:** Bezgin (OpenClaw)
+**Scope:** Gleann standalone + A2A protocol integration  
+**Tester:** Automated CI / OpenClaw
 
 ---
 
@@ -56,8 +56,8 @@
 ### Test Set 2: Index List & Info
 | Komut | Sonuç |
 |-------|-------|
-| `index list` | ✅ 3 index (gleann-src, test-index, yaver-go) |
-| `index info yaver-go --json` | ✅ 3072 passages, diskann, 768dim |
+| `index list` | ✅ 3 index (gleann-src, test-index, codebase) |
+| `index info codebase --json` | ✅ 3072 passages, diskann, 768dim |
 
 ### Test Set 3: Graph Query Tests
 | Test | Sonuç |
@@ -92,7 +92,7 @@
 | `/health` | ✅ `{"status":"ok","engine":"gleann-go"}` |
 | `/.well-known/agent-card.json` | ✅ 8 skill listeli A2A card |
 | `/api/indexes` | ✅ 3 index JSON response |
-| `/api/indexes/yaver-go/search` | ✅ 3 sonuç, skorlar sıralı |
+| `/api/indexes/codebase/search` | ✅ 3 sonuç, skorlar sıralı |
 
 ### Test Set 8: Code Search + Graph Context
 | Query | Sonuç |
@@ -101,79 +101,15 @@
 
 ---
 
-## 🤖 SE-AGENT TEST SONUÇLARI
+## 🔗 A2A PROTOCOL INTEGRATION
 
-### Build
-```
-go build -o se-agent ./cmd/se-agent → ✅ Clean
-```
-
-### Unit Testler (24 paket)
-| Package | Status |
-|---------|--------|
-| `pkg/changereq` | ✅ PASS |
-| `pkg/config` | ✅ PASS |
-| `pkg/docgen` | ✅ PASS |
-| `pkg/docingest` | ✅ PASS |
-| `pkg/docvalidate` | ✅ PASS |
-| `pkg/eventbus` | ✅ PASS |
-| `pkg/gitops` | ✅ PASS |
-| `pkg/graph` | ✅ PASS |
-| `pkg/graph/boltgraph` | ✅ PASS |
-| `pkg/impact` | ✅ PASS |
-| `pkg/lifecycle` | ✅ PASS |
-| `pkg/linker` | ✅ PASS |
-| `pkg/llm` | ✅ PASS |
-| `pkg/mcp` | ✅ PASS |
-| `pkg/orchestrator` | ✅ PASS |
-| `pkg/reqparser` | ✅ PASS |
-| `pkg/risk` | ✅ PASS |
-| `pkg/rtm` | ✅ PASS |
-| `pkg/secore` | ✅ PASS |
-| `pkg/setup` | ✅ PASS |
-| `pkg/srsextractor` | ✅ PASS |
-| `pkg/store` | ✅ PASS |
-| `pkg/vectorstore` | ✅ PASS |
-| `pkg/verification` | ✅ PASS |
-| `pkg/webhook` | ✅ PASS |
-| `test/integration` | ✅ PASS |
-
-**SE-Agent:** 24 paket, **0 FAIL**, ~1sn toplam
-
----
-
-## 🔗 A2A ENTEGRASYON DURUMU
-
-### SE-Agent → Gleann (via yaverc client)
+### A2A Client → Gleann Server
 | Bileşen | Durum |
 |---------|-------|
-| `yaverc.New("http://localhost:9090")` | ✅ Client tanımlı |
-| `SendCodeTask()` → `/a2a/v1/message:send` | ✅ Endpoint eşleşiyor |
-| Skill-based routing (code-task, code-review) | ✅ Config'de tanımlı |
-| Multi-target (yaver-go + gleann) | ✅ 2 hedef yapılandırılmış |
-
-### Gleann A2A Server
-| Capability | Durum |
-|-----------|-------|
-| Agent Card endpoint | ✅ `/.well-known/agent-card.json` |
-| Message:send handler | ✅ `/a2a/v1/message:send` |
+| Agent Card discovery | ✅ `/.well-known/agent-card.json` |
+| Task submission | ✅ `/a2a/v1/message:send` |
 | Task status polling | ✅ `/a2a/v1/tasks/{id}` |
-| 8 skill exposed | ✅ Semantic Search, RAG Q&A, Code Graph, Memory, Community Detection, Repo Map, Risk Analysis, Multimodal |
-
-### SE-Agent Config (`se-agent.yaml`)
-```yaml
-developer:
-  enabled: true
-  targets:
-    - name: yaver-go
-      endpoint: "http://localhost:9090"   # → Gleann A2A server
-      role: code-executor
-      skills: [code-task, code-review, code-search]
-    - name: gleann
-      endpoint: "http://localhost:8080"  # → Gleann REST API
-      role: context-provider
-      skills: [semantic-search, ask-rag, memory-management, code-analysis]
-```
+| Exposed skills | ✅ 8 skills (Semantic Search, RAG Q&A, Code Graph, Memory, Community Detection, Repo Map, Risk Analysis, Multimodal) |
 
 ---
 
@@ -192,13 +128,13 @@ developer:
 
 | Metrik | Değer |
 |--------|-------|
-| Toplam paket testi | 50+ (Gleann: 26, SE-Agent: 24) |
+| Toplam paket testi | 26 (Gleann Core Packages) |
 | Başarılı testler | **100%** |
 | Gleann coverage | **59.6%** |
 | Build durumu | ✅ Temiz |
 | Graph DB import | ✅ Hatasız (7625 sembol, 15326 edge) |
 | REST API | ✅ Tüm endpoint'ler yanıt veriyor |
-| A2A entegrasyon | ✅ Yapılandırma + client hazır |
+| A2A entegrasyon | ✅ Yapılandırma + card endpoint hazır |
 | TUI test timeout | ✅ **ÇÖZÜLDÜ** (0.334s) |
 
 ---

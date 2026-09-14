@@ -2,7 +2,7 @@
 
 **Date:** 2026-06-28  
 **Author:** Bezgin  
-**Scope:** Internal Gleann integration points only (NOT shared with Yaver-Go or SE-Agent)
+**Scope:** Internal Gleann end-to-end integration points
 
 ---
 

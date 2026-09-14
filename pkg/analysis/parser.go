@@ -1,7 +1,7 @@
 // Package analysis provides a public API for gleann's AST-aware code parsing.
 //
 // This package re-exports the internal chunking engine so that external modules
-// (e.g. yaver-go) can use gleann's multi-language AST analysis without
+// (e.g. external tools or agent frameworks) can use gleann's multi-language AST analysis without
 // accessing internal packages.
 //
 // Usage:

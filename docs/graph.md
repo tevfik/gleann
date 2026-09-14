@@ -45,7 +45,7 @@ The KuzuDB property graph models both source code ASTs and the structural layout
 | `CALLS` | `Symbol → Symbol` | Function calls another |
 | `IMPLEMENTS` | `Symbol → Symbol` | Struct implements interface |
 
-## MCP Integration (Yaver / Cursor / Claude Code)
+## MCP Integration (Windsurf / Cursor / Claude Code)
 
 When `gleann mcp` is running, AI editors can call these graph tools:
 

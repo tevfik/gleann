@@ -2,16 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
-## [Unreleased] — 2026-06-30
+## [v1.1.0] — 2026-09-14
+
+### Added
+- **Web UI Architecture**: Completely modularized React frontend into clean, maintainable components (`ChatView`, `GraphView`, `MemoryView`, `TasksView`, `IndexesView`, `SettingsModal`).
+- **Memory Scope Generics**: Clean generic hierarchical scoping patterns across memory engine and documentation.
 
 ### Fixed
-- **Graph CSV Import Crash**: Kuzu DB'de doc comment'lerdeki `"`, `,`, `\`, `\n` karakterleri nedeniyle STRING→DOUBLE cast hatası düzeltildi (`sanitizeCSVField()` eklendi)
-- **TUI Test Timeout**: 200+ TUI testi 90sn timeout'u aşuyordu. `TestMain` ile `GLEANN_TEST_MODE=true` set edilerek ~4700x hızlanma sağlandı (5sn/test → 0.001sn/test)
+- **Windows CI & Path Compatibility**: Resolved `models_handler_test` failure on Windows by honoring `USERPROFILE` path resolution.
+- **Race Condition Handling**: Disabled Windows `-race` flag in CI to prevent TSAN crashes with CGO.
+- **Graph CSV Import Crash**: Kuzu DB'de doc comment'lerdeki `"`, `,`, `\`, `\n` karakterleri nedeniyle STRING→DOUBLE cast hatası düzeltildi (`sanitizeCSVField()` eklendi).
+- **TUI Test Timeout**: 200+ TUI testi 90sn timeout'u aşması `TestMain` ve test modu ile çözüldü.
 
 ### Stats
-- **Coverage**: %59.6 total statements (26 paket, 0 fail)
+- **Coverage**: %59.6 total statements (26 packages, 0 fail)
 - **Graph Index**: 8080 nodes, 22037 edges, 789 communities
-- **Unit Tests**: Gleann 26 + SE-Agent 24 = **50 package**, all passing
+- **Unit Tests**: Gleann Core: **26 packages**, all passing
 
 ---
 

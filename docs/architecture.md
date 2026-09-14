@@ -154,7 +154,7 @@ gleann v2 introduces a **Memory Engine** that transforms the system from a
 closed RAG box into a generic knowledge graph backend for autonomous AI agents.
 
 ```
-External Agent (e.g. Yaver, Claude)
+External Agent (e.g. Cursor, Claude)
         │
         │  MCP tools:                    HTTP endpoints:
         │  inject_knowledge_graph   ←→   POST /api/memory/{name}/inject

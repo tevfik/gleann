@@ -1,5 +1,5 @@
 // Package server — graph API handlers for KuzuDB graph queries.
-// These endpoints allow external tools (e.g. yaver-go) to query the
+// These endpoints allow external tools (e.g. external agents or IDE extensions) to query the
 // code graph over HTTP instead of linking KuzuDB as an embedded library.
 package server
 

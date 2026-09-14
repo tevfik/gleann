@@ -17,8 +17,6 @@ Gleann is a self-contained AI/RAG backend implemented in Go. This test plan cove
 5. REST API & A2A protocol
 6. Security & performance requirements
 
-**Note:** Test plans for Yaver-Go and SE-Agent are maintained in their respective repositories.
-
 ---
 
 ## 🧪 1. GLEANN TEST PLAN
@@ -41,7 +39,7 @@ Gleann is a self-contained AI/RAG backend implemented in Go. This test plan cove
 |---------|---------|----------------|-----------------|
 | GL-CODE-001 | Build with graph | `gleann index build code --docs ./src --graph` | AST call graph indexed |
 | GL-CODE-002 | Callers/callees search | `gleann search code "handleRequest" --graph` | Graph context enriched results |
-| GL-CODE-003 | Blast radius analysis | `se-agent impact pkg/auth.Validate` (external tool) | BFS traversal output |
+| GL-CODE-003 | Blast radius analysis | `curl http://localhost:8080/api/graph/code/callers?symbol=Validate` | BFS traversal output |
 
 ### 1.3 Long-Term Memory
 

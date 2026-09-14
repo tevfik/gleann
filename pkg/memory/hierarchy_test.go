@@ -15,8 +15,8 @@ func TestScopeAncestors(t *testing.T) {
 		{"", []string{""}},
 		{"acme", []string{"", "acme"}},
 		{"acme/web", []string{"", "acme", "acme/web"}},
-		{"yaver-go/social/feature-x", []string{
-			"", "yaver-go", "yaver-go/social", "yaver-go/social/feature-x",
+		{"myorg/backend/feature-x", []string{
+			"", "myorg", "myorg/backend", "myorg/backend/feature-x",
 		}},
 		// Stray slashes do not create empty entries.
 		{"a//b", []string{"", "a", "a/b", "a//b"}},
@@ -40,13 +40,13 @@ func TestScopeAncestors(t *testing.T) {
 func TestFilterScope_Hierarchical(t *testing.T) {
 	blocks := []Block{
 		{ID: "g", Scope: ""},
-		{ID: "p", Scope: "yaver-go"},
-		{ID: "ps", Scope: "yaver-go/social"},
-		{ID: "psf", Scope: "yaver-go/social/feature-x"},
+		{ID: "p", Scope: "myorg"},
+		{ID: "ps", Scope: "myorg/backend"},
+		{ID: "psf", Scope: "myorg/backend/feature-x"},
 		{ID: "other", Scope: "different-project"},
 	}
 
-	got := filterScope(blocks, "yaver-go/social/feature-x")
+	got := filterScope(blocks, "myorg/backend/feature-x")
 	wantIDs := map[string]bool{"g": true, "p": true, "ps": true, "psf": true}
 
 	if len(got) != len(wantIDs) {
@@ -64,10 +64,10 @@ func TestFilterScope_Hierarchical(t *testing.T) {
 // inheritance: parents are visible to children, not the reverse).
 func TestFilterScope_DescendantNotMatched(t *testing.T) {
 	blocks := []Block{
-		{ID: "p", Scope: "yaver-go"},
-		{ID: "psf", Scope: "yaver-go/social/feature-x"},
+		{ID: "p", Scope: "myorg"},
+		{ID: "psf", Scope: "myorg/backend/feature-x"},
 	}
-	got := filterScope(blocks, "yaver-go")
+	got := filterScope(blocks, "myorg")
 	if len(got) != 1 || got[0].ID != "p" {
 		t.Errorf("expected only the parent block, got %+v", got)
 	}
@@ -109,9 +109,9 @@ func TestFilterScope_PathStyleVsLegacy(t *testing.T) {
 // Ensure the hierarchy helper plays nicely with file-path-shaped scopes
 // (commonly used when an agent passes its repo path as a scope).
 func TestScopeAncestors_FilesystemPath(t *testing.T) {
-	scope := filepath.ToSlash("yaver-go/internal/agent/social")
+	scope := filepath.ToSlash("myorg/internal/agent/auth")
 	got := scopeAncestors(scope)
-	for _, want := range []string{"", "yaver-go", "yaver-go/internal", "yaver-go/internal/agent", "yaver-go/internal/agent/social"} {
+	for _, want := range []string{"", "myorg", "myorg/internal", "myorg/internal/agent", "myorg/internal/agent/auth"} {
 		if _, ok := got[want]; !ok {
 			t.Errorf("missing ancestor %q in %v", want, got)
 		}

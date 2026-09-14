@@ -387,7 +387,7 @@ type EmbeddingBatch struct {
 // ── Memory Engine types ───────────────────────────────────────────────────────
 //
 // These types form the generic Knowledge Graph / Memory Engine API that allows
-// external AI agents (e.g. Yaver, Claude) to inject, query, and manage graph
+// external AI agents (e.g. Cursor, Claude, custom agents) to inject, query, and manage graph
 // knowledge without coupling to gleann's internal RAG pipeline.
 
 // MemoryGraphNode is a generic, labeled property node stored in the Entity

@@ -1,7 +1,7 @@
 # Gleann — Security & Quality Audit (October 2025)
 
 ## Scope
-Comprehensive security, dead-code, documentation, and code-quality audit of the gleann repository — a foundational GraphRAG/memory engine consumed by yaver-go and se-agent.
+Comprehensive security, dead-code, documentation, and code-quality audit of the gleann repository — a foundational GraphRAG/memory engine consumed by downstream AI agents and autonomous developer tools.
 
 ## Toolchain
 - `govulncheck` (golang.org/x/vuln) — CVE detection (callable paths only)
@@ -42,7 +42,7 @@ Comprehensive security, dead-code, documentation, and code-quality audit of the 
 ### Dead Code (Intentional)
 The `deadcode` tool flagged ~30 unreachable functions, primarily:
 - A2A FSM helpers (`TaskFSMResume`, `TaskFSMGraph`) — public API for downstream
-  consumers (yaver-go, se-agent) that aren't called inside gleann itself.
+  agents and external clients that aren't called inside gleann itself.
 - Background manager methods (`ActiveCount`, `NewTaskFSM`, etc.) — public API.
 - Event bus `Subscribe` — exported for plugin authors.
 

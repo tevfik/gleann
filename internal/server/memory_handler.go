@@ -3,7 +3,7 @@
 // Package server — Memory Engine REST API handlers.
 //
 // These endpoints expose gleann's generic Knowledge Graph to external AI
-// agents (e.g. Yaver, Claude) over HTTP.  An agent can inject entities and
+// agents (e.g. Cursor, Claude) over HTTP.  An agent can inject entities and
 // relationships, delete them, and traverse sub-graphs without coupling to
 // gleann's internal RAG pipeline.
 package server

@@ -36,7 +36,7 @@ Gleann is designed as a **local-first** tool. Key security notes:
 
 | Threat | Mitigation |
 |--------|------------|
-| Prompt injection in indexed documents | Search results are returned as structured JSON; downstream LLM consumers (yaver, opencode, etc.) are responsible for treating retrieved content as untrusted. |
+| Prompt injection in indexed documents | Search results are returned as structured JSON; downstream LLM consumers (Claude Code, OpenCode, etc.) are responsible for treating retrieved content as untrusted. |
 | Path traversal in `gleann build --docs` | The ingestion walker resolves symlinks and refuses to follow paths outside the chosen root. |
 | Webhook SSRF | `POST /api/webhooks` rejects non-http(s) schemes and hostnames resolving to loopback / link-local / private ranges (incl. 169.254.169.254). Override for trusted internal deployments with `GLEANN_WEBHOOK_ALLOW_PRIVATE=1`. |
 | Request body memory exhaustion | All POST/PUT/PATCH bodies are capped (default 16 MiB) via `http.MaxBytesReader`; tune via `GLEANN_MAX_BODY_BYTES` (0 disables). |
