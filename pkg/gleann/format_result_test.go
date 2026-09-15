@@ -136,6 +136,26 @@ func TestFormatResult(t *testing.T) {
 				"Content:\n" +
 				"This is a test context.",
 		},
+		{
+			name: "result with hierarchical breadcrumb",
+			result: SearchResult{
+				Text: "Breadcrumb context snippet.",
+				GraphContext: &GraphContextInfo{
+					DocumentContext: &DocumentContextData{
+						Name:       "architecture.md",
+						FolderName: "docs",
+						Breadcrumb: "docs > architecture.md > Storage > KuzuDB",
+						Summary:    "Detailed overview of KuzuDB storage.",
+					},
+				},
+			},
+			idx: 7,
+			expected: "[7]\n" +
+				"Location: docs > architecture.md > Storage > KuzuDB\n" +
+				"Summary: Detailed overview of KuzuDB storage.\n" +
+				"Content:\n" +
+				"Breadcrumb context snippet.",
+		},
 	}
 
 	for _, tt := range tests {

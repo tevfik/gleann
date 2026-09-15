@@ -28,11 +28,13 @@ type GraphContextInfo struct {
 
 // DocumentContextData holds hierarchical graph metadata about a document.
 type DocumentContextData struct {
-	VPath      string `json:"vpath"`
-	RPath      string `json:"rpath"`
-	Name       string `json:"name"`
-	Summary    string `json:"summary"`
-	FolderName string `json:"folder_name,omitempty"`
+	VPath      string   `json:"vpath"`
+	RPath      string   `json:"rpath"`
+	Name       string   `json:"name"`
+	Summary    string   `json:"summary"`
+	FolderName string   `json:"folder_name,omitempty"`
+	Breadcrumb string   `json:"breadcrumb,omitempty"`
+	Headings   []string `json:"headings,omitempty"`
 }
 
 // SymbolNeighbors holds a symbol and its direct callers/callees from the code graph.

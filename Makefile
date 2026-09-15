@@ -83,7 +83,7 @@ $(BINARY): prepare-assets
 	@if command -v go >/dev/null 2>&1; then \
 		go build -ldflags "$(LDFLAGS)" -o $(BINARY) $(CMD); \
 	elif command -v docker >/dev/null 2>&1; then \
-		docker run --rm -u $$(id -u):$$(id -g) -v gleann-go-cache:/go/pkg/mod -v gleann-build-cache:/root/.cache/go-build -v $$(pwd):/app -w /app golang:1.25 sh -c "go build -buildvcs=false -ldflags '$(LDFLAGS)' -o $(BINARY) $(CMD)"; \
+		docker run --rm -v gleann-go-cache:/go/pkg/mod -v gleann-build-cache:/root/.cache/go-build -v $$(pwd):/app -w /app golang:1.25 sh -c "go build -buildvcs=false -ldflags '$(LDFLAGS)' -o $(BINARY) $(CMD) && chown -R $$(id -u):$$(id -g) /app/$(BUILD_DIR)"; \
 	else \
 		echo "❌ Neither 'go' nor 'docker' found!"; exit 1; \
 	fi
@@ -96,7 +96,7 @@ build-cgo: prepare-assets
 	@if command -v go >/dev/null 2>&1; then \
 		CGO_ENABLED=1 CGO_CFLAGS="-w" go build -tags "treesitter" -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/gleann-cgo $(CMD); \
 	elif command -v docker >/dev/null 2>&1; then \
-		docker run --rm -u $$(id -u):$$(id -g) -v gleann-go-cache:/go/pkg/mod -v gleann-build-cache:/root/.cache/go-build -v $$(pwd):/app -w /app golang:1.25 sh -c "CGO_ENABLED=1 go build -buildvcs=false -tags 'treesitter' -ldflags '$(LDFLAGS)' -o $(BUILD_DIR)/gleann-cgo $(CMD)"; \
+		docker run --rm -v gleann-go-cache:/go/pkg/mod -v gleann-build-cache:/root/.cache/go-build -v $$(pwd):/app -w /app golang:1.25 sh -c "CGO_ENABLED=1 go build -buildvcs=false -tags 'treesitter' -ldflags '$(LDFLAGS)' -o $(BUILD_DIR)/gleann-cgo $(CMD) && chown -R $$(id -u):$$(id -g) /app/$(BUILD_DIR)"; \
 	fi
 	@echo "✅ Built $(BUILD_DIR)/gleann-cgo (with CGo and tree-sitter)"
 

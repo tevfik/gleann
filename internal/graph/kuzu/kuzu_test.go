@@ -3,6 +3,8 @@
 package kuzu_test
 
 import (
+	"fmt"
+	"os"
 	"testing"
 
 	kgraph "github.com/tevfik/gleann/internal/graph/kuzu"
@@ -377,3 +379,87 @@ func TestRemoveFileSymbols_NonexistentFile(t *testing.T) {
 		t.Errorf("RemoveFileSymbols for nonexistent file should not error, got: %v", err)
 	}
 }
+
+func TestDocumentContextAndFullDocument(t *testing.T) {
+	db, err := kgraph.Open("")
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer db.Close()
+
+	// 1. Setup Folder, Document, Headings, and Chunks
+	ddls := []string{
+		`CREATE (f:Folder {vpath: "docs", name: "docs"})`,
+		`CREATE (d:Document {vpath: "docs/arch.md", rpath: "/nonexistent/arch.md", name: "arch.md", hash: "hash123", summary: "Architecture documentation summary."})`,
+		`MATCH (f:Folder {vpath: "docs"}), (d:Document {vpath: "docs/arch.md"}) CREATE (f)-[:CONTAINS_DOC]->(d)`,
+		`CREATE (h1:Heading {id: "docs/arch.md#h1", name: "Introduction", level: 1})`,
+		`CREATE (h2:Heading {id: "docs/arch.md#h2", name: "Storage Engine", level: 2})`,
+		`MATCH (d:Document {vpath: "docs/arch.md"}), (h:Heading {id: "docs/arch.md#h1"}) CREATE (d)-[:HAS_HEADING]->(h)`,
+		`MATCH (d:Document {vpath: "docs/arch.md"}), (h:Heading {id: "docs/arch.md#h2"}) CREATE (d)-[:HAS_HEADING]->(h)`,
+		`CREATE (c1:Chunk {id: "chunk-1", text: "Introduction text.", start_char: 0, end_char: 18})`,
+		`CREATE (c2:Chunk {id: "chunk-2", text: "Storage engine details.", start_char: 19, end_char: 42})`,
+		`MATCH (d:Document {vpath: "docs/arch.md"}), (c:Chunk {id: "chunk-1"}) CREATE (d)-[:HAS_CHUNK_DOC]->(c)`,
+		`MATCH (d:Document {vpath: "docs/arch.md"}), (c:Chunk {id: "chunk-2"}) CREATE (d)-[:HAS_CHUNK_DOC]->(c)`,
+	}
+	for _, q := range ddls {
+		if err := kgraph.ExecOn(db.Conn(), q); err != nil {
+			t.Fatalf("ExecOn(%q): %v", q, err)
+		}
+	}
+
+	// 2. Test DocumentContext
+	docCtx, err := db.DocumentContext("docs/arch.md")
+	if err != nil {
+		t.Fatalf("DocumentContext: %v", err)
+	}
+	if docCtx.Name != "arch.md" {
+		t.Errorf("expected Name 'arch.md', got %q", docCtx.Name)
+	}
+	if docCtx.FolderName != "docs" {
+		t.Errorf("expected FolderName 'docs', got %q", docCtx.FolderName)
+	}
+	if docCtx.Summary != "Architecture documentation summary." {
+		t.Errorf("expected summary, got %q", docCtx.Summary)
+	}
+	expectedBreadcrumb := "docs > arch.md > Introduction > Storage Engine"
+	if docCtx.Breadcrumb != expectedBreadcrumb {
+		t.Errorf("expected Breadcrumb %q, got %q", expectedBreadcrumb, docCtx.Breadcrumb)
+	}
+	if len(docCtx.Headings) != 2 || docCtx.Headings[0] != "Introduction" || docCtx.Headings[1] != "Storage Engine" {
+		t.Errorf("expected Headings [Introduction, Storage Engine], got %+v", docCtx.Headings)
+	}
+
+	// 3. Test FullDocument via graph chunk fallback
+	fullText, err := db.FullDocument("docs/arch.md")
+	if err != nil {
+		t.Fatalf("FullDocument: %v", err)
+	}
+	expectedText := "Introduction text.\n\nStorage engine details."
+	if fullText != expectedText {
+		t.Errorf("FullDocument chunk fallback = %q, want %q", fullText, expectedText)
+	}
+
+	// 4. Test FullDocument fast-path when rpath exists on disk
+	tmpFile, err := os.CreateTemp("", "test_doc_*.md")
+	if err != nil {
+		t.Fatalf("CreateTemp: %v", err)
+	}
+	defer os.Remove(tmpFile.Name())
+	diskContent := "# Live Document\nFrom local filesystem directly."
+	if _, err := tmpFile.WriteString(diskContent); err != nil {
+		t.Fatalf("WriteString: %v", err)
+	}
+	tmpFile.Close()
+
+	if err := kgraph.ExecOn(db.Conn(), fmt.Sprintf(`CREATE (d:Document {vpath: "disk/doc.md", rpath: %q, name: "doc.md", hash: "h456", summary: ""})`, tmpFile.Name())); err != nil {
+		t.Fatalf("create disk doc: %v", err)
+	}
+	diskDocText, err := db.FullDocument("disk/doc.md")
+	if err != nil {
+		t.Fatalf("FullDocument disk: %v", err)
+	}
+	if diskDocText != diskContent {
+		t.Errorf("FullDocument disk fast-path = %q, want %q", diskDocText, diskContent)
+	}
+}
+

@@ -51,15 +51,17 @@ func TestNewServer_ToolNames(t *testing.T) {
 		{"gleann_ask", nil},
 		{"gleann_graph_neighbors", nil},
 		{"gleann_document_links", nil},
+		{"gleann_read_full_document", nil},
 	}
 
 	// Build tools directly to verify their structure
 	builtTools := map[string]bool{
-		srv.buildSearchTool().Name:         true,
-		srv.buildListTool().Name:           true,
-		srv.buildAskTool().Name:            true,
-		srv.buildGraphNeighborsTool().Name: true,
-		srv.buildDocumentLinksTool().Name:  true,
+		srv.buildSearchTool().Name:           true,
+		srv.buildListTool().Name:             true,
+		srv.buildAskTool().Name:              true,
+		srv.buildGraphNeighborsTool().Name:   true,
+		srv.buildDocumentLinksTool().Name:    true,
+		srv.buildReadFullDocumentTool().Name: true,
 	}
 
 	for _, tt := range tools {

@@ -4,6 +4,7 @@ package kuzu
 
 import (
 	"fmt"
+	"os"
 	"strings"
 
 	gokuzu "github.com/kuzudb/go-kuzu"
@@ -164,14 +165,15 @@ func (g *DB) DocumentSymbols(docPath string) ([]gleann.SymbolInfo, error) {
 	return out, nil
 }
 
-// DocumentContext fetches hierarchical structural information and summary for a document by vpath.
-func (g *DB) DocumentContext(vpath string) (*gleann.DocumentContextData, error) {
+// DocumentContext fetches hierarchical structural information and summary for a document by vpath or rpath.
+func (g *DB) DocumentContext(path string) (*gleann.DocumentContextData, error) {
 	cypher := fmt.Sprintf(`
-		MATCH (d:Document {vpath: "%s"})
+		MATCH (d:Document)
+		WHERE d.vpath = "%s" OR d.rpath = "%s"
 		OPTIONAL MATCH (f:Folder)-[:CONTAINS_DOC]->(d)
 		RETURN d.vpath AS vpath, d.rpath AS rpath, d.name AS name,
 		       coalesce(d.summary, "") AS summary, coalesce(f.name, "") AS folder
-	`, vpath)
+	`, path, path)
 
 	res, err := g.conn.Query(cypher)
 	if err != nil {
@@ -180,7 +182,7 @@ func (g *DB) DocumentContext(vpath string) (*gleann.DocumentContextData, error) 
 	defer res.Close()
 
 	if !res.HasNext() {
-		return nil, fmt.Errorf("no Document found with vpath: %s", vpath)
+		return nil, fmt.Errorf("no Document found with path: %s", path)
 	}
 
 	row, err := res.Next()
@@ -193,12 +195,55 @@ func (g *DB) DocumentContext(vpath string) (*gleann.DocumentContextData, error) 
 		return nil, err
 	}
 
+	// Fetch associated headings to build hierarchical breadcrumb
+	headingCypher := fmt.Sprintf(`
+		MATCH (d:Document)-[:HAS_HEADING]->(h:Heading)
+		WHERE d.vpath = "%s" OR d.rpath = "%s"
+		RETURN h.name AS name, h.level AS level
+		ORDER BY h.level ASC
+	`, path, path)
+
+	var headings []string
+	if hres, err := g.conn.Query(headingCypher); err == nil {
+		defer hres.Close()
+		for hres.HasNext() {
+			if hrow, err := hres.Next(); err == nil {
+				if hm, err := hrow.GetAsMap(); err == nil {
+					hName := strVal(hm["name"])
+					if hName != "" {
+						headings = append(headings, hName)
+					}
+				}
+			}
+		}
+	}
+
+	folder := strVal(m["folder"])
+	docName := strVal(m["name"])
+	if docName == "" {
+		docName = strVal(m["vpath"])
+	}
+
+	var bParts []string
+	if folder != "" {
+		bParts = append(bParts, folder)
+	}
+	if docName != "" {
+		bParts = append(bParts, docName)
+	}
+	if len(headings) > 0 {
+		bParts = append(bParts, headings...)
+	}
+	breadcrumb := strings.Join(bParts, " > ")
+
 	return &gleann.DocumentContextData{
 		VPath:      strVal(m["vpath"]),
 		RPath:      strVal(m["rpath"]),
 		Name:       strVal(m["name"]),
 		Summary:    strVal(m["summary"]),
-		FolderName: strVal(m["folder"]),
+		FolderName: folder,
+		Breadcrumb: breadcrumb,
+		Headings:   headings,
 	}, nil
 }
 
@@ -210,14 +255,28 @@ func strVal(v any) string {
 	return fmt.Sprint(v)
 }
 
-// FullDocument retrieves all chunks for a document ordered by their integer chunkId
-// and concatenates them to reconstruct the full document text.
-func (g *DB) FullDocument(vpath string) (string, error) {
+// FullDocument retrieves the complete document content by querying KuzuDB for its
+// on-disk physical path (rpath) or reconstructing it from the graph chunks.
+func (g *DB) FullDocument(path string) (string, error) {
+	// 1. Fast path: If physical file exists on disk, read it directly
+	docCtx, err := g.DocumentContext(path)
+	if err == nil && docCtx != nil && docCtx.RPath != "" {
+		if data, err := os.ReadFile(docCtx.RPath); err == nil && len(data) > 0 {
+			return string(data), nil
+		}
+	}
+
+	if data, err := os.ReadFile(path); err == nil && len(data) > 0 {
+		return string(data), nil
+	}
+
+	// 2. Graph reconstruction fallback: Retrieve all chunks for this document
 	cypher := fmt.Sprintf(`
-		MATCH (d:Document {vpath: "%s"})-[:HAS_CHUNK_DOC]->(c:DocChunk)
-		RETURN c.content AS content
-		ORDER BY cast(c.chunkId AS INT64) ASC
-	`, vpath)
+		MATCH (d:Document)-[:HAS_CHUNK_DOC]->(c:Chunk)
+		WHERE d.vpath = "%s" OR d.rpath = "%s"
+		RETURN c.text AS content
+		ORDER BY c.start_char ASC
+	`, path, path)
 
 	res, err := g.conn.Query(cypher)
 	if err != nil {
@@ -241,7 +300,7 @@ func (g *DB) FullDocument(vpath string) (string, error) {
 	}
 
 	if len(parts) == 0 {
-		return "", fmt.Errorf("no chunks found for document: %s", vpath)
+		return "", fmt.Errorf("no content found for document: %s", path)
 	}
 
 	return strings.Join(parts, "\n\n"), nil

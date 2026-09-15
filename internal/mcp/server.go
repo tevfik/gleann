@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"math"
+	"os"
 	"strings"
 
 	"github.com/mark3labs/mcp-go/mcp"
@@ -82,6 +83,7 @@ func NewServer(cfg Config) *Server {
 	s.AddTool(srv.buildAskTool(), srv.handleAsk)
 	s.AddTool(srv.buildGraphNeighborsTool(), srv.handleGraphNeighbors)
 	s.AddTool(srv.buildDocumentLinksTool(), srv.handleDocumentLinks)
+	s.AddTool(srv.buildReadFullDocumentTool(), srv.handleReadFullDocument)
 	s.AddTool(srv.buildImpactTool(), srv.handleImpact)
 
 	// Progressive disclosure — compact search + batch fetch + citation lookup.
@@ -719,6 +721,60 @@ func (s *Server) handleDocumentLinks(ctx context.Context, request mcp.CallToolRe
 	}
 
 	return mcp.NewToolResultText(sb.String()), nil
+}
+
+func (s *Server) buildReadFullDocumentTool() mcp.Tool {
+	return mcp.Tool{
+		Name:        "gleann_read_full_document",
+		Description: "Retrieve the complete text of an indexed document using its virtual or relative path (e.g. 'docs/architecture.md'). Uses KuzuDB path resolution and returns the intact document.",
+		InputSchema: mcp.ToolInputSchema{
+			Type: "object",
+			Properties: map[string]interface{}{
+				"index": map[string]interface{}{
+					"type":        "string",
+					"description": "Name of the index to query",
+				},
+				"vpath": map[string]interface{}{
+					"type":        "string",
+					"description": "The virtual or relative document path (e.g. 'docs/architecture.md')",
+				},
+			},
+			Required: []string{"index", "vpath"},
+		},
+	}
+}
+
+func (s *Server) handleReadFullDocument(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	args, ok := request.Params.Arguments.(map[string]interface{})
+	if !ok {
+		return mcp.NewToolResultError("invalid arguments format"), nil
+	}
+
+	indexName, _ := args["index"].(string)
+	vpath, _ := args["vpath"].(string)
+
+	if indexName == "" || vpath == "" {
+		return mcp.NewToolResultError("index and vpath are required"), nil
+	}
+
+	searcher, err := s.getSearcher(indexName)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("Error loading index %q: %v", indexName, err)), nil
+	}
+
+	db := searcher.GraphDB()
+	if db != nil {
+		if content, err := db.FullDocument(vpath); err == nil && content != "" {
+			return mcp.NewToolResultText(content), nil
+		}
+	}
+
+	// Fallback to direct file read if relative path exists
+	if data, err := os.ReadFile(vpath); err == nil {
+		return mcp.NewToolResultText(string(data)), nil
+	}
+
+	return mcp.NewToolResultError(fmt.Sprintf("could not read full document for %q in index %q", vpath, indexName)), nil
 }
 
 // --- Impact Analysis Tool ---

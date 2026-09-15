@@ -1366,7 +1366,14 @@ func formatResult(r SearchResult, idx int) string {
 
 	if r.GraphContext != nil {
 		if dc := r.GraphContext.DocumentContext; dc != nil {
-			sb.WriteString(fmt.Sprintf("Document: %s | Folder: %s\nSummary: %s\n", dc.Name, dc.FolderName, dc.Summary))
+			if dc.Breadcrumb != "" {
+				sb.WriteString(fmt.Sprintf("Location: %s\n", dc.Breadcrumb))
+			} else {
+				sb.WriteString(fmt.Sprintf("Document: %s | Folder: %s\n", dc.Name, dc.FolderName))
+			}
+			if dc.Summary != "" {
+				sb.WriteString(fmt.Sprintf("Summary: %s\n", dc.Summary))
+			}
 		}
 
 		if len(r.GraphContext.Symbols) > 0 {
