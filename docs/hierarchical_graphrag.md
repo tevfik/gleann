@@ -112,16 +112,16 @@ The user raised an excellent point: *How exactly does the LLM know how to fetch 
 
 Gleann achieves this through native **LLM Tool Calling (Function Calling)**:
 
-1. **System Prompt Injection:** When Gleann sends the context blocks to the LLM, it injects a small instruction: *"You have snippets from various files. If a snippet is insufficient, you can call the `read_full_document(vpath)` tool to read the entire file."*
+1. **System Prompt Injection:** When Gleann sends the context blocks to the LLM, it injects a small instruction: *"You have snippets from various files. If a snippet is insufficient, you can call the `read_full_document(vpath)` / `gleann_read_full_document(index, vpath)` tool to read the entire file."*
 2. **The LLM Decides:** The LLM reads the enriched chunk: `[Location: /docs/maintenance.md] Content: Run the restart script`. It realizes it lacks the script's arguments.
-3. **Tool Execution:** The LLM outputs a structured Tool Call for `read_full_document(vpath="/docs/maintenance.md")`.
-4. **Gleann Backend Resolution:** The Gleann backend intercepts this tool call, queries KuzuDB parameterizing the `vpath` to retrieve the `rpath` on disk (`/home/user/project/docs/maintenance.md`), reads the full file string, and feeds it back to the LLM within the same chat turn.
+3. **Tool Execution:** The LLM outputs a structured Tool Call for `gleann_read_full_document(index="docs", vpath="/docs/maintenance.md")`.
+4. **Gleann Backend Resolution:** The Gleann backend intercepts this tool call, queries KuzuDB parameterizing the `vpath` to retrieve the `rpath` on disk (`/home/user/project/docs/maintenance.md`), falls back to assembling the text from graph `Chunk` nodes if the disk file is unreachable, and feeds it back to the LLM within the same chat turn.
 5. **Tool Calling Fails / Fallback:** If the LLM generates a malformed tool call, or if the user is using a model that doesn't support structured function calling, Gleann simply ignores the tool call and instructs the LLM: *"Tool call failed, please provide the best answer using only the provided context snippets."* The LLM then falls back seamlessly to the stitched chunks.
 
 #### The MCP (Model Context Protocol) Angle
 If Gleann is running as an **MCP Server** (e.g., connected to Cursor or Claude Desktop), the mechanics shift slightly:
 - Gleann itself does not run the LLM. The AI Editor (Cursor/Claude) runs the LLM.
-- Gleann simply exposes `read_full_document(vpath)` and `semantic_search(query)` as **MCP Tools**.
+- Gleann exposes `gleann_read_full_document(index, vpath)` and `gleann_search(index, query)` as **MCP Tools**.
 - When the AI Editor LLM decides it needs a file, it sends an MCP JSON-RPC execution request to Gleann. Gleann translates the `vpath` to `rpath`, reads the file, and returns the raw string via MCP. The editor's LLM handles the rest!
 
 ### 6. How this Graph Hierarchy Benefits Source Code

@@ -50,11 +50,18 @@ type FileHashStore struct {
 }
 
 // DefaultHashStorePath returns the canonical on-disk location of the hash
-// store, alongside the KuzuDB graph directory.
+// store, alongside the KuzuDB graph.
 //
+// If indexDir/<name>_graph is a directory, it lives inside it:
 //	indexDir/<name>_graph/file_hashes.db
+// Otherwise (when <name>_graph is a single file in KuzuDB):
+//	indexDir/<name>_graph_file_hashes.db
 func DefaultHashStorePath(indexDir, name string) string {
-	return filepath.Join(indexDir, name+"_graph", "file_hashes.db")
+	graphPath := filepath.Join(indexDir, name+"_graph")
+	if fi, err := os.Stat(graphPath); err == nil && fi.IsDir() {
+		return filepath.Join(graphPath, "file_hashes.db")
+	}
+	return filepath.Join(indexDir, name+"_graph_file_hashes.db")
 }
 
 // NewFileHashStore opens (or creates) a hash store at path.

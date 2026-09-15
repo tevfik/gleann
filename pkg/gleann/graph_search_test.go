@@ -2,6 +2,7 @@ package gleann
 
 import (
 	"context"
+	"strings"
 	"testing"
 )
 
@@ -11,6 +12,7 @@ type mockGraphDB struct {
 	callersMap      map[string][]Callee
 	symbolsInFile   map[string][]Callee
 	documentSymbols map[string][]SymbolInfo
+	docContextMap   map[string]*DocumentContextData
 }
 
 func (m *mockGraphDB) Callees(fqn string) ([]Callee, error) {
@@ -25,11 +27,14 @@ func (m *mockGraphDB) SymbolsInFile(path string) ([]Callee, error) {
 func (m *mockGraphDB) DocumentSymbols(path string) ([]SymbolInfo, error) {
 	return m.documentSymbols[path], nil
 }
-func (m *mockGraphDB) DocumentContext(_ string) (*DocumentContextData, error) {
-	return nil, nil // not needed in tests
+func (m *mockGraphDB) DocumentContext(path string) (*DocumentContextData, error) {
+	if m.docContextMap != nil {
+		return m.docContextMap[path], nil
+	}
+	return nil, nil
 }
-func (m *mockGraphDB) FullDocument(_ string) (string, error) {
-	return "", nil // not needed in tests
+func (m *mockGraphDB) FullDocument(path string) (string, error) {
+	return "", nil
 }
 func (m *mockGraphDB) Impact(fqn string, maxDepth int) (*ImpactResult, error) {
 	// Simple mock: use callers as direct callers
@@ -306,5 +311,63 @@ func (c *countingGraphDB) Impact(fqn string, maxDepth int) (*ImpactResult, error
 	return c.GraphDB.Impact(fqn, maxDepth)
 }
 
+func TestEnrichWithGraphContext_HierarchicalDocumentBreadcrumb(t *testing.T) {
+	db := newMockGraphDB()
+	db.docContextMap = map[string]*DocumentContextData{
+		"docs/getting_started.md": {
+			Name:       "getting_started.md",
+			FolderName: "docs",
+			Summary:    "Quickstart guide to Gleann installation and usage.",
+			Breadcrumb: "docs > getting_started.md > Installation > Linux",
+			Headings:   []string{"Installation", "Linux"},
+		},
+	}
+
+	s := &LeannSearcher{graphDB: db}
+
+	results := []SearchResult{
+		{
+			ID:       1,
+			Text:     "Run make full to build the tree-sitter binary.",
+			Score:    0.95,
+			Metadata: map[string]any{"source": "docs/getting_started.md"},
+		},
+		{
+			ID:       2,
+			Text:     "Ensure systemd user service is enabled.",
+			Score:    0.85,
+			Metadata: map[string]any{"source": "docs/getting_started.md"},
+		},
+	}
+
+	s.enrichWithGraphContext(results)
+
+	// Verify both results received the hierarchical document context
+	for i, r := range results {
+		if r.GraphContext == nil {
+			t.Fatalf("result %d: expected non-nil GraphContext", i)
+		}
+		if r.GraphContext.DocumentContext == nil {
+			t.Fatalf("result %d: expected non-nil DocumentContext", i)
+		}
+		dc := r.GraphContext.DocumentContext
+		expectedBreadcrumb := "docs > getting_started.md > Installation > Linux"
+		if dc.Breadcrumb != expectedBreadcrumb {
+			t.Errorf("result %d: expected breadcrumb %q, got %q", i, expectedBreadcrumb, dc.Breadcrumb)
+		}
+		if dc.Summary != "Quickstart guide to Gleann installation and usage." {
+			t.Errorf("result %d: unexpected summary %q", i, dc.Summary)
+		}
+
+		// Verify prompt formatting includes Location
+		formatted := formatResult(r, i+1)
+		expectedLocation := "Location: docs > getting_started.md > Installation > Linux\n"
+		if !strings.Contains(formatted, expectedLocation) {
+			t.Errorf("result %d: formatted output missing %q, got %q", i, expectedLocation, formatted)
+		}
+	}
+}
+
 // Verify unused import guard
 var _ = context.Background
+

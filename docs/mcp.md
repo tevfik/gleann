@@ -133,6 +133,7 @@ Add to `claude_desktop_config.json`:
 | `gleann_graph_neighbors` | Query callers/callees of a symbol |
 | `gleann_document_links` | Get document structure links |
 | `gleann_impact` | Blast radius analysis for a symbol |
+| `gleann_read_full_document` | Retrieve intact full document text via KuzuDB path resolution or graph chunks |
 
 ### Progressive Disclosure Tools
 
@@ -250,6 +251,17 @@ Analyze the blast radius of changing a symbol:
   "index": "my-code",
   "symbol": "pkg.Config",
   "max_depth": 3
+}
+```
+
+### gleann_read_full_document
+
+Retrieve the complete text of an indexed document using its virtual or relative path (e.g. `docs/architecture.md`). Resolves the physical path via KuzuDB, falls back to reconstructing text from ordered graph chunks (`Chunk`), or reads directly from disk if accessible.
+
+```json
+{
+  "index": "my-docs",
+  "vpath": "docs/architecture.md"
 }
 ```
 

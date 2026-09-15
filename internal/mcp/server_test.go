@@ -295,3 +295,85 @@ func TestMaxCachedSearchers(t *testing.T) {
 		t.Error("maxCachedSearchers should be at least 1")
 	}
 }
+
+func TestBuildReadFullDocumentTool_Schema(t *testing.T) {
+	tmpDir := t.TempDir()
+	srv := NewServer(Config{
+		IndexDir:          tmpDir,
+		EmbeddingProvider: "ollama",
+		EmbeddingModel:    "bge-m3",
+		OllamaHost:        gleann.DefaultOllamaHost,
+		Version:           "test",
+	})
+
+	tool := srv.buildReadFullDocumentTool()
+	if tool.Name != "gleann_read_full_document" {
+		t.Errorf("expected tool name gleann_read_full_document, got %q", tool.Name)
+	}
+
+	required := map[string]bool{}
+	for _, r := range tool.InputSchema.Required {
+		required[r] = true
+	}
+	if !required["index"] || !required["vpath"] {
+		t.Errorf("expected required fields index and vpath, got %v", tool.InputSchema.Required)
+	}
+}
+
+func TestHandleReadFullDocument_Validation(t *testing.T) {
+	tmpDir := t.TempDir()
+	srv := NewServer(Config{
+		IndexDir:          tmpDir,
+		EmbeddingProvider: "ollama",
+		EmbeddingModel:    "bge-m3",
+		OllamaHost:        gleann.DefaultOllamaHost,
+		Version:           "test",
+	})
+
+	// 1. Invalid arguments format
+	reqBad := mcp.CallToolRequest{}
+	reqBad.Params.Arguments = "invalid-type"
+	res, err := srv.handleReadFullDocument(nil, reqBad)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !res.IsError {
+		t.Errorf("expected error result for invalid arguments format")
+	}
+
+	// 2. Missing required parameters
+	reqMissing := mcp.CallToolRequest{}
+	reqMissing.Params.Arguments = map[string]interface{}{
+		"index": "",
+		"vpath": "",
+	}
+	res2, err := srv.handleReadFullDocument(nil, reqMissing)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !res2.IsError {
+		t.Errorf("expected error result for empty arguments")
+	}
+
+	// 3. Fallback on-disk direct read
+	testFilePath := filepath.Join(tmpDir, "readme.md")
+	testContent := "# Gleann Full Document Test Content\nValidating read_full_document tool."
+	if err := os.WriteFile(testFilePath, []byte(testContent), 0644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+
+	reqFallback := mcp.CallToolRequest{}
+	reqFallback.Params.Arguments = map[string]interface{}{
+		"index": "nonexistent-index",
+		"vpath": testFilePath,
+	}
+	res3, err := srv.handleReadFullDocument(nil, reqFallback)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// Fallback to direct file read if relative path exists
+	if res3.IsError {
+		t.Errorf("expected successful file read via fallback, got error result")
+	}
+}
+

@@ -758,20 +758,22 @@ func (s *Server) handleReadFullDocument(ctx context.Context, request mcp.CallToo
 	}
 
 	searcher, err := s.getSearcher(indexName)
-	if err != nil {
-		return mcp.NewToolResultError(fmt.Sprintf("Error loading index %q: %v", indexName, err)), nil
-	}
-
-	db := searcher.GraphDB()
-	if db != nil {
-		if content, err := db.FullDocument(vpath); err == nil && content != "" {
-			return mcp.NewToolResultText(content), nil
+	if err == nil && searcher != nil {
+		db := searcher.GraphDB()
+		if db != nil {
+			if content, err := db.FullDocument(vpath); err == nil && content != "" {
+				return mcp.NewToolResultText(content), nil
+			}
 		}
 	}
 
-	// Fallback to direct file read if relative path exists
-	if data, err := os.ReadFile(vpath); err == nil {
+	// Fallback to direct file read if path exists on disk
+	if data, err := os.ReadFile(vpath); err == nil && len(data) > 0 {
 		return mcp.NewToolResultText(string(data)), nil
+	}
+
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("Error loading index %q: %v", indexName, err)), nil
 	}
 
 	return mcp.NewToolResultError(fmt.Sprintf("could not read full document for %q in index %q", vpath, indexName)), nil

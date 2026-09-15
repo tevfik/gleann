@@ -429,7 +429,7 @@ extracts facts, resolves contradictions, and promotes important information acro
 ### 3 — MCP tools (when gleann mcp is running)
 
 **Search & graph:**
-` + "`gleann_search`" + ` · ` + "`gleann_search_multi`" + ` · ` + "`gleann_ask`" + ` · ` + "`gleann_graph_neighbors`" + ` · ` + "`gleann_impact`" + `
+` + "`gleann_search`" + ` · ` + "`gleann_search_multi`" + ` · ` + "`gleann_ask`" + ` · ` + "`gleann_graph_neighbors`" + ` · ` + "`gleann_impact`" + ` · ` + "`gleann_read_full_document`" + `
 ` + "`inject_knowledge_graph`" + ` · ` + "`delete_graph_entity`" + ` · ` + "`traverse_knowledge_graph`" + `
 
 **Memory (always-available, no build tag):**
@@ -541,7 +541,7 @@ curl -X POST http://localhost:8080/a2a/v1/message:send \
 ` + "```" + `
 
 ### MCP graph tools
-` + "`gleann_search`" + ` · ` + "`gleann_ask`" + ` · ` + "`gleann_graph_neighbors`" + ` · ` + "`gleann_impact`" + `
+` + "`gleann_search`" + ` · ` + "`gleann_ask`" + ` · ` + "`gleann_graph_neighbors`" + ` · ` + "`gleann_impact`" + ` · ` + "`gleann_read_full_document`" + `
 ` + "`inject_knowledge_graph`" + ` · ` + "`traverse_knowledge_graph`" + `
 `
 

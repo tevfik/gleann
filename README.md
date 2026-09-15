@@ -66,6 +66,7 @@ Both projects share the same foundational idea — graph-based ANN indices + sel
 - **Flexible Intelligence (Local or Cloud)**: Run LLMs 100% locally via llama.cpp for total privacy, or connect to any OpenAI-compatible API for high-reasoning tasks.
 - **Advanced RAG (Faiss / HNSW & Graph DB)**: Indexes documents and code semantically (vector) and relationally (graph), not just via simple keyword matching.
 - **Smart Chunking (Tree-sitter)**: Intelligent AST-aware partitioning preserves the structural integrity of your code functions and classes.
+- **Hierarchical GraphRAG & Context Stitching**: KuzuDB structural graph (`Folder` → `Document` → `Heading` → `Chunk`) prepends physical location breadcrumbs (`Location: Folder > Doc > H1 > H2`) to retrieved chunks and empowers LLMs with `gleann_read_full_document` tool calling.
 - **Graph-Augmented Search**: Search results are enriched with callers/callees from the AST graph, giving LLMs structural code context alongside semantic matches.
 - **Impact Analysis**: Blast radius analysis via BFS traversal — find all direct and transitive callers of any symbol and the files they belong to.
 - **Multi-Index Chat**: Ask questions across multiple indexes simultaneously with `gleann ask docs,code "question"`. Results are merged by relevance score.
