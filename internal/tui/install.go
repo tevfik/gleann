@@ -77,7 +77,27 @@ func InstallBinary(targetDir string) error {
 func copySharedLibs(exe, targetDir string) {
 	// RPATH $ORIGIN requires them to be in the exact same directory as the executable.
 	exeDir := filepath.Dir(exe)
-	for _, lib := range sharedLibNames() {
+
+	// Collect known shared libraries and any other bundled .so/.dylib/.dll in exeDir
+	libsToCopy := append([]string{}, sharedLibNames()...)
+	if entries, err := os.ReadDir(exeDir); err == nil {
+		for _, e := range entries {
+			if e.IsDir() {
+				continue
+			}
+			name := e.Name()
+			if strings.Contains(name, ".so") || strings.HasSuffix(name, ".dylib") || strings.HasSuffix(name, ".dll") {
+				libsToCopy = append(libsToCopy, name)
+			}
+		}
+	}
+
+	seen := make(map[string]bool)
+	for _, lib := range libsToCopy {
+		if seen[lib] {
+			continue
+		}
+		seen[lib] = true
 		libSrc := filepath.Join(exeDir, lib)
 		if _, err := os.Stat(libSrc); err == nil {
 			libDst := filepath.Join(targetDir, lib)

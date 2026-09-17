@@ -155,7 +155,7 @@ main() {
     log "Installed to ${DEST}"
 
     # Copy libraries for full/FAISS variant
-    for lib in "${TMPDIR}/extracted"/*.so "${TMPDIR}/extracted"/*.dylib "${TMPDIR}/extracted"/*.dll; do
+    for lib in "${TMPDIR}/extracted"/*.so* "${TMPDIR}/extracted"/*.dylib "${TMPDIR}/extracted"/*.dll; do
         if [ -f "$lib" ]; then
             mv "$lib" "${INSTALL_DIR}/"
             log "Installed library: $(basename "$lib")"

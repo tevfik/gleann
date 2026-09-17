@@ -152,8 +152,8 @@ jobs:
         run: |
           if [ "$RUNNER_OS" == "Linux" ]; then
             sudo apt-get update
-            # Added libomp-dev for Linux just in case
-            sudo apt-get install -y cmake build-essential libopenblas-dev libomp-dev swig
+            # Added libomp-dev and patchelf for Linux
+            sudo apt-get install -y cmake build-essential libopenblas-dev libomp-dev swig patchelf
           elif [ "$RUNNER_OS" == "macOS" ]; then
             # libomp openblas swig added for macOS CXX OpenMP compatibility (AppleClang missing it by default)
             brew install cmake libomp openblas swig
@@ -198,7 +198,7 @@ jobs:
           # Build FAISS C API wrapper (not built by cmake)
           cd /tmp/faiss
           if [ "$RUNNER_OS" == "Linux" ]; then
-            g++ -shared -fPIC -Wl,-rpath,'$$ORIGIN' -o libfaiss_c.so \
+            g++ -shared -fPIC -Wl,-rpath,'$ORIGIN' -o libfaiss_c.so \
               c_api/*.cpp \
               -I. -I/usr/local/include \
               -L/usr/local/lib -lfaiss \
@@ -247,22 +247,15 @@ jobs:
           fi
           task full FAISS_LIB_DIR=/usr/local/lib FAISS_INC_DIR=/usr/local/include
 
-      - name: Rename and compress binary with shared libraries
+      - name: Rename and compress binary
         shell: bash
         run: |
           mkdir -p dist
           SUFFIX="gleann-full-${{ steps.version.outputs.version }}-${{ matrix.suffix }}"
-          cp build/gleann-full "${SUFFIX}"
-          cp /usr/local/lib/libfaiss_c.* . 2>/dev/null || true
-          cp /usr/local/lib/libfaiss.*   . 2>/dev/null || true
-          cp build/libgleann_core_rs.* . 2>/dev/null || true
-          
-          # Use different archive extensions based on OS
-          if [ "$RUNNER_OS" == "Linux" ]; then
-            tar czf "dist/${SUFFIX}.tar.gz" "${SUFFIX}" libfaiss*.so libgleann_core_rs.so 2>/dev/null || true
-          elif [ "$RUNNER_OS" == "macOS" ]; then
-            tar czf "dist/${SUFFIX}.tar.gz" "${SUFFIX}" libfaiss*.dylib libgleann_core_rs.dylib 2>/dev/null || true
-          fi
+          # 1. Standalone single executable (zero external dependencies, self-extracting runtime)
+          cp build/gleann-full "dist/${SUFFIX}"
+          # 2. Compressed archive
+          tar czf "dist/${SUFFIX}.tar.gz" -C dist "${SUFFIX}"
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4

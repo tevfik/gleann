@@ -112,17 +112,34 @@ build-rust-core:
 full: $(BINARY_FULL)
 
 $(BINARY_FULL): prepare-assets
-	@echo "🔧 Building $(BINARY_FULL) with Tree-sitter + KuzuDB CGo..."
-	@mkdir -p $(BUILD_DIR)
+	@echo "🔧 Building $(BINARY_FULL) with Tree-sitter + KuzuDB CGo (standalone single executable)..."
+	@mkdir -p $(BUILD_DIR)/stage
 	@if command -v go >/dev/null 2>&1; then \
-		CGO_ENABLED=1 CGO_CFLAGS="-w" go build -tags "treesitter" -ldflags "$(LDFLAGS) -extldflags '$(RPATH_FLAGS)'" -o $(BINARY_FULL) $(CMD); \
+		KUZU_DIR=$$(go list -m -f '{{.Dir}}' github.com/kuzudb/go-kuzu 2>/dev/null || true); \
+		if [ -n "$$KUZU_DIR" ]; then \
+			cp "$$KUZU_DIR/lib/dynamic/linux-amd64/libkuzu.so" $(BUILD_DIR)/stage/ 2>/dev/null || true; \
+		fi; \
+		CGO_ENABLED=1 CGO_CFLAGS="-w" go build -tags "treesitter" -ldflags "$(LDFLAGS) -extldflags '$(RPATH_FLAGS)'" -o $(BUILD_DIR)/stage/gleann-full-bin $(CMD); \
 	elif command -v docker >/dev/null 2>&1; then \
-		docker run --rm -v gleann-go-cache:/go/pkg/mod -v gleann-build-cache:/root/.cache/go-build -v $$(pwd):/app -w /app golang:1.25 sh -c "CGO_ENABLED=1 CGO_CFLAGS='-w' go build -buildvcs=false -tags 'treesitter' -ldflags '$(LDFLAGS) -extldflags \"$(RPATH_FLAGS)\"' -o $(BINARY_FULL) $(CMD) && go mod download && cp /go/pkg/mod/github.com/kuzudb/go-kuzu@v0.11.3/lib/dynamic/linux-amd64/libkuzu.so /app/$(BUILD_DIR)/ 2>/dev/null || true && chown -R $$(id -u):$$(id -g) /app/$(BUILD_DIR)"; \
+		docker run --rm -v gleann-go-cache:/go/pkg/mod -v gleann-build-cache:/root/.cache/go-build -v $$(pwd):/app -w /app golang:1.25 sh -c "mkdir -p $(BUILD_DIR)/stage && CGO_ENABLED=1 CGO_CFLAGS='-w' go build -buildvcs=false -tags 'treesitter' -ldflags '$(LDFLAGS) -extldflags \"$(RPATH_FLAGS)\"' -o $(BUILD_DIR)/stage/gleann-full-bin $(CMD) && go mod download && cp /go/pkg/mod/github.com/kuzudb/go-kuzu@v0.11.3/lib/dynamic/linux-amd64/libkuzu.so /app/$(BUILD_DIR)/stage/ 2>/dev/null || true && chown -R $$(id -u):$$(id -g) /app/$(BUILD_DIR)"; \
 	fi
-	@if command -v patchelf >/dev/null 2>&1 && [ -f $(BINARY_FULL) ]; then \
-		patchelf --set-rpath '$$ORIGIN:$$ORIGIN/../lib:/usr/local/lib:$(USER_LIB_DIR)' $(BINARY_FULL) 2>/dev/null || true; \
+	@if command -v patchelf >/dev/null 2>&1 && [ -f $(BUILD_DIR)/stage/gleann-full-bin ]; then \
+		patchelf --set-rpath '$$ORIGIN:$$ORIGIN/../lib:/usr/local/lib:$(USER_LIB_DIR)' $(BUILD_DIR)/stage/gleann-full-bin 2>/dev/null || true; \
+		for so in $(BUILD_DIR)/stage/*.so*; do \
+			if [ -f "$$so" ]; then \
+				patchelf --set-rpath '$$ORIGIN:$$ORIGIN/../lib:/usr/local/lib' "$$so" 2>/dev/null || true; \
+			fi; \
+		done; \
 	fi
-	@echo "✅ Built $(BINARY_FULL)"
+	@tar czf cmd/gleann-full-launcher/payload.tar.gz -C $(BUILD_DIR)/stage .
+	@if command -v go >/dev/null 2>&1; then \
+		CGO_ENABLED=0 go build -ldflags "$(LDFLAGS)" -o $(BINARY_FULL) ./cmd/gleann-full-launcher; \
+	elif command -v docker >/dev/null 2>&1; then \
+		docker run --rm -v gleann-go-cache:/go/pkg/mod -v gleann-build-cache:/root/.cache/go-build -v $$(pwd):/app -w /app golang:1.25 sh -c "CGO_ENABLED=0 go build -buildvcs=false -ldflags '$(LDFLAGS)' -o $(BINARY_FULL) ./cmd/gleann-full-launcher && chown -R $$(id -u):$$(id -g) /app/$(BUILD_DIR)"; \
+	fi
+	@tar -czf cmd/gleann-full-launcher/payload.tar.gz --files-from /dev/null
+	@rm -rf $(BUILD_DIR)/stage
+	@echo "✅ Built single standalone $(BINARY_FULL)"
 
 # ── Install ─────────────────────────────────────────────────────────────────
 

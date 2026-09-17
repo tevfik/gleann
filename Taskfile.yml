@@ -17,7 +17,7 @@ vars:
     sh: uname -s
   
   # Platform detection logic
-  RPATH_FLAGS: '{{if eq .UNAME_S "Darwin"}}-Wl,-rpath,@loader_path{{else}}-Wl,-rpath,$ORIGIN{{end}}'
+  RPATH_FLAGS: '{{if eq .UNAME_S "Darwin"}}-Wl,-rpath,@loader_path -Wl,-rpath,@executable_path{{else}}-Wl,-rpath,\$$ORIGIN{{end}}'
   ZNOW_FLAG: '{{if eq .UNAME_S "Darwin"}}{{else}}-Wl,-z,now{{end}}'
   SO_EXT: '{{if eq .UNAME_S "Darwin"}}dylib{{else}}so{{end}}'
 
@@ -89,20 +89,64 @@ tasks:
       - echo "✅ Built {{.BUILD_DIR}}/gleann-native"
 
   full:
-    desc: Build FAISS + tree-sitter binary (gleann-full)
+    desc: Build FAISS + tree-sitter single-executable binary (gleann-full)
     deps: [build-rust-core, prepare-assets]
     cmds:
       - echo "🔧 Building {{.BINARY_FULL}} with FAISS + tree-sitter + native..."
-      - mkdir -p {{.BUILD_DIR}}
-      - cp ext/gleann-core-rs/target/release/libgleann_core_rs.{{.SO_EXT}} {{.BUILD_DIR}}/
-      - cp {{.FAISS_LIB_DIR}}/libfaiss*.so* {{.BUILD_DIR}}/ || true
+      - mkdir -p {{.BUILD_DIR}}/stage
+      - cp ext/gleann-core-rs/target/release/libgleann_core_rs.{{.SO_EXT}} {{.BUILD_DIR}}/stage/ 2>/dev/null || true
+      - cp {{.FAISS_LIB_DIR}}/libfaiss* {{.BUILD_DIR}}/stage/ 2>/dev/null || true
+      - |
+        if [ "{{.UNAME_S}}" != "Darwin" ]; then
+          for lib in /usr/lib/*-linux-gnu/libopenblas.so.0 \
+                     /usr/lib/*-linux-gnu/libgomp.so.1 \
+                     /usr/lib/*-linux-gnu/libgfortran.so.5 \
+                     /usr/lib/*-linux-gnu/libquadmath.so.0; do
+            if [ -f "$lib" ]; then
+              cp "$lib" {{.BUILD_DIR}}/stage/ 2>/dev/null || true
+            fi
+          done
+        fi
+      - |
+        KUZU_DIR=$(go list -m -f '{{`{{.Dir}}`}}' github.com/kuzudb/go-kuzu 2>/dev/null || true)
+        if [ -n "$KUZU_DIR" ]; then
+          if [ "{{.UNAME_S}}" = "Darwin" ]; then
+            cp "$KUZU_DIR/lib/dynamic/darwin/libkuzu.dylib" {{.BUILD_DIR}}/stage/ 2>/dev/null || true
+          else
+            cp "$KUZU_DIR/lib/dynamic/linux-amd64/libkuzu.so" {{.BUILD_DIR}}/stage/ 2>/dev/null || \
+            cp "$KUZU_DIR/lib/dynamic/linux-arm64/libkuzu.so" {{.BUILD_DIR}}/stage/ 2>/dev/null || true
+          fi
+        fi
       - |
         CGO_ENABLED=1 \
         CGO_CFLAGS="-w -I{{.FAISS_INC_DIR}} $CGO_CFLAGS" \
         CGO_CXXFLAGS="-w -I{{.FAISS_INC_DIR}} $CGO_CXXFLAGS" \
-        CGO_LDFLAGS="{{.RPATH_FLAGS}} {{.ZNOW_FLAG}} -L{{.FAISS_LIB_DIR}} -lfaiss_c -lfaiss -L{{.BUILD_DIR}} -lgleann_core_rs $CGO_LDFLAGS" \
-        go build -tags "faiss treesitter native" -ldflags "{{.LDFLAGS}}" -o {{.BINARY_FULL}} {{.CMD}}
-      - echo "✅ Built {{.BINARY_FULL}}"
+        CGO_LDFLAGS="{{.RPATH_FLAGS}} {{.ZNOW_FLAG}} -L{{.FAISS_LIB_DIR}} -lfaiss_c -lfaiss -L{{.BUILD_DIR}}/stage -lgleann_core_rs $CGO_LDFLAGS" \
+        go build -tags "faiss treesitter native" -ldflags "{{.LDFLAGS}}" -o {{.BUILD_DIR}}/stage/gleann-full-bin {{.CMD}}
+      - |
+        if command -v patchelf >/dev/null 2>&1 && [ -f {{.BUILD_DIR}}/stage/gleann-full-bin ]; then
+          patchelf --set-rpath '$ORIGIN:$ORIGIN/../lib:/usr/local/lib:{{.USER_BIN_DIR}}' {{.BUILD_DIR}}/stage/gleann-full-bin 2>/dev/null || true
+          for so in {{.BUILD_DIR}}/stage/*.so*; do
+            if [ -f "$so" ]; then
+              patchelf --set-rpath '$ORIGIN:$ORIGIN/../lib:/usr/local/lib' "$so" 2>/dev/null || true
+            fi
+          done
+        fi
+        if [ "{{.UNAME_S}}" = "Darwin" ] && command -v install_name_tool >/dev/null 2>&1; then
+          install_name_tool -add_rpath @executable_path {{.BUILD_DIR}}/stage/gleann-full-bin 2>/dev/null || true
+          install_name_tool -add_rpath @loader_path {{.BUILD_DIR}}/stage/gleann-full-bin 2>/dev/null || true
+          for dylib in {{.BUILD_DIR}}/stage/*.dylib; do
+            if [ -f "$dylib" ]; then
+              install_name_tool -add_rpath @executable_path "$dylib" 2>/dev/null || true
+              install_name_tool -add_rpath @loader_path "$dylib" 2>/dev/null || true
+            fi
+          done
+        fi
+      - tar czf cmd/gleann-full-launcher/payload.tar.gz -C {{.BUILD_DIR}}/stage .
+      - CGO_ENABLED=0 go build -ldflags "{{.LDFLAGS}}" -o {{.BINARY_FULL}} ./cmd/gleann-full-launcher
+      - tar -czf cmd/gleann-full-launcher/payload.tar.gz --files-from /dev/null
+      - rm -rf {{.BUILD_DIR}}/stage
+      - echo "✅ Built single standalone {{.BINARY_FULL}}"
 
   install-user:
     desc: Build gleann-full (FAISS) and install to ~/.local/bin/gleann
@@ -219,7 +263,7 @@ tasks:
       - tar czf dist/gleann-{{.VERSION}}-linux-amd64.tar.gz -C {{.BUILD_DIR}} $(basename {{.BINARY}})
       - cp {{.FAISS_LIB_DIR}}/libfaiss_c.{{.SO_EXT}} {{.BUILD_DIR}}/ 2>/dev/null || true
       - cp {{.FAISS_LIB_DIR}}/libfaiss.{{.SO_EXT}}   {{.BUILD_DIR}}/ 2>/dev/null || true
-      - cd {{.BUILD_DIR}} && tar czf ../dist/gleann-full-{{.VERSION}}-linux-amd64.tar.gz $(basename {{.BINARY_FULL}}) libfaiss*.{{.SO_EXT}} 2>/dev/null || true
+      - cd {{.BUILD_DIR}} && tar czf ../dist/gleann-full-{{.VERSION}}-linux-amd64.tar.gz $(basename {{.BINARY_FULL}}) *.{{.SO_EXT}}* 2>/dev/null || true
       - rm -f {{.BUILD_DIR}}/libfaiss*.{{.SO_EXT}}
       - echo "📦 Release artifacts created in dist/"
 
