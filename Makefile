@@ -115,13 +115,17 @@ $(BINARY_FULL): prepare-assets
 	@echo "🔧 Building $(BINARY_FULL) with Tree-sitter + KuzuDB CGo (standalone single executable)..."
 	@mkdir -p $(BUILD_DIR)/stage
 	@if command -v go >/dev/null 2>&1; then \
+		CGO_ENABLED=1 CGO_CFLAGS="-w" go build -tags "treesitter" -ldflags "$(LDFLAGS) -extldflags '$(RPATH_FLAGS)'" -o $(BUILD_DIR)/stage/gleann-full-bin $(CMD) && \
+		go mod download github.com/kuzudb/go-kuzu && \
 		KUZU_DIR=$$(go list -m -f '{{.Dir}}' github.com/kuzudb/go-kuzu 2>/dev/null || true); \
-		if [ -n "$$KUZU_DIR" ]; then \
-			cp "$$KUZU_DIR/lib/dynamic/linux-amd64/libkuzu.so" $(BUILD_DIR)/stage/ 2>/dev/null || true; \
-		fi; \
-		CGO_ENABLED=1 CGO_CFLAGS="-w" go build -tags "treesitter" -ldflags "$(LDFLAGS) -extldflags '$(RPATH_FLAGS)'" -o $(BUILD_DIR)/stage/gleann-full-bin $(CMD); \
+		if [ -z "$$KUZU_DIR" ]; then KUZU_DIR=$$(find $$(go env GOPATH)/pkg/mod/github.com/kuzudb/go-kuzu* -maxdepth 0 2>/dev/null | head -n 1); fi; \
+		cp "$$KUZU_DIR/lib/dynamic/linux-amd64/libkuzu.so" $(BUILD_DIR)/stage/ 2>/dev/null || true; \
 	elif command -v docker >/dev/null 2>&1; then \
-		docker run --rm -v gleann-go-cache:/go/pkg/mod -v gleann-build-cache:/root/.cache/go-build -v $$(pwd):/app -w /app golang:1.25 sh -c "mkdir -p $(BUILD_DIR)/stage && CGO_ENABLED=1 CGO_CFLAGS='-w' go build -buildvcs=false -tags 'treesitter' -ldflags '$(LDFLAGS) -extldflags \"$(RPATH_FLAGS)\"' -o $(BUILD_DIR)/stage/gleann-full-bin $(CMD) && go mod download && cp /go/pkg/mod/github.com/kuzudb/go-kuzu@v0.11.3/lib/dynamic/linux-amd64/libkuzu.so /app/$(BUILD_DIR)/stage/ 2>/dev/null || true && chown -R $$(id -u):$$(id -g) /app/$(BUILD_DIR)"; \
+		docker run --rm -v gleann-go-cache:/go/pkg/mod -v gleann-build-cache:/root/.cache/go-build -v $$(pwd):/app -w /app golang:1.25 sh -c "mkdir -p $(BUILD_DIR)/stage && CGO_ENABLED=1 CGO_CFLAGS='-w' go build -buildvcs=false -tags 'treesitter' -ldflags '$(LDFLAGS) -extldflags \"$(RPATH_FLAGS)\"' -o $(BUILD_DIR)/stage/gleann-full-bin $(CMD) && go mod download github.com/kuzudb/go-kuzu && KUZU_DIR=\$$(go list -m -f '{{.Dir}}' github.com/kuzudb/go-kuzu) && cp \$$KUZU_DIR/lib/dynamic/linux-amd64/libkuzu.so /app/$(BUILD_DIR)/stage/ && chown -R $$(id -u):$$(id -g) /app/$(BUILD_DIR)"; \
+	fi
+	@if [ ! -f $(BUILD_DIR)/stage/libkuzu.* ]; then \
+		echo "❌ ERROR: libkuzu was not copied to $(BUILD_DIR)/stage!"; \
+		exit 1; \
 	fi
 	@if command -v patchelf >/dev/null 2>&1 && [ -f $(BUILD_DIR)/stage/gleann-full-bin ]; then \
 		patchelf --set-rpath '$$ORIGIN:$$ORIGIN/../lib:/usr/local/lib:$(USER_LIB_DIR)' $(BUILD_DIR)/stage/gleann-full-bin 2>/dev/null || true; \

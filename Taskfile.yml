@@ -108,21 +108,28 @@ tasks:
           done
         fi
       - |
-        KUZU_DIR=$(go list -m -f '{{`{{.Dir}}`}}' github.com/kuzudb/go-kuzu 2>/dev/null || true)
-        if [ -n "$KUZU_DIR" ]; then
-          if [ "{{.UNAME_S}}" = "Darwin" ]; then
-            cp "$KUZU_DIR/lib/dynamic/darwin/libkuzu.dylib" {{.BUILD_DIR}}/stage/ 2>/dev/null || true
-          else
-            cp "$KUZU_DIR/lib/dynamic/linux-amd64/libkuzu.so" {{.BUILD_DIR}}/stage/ 2>/dev/null || \
-            cp "$KUZU_DIR/lib/dynamic/linux-arm64/libkuzu.so" {{.BUILD_DIR}}/stage/ 2>/dev/null || true
-          fi
-        fi
-      - |
         CGO_ENABLED=1 \
         CGO_CFLAGS="-w -I{{.FAISS_INC_DIR}} $CGO_CFLAGS" \
         CGO_CXXFLAGS="-w -I{{.FAISS_INC_DIR}} $CGO_CXXFLAGS" \
         CGO_LDFLAGS="{{.RPATH_FLAGS}} {{.ZNOW_FLAG}} -L{{.FAISS_LIB_DIR}} -lfaiss_c -lfaiss -L{{.BUILD_DIR}}/stage -lgleann_core_rs $CGO_LDFLAGS" \
         go build -tags "faiss treesitter native" -ldflags "{{.LDFLAGS}}" -o {{.BUILD_DIR}}/stage/gleann-full-bin {{.CMD}}
+      - |
+        go mod download github.com/kuzudb/go-kuzu
+        KUZU_DIR=$(go list -m -f '{{`{{.Dir}}`}}' github.com/kuzudb/go-kuzu 2>/dev/null || true)
+        if [ -z "$KUZU_DIR" ]; then
+          KUZU_DIR=$(find $(go env GOPATH)/pkg/mod/github.com/kuzudb/go-kuzu* -maxdepth 0 2>/dev/null | head -n 1)
+        fi
+        if [ "{{.UNAME_S}}" = "Darwin" ]; then
+          cp "$KUZU_DIR/lib/dynamic/darwin/libkuzu.dylib" {{.BUILD_DIR}}/stage/
+        else
+          cp "$KUZU_DIR/lib/dynamic/linux-amd64/libkuzu.so" {{.BUILD_DIR}}/stage/ 2>/dev/null || \
+          cp "$KUZU_DIR/lib/dynamic/linux-arm64/libkuzu.so" {{.BUILD_DIR}}/stage/
+        fi
+      - |
+        if [ ! -f {{.BUILD_DIR}}/stage/libkuzu.* ]; then
+          echo "❌ ERROR: libkuzu was not copied to staging directory!"
+          exit 1
+        fi
       - |
         if command -v patchelf >/dev/null 2>&1 && [ -f {{.BUILD_DIR}}/stage/gleann-full-bin ]; then
           patchelf --set-rpath '$ORIGIN:$ORIGIN/../lib:/usr/local/lib:{{.USER_BIN_DIR}}' {{.BUILD_DIR}}/stage/gleann-full-bin 2>/dev/null || true
