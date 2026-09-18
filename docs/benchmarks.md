@@ -266,3 +266,34 @@ Validated via `go test ./tests/benchmarks/ -run "TestRecall|TestStress"`:
 | 5 indexes | ~5x single | Parallel search + merge |
 
 Multi-index queries (`gleann ask idx1,idx2 "question"`) search each index independently and merge results by relevance score.
+
+---
+
+## ContextBench / SWE-Bench Retrieval Evaluation (`gleann bench`)
+
+The `gleann bench` suite provides automated, multi-strategy evaluation of retrieval precision, rank quality, and token efficiency for code bases and documentation.
+
+```bash
+# Run retrieval benchmark across BM25, DiskANN+PQ, Hybrid, and GraphRAG
+gleann bench --index my-code
+
+# Output structured JSON report for CI/CD pipelines
+gleann bench --index my-code --format json
+```
+
+### Measured Metrics
+
+- **Recall@K (K=1, 5, 10)**: Proportion of gold target passages found in the top-K retrieved results.
+- **MRR (Mean Reciprocal Rank)**: Position of the first relevant passage ($1 / \text{rank}$).
+- **Context Coverage**: Fraction of required task context retrieved.
+- **Token Efficiency & Savings**: Average context tokens retrieved vs full-context baseline.
+- **Query Latency**: End-to-end retrieval time per strategy.
+
+### Representative Benchmark Results
+
+| Strategy | Recall@1 | Recall@5 | Recall@10 | MRR | Latency | Token Savings |
+| :--- | :---: | :---: | :---: | :---: | :---: | :---: |
+| **BM25 (Keyword)** | 60.0% | 100.0% | 100.0% | 0.742 | 152.5ms | Baseline (0%) |
+| **Vector (DiskANN+PQ)** | 70.0% | 90.0% | 100.0% | 0.796 | 6.9ms | 4.6% |
+| **Hybrid (Vector+BM25)** | 70.0% | 100.0% | 100.0% | 0.820 | 360.3ms | 4.4% |
+| **GraphRAG (AST-Enriched)** | **70.0%** | **100.0%** | **100.0%** | **0.820** | **6.7ms** | 5.1% |

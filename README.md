@@ -327,11 +327,27 @@ gleann config validate
 # Launch TUI
 gleann tui
 
-# Start MCP server (for AI editors)
+# Build index with DiskANN backend (Vamana graph + PQ compression)
+gleann index build my-code --docs ./src --backend diskann --pq-dim 32 --pq-centroids 256
+
+# Retrieval benchmarking (SWE-Bench / ContextBench evaluation)
+gleann bench --index my-code                      # Recall@1/5/10, MRR, latency, token savings
+gleann bench --index my-code --format json       # Output structured JSON report
+
+# Long-term memory & Bayesian compaction
+gleann memory remember "Backend uses DiskANN with PQ compression"
+gleann memory context                            # View compiled context injected to LLM
+gleann memory compact --min-validity 0.2         # Prune stale/unreliable memories (<0.2 score)
+
+# Zero-friction MCP installer for AI agents & editors
+gleann mcp install --target all                  # Auto-configure Claude, Cursor, Gemini, VS Code
+gleann mcp install --target claude-code          # Configure ~/.claude.json
+
+# Start MCP server (stdio, for AI editors)
 gleann mcp
 
 # Start REST API server
-gleann serve --port 8080
+gleann serve --addr :8080
 
 # Open interactive API docs (Swagger UI)
 open http://localhost:8080/api/docs

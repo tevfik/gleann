@@ -348,3 +348,28 @@ gleann memory ctx --scope "myorg/backend/auth" --query "commit message?"
 Flat (single-segment) scopes still behave exactly as before — the change
 is fully backwards-compatible. The hierarchy is implemented at the filter
 layer (`scopeAncestors`) so no schema migration is needed.
+
+---
+
+## Memory Compaction & Bayesian Pruning (`gleann memory compact`)
+
+As conversations and autonomous agent interactions accumulate, memory blocks may become outdated, contradictory, or superseded. Gleann employs a **Bayesian Validity Score** to model confidence:
+
+- **Confirmations**: Incremented when a fact is observed again without contradiction.
+- **Conflicts**: Incremented when an agent observes opposing statements.
+- **Recency Decay**: Temporal half-life decay discounts very old, unreferenced memories.
+
+### Automated Context Filtering & Compaction
+
+1. **At Retrieval Time**: Memories with a validity score $< 0.20$ are automatically omitted during `BuildContext()`, preventing hallucinations and context pollution.
+2. **On-Demand Compaction**: Run `gleann memory compact` to permanently purge blocks below a threshold:
+
+```bash
+# Compact memory by removing unreliable and decayed blocks (default: min-validity 0.2)
+gleann memory compact
+
+# Custom threshold compaction
+gleann memory compact --min-validity 0.35
+```
+
+The operation works seamlessly through the active `gleann serve` REST endpoint (`POST /api/blocks/compact`) to prevent database lock collisions.

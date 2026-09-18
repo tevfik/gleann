@@ -113,6 +113,15 @@ CLI flags override both defaults and config file values.
 --graph                 # Build AST code graph
 --prune                 # Prune unchanged files
 --no-mmap               # Disable memory-mapped access
+
+# DiskANN & Product Quantization (PQ) Options
+--pq-dim <n>            # PQ sub-vector dimension (default: 32)
+--pq-centroids <k>      # Centroids per sub-vector (default: 256)
+--search-l <n>          # Search list size for Vamana graph (default: 64)
+--search-pq-rerank      # Enable PQ pre-filtering with exact reranking
+--diskann-r <n>         # Vamana max out-degree (default: 64)
+--diskann-l <n>         # Vamana build search list size (default: 100)
+--diskann-alpha <f>     # Vamana graph pruning parameter alpha (default: 1.2)
 ```
 
 ### Ask & Chat Options

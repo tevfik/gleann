@@ -2,7 +2,24 @@
 
 Gleann includes a built-in [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server that exposes your indexed knowledge base to AI editors like Cursor, Windsurf, Claude Desktop, and others.
 
-## One-command Platform Setup
+## Zero-Friction MCP Installer (`gleann mcp install`)
+
+To immediately configure gleann's MCP server for AI agents and editors without editing configuration files manually, run:
+
+```bash
+# Auto-configure all detected targets (Claude Code, Cursor, Gemini/Antigravity, VS Code)
+gleann mcp install --target all
+
+# Or configure a specific client:
+gleann mcp install --target claude-code   # Merges into ~/.claude.json
+gleann mcp install --target cursor        # Merges into ~/.cursor/mcp.json
+gleann mcp install --target gemini        # Merges into ~/.gemini/config/mcp_config.json
+gleann mcp install --target vscode        # Merges into .vscode/mcp.json
+```
+
+The installer parses existing JSON configuration files, cleanly merges `gleann` under `mcpServers`, preserves all other configured tools and settings, and automatically backs up corrupt files to `.bak`.
+
+## One-command Platform Setup (`gleann install`)
 
 The `gleann install` command auto-detects your AI coding platform and writes all required integration files (AGENTS.md, MCP config, platform-specific plugins) in one step.
 
