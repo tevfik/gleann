@@ -36,8 +36,10 @@ When the server is running, interactive Swagger UI documentation is available at
 |--------|------|-------------|
 | GET | `/api/indexes` | List all indexes |
 | GET | `/api/indexes/{name}` | Get index metadata |
+| PATCH | `/api/indexes/{name}` | Update index governance (`tags`, `description`, `mcp_exposed`) |
 | POST | `/api/indexes/{name}/build` | Build index from texts/items |
 | DELETE | `/api/indexes/{name}` | Delete an index |
+
 
 ### Search & RAG
 

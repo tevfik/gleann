@@ -25,11 +25,33 @@ import (
 func cmdList(args []string) {
 	config := getConfig(args)
 	asJSON := hasFlag(args, "--json")
+	tagFilter := getFlag(args, "--tag")
+	mcpFilter := hasFlag(args, "--mcp")
 
 	indexes, err := gleann.ListIndexes(config.IndexDir)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
+	}
+
+	if tagFilter != "" {
+		var filtered []gleann.IndexMeta
+		for _, idx := range indexes {
+			if idx.HasTag(tagFilter) {
+				filtered = append(filtered, idx)
+			}
+		}
+		indexes = filtered
+	}
+
+	if mcpFilter {
+		var filtered []gleann.IndexMeta
+		for _, idx := range indexes {
+			if idx.IsMCPExposed() {
+				filtered = append(filtered, idx)
+			}
+		}
+		indexes = filtered
 	}
 
 	if asJSON {
@@ -49,8 +71,19 @@ func cmdList(args []string) {
 		if config.EmbeddingModel != "" && idx.EmbeddingModel != "" && config.EmbeddingModel != idx.EmbeddingModel {
 			mismatch = fmt.Sprintf(" (⚠ needs rebuild for %s)", config.EmbeddingModel)
 		}
-		fmt.Printf("  %-20s  %d passages  backend=%s  model=%s%s\n",
-			idx.Name, idx.NumPassages, idx.Backend, idx.EmbeddingModel, mismatch)
+		mcpBadge := "🟢 MCP"
+		if !idx.IsMCPExposed() {
+			mcpBadge = "🔒 Private"
+		}
+		tagsStr := ""
+		if len(idx.Tags) > 0 {
+			tagsStr = fmt.Sprintf("  tags: [%s]", strings.Join(idx.Tags, ", "))
+		}
+		fmt.Printf("  %-20s  %-10s  %d passages  backend=%s%s%s\n",
+			idx.Name, mcpBadge, idx.NumPassages, idx.Backend, mismatch, tagsStr)
+		if idx.Description != "" {
+			fmt.Printf("    ↳ %s\n", idx.Description)
+		}
 	}
 }
 
@@ -84,13 +117,25 @@ func cmdInfo(args []string) {
 		return
 	}
 
+	mcpStatus := "🟢 Exposed to MCP"
+	if !meta.IsMCPExposed() {
+		mcpStatus = "🔒 Private (Hidden from MCP)"
+	}
+
 	fmt.Printf("📊 Index: %s\n", meta.Name)
-	fmt.Printf("   Backend:    %s\n", meta.Backend)
-	fmt.Printf("   Model:      %s\n", meta.EmbeddingModel)
-	fmt.Printf("   Dimensions: %d\n", meta.Dimensions)
-	fmt.Printf("   Passages:   %d\n", meta.NumPassages)
-	fmt.Printf("   Created:    %s\n", meta.CreatedAt.Format(time.RFC3339))
-	fmt.Printf("   Updated:    %s\n", meta.UpdatedAt.Format(time.RFC3339))
+	fmt.Printf("   Backend:     %s\n", meta.Backend)
+	fmt.Printf("   Model:       %s\n", meta.EmbeddingModel)
+	fmt.Printf("   Dimensions:  %d\n", meta.Dimensions)
+	fmt.Printf("   Passages:    %d\n", meta.NumPassages)
+	fmt.Printf("   MCP Status:  %s\n", mcpStatus)
+	if len(meta.Tags) > 0 {
+		fmt.Printf("   Tags:        %s\n", strings.Join(meta.Tags, ", "))
+	}
+	if meta.Description != "" {
+		fmt.Printf("   Description: %s\n", meta.Description)
+	}
+	fmt.Printf("   Created:     %s\n", meta.CreatedAt.Format(time.RFC3339))
+	fmt.Printf("   Updated:     %s\n", meta.UpdatedAt.Format(time.RFC3339))
 
 	// Show file sizes.
 	files := []string{".index", ".passages.jsonl", ".passages.idx", ".meta.json"}

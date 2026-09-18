@@ -246,6 +246,63 @@ Search an index with optional filters and graph context:
 }
 ```
 
+### Index Governance, Scoping & Federated Search
+
+When managing multiple indexes across different projects or sensitivity levels, you can control which indexes are exposed to MCP AI agents and group them with tags:
+
+#### 1. Controlling Index Visibility (`mcp_exposed`)
+By default, indexes are exposed to MCP. To make an index private (hidden from `gleann_list` and inaccessible to MCP agents):
+```bash
+# Hide an index from MCP agents
+gleann index set my-secret-repo --mcp=false
+
+# Re-expose an index to MCP
+gleann index set my-secret-repo --mcp=true
+
+# Add a semantic description to help agents understand the contents
+gleann index set my-code --desc "Core Go microservices and auth backend"
+```
+
+#### 2. Tagging & Organizing Indexes
+Assign tags to categorize indexes:
+```bash
+gleann index tag backend-api --add work --add backend
+gleann index tag payment-svc --add work --add finance
+gleann index tag personal-notes --add personal
+
+# List indexes matching a tag or MCP status
+gleann index list --tag work
+gleann index list --mcp
+```
+
+#### 3. Restricting MCP Server with `GLEANN_TAGS`
+In your AI editor's MCP configuration, you can set the `GLEANN_TAGS` environment variable to restrict the agent to only indexes matching those tags:
+```json
+{
+  "mcpServers": {
+    "gleann": {
+      "command": "gleann",
+      "args": ["mcp"],
+      "env": {
+        "GLEANN_TAGS": "work,backend"
+      }
+    }
+  }
+}
+```
+
+#### 4. Federated Multi-Index Search via `@tag`
+Agents can search across all indexes tagged with a collection by prefixing the tag name with `@`:
+```json
+{
+  "index": "@work",
+  "query": "Where is the payment gateway webhook defined?",
+  "top_k": 5
+}
+```
+Gleann searches all accessible indexes tagged with `work`, combines and re-ranks the results by relevance score, and returns the top-K fragments annotated with their source index `[index: <name>]`.
+
+
 ### gleann_graph_neighbors
 
 Find callers and callees of a function:

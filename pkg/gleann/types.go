@@ -6,8 +6,10 @@ package gleann
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 )
+
 
 // Default host/address constants used across the codebase.
 const (
@@ -76,10 +78,47 @@ type IndexMeta struct {
 	NumPassages    int       `json:"num_passages"`
 	SourceDir      string    `json:"source_dir,omitempty"`
 	AutoWatch      bool      `json:"auto_watch,omitempty"`
+	Tags           []string  `json:"tags,omitempty"`
+	Description    string    `json:"description,omitempty"`
+	MCPExposed     *bool     `json:"mcp_exposed,omitempty"`
 	CreatedAt      time.Time `json:"created_at"`
 	UpdatedAt      time.Time `json:"updated_at"`
 	Version        string    `json:"version"`
 }
+
+// IsMCPExposed returns true if this index is allowed to be accessed by MCP agents.
+// Defaults to true when unspecified (nil) for backward compatibility.
+func (m IndexMeta) IsMCPExposed() bool {
+	if m.MCPExposed == nil {
+		return true
+	}
+	return *m.MCPExposed
+}
+
+// HasTag returns true if this index contains the specified tag (case-insensitive).
+func (m IndexMeta) HasTag(tag string) bool {
+	tag = strings.TrimSpace(strings.ToLower(tag))
+	if strings.HasPrefix(tag, "@") {
+		tag = strings.TrimPrefix(tag, "@")
+	}
+	for _, t := range m.Tags {
+		if strings.EqualFold(strings.TrimSpace(t), tag) {
+			return true
+		}
+	}
+	return false
+}
+
+// HasAnyTag returns true if this index contains at least one of the specified tags.
+func (m IndexMeta) HasAnyTag(tags []string) bool {
+	for _, tag := range tags {
+		if m.HasTag(tag) {
+			return true
+		}
+	}
+	return false
+}
+
 
 // MarshalJSON implements custom JSON marshaling for IndexMeta.
 func (m IndexMeta) MarshalJSON() ([]byte, error) {

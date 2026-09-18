@@ -286,3 +286,11 @@ See [A2A Protocol](a2a.md) for full documentation.
 | `multimodal_model` | `GLEANN_MULTIMODAL_MODEL` | auto-detected | Ollama model for media processing |
 
 See [Multimodal Processing](multimodal.md) for supported models and media types.
+
+### Index Governance & MCP Scoping
+
+| Env Var | Default | Description |
+|---------|---------|-------------|
+| `GLEANN_TAGS` | — | Comma-separated list of tags to expose over MCP. When set, only indexes possessing one of these tags are accessible by AI agents. |
+| `GLEANN_AUTO_INDEX_DIRS` | — | Comma-separated pairs `name:dir` to automatically watch and index in the background. |
+

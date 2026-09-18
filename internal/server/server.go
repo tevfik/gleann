@@ -133,6 +133,7 @@ func (s *Server) Start() error {
 	mux.HandleFunc("POST /api/indexes/{name}/index-path", s.handleIndexPath)
 	mux.HandleFunc("POST /api/indexes/{name}/watch", s.handleWatch)
 	mux.HandleFunc("POST /api/indexes/{name}/upload", s.handleUpload)
+	mux.HandleFunc("PATCH /api/indexes/{name}", s.handlePatchIndex)
 	mux.HandleFunc("DELETE /api/indexes/{name}", s.handleDeleteIndex)
 
 	// Multi-index search.
@@ -373,6 +374,57 @@ func (s *Server) handleGetIndex(w http.ResponseWriter, r *http.Request) {
 
 	writeJSON(w, http.StatusOK, searcher.Meta())
 }
+
+type patchIndexRequest struct {
+	Tags        *[]string `json:"tags,omitempty"`
+	Description *string   `json:"description,omitempty"`
+	MCPExposed  *bool     `json:"mcp_exposed,omitempty"`
+}
+
+func (s *Server) handlePatchIndex(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	if name == "" {
+		writeError(w, http.StatusBadRequest, "index name required")
+		return
+	}
+
+	var req patchIndexRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
+		return
+	}
+
+	err := gleann.UpdateIndexMeta(s.config.IndexDir, name, func(meta *gleann.IndexMeta) {
+		if req.Tags != nil {
+			meta.Tags = *req.Tags
+		}
+		if req.Description != nil {
+			meta.Description = *req.Description
+		}
+		if req.MCPExposed != nil {
+			meta.MCPExposed = req.MCPExposed
+		}
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to update index metadata: %v", err))
+		return
+	}
+
+	meta, err := gleann.GetIndexMeta(s.config.IndexDir, name)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	s.mu.Lock()
+	if searcher, ok := s.searchers[name]; ok && searcher != nil {
+		searcher.SetMeta(*meta)
+	}
+	s.mu.Unlock()
+
+	writeJSON(w, http.StatusOK, meta)
+}
+
 
 type searchRequest struct {
 	Query               string                  `json:"query"`

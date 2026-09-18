@@ -479,6 +479,12 @@ func (s *LeannSearcher) Meta() IndexMeta {
 	return s.meta
 }
 
+// SetMeta updates the in-memory metadata.
+func (s *LeannSearcher) SetMeta(meta IndexMeta) {
+	s.meta = meta
+}
+
+
 // GraphDB returns the underlying Graph DB connection, or nil if none exists.
 func (s *LeannSearcher) GraphDB() GraphDB {
 	return s.graphDB
@@ -559,6 +565,57 @@ func ListIndexes(indexDir string) ([]IndexMeta, error) {
 	return indexes, nil
 }
 
+// GetIndexMeta reads the metadata for a specific index.
+func GetIndexMeta(indexDir, name string) (*IndexMeta, error) {
+	metaPath := filepath.Join(indexDir, name, name+".meta.json")
+	data, err := os.ReadFile(metaPath)
+	if err != nil {
+		return nil, fmt.Errorf("read index metadata: %w", err)
+	}
+	var meta IndexMeta
+	if err := json.Unmarshal(data, &meta); err != nil {
+		return nil, fmt.Errorf("unmarshal index metadata: %w", err)
+	}
+	return &meta, nil
+}
+
+// UpdateIndexMeta atomically updates the metadata file of an existing index.
+func UpdateIndexMeta(indexDir, name string, updateFn func(*IndexMeta)) error {
+	meta, err := GetIndexMeta(indexDir, name)
+	if err != nil {
+		return err
+	}
+	updateFn(meta)
+	meta.UpdatedAt = time.Now()
+
+	data, err := json.MarshalIndent(meta, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal index metadata: %w", err)
+	}
+
+	metaPath := filepath.Join(indexDir, name, name+".meta.json")
+	tmpPath := metaPath + ".tmp"
+	if err := os.WriteFile(tmpPath, data, 0o644); err != nil {
+		return fmt.Errorf("write temp metadata: %w", err)
+	}
+	return os.Rename(tmpPath, metaPath)
+}
+
+// ListIndexesByTag returns all indexes containing the given tag.
+func ListIndexesByTag(indexDir, tag string) ([]IndexMeta, error) {
+	all, err := ListIndexes(indexDir)
+	if err != nil {
+		return nil, err
+	}
+	var matched []IndexMeta
+	for _, idx := range all {
+		if idx.HasTag(tag) {
+			matched = append(matched, idx)
+		}
+	}
+	return matched, nil
+}
+
 // RemoveIndex removes an index and all its associated files (vector index, graph database, sync state).
 func RemoveIndex(indexDir, name string) error {
 	// 1. Remove the main index directory (contains .index, .passages.jsonl, .meta.json, etc.)
@@ -597,44 +654,3 @@ func cosineSimilarity(a, b []float32) float32 {
 	return dot / denominator
 }
 
-// UpdateIndexMeta updates the metadata for an existing index on disk.
-func UpdateIndexMeta(indexDir string, name string, mutator func(meta *IndexMeta)) error {
-	metaPath := filepath.Join(indexDir, name, name+".meta.json")
-	data, err := os.ReadFile(metaPath)
-	if err != nil {
-		return fmt.Errorf("read meta: %w", err)
-	}
-
-	var meta IndexMeta
-	if err := json.Unmarshal(data, &meta); err != nil {
-		return fmt.Errorf("unmarshal meta: %w", err)
-	}
-
-	mutator(&meta)
-	meta.UpdatedAt = time.Now()
-
-	updatedData, err := json.MarshalIndent(meta, "", "  ")
-	if err != nil {
-		return fmt.Errorf("marshal meta: %w", err)
-	}
-
-	if err := os.WriteFile(metaPath, updatedData, 0644); err != nil {
-		return fmt.Errorf("write meta: %w", err)
-	}
-
-	return nil
-}
-
-// GetIndexMeta returns the metadata for a specific index.
-func GetIndexMeta(indexDir, name string) (IndexMeta, error) {
-	metaPath := filepath.Join(indexDir, name, name+".meta.json")
-	data, err := os.ReadFile(metaPath)
-	if err != nil {
-		return IndexMeta{}, fmt.Errorf("read meta: %w", err)
-	}
-	var meta IndexMeta
-	if err := json.Unmarshal(data, &meta); err != nil {
-		return IndexMeta{}, fmt.Errorf("parse meta: %w", err)
-	}
-	return meta, nil
-}

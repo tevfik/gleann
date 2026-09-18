@@ -9,6 +9,7 @@ export interface Message {
   content: string;
   sources?: Source[];
   status?: string;
+  images?: string[];
 }
 
 export interface ConversationSummary {
@@ -36,6 +37,14 @@ export interface IndexInfo {
   backend?: string;
   dimension?: number;
   count?: number;
+  num_passages?: number;
   docs_dir?: string;
+  source_dir?: string;
   watching?: boolean;
+  auto_watch?: boolean;
+  embedding_model?: string;
+  tags?: string[];
+  description?: string;
+  mcp_exposed?: boolean;
 }
+

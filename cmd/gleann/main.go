@@ -14,7 +14,7 @@ func main() {
 	defer cleanupLlamaCPP()
 	if len(os.Args) < 2 {
 		printUsage()
-		os.Exit(1)
+		return
 	}
 
 	cmd := os.Args[1]
@@ -79,228 +79,66 @@ func main() {
 }
 
 func printUsage() {
-	fmt.Println(`gleann — AI-powered search, code analysis & long-term memory
+	fmt.Println(`gleann — High-Performance AI Search, Code Intelligence & Governance
 
-gleann has three intelligence pillars that work together:
+Usage:
+  gleann <command> [arguments] [flags]
 
-  ┌─ Document & Code Search ──────────────────────────────────────────┐
-  │  Index any docs or source code, then search or ask questions.     │
-  │  Memory context is automatically injected into every LLM query.  │
-  └───────────────────────────────────────────────────────────────────┘
-  ┌─ Code Intelligence (AST Graph) ───────────────────────────────────┐
-  │  Build a call graph alongside your index. Trace dependencies,     │
-  │  callers, and blast-radius across your codebase.                  │
-  └───────────────────────────────────────────────────────────────────┘
-  ┌─ Long-term Memory ────────────────────────────────────────────────┐
-  │  Store persistent facts, preferences, and conversation summaries. │
-  │  Injected automatically as context into ask, chat, and agents.   │
-  └───────────────────────────────────────────────────────────────────┘
+Core Commands:
+  search <name> <query>        Semantic vector search across an index
+  ask    <name> <question>     RAG question-answering with LLM synthesis
+  chat   [name]                Interactive terminal chat session
+  serve  [--addr :8080]        Start REST API & Web UI server
+  mcp                          Start MCP server (stdio transport for AI agents)
 
-── Getting Started ───────────────────────────────────────────────────
+Index Management & Governance:
+  index build <name> --docs <dir> [--graph] [--multimodal-model <m>]
+                               Index documents or code (optionally with AST graph)
+  index list [--tag <t>] [--mcp]  List indexes with stats, tags, and MCP status
+  index tag  <name> --add/--remove <tag>   Assign governance tags (e.g. work, private)
+  index set  <name> [--mcp=true|false] [--desc "..."]
+                               Configure MCP visibility and semantic description
+  index watch <name> --docs <dir>  Auto-sync and rebuild index on file changes
+  index remove <name>          Delete an index and all associated data
 
-  gleann setup --auto [--docs <dir>]     Zero to working in 90 seconds
-  gleann setup                           Interactive configuration wizard
-  gleann doctor                          System health check
+Code Intelligence (AST Graph):
+  graph deps    <fqn> --index <name>  Show downstream dependencies of a symbol
+  graph callers <fqn> --index <name>  Show callers / upstream references
+  graph explain <fqn> --index <name>  Full symbol context and blast radius
+  graph viz           --index <name>  Generate interactive HTML graph visualization
+  graph report        --index <name>  Export comprehensive GRAPH_REPORT.md
 
-── Document & Code Search ────────────────────────────────────────────
+Long-term Memory Engine:
+  memory remember <text>       Store persistent facts into hierarchical memory
+  memory search   <query>      Retrieve relevant memories across all tiers
+  memory list [--tier <tier>]  Browse stored memories (short, medium, long)
+  memory stats                 Show memory database statistics
 
-  gleann index  <sub> [args]            Manage indexes
-  gleann search <name> <query>          Semantic search
-  gleann ask    <name> <question>       RAG-powered Q&A (LLM answer from docs)
-  gleann chat   [name]                  Interactive chat TUI
+Service & Setup:
+  setup [--auto]               Interactive setup wizard (or zero-config auto)
+  doctor                       System health and dependencies check
+  service install|start|status Manage Gleann as a background system service
 
-  gleann index subcommands:
-    list                                List all indexes
-    build  <name> --docs <dir>          Build index from documents
-    build  <name> --docs <dir> --graph  Also build AST code graph
-    rebuild <name> --docs <dir>         Remove & rebuild from scratch
-    remove <name>                       Delete an index
-    info   <name>                       Show index metadata
-    watch  <name> --docs <dir>          Watch directory & auto-rebuild
+Examples:
+  # 1. Index source code with call graph
+  gleann index build core --docs ./src --graph
 
-── Code Intelligence ─────────────────────────────────────────────────
+  # 2. Tag index and expose to MCP AI agents
+  gleann index tag core --add backend --add work
+  gleann index set core --mcp=true --desc "Core API server"
 
-  Symbol navigation:
-  gleann graph deps    <fqn> --index <name>         What does this symbol call?
-  gleann graph callers <fqn> --index <name>         Who calls this symbol?
-  gleann graph explain <fqn> --index <name>         Full context: edges, community, blast radius
-  gleann graph path    <from> <to> --index <name>   Shortest dependency path between two symbols
-  gleann graph query   <pattern> --index <name>     BFS neighborhood around a symbol (pattern match)
+  # 3. Search and Ask
+  gleann search core "rate limiting middleware" --rerank
+  gleann ask core "Explain error handling patterns"
 
-  Analysis & output:
-  gleann graph viz         --index <name>           Interactive HTML call-graph (vis.js)
-  gleann graph report      --index <name>           Markdown report (god nodes, communities)
-  gleann graph communities --index <name>           Community detection results (stdout)
-  gleann graph export      --index <name> --format <graphml|cypher>  Export for Gephi / Neo4j
-  gleann graph wiki        --index <name>           Per-community wiki articles (Markdown)
-  gleann graph hook        install|uninstall|status Git hook: auto-rebuild on commit
+  # 4. Long-term memory
+  gleann memory remember "Database migrations run via golang-migrate"
+  gleann memory search "migration"
 
-  Requires: gleann index build <name> --docs <dir> --graph
-
-── Installation & Integration ───────────────────────────────────────
-
-  gleann install --user             Install gleann binary to ~/.local/bin + completions
-  gleann install --system           Install gleann binary to /usr/local/bin (requires sudo)
-  gleann install                    Auto-detect & install for AI platforms
-  gleann install --platform <name>  Install for a specific platform
-  gleann install --list             List supported platforms
-  gleann install uninstall          Remove platform integration files
-  gleann uninstall                  Remove gleann binary & shell completions
-  gleann uninstall --all            Remove gleann binary, completions & ~/.gleann data
-
-  Platforms: opencode, claude, cursor, codex, gemini, claw, aider, copilot
-
-── Long-term Memory ──────────────────────────────────────────────────
-
-  gleann memory remember <text>               Store important knowledge (long-term)
-  gleann memory forget   <query-or-id>        Remove a memory
-  gleann memory list     [--tier short|medium|long]  Browse stored memories
-  gleann memory search   <query>              Full-text search across all tiers
-  gleann memory add      <tier> <text>        Add a note to a specific tier
-  gleann memory clear    [--tier <tier>]      Clear memories (tier or all)
-  gleann memory stats                         Storage statistics
-  gleann memory summarize --last              Auto-summarize last conversation into memory
-  gleann memory summarize --id <conv-id>      Summarize a specific conversation
-  gleann memory prune    [--age <duration>]   Remove old entries (e.g. 30d, 90d)
-  gleann memory maintain                      Full maintenance pass (prune + archive)
-  gleann memory context                       Show current compiled memory context
-
-  Memory tiers:
-    short   In-memory, session-scoped → auto-promoted to medium on chat exit
-    medium  BBolt, daily summaries → auto-archived to long after 30 days
-    long    BBolt, permanent facts, user preferences (never auto-deleted)
-
-  Chat slash commands:
-    /remember <text>   Store fact to long-term memory mid-conversation
-    /forget <query>    Remove matching memories mid-conversation
-    /memories          Browse stored memories
-    /new               Start a fresh conversation thread
-
-  Memory is automatically injected into every: ask, chat, mcp
-
-── Conversation Management ───────────────────────────────────────────
-
-  gleann chat --list                    List saved conversations
-  gleann chat --pick                    Interactively pick a conversation
-  gleann chat --show <id>               Show a conversation
-  gleann chat --show-last               Show most recent conversation
-  gleann chat --delete <id> [id...]     Delete conversations
-  gleann chat --delete-older-than <d>   Delete by age (e.g. 7d, 2w, 30d)
-
-── Infrastructure ────────────────────────────────────────────────────
-
-  gleann serve  [--addr :8080]          REST API server (rate limiting, timeouts)
-  gleann tasks                          View background tasks (requires serve)
-  gleann benchmark --index <n> --docs <d>  Token reduction analysis
-  gleann tokens <file-or-dir>           Estimate tokens under different read modes
-  gleann mcp                            MCP server (stdio, for AI editors)
-  gleann mcp install [--target <name>]  Auto-configure MCP for Claude, Cursor, Gemini
-  gleann tui                            Interactive TUI launcher
-  gleann config <show|path|edit|validate>  Manage configuration
-  gleann completion <bash|zsh|fish>     Shell completion script
-  gleann version                        Show version
-
-── Service Management ────────────────────────────────────────────────
-
-  gleann service install                Install as OS service (auto-start on login)
-  gleann service uninstall              Remove OS service
-  gleann service start [--addr :8080]   Start server in background
-  gleann service stop                   Stop running server
-  gleann service restart                Restart server
-  gleann service status                 Show server status
-  gleann service logs [--lines 50]      Show server logs
-
-  Platforms: Linux (systemd), macOS (launchd), Windows (Task Scheduler)
-
-── Multimodal Analysis ───────────────────────────────────────────────
-
-  gleann multimodal analyze <file>      Analyze a PDF, image, or video with vision LLM
-  gleann multimodal analyze <dir>       Batch analyze all multimodal files in a directory
-    --model <model>                     Ollama model (default: auto-detect or gemma4)
-    --host <url>                        Ollama host (default: http://localhost:11434)
-
-  Server env vars:
-    GLEANN_RATE_LIMIT=60     Requests/sec per IP (token bucket)
-    GLEANN_RATE_BURST=120    Per-IP burst capacity
-    GLEANN_TIMEOUT_ASK_S=300 Timeout for /ask endpoints (seconds)
-    GLEANN_MAINTENANCE_ENABLED=true  Background memory maintenance
-
-── Common Options ────────────────────────────────────────────────────
-
-  Embedding:
-    --model <model>         Embedding model (default: bge-m3)
-    --provider <provider>   ollama | openai (default: ollama)
-    --host <url>            Ollama host (default: http://localhost:11434)
-
-  Search:
-    --top-k <n>             Results to retrieve (default: 10)
-    --rerank                Two-stage reranking for higher accuracy
-    --hybrid                Vector + BM25 hybrid search
-    --graph                 Enrich results with code graph context
-
-  LLM:
-    --llm-model <model>     LLM model (default: nemotron-3-nano:4b)
-    --llm-provider <prov>   ollama | openai | anthropic
-    --role <role>           System prompt role (code, shell, explain, ...)
-    --format <fmt>          Output format: json | markdown | raw
-    --no-limit              Remove output token limit
-
-  Multimodal:
-    --attach <file>         Attach image/audio for analysis (repeatable)
-    --multimodal-model <m>  Model for media indexing (default: auto-detect)
-
-  Ask/Chat:
-    --continue <id>         Continue a previous conversation
-    --continue-last         Continue most recent conversation
-    --smart-context         Compress supporting code to signatures (saves tokens)
-    --no-cache              Don't save conversation to history
-    --quiet                 Suppress status messages
-
-── Examples ──────────────────────────────────────────────────────────
-
-  # Index and search documents
-  gleann index build my-docs --docs ./documents/
-  gleann index build my-docs --docs ./media/ --multimodal-model gemma4:e4b
-  gleann search my-docs "How does authentication work?" --rerank
-  gleann ask my-docs "Explain the architecture"
-
-  # Index source code with call graph
-  gleann index build my-code --docs ./src/ --graph
-  gleann graph deps "github.com/org/pkg.Handler" --index my-code
-  gleann graph callers "github.com/org/pkg.Handler" --index my-code
-
-  # Graph analysis & visualization
-  gleann graph viz --index my-code                     # interactive HTML
-  gleann graph report --index my-code                  # GRAPH_REPORT.md
-  gleann graph communities --index my-code             # community detection
-
-  # Token reduction benchmark
-  gleann benchmark --index my-code --docs ./src/
-
-  # Long-term memory
-  gleann memory remember "Project uses hexagonal architecture"
-  gleann memory remember "Prefer snake_case for DB columns" --tag "preference"
-  gleann memory search "architecture"
-  gleann memory summarize --last
-  gleann memory stats
-
-  # Chat with memory-augmented context
-  gleann chat my-docs       # memory auto-injected
-  cat file.go | gleann ask my-code "Review this code"
-  gleann ask my-code --continue-last "What about error handling?"
-
-  # Multi-index search
-  gleann search code,docs "rate limiter" --rerank
-
-  # Multimodal (image/audio analysis during RAG)
-  gleann ask my-docs "What's in this diagram?" --attach diagram.png
-  gleann ask my-docs "Summarize this recording" --attach meeting.wav
-
-  # Background tasks
-  gleann tasks                          # list running tasks
-  gleann tasks --status running         # filter by status
-
-  # REST API / MCP
+  # 5. Run Web UI and MCP server
   gleann serve --addr :8080
-  gleann mcp`)
+  gleann mcp
+
+Run 'gleann <command> --help' for detailed subcommand flags and options.`)
 }
+

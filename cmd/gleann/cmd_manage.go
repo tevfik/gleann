@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/tevfik/gleann/internal/tui"
@@ -102,4 +103,111 @@ func cmdTUI() {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
 	}
+}
+
+// cmdTag manages index tags: gleann index tag <name> [--add tag1,tag2] [--remove tag3]
+func cmdTag(args []string) {
+	if len(args) < 1 {
+		fmt.Fprintln(os.Stderr, "usage: gleann index tag <name> [--add <tags>] [--remove <tags>]")
+		os.Exit(1)
+	}
+
+	name := args[0]
+	config := getConfig(args)
+
+	addTagsStr := getFlag(args, "--add")
+	remTagsStr := getFlag(args, "--remove")
+
+	if addTagsStr == "" && remTagsStr == "" {
+		meta, err := gleann.GetIndexMeta(config.IndexDir, name)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			os.Exit(1)
+		}
+		if len(meta.Tags) == 0 {
+			fmt.Printf("Index %q has no tags.\n", name)
+		} else {
+			fmt.Printf("🏷️  Tags for %q: %s\n", name, strings.Join(meta.Tags, ", "))
+		}
+		return
+	}
+
+	err := gleann.UpdateIndexMeta(config.IndexDir, name, func(m *gleann.IndexMeta) {
+		tagSet := make(map[string]bool)
+		for _, t := range m.Tags {
+			tagSet[strings.ToLower(strings.TrimSpace(t))] = true
+		}
+
+		if addTagsStr != "" {
+			for _, t := range strings.Split(addTagsStr, ",") {
+				t = strings.TrimSpace(t)
+				if t != "" {
+					tagSet[strings.ToLower(t)] = true
+				}
+			}
+		}
+
+		if remTagsStr != "" {
+			for _, t := range strings.Split(remTagsStr, ",") {
+				t = strings.TrimSpace(t)
+				delete(tagSet, strings.ToLower(t))
+			}
+		}
+
+		var newTags []string
+		for t := range tagSet {
+			newTags = append(newTags, t)
+		}
+		sort.Strings(newTags)
+		m.Tags = newTags
+	})
+
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error updating tags for %q: %v\n", name, err)
+		os.Exit(1)
+	}
+
+	meta, _ := gleann.GetIndexMeta(config.IndexDir, name)
+	fmt.Printf("✅ Updated tags for %q: %s\n", name, strings.Join(meta.Tags, ", "))
+}
+
+// cmdSet updates index properties: gleann index set <name> [--mcp=true|false] [--desc "description"]
+func cmdSet(args []string) {
+	if len(args) < 1 {
+		fmt.Fprintln(os.Stderr, "usage: gleann index set <name> [--mcp=true|false] [--desc <text>]")
+		os.Exit(1)
+	}
+
+	name := args[0]
+	config := getConfig(args)
+
+	mcpStr := getFlag(args, "--mcp")
+	descStr := getFlag(args, "--desc")
+
+	if mcpStr == "" && descStr == "" {
+		fmt.Fprintln(os.Stderr, "usage: gleann index set <name> [--mcp=true|false] [--desc <text>]")
+		os.Exit(1)
+	}
+
+	err := gleann.UpdateIndexMeta(config.IndexDir, name, func(m *gleann.IndexMeta) {
+		if mcpStr != "" {
+			val := strings.ToLower(mcpStr) == "true" || mcpStr == "1"
+			m.MCPExposed = &val
+		}
+		if descStr != "" {
+			m.Description = descStr
+		}
+	})
+
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error updating index %q: %v\n", name, err)
+		os.Exit(1)
+	}
+
+	meta, _ := gleann.GetIndexMeta(config.IndexDir, name)
+	status := "🟢 Exposed"
+	if !meta.IsMCPExposed() {
+		status = "🔒 Private (Hidden from MCP)"
+	}
+	fmt.Printf("✅ Index %q updated:\n   MCP Status:  %s\n   Description: %s\n", name, status, meta.Description)
 }

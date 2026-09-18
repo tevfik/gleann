@@ -10,6 +10,7 @@ import { System } from './components/System';
 
 function App() {
   const location = useLocation();
+  const isChat = location.pathname === '/';
 
   const getNavClass = (path: string) => {
     const isActive = location.pathname === path;
@@ -51,7 +52,7 @@ function App() {
         </div>
       </nav>
 
-      <div className="flex-1 overflow-y-auto relative z-10">
+      <div className={`flex-1 relative z-10 ${isChat ? 'overflow-hidden' : 'overflow-y-auto'}`}>
         <Routes>
           <Route path="/" element={<Chat />} />
           <Route path="/memory" element={<Memory />} />

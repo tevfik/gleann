@@ -270,8 +270,13 @@ gleann search my-docs "what is HNSW?" --rerank
 # Search with graph context (callers/callees enrichment)
 gleann search my-code "handleSearch" --graph
 
-# Index management
-gleann index list
+# Index management & governance
+gleann index list                          # List all indexes (shows status, tags, passages)
+gleann index list --tag work               # Filter indexes by tag
+gleann index list --mcp                    # List only MCP-exposed indexes
+gleann index tag my-code --add work        # Assign tags to index
+gleann index set my-code --mcp=true        # Control MCP visibility (true/false)
+gleann index set my-code --desc "Core API" # Set semantic description for AI agents
 gleann index info my-docs
 gleann index remove my-docs
 gleann index rebuild my-code --docs ./src --graph

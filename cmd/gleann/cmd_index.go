@@ -35,6 +35,10 @@ func cmdIndex(args []string) {
 		cmdInfo(subArgs)
 	case "watch":
 		cmdWatch(subArgs)
+	case "tag":
+		cmdTag(subArgs)
+	case "set":
+		cmdSet(subArgs)
 	case "help", "--help", "-h":
 		printIndexUsage()
 	default:
@@ -54,6 +58,8 @@ Usage:
   gleann index rebuild <name> --docs <dir>  Remove & rebuild index from scratch
   gleann index info   <name>                Show index metadata
   gleann index watch  <name> --docs <dir>   Watch & auto-rebuild on changes
+  gleann index tag    <name> [--add <t>] [--remove <t>]  Manage index tags
+  gleann index set    <name> [--mcp=true|false] [--desc <d>]  Configure MCP exposure & description
 
 Options:
   --json                  Output as JSON (list, info)

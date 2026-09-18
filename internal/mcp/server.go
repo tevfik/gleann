@@ -6,6 +6,7 @@ import (
 	"log"
 	"math"
 	"os"
+	"sort"
 	"strings"
 
 	"github.com/mark3labs/mcp-go/mcp"
@@ -169,6 +170,49 @@ func (s *Server) Close() {
 }
 
 func (s *Server) getSearcher(name string) (*gleann.LeannSearcher, error) {
+	// Auto-resolve index name if empty
+	if name == "" {
+		if envIdx := os.Getenv("GLEANN_INDEX"); envIdx != "" {
+			name = envIdx
+		} else {
+			indexes, err := gleann.ListIndexes(s.config.IndexDir)
+			if err == nil {
+				var exposed []gleann.IndexMeta
+				for _, idx := range indexes {
+					if idx.IsMCPExposed() {
+						exposed = append(exposed, idx)
+					}
+				}
+				if len(exposed) == 1 {
+					name = exposed[0].Name
+				}
+			}
+		}
+	}
+	if name == "" {
+		return nil, fmt.Errorf("index name required (use gleann_list to see available indexes)")
+	}
+
+	// Verify index is exposed to MCP
+	meta, err := gleann.GetIndexMeta(s.config.IndexDir, name)
+	if err == nil {
+		if !meta.IsMCPExposed() {
+			return nil, fmt.Errorf("access denied: index %q is private and not exposed to MCP", name)
+		}
+		if tagEnv := os.Getenv("GLEANN_TAGS"); tagEnv != "" {
+			matched := false
+			for _, t := range strings.Split(tagEnv, ",") {
+				if meta.HasTag(t) {
+					matched = true
+					break
+				}
+			}
+			if !matched {
+				return nil, fmt.Errorf("access denied: index %q does not match required tags (%s)", name, tagEnv)
+			}
+		}
+	}
+
 	if searcher, ok := s.searchers[name]; ok {
 		s.touchLRU(name)
 		return searcher, nil
@@ -224,10 +268,40 @@ func (s *Server) handleIndexListResource(ctx context.Context, request mcp.ReadRe
 		return nil, fmt.Errorf("error listing indexes: %v", err)
 	}
 
+	tagEnv := os.Getenv("GLEANN_TAGS")
+
 	var sb strings.Builder
 	sb.WriteString("Available Gleann Indexes:\n")
+	count := 0
 	for _, idx := range indexes {
-		sb.WriteString(fmt.Sprintf("- %s: %d passages, backend=%s, model=%s\n", idx.Name, idx.NumPassages, idx.Backend, idx.EmbeddingModel))
+		if !idx.IsMCPExposed() {
+			continue
+		}
+		if tagEnv != "" {
+			matched := false
+			for _, t := range strings.Split(tagEnv, ",") {
+				if idx.HasTag(t) {
+					matched = true
+					break
+				}
+			}
+			if !matched {
+				continue
+			}
+		}
+		count++
+		sb.WriteString(fmt.Sprintf("- %s: %d passages, backend=%s", idx.Name, idx.NumPassages, idx.Backend))
+		if len(idx.Tags) > 0 {
+			sb.WriteString(fmt.Sprintf(", tags=[%s]", strings.Join(idx.Tags, ", ")))
+		}
+		if idx.Description != "" {
+			sb.WriteString(fmt.Sprintf(" — %s", idx.Description))
+		}
+		sb.WriteString("\n")
+	}
+
+	if count == 0 {
+		sb.WriteString("No exposed indexes found.\n")
 	}
 
 	res := mcp.TextResourceContents{
@@ -305,7 +379,7 @@ func (s *Server) buildSearchTool() mcp.Tool {
 			Properties: map[string]interface{}{
 				"index": map[string]interface{}{
 					"type":        "string",
-					"description": "Name of the index to search",
+					"description": "Name of the index to search, or a tag collection starting with '@' (e.g. '@work') to search across all indexes with that tag.",
 				},
 				"query": map[string]interface{}{
 					"type":        "string",
@@ -390,11 +464,6 @@ func (s *Server) handleSearch(ctx context.Context, request mcp.CallToolRequest) 
 		topK = int(limit)
 	}
 
-	searcher, err := s.getSearcher(indexName)
-	if err != nil {
-		return mcp.NewToolResultError(fmt.Sprintf("Error loading index %q: %v", indexName, err)), nil
-	}
-
 	searchOpts := []gleann.SearchOption{gleann.WithTopK(topK)}
 	if filters, logic := parseFilters(args); len(filters) > 0 {
 		searchOpts = append(searchOpts, gleann.WithMetadataFilter(filters...))
@@ -404,9 +473,80 @@ func (s *Server) handleSearch(ctx context.Context, request mcp.CallToolRequest) 
 		searchOpts = append(searchOpts, gleann.WithGraphContext(true))
 	}
 
-	results, err := searcher.Search(ctx, query, searchOpts...)
-	if err != nil {
-		return mcp.NewToolResultError(fmt.Sprintf("Error searching memory: %v", err)), nil
+	var results []gleann.SearchResult
+
+	// Support federated search across tag collections (e.g. index="@work" or "@backend")
+	if strings.HasPrefix(indexName, "@") {
+		tagName := strings.TrimPrefix(indexName, "@")
+		matchingIndexes, err := gleann.ListIndexesByTag(s.config.IndexDir, tagName)
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("Error listing indexes for tag %q: %v", tagName, err)), nil
+		}
+		if len(matchingIndexes) == 0 {
+			return mcp.NewToolResultText(fmt.Sprintf("No indexes found with tag %q.", tagName)), nil
+		}
+
+		tagEnv := os.Getenv("GLEANN_TAGS")
+		var targetNames []string
+		for _, idx := range matchingIndexes {
+			if !idx.IsMCPExposed() {
+				continue
+			}
+			if tagEnv != "" {
+				matched := false
+				for _, t := range strings.Split(tagEnv, ",") {
+					if idx.HasTag(t) {
+						matched = true
+						break
+					}
+				}
+				if !matched {
+					continue
+				}
+			}
+			targetNames = append(targetNames, idx.Name)
+		}
+
+		if len(targetNames) == 0 {
+			return mcp.NewToolResultText(fmt.Sprintf("No accessible indexes found with tag %q.", tagName)), nil
+		}
+
+		for _, name := range targetNames {
+			searcher, err := s.getSearcher(name)
+			if err != nil {
+				continue
+			}
+			res, err := searcher.Search(ctx, query, searchOpts...)
+			if err != nil {
+				continue
+			}
+			for _, r := range res {
+				if r.Metadata == nil {
+					r.Metadata = make(map[string]any)
+				}
+				r.Metadata["_index"] = name
+				results = append(results, r)
+			}
+		}
+
+		// Sort merged results descending by score
+		sort.Slice(results, func(i, j int) bool {
+			return results[i].Score > results[j].Score
+		})
+		if len(results) > topK {
+			results = results[:topK]
+		}
+	} else {
+		searcher, err := s.getSearcher(indexName)
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("Error loading index %q: %v", indexName, err)), nil
+		}
+
+		res, err := searcher.Search(ctx, query, searchOpts...)
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("Error searching memory: %v", err)), nil
+		}
+		results = res
 	}
 
 	if len(results) == 0 {
@@ -439,8 +579,11 @@ func (s *Server) handleSearch(ctx context.Context, request mcp.CallToolRequest) 
 	var sb strings.Builder
 	for i, r := range results {
 		source := ""
+		if idxName, ok := r.Metadata["_index"].(string); ok {
+			source = fmt.Sprintf(" [index: %s]", idxName)
+		}
 		if metaSource, ok := r.Metadata["source"]; ok {
-			source = fmt.Sprintf(" [%v]", metaSource)
+			source += fmt.Sprintf(" [%v]", metaSource)
 		}
 		sb.WriteString(fmt.Sprintf("---\nResult [%d]%s (Score: %.4f):\n%s\n", i+1, source, r.Score, r.Text))
 
@@ -470,7 +613,7 @@ func (s *Server) handleSearch(ctx context.Context, request mcp.CallToolRequest) 
 func (s *Server) buildListTool() mcp.Tool {
 	return mcp.Tool{
 		Name:        "gleann_list",
-		Description: "List all available gleann indexes with their metadata (name, backend, model, passage count).",
+		Description: "List all available gleann indexes with their metadata (name, backend, model, passage count, tags, description).",
 		InputSchema: mcp.ToolInputSchema{
 			Type:       "object",
 			Properties: map[string]interface{}{},
@@ -488,9 +631,39 @@ func (s *Server) handleList(ctx context.Context, request mcp.CallToolRequest) (*
 		return mcp.NewToolResultText("No indexes found."), nil
 	}
 
+	tagEnv := os.Getenv("GLEANN_TAGS")
+
 	var sb strings.Builder
 	for _, idx := range indexes {
-		sb.WriteString(fmt.Sprintf("- %s: %d passages, backend=%s, model=%s\n", idx.Name, idx.NumPassages, idx.Backend, idx.EmbeddingModel))
+		if !idx.IsMCPExposed() {
+			continue
+		}
+		if tagEnv != "" {
+			matched := false
+			for _, t := range strings.Split(tagEnv, ",") {
+				if idx.HasTag(t) {
+					matched = true
+					break
+				}
+			}
+			if !matched {
+				continue
+			}
+		}
+
+		tagStr := ""
+		if len(idx.Tags) > 0 {
+			tagStr = fmt.Sprintf(", tags=[%s]", strings.Join(idx.Tags, ", "))
+		}
+		descStr := ""
+		if idx.Description != "" {
+			descStr = fmt.Sprintf(" - %s", idx.Description)
+		}
+		sb.WriteString(fmt.Sprintf("- %s: %d passages, backend=%s, model=%s%s%s\n", idx.Name, idx.NumPassages, idx.Backend, idx.EmbeddingModel, tagStr, descStr))
+	}
+
+	if sb.Len() == 0 {
+		return mcp.NewToolResultText("No accessible indexes found for MCP."), nil
 	}
 
 	return mcp.NewToolResultText(sb.String()), nil

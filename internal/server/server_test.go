@@ -5,10 +5,14 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/tevfik/gleann/pkg/gleann"
 )
+
 
 func TestHandleHealth(t *testing.T) {
 	s := &Server{
@@ -281,3 +285,49 @@ func TestCORSPreflight(t *testing.T) {
 		t.Errorf("expected 200 for OPTIONS, got %d", w.Code)
 	}
 }
+
+func TestHandlePatchIndex(t *testing.T) {
+	dir := t.TempDir()
+	config := gleann.DefaultConfig()
+	config.IndexDir = dir
+
+	idxDir := filepath.Join(dir, "myindex")
+	os.MkdirAll(idxDir, 0755)
+	initialMeta := gleann.IndexMeta{
+		Name: "myindex",
+	}
+	data, _ := json.Marshal(initialMeta)
+	os.WriteFile(filepath.Join(idxDir, "myindex.meta.json"), data, 0644)
+
+	s := &Server{
+		config:    config,
+		searchers: make(map[string]*gleann.LeannSearcher),
+	}
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("PATCH /api/indexes/{name}", s.handlePatchIndex)
+
+	patchBody := `{"tags":["work","go"],"description":"Test index","mcp_exposed":false}`
+	req := httptest.NewRequest(http.MethodPatch, "/api/indexes/myindex", strings.NewReader(patchBody))
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	meta, err := gleann.GetIndexMeta(dir, "myindex")
+	if err != nil {
+		t.Fatalf("GetIndexMeta failed: %v", err)
+	}
+	if meta.Description != "Test index" {
+		t.Errorf("description mismatch: %s", meta.Description)
+	}
+	if meta.IsMCPExposed() {
+		t.Errorf("expected mcp_exposed to be false")
+	}
+	if !meta.HasTag("work") || !meta.HasTag("go") {
+		t.Errorf("tags mismatch: %v", meta.Tags)
+	}
+}
+
