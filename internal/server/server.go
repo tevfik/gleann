@@ -850,9 +850,12 @@ func (s *Server) handleAskStream(w http.ResponseWriter, r *http.Request, chat *g
 }
 
 type buildRequest struct {
-	Texts    []string       `json:"texts"`
-	Items    []gleann.Item  `json:"items,omitempty"`
-	Metadata map[string]any `json:"metadata,omitempty"`
+	Texts       []string       `json:"texts"`
+	Items       []gleann.Item  `json:"items,omitempty"`
+	Metadata    map[string]any `json:"metadata,omitempty"`
+	Tags        []string       `json:"tags,omitempty"`
+	Description string         `json:"description,omitempty"`
+	MCPExposed  *bool          `json:"mcp_exposed,omitempty"`
 }
 
 func (s *Server) handleBuild(w http.ResponseWriter, r *http.Request) {
@@ -916,6 +919,21 @@ func (s *Server) handleBuild(w http.ResponseWriter, r *http.Request) {
 		"count":    len(items),
 		"build_ms": buildDuration.Milliseconds(),
 	})
+
+	// Update governance metadata if provided.
+	if len(req.Tags) > 0 || req.Description != "" || req.MCPExposed != nil {
+		_ = gleann.UpdateIndexMeta(s.config.IndexDir, name, func(meta *gleann.IndexMeta) {
+			if len(req.Tags) > 0 {
+				meta.Tags = req.Tags
+			}
+			if req.Description != "" {
+				meta.Description = req.Description
+			}
+			if req.MCPExposed != nil {
+				meta.MCPExposed = req.MCPExposed
+			}
+		})
+	}
 
 	// Clear cached searcher.
 	s.mu.Lock()
@@ -1333,7 +1351,10 @@ func (s *Server) handleUpdateConversation(w http.ResponseWriter, r *http.Request
 
 // indexPathRequest is the body for POST /api/indexes/{name}/index-path
 type indexPathRequest struct {
-	Path string `json:"path"`
+	Path        string   `json:"path"`
+	Tags        []string `json:"tags,omitempty"`
+	Description string   `json:"description,omitempty"`
+	MCPExposed  *bool    `json:"mcp_exposed,omitempty"`
 }
 
 // handleIndexPath triggers indexing of a local directory or file path on the server.
@@ -1354,10 +1375,21 @@ func (s *Server) handleIndexPath(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	buildArgs := []string{"index", "build", name, "--docs", req.Path}
+	if len(req.Tags) > 0 {
+		buildArgs = append(buildArgs, "--tags", strings.Join(req.Tags, ","))
+	}
+	if req.Description != "" {
+		buildArgs = append(buildArgs, "--desc", req.Description)
+	}
+	if req.MCPExposed != nil {
+		buildArgs = append(buildArgs, fmt.Sprintf("--mcp=%t", *req.MCPExposed))
+	}
+
 	if s.bgManager != nil {
 		s.bgManager.Submit(background.TaskTypeAutoIndex, func(progress func(pct float64, msg string)) error {
 			progress(0.1, fmt.Sprintf("Building index '%s' from '%s'", name, req.Path))
-			cmd := exec.Command(os.Args[0], "index", "build", name, "--docs", req.Path)
+			cmd := exec.Command(os.Args[0], buildArgs...)
 			if err := cmd.Run(); err != nil {
 				return fmt.Errorf("indexing failed: %w", err)
 			}
@@ -1366,7 +1398,7 @@ func (s *Server) handleIndexPath(w http.ResponseWriter, r *http.Request) {
 		})
 	} else {
 		go func() {
-			cmd := exec.Command(os.Args[0], "index", "build", name, "--docs", req.Path)
+			cmd := exec.Command(os.Args[0], buildArgs...)
 			if err := cmd.Run(); err != nil {
 				log.Printf("Background index build failed for %s: %v", req.Path, err)
 			}

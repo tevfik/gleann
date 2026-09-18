@@ -105,9 +105,32 @@ func cmdBuild(args []string) {
 		os.Exit(1)
 	}
 
+	tagsFlag := getFlag(args, "--tags")
+	if tagsFlag == "" {
+		tagsFlag = getFlag(args, "--tag")
+	}
+	descFlag := getFlag(args, "--desc")
+	mcpFlag := getFlag(args, "--mcp")
+
 	_ = gleann.UpdateIndexMeta(config.IndexDir, name, func(meta *gleann.IndexMeta) {
 		meta.SourceDir = docsDir
+		if tagsFlag != "" {
+			for _, t := range strings.Split(tagsFlag, ",") {
+				t = strings.TrimSpace(t)
+				if t != "" && !meta.HasTag(t) {
+					meta.Tags = append(meta.Tags, strings.TrimPrefix(t, "@"))
+				}
+			}
+		}
+		if descFlag != "" {
+			meta.Description = descFlag
+		}
+		if mcpFlag != "" {
+			exp := (mcpFlag == "true" || mcpFlag == "1" || mcpFlag == "yes")
+			meta.MCPExposed = &exp
+		}
 	})
+
 
 	elapsed := time.Since(start)
 	fmt.Printf("✅ Vector Index %q built: %d passages in %s\n", name, len(items), elapsed.Round(time.Millisecond))
