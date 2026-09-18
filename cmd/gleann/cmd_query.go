@@ -26,7 +26,11 @@ func cmdList(args []string) {
 	config := getConfig(args)
 	asJSON := hasFlag(args, "--json")
 	tagFilter := getFlag(args, "--tag")
-	mcpFilter := hasFlag(args, "--mcp")
+	if tagFilter == "" {
+		tagFilter = getFlag(args, "--tags")
+	}
+	mcpFilter := hasFlag(args, "--mcp") || hasFlag(args, "--public")
+	privateFilter := hasFlag(args, "--private")
 
 	indexes, err := gleann.ListIndexes(config.IndexDir)
 	if err != nil {
@@ -54,6 +58,16 @@ func cmdList(args []string) {
 		indexes = filtered
 	}
 
+	if privateFilter {
+		var filtered []gleann.IndexMeta
+		for _, idx := range indexes {
+			if !idx.IsMCPExposed() {
+				filtered = append(filtered, idx)
+			}
+		}
+		indexes = filtered
+	}
+
 	if asJSON {
 		data, _ := json.MarshalIndent(indexes, "", "  ")
 		fmt.Println(string(data))
@@ -71,16 +85,16 @@ func cmdList(args []string) {
 		if config.EmbeddingModel != "" && idx.EmbeddingModel != "" && config.EmbeddingModel != idx.EmbeddingModel {
 			mismatch = fmt.Sprintf(" (⚠ needs rebuild for %s)", config.EmbeddingModel)
 		}
-		mcpBadge := "🟢 MCP"
+		statusBadge := "🟢 Public (MCP)"
 		if !idx.IsMCPExposed() {
-			mcpBadge = "🔒 Private"
+			statusBadge = "🔒 Private"
 		}
 		tagsStr := ""
 		if len(idx.Tags) > 0 {
-			tagsStr = fmt.Sprintf("  tags: [%s]", strings.Join(idx.Tags, ", "))
+			tagsStr = fmt.Sprintf("  tags: [@%s]", strings.Join(idx.Tags, ", @"))
 		}
-		fmt.Printf("  %-20s  %-10s  %d passages  backend=%s%s%s\n",
-			idx.Name, mcpBadge, idx.NumPassages, idx.Backend, mismatch, tagsStr)
+		fmt.Printf("  %-22s  %-18s  %4d passages  backend=%s%s%s\n",
+			idx.Name, statusBadge, idx.NumPassages, idx.Backend, mismatch, tagsStr)
 		if idx.Description != "" {
 			fmt.Printf("    ↳ %s\n", idx.Description)
 		}

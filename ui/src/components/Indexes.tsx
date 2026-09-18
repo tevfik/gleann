@@ -30,6 +30,31 @@ export function Indexes() {
   const [inlineTagInput, setInlineTagInput] = useState('');
   const [editingDescFor, setEditingDescFor] = useState<string | null>(null);
   const [inlineDescInput, setInlineDescInput] = useState('');
+  const [editingBulkTagsFor, setEditingBulkTagsFor] = useState<string | null>(null);
+  const [bulkTagsInput, setBulkTagsInput] = useState('');
+
+  const handleSaveBulkTags = async (indexName: string) => {
+    const parsedTags = bulkTagsInput
+      .split(',')
+      .map(t => t.trim().replace(/^@/, ''))
+      .filter(t => t.length > 0);
+
+    // Optimistic update
+    setIndexes(prev => prev.map(idx => idx.name === indexName ? { ...idx, tags: parsedTags } : idx));
+    setEditingBulkTagsFor(null);
+    setBulkTagsInput('');
+
+    try {
+      await fetch(`/api/indexes/${indexName}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tags: parsedTags })
+      });
+    } catch (err) {
+      console.error(err);
+      loadIndexes();
+    }
+  };
 
   const loadIndexes = () => {
     fetch('/api/indexes')
@@ -502,7 +527,7 @@ export function Indexes() {
             <tr>
               <th className="px-5 py-3">Index & Info</th>
               <th className="px-5 py-3">Tags & Scope</th>
-              <th className="px-5 py-3">MCP Access</th>
+              <th className="px-5 py-3">Access (Public / Private)</th>
               <th className="px-5 py-3">Passages</th>
               <th className="px-5 py-3">Auto-Sync</th>
               <th className="px-5 py-3 text-right">Actions</th>
@@ -596,7 +621,7 @@ export function Indexes() {
 
                   {/* Interactive Tags */}
                   <td className="px-5 py-4">
-                    <div className="flex flex-wrap items-center gap-1.5 max-w-[220px]">
+                    <div className="flex flex-wrap items-center gap-1.5 max-w-[240px]">
                       {(idx.tags || []).map(tag => (
                         <span 
                           key={tag} 
@@ -643,44 +668,68 @@ export function Indexes() {
                           </button>
                         </div>
                       ) : (
-                        <button
-                          onClick={() => {
-                            setEditingTagFor(idx.name);
-                            setInlineTagInput('');
-                          }}
-                          className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] text-gray-500 hover:text-purple-300 hover:bg-white/5 border border-dashed border-white/10 transition-colors"
-                          title="Add tag"
-                        >
-                          <Tag className="w-2.5 h-2.5" />
-                          <span>+tag</span>
-                        </button>
+                        <div className="inline-flex items-center gap-1">
+                          <button
+                            onClick={() => {
+                              setEditingTagFor(idx.name);
+                              setInlineTagInput('');
+                            }}
+                            className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] text-gray-400 hover:text-purple-300 hover:bg-white/5 border border-dashed border-white/10 transition-colors"
+                            title="Add a tag"
+                          >
+                            <Tag className="w-2.5 h-2.5" />
+                            <span>+tag</span>
+                          </button>
+                          <button
+                            onClick={() => {
+                              setEditingBulkTagsFor(idx.name);
+                              setBulkTagsInput((idx.tags || []).join(', '));
+                            }}
+                            className="p-1 rounded text-gray-500 hover:text-purple-300 hover:bg-white/5 transition-colors"
+                            title="Edit all tags"
+                          >
+                            <Edit3 className="w-3 h-3" />
+                          </button>
+                        </div>
                       )}
                     </div>
                   </td>
 
-                  {/* MCP Toggle */}
+                  {/* Slide Switch for Public (MCP) vs Private */}
                   <td className="px-5 py-4">
-                    <button
-                      onClick={() => handleToggleMCP(idx.name, isExposed)}
-                      className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border transition-colors ${
-                        isExposed
-                          ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30 hover:bg-emerald-500/20'
-                          : 'bg-zinc-800 text-zinc-400 border-zinc-700 hover:bg-zinc-700'
-                      }`}
-                      title={isExposed ? "Exposed to AI Agents via MCP (Click to make Private)" : "Private / Hidden from AI Agents (Click to Expose)"}
-                    >
-                      {isExposed ? (
-                        <>
-                          <Shield className="w-3 h-3" />
-                          <span>Exposed</span>
-                        </>
-                      ) : (
-                        <>
-                          <ShieldOff className="w-3 h-3" />
-                          <span>Private</span>
-                        </>
-                      )}
-                    </button>
+                    <div className="flex items-center gap-2.5">
+                      <button
+                        type="button"
+                        role="switch"
+                        aria-checked={isExposed}
+                        onClick={() => handleToggleMCP(idx.name, isExposed)}
+                        className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+                          isExposed ? 'bg-emerald-500' : 'bg-zinc-700'
+                        }`}
+                        title={isExposed ? "Public / MCP Enabled (Click to switch to Private)" : "Private / Hidden from MCP (Click to switch to Public)"}
+                      >
+                        <span
+                          className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-md ring-0 transition duration-200 ease-in-out ${
+                            isExposed ? 'translate-x-5' : 'translate-x-0'
+                          }`}
+                        />
+                      </button>
+                      <span className={`text-xs font-medium select-none inline-flex items-center gap-1.5 ${
+                        isExposed ? 'text-emerald-400' : 'text-zinc-400'
+                      }`}>
+                        {isExposed ? (
+                          <>
+                            <Shield className="w-3.5 h-3.5" />
+                            <span>Public (MCP)</span>
+                          </>
+                        ) : (
+                          <>
+                            <ShieldOff className="w-3.5 h-3.5" />
+                            <span>Private</span>
+                          </>
+                        )}
+                      </span>
+                    </div>
                   </td>
 
                   <td className="px-5 py-4 font-mono text-xs text-gray-400">
@@ -720,6 +769,49 @@ export function Indexes() {
           </tbody>
         </table>
       </div>
+
+      {/* Edit All Tags Modal */}
+      {editingBulkTagsFor && (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-[#1a1b23] border border-white/10 rounded-xl p-6 max-w-md w-full shadow-2xl">
+            <h3 className="text-lg font-semibold text-white mb-2 flex items-center gap-2">
+              <Tag className="w-5 h-5 text-purple-400" />
+              Edit Tags for <span className="text-blue-400 font-mono">{editingBulkTagsFor}</span>
+            </h3>
+            <p className="text-xs text-gray-400 mb-4">
+              Enter comma-separated tags to categorize and scope this index for AI agents (e.g. <code className="text-purple-300">work, backend, docs</code>).
+            </p>
+            <input
+              type="text"
+              autoFocus
+              value={bulkTagsInput}
+              onChange={e => setBulkTagsInput(e.target.value)}
+              onKeyDown={e => {
+                if (e.key === 'Enter') handleSaveBulkTags(editingBulkTagsFor);
+                if (e.key === 'Escape') setEditingBulkTagsFor(null);
+              }}
+              placeholder="e.g. work, backend, docs"
+              className="w-full px-3 py-2 bg-black/40 border border-white/10 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:border-purple-500 text-sm mb-4"
+            />
+            <div className="flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setEditingBulkTagsFor(null)}
+                className="px-4 py-2 rounded-lg text-sm text-gray-400 hover:text-white hover:bg-white/5 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => handleSaveBulkTags(editingBulkTagsFor)}
+                className="px-4 py-2 rounded-lg text-sm bg-purple-600 hover:bg-purple-500 text-white font-medium transition-colors"
+              >
+                Save Tags
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
