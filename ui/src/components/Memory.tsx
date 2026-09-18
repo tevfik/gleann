@@ -1,10 +1,11 @@
 import { useState, useEffect } from 'react';
-import { Brain, Trash2, ArrowRight } from 'lucide-react';
+import { Brain, Trash2, ArrowRight, Sparkles, Tag } from 'lucide-react';
 
 export function Memory() {
   const [blocks, setBlocks] = useState<any[]>([]);
   const [newContent, setNewContent] = useState('');
   const [newTier, setNewTier] = useState('long');
+  const [compactMsg, setCompactMsg] = useState<string | null>(null);
 
   const loadBlocks = () => {
     fetch(`/api/blocks?t=${Date.now()}`)
@@ -18,6 +19,24 @@ export function Memory() {
   useEffect(() => {
     loadBlocks();
   }, []);
+
+  const handleCompact = async () => {
+    try {
+      const res = await fetch('/api/blocks/compact', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ min_validity: 0.2 })
+      });
+      const data = await res.json();
+      setCompactMsg(`Compacted: ${data.pruned || 0} stale/unreliable block(s) pruned`);
+      setTimeout(() => setCompactMsg(null), 4000);
+      loadBlocks();
+    } catch (err) {
+      console.error(err);
+      setCompactMsg('Compaction failed');
+      setTimeout(() => setCompactMsg(null), 4000);
+    }
+  };
 
   const handleAdd = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -61,12 +80,27 @@ export function Memory() {
         <h1 className="text-2xl font-bold text-white flex items-center gap-2">
           <Brain className="w-6 h-6 text-blue-400" /> Long-Term Memory
         </h1>
-        <button 
-          onClick={handleClearAll}
-          className="bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/20 px-4 py-2 rounded-lg text-sm font-medium transition-colors"
-        >
-          Clear All
-        </button>
+        <div className="flex items-center gap-2">
+          {compactMsg && (
+            <span className="text-xs text-indigo-400 font-medium bg-indigo-500/10 border border-indigo-500/20 px-2.5 py-1 rounded-md animate-fade-in">
+              {compactMsg}
+            </span>
+          )}
+          <button
+            onClick={handleCompact}
+            title="Compact memory by pruning stale and unreliable memories (<0.2 Bayesian validity)"
+            className="bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-400 border border-indigo-500/20 px-3 py-1.5 rounded-lg text-sm font-medium flex items-center gap-1.5 transition-colors"
+          >
+            <Sparkles className="w-4 h-4" />
+            Compact Memory
+          </button>
+          <button 
+            onClick={handleClearAll}
+            className="bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/20 px-4 py-2 rounded-lg text-sm font-medium transition-colors"
+          >
+            Clear All
+          </button>
+        </div>
       </div>
       <p className="text-sm text-gray-400 mb-6 max-w-3xl">
         Memory blocks are automatically injected into the LLM context based on semantic relevance. 
@@ -158,8 +192,9 @@ export function Memory() {
                 {tierBlocks.map((block, i) => (
                   <div key={i} className="bg-[#1a1b23] border border-white/10 rounded-xl p-4 shadow-lg group hover:border-blue-500/30 transition-colors">
                     <div className="flex justify-between items-start mb-2">
-                      <div className="flex gap-2 items-center">
+                      <div className="flex flex-wrap gap-2 items-center">
                         <span className="text-[10px] text-gray-500">{new Date(block.created_at).toLocaleString()}</span>
+                        {block.label && <span className="text-[10px] font-mono bg-white/5 text-gray-400 px-1.5 py-0.5 rounded uppercase">{block.label}</span>}
                         {block.scope && <span className="text-[10px] bg-blue-500/10 text-blue-300 px-1.5 py-0.5 rounded">Scope: {block.scope}</span>}
                       </div>
                       <button 
@@ -170,7 +205,17 @@ export function Memory() {
                         <Trash2 className="w-4 h-4" />
                       </button>
                     </div>
-                    <p className="text-sm text-gray-300 whitespace-pre-wrap">{block.content}</p>
+                    <p className="text-sm text-gray-300 whitespace-pre-wrap mb-2">{block.content}</p>
+                    {block.tags && block.tags.length > 0 && (
+                      <div className="flex flex-wrap gap-1 mt-2 pt-2 border-t border-white/5">
+                        {block.tags.map((t: string, idx: number) => (
+                          <span key={idx} className="text-[10px] text-gray-400 bg-white/5 px-2 py-0.5 rounded-full flex items-center gap-1">
+                            <Tag className="w-2.5 h-2.5 opacity-60" />
+                            {t}
+                          </span>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 ))}
               </div>

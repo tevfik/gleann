@@ -57,7 +57,7 @@ build-web:
 		cd ui && npm install && npm run build; \
 	elif command -v docker >/dev/null 2>&1; then \
 		echo "npm not found. Building using Docker (node:20-alpine)..."; \
-		docker run --rm -u $$(id -u):$$(id -g) -v $$(pwd):/app -w /app/ui node:20-alpine sh -c "npm ci && npm run build"; \
+		docker run --rm -v $$(pwd):/app -w /app/ui node:20-alpine sh -c "(npm run build || (npm ci && npm run build)) && chown -R $$(id -u):$$(id -g) dist"; \
 	fi
 	@if [ ! -f ui/dist/index.html ]; then echo "❌ ui/dist/index.html missing! Build failed."; exit 1; fi
 
