@@ -270,11 +270,20 @@ func (m *Manager) Stats() (*Stats, error) {
 // ── Context ───────────────────────────────────────────────────────
 
 // BuildContext compiles memory into a ContextWindow for LLM injection.
+// Automatically filters out low-validity (< 0.2) or expired blocks to keep context clean.
 func (m *Manager) BuildContext() (*ContextWindow, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	return m.store.BuildContext()
+	cw, err := m.store.BuildContext()
+	if err != nil {
+		return nil, err
+	}
+
+	cw.ShortTerm = filterValid(cw.ShortTerm)
+	cw.MediumTerm = filterValid(cw.MediumTerm)
+	cw.LongTerm = filterValid(cw.LongTerm)
+	return cw, nil
 }
 
 // BuildScopedContext compiles memory visible to a specific scope.
@@ -283,7 +292,7 @@ func (m *Manager) BuildScopedContext(scope string) (*ContextWindow, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	cw, err := m.store.BuildContext()
+	cw, err := m.BuildContext()
 	if err != nil {
 		return nil, err
 	}
@@ -296,6 +305,62 @@ func (m *Manager) BuildScopedContext(scope string) (*ContextWindow, error) {
 	cw.MediumTerm = filterScope(cw.MediumTerm, scope)
 	cw.LongTerm = filterScope(cw.LongTerm, scope)
 	return cw, nil
+}
+
+// Compact prunes expired blocks and blocks whose validity score falls below minValidity.
+// If minValidity <= 0, it defaults to 0.2 (unreliable threshold).
+// Returns the count of pruned blocks.
+func (m *Manager) Compact(minValidity float64) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if minValidity <= 0 {
+		minValidity = 0.2
+	}
+
+	prunedCount := 0
+
+	// 1. Prune expired first.
+	n, _ := m.store.PruneExpired()
+	prunedCount += n
+
+	// 2. Prune low-validity short-term blocks.
+	var remainingShort []Block
+	for _, b := range m.store.shortTerm {
+		if b.ValidityScore() < minValidity {
+			prunedCount++
+		} else {
+			remainingShort = append(remainingShort, b)
+		}
+	}
+	m.store.shortTerm = remainingShort
+
+	// 3. Prune low-validity medium and long-term blocks from store.
+	for _, tier := range []Tier{TierMedium, TierLong} {
+		blocks, err := m.store.List(tier)
+		if err != nil {
+			continue
+		}
+		for _, b := range blocks {
+			if b.ValidityScore() < minValidity {
+				if err := m.store.Delete(b.ID); err == nil {
+					prunedCount++
+				}
+			}
+		}
+	}
+
+	return prunedCount, nil
+}
+
+func filterValid(blocks []Block) []Block {
+	var valid []Block
+	for _, b := range blocks {
+		if !b.IsExpired() && b.ValidityScore() >= 0.2 {
+			valid = append(valid, b)
+		}
+	}
+	return valid
 }
 
 // ── Lifecycle ─────────────────────────────────────────────────────

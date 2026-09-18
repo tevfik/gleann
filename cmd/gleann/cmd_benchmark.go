@@ -1,6 +1,8 @@
 package main
 
 import (
+	"context"
+	"encoding/json"
 	"fmt"
 	"io/fs"
 	"os"
@@ -10,15 +12,26 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/tevfik/gleann/internal/embedding"
+	"github.com/tevfik/gleann/pkg/benchmark"
 	"github.com/tevfik/gleann/pkg/gleann"
 )
 
-// cmdBenchmark implements `gleann benchmark --index <name> --docs <dir>`.
-// It measures token reduction: raw corpus tokens vs RAG context tokens.
+// cmdBenchmark implements `gleann benchmark` / `gleann bench`.
+// It supports two modes:
+// 1. ContextBench / SWE-Bench retrieval quality benchmark (--suite contextbench or when --docs is omitted)
+// 2. Token reduction analysis (--docs <dir> without --suite)
 func cmdBenchmark(args []string) {
 	config := getConfig(args)
+	applySavedConfig(&config, args)
+
 	indexName := getFlag(args, "--index")
 	docsDir := getFlag(args, "--docs")
+	tasksFile := getFlag(args, "--tasks")
+	suite := getFlag(args, "--suite")
+	outputFile := getFlag(args, "--output")
+	asJSON := hasFlag(args, "--json")
+
 	topK := 10
 	if v := getFlag(args, "--top-k"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
@@ -26,11 +39,229 @@ func cmdBenchmark(args []string) {
 		}
 	}
 
+	// Mode 1: SWE-Bench / ContextBench evaluation mode.
+	if suite != "" || tasksFile != "" || (indexName != "" && docsDir == "") {
+		runContextBenchmark(config, indexName, tasksFile, topK, asJSON, outputFile)
+		return
+	}
+
+	// Mode 2: Legacy Token Reduction Analysis (requires --index and --docs).
 	if indexName == "" || docsDir == "" {
 		printBenchmarkUsage()
 		os.Exit(1)
 	}
 
+	runTokenReductionAnalysis(config, indexName, docsDir, topK)
+}
+
+// runContextBenchmark runs SWE-Bench / ContextBench retrieval evaluation against an index.
+func runContextBenchmark(config gleann.Config, indexName, tasksFile string, topK int, asJSON bool, outputFile string) {
+	if indexName == "" {
+		fmt.Fprintln(os.Stderr, "error: --index <name> is required for benchmark suite")
+		os.Exit(1)
+	}
+
+	ctx := context.Background()
+
+	embedder := embedding.NewComputer(embedding.Options{
+		Provider:    embedding.Provider(config.EmbeddingProvider),
+		Model:       config.EmbeddingModel,
+		BaseURL:     config.OllamaHost,
+		BatchSize:   config.BatchSize,
+		Concurrency: config.Concurrency,
+	})
+
+	searcher := gleann.NewSearcher(config, embedder)
+	searcher.SetScorer(gleann.NewBM25Adapter())
+
+	if err := searcher.Load(ctx, indexName); err != nil {
+		fmt.Fprintf(os.Stderr, "error loading index %q: %v\n", indexName, err)
+		os.Exit(1)
+	}
+	defer searcher.Close()
+
+	// Load tasks from file or auto-generate from index
+	var tasks []benchmark.Task
+	if tasksFile != "" {
+		data, err := os.ReadFile(tasksFile)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error reading tasks file %s: %v\n", tasksFile, err)
+			os.Exit(1)
+		}
+		if err := json.Unmarshal(data, &tasks); err != nil {
+			fmt.Fprintf(os.Stderr, "error parsing tasks json: %v\n", err)
+			os.Exit(1)
+		}
+	} else {
+		tasks = generateSampleTasks(searcher)
+	}
+
+	if len(tasks) == 0 {
+		fmt.Fprintln(os.Stderr, "error: no benchmark tasks available")
+		os.Exit(1)
+	}
+
+	if !asJSON {
+		fmt.Printf("🧪 Running ContextBench / SWE-Bench retrieval suite on index %q (%d tasks)...\n", indexName, len(tasks))
+	}
+
+	runner := benchmark.NewRunner(tasks)
+
+	// Strategy 1: BM25 (Lexical baseline)
+	runner.RegisterStrategy("BM25", func(ctx context.Context, query string, k int) ([]string, int, error) {
+		results, err := searcher.Search(ctx, query, gleann.WithTopK(k), gleann.WithHybridAlpha(0.0))
+		if err != nil {
+			return nil, 0, err
+		}
+		paths, tokens := extractResults(results)
+		return paths, tokens, nil
+	})
+
+	// Strategy 2: Vector (DiskANN+PQ or HNSW)
+	vectorLabel := fmt.Sprintf("Vector (%s)", strings.ToUpper(config.Backend))
+	if config.Backend == "" || config.Backend == "diskann" {
+		vectorLabel = "Vector (DiskANN+PQ)"
+	}
+	runner.RegisterStrategy(vectorLabel, func(ctx context.Context, query string, k int) ([]string, int, error) {
+		results, err := searcher.Search(ctx, query, gleann.WithTopK(k), gleann.WithHybridAlpha(1.0))
+		if err != nil {
+			return nil, 0, err
+		}
+		paths, tokens := extractResults(results)
+		return paths, tokens, nil
+	})
+
+	// Strategy 3: Hybrid (Vector + BM25)
+	runner.RegisterStrategy("Hybrid", func(ctx context.Context, query string, k int) ([]string, int, error) {
+		results, err := searcher.Search(ctx, query, gleann.WithTopK(k), gleann.WithHybridAlpha(0.5))
+		if err != nil {
+			return nil, 0, err
+		}
+		paths, tokens := extractResults(results)
+		return paths, tokens, nil
+	})
+
+	// Strategy 4: GraphRAG (if graph exists)
+	if searcher.GraphDB() != nil {
+		runner.RegisterStrategy("GraphRAG", func(ctx context.Context, query string, k int) ([]string, int, error) {
+			results, err := searcher.Search(ctx, query, gleann.WithTopK(k), gleann.WithHybridAlpha(0.6))
+			if err != nil {
+				return nil, 0, err
+			}
+			paths, tokens := extractResults(results)
+			return paths, tokens, nil
+		})
+	}
+
+	summaries, err := runner.Run(ctx, topK)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "benchmark run error: %v\n", err)
+		os.Exit(1)
+	}
+
+	if asJSON {
+		out, _ := benchmark.RenderJSON(summaries)
+		fmt.Println(out)
+		if outputFile != "" {
+			_ = os.WriteFile(outputFile, []byte(out), 0644)
+		}
+		return
+	}
+
+	report := benchmark.RenderMarkdownReport(summaries, len(tasks))
+	fmt.Println()
+	fmt.Println(report)
+
+	if outputFile != "" {
+		if err := os.WriteFile(outputFile, []byte(report), 0644); err == nil {
+			fmt.Printf("📄 Report saved to %s\n", outputFile)
+		}
+	}
+}
+
+func getMetaStr(m map[string]any, key string) string {
+	if m == nil {
+		return ""
+	}
+	if v, ok := m[key]; ok {
+		if s, ok := v.(string); ok {
+			return s
+		}
+	}
+	return ""
+}
+
+func extractResults(results []gleann.SearchResult) ([]string, int) {
+	var paths []string
+	tokens := 0
+	for _, r := range results {
+		filePath := getMetaStr(r.Metadata, "file")
+		if filePath == "" {
+			filePath = getMetaStr(r.Metadata, "source")
+		}
+		if filePath != "" {
+			paths = append(paths, filePath)
+		}
+		tokens += len(r.Text) / 4 // approximate tokens
+	}
+	return paths, tokens
+}
+
+func generateSampleTasks(searcher *gleann.LeannSearcher) []benchmark.Task {
+	pm := searcher.PassageManager()
+	if pm == nil {
+		return nil
+	}
+
+	total := pm.Count()
+	if total == 0 {
+		return nil
+	}
+
+	sampleLimit := 10
+	if total < sampleLimit {
+		sampleLimit = total
+	}
+
+	var tasks []benchmark.Task
+	for i := 0; i < sampleLimit; i++ {
+		p, err := pm.Get(int64(i))
+		if err != nil || len(p.Text) < 20 {
+			continue
+		}
+		filePath := getMetaStr(p.Metadata, "file")
+		if filePath == "" {
+			filePath = getMetaStr(p.Metadata, "source")
+		}
+		if filePath == "" {
+			continue
+		}
+
+		lines := strings.Split(p.Text, "\n")
+		firstLine := strings.TrimSpace(lines[0])
+		if len(firstLine) > 60 {
+			firstLine = firstLine[:60]
+		}
+		firstLine = strings.TrimPrefix(firstLine, "//")
+		firstLine = strings.TrimPrefix(firstLine, "#")
+		firstLine = strings.TrimSpace(firstLine)
+
+		if firstLine == "" {
+			continue
+		}
+
+		tasks = append(tasks, benchmark.Task{
+			ID:          fmt.Sprintf("task-%03d", len(tasks)+1),
+			Description: "Find context for " + filepath.Base(filePath),
+			Query:       firstLine,
+			GoldFiles:   []string{filePath},
+		})
+	}
+	return tasks
+}
+
+// runTokenReductionAnalysis runs the legacy token reduction benchmark.
+func runTokenReductionAnalysis(config gleann.Config, indexName, docsDir string, topK int) {
 	fmt.Println("📊 gleann benchmark — Token Reduction Analysis")
 	fmt.Println(strings.Repeat("─", 60))
 	fmt.Printf("Index: %s\nDocs:  %s\n\n", indexName, docsDir)
@@ -71,8 +302,6 @@ func cmdBenchmark(args []string) {
 	}
 }
 
-// countCorpusTokens walks a directory and estimates total tokens.
-// Uses a simple heuristic: ~4 chars per token (GPT-like tokenizer estimate).
 func countCorpusTokens(dir string) (tokens, files int, bytes int64) {
 	filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil || d.IsDir() {
@@ -86,7 +315,6 @@ func countCorpusTokens(dir string) (tokens, files int, bytes int64) {
 			return nil
 		}
 
-		// Skip binary files.
 		ext := strings.ToLower(filepath.Ext(path))
 		if isBinaryExt(ext) {
 			return nil
@@ -102,50 +330,51 @@ func countCorpusTokens(dir string) (tokens, files int, bytes int64) {
 
 		files++
 		bytes += int64(len(data))
-		// Estimate tokens: ~4 bytes per token for code/text.
 		tokens += len(data) / 4
 		return nil
 	})
 	return
 }
 
-// estimateRAGTokens estimates the token count for top-K passages from an index.
-// It reads the passage store to get average passage size.
 func estimateRAGTokens(config gleann.Config, indexName string, topK int) int {
 	indexDir := filepath.Join(config.IndexDir, indexName)
-	passageDB := filepath.Join(indexDir, "passages.db")
+	basePath := filepath.Join(indexDir, indexName)
 
-	info, err := os.Stat(passageDB)
-	if err != nil {
-		// Fallback: estimate based on typical passage size.
-		return topK * 375 // ~1500 chars / 4 = 375 tokens per passage
+	pm := gleann.NewPassageManager(basePath)
+	defer pm.Close()
+
+	total := 0
+	count := topK
+	maxCount := pm.Count()
+	if maxCount < count {
+		count = maxCount
 	}
 
-	// Rough estimate: each passage entry is ~2KB in BoltDB.
-	// Actual passage text is ~1500 chars = ~375 tokens.
-	totalPassages := info.Size() / 2048
-	if totalPassages < int64(topK) {
-		return int(totalPassages) * 375
+	for i := 0; i < count; i++ {
+		p, err := pm.Get(int64(i))
+		if err != nil {
+			continue
+		}
+		total += len(p.Text) / 4
 	}
-	return topK * 375
+
+	return total
 }
 
 func printGraphBenchmark(graphDir string) {
-	fmt.Println("📊 Graph Statistics:")
-	// Walk the graph directory to get size.
+	fmt.Println("Phase 4: AST Graph Stats")
 	var totalSize int64
-	filepath.WalkDir(graphDir, func(path string, d fs.DirEntry, err error) error {
-		if err != nil || d.IsDir() {
-			return nil
+	var fileCount int
+	filepath.WalkDir(graphDir, func(_ string, d fs.DirEntry, _ error) error {
+		if d != nil && !d.IsDir() {
+			if info, err := d.Info(); err == nil {
+				totalSize += info.Size()
+				fileCount++
+			}
 		}
-		info, err := d.Info()
-		if err != nil {
-			return nil
-		}
-		totalSize += info.Size()
 		return nil
 	})
-	fmt.Printf("   Graph DB size: %s\n", benchFormatBytes(totalSize))
+	fmt.Printf("  Graph storage: %s (%d files)\n", benchFormatBytes(totalSize), fileCount)
 }
 
 func isBinaryExt(ext string) bool {
@@ -177,24 +406,25 @@ func benchFormatBytes(b int64) string {
 }
 
 func printBenchmarkUsage() {
-	fmt.Println(`gleann benchmark — Token reduction analysis
+	fmt.Println(`gleann benchmark / gleann bench — Retrieval & token reduction evaluation
 
 Usage:
+  # 1. SWE-Bench / ContextBench Retrieval Quality Evaluation:
+  gleann bench --index <name> [--tasks <file.json>] [--top-k <n>] [--output <report.md>] [--json]
+
+  # 2. Token Reduction Analysis:
   gleann benchmark --index <name> --docs <dir> [--top-k <n>]
 
-Measures how much context compression the RAG pipeline achieves
-compared to sending the entire raw corpus to an LLM.
-
 Options:
-  --index <name>   Index name (required)
-  --docs <dir>     Source documents directory (required)
-  --top-k <n>      Number of retrieved passages (default: 10)
+  --index <name>      Index name (required)
+  --tasks <file>      SWE-Bench/ContextBench task file (optional, auto-generates if omitted)
+  --docs <dir>        Source directory for token reduction analysis
+  --top-k <n>         Number of retrieved passages (default: 10)
+  --output <file>     Write markdown report to file
+  --json              Output raw JSON metrics
 
-Example:
-  gleann benchmark --index my-code --docs ./src/
-  gleann benchmark --index my-docs --docs ./documents/ --top-k 20
-
-Output:
-  Token Reduction: Nx — raw corpus tokens / RAG context tokens
-  Higher is better. Typical projects see 10-100x reduction.`)
+Examples:
+  gleann bench --index my-code
+  gleann bench --index my-code --output report.md
+  gleann benchmark --index my-code --docs ./src/`)
 }

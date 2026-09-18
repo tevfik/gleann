@@ -18,6 +18,7 @@ package server
 import (
 	"encoding/json"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/tevfik/gleann/pkg/memory"
@@ -343,6 +344,38 @@ func (s *Server) handleBlockStats(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, stats)
+}
+
+// ── POST /api/blocks/compact ──────────────────────────────────────────────────
+
+// handleCompactBlocks compacts memory by purging expired and unreliable (< 0.2 validity) blocks.
+//
+//	POST /api/blocks/compact
+//	POST /api/blocks/compact?min_validity=0.3
+func (s *Server) handleCompactBlocks(w http.ResponseWriter, r *http.Request) {
+	mgr, err := s.blockManager()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "open memory store: "+err.Error())
+		return
+	}
+
+	minVal := 0.2
+	if q := r.URL.Query().Get("min_validity"); q != "" {
+		if v, err := strconv.ParseFloat(q, 64); err == nil {
+			minVal = v
+		}
+	}
+
+	pruned, err := mgr.Compact(minVal)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "compact memory: "+err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"pruned":       pruned,
+		"min_validity": minVal,
+	})
 }
 
 // closeBlockMem is called by Server.Stop to release the memory manager.

@@ -6,16 +6,13 @@ import (
 	"net"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
 	"time"
 
 	"github.com/tevfik/gleann/internal/autosetup"
-	"github.com/tevfik/gleann/internal/mcp"
 	"github.com/tevfik/gleann/internal/server"
-	"github.com/tevfik/gleann/internal/tui"
 	"github.com/tevfik/gleann/pkg/gleann"
 )
 
@@ -150,43 +147,4 @@ func cmdServe(args []string) {
 		fmt.Fprintf(os.Stderr, "server error: %v\n", err)
 		os.Exit(1)
 	}
-}
-
-func cmdMCP() {
-	savedCfg := tui.LoadSavedConfig()
-
-	cfg := mcp.Config{
-		EmbeddingProvider: DefaultProvider,
-		EmbeddingModel:    DefaultEmbeddingModel,
-		OllamaHost:        gleann.DefaultOllamaHost,
-		Version:           version,
-	}
-
-	homeDir, _ := os.UserHomeDir()
-	cfg.IndexDir = filepath.Join(homeDir, ".gleann", "indexes")
-
-	if savedCfg != nil {
-		if savedCfg.EmbeddingProvider != "" {
-			cfg.EmbeddingProvider = savedCfg.EmbeddingProvider
-		}
-		if savedCfg.EmbeddingModel != "" {
-			cfg.EmbeddingModel = savedCfg.EmbeddingModel
-		}
-		if savedCfg.OllamaHost != "" {
-			cfg.OllamaHost = savedCfg.OllamaHost
-		}
-		if savedCfg.OpenAIKey != "" {
-			cfg.OpenAIAPIKey = savedCfg.OpenAIKey
-		}
-		if savedCfg.OpenAIBaseURL != "" {
-			cfg.OpenAIBaseURL = savedCfg.OpenAIBaseURL
-		}
-		if savedCfg.IndexDir != "" {
-			cfg.IndexDir = tui.ExpandPath(savedCfg.IndexDir)
-		}
-	}
-
-	server := mcp.NewServer(cfg)
-	defer server.Close()
-	server.Run()
 }

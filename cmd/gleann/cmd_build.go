@@ -96,7 +96,7 @@ func cmdBuild(args []string) {
 	}
 
 	fmt.Printf("📝 Found %d text chunks\n", len(items))
-	fmt.Printf("🔧 Building index %q with model %s...\n", name, config.EmbeddingModel)
+	fmt.Printf("🔧 Building index %q (backend: %s) with model %s...\n", name, config.Backend, config.EmbeddingModel)
 
 	start := time.Now()
 	ctx := context.Background()

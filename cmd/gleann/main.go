@@ -36,7 +36,7 @@ func main() {
 	case "memory":
 		cmdMemory(args)
 	case "mcp":
-		cmdMCP()
+		cmdMCP(args)
 	case "multimodal":
 		cmdMultimodal(args)
 	case "tui":
@@ -59,7 +59,7 @@ func main() {
 		cmdDoctor()
 	case "tasks":
 		cmdTasks(args)
-	case "benchmark":
+	case "benchmark", "bench":
 		cmdBenchmark(args)
 	case "tokens":
 		cmdTokens(args)
@@ -194,6 +194,7 @@ gleann has three intelligence pillars that work together:
   gleann benchmark --index <n> --docs <d>  Token reduction analysis
   gleann tokens <file-or-dir>           Estimate tokens under different read modes
   gleann mcp                            MCP server (stdio, for AI editors)
+  gleann mcp install [--target <name>]  Auto-configure MCP for Claude, Cursor, Gemini
   gleann tui                            Interactive TUI launcher
   gleann config <show|path|edit|validate>  Manage configuration
   gleann completion <bash|zsh|fish>     Shell completion script

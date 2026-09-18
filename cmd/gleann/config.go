@@ -112,6 +112,46 @@ func getConfig(args []string) gleann.Config {
 				config.HNSWConfig.PruneEmbeddings = true
 				i++
 			}
+		case "--backend":
+			if i+1 < len(args) {
+				config.Backend = args[i+1]
+				i++
+			}
+		case "--pq-dim":
+			if i+1 < len(args) {
+				fmt.Sscanf(args[i+1], "%d", &config.DiskANNConfig.PQDim)
+				i++
+			}
+		case "--pq-centroids":
+			if i+1 < len(args) {
+				fmt.Sscanf(args[i+1], "%d", &config.DiskANNConfig.PQCentroids)
+				i++
+			}
+		case "--search-l":
+			if i+1 < len(args) {
+				fmt.Sscanf(args[i+1], "%d", &config.DiskANNConfig.SearchL)
+				i++
+			}
+		case "--search-pq-rerank":
+			if i+1 < len(args) {
+				fmt.Sscanf(args[i+1], "%d", &config.DiskANNConfig.SearchPQRerank)
+				i++
+			}
+		case "--diskann-r":
+			if i+1 < len(args) {
+				fmt.Sscanf(args[i+1], "%d", &config.DiskANNConfig.R)
+				i++
+			}
+		case "--diskann-l":
+			if i+1 < len(args) {
+				fmt.Sscanf(args[i+1], "%d", &config.DiskANNConfig.L)
+				i++
+			}
+		case "--diskann-alpha":
+			if i+1 < len(args) {
+				fmt.Sscanf(args[i+1], "%f", &config.DiskANNConfig.Alpha)
+				i++
+			}
 		case "--host":
 			if i+1 < len(args) {
 				config.OllamaHost = args[i+1]

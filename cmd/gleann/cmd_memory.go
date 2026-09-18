@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -43,6 +44,8 @@ func cmdMemory(args []string) {
 		cmdMemorySummarize(subArgs)
 	case "prune":
 		cmdMemoryPrune(subArgs)
+	case "compact":
+		cmdMemoryCompact(subArgs)
 	case "context":
 		cmdMemoryContext()
 	case "maintain":
@@ -693,4 +696,37 @@ func formatMemSize(bytes int64) string {
 	default:
 		return fmt.Sprintf("%.1f GB", float64(bytes)/(1024*1024*1024))
 	}
+}
+
+func cmdMemoryCompact(args []string) {
+	minVal := 0.2
+	for i := 0; i < len(args); i++ {
+		if args[i] == "--min-validity" && i+1 < len(args) {
+			if v, err := strconv.ParseFloat(args[i+1], 64); err == nil {
+				minVal = v
+			}
+			i++
+		}
+	}
+
+	if rc := remoteMemoryClient(); rc != nil {
+		pruned, err := rc.Compact(minVal)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error (remote): %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("🧹 Memory compacted: %d stale/unreliable block(s) pruned (min validity: %.2f) (via running server)\n", pruned, minVal)
+		return
+	}
+
+	mgr := openMemoryManager()
+	defer mgr.Close()
+
+	pruned, err := mgr.Compact(minVal)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Printf("🧹 Memory compacted: %d stale/unreliable block(s) pruned (min validity: %.2f)\n", pruned, minVal)
 }

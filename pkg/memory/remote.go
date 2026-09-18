@@ -241,6 +241,26 @@ func (r *RemoteClient) Clear(tier Tier) (int, error) {
 	return env.Deleted, nil
 }
 
+// Compact triggers memory compaction on the server, purging expired and unreliable blocks.
+func (r *RemoteClient) Compact(minValidity float64) (int, error) {
+	u := fmt.Sprintf("%s/api/blocks/compact?min_validity=%f", r.base, minValidity)
+	resp, err := r.client.Post(u, "application/json", nil)
+	if err != nil {
+		return 0, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return 0, decodeError(resp)
+	}
+	var env struct {
+		Pruned int `json:"pruned"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&env); err != nil {
+		return 0, fmt.Errorf("decode compact: %w", err)
+	}
+	return env.Pruned, nil
+}
+
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 func (r *RemoteClient) fetchBlocks(u string) ([]Block, error) {
