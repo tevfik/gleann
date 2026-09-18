@@ -627,6 +627,20 @@ func cmdMemoryPrune(args []string) {
 }
 
 func cmdMemoryContext() {
+	if rc := remoteMemoryClient(); rc != nil {
+		rendered, err := rc.Context("")
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error (remote): %v\n", err)
+			os.Exit(1)
+		}
+		if rendered == "" {
+			fmt.Println("(empty memory context)")
+			return
+		}
+		fmt.Println(rendered)
+		return
+	}
+
 	mgr := openMemoryManager()
 	defer mgr.Close()
 
