@@ -59,6 +59,13 @@ func (p *blockMemPool) close() {
 	}
 }
 
+// remoteMemoryClient probes for a running gleann REST server and returns
+// a client if reachable. This prevents bbolt lock contention when gleann serve
+// is running in the background.
+func remoteMemoryClient() *memory.RemoteClient {
+	return memory.Remote()
+}
+
 // ── Tool: memory_remember ─────────────────────────────────────────────────────
 
 func (s *Server) buildMemoryRememberTool() mcpsdk.Tool {
@@ -140,11 +147,6 @@ func (s *Server) handleMemoryRemember(ctx context.Context, req mcpsdk.CallToolRe
 		}
 	}
 
-	mgr, err := s.blockMem.get()
-	if err != nil {
-		return mcpsdk.NewToolResultError("open memory store: " + err.Error()), nil
-	}
-
 	charLimit := 0
 	if raw, ok := args["char_limit"]; ok && raw != nil {
 		if v, ok := raw.(float64); ok {
@@ -163,6 +165,22 @@ func (s *Server) handleMemoryRemember(ctx context.Context, req mcpsdk.CallToolRe
 		CharLimit: charLimit,
 		Scope:     scope,
 	}
+
+	if rc := remoteMemoryClient(); rc != nil {
+		created, err := rc.AddBlock(block)
+		if err != nil {
+			return mcpsdk.NewToolResultError("remember failed (remote): " + err.Error()), nil
+		}
+		return mcpsdk.NewToolResultText(fmt.Sprintf(
+			"Remembered (ID: %s, tier: %s): %s", created.ID, tier, content,
+		)), nil
+	}
+
+	mgr, err := s.blockMem.get()
+	if err != nil {
+		return mcpsdk.NewToolResultError("open memory store: " + err.Error()), nil
+	}
+
 	if err := mgr.Store().Add(block); err != nil {
 		return mcpsdk.NewToolResultError("remember failed: " + err.Error()), nil
 	}
@@ -200,6 +218,14 @@ func (s *Server) handleMemoryForget(ctx context.Context, req mcpsdk.CallToolRequ
 	idOrQuery, _ := args["id_or_query"].(string)
 	if idOrQuery == "" {
 		return mcpsdk.NewToolResultError("id_or_query is required"), nil
+	}
+
+	if rc := remoteMemoryClient(); rc != nil {
+		n, err := rc.Forget(idOrQuery)
+		if err != nil {
+			return mcpsdk.NewToolResultError("forget failed (remote): " + err.Error()), nil
+		}
+		return mcpsdk.NewToolResultText(fmt.Sprintf("Forgot %d block(s) matching %q.", n, idOrQuery)), nil
 	}
 
 	mgr, err := s.blockMem.get()
@@ -245,14 +271,24 @@ func (s *Server) handleMemorySearch(ctx context.Context, req mcpsdk.CallToolRequ
 		return mcpsdk.NewToolResultError("query is required"), nil
 	}
 
-	mgr, err := s.blockMem.get()
-	if err != nil {
-		return mcpsdk.NewToolResultError("open memory store: " + err.Error()), nil
-	}
+	var blocks []memory.Block
+	if rc := remoteMemoryClient(); rc != nil {
+		b, err := rc.Search(query)
+		if err != nil {
+			return mcpsdk.NewToolResultError("search failed (remote): " + err.Error()), nil
+		}
+		blocks = b
+	} else {
+		mgr, err := s.blockMem.get()
+		if err != nil {
+			return mcpsdk.NewToolResultError("open memory store: " + err.Error()), nil
+		}
 
-	blocks, err := mgr.Search(query)
-	if err != nil {
-		return mcpsdk.NewToolResultError("search failed: " + err.Error()), nil
+		b, err := mgr.Search(query)
+		if err != nil {
+			return mcpsdk.NewToolResultError("search failed: " + err.Error()), nil
+		}
+		blocks = b
 	}
 
 	if len(blocks) == 0 {
@@ -303,14 +339,24 @@ func (s *Server) handleMemoryList(ctx context.Context, req mcpsdk.CallToolReques
 		}
 	}
 
-	mgr, err := s.blockMem.get()
-	if err != nil {
-		return mcpsdk.NewToolResultError("open memory store: " + err.Error()), nil
-	}
+	var blocks []memory.Block
+	if rc := remoteMemoryClient(); rc != nil {
+		b, err := rc.List(tier)
+		if err != nil {
+			return mcpsdk.NewToolResultError("list failed (remote): " + err.Error()), nil
+		}
+		blocks = b
+	} else {
+		mgr, err := s.blockMem.get()
+		if err != nil {
+			return mcpsdk.NewToolResultError("open memory store: " + err.Error()), nil
+		}
 
-	blocks, err := mgr.List(tier)
-	if err != nil {
-		return mcpsdk.NewToolResultError("list failed: " + err.Error()), nil
+		b, err := mgr.List(tier)
+		if err != nil {
+			return mcpsdk.NewToolResultError("list failed: " + err.Error()), nil
+		}
+		blocks = b
 	}
 
 	if len(blocks) == 0 {
@@ -352,17 +398,26 @@ func (s *Server) buildMemoryContextTool() mcpsdk.Tool {
 }
 
 func (s *Server) handleMemoryContext(ctx context.Context, req mcpsdk.CallToolRequest) (*mcpsdk.CallToolResult, error) {
-	mgr, err := s.blockMem.get()
-	if err != nil {
-		return mcpsdk.NewToolResultError("open memory store: " + err.Error()), nil
+	var rendered string
+	if rc := remoteMemoryClient(); rc != nil {
+		r, err := rc.Context("")
+		if err != nil {
+			return mcpsdk.NewToolResultError("build context (remote): " + err.Error()), nil
+		}
+		rendered = r
+	} else {
+		mgr, err := s.blockMem.get()
+		if err != nil {
+			return mcpsdk.NewToolResultError("open memory store: " + err.Error()), nil
+		}
+
+		cw, err := mgr.BuildContext()
+		if err != nil {
+			return mcpsdk.NewToolResultError("build context: " + err.Error()), nil
+		}
+		rendered = cw.Render()
 	}
 
-	cw, err := mgr.BuildContext()
-	if err != nil {
-		return mcpsdk.NewToolResultError("build context: " + err.Error()), nil
-	}
-
-	rendered := cw.Render()
 	if rendered == "" {
 		return mcpsdk.NewToolResultText("Memory is empty — no blocks stored yet."), nil
 	}
