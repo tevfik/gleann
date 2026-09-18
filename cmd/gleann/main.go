@@ -252,6 +252,7 @@ gleann has three intelligence pillars that work together:
   Ask/Chat:
     --continue <id>         Continue a previous conversation
     --continue-last         Continue most recent conversation
+    --smart-context         Compress supporting code to signatures (saves tokens)
     --no-cache              Don't save conversation to history
     --quiet                 Suppress status messages
 

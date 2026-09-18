@@ -1,6 +1,7 @@
 package gleann
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -165,5 +166,79 @@ func TestFormatResult(t *testing.T) {
 				t.Errorf("formatResult() = %q, want %q", actual, tt.expected)
 			}
 		})
+	}
+}
+
+func TestFormatResult_ASTContextCompression(t *testing.T) {
+	codeSnippet := `package sample
+
+type Engine struct {
+	ID string
+}
+
+func NewEngine(id string) *Engine {
+	// A long function implementation that would consume many tokens
+	e := &Engine{ID: id}
+	for i := 0; i < 10; i++ {
+		e.ID += fmt.Sprintf("-%d", i)
+	}
+	return e
+}
+
+func (e *Engine) Run() error {
+	// Another long function implementation with multiple lines of logic
+	if e.ID == "" {
+		return errors.New("empty id")
+	}
+	return nil
+}`
+
+	res := SearchResult{
+		Text: codeSnippet,
+		Metadata: map[string]any{
+			"source": "pkg/engine/engine.go",
+		},
+		GraphContext: &GraphContextInfo{
+			Symbols: []SymbolNeighbors{
+				{
+					FQN:     "sample.Engine",
+					Kind:    "struct",
+					Callers: []string{"main.Init"},
+				},
+			},
+		},
+	}
+
+	// 1. Primary result (idx=1) with compression enabled: should remain FULL body
+	primary := formatResultWithOptions(res, 1, true)
+	if !strings.Contains(primary, "func NewEngine(id string) *Engine {") || !strings.Contains(primary, "for i := 0; i < 10; i++ {") {
+		t.Errorf("expected primary result (idx=1) to keep full body, got:\n%s", primary)
+	}
+	if strings.Contains(primary, "[AST Context: Signatures Only]") {
+		t.Errorf("primary result should not be marked as signatures only")
+	}
+
+	// 2. Secondary result (idx=2) with compression enabled: should compress to signatures
+	secondary := formatResultWithOptions(res, 2, true)
+	if !strings.Contains(secondary, "[AST Context: Signatures Only]") {
+		t.Errorf("expected secondary result to be marked as signatures only, got:\n%s", secondary)
+	}
+	if !strings.Contains(secondary, "Signatures & Interface:") {
+		t.Errorf("expected Signatures & Interface header, got:\n%s", secondary)
+	}
+	if !strings.Contains(secondary, "func NewEngine(id string) *Engine") {
+		t.Errorf("expected signature of NewEngine in compressed output")
+	}
+	if strings.Contains(secondary, "for i := 0; i < 10; i++ {") {
+		t.Errorf("expected function body to be stripped in compressed output, but found it:\n%s", secondary)
+	}
+
+	// 3. Secondary result (idx=2) with compression disabled: should remain FULL body
+	uncompressed := formatResultWithOptions(res, 2, false)
+	if strings.Contains(uncompressed, "[AST Context: Signatures Only]") {
+		t.Errorf("expected uncompressed result when compress=false")
+	}
+	if !strings.Contains(uncompressed, "for i := 0; i < 10; i++ {") {
+		t.Errorf("expected full body when compress=false")
 	}
 }

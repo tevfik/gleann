@@ -766,6 +766,10 @@ func buildChatConfig(args []string, config gleann.Config) gleann.ChatConfig {
 		chatConfig.Provider = gleann.LLMProvider(llmProvider)
 	}
 
+	if hasFlag(args, "--smart-context") || hasFlag(args, "--compress-context") {
+		chatConfig.CompressContext = true
+	}
+
 	savedCfg := tui.LoadSavedConfig()
 	if roleName := getFlag(args, "--role"); roleName != "" {
 		var prompt string

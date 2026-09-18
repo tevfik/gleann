@@ -38,8 +38,9 @@ type ChatConfig struct {
 	MaxTokens    int           `json:"max_tokens,omitempty"`
 	SystemPrompt string        `json:"system_prompt,omitempty"`
 	Timeout      time.Duration `json:"timeout,omitempty"` // HTTP client timeout; 0 uses DefaultChatTimeout
-	Think        *bool         `json:"think,omitempty"`   // Ollama: nil=model default, false=disable thinking
-	Format       any           `json:"format,omitempty"`  // Native structured output (JSON schema/format)
+	Think           *bool         `json:"think,omitempty"`   // Ollama: nil=model default, false=disable thinking
+	Format          any           `json:"format,omitempty"`  // Native structured output (JSON schema/format)
+	CompressContext bool          `json:"compress_context,omitempty"` // Smart AST-guided context compression
 }
 
 // DefaultChatTimeout is the default HTTP timeout for LLM chat requests.
@@ -179,7 +180,7 @@ func (c *LeannChat) Ask(ctx context.Context, question string, opts ...SearchOpti
 	// Step 2: Build context from results.
 	var contextParts []string
 	for i, r := range results {
-		contextParts = append(contextParts, formatResult(r, i+1))
+		contextParts = append(contextParts, c.formatResult(r, i+1))
 	}
 	context_text := strings.Join(contextParts, "\n\n")
 
@@ -245,7 +246,7 @@ func (c *LeannChat) AskStream(ctx context.Context, question string, callback Str
 	// Step 2: Build context from results.
 	var contextParts []string
 	for i, r := range results {
-		contextParts = append(contextParts, formatResult(r, i+1))
+		contextParts = append(contextParts, c.formatResult(r, i+1))
 	}
 	contextText := strings.Join(contextParts, "\n\n")
 
@@ -332,7 +333,7 @@ func (c *LeannChat) AskWithImages(ctx context.Context, question string, images [
 
 	var contextParts []string
 	for i, r := range results {
-		contextParts = append(contextParts, formatResult(r, i+1))
+		contextParts = append(contextParts, c.formatResult(r, i+1))
 	}
 	contextText := strings.Join(contextParts, "\n\n")
 
@@ -403,7 +404,7 @@ func (c *LeannChat) AskStreamWithMedia(ctx context.Context, question string, med
 
 	var contextParts []string
 	for i, r := range results {
-		contextParts = append(contextParts, formatResult(r, i+1))
+		contextParts = append(contextParts, c.formatResult(r, i+1))
 	}
 	contextText := strings.Join(contextParts, "\n\n")
 
@@ -1355,14 +1356,42 @@ func (c *LeannChat) chatAnthropicStream(ctx context.Context, messages []ChatMess
 	return scanner.Err()
 }
 
+func (c *LeannChat) formatResult(r SearchResult, idx int) string {
+	return formatResultWithOptions(r, idx, c.config.CompressContext)
+}
+
 // formatResult formats a single SearchResult into a text string for the LLM context.
 func formatResult(r SearchResult, idx int) string {
+	return formatResultWithOptions(r, idx, false)
+}
+
+// formatResultWithOptions formats a single SearchResult with optional AST context compression.
+func formatResultWithOptions(r SearchResult, idx int, compress bool) string {
 	var sb strings.Builder
 	source := ""
+	filename := ""
 	if s, ok := r.Metadata["source"]; ok {
 		source = fmt.Sprintf(" (source: %v)", s)
+		filename = fmt.Sprint(s)
 	}
-	sb.WriteString(fmt.Sprintf("[%d]%s\n", idx, source))
+
+	shouldCompress := compress && idx > 1 && len(r.Text) > 250
+	compressedContent := ""
+	if shouldCompress {
+		ext := strings.ToLower(filepath.Ext(filename))
+		if ext != "" {
+			sig := extractSignatures(filename, r.Text)
+			if len(sig) > 0 && len(sig) < len(r.Text) {
+				compressedContent = sig
+			}
+		}
+	}
+
+	if compressedContent != "" {
+		sb.WriteString(fmt.Sprintf("[%d]%s [AST Context: Signatures Only]\n", idx, source))
+	} else {
+		sb.WriteString(fmt.Sprintf("[%d]%s\n", idx, source))
+	}
 
 	if r.GraphContext != nil {
 		if dc := r.GraphContext.DocumentContext; dc != nil {
@@ -1390,8 +1419,13 @@ func formatResult(r SearchResult, idx int) string {
 		}
 	}
 
-	sb.WriteString("Content:\n")
-	sb.WriteString(r.Text)
+	if compressedContent != "" {
+		sb.WriteString("Signatures & Interface:\n")
+		sb.WriteString(compressedContent)
+	} else {
+		sb.WriteString("Content:\n")
+		sb.WriteString(r.Text)
+	}
 	return sb.String()
 }
 
@@ -1404,7 +1438,7 @@ func (c *LeannChat) AskStreamWithImages(ctx context.Context, question string, im
 
 	var contextParts []string
 	for i, r := range results {
-		contextParts = append(contextParts, formatResult(r, i+1))
+		contextParts = append(contextParts, c.formatResult(r, i+1))
 	}
 	contextText := strings.Join(contextParts, "\n\n")
 
