@@ -22,13 +22,25 @@ type pattern struct {
 	glob   string // cleaned glob pattern
 }
 
-// Load reads a .gleannignore file from the given directory.
-// Returns an empty Matcher (matches nothing) if no file exists.
+// Load reads .gleannignore and .gitignore files from the given directory.
+// .gitignore patterns are loaded first, and .gleannignore patterns take precedence.
+// Returns an empty Matcher (matches nothing) if neither file exists.
 func Load(dir string) *Matcher {
-	path := filepath.Join(dir, ".gleannignore")
+	var patterns []pattern
+
+	// 1. Load .gitignore if present.
+	patterns = append(patterns, parseIgnoreFile(filepath.Join(dir, ".gitignore"))...)
+
+	// 2. Load .gleannignore if present.
+	patterns = append(patterns, parseIgnoreFile(filepath.Join(dir, ".gleannignore"))...)
+
+	return &Matcher{patterns: patterns}
+}
+
+func parseIgnoreFile(path string) []pattern {
 	f, err := os.Open(path)
 	if err != nil {
-		return &Matcher{}
+		return nil
 	}
 	defer f.Close()
 
@@ -60,7 +72,7 @@ func Load(dir string) *Matcher {
 		patterns = append(patterns, p)
 	}
 
-	return &Matcher{patterns: patterns}
+	return patterns
 }
 
 // Match checks if a path (relative to the .gleannignore root) should be ignored.

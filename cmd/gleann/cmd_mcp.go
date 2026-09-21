@@ -5,7 +5,6 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -26,23 +25,30 @@ func cmdMCP(args []string) {
 		}
 	}
 
-	// Default: Run MCP server on stdio
-	runMCPServer()
+	fs := flag.NewFlagSet("gleann mcp", flag.ExitOnError)
+	cleanNames := fs.Bool("clean-names", false, "Strip 'gleann_' prefix from tool names for clients that namespace automatically (e.g. OpenCode)")
+	_ = fs.Parse(args)
+
+	isClean := *cleanNames || os.Getenv("GLEANN_MCP_CLEAN_NAMES") == "1" || os.Getenv("GLEANN_MCP_STRIP_PREFIX") == "1"
+	runMCPServer(isClean)
 }
 
 func printMCPUsage() {
 	fmt.Println(`Usage:
-  gleann mcp                               Start MCP server over stdio
+  gleann mcp [options]                     Start MCP server over stdio
   gleann mcp install [options]             Auto-configure MCP for AI agents & editors
 
+Options for mcp:
+  --clean-names     Strip 'gleann_' prefix from tool names for clients that namespace (OpenCode, etc.)
+
 Options for install:
-  --target <name>   Target platform: all, claude-code, cursor, gemini, antigravity, vscode
+  --target <name>   Target platform: all, claude-code, cursor, gemini, antigravity, vscode, opencode
                     (default: all)
   --bin <path>      Explicit path to gleann binary (default: auto-detected)
   --name <name>     MCP server name in configuration (default: gleann)`)
 }
 
-func runMCPServer() {
+func runMCPServer(cleanNames bool) {
 	savedCfg := tui.LoadSavedConfig()
 
 	cfg := mcp.Config{
@@ -50,6 +56,7 @@ func runMCPServer() {
 		EmbeddingModel:    DefaultEmbeddingModel,
 		OllamaHost:        gleann.DefaultOllamaHost,
 		Version:           version,
+		CleanToolNames:    cleanNames,
 	}
 
 	homeDir, _ := os.UserHomeDir()
@@ -90,25 +97,7 @@ func cmdMCPInstall(args []string) {
 
 	gleannBin := *binPath
 	if gleannBin == "" {
-		home, _ := os.UserHomeDir()
-		if _, err := os.Stat("/usr/local/bin/gleann"); err == nil {
-			gleannBin = "/usr/local/bin/gleann"
-		} else if home != "" {
-			userBin := filepath.Join(home, ".local", "bin", "gleann")
-			if _, err := os.Stat(userBin); err == nil {
-				gleannBin = userBin
-			}
-		}
-
-		if gleannBin == "" {
-			if pathBin, err := exec.LookPath("gleann"); err == nil {
-				gleannBin = pathBin
-			} else if exe, err := os.Executable(); err == nil && !strings.Contains(exe, ".gleann/runtime") && !strings.Contains(exe, "/tmp") {
-				gleannBin = exe
-			} else {
-				gleannBin = "gleann"
-			}
-		}
+		gleannBin = resolveInstalledGleannBin()
 	}
 
 	home, err := os.UserHomeDir()
@@ -163,6 +152,23 @@ func cmdMCPInstall(args []string) {
 		rooStorageDir := filepath.Join(home, ".config", "Code", "User", "globalStorage", "rooveterinaryinc.roo-cline", "settings")
 		if info, err := os.Stat(rooStorageDir); err == nil && info.IsDir() {
 			installTarget("Roo Code", filepath.Join(rooStorageDir, "cline_mcp_settings.json"))
+		}
+	}
+
+	// OpenCode
+	if t == "all" || t == "opencode" {
+		openCodeDir := filepath.Join(home, ".config", "opencode")
+		_ = os.MkdirAll(openCodeDir, 0o755)
+		openCodeConfigPath := filepath.Join(openCodeDir, "opencode.json")
+		if err := patchOpenCodeJSON(openCodeConfigPath); err != nil {
+			fmt.Printf("  ✗ OpenCode (%s): %v\n", openCodeConfigPath, err)
+		} else {
+			fmt.Printf("  ✓ OpenCode: %s\n", openCodeConfigPath)
+			configured++
+		}
+		globalAgentsPath := filepath.Join(openCodeDir, "AGENTS.md")
+		if err := appendOrCreateFile(globalAgentsPath, agentsMDSection, "gleann: Code Intelligence"); err == nil {
+			fmt.Printf("  ✓ OpenCode (Global AGENTS.md): %s\n", globalAgentsPath)
 		}
 	}
 

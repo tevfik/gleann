@@ -399,11 +399,36 @@ func (idx *Indexer) IndexDir(root string) error {
 		return gerr
 	}
 
-	// --- Deduplicate Data to Prevent KuzuDB "primary key / relationship exists" constraints ---
+	// --- Sanitize and Deduplicate Data to Prevent KuzuDB "primary key / relationship exists" constraints ---
+	for i := range allFiles {
+		allFiles[i].Path = kuzu.SanitizeCSVField(allFiles[i].Path)
+	}
+	for i := range allSymbols {
+		allSymbols[i].FQN = kuzu.SanitizeCSVField(allSymbols[i].FQN)
+		allSymbols[i].File = kuzu.SanitizeCSVField(allSymbols[i].File)
+		allSymbols[i].Name = kuzu.SanitizeCSVField(allSymbols[i].Name)
+	}
+	for i := range allDeclares {
+		allDeclares[i].FilePath = kuzu.SanitizeCSVField(allDeclares[i].FilePath)
+		allDeclares[i].SymbolFQN = kuzu.SanitizeCSVField(allDeclares[i].SymbolFQN)
+	}
+	for i := range allCalls {
+		allCalls[i].CallerFQN = kuzu.SanitizeCSVField(allCalls[i].CallerFQN)
+		allCalls[i].CalleeFQN = kuzu.SanitizeCSVField(allCalls[i].CalleeFQN)
+	}
+	for i := range allImpls {
+		allImpls[i].ImplFQN = kuzu.SanitizeCSVField(allImpls[i].ImplFQN)
+		allImpls[i].IfaceFQN = kuzu.SanitizeCSVField(allImpls[i].IfaceFQN)
+	}
+	for i := range allRefs {
+		allRefs[i].RefererFQN = kuzu.SanitizeCSVField(allRefs[i].RefererFQN)
+		allRefs[i].RefereeFQN = kuzu.SanitizeCSVField(allRefs[i].RefereeFQN)
+	}
+
 	uniqueFiles := make([]kuzu.FileNode, 0, len(allFiles))
 	seenFiles := make(map[string]bool)
 	for _, f := range allFiles {
-		if !seenFiles[f.Path] {
+		if f.Path != "" && !seenFiles[f.Path] {
 			seenFiles[f.Path] = true
 			uniqueFiles = append(uniqueFiles, f)
 		}
@@ -413,7 +438,7 @@ func (idx *Indexer) IndexDir(root string) error {
 	uniqueSymbols := make([]kuzu.SymbolNode, 0, len(allSymbols))
 	seenSymbols := make(map[string]bool)
 	for _, sym := range allSymbols {
-		if !seenSymbols[sym.FQN] {
+		if sym.FQN != "" && !seenSymbols[sym.FQN] {
 			seenSymbols[sym.FQN] = true
 			uniqueSymbols = append(uniqueSymbols, sym)
 		}
@@ -424,7 +449,7 @@ func (idx *Indexer) IndexDir(root string) error {
 	seenDeclares := make(map[string]bool)
 	for _, d := range allDeclares {
 		key := d.FilePath + "->" + d.SymbolFQN
-		if !seenDeclares[key] {
+		if d.FilePath != "" && d.SymbolFQN != "" && seenFiles[d.FilePath] && seenSymbols[d.SymbolFQN] && !seenDeclares[key] {
 			seenDeclares[key] = true
 			uniqueDeclares = append(uniqueDeclares, d)
 		}

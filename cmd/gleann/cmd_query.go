@@ -23,6 +23,20 @@ import (
 )
 
 func cmdList(args []string) {
+	if hasFlag(args, "--help") || hasFlag(args, "-h") {
+		fmt.Println(`Usage: gleann index list [options]
+
+List all available vector indexes with stats, tags, and MCP status.
+
+Options:
+  --tag <tag>             Filter indexes by tag (e.g. --tag work)
+  --mcp, --public         Show only indexes exposed to MCP
+  --private               Show only indexes hidden from MCP
+  --json                  Output list as JSON
+  -h, --help              Show this help message`)
+		return
+	}
+
 	config := getConfig(args)
 	applySavedConfig(&config, args)
 	asJSON := hasFlag(args, "--json")
@@ -103,7 +117,17 @@ func cmdList(args []string) {
 }
 
 func cmdInfo(args []string) {
-	if len(args) < 1 {
+	if len(args) < 1 || hasFlag(args, "--help") || hasFlag(args, "-h") {
+		if hasFlag(args, "--help") || hasFlag(args, "-h") {
+			fmt.Println(`Usage: gleann index info <name> [--json]
+
+Show detailed metadata, backend, and passage count for an index.
+
+Options:
+  --json                  Output metadata as JSON
+  -h, --help              Show this help message`)
+			return
+		}
 		fmt.Fprintln(os.Stderr, "usage: gleann info <name>")
 		os.Exit(1)
 	}

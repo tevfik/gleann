@@ -12,7 +12,16 @@ import (
 )
 
 func cmdRemove(args []string) {
-	if len(args) < 1 {
+	if len(args) < 1 || hasFlag(args, "--help") || hasFlag(args, "-h") {
+		if hasFlag(args, "--help") || hasFlag(args, "-h") {
+			fmt.Println(`Usage: gleann index remove <name1> [name2] ... or gleann index remove "<prefix>*"
+
+Remove one or more indexes and all associated vector and graph storage.
+
+Options:
+  -h, --help              Show this help message`)
+			return
+		}
 		fmt.Fprintln(os.Stderr, "usage: gleann remove <name1> [name2] ... or gleann remove \"prefix*\"")
 		os.Exit(1)
 	}

@@ -8,8 +8,11 @@ import (
 	"math"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
@@ -26,6 +29,7 @@ type Config struct {
 	OpenAIAPIKey      string
 	OpenAIBaseURL     string
 	Version           string
+	CleanToolNames    bool
 }
 
 // maxCachedSearchers is the maximum number of searchers to keep in memory.
@@ -34,16 +38,43 @@ const maxCachedSearchers = 16
 
 // Server wraps the mark3labs MCP server.
 type Server struct {
-	mcpServer   *server.MCPServer
-	embedder    gleann.EmbeddingComputer
-	config      gleann.Config
-	searchers   map[string]*gleann.LeannSearcher
-	searcherLRU []string       // tracks access order: most recent at end
-	memPool     *mcpMemoryPool // Memory Engine: generic Entity/RELATES_TO graph
-	blockMem    *blockMemPool  // BBolt hierarchical memory blocks (pkg/memory)
-	gPool       *graphPool     // Community detection graph pool (treesitter only)
-	syncRunner  func(ctx context.Context, indexName, docsDir string, files []string) (string, error)
+	mcpServer      *server.MCPServer
+	embedder       gleann.EmbeddingComputer
+	config         gleann.Config
+	cleanToolNames bool
+	searchers      map[string]*gleann.LeannSearcher
+	searcherLRU    []string       // tracks access order: most recent at end
+	memPool        *mcpMemoryPool // Memory Engine: generic Entity/RELATES_TO graph
+	blockMem       *blockMemPool  // BBolt hierarchical memory blocks (pkg/memory)
+	gPool          *graphPool     // Community detection graph pool (treesitter only)
+	syncRunner      syncRunnerFunc
+	syncMu          sync.Mutex
+	syncTasks       map[string]*syncTask
+	syncWaitTimeout time.Duration
 }
+
+// syncTask tracks a background indexing or synchronization task for an index.
+type syncTask struct {
+	indexName string
+	mode      string
+	isNew     bool
+	startTime time.Time
+	done      chan struct{}
+	output    string
+	err       error
+}
+
+// SyncOptions contains options for synchronizing or building an index via gleann_sync.
+type SyncOptions struct {
+	IndexName string
+	DocsDir   string
+	Files     []string
+	Mode      string // "code", "docs", "all"
+	NoPlugins bool
+	IsNew     bool
+}
+
+type syncRunnerFunc func(ctx context.Context, opts SyncOptions) (string, error)
 
 // NewServer initializes a new MCP server that exposes Gleann capabilities using the SDK.
 func NewServer(cfg Config) *Server {
@@ -69,64 +100,66 @@ func NewServer(cfg Config) *Server {
 	s := server.NewMCPServer("gleann-mcp", version, server.WithRoots())
 
 	srv := &Server{
-		mcpServer: s,
-		config:    glCfg,
-		embedder:  embedder,
-		searchers: make(map[string]*gleann.LeannSearcher),
-		memPool:   newMCPMemoryPool(cfg.IndexDir),
-		blockMem:  &blockMemPool{},
+		mcpServer:      s,
+		config:         glCfg,
+		cleanToolNames: cfg.CleanToolNames,
+		embedder:       embedder,
+		searchers:      make(map[string]*gleann.LeannSearcher),
+		memPool:        newMCPMemoryPool(cfg.IndexDir),
+		blockMem:       &blockMemPool{},
+		syncTasks:      make(map[string]*syncTask),
 	}
 
 	// Wire VectorSyncer factory (build-tag gated; no-op when !treesitter).
 	srv.wireMemorySyncer(cfg, glCfg, embedder)
 
-	// Register tools natively with the SDK
-	s.AddTool(srv.buildSearchTool(), srv.handleSearch)
-	s.AddTool(srv.buildSearchMultiTool(), srv.handleSearchMulti)
-	s.AddTool(srv.buildListTool(), srv.handleList)
-	s.AddTool(srv.buildAskTool(), srv.handleAsk)
-	s.AddTool(srv.buildGraphNeighborsTool(), srv.handleGraphNeighbors)
-	s.AddTool(srv.buildDocumentLinksTool(), srv.handleDocumentLinks)
-	s.AddTool(srv.buildReadFullDocumentTool(), srv.handleReadFullDocument)
-	s.AddTool(srv.buildDocumentTOCTool(), srv.handleDocumentTOC)
-	s.AddTool(srv.buildImpactTool(), srv.handleImpact)
+	// Register tools natively with the SDK (respecting cleanToolNames)
+	srv.addTool(srv.buildSearchTool(), srv.handleSearch)
+	srv.addTool(srv.buildSearchMultiTool(), srv.handleSearchMulti)
+	srv.addTool(srv.buildListTool(), srv.handleList)
+	srv.addTool(srv.buildAskTool(), srv.handleAsk)
+	srv.addTool(srv.buildGraphNeighborsTool(), srv.handleGraphNeighbors)
+	srv.addTool(srv.buildDocumentLinksTool(), srv.handleDocumentLinks)
+	srv.addTool(srv.buildReadFullDocumentTool(), srv.handleReadFullDocument)
+	srv.addTool(srv.buildDocumentTOCTool(), srv.handleDocumentTOC)
+	srv.addTool(srv.buildImpactTool(), srv.handleImpact)
 
 	// Progressive disclosure — compact search + batch fetch + citation lookup.
-	s.AddTool(srv.buildSearchIDsTool(), srv.handleSearchIDs)
-	s.AddTool(srv.buildFetchTool(), srv.handleFetch)
-	s.AddTool(srv.buildGetTool(), srv.handleGet)
+	srv.addTool(srv.buildSearchIDsTool(), srv.handleSearchIDs)
+	srv.addTool(srv.buildFetchTool(), srv.handleFetch)
+	srv.addTool(srv.buildGetTool(), srv.handleGet)
 
 	// Session tracking — log searches/asks to BBolt for cross-session context.
-	s.AddTool(srv.buildSessionStartTool(), srv.handleSessionStart)
-	s.AddTool(srv.buildSessionEndTool(), srv.handleSessionEnd)
-	s.AddTool(srv.buildSessionStatusTool(), srv.handleSessionStatus)
+	srv.addTool(srv.buildSessionStartTool(), srv.handleSessionStart)
+	srv.addTool(srv.buildSessionEndTool(), srv.handleSessionEnd)
+	srv.addTool(srv.buildSessionStatusTool(), srv.handleSessionStatus)
 
 	// Memory Block tools — persistent hierarchical memory (BBolt, no CGo).
-	s.AddTool(srv.buildMemoryRememberTool(), srv.handleMemoryRemember)
-	s.AddTool(srv.buildMemoryForgetTool(), srv.handleMemoryForget)
-	s.AddTool(srv.buildMemorySearchTool(), srv.handleMemorySearch)
-	s.AddTool(srv.buildMemoryListTool(), srv.handleMemoryList)
-	s.AddTool(srv.buildMemoryContextTool(), srv.handleMemoryContext)
+	srv.addTool(srv.buildMemoryRememberTool(), srv.handleMemoryRemember)
+	srv.addTool(srv.buildMemoryForgetTool(), srv.handleMemoryForget)
+	srv.addTool(srv.buildMemorySearchTool(), srv.handleMemorySearch)
+	srv.addTool(srv.buildMemoryListTool(), srv.handleMemoryList)
+	srv.addTool(srv.buildMemoryContextTool(), srv.handleMemoryContext)
 
 	// Batch query — run multiple questions concurrently.
-	s.AddTool(srv.buildBatchAskTool(), srv.handleBatchAsk)
+	srv.addTool(srv.buildBatchAskTool(), srv.handleBatchAsk)
 
 	// Memory Engine tools — external agents can manipulate the knowledge graph directly.
-	s.AddTool(srv.buildInjectKGTool(), srv.handleInjectKG)
-	s.AddTool(srv.buildDeleteEntityTool(), srv.handleDeleteEntity)
-	s.AddTool(srv.buildTraverseKGTool(), srv.handleTraverseKG)
+	srv.addTool(srv.buildInjectKGTool(), srv.handleInjectKG)
+	srv.addTool(srv.buildDeleteEntityTool(), srv.handleDeleteEntity)
+	srv.addTool(srv.buildTraverseKGTool(), srv.handleTraverseKG)
 
 	// Graph stats + symbols_in_file — available without treesitter.
-	s.AddTool(srv.buildGraphStatsTool(), srv.handleGraphStats)
-	s.AddTool(srv.buildSymbolsInFileTool(), srv.handleSymbolsInFile)
+	srv.addTool(srv.buildGraphStatsTool(), srv.handleGraphStats)
+	srv.addTool(srv.buildSymbolsInFileTool(), srv.handleSymbolsInFile)
 
 	// Shell compression + mode-aware file read + token gain tracking.
-	s.AddTool(srv.buildShellTool(), srv.handleShell)
-	s.AddTool(srv.buildReadTool(), srv.handleRead)
-	s.AddTool(srv.buildGainTool(), srv.handleGain)
+	srv.addTool(srv.buildShellTool(), srv.handleShell)
+	srv.addTool(srv.buildReadTool(), srv.handleRead)
+	srv.addTool(srv.buildGainTool(), srv.handleGain)
 
 	// On-demand index synchronization tool
-	s.AddTool(srv.buildSyncTool(), srv.handleSync)
+	srv.addTool(srv.buildSyncTool(), srv.handleSync)
 
 	// Community detection tools — require treesitter build tag.
 	srv.initGraphPool()
@@ -155,6 +188,15 @@ func NewServer(cfg Config) *Server {
 	), srv.handleReadResource)
 
 	return srv
+}
+
+// addTool registers a tool with the MCP server, stripping the "gleann_" prefix
+// if cleanToolNames is enabled (for clients like OpenCode that namespace automatically).
+func (s *Server) addTool(tool mcp.Tool, handler server.ToolHandlerFunc) {
+	if s.cleanToolNames {
+		tool.Name = strings.TrimPrefix(tool.Name, "gleann_")
+	}
+	s.mcpServer.AddTool(tool, handler)
 }
 
 func (s *Server) Run() {
@@ -190,7 +232,19 @@ func (s *Server) getSearcher(name string) (*gleann.LeannSearcher, error) {
 						exposed = append(exposed, idx)
 					}
 				}
-				if len(exposed) == 1 {
+
+				// Check if current working directory name matches an available index
+				if cwd, err := os.Getwd(); err == nil {
+					base := filepath.Base(cwd)
+					for _, idx := range exposed {
+						if strings.EqualFold(idx.Name, base) {
+							name = idx.Name
+							break
+						}
+					}
+				}
+
+				if name == "" && len(exposed) == 1 {
 					name = exposed[0].Name
 				}
 			}
@@ -483,6 +537,47 @@ func (s *Server) handleSearch(ctx context.Context, request mcp.CallToolRequest) 
 
 	indexName, _ := args["index"].(string)
 	query, _ := args["query"].(string)
+
+	if query == "" {
+		return mcp.NewToolResultError("query is required"), nil
+	}
+
+	// Auto-resolve index if empty
+	if indexName == "" {
+		if envIdx := os.Getenv("GLEANN_INDEX"); envIdx != "" {
+			indexName = envIdx
+		} else {
+			indexes, err := gleann.ListIndexes(s.config.IndexDir)
+			if err == nil {
+				var exposed []gleann.IndexMeta
+				for _, idx := range indexes {
+					if idx.IsMCPExposed() {
+						exposed = append(exposed, idx)
+					}
+				}
+
+				// Check if current working directory name matches an index
+				if cwd, err := os.Getwd(); err == nil {
+					base := filepath.Base(cwd)
+					for _, idx := range exposed {
+						if strings.EqualFold(idx.Name, base) {
+							indexName = idx.Name
+							break
+						}
+					}
+				}
+
+				if indexName == "" {
+					if len(exposed) == 1 {
+						indexName = exposed[0].Name
+					} else if len(exposed) > 1 {
+						indexName = "@all"
+					}
+				}
+			}
+		}
+	}
+
 	topK := 5
 	if limit, ok := args["top_k"].(float64); ok {
 		topK = int(limit)
@@ -499,15 +594,21 @@ func (s *Server) handleSearch(ctx context.Context, request mcp.CallToolRequest) 
 
 	var results []gleann.SearchResult
 
-	// Support federated search across tag collections (e.g. index="@work" or "@backend")
+	// Support federated search across tag collections (e.g. index="@work" or "@all")
 	if strings.HasPrefix(indexName, "@") {
 		tagName := strings.TrimPrefix(indexName, "@")
-		matchingIndexes, err := gleann.ListIndexesByTag(s.config.IndexDir, tagName)
+		var matchingIndexes []gleann.IndexMeta
+		var err error
+		if tagName == "all" || tagName == "" {
+			matchingIndexes, err = gleann.ListIndexes(s.config.IndexDir)
+		} else {
+			matchingIndexes, err = gleann.ListIndexesByTag(s.config.IndexDir, tagName)
+		}
 		if err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("Error listing indexes for tag %q: %v", tagName, err)), nil
+			return mcp.NewToolResultError(fmt.Sprintf("Error listing indexes: %v", err)), nil
 		}
 		if len(matchingIndexes) == 0 {
-			return mcp.NewToolResultText(fmt.Sprintf("No indexes found with tag %q.", tagName)), nil
+			return mcp.NewToolResultText("No indexes found. Create an index first with: gleann index build <name> --docs <dir>"), nil
 		}
 
 		tagEnv := os.Getenv("GLEANN_TAGS")
@@ -563,6 +664,9 @@ func (s *Server) handleSearch(ctx context.Context, request mcp.CallToolRequest) 
 	} else {
 		searcher, err := s.getSearcher(indexName)
 		if err != nil {
+			if s.isSyncRunning(indexName) {
+				return mcp.NewToolResultError(fmt.Sprintf("Index %q is currently being built in the background. Please wait a moment for initial indexing to complete.", indexName)), nil
+			}
 			return mcp.NewToolResultError(fmt.Sprintf("Error loading index %q: %v", indexName, err)), nil
 		}
 
@@ -1319,13 +1423,19 @@ func (s *Server) handleSymbolsInFile(ctx context.Context, request mcp.CallToolRe
 
 func (s *Server) buildSyncTool() mcp.Tool {
 	return mcp.NewTool("gleann_sync",
-		mcp.WithDescription("Synchronize and incrementally update a Gleann index (vector search passages, AST code graph, and document outlines) with the latest workspace file changes. Call this after creating, editing, or deleting files so code intelligence tools immediately reflect the current codebase."),
+		mcp.WithDescription("Synchronize, update, or initialize a Gleann index (vector search passages, AST code graph, and document outlines) with workspace files. Defaults to fast 'code' mode (source code & AST graph only, zero office doc plugins). Auto-resolves index name and docs_dir from current workspace directory if omitted."),
 		mcp.WithString("index",
-			mcp.Required(),
-			mcp.Description("Name of the index to synchronize"),
+			mcp.Description("Name of the index to synchronize or create. If omitted, automatically inferred from the workspace directory name."),
 		),
 		mcp.WithString("docs_dir",
-			mcp.Description("Optional root directory of the codebase. Defaults to the source directory recorded when the index was built."),
+			mcp.Description("Root directory of the codebase/documents. Defaults to the current workspace directory or the source directory recorded when the index was built."),
+		),
+		mcp.WithString("mode",
+			mcp.Description("Indexing mode: 'code' (fast: source code & AST code graph only, skips office documents and plugins; default and recommended for coding agents), 'docs' (office documents and markdown only), 'all' (both code and office documents)."),
+			mcp.Enum("code", "docs", "all"),
+		),
+		mcp.WithBoolean("no_plugins",
+			mcp.Description("Explicitly disable external document extraction plugins (e.g. markitdown). Defaults to true when mode is 'code'."),
 		),
 		mcp.WithArray("files",
 			mcp.Description("Optional list of specific file paths to sync. If omitted, all modified, added, and deleted files in the workspace are automatically detected and synced."),
@@ -1334,23 +1444,74 @@ func (s *Server) buildSyncTool() mcp.Tool {
 	)
 }
 
+func (s *Server) isSyncRunning(indexName string) bool {
+	s.syncMu.Lock()
+	defer s.syncMu.Unlock()
+	task, exists := s.syncTasks[indexName]
+	if !exists {
+		return false
+	}
+	select {
+	case <-task.done:
+		return false
+	default:
+		return true
+	}
+}
+
 func (s *Server) handleSync(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	indexName, err := request.RequireString("index")
-	if err != nil {
-		return mcp.NewToolResultError("missing required parameter: index"), nil
+	var indexName string
+	if args, ok := request.Params.Arguments.(map[string]interface{}); ok && args != nil {
+		if idx, ok := args["index"].(string); ok {
+			indexName = strings.TrimSpace(idx)
+		}
 	}
 
-	meta, err := gleann.GetIndexMeta(s.config.IndexDir, indexName)
-	if err != nil {
-		return mcp.NewToolResultError(fmt.Sprintf("index %q not found in %s: %v", indexName, s.config.IndexDir, err)), nil
+	cwd, _ := os.Getwd()
+
+	// Auto-resolve indexName if omitted
+	if indexName == "" {
+		if envIdx := os.Getenv("GLEANN_INDEX"); envIdx != "" {
+			indexName = envIdx
+		} else if cwd != "" && cwd != "/" {
+			indexName = strings.ToLower(filepath.Base(cwd))
+		}
 	}
+	if indexName == "" {
+		return mcp.NewToolResultError("missing parameter: index (and could not auto-resolve from workspace directory)"), nil
+	}
+
+	meta, metaErr := gleann.GetIndexMeta(s.config.IndexDir, indexName)
+	isNew := (metaErr != nil)
 
 	docsDir := request.GetString("docs_dir", "")
-	if docsDir == "" {
+	if docsDir == "" && meta != nil {
 		docsDir = meta.SourceDir
 	}
+	// Fall back to current working directory if docs_dir is not provided
+	if docsDir == "" && cwd != "" && cwd != "/" {
+		docsDir = cwd
+	}
 	if docsDir == "" {
+		if isNew {
+			return mcp.NewToolResultError(fmt.Sprintf("index %q does not exist; please provide 'docs_dir' to build it", indexName)), nil
+		}
 		return mcp.NewToolResultError(fmt.Sprintf("index %q does not have a recorded source_dir; please specify docs_dir", indexName)), nil
+	}
+
+	mode := strings.ToLower(request.GetString("mode", "code"))
+	if mode == "" {
+		mode = "code"
+	}
+	if mode != "code" && mode != "docs" && mode != "all" {
+		return mcp.NewToolResultError(fmt.Sprintf("invalid mode %q: must be 'code', 'docs', or 'all'", mode)), nil
+	}
+
+	noPlugins := (mode == "code")
+	if args, ok := request.Params.Arguments.(map[string]interface{}); ok && args != nil {
+		if np, ok := args["no_plugins"].(bool); ok {
+			noPlugins = np
+		}
 	}
 
 	var files []string
@@ -1378,30 +1539,167 @@ func (s *Server) handleSync(ctx context.Context, request mcp.CallToolRequest) (*
 		runner = s.defaultSyncRunner
 	}
 
-	output, runErr := runner(ctx, indexName, docsDir, files)
-	if runErr != nil {
-		return mcp.NewToolResultError(fmt.Sprintf("sync failed for index %q: %v\nOutput: %s", indexName, runErr, output)), nil
+	opts := SyncOptions{
+		IndexName: indexName,
+		DocsDir:   docsDir,
+		Files:     files,
+		Mode:      mode,
+		NoPlugins: noPlugins,
+		IsNew:     isNew,
 	}
 
-	res := map[string]any{
-		"status":  "success",
-		"index":   indexName,
-		"message": "Index synchronized successfully",
-		"details": strings.TrimSpace(output),
+	s.syncMu.Lock()
+	if existing, running := s.syncTasks[indexName]; running {
+		select {
+		case <-existing.done:
+			// Previous background task finished! Return its result
+			taskErr := existing.err
+			taskOut := existing.output
+			taskWasNew := existing.isNew
+			delete(s.syncTasks, indexName)
+			s.syncMu.Unlock()
+
+			action := "sync"
+			if taskWasNew {
+				action = "build"
+			}
+			if taskErr != nil {
+				return mcp.NewToolResultError(fmt.Sprintf("%s failed for index %q: %v\nOutput: %s", action, indexName, taskErr, taskOut)), nil
+			}
+
+			actionMsg := "Index synchronized successfully"
+			if taskWasNew {
+				actionMsg = "Index built successfully"
+			}
+
+			res := map[string]any{
+				"status":  "success",
+				"index":   indexName,
+				"mode":    existing.mode,
+				"action":  actionMsg,
+				"message": actionMsg,
+				"details": strings.TrimSpace(taskOut),
+			}
+			resBytes, _ := json.MarshalIndent(res, "", "  ")
+			return mcp.NewToolResultText(string(resBytes)), nil
+
+		default:
+			// Task is already actively running! Prevent duplicate process!
+			s.syncMu.Unlock()
+			elapsed := time.Since(existing.startTime).Round(time.Second)
+			actionMsg := "Indexing"
+			if !existing.isNew {
+				actionMsg = "Sync"
+			}
+			res := map[string]any{
+				"status":  "in_progress",
+				"index":   indexName,
+				"mode":    existing.mode,
+				"action":  "in_progress",
+				"message": fmt.Sprintf("%s for %q is already actively running in the background (started %s ago). Please wait for completion.", actionMsg, indexName, elapsed),
+				"elapsed": elapsed.String(),
+			}
+			resBytes, _ := json.MarshalIndent(res, "", "  ")
+			return mcp.NewToolResultText(string(resBytes)), nil
+		}
 	}
-	resBytes, _ := json.MarshalIndent(res, "", "  ")
-	return mcp.NewToolResultText(string(resBytes)), nil
+
+	// Create and register new background task
+	task := &syncTask{
+		indexName: indexName,
+		mode:      mode,
+		isNew:     isNew,
+		startTime: time.Now(),
+		done:      make(chan struct{}),
+	}
+	s.syncTasks[indexName] = task
+	s.syncMu.Unlock()
+
+	go func() {
+		defer close(task.done)
+		// Detach context so client timeout does not sever indexing
+		out, runErr := runner(context.Background(), opts)
+		s.syncMu.Lock()
+		task.output = out
+		task.err = runErr
+		s.syncMu.Unlock()
+	}()
+
+	waitTimeout := s.syncWaitTimeout
+	if waitTimeout <= 0 {
+		waitTimeout = 5 * time.Second
+	}
+
+	// Wait up to waitTimeout. If small repo or incremental sync, return immediately.
+	// If large repo, return in_progress so MCP client NEVER hits request timeout.
+	select {
+	case <-task.done:
+		s.syncMu.Lock()
+		delete(s.syncTasks, indexName)
+		taskErr := task.err
+		taskOut := task.output
+		s.syncMu.Unlock()
+
+		action := "sync"
+		if isNew {
+			action = "build"
+		}
+		if taskErr != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("%s failed for index %q: %v\nOutput: %s", action, indexName, taskErr, taskOut)), nil
+		}
+
+		actionMsg := "Index synchronized successfully"
+		if isNew {
+			actionMsg = "Index built successfully"
+		}
+
+		res := map[string]any{
+			"status":  "success",
+			"index":   indexName,
+			"mode":    mode,
+			"action":  actionMsg,
+			"message": actionMsg,
+			"details": strings.TrimSpace(taskOut),
+		}
+		resBytes, _ := json.MarshalIndent(res, "", "  ")
+		return mcp.NewToolResultText(string(resBytes)), nil
+
+	case <-time.After(waitTimeout):
+		actionMsg := "Indexing started in background"
+		if isNew {
+			actionMsg = "Initial index build started in background"
+		}
+		elapsedStr := waitTimeout.String()
+		res := map[string]any{
+			"status":  "in_progress",
+			"index":   indexName,
+			"mode":    mode,
+			"action":  actionMsg,
+			"message": fmt.Sprintf("%s for %q. Because this is a large codebase, indexing is progressing asynchronously in the background. You can check status anytime by calling gleann_sync.", actionMsg, indexName),
+			"elapsed": elapsedStr,
+		}
+		resBytes, _ := json.MarshalIndent(res, "", "  ")
+		return mcp.NewToolResultText(string(resBytes)), nil
+	}
 }
 
-func (s *Server) defaultSyncRunner(ctx context.Context, indexName, docsDir string, files []string) (string, error) {
+func (s *Server) defaultSyncRunner(ctx context.Context, opts SyncOptions) (string, error) {
 	exe, err := os.Executable()
 	if err != nil || exe == "" {
 		exe = "gleann"
 	}
 
-	cmdArgs := []string{"index", "sync", indexName, "--docs", docsDir}
-	if len(files) > 0 {
-		cmdArgs = append(cmdArgs, "--files", strings.Join(files, ","))
+	var cmdArgs []string
+	if opts.IsNew {
+		cmdArgs = []string{"index", "build", opts.IndexName, "--docs", opts.DocsDir, "--graph", "--mode", opts.Mode}
+	} else {
+		cmdArgs = []string{"index", "sync", opts.IndexName, "--docs", opts.DocsDir, "--graph", "--mode", opts.Mode}
+		if len(opts.Files) > 0 {
+			cmdArgs = append(cmdArgs, "--files", strings.Join(opts.Files, ","))
+		}
+	}
+	if opts.NoPlugins {
+		cmdArgs = append(cmdArgs, "--no-plugins")
 	}
 	if s.config.IndexDir != "" {
 		cmdArgs = append(cmdArgs, "--index-dir", s.config.IndexDir)

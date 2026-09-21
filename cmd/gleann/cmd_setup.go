@@ -183,7 +183,7 @@ func runAutoSetup(args []string) {
 		defer tracker.Close()
 	}
 
-	items, pluginDocs, err := readDocuments(absDir, config.ChunkConfig.ChunkSize, config.ChunkConfig.ChunkOverlap, tracker, nil)
+	items, pluginDocs, err := readDocuments(absDir, config.ChunkConfig.ChunkSize, config.ChunkConfig.ChunkOverlap, tracker, nil, IndexModeAll, false)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error reading documents: %v\n", err)
 		os.Exit(1)
@@ -219,6 +219,16 @@ func runAutoSetup(args []string) {
 
 	if buildGraph {
 		buildGraphIndex(indexName, absDir, config.IndexDir, pluginDocs, nil)
+		graphReportPath := filepath.Join(absDir, "GRAPH_REPORT.md")
+		if err := generateGraphReportFile(indexName, config.IndexDir, absDir, graphReportPath); err == nil {
+			fmt.Printf("  📊 GRAPH_REPORT.md automatically generated in %s\n", graphReportPath)
+		}
+	}
+
+	agentsPath := filepath.Join(absDir, "AGENTS.md")
+	content := getAgentsMDContent(indexName)
+	if err := appendOrCreateFile(agentsPath, content, "gleann: Code Intelligence"); err == nil {
+		fmt.Printf("  🤖 AGENTS.md automatically generated/updated in %s\n", agentsPath)
 	}
 
 	fmt.Println()

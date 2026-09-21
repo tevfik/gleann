@@ -24,9 +24,65 @@ import (
 	"github.com/tevfik/gleann/pkg/gleannignore"
 )
 
+// IndexMode represents the filtering mode for indexing.
+type IndexMode string
+
+const (
+	IndexModeAll  IndexMode = "all"
+	IndexModeCode IndexMode = "code"
+	IndexModeDocs IndexMode = "docs"
+)
+
+func parseIndexMode(args []string) (IndexMode, bool) {
+	modeStr := strings.ToLower(getFlag(args, "--mode"))
+	if modeStr == "" {
+		if hasFlag(args, "--code-only") || hasFlag(args, "--code") {
+			modeStr = "code"
+		} else if hasFlag(args, "--docs-only") {
+			modeStr = "docs"
+		} else {
+			modeStr = "all"
+		}
+	}
+	noPlugins := hasFlag(args, "--no-plugins") || modeStr == "code"
+	return IndexMode(modeStr), noPlugins
+}
+
+func printBuildUsage() {
+	fmt.Println(`Usage: gleann index build <name> --docs <dir> [options]
+
+Build a vector index (and optional AST code graph) from documents or source code.
+
+Arguments:
+  <name>                  Name of the index to create
+
+Options:
+  --docs <dir>            Source directory containing files to index (required)
+  --graph                 Build AST-based code graph using tree-sitter & Kùzu
+  --mode <code|docs|all>  Index mode:
+                            code - fast source code & AST graph only
+                            docs - documents only (pdf, docx, etc.)
+                            all  - index everything (default)
+  --tag <tag>             Assign governance tag(s) (comma-separated or multiple)
+  --desc <description>    Human-readable description for semantic MCP routing
+  --mcp                   Expose index to MCP tools (default: true)
+  --no-plugins            Disable external document extraction plugins
+  --multimodal-model <m>  Model for media files (images, audio, video)
+  --no-report             Skip automatic GRAPH_REPORT.md generation
+  --no-agents             Skip automatic AGENTS.md generation
+  -h, --help              Show this help message
+
+Examples:
+  gleann index build core --docs ./src --graph --mode code
+  gleann index build docs --docs ./documentation --tag docs,work`)
+}
+
 func cmdBuild(args []string) {
-	if len(args) < 1 {
-		fmt.Fprintln(os.Stderr, "usage: gleann build <name> --docs <dir>")
+	if len(args) < 1 || hasFlag(args, "--help") || hasFlag(args, "-h") {
+		printBuildUsage()
+		if hasFlag(args, "--help") || hasFlag(args, "-h") {
+			return
+		}
 		os.Exit(1)
 	}
 
@@ -41,6 +97,13 @@ func cmdBuild(args []string) {
 		os.Exit(1)
 	}
 	buildGraph := hasFlag(args, "--graph")
+
+	mode, noPlugins := parseIndexMode(args)
+	if mode == IndexModeCode {
+		fmt.Printf("⚡ Index mode: CODE (fast code & AST graph, skipping office doc plugins)\n")
+	} else if mode == IndexModeDocs {
+		fmt.Printf("📄 Index mode: DOCUMENTS (office docs only, skipping raw code)\n")
+	}
 
 	config := getConfig(args)
 	applySavedConfig(&config, args)
@@ -84,7 +147,7 @@ func cmdBuild(args []string) {
 
 	// Read documents from directory.
 	fmt.Printf("📂 Reading documents from %s...\n", docsDir)
-	items, pluginDocs, err := readDocuments(docsDir, config.ChunkConfig.ChunkSize, config.ChunkConfig.ChunkOverlap, tracker, mmProcessor)
+	items, pluginDocs, err := readDocuments(docsDir, config.ChunkConfig.ChunkSize, config.ChunkConfig.ChunkOverlap, tracker, mmProcessor, mode, noPlugins)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error reading documents: %v\n", err)
 		os.Exit(1)
@@ -142,17 +205,47 @@ func cmdBuild(args []string) {
 
 	if buildGraph {
 		buildGraphIndex(name, docsDir, config.IndexDir, pluginDocs, nil)
+		if !hasFlag(args, "--no-report") {
+			graphReportPath := filepath.Join(docsDir, "GRAPH_REPORT.md")
+			if err := generateGraphReportFile(name, config.IndexDir, docsDir, graphReportPath); err == nil {
+				fmt.Printf("📊 GRAPH_REPORT.md automatically generated in %s\n", graphReportPath)
+			}
+		}
+	}
+
+	if !hasFlag(args, "--no-agents") {
+		agentsPath := filepath.Join(docsDir, "AGENTS.md")
+		content := getAgentsMDContent(name)
+		if err := appendOrCreateFile(agentsPath, content, "gleann: Code Intelligence"); err == nil {
+			fmt.Printf("🤖 AGENTS.md automatically generated/updated in %s\n", agentsPath)
+		}
 	}
 }
 
 // cmdRebuild removes an existing index and rebuilds it from scratch.
 func cmdRebuild(args []string) {
-	if len(args) < 1 {
+	if len(args) < 1 || hasFlag(args, "--help") || hasFlag(args, "-h") {
+		if hasFlag(args, "--help") || hasFlag(args, "-h") {
+			fmt.Println(`Usage: gleann index rebuild <name> --docs <dir> [options]
+
+Remove and completely rebuild an index from scratch. Supports all flags from 'index build'.
+
+Options:
+  --docs <dir>            Source directory containing files to index (required)
+  --graph                 Build AST-based code graph using tree-sitter & Kùzu
+  --mode <code|docs|all>  Index mode (code, docs, all)
+  -h, --help              Show this help message`)
+			return
+		}
 		fmt.Fprintln(os.Stderr, "usage: gleann rebuild <name> --docs <dir>")
 		os.Exit(1)
 	}
 
 	name := args[0]
+	if strings.HasPrefix(name, "-") {
+		fmt.Fprintf(os.Stderr, "error: index name %q looks like a flag\nusage: gleann index rebuild <name> --docs <dir>\n", name)
+		os.Exit(1)
+	}
 	docsDir := getFlag(args, "--docs")
 	if docsDir == "" {
 		fmt.Fprintln(os.Stderr, "error: --docs flag required")
@@ -174,9 +267,9 @@ func cmdRebuild(args []string) {
 	cmdBuild(args)
 }
 
-func buildIndex(name, docsDir string, config gleann.Config, embedder gleann.EmbeddingComputer, tracker *vault.Tracker) []*PluginDoc {
+func buildIndex(name, docsDir string, config gleann.Config, embedder gleann.EmbeddingComputer, tracker *vault.Tracker, mode IndexMode, noPlugins bool) []*PluginDoc {
 	mmProcessor := initMultimodalProcessor(config.OllamaHost, config.MultimodalModel)
-	items, pluginDocs, err := readDocuments(docsDir, config.ChunkConfig.ChunkSize, config.ChunkConfig.ChunkOverlap, tracker, mmProcessor)
+	items, pluginDocs, err := readDocuments(docsDir, config.ChunkConfig.ChunkSize, config.ChunkConfig.ChunkOverlap, tracker, mmProcessor, mode, noPlugins)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error reading documents: %v\n", err)
 		return nil
@@ -204,19 +297,22 @@ func buildIndex(name, docsDir string, config gleann.Config, embedder gleann.Embe
 	return pluginDocs
 }
 
-func readDocuments(dir string, chunkSize, chunkOverlap int, tracker *vault.Tracker, mmProcessor *multimodal.Processor) ([]gleann.Item, []*PluginDoc, error) {
-	// Load plugins once and manage their lifecycles
-	pluginManager, _ := gleann.NewPluginManager()
-	if pluginManager != nil {
-		defer pluginManager.Close()
-		pluginManager.ResolveMultimodalPluginEnv()
+func readDocuments(dir string, chunkSize, chunkOverlap int, tracker *vault.Tracker, mmProcessor *multimodal.Processor, mode IndexMode, noPlugins bool) ([]gleann.Item, []*PluginDoc, error) {
+	// Load plugins once and manage their lifecycles only when plugins are allowed
+	var pluginManager *gleann.PluginManager
+	if !noPlugins && mode != IndexModeCode {
+		pluginManager, _ = gleann.NewPluginManager()
+		if pluginManager != nil {
+			defer pluginManager.Close()
+			pluginManager.ResolveMultimodalPluginEnv()
+		}
 	}
 
 	// Native extractor: pure-Go fallback for PDF, DOCX, XLSX, PPTX, CSV, HTML.
 	nativeExtractor := gleann.NewNativeExtractor()
 
 	// Phase 1: collect eligible file paths (serial walk is fast — just syscalls).
-	files, walkErr := collectEligibleFiles(dir, pluginManager, nativeExtractor, mmProcessor)
+	files, walkErr := collectEligibleFiles(dir, pluginManager, nativeExtractor, mmProcessor, mode)
 	if walkErr != nil {
 		return nil, nil, walkErr
 	}
@@ -387,11 +483,22 @@ func readDocuments(dir string, chunkSize, chunkOverlap int, tracker *vault.Track
 
 					var items []gleann.Item
 					if len(mdChunks) == 0 {
-						// Single-chunk fallback for short documents.
-						items = append(items, gleann.Item{
-							Text:     md,
-							Metadata: map[string]any{"source": relPath, "extractor": "native"},
-						})
+						// Split plain text with SentenceSplitter instead of creating giant single chunks
+						textChunks := splitter.Chunk(md)
+						if len(textChunks) == 0 {
+							textChunks = []string{md}
+						}
+						for idx, tc := range textChunks {
+							items = append(items, gleann.Item{
+								Text: tc,
+								Metadata: map[string]any{
+									"source":       relPath,
+									"extractor":    "native",
+									"chunk_index":  idx,
+									"total_chunks": len(textChunks),
+								},
+							})
+						}
 					} else {
 						for _, ch := range mdChunks {
 							ch.Metadata["source"] = relPath
@@ -576,7 +683,7 @@ var binaryExts = map[string]bool{
 
 // collectEligibleFiles walks dir and returns files eligible for indexing,
 // respecting .gleannignore, hidden dirs, and binary extensions.
-func collectEligibleFiles(dir string, pluginManager *gleann.PluginManager, nativeExtractor *gleann.NativeExtractor, mmProcessor *multimodal.Processor) ([]fileEntry, error) {
+func collectEligibleFiles(dir string, pluginManager *gleann.PluginManager, nativeExtractor *gleann.NativeExtractor, mmProcessor *multimodal.Processor, mode IndexMode) ([]fileEntry, error) {
 	ignoreMatcher := gleannignore.Load(dir)
 
 	var files []fileEntry
@@ -609,15 +716,32 @@ func collectEligibleFiles(dir string, pluginManager *gleann.PluginManager, nativ
 
 		ext := strings.ToLower(filepath.Ext(path))
 
-		hasPlugin := pluginManager != nil && pluginManager.FindDocumentExtractor(ext) != nil
-		hasNative := nativeExtractor.CanHandle(ext)
-		hasMultimodal := mmProcessor != nil && mmProcessor.CanProcess(path)
+		switch mode {
+		case IndexModeCode:
+			// Code mode: source code, configs, and documentation text.
+			// Office docs, binary files, and massive data dumps (>1MB) are skipped.
+			if isOfficeDocExtension(ext) || binaryExts[ext] || info.Size() > 1<<20 {
+				return nil
+			}
+			if !isCodeExtension(ext) && !isDocumentationExtension(ext) {
+				return nil
+			}
+		case IndexModeDocs:
+			// Docs mode: office docs and documentation text. Pure code files are skipped.
+			if (!isOfficeDocExtension(ext) && !isDocumentationExtension(ext)) || info.Size() > 10<<20 {
+				return nil
+			}
+		case IndexModeAll, "":
+			hasPlugin := pluginManager != nil && pluginManager.FindDocumentExtractor(ext) != nil
+			hasNative := nativeExtractor.CanHandle(ext)
+			hasMultimodal := mmProcessor != nil && mmProcessor.CanProcess(path)
 
-		if !hasPlugin && !hasNative && !hasMultimodal && binaryExts[ext] {
-			return nil
-		}
-		if !hasPlugin && !hasNative && !hasMultimodal && info.Size() > 1<<20 {
-			return nil
+			if !hasPlugin && !hasNative && !hasMultimodal && binaryExts[ext] {
+				return nil
+			}
+			if !hasPlugin && !hasNative && !hasMultimodal && info.Size() > 1<<20 {
+				return nil
+			}
 		}
 
 		files = append(files, fileEntry{path: path, info: info})
@@ -629,15 +753,18 @@ func collectEligibleFiles(dir string, pluginManager *gleann.PluginManager, nativ
 // readDocumentsForFiles reads and chunks only the specified files.
 // This is used for incremental indexing in watch mode where only changed files
 // need processing — much faster than re-reading the entire directory.
-func readDocumentsForFiles(dir string, filePaths []string, chunkSize, chunkOverlap int, tracker *vault.Tracker, mmProcessor *multimodal.Processor) ([]gleann.Item, []*PluginDoc, error) {
+func readDocumentsForFiles(dir string, filePaths []string, chunkSize, chunkOverlap int, tracker *vault.Tracker, mmProcessor *multimodal.Processor, mode IndexMode, noPlugins bool) ([]gleann.Item, []*PluginDoc, error) {
 	if len(filePaths) == 0 {
 		return nil, nil, nil
 	}
 
-	pluginManager, _ := gleann.NewPluginManager()
-	if pluginManager != nil {
-		defer pluginManager.Close()
-		pluginManager.ResolveMultimodalPluginEnv()
+	var pluginManager *gleann.PluginManager
+	if !noPlugins && mode != IndexModeCode {
+		pluginManager, _ = gleann.NewPluginManager()
+		if pluginManager != nil {
+			defer pluginManager.Close()
+			pluginManager.ResolveMultimodalPluginEnv()
+		}
 	}
 	nativeExtractor := gleann.NewNativeExtractor()
 	ignoreMatcher := gleannignore.Load(dir)
@@ -666,6 +793,21 @@ func readDocumentsForFiles(dir string, filePaths []string, chunkSize, chunkOverl
 		}
 
 		ext := strings.ToLower(filepath.Ext(filePath))
+
+		// Apply mode filtering
+		switch mode {
+		case IndexModeCode:
+			if isOfficeDocExtension(ext) || binaryExts[ext] {
+				continue
+			}
+			if !isCodeExtension(ext) && !isDocumentationExtension(ext) {
+				continue
+			}
+		case IndexModeDocs:
+			if !isOfficeDocExtension(ext) && !isDocumentationExtension(ext) {
+				continue
+			}
+		}
 
 		// Plugin extraction.
 		if pluginManager != nil && !(ext == ".pdf" && mmProcessor != nil) {
@@ -751,7 +893,21 @@ func readDocumentsForFiles(dir string, filePaths []string, chunkSize, chunkOverl
 				if md != "" {
 					mdChunks := mdChunker.ChunkMarkdown(md, relPath)
 					if len(mdChunks) == 0 {
-						allItems = append(allItems, gleann.Item{Text: md, Metadata: map[string]any{"source": relPath, "extractor": "native"}})
+						textChunks := splitter.Chunk(md)
+						if len(textChunks) == 0 {
+							textChunks = []string{md}
+						}
+						for idx, tc := range textChunks {
+							allItems = append(allItems, gleann.Item{
+								Text: tc,
+								Metadata: map[string]any{
+									"source":       relPath,
+									"extractor":    "native",
+									"chunk_index":  idx,
+									"total_chunks": len(textChunks),
+								},
+							})
+						}
 					} else {
 						for _, ch := range mdChunks {
 							ch.Metadata["source"] = relPath
@@ -852,7 +1008,7 @@ func readDocumentsForFiles(dir string, filePaths []string, chunkSize, chunkOverl
 // incrementalBuildIndex attempts to incrementally update the index for changed files.
 // It removes old passages for changed/deleted sources and adds new chunks.
 // Returns plugin docs and true on success, or nil and false if a full rebuild is needed.
-func incrementalBuildIndex(name, docsDir string, changedFiles []string, config gleann.Config, embedder gleann.EmbeddingComputer, tracker *vault.Tracker) ([]*PluginDoc, bool) {
+func incrementalBuildIndex(name, docsDir string, changedFiles []string, config gleann.Config, embedder gleann.EmbeddingComputer, tracker *vault.Tracker, mode IndexMode, noPlugins bool) ([]*PluginDoc, bool) {
 	// Classify changes: existing files need re-chunking, missing files are deletions.
 	var existingFiles []string
 	var removeSources []string
@@ -872,7 +1028,7 @@ func incrementalBuildIndex(name, docsDir string, changedFiles []string, config g
 	// Read and chunk only the changed files.
 	mmProcessor := initMultimodalProcessor(config.OllamaHost, config.MultimodalModel)
 	items, pluginDocs, err := readDocumentsForFiles(docsDir, existingFiles,
-		config.ChunkConfig.ChunkSize, config.ChunkConfig.ChunkOverlap, tracker, mmProcessor)
+		config.ChunkConfig.ChunkSize, config.ChunkConfig.ChunkOverlap, tracker, mmProcessor, mode, noPlugins)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "incremental: error reading changed files: %v\n", err)
 		return nil, false
@@ -895,7 +1051,20 @@ func incrementalBuildIndex(name, docsDir string, changedFiles []string, config g
 }
 
 func cmdWatch(args []string) {
-	if len(args) < 1 {
+	if len(args) < 1 || hasFlag(args, "--help") || hasFlag(args, "-h") {
+		if hasFlag(args, "--help") || hasFlag(args, "-h") {
+			fmt.Println(`Usage: gleann index watch <name> --docs <dir> [options]
+
+Watch a source directory and automatically re-index on file changes.
+
+Options:
+  --docs <dir>            Source directory to watch (required)
+  --graph                 Also update AST call graph
+  --mode <code|docs|all>  Index mode: code, docs, all (default: all)
+  --interval <seconds>    Polling interval (default: 5)
+  -h, --help              Show this help message`)
+			return
+		}
 		fmt.Fprintln(os.Stderr, "usage: gleann index watch <name> --docs <dir> [--graph] [--interval 5]")
 		os.Exit(1)
 	}
@@ -965,8 +1134,10 @@ func cmdWatch(args []string) {
 	}
 	defer watcher.Close()
 
+	mode, noPlugins := parseIndexMode(args)
+
 	// Initial build.
-	pluginDocs := buildIndex(name, docsDir, config, cachedEmbedder, tracker)
+	pluginDocs := buildIndex(name, docsDir, config, cachedEmbedder, tracker, mode, noPlugins)
 
 	if buildGraph {
 		buildGraphIndex(name, docsDir, config.IndexDir, pluginDocs, nil)
@@ -1017,10 +1188,10 @@ func cmdWatch(args []string) {
 
 			fmt.Printf("🔄 %d file(s) changed, updating index %q...\n", len(files), name)
 			start := time.Now()
-			pDocs, ok := incrementalBuildIndex(name, docsDir, files, config, cachedEmbedder, tracker)
+			pDocs, ok := incrementalBuildIndex(name, docsDir, files, config, cachedEmbedder, tracker, mode, noPlugins)
 			if !ok {
 				// Fall back to full rebuild.
-				pDocs = buildIndex(name, docsDir, config, cachedEmbedder, tracker)
+				pDocs = buildIndex(name, docsDir, config, cachedEmbedder, tracker, mode, noPlugins)
 			} else {
 				fmt.Printf("⚡ Incremental update complete in %s\n", time.Since(start).Round(time.Millisecond))
 			}
@@ -1079,7 +1250,7 @@ func initMultimodalProcessor(ollamaHost, flagModel string) *multimodal.Processor
 //   gleann index sync <name> [--docs <dir>] [--files <file1,file2>] [--graph]
 func cmdSync(args []string) {
 	if len(args) < 1 || hasFlag(args, "--help") || hasFlag(args, "-h") {
-		fmt.Fprintln(os.Stderr, "usage: gleann index sync <name> [--docs <dir>] [--files <file1,file2>] [--graph]")
+		fmt.Fprintln(os.Stderr, "usage: gleann index sync <name> [--docs <dir>] [--files <file1,file2>] [--graph] [--mode code|docs|all] [--no-plugins]")
 		if hasFlag(args, "--help") || hasFlag(args, "-h") {
 			return
 		}
@@ -1090,6 +1261,13 @@ func cmdSync(args []string) {
 	if strings.HasPrefix(name, "-") {
 		fmt.Fprintf(os.Stderr, "error: index name %q looks like a flag\nusage: gleann index sync <name> [--docs <dir>]\n", name)
 		os.Exit(1)
+	}
+
+	mode, noPlugins := parseIndexMode(args)
+	if mode == IndexModeCode {
+		fmt.Printf("⚡ Sync mode: CODE (fast code & AST graph, skipping office doc plugins)\n")
+	} else if mode == IndexModeDocs {
+		fmt.Printf("📄 Sync mode: DOCUMENTS (office docs only, skipping raw code)\n")
 	}
 
 	config := getConfig(args)
@@ -1169,10 +1347,13 @@ func cmdSync(args []string) {
 			}
 		}
 	} else {
-		pluginManager, _ := gleann.NewPluginManager()
-		if pluginManager != nil {
-			defer pluginManager.Close()
-			pluginManager.ResolveMultimodalPluginEnv()
+		var pluginManager *gleann.PluginManager
+		if !noPlugins && mode != IndexModeCode {
+			pluginManager, _ = gleann.NewPluginManager()
+			if pluginManager != nil {
+				defer pluginManager.Close()
+				pluginManager.ResolveMultimodalPluginEnv()
+			}
 		}
 		nativeExtractor := gleann.NewNativeExtractor()
 		mmModel := getFlag(args, "--multimodal-model")
@@ -1181,7 +1362,7 @@ func cmdSync(args []string) {
 		}
 		mmProcessor := initMultimodalProcessor(config.OllamaHost, mmModel)
 
-		eligibleEntries, walkErr := collectEligibleFiles(absDocsDir, pluginManager, nativeExtractor, mmProcessor)
+		eligibleEntries, walkErr := collectEligibleFiles(absDocsDir, pluginManager, nativeExtractor, mmProcessor, mode)
 		if walkErr != nil {
 			fmt.Fprintf(os.Stderr, "error scanning workspace: %v\n", walkErr)
 			os.Exit(1)
@@ -1207,6 +1388,24 @@ func cmdSync(args []string) {
 		}
 	}
 
+	if len(deletedFiles) > 0 && mode != IndexModeAll {
+		var realDeleted []string
+		for _, df := range deletedFiles {
+			if _, err := os.Stat(df); err == nil {
+				// File still exists on disk; check if it was only excluded by the active mode filter.
+				ext := strings.ToLower(filepath.Ext(df))
+				if mode == IndexModeDocs && (isCodeExtension(ext) || !isOfficeDocExtension(ext)) {
+					continue // Preserve code files when syncing docs
+				}
+				if mode == IndexModeCode && (isOfficeDocExtension(ext) || !isCodeExtension(ext)) {
+					continue // Preserve office documents when syncing code
+				}
+			}
+			realDeleted = append(realDeleted, df)
+		}
+		deletedFiles = realDeleted
+	}
+
 	allChanged := append(changedFiles, deletedFiles...)
 	if len(allChanged) == 0 {
 		fmt.Printf("⚡ Index %q is already up to date. No changes detected in %s.\n", name, time.Since(start).Round(time.Millisecond))
@@ -1222,10 +1421,10 @@ func cmdSync(args []string) {
 		}
 	}
 
-	pDocs, ok := incrementalBuildIndex(name, absDocsDir, allChanged, config, cachedEmbedder, tracker)
+	pDocs, ok := incrementalBuildIndex(name, absDocsDir, allChanged, config, cachedEmbedder, tracker, mode, noPlugins)
 	if !ok {
 		fmt.Println("⚠️  Incremental vector update not supported or failed, running full rebuild...")
-		pDocs = buildIndex(name, absDocsDir, config, cachedEmbedder, tracker)
+		pDocs = buildIndex(name, absDocsDir, config, cachedEmbedder, tracker, mode, noPlugins)
 	} else {
 		fmt.Printf("⚡ Vector index updated in %s\n", time.Since(start).Round(time.Millisecond))
 	}

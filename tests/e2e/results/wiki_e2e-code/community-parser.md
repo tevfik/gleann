@@ -6,13 +6,13 @@
 
 | Symbol | Kind |
 |--------|------|
-| `code.Parser.Parse` | method |
-| `fmt.Errorf` | function |
+| `code.FilterByKind` | function |
+| `code.append` | function |
 
 ## External Connections
 
-- `code.parseTypeScript` ↔ `code.Parser.Parse`
-- `code.parseGo` ↔ `code.Parser.Parse`
+- `code.parsePython` ↔ `code.append`
+- `code.LeakyBucket` ↔ `code.append`
 
 ---
 [← Back to Index](index.md)

@@ -18,3 +18,8 @@ func cmdGraph(args []string) {
 	fmt.Fprintln(os.Stderr, "   Use the gleann-full binary or rebuild with: go build -tags treesitter ./cmd/gleann")
 	os.Exit(1)
 }
+
+// generateGraphReportFile is a stub when built without CGo/tree-sitter support.
+func generateGraphReportFile(indexName, indexDir, docsDir, outputPath string) error {
+	return fmt.Errorf("graph report requires CGo (build with -tags treesitter)")
+}

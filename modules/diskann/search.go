@@ -68,51 +68,33 @@ func SearchDiskIndex(idx *DiskIndex, query []float32, topK, searchL, rerankK int
 // from RAM, never touching raw embeddings.
 func beamSearchPQ(idx *DiskIndex, query []float32, l int, pqTable [][]float32) []Candidate {
 	visited := make(map[int64]bool)
-	visited[idx.Medoid] = true
+	expanded := make(map[int64]bool)
 
 	medoidDist := ADCDistance(pqTable, idx.PQCodes[idx.Medoid])
 	candidates := []Candidate{{ID: idx.Medoid, Distance: medoidDist}}
+	visited[idx.Medoid] = true
 
-	// Best-first search: expand closest unvisited candidate.
-	expanded := 0
-
-	for expanded < len(candidates) {
-		// Find the closest unexpanded candidate.
+	for {
+		// Find closest unexpanded candidate in beam
 		bestIdx := -1
 		bestDist := float32(1e30)
-		for i := expanded; i < len(candidates); i++ {
-			if candidates[i].Distance < bestDist {
-				bestDist = candidates[i].Distance
+		for i, c := range candidates {
+			if !expanded[c.ID] && c.Distance < bestDist {
+				bestDist = c.Distance
 				bestIdx = i
 			}
 		}
 
 		if bestIdx < 0 {
-			break
+			break // all candidates in beam expanded
 		}
 
-		// Move best to the expanded partition.
-		candidates[expanded], candidates[bestIdx] = candidates[bestIdx], candidates[expanded]
-		current := candidates[expanded]
-		expanded++
+		current := candidates[bestIdx]
+		expanded[current.ID] = true
 
-		// Early termination: if we have L candidates and current is worse than L-th best.
-		if len(candidates) >= l {
-			sort.Slice(candidates, func(a, b int) bool {
-				return candidates[a].Distance < candidates[b].Distance
-			})
-			if current.Distance > candidates[l-1].Distance {
-				break
-			}
-		}
-
-		// Expand neighbors.
 		neighbors := idx.GetNeighbors(current.ID)
 		for _, nID := range neighbors {
-			if nID < 0 || nID >= idx.NumNodes {
-				continue
-			}
-			if visited[nID] {
+			if nID < 0 || nID >= idx.NumNodes || visited[nID] {
 				continue
 			}
 			visited[nID] = true
@@ -121,26 +103,14 @@ func beamSearchPQ(idx *DiskIndex, query []float32, l int, pqTable [][]float32) [
 			candidates = append(candidates, Candidate{ID: nID, Distance: dist})
 		}
 
-		// Trim to keep candidate list manageable.
-		if len(candidates) > l*3 {
+		if len(candidates) > l*2 {
 			sort.Slice(candidates, func(a, b int) bool {
 				return candidates[a].Distance < candidates[b].Distance
 			})
-			candidates = candidates[:l*2]
-			expanded = 0
-			for i, c := range candidates {
-				if visited[c.ID] {
-					// Count all visited nodes as "expanded" conceptually,
-					// but we need to re-check if they were actually expanded.
-				}
-				_ = i
-			}
-			// Reset expanded counter to re-examine from best.
-			expanded = 0
+			candidates = candidates[:l]
 		}
 	}
 
-	// Return sorted by PQ distance.
 	sort.Slice(candidates, func(a, b int) bool {
 		return candidates[a].Distance < candidates[b].Distance
 	})

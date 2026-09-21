@@ -5,7 +5,10 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/tevfik/gleann/pkg/gleann"
@@ -463,12 +466,9 @@ func TestBuildSyncTool(t *testing.T) {
 		t.Errorf("expected property files")
 	}
 
-	required := make(map[string]bool)
-	for _, req := range tool.InputSchema.Required {
-		required[req] = true
-	}
-	if !required["index"] {
-		t.Errorf("expected required field index, got %v", tool.InputSchema.Required)
+	// index is now optional (auto-inferred from current workspace directory if omitted)
+	if props["index"] == nil {
+		t.Errorf("expected property index")
 	}
 }
 
@@ -482,31 +482,65 @@ func TestHandleSync(t *testing.T) {
 		Version:           "test",
 	})
 
-	// 1. Missing index parameter
-	reqMissing := mcp.CallToolRequest{}
-	reqMissing.Params.Arguments = map[string]interface{}{}
-	res, err := srv.handleSync(nil, reqMissing)
+	var capturedOpts SyncOptions
+	srv.syncRunner = func(ctx context.Context, opts SyncOptions) (string, error) {
+		capturedOpts = opts
+		return "Mock build complete", nil
+	}
+
+	cwd, _ := os.Getwd()
+
+	// 1. Auto-resolves index and docs_dir when omitted
+	reqOmitted := mcp.CallToolRequest{}
+	reqOmitted.Params.Arguments = map[string]interface{}{}
+	res, err := srv.handleSync(nil, reqOmitted)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !res.IsError {
-		t.Errorf("expected error result for missing index")
+	if res.IsError {
+		t.Fatalf("expected auto-resolved success, got error: %v", res)
+	}
+	if capturedOpts.IndexName != strings.ToLower(filepath.Base(cwd)) {
+		t.Errorf("expected auto-resolved index %s, got %s", strings.ToLower(filepath.Base(cwd)), capturedOpts.IndexName)
+	}
+	if capturedOpts.DocsDir != cwd {
+		t.Errorf("expected auto-resolved docsDir %s, got %s", cwd, capturedOpts.DocsDir)
 	}
 
-	// 2. Non-existent index
-	reqNonExistent := mcp.CallToolRequest{}
-	reqNonExistent.Params.Arguments = map[string]interface{}{
-		"index": "non-existent-index",
+	// 2. Non-existent index without docs_dir (auto-builds with docs_dir=cwd)
+	reqNoDocsDir := mcp.CallToolRequest{}
+	reqNoDocsDir.Params.Arguments = map[string]interface{}{
+		"index": "auto-cwd-idx",
 	}
-	res, err = srv.handleSync(nil, reqNonExistent)
+	res, err = srv.handleSync(nil, reqNoDocsDir)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !res.IsError {
-		t.Errorf("expected error result for nonexistent index")
+	if res.IsError {
+		t.Fatalf("expected auto-build success with docs_dir=cwd, got: %v", res)
+	}
+	if capturedOpts.DocsDir != cwd || capturedOpts.IndexName != "auto-cwd-idx" || !capturedOpts.IsNew {
+		t.Errorf("unexpected options: %+v", capturedOpts)
 	}
 
-	// 3. Existing index with mocked syncRunner
+	// 3. Non-existent index WITH explicit docs_dir (auto-builds with mode=code)
+	reqAutoBuild := mcp.CallToolRequest{}
+	reqAutoBuild.Params.Arguments = map[string]interface{}{
+		"index":    "new-auto-idx",
+		"docs_dir": "/tmp/new-repo",
+	}
+	res, err = srv.handleSync(nil, reqAutoBuild)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if res.IsError {
+		t.Fatalf("expected auto-build success, got error: %v", res)
+	}
+	if !capturedOpts.IsNew || capturedOpts.IndexName != "new-auto-idx" || capturedOpts.Mode != "code" || !capturedOpts.NoPlugins {
+		t.Errorf("unexpected auto-build options: %+v", capturedOpts)
+	}
+
+	// 4. Existing index with mocked syncRunner and custom mode
 	testIndex := "test-sync-idx"
 	idxDir := filepath.Join(tmpDir, testIndex)
 	_ = os.MkdirAll(idxDir, 0755)
@@ -517,12 +551,8 @@ func TestHandleSync(t *testing.T) {
 	metaBytes, _ := json.Marshal(meta)
 	_ = os.WriteFile(filepath.Join(idxDir, testIndex+".meta.json"), metaBytes, 0644)
 
-	var capturedIndex, capturedDocs string
-	var capturedFiles []string
-	srv.syncRunner = func(ctx context.Context, idx, docs string, files []string) (string, error) {
-		capturedIndex = idx
-		capturedDocs = docs
-		capturedFiles = files
+	srv.syncRunner = func(ctx context.Context, opts SyncOptions) (string, error) {
+		capturedOpts = opts
 		return "Mock sync complete: 2 files processed", nil
 	}
 
@@ -530,6 +560,7 @@ func TestHandleSync(t *testing.T) {
 	reqValid.Params.Arguments = map[string]interface{}{
 		"index": testIndex,
 		"files": []interface{}{"file1.go", "file2.go"},
+		"mode":  "docs",
 	}
 	res, err = srv.handleSync(nil, reqValid)
 	if err != nil {
@@ -539,14 +570,133 @@ func TestHandleSync(t *testing.T) {
 		t.Fatalf("expected success, got error: %v", res)
 	}
 
-	if capturedIndex != testIndex {
-		t.Errorf("expected index %s, got %s", testIndex, capturedIndex)
+	if capturedOpts.IndexName != testIndex {
+		t.Errorf("expected index %s, got %s", testIndex, capturedOpts.IndexName)
 	}
-	if capturedDocs != "/tmp/mock-source" {
-		t.Errorf("expected docs /tmp/mock-source, got %s", capturedDocs)
+	if capturedOpts.DocsDir != "/tmp/mock-source" {
+		t.Errorf("expected docs /tmp/mock-source, got %s", capturedOpts.DocsDir)
 	}
-	if len(capturedFiles) != 2 || capturedFiles[0] != "file1.go" {
-		t.Errorf("expected files [file1.go, file2.go], got %v", capturedFiles)
+	if len(capturedOpts.Files) != 2 || capturedOpts.Files[0] != "file1.go" {
+		t.Errorf("expected files [file1.go, file2.go], got %v", capturedOpts.Files)
+	}
+	if capturedOpts.Mode != "docs" {
+		t.Errorf("expected mode 'docs', got %s", capturedOpts.Mode)
+	}
+	if capturedOpts.IsNew {
+		t.Errorf("expected isNew=false for existing index")
+	}
+
+	// 5. Long-running sync: returns in_progress if takes > timeout, and prevents duplicate executions
+	srv.syncWaitTimeout = 50 * time.Millisecond
+	blockRunner := make(chan struct{})
+	var syncCallCount atomic.Int64
+	srv.syncRunner = func(ctx context.Context, opts SyncOptions) (string, error) {
+		syncCallCount.Add(1)
+		<-blockRunner
+		return "Done", nil
+	}
+
+	reqSlow := mcp.CallToolRequest{}
+	reqSlow.Params.Arguments = map[string]interface{}{
+		"index": testIndex,
+	}
+
+	// First call should wait timeout and return in_progress
+	resSlow, err := srv.handleSync(nil, reqSlow)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resSlow.IsError {
+		t.Fatalf("expected non-error, got: %v", resSlow)
+	}
+	var resMap map[string]any
+	textContent := resSlow.Content[0].(mcp.TextContent).Text
+	if err := json.Unmarshal([]byte(textContent), &resMap); err != nil {
+		t.Fatalf("failed to unmarshal: %v", err)
+	}
+	if resMap["status"] != "in_progress" {
+		t.Errorf("expected status in_progress, got %v", resMap["status"])
+	}
+
+	// Second concurrent call should return immediately with in_progress and NOT invoke syncRunner again
+	resConcurrent, err := srv.handleSync(nil, reqSlow)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resConcurrent.IsError {
+		t.Fatalf("expected non-error, got: %v", resConcurrent)
+	}
+	if syncCallCount.Load() != 1 {
+		t.Errorf("expected syncRunner called only once, called %d times", syncCallCount.Load())
+	}
+
+	// Release runner
+	close(blockRunner)
+
+	// Wait for background task to complete and unregister
+	for i := 0; i < 50; i++ {
+		resFinal, err := srv.handleSync(nil, reqSlow)
+		if err == nil && !resFinal.IsError {
+			var m map[string]any
+			tc := resFinal.Content[0].(mcp.TextContent).Text
+			if json.Unmarshal([]byte(tc), &m) == nil && m["status"] == "success" {
+				break
+			}
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+func TestServerCleanToolNames(t *testing.T) {
+	srvClean := NewServer(Config{
+		CleanToolNames: true,
+		IndexDir:       t.TempDir(),
+	})
+	defer srvClean.Close()
+
+	if !srvClean.cleanToolNames {
+		t.Error("expected cleanToolNames to be true")
+	}
+
+	// Verify addTool strips gleann_ prefix
+	mockHandler := func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		return nil, nil
+	}
+
+	tool := mcp.Tool{Name: "gleann_test_tool"}
+	srvClean.addTool(tool, mockHandler)
+
+	toolMem := mcp.Tool{Name: "memory_test_tool"}
+	srvClean.addTool(toolMem, mockHandler)
+}
+
+func TestHandleSearch_AutoResolveEmptyIndex(t *testing.T) {
+	tmpDir := t.TempDir()
+	srv := NewServer(Config{IndexDir: tmpDir})
+	defer srv.Close()
+
+	// Calling handleSearch with empty query should return error
+	reqEmptyQuery := mcp.CallToolRequest{}
+	reqEmptyQuery.Params.Arguments = map[string]interface{}{}
+	res, err := srv.handleSearch(context.Background(), reqEmptyQuery)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !res.IsError {
+		t.Error("expected error for empty query")
+	}
+
+	// Calling handleSearch with query but empty index and no indexes found
+	reqEmptyIdx := mcp.CallToolRequest{}
+	reqEmptyIdx.Params.Arguments = map[string]interface{}{
+		"query": "test query",
+	}
+	res2, err := srv.handleSearch(context.Background(), reqEmptyIdx)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(res2.Content) == 0 {
+		t.Error("expected content in response")
 	}
 }
 

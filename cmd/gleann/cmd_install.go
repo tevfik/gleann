@@ -24,14 +24,34 @@ type Platform struct {
 
 var platforms = []Platform{
 	{
+		Name:        "agents",
+		Description: "Universal AGENTS.md instructions for AI coding agents",
+		Detect: func(dir, home string) bool {
+			return false // on-demand or explicit target
+		},
+		Install: func(dir, home string) error {
+			agentsPath := filepath.Join(dir, "AGENTS.md")
+			content := getAgentsMDContent(filepath.Base(dir))
+			return appendOrCreateFile(agentsPath, content, "gleann: Code Intelligence")
+		},
+		Uninstall: func(dir, home string) error {
+			return removeSection(filepath.Join(dir, "AGENTS.md"), "## gleann: Code Intelligence", "\n---")
+		},
+	},
+	{
 		Name:        "opencode",
 		Description: "OpenCode AI (tool.execute.before plugin + MCP config)",
 		Detect: func(dir, home string) bool {
-			_, err := os.Stat(filepath.Join(dir, ".opencode"))
-			if err == nil {
+			if _, err := os.Stat(filepath.Join(dir, ".opencode")); err == nil {
 				return true
 			}
-			_, err = os.Stat(filepath.Join(home, ".opencode"))
+			if _, err := os.Stat(filepath.Join(dir, "opencode.json")); err == nil {
+				return true
+			}
+			if _, err := os.Stat(filepath.Join(home, ".config", "opencode")); err == nil {
+				return true
+			}
+			_, err := os.Stat(filepath.Join(home, ".opencode"))
 			return err == nil
 		},
 		Install:   installOpenCode,
@@ -367,85 +387,7 @@ Supported platforms:
 
 // ─── Shared content helpers ───────────────────────────────────────────────────
 
-const agentsMDSection = `
-## gleann: Code Intelligence, Search & Long-term Memory
-
-This project uses [gleann](https://github.com/tevfik/gleann) for AI-powered codebase
-navigation and persistent cross-session memory.
-
-### 1 — Before exploring source files
-
-Read **GRAPH_REPORT.md** (if present) — contains god nodes (high-degree hub symbols),
-community structure, and cross-cutting dependency edges.
-Generate it with: ` + "`gleann graph report --index <name>`" + `
-
-Key graph / search commands:
-- ` + "`gleann search <name> <query>`" + ` — semantic search
-- ` + "`gleann search idx1,idx2 <query>`" + ` — multi-index search (comma-separated)
-- ` + "`gleann search --all <query>`" + ` — search across all indexes
-- ` + "`gleann search <name> <query> --rerank`" + ` — add cross-encoder reranking
-- ` + "`gleann ask <name> <question>`" + ` — RAG-powered Q&A from indexed content
-- ` + "`gleann index list`" + ` — list available indexes
-- ` + "`gleann index sync <name> [--docs <dir>]`" + ` — incrementally sync index after code changes
-- ` + "`gleann index watch <name> --docs <dir>`" + ` — auto-rebuild on file changes
-- ` + "`gleann graph explain <symbol> --index <name>`" + ` — callers, callees, blast radius
-- ` + "`gleann graph query <pattern> --index <name>`" + ` — find symbols by pattern
-- ` + "`gleann graph path <from> <to> --index <name>`" + ` — shortest dependency path
-
-### 2 — Long-term memory (always ON)
-
-gleann maintains **persistent, tiered memory** that survives across sessions.  Use it
-actively to build up institutional knowledge about this codebase:
-
-| Tier | Lifetime | Use for |
-|------|----------|---------|
-| **short** | session only | current task state, transient notes |
-| **medium** | days / sprints | sprint goals, active decisions, pending TODOs |
-| **long** | permanent | architecture decisions, conventions, team contacts |
-
-**CLI — store & retrieve**
-` + "```bash" + `
-gleann memory remember "Hexagonal architecture: adapters live in internal/adapters"
-gleann memory remember "DB columns use snake_case" --tag "convention"
-gleann memory add short "Current task: refactor auth module"
-gleann memory add medium "Sprint 14: focus on latency improvements"
-gleann memory search "architecture"
-gleann memory list --tier long
-gleann memory stats
-` + "```" + `
-
-**CLI — rotation & housekeeping**
-` + "```bash" + `
-gleann memory summarize --last           # compress last conversation → long-term memory
-gleann memory summarize --last --extract # also extract individual facts into blocks
-gleann memory prune --age 90d            # remove entries older than 90 days
-gleann memory forget "outdated fact"     # remove by content match or block ID
-gleann memory clear --tier short         # wipe session-tier blocks
-` + "```" + `
-
-**Sleep-time engine** (Letta-inspired) — enable with ` + "`GLEANN_SLEEPTIME_ENABLED=1`" + `
-to run a background goroutine that automatically reflects on recent conversations,
-extracts facts, resolves contradictions, and promotes important information across tiers.
-
-### 3 — MCP tools (when gleann mcp is running)
-
-**Search & graph:**
-` + "`gleann_search`" + ` · ` + "`gleann_search_multi`" + ` · ` + "`gleann_ask`" + ` · ` + "`gleann_graph_neighbors`" + ` · ` + "`gleann_impact`" + ` · ` + "`gleann_read_full_document`" + ` · ` + "`gleann_document_toc`" + ` · ` + "`gleann_sync`" + `
-` + "`inject_knowledge_graph`" + ` · ` + "`delete_graph_entity`" + ` · ` + "`traverse_knowledge_graph`" + `
-
-- ` + "`gleann_sync`" + ` — call this after creating, editing, or deleting files to incrementally refresh vector passages and AST graph!
-
-**Memory (always-available, no build tag):**
-- ` + "`memory_remember`" + ` — store fact with tier/label/tags/scope
-- ` + "`memory_forget`" + ` — remove block by ID or content match
-- ` + "`memory_search`" + ` — full-text search across all tiers
-- ` + "`memory_list`" + ` — browse blocks, filter by tier
-- ` + "`memory_context`" + ` — returns the compiled ` + "`<memory_context>`" + ` window that gleann
-  injects into LLM system prompts — call this at session start to recall everything
-
-**Workflow:** call ` + "`memory_context`" + ` at the start of every session, use ` + "`gleann_sync`" + ` after modifying files so code intelligence tools immediately reflect changes, then call
-` + "`memory_remember`" + ` whenever you learn something important about the codebase.
-`
+var agentsMDSection = getAgentsMDContent("")
 
 const skillMDContent = `# gleann: Code Intelligence, Search & Memory
 
@@ -677,6 +619,18 @@ func installOpenCode(dir, home string) error {
 	}
 	fmt.Printf("  • %s  (mcp.gleann registered)\n", ocConfigPath)
 
+	// 4. Global ~/.config/opencode/opencode.json & ~/.config/opencode/AGENTS.md
+	globalConfigDir := filepath.Join(home, ".config", "opencode")
+	_ = os.MkdirAll(globalConfigDir, 0o755)
+	globalConfigPath := filepath.Join(globalConfigDir, "opencode.json")
+	if err := patchOpenCodeJSON(globalConfigPath); err == nil {
+		fmt.Printf("  • %s  (mcp.gleann registered globally)\n", globalConfigPath)
+	}
+	globalAgentsPath := filepath.Join(globalConfigDir, "AGENTS.md")
+	if err := appendOrCreateFile(globalAgentsPath, agentsMDSection, "gleann: Code Intelligence"); err == nil {
+		fmt.Printf("  • %s  (global instructions for OpenCode agents)\n", globalAgentsPath)
+	}
+
 	return nil
 }
 
@@ -710,14 +664,46 @@ func patchOpenCodeJSON(path string) error {
 	if mcpSection == nil {
 		mcpSection = make(map[string]interface{})
 	}
-	// Idempotent: skip if already registered.
-	if _, exists := mcpSection["gleann"]; exists {
+	binPath := resolveInstalledGleannBin()
+
+	// Check if already registered.
+	if existing, exists := mcpSection["gleann"]; exists {
+		// Ensure --clean-names is in command args, and heal any stale ephemeral runtime paths.
+		if exMap, ok := existing.(map[string]interface{}); ok {
+			cmdList, _ := exMap["command"].([]interface{})
+			hasClean := false
+			updatedCmd := false
+			for i, arg := range cmdList {
+				if str, ok := arg.(string); ok && i == 0 {
+					if strings.Contains(str, ".gleann/runtime") || strings.Contains(str, "/tmp") {
+						cmdList[0] = binPath
+						updatedCmd = true
+					}
+				}
+				if arg == "--clean-names" {
+					hasClean = true
+				}
+			}
+			if !hasClean {
+				cmdList = append(cmdList, "--clean-names")
+				updatedCmd = true
+			}
+			if updatedCmd {
+				exMap["command"] = cmdList
+				config["mcp"] = mcpSection
+				out, err := json.MarshalIndent(config, "", "  ")
+				if err == nil {
+					_ = os.WriteFile(path, append(out, '\n'), 0o644)
+				}
+			}
+		}
 		fmt.Printf("  (gleann mcp already in %s)\n", filepath.Base(path))
 		return nil
 	}
+
 	mcpSection["gleann"] = map[string]interface{}{
 		"type":    "local",
-		"command": []interface{}{"gleann", "mcp"},
+		"command": []interface{}{binPath, "mcp", "--clean-names"},
 		"enabled": true,
 	}
 	config["mcp"] = mcpSection

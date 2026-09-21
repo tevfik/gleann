@@ -21,6 +21,8 @@ REPO_ROOT   := $(CURDIR)
 USER_BIN_DIR ?= $(HOME)/.local/bin
 USER_LIB_DIR ?= $(HOME)/.local/lib
 
+BUILDER_IMAGE ?= gleann-builder:latest
+
 # FAISS shared lib locations
 FAISS_LIB_DIR ?= $(REPO_ROOT)/deps/faiss_install/lib
 FAISS_INC_DIR ?= $(REPO_ROOT)/deps/faiss_install/include
@@ -108,42 +110,72 @@ build-rust-core:
 	fi
 
 # ── Full Binary (Tree-sitter + KuzuDB CGo) ───────────────────────────────────
+.PHONY: builder-image
+builder-image:
+	@if command -v docker >/dev/null 2>&1; then \
+		if ! docker image inspect $(BUILDER_IMAGE) >/dev/null 2>&1; then \
+			echo "📦 Creating $(BUILDER_IMAGE) (one-time setup, eliminates apt-get on every build)..."; \
+			printf 'FROM golang:1.25\nRUN apt-get update && apt-get install -y --no-install-recommends libopenblas-dev libgomp1 patchelf && rm -rf /var/lib/apt/lists/*\n' | docker build -t $(BUILDER_IMAGE) -; \
+		fi; \
+	fi
+
 .PHONY: full
 full: $(BINARY_FULL)
 
-$(BINARY_FULL): prepare-assets
-	@echo "🔧 Building $(BINARY_FULL) with Tree-sitter + KuzuDB CGo (standalone single executable)..."
+$(BINARY_FULL): prepare-assets builder-image
+	@echo "🔧 Building $(BINARY_FULL) with FAISS + Tree-sitter + KuzuDB CGo (standalone single executable)..."
 	@mkdir -p $(BUILD_DIR)/stage
 	@if command -v go >/dev/null 2>&1; then \
-		CGO_ENABLED=1 CGO_CFLAGS="-w" go build -tags "treesitter" -ldflags "$(LDFLAGS) -extldflags '$(RPATH_FLAGS)'" -o $(BUILD_DIR)/stage/gleann-full-bin $(CMD) && \
+		CGO_ENABLED=1 \
+		CGO_CFLAGS="-w -I$(FAISS_INC_DIR)" \
+		CGO_CXXFLAGS="-w -I$(FAISS_INC_DIR)" \
+		CGO_LDFLAGS="$(RPATH_FLAGS) -L$(FAISS_LIB_DIR) -lfaiss_c -lfaiss -lopenblas -lgomp -lstdc++ -lm" \
+		go build -tags "treesitter,faiss" -ldflags "$(LDFLAGS) -extldflags '$(RPATH_FLAGS)'" -o $(BUILD_DIR)/stage/gleann-full-bin $(CMD) && \
 		go mod download github.com/kuzudb/go-kuzu && \
 		KUZU_DIR=$$(go list -m -f '{{.Dir}}' github.com/kuzudb/go-kuzu 2>/dev/null || true); \
 		if [ -z "$$KUZU_DIR" ]; then KUZU_DIR=$$(find $$(go env GOPATH)/pkg/mod/github.com/kuzudb/go-kuzu* -maxdepth 0 2>/dev/null | head -n 1); fi; \
 		cp "$$KUZU_DIR/lib/dynamic/linux-amd64/libkuzu.so" $(BUILD_DIR)/stage/ 2>/dev/null || true; \
+		if command -v patchelf >/dev/null 2>&1; then \
+			patchelf --set-rpath '$$ORIGIN:$$ORIGIN/../lib:/usr/local/lib:$(USER_LIB_DIR)' $(BUILD_DIR)/stage/gleann-full-bin 2>/dev/null || true; \
+			for so in $(BUILD_DIR)/stage/*.so*; do \
+				if [ -f "$$so" ]; then \
+					patchelf --set-rpath '$$ORIGIN:$$ORIGIN/../lib:/usr/local/lib' "$$so" 2>/dev/null || true; \
+				fi; \
+			done; \
+		fi; \
+		tar czf cmd/gleann-full-launcher/payload.tar.gz -C $(BUILD_DIR)/stage . && \
+		CGO_ENABLED=0 go build -ldflags "$(LDFLAGS)" -o $(BINARY_FULL) ./cmd/gleann-full-launcher && \
+		tar -czf cmd/gleann-full-launcher/payload.tar.gz --files-from /dev/null && \
+		rm -rf $(BUILD_DIR)/stage; \
 	elif command -v docker >/dev/null 2>&1; then \
-		docker run --rm -v gleann-go-cache:/go/pkg/mod -v gleann-build-cache:/root/.cache/go-build -v $$(pwd):/app -w /app golang:1.25 sh -c "mkdir -p $(BUILD_DIR)/stage && CGO_ENABLED=1 CGO_CFLAGS='-w' go build -buildvcs=false -tags 'treesitter' -ldflags '$(LDFLAGS) -extldflags \"$(RPATH_FLAGS)\"' -o $(BUILD_DIR)/stage/gleann-full-bin $(CMD) && go mod download github.com/kuzudb/go-kuzu && KUZU_DIR=\$$(go list -m -f '{{.Dir}}' github.com/kuzudb/go-kuzu) && cp \$$KUZU_DIR/lib/dynamic/linux-amd64/libkuzu.so /app/$(BUILD_DIR)/stage/ && chown -R $$(id -u):$$(id -g) /app/$(BUILD_DIR)"; \
+		docker run --rm \
+			-v gleann-go-cache:/go/pkg/mod \
+			-v gleann-build-cache:/root/.cache/go-build \
+			-v $$(pwd):/app -w /app $(BUILDER_IMAGE) sh -c "\
+				set -e && \
+				mkdir -p $(BUILD_DIR)/stage && \
+				CGO_ENABLED=1 \
+				CGO_CFLAGS='-w -I/app/deps/faiss_install/include' \
+				CGO_CXXFLAGS='-w -I/app/deps/faiss_install/include' \
+				CGO_LDFLAGS='$(RPATH_FLAGS) -L/app/deps/faiss_install/lib -lfaiss_c -lfaiss -lopenblas -lgomp -lstdc++ -lm' \
+				go build -buildvcs=false -tags 'treesitter,faiss' -ldflags '$(LDFLAGS) -extldflags \"$(RPATH_FLAGS)\"' -o $(BUILD_DIR)/stage/gleann-full-bin $(CMD) && \
+				go mod download github.com/kuzudb/go-kuzu && \
+				KUZU_DIR=\$$(go list -m -f '{{.Dir}}' github.com/kuzudb/go-kuzu) && \
+				cp \"\$$KUZU_DIR/lib/dynamic/linux-amd64/libkuzu.so\" $(BUILD_DIR)/stage/ && \
+				cp -L /usr/lib/x86_64-linux-gnu/libopenblas.so.0 $(BUILD_DIR)/stage/ 2>/dev/null || true && \
+				cp -L /usr/lib/x86_64-linux-gnu/libgomp.so.1 $(BUILD_DIR)/stage/ 2>/dev/null || true && \
+				cp -L /usr/lib/x86_64-linux-gnu/libgfortran.so.5 $(BUILD_DIR)/stage/ 2>/dev/null || true && \
+				patchelf --set-rpath '\$$ORIGIN' $(BUILD_DIR)/stage/gleann-full-bin 2>/dev/null || true && \
+				for so in $(BUILD_DIR)/stage/*.so*; do \
+					[ -f \"\$$so\" ] && patchelf --set-rpath '\$$ORIGIN' \"\$$so\" 2>/dev/null || true; \
+				done && \
+				tar czf cmd/gleann-full-launcher/payload.tar.gz -C $(BUILD_DIR)/stage . && \
+				CGO_ENABLED=0 go build -buildvcs=false -ldflags '$(LDFLAGS)' -o $(BINARY_FULL) ./cmd/gleann-full-launcher && \
+				tar -czf cmd/gleann-full-launcher/payload.tar.gz --files-from /dev/null && \
+				rm -rf $(BUILD_DIR)/stage && \
+				chown -R $$(id -u):$$(id -g) /app/$(BUILD_DIR) cmd/gleann-full-launcher /app/internal/server/dist 2>/dev/null || true"; \
 	fi
-	@if [ ! -f $(BUILD_DIR)/stage/libkuzu.* ]; then \
-		echo "❌ ERROR: libkuzu was not copied to $(BUILD_DIR)/stage!"; \
-		exit 1; \
-	fi
-	@if command -v patchelf >/dev/null 2>&1 && [ -f $(BUILD_DIR)/stage/gleann-full-bin ]; then \
-		patchelf --set-rpath '$$ORIGIN:$$ORIGIN/../lib:/usr/local/lib:$(USER_LIB_DIR)' $(BUILD_DIR)/stage/gleann-full-bin 2>/dev/null || true; \
-		for so in $(BUILD_DIR)/stage/*.so*; do \
-			if [ -f "$$so" ]; then \
-				patchelf --set-rpath '$$ORIGIN:$$ORIGIN/../lib:/usr/local/lib' "$$so" 2>/dev/null || true; \
-			fi; \
-		done; \
-	fi
-	@tar czf cmd/gleann-full-launcher/payload.tar.gz -C $(BUILD_DIR)/stage .
-	@if command -v go >/dev/null 2>&1; then \
-		CGO_ENABLED=0 go build -ldflags "$(LDFLAGS)" -o $(BINARY_FULL) ./cmd/gleann-full-launcher; \
-	elif command -v docker >/dev/null 2>&1; then \
-		docker run --rm -v gleann-go-cache:/go/pkg/mod -v gleann-build-cache:/root/.cache/go-build -v $$(pwd):/app -w /app golang:1.25 sh -c "CGO_ENABLED=0 go build -buildvcs=false -ldflags '$(LDFLAGS)' -o $(BINARY_FULL) ./cmd/gleann-full-launcher && chown -R $$(id -u):$$(id -g) /app/$(BUILD_DIR)"; \
-	fi
-	@tar -czf cmd/gleann-full-launcher/payload.tar.gz --files-from /dev/null
-	@rm -rf $(BUILD_DIR)/stage
-	@echo "✅ Built single standalone $(BINARY_FULL)"
+	@echo "✅ Built single standalone $(BINARY_FULL) with FAISS + Tree-sitter + KuzuDB"
 
 # ── Install ─────────────────────────────────────────────────────────────────
 

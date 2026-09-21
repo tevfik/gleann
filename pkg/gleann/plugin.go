@@ -295,7 +295,7 @@ func (m *PluginManager) FindDocumentExtractor(ext string) *Plugin {
 		for _, supportedExt := range p.Extensions {
 			if strings.ToLower(supportedExt) == ext {
 				if deprecatedMediaExts[ext] {
-					fmt.Fprintf(os.Stderr, "⚠ Plugin %q handles %s but media extensions are now supported natively via --multimodal-model.\n  Consider removing this plugin and using: gleann index build <name> --docs <dir> --multimodal-model gemma4:e4b\n", p.Name, ext)
+					continue // Media extensions (.png, .jpg, etc.) are handled by multimodal pipeline, not document plugins
 				}
 				return &p
 			}

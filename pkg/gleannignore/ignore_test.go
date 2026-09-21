@@ -133,3 +133,22 @@ func TestNegation(t *testing.T) {
 		t.Error("README.txt should NOT be ignored (negated)")
 	}
 }
+
+func TestLoadGitignore(t *testing.T) {
+	dir := t.TempDir()
+	gitignorePath := filepath.Join(dir, ".gitignore")
+	if err := os.WriteFile(gitignorePath, []byte("build/\n*.tmp\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	m := Load(dir)
+	if !m.Match("build", true) {
+		t.Error("build dir should be ignored via .gitignore")
+	}
+	if !m.Match("test.tmp", false) {
+		t.Error("test.tmp should be ignored via .gitignore")
+	}
+	if m.Match("main.go", false) {
+		t.Error("main.go should not be ignored")
+	}
+}

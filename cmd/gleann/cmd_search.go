@@ -14,7 +14,29 @@ import (
 )
 
 func cmdSearch(args []string) {
-	if len(args) < 2 {
+	if len(args) < 2 || hasFlag(args, "--help") || hasFlag(args, "-h") {
+		if hasFlag(args, "--help") || hasFlag(args, "-h") {
+			fmt.Println(`Usage: gleann search <name[,name2,...]|--all> <query> [options]
+
+Semantic vector search across one or more indexes.
+
+Arguments:
+  <name>                  Name of the index (or comma-separated names, e.g. core,px4)
+  <query>                 Search query text
+
+Options:
+  --all                   Search across all existing indexes
+  --top-k <N>             Number of top results to return (default: 5)
+  --rerank                Rerank results with cross-encoder
+  --json                  Output results as JSON
+  -h, --help              Show this help message
+
+Examples:
+  gleann search core "auth middleware"
+  gleann search px4,core "ekf estimation" --rerank
+  gleann search --all "PID controller"`)
+			return
+		}
 		fmt.Fprintln(os.Stderr, "usage: gleann search <name[,name2,...]|--all> <query>")
 		os.Exit(1)
 	}

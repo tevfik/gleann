@@ -66,7 +66,9 @@ Usage:
 
 Options:
   --json                  Output as JSON (list, info)
-  --graph                 Build AST-based code graph (build, rebuild)
+  --graph                 Build AST-based code graph (build, rebuild, sync)
+  --mode <code|docs|all>  Index mode: code (fast, source code only), docs (office docs only), all (default)
+  --no-plugins            Disable external document extraction plugins
   --docs <dir>            Source directory (required for build/rebuild/watch)
   --index-dir <dir>       Index storage directory (default: ~/.gleann/indexes)
   --prune                 Prune unchanged files during incremental builds
@@ -76,7 +78,8 @@ Options:
 Examples:
   gleann index list
   gleann index build my-docs --docs ./documents/
-  gleann index build my-code --docs ./src/ --graph
+  gleann index build my-code --docs ./src/ --graph --mode code
+  gleann index sync  my-code --mode code
   gleann index build my-media --docs ./media/ --multimodal-model gemma4:e4b
   gleann index remove my-old-index
   gleann index rebuild my-code --docs ./src/ --graph

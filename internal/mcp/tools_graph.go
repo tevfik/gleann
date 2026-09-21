@@ -87,10 +87,10 @@ func (s *Server) evictGraph(name string) {
 // registerGraphTools registers community detection, risk analysis, and
 // repo map tools. Only available with treesitter build tag.
 func (s *Server) registerGraphTools() {
-	s.mcpServer.AddTool(s.buildCommunitiesTool(), s.handleCommunities)
-	s.mcpServer.AddTool(s.buildRiskAnalysisTool(), s.handleRiskAnalysis)
-	s.mcpServer.AddTool(s.buildRepoMapTool(), s.handleRepoMap)
-	s.mcpServer.AddTool(s.buildNavigateSymbolTool(), s.handleNavigateSymbol)
+	s.addTool(s.buildCommunitiesTool(), s.handleCommunities)
+	s.addTool(s.buildRiskAnalysisTool(), s.handleRiskAnalysis)
+	s.addTool(s.buildRepoMapTool(), s.handleRepoMap)
+	s.addTool(s.buildNavigateSymbolTool(), s.handleNavigateSymbol)
 }
 
 // ── Communities Tool ─────────────────────────────────────────────────────

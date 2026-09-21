@@ -62,7 +62,7 @@ type Options struct {
 func NewComputer(opts Options) *Computer {
 	if opts.BatchSize <= 0 {
 		if opts.Provider == ProviderOllama {
-			opts.BatchSize = 1024 // Increased from 256 for GPU saturation
+			opts.BatchSize = 256 // Optimized for stability and GPU throughput without OOM
 		} else {
 			opts.BatchSize = 100 // External APIs handle larger batches
 		}
@@ -102,7 +102,7 @@ func NewComputer(opts Options) *Computer {
 	}
 	if opts.Concurrency <= 0 {
 		if opts.Provider == ProviderOllama {
-			opts.Concurrency = 8 // Increased from 4 for GPU saturation
+			opts.Concurrency = 2 // Prevents GPU VRAM exhaustion and thread contention
 		} else {
 			opts.Concurrency = 20 // External providers
 		}
@@ -358,6 +358,13 @@ var modelTokenLimits = map[string]int{
 // GetModelTokenLimit returns the token limit for a model.
 func GetModelTokenLimit(model string) int {
 	if limit, ok := modelTokenLimits[model]; ok {
+		return limit
+	}
+	baseModel := strings.ToLower(model)
+	if idx := strings.Index(baseModel, ":"); idx != -1 {
+		baseModel = baseModel[:idx]
+	}
+	if limit, ok := modelTokenLimits[baseModel]; ok {
 		return limit
 	}
 	return modelTokenLimits["default"]

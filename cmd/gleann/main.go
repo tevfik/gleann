@@ -41,6 +41,8 @@ func main() {
 		cmdMultimodal(args)
 	case "tui":
 		cmdTUI()
+	case "agents":
+		cmdAgents(args)
 	case "install":
 		cmdInstall(args)
 	case "uninstall":
@@ -85,11 +87,12 @@ Usage:
   gleann <command> [arguments] [flags]
 
 Core Commands:
-  search <name> <query>        Semantic vector search across an index
-  ask    <name> <question>     RAG question-answering with LLM synthesis
-  chat   [name]                Interactive terminal chat session
-  serve  [--addr :8080]        Start REST API & Web UI server
+  search    <name> <query>     Semantic vector search across an index
+  ask       <name> <question>  RAG question-answering with LLM synthesis
+  chat      [name]             Interactive terminal chat session
+  serve     [--addr :8080]     Start REST API & Web UI server
   mcp                          Start MCP server (stdio transport for AI agents)
+  benchmark [--index <i>]      Run retrieval & token reduction benchmarks
 
 Index Management & Governance:
   index build <name> --docs <dir> [--graph] [--multimodal-model <m>]
@@ -117,6 +120,7 @@ Long-term Memory Engine:
 Service & Setup:
   setup [--auto]               Interactive setup wizard (or zero-config auto)
   doctor                       System health and dependencies check
+  agents [dump]                Generate or dump AGENTS.md for AI coding agents
   service install|start|status Manage Gleann as a background system service
 
 Examples:

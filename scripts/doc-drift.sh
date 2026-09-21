@@ -55,7 +55,7 @@ while IFS= read -r f; do
   done < <(grep -oE '\[[^]]+\]\([^)]+\)' "$f" || true)
 done < <(find . -type f -name '*.md' \
   -not -path './.git/*' \
-  -not -path './node_modules/*' \
+  -not -path '*/node_modules/*' \
   -not -path './build/*' \
   -not -path './.openclaw/*' \
   | head -200)

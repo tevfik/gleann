@@ -182,8 +182,14 @@ func WriteFileNodesCSV(path string, files []FileNode) error {
 	if err := w.Write([]string{"path", "lang"}); err != nil {
 		return err
 	}
+	seenPath := make(map[string]bool, len(files))
 	for _, fn := range files {
-		if err := w.Write([]string{fn.Path, fn.Lang}); err != nil {
+		cleanPath := SanitizeCSVField(fn.Path)
+		if cleanPath == "" || seenPath[cleanPath] {
+			continue
+		}
+		seenPath[cleanPath] = true
+		if err := w.Write([]string{cleanPath, SanitizeCSVField(fn.Lang)}); err != nil {
 			return err
 		}
 	}
@@ -191,14 +197,14 @@ func WriteFileNodesCSV(path string, files []FileNode) error {
 	return w.Error()
 }
 
-// sanitizeCSVField aggressively removes or replaces characters that break Kuzu's CSV importer.
+// SanitizeCSVField aggressively removes or replaces characters that break Kuzu's CSV importer.
 // Kuzu does not fully support RFC 4180 escape sequences, so we must ensure fields contain
 // NO double-quotes, NO backslashes, NO commas (which would create fake columns), and NO newlines.
-func sanitizeCSVField(s string) string {
+func SanitizeCSVField(s string) string {
 	s = strings.ReplaceAll(s, "\n", " ")
 	s = strings.ReplaceAll(s, "\r", " ")
 	s = strings.ReplaceAll(s, "\t", " ")
-	// Remove commas to prevent fake column creation
+	// Remove commas to prevent fake column creation (e.g. C++ templates like storage<false, T>)
 	s = strings.ReplaceAll(s, ",", ";")
 	// Remove backslashes to prevent escape-sequence misinterpretation
 	s = strings.ReplaceAll(s, `\`, "")
@@ -209,6 +215,10 @@ func sanitizeCSVField(s string) string {
 		s = strings.ReplaceAll(s, "  ", " ")
 	}
 	return strings.TrimSpace(s)
+}
+
+func sanitizeCSVField(s string) string {
+	return SanitizeCSVField(s)
 }
 
 // WriteSymbolNodesCSV writes a list of SymbolNode to a CSV file.
@@ -223,13 +233,20 @@ func WriteSymbolNodesCSV(path string, symbols []SymbolNode) error {
 	if err := w.Write([]string{"fqn", "kind", "file", "line", "name", "doc", "weight"}); err != nil {
 		return err
 	}
+	seenFQN := make(map[string]bool, len(symbols))
 	for _, sym := range symbols {
+		cleanFQN := SanitizeCSVField(sym.FQN)
+		if cleanFQN == "" || seenFQN[cleanFQN] {
+			continue
+		}
+		seenFQN[cleanFQN] = true
+
 		weight := sym.Weight
 		if weight == 0 {
 			weight = 1.0
 		}
 		if err := w.Write([]string{
-			sym.FQN, sym.Kind, sym.File, fmt.Sprintf("%d", sym.Line), sym.Name, sanitizeCSVField(sym.Doc),
+			cleanFQN, SanitizeCSVField(sym.Kind), SanitizeCSVField(sym.File), fmt.Sprintf("%d", sym.Line), SanitizeCSVField(sym.Name), SanitizeCSVField(sym.Doc),
 			strconv.FormatFloat(weight, 'f', -1, 64),
 		}); err != nil {
 			return err
@@ -251,8 +268,16 @@ func WriteDeclaresCSV(path string, edges []EdgeDeclares) error {
 	if err := w.Write([]string{"from", "to"}); err != nil {
 		return err
 	}
+	seen := make(map[string]bool, len(edges))
 	for _, e := range edges {
-		if err := w.Write([]string{e.FilePath, e.SymbolFQN}); err != nil {
+		from := SanitizeCSVField(e.FilePath)
+		to := SanitizeCSVField(e.SymbolFQN)
+		key := from + "->" + to
+		if from == "" || to == "" || seen[key] {
+			continue
+		}
+		seen[key] = true
+		if err := w.Write([]string{from, to}); err != nil {
 			return err
 		}
 	}
@@ -272,8 +297,16 @@ func WriteCallsCSV(path string, edges []EdgeCalls) error {
 	if err := w.Write([]string{"from", "to"}); err != nil {
 		return err
 	}
+	seen := make(map[string]bool, len(edges))
 	for _, e := range edges {
-		if err := w.Write([]string{e.CallerFQN, e.CalleeFQN}); err != nil {
+		from := SanitizeCSVField(e.CallerFQN)
+		to := SanitizeCSVField(e.CalleeFQN)
+		key := from + "->" + to
+		if from == "" || to == "" || seen[key] {
+			continue
+		}
+		seen[key] = true
+		if err := w.Write([]string{from, to}); err != nil {
 			return err
 		}
 	}
@@ -308,8 +341,16 @@ func WriteImplementsCSV(path string, edges []EdgeImplements) error {
 	if err := w.Write([]string{"from", "to"}); err != nil {
 		return err
 	}
+	seen := make(map[string]bool, len(edges))
 	for _, e := range edges {
-		if err := w.Write([]string{e.ImplFQN, e.IfaceFQN}); err != nil {
+		from := SanitizeCSVField(e.ImplFQN)
+		to := SanitizeCSVField(e.IfaceFQN)
+		key := from + "->" + to
+		if from == "" || to == "" || seen[key] {
+			continue
+		}
+		seen[key] = true
+		if err := w.Write([]string{from, to}); err != nil {
 			return err
 		}
 	}
@@ -329,8 +370,16 @@ func WriteReferencesCSV(path string, edges []EdgeReferences) error {
 	if err := w.Write([]string{"from", "to"}); err != nil {
 		return err
 	}
+	seen := make(map[string]bool, len(edges))
 	for _, e := range edges {
-		if err := w.Write([]string{e.RefererFQN, e.RefereeFQN}); err != nil {
+		from := SanitizeCSVField(e.RefererFQN)
+		to := SanitizeCSVField(e.RefereeFQN)
+		key := from + "->" + to
+		if from == "" || to == "" || seen[key] {
+			continue
+		}
+		seen[key] = true
+		if err := w.Write([]string{from, to}); err != nil {
 			return err
 		}
 	}
@@ -419,7 +468,7 @@ func WriteFolderNodesCSV(path string, folders []FolderNode) error {
 		return err
 	}
 	for _, f := range folders {
-		if err := w.Write([]string{f.VPath, f.Name}); err != nil {
+		if err := w.Write([]string{sanitizeCSVField(f.VPath), sanitizeCSVField(f.Name)}); err != nil {
 			return err
 		}
 	}

@@ -145,6 +145,28 @@ func cmdGraph(args []string) {
 	case "toc":
 		cmdGraphTOC(args[1:], config)
 		return
+	case "build":
+		indexName := getFlag(args[1:], "--index")
+		docsDir := getFlag(args[1:], "--docs")
+		if indexName == "" {
+			for _, a := range args[1:] {
+				if !strings.HasPrefix(a, "-") {
+					indexName = a
+					break
+				}
+			}
+		}
+		if docsDir == "" && indexName != "" {
+			if meta, err := gleann.GetIndexMeta(config.IndexDir, indexName); err == nil && meta.SourceDir != "" {
+				docsDir = meta.SourceDir
+			}
+		}
+		if indexName == "" || docsDir == "" {
+			fmt.Fprintln(os.Stderr, "usage: gleann graph build <name> [--docs <dir>]")
+			os.Exit(1)
+		}
+		buildGraphIndex(indexName, docsDir, config.IndexDir, nil, nil)
+		return
 	case "help", "--help":
 		printGraphUsage()
 		return
@@ -267,6 +289,33 @@ func cmdGraphViz(args []string, config gleann.Config) {
 	fmt.Printf("✅ Graph visualization saved to %s\n", output)
 }
 
+// generateGraphReportFile generates a Markdown graph report to outputPath.
+func generateGraphReportFile(indexName, indexDir, docsDir, outputPath string) error {
+	dbPath := filepath.Join(indexDir, indexName+"_graph")
+	db, err := kgraph.Open(dbPath)
+	if err != nil {
+		return fmt.Errorf("error opening graph db: %w", err)
+	}
+	defer db.Close()
+
+	result, err := community.FromKuzu(db, 5, 20)
+	if err != nil {
+		return fmt.Errorf("running community detection: %w", err)
+	}
+
+	f, err := os.Create(outputPath)
+	if err != nil {
+		return fmt.Errorf("creating file: %w", err)
+	}
+	defer f.Close()
+
+	opts := report.Options{
+		IndexName: indexName,
+		DocsDir:   docsDir,
+	}
+	return report.WriteMarkdown(f, result, opts)
+}
+
 // cmdGraphReport generates a Markdown graph report.
 func cmdGraphReport(args []string, config gleann.Config) {
 	indexName := getFlag(args, "--index")
@@ -280,34 +329,9 @@ func cmdGraphReport(args []string, config gleann.Config) {
 		output = "GRAPH_REPORT.md"
 	}
 
-	dbPath := filepath.Join(config.IndexDir, indexName+"_graph")
-	db, err := kgraph.Open(dbPath)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "error opening graph db: %v\n", err)
-		os.Exit(1)
-	}
-	defer db.Close()
-
 	fmt.Println("📊 Running community detection for report...")
-	result, err := community.FromKuzu(db, 5, 20)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		os.Exit(1)
-	}
-
-	f, err := os.Create(output)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "error creating file: %v\n", err)
-		os.Exit(1)
-	}
-	defer f.Close()
-
-	opts := report.Options{
-		IndexName: indexName,
-		DocsDir:   getFlag(args, "--docs"),
-	}
-	if err := report.WriteMarkdown(f, result, opts); err != nil {
-		fmt.Fprintf(os.Stderr, "error writing report: %v\n", err)
+	if err := generateGraphReportFile(indexName, config.IndexDir, getFlag(args, "--docs"), output); err != nil {
+		fmt.Fprintf(os.Stderr, "error generating graph report: %v\n", err)
 		os.Exit(1)
 	}
 

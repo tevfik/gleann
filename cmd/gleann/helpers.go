@@ -2,6 +2,9 @@ package main
 
 import (
 	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 
 	"github.com/tevfik/gleann/modules/chunking"
@@ -181,4 +184,47 @@ func isCodeExtension(ext string) bool {
 		".dart": true, ".groovy": true, ".gradle": true,
 	}
 	return codeExts[strings.ToLower(ext)]
+}
+
+// isOfficeDocExtension returns true if the file extension is an office/document format.
+func isOfficeDocExtension(ext string) bool {
+	docExts := map[string]bool{
+		".pdf": true, ".docx": true, ".doc": true,
+		".xlsx": true, ".xls": true, ".pptx": true, ".ppt": true,
+		".csv": true, ".tsv": true, ".odt": true, ".ods": true, ".odp": true,
+	}
+	return docExts[strings.ToLower(ext)]
+}
+
+// isDocumentationExtension returns true for text/markdown documentation files.
+func isDocumentationExtension(ext string) bool {
+	docExts := map[string]bool{
+		".md": true, ".markdown": true, ".mdown": true,
+		".txt": true, ".rst": true, ".adoc": true,
+	}
+	return docExts[strings.ToLower(ext)]
+}
+
+// resolveInstalledGleannBin returns a persistent, reliable binary path for gleann,
+// explicitly avoiding ephemeral extraction paths like ~/.gleann/runtime or /tmp.
+func resolveInstalledGleannBin() string {
+	home, _ := os.UserHomeDir()
+	if _, err := os.Stat("/usr/local/bin/gleann"); err == nil {
+		return "/usr/local/bin/gleann"
+	} else if home != "" {
+		userBin := filepath.Join(home, ".local", "bin", "gleann")
+		if _, err := os.Stat(userBin); err == nil {
+			return userBin
+		}
+	}
+
+	if pathBin, err := exec.LookPath("gleann"); err == nil {
+		return pathBin
+	}
+
+	if exe, err := os.Executable(); err == nil && !strings.Contains(exe, ".gleann/runtime") && !strings.Contains(exe, "/tmp") {
+		return exe
+	}
+
+	return "gleann"
 }
