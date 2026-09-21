@@ -47,6 +47,14 @@ func (h *kuzuHandle) SymbolsInFile(path string) ([]GraphNode, error) {
 	return toGraphNodes(syms), nil
 }
 
+func (h *kuzuHandle) DocumentTOC(path string) (*gleann.DocumentTOCInfo, error) {
+	return h.db.DocumentTOC(path)
+}
+
+func (h *kuzuHandle) ListDocuments() ([]gleann.DocumentTOCInfo, error) {
+	return h.db.ListDocuments()
+}
+
 func (h *kuzuHandle) FileCount() (int, error) {
 	res, err := h.db.Conn().Query("MATCH (f:CodeFile) RETURN count(f) AS cnt")
 	if err != nil {

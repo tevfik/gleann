@@ -172,6 +172,25 @@ type GraphStats struct {
 	ImplementsEdges int `json:"implements_edges"`
 }
 
+// DocumentHeadingItem represents a heading node in a document table of contents.
+type DocumentHeadingItem struct {
+	ID       string                `json:"id"`
+	Title    string                `json:"title"`
+	Level    int                   `json:"level"`
+	Children []DocumentHeadingItem `json:"children,omitempty"`
+}
+
+// DocumentTOCInfo represents hierarchical table of contents and metadata for a document.
+type DocumentTOCInfo struct {
+	VPath      string                `json:"vpath"`
+	RPath      string                `json:"rpath,omitempty"`
+	Title      string                `json:"title"`
+	Summary    string                `json:"summary,omitempty"`
+	Folder     string                `json:"folder,omitempty"`
+	Headings   []DocumentHeadingItem `json:"headings"`
+	TotalNodes int                   `json:"total_nodes"`
+}
+
 // GraphDB represents a graph database backend capable of querying AST and document relationships.
 type GraphDB interface {
 	Callees(callerFQN string) ([]Callee, error)
@@ -179,6 +198,8 @@ type GraphDB interface {
 	SymbolsInFile(filePath string) ([]Callee, error)
 	DocumentSymbols(docPath string) ([]SymbolInfo, error)
 	DocumentContext(vpath string) (*DocumentContextData, error)
+	DocumentTOC(vpath string) (*DocumentTOCInfo, error)
+	ListDocuments() ([]DocumentTOCInfo, error)
 	FullDocument(vpath string) (string, error)
 	Impact(fqn string, maxDepth int) (*ImpactResult, error)
 	Neighbors(fqn string, maxDepth int) ([]GraphEdge, error)

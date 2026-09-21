@@ -211,8 +211,16 @@ func parseHeadings(markdown string) []parsedSection {
 	}
 
 	var hdrs []hdr
+	inFence := false
 	for i, line := range lines {
 		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "```") || strings.HasPrefix(trimmed, "~~~") {
+			inFence = !inFence
+			continue
+		}
+		if inFence {
+			continue
+		}
 		if !strings.HasPrefix(trimmed, "#") {
 			continue
 		}

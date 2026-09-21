@@ -33,6 +33,12 @@ func (m *mockGraphDB) DocumentContext(path string) (*DocumentContextData, error)
 	}
 	return nil, nil
 }
+func (m *mockGraphDB) DocumentTOC(path string) (*DocumentTOCInfo, error) {
+	return nil, nil
+}
+func (m *mockGraphDB) ListDocuments() ([]DocumentTOCInfo, error) {
+	return nil, nil
+}
 func (m *mockGraphDB) FullDocument(path string) (string, error) {
 	return "", nil
 }
@@ -301,6 +307,14 @@ func (c *countingGraphDB) DocumentSymbols(path string) ([]SymbolInfo, error) {
 
 func (c *countingGraphDB) DocumentContext(vpath string) (*DocumentContextData, error) {
 	return c.GraphDB.DocumentContext(vpath)
+}
+
+func (c *countingGraphDB) DocumentTOC(vpath string) (*DocumentTOCInfo, error) {
+	return c.GraphDB.DocumentTOC(vpath)
+}
+
+func (c *countingGraphDB) ListDocuments() ([]DocumentTOCInfo, error) {
+	return c.GraphDB.ListDocuments()
 }
 
 func (c *countingGraphDB) FullDocument(vpath string) (string, error) {

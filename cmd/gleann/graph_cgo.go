@@ -3,6 +3,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -140,6 +141,9 @@ func cmdGraph(args []string) {
 		return
 	case "risk":
 		cmdGraphRisk(args[1:], config)
+		return
+	case "toc":
+		cmdGraphTOC(args[1:], config)
 		return
 	case "help", "--help":
 		printGraphUsage()
@@ -1116,6 +1120,134 @@ func truncStr(s string, max int) string {
 	return s[:max-1] + "…"
 }
 
+// cmdGraphTOC inspects hierarchical Table of Contents (TOC) or lists indexed documents.
+func cmdGraphTOC(args []string, config gleann.Config) {
+	indexName := getFlag(args, "--index")
+	if indexName == "" {
+		fmt.Fprintln(os.Stderr, "error: --index flag required for graph toc")
+		os.Exit(1)
+	}
+
+	jsonOutput := hasFlag(args, "--json")
+
+	// Extract positional document path if any (skipping known flag values)
+	var docPath string
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		if strings.HasPrefix(arg, "-") {
+			if arg == "--index" || arg == "--config" || arg == "--output" {
+				i++
+			}
+			continue
+		}
+		docPath = arg
+		break
+	}
+
+	dbPath := filepath.Join(config.IndexDir, indexName+"_graph")
+	db, err := kgraph.Open(dbPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error opening graph db: %v\n", err)
+		os.Exit(1)
+	}
+	defer db.Close()
+
+	if docPath != "" {
+		toc, err := db.DocumentTOC(docPath)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error getting document TOC: %v\n", err)
+			os.Exit(1)
+		}
+
+		if jsonOutput {
+			data, _ := json.MarshalIndent(toc, "", "  ")
+			fmt.Println(string(data))
+			return
+		}
+
+		fmt.Println()
+		fmt.Printf("📄 Document: %s\n", toc.Title)
+		fmt.Printf("📍 Path:     %s\n", toc.VPath)
+		if toc.Folder != "" {
+			fmt.Printf("📁 Folder:   %s\n", toc.Folder)
+		}
+		if toc.Summary != "" {
+			fmt.Printf("📝 Summary:  %s\n", toc.Summary)
+		}
+		fmt.Printf("🔢 Headings: %d\n\n", toc.TotalNodes)
+		fmt.Println("Hierarchical Outline:")
+		if len(toc.Headings) == 0 {
+			fmt.Println("  (No headings indexed for this document)")
+		} else {
+			printHeadingTree(toc.Headings, "")
+		}
+		fmt.Println()
+		return
+	}
+
+	// List all documents
+	docs, err := db.ListDocuments()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error listing documents: %v\n", err)
+		os.Exit(1)
+	}
+
+	if jsonOutput {
+		data, _ := json.MarshalIndent(docs, "", "  ")
+		fmt.Println(string(data))
+		return
+	}
+
+	fmt.Println()
+	fmt.Printf("📚 Indexed Documents in %q (%d total):\n\n", indexName, len(docs))
+	if len(docs) == 0 {
+		fmt.Println("  (No documents found in graph index)")
+		fmt.Println()
+		return
+	}
+
+	for i, d := range docs {
+		isLast := i == len(docs)-1
+		connector := "├── "
+		subPrefix := "│   "
+		if isLast {
+			connector = "└── "
+			subPrefix = "    "
+		}
+		folder := ""
+		if d.Folder != "" {
+			folder = fmt.Sprintf(" [%s]", d.Folder)
+		}
+		fmt.Printf("%s📄 %s (%d headings)%s\n", connector, d.VPath, d.TotalNodes, folder)
+		if d.Summary != "" {
+			fmt.Printf("%s📝 %s\n", subPrefix, truncStr(d.Summary, 90))
+		}
+	}
+	fmt.Println()
+}
+
+func printHeadingTree(headings []gleann.DocumentHeadingItem, prefix string) {
+	for i, h := range headings {
+		isLast := i == len(headings)-1
+		connector := "├── "
+		childPrefix := prefix + "│   "
+		if isLast {
+			connector = "└── "
+			childPrefix = prefix + "    "
+		}
+		icon := "📌"
+		if h.Level == 2 {
+			icon = "📎"
+		} else if h.Level >= 3 {
+			icon = "▫️"
+		}
+		fmt.Printf("%s%s%s %s (H%d)\n", prefix, connector, icon, h.Title, h.Level)
+		if len(h.Children) > 0 {
+			printHeadingTree(h.Children, childPrefix)
+		}
+	}
+}
+
 func printGraphUsage() {
 	fmt.Println(`gleann graph — Code graph analysis & visualization
 
@@ -1126,6 +1258,9 @@ Usage:
   gleann graph path    <from> <to> --index <name>  Shortest path between two symbols
   gleann graph query   <pattern> --index <name> [--depth N]
       Neighborhood traversal (BFS) around a symbol
+
+  gleann graph toc     [doc_path] --index <name> [--json]
+      Inspect hierarchical Table of Contents (TOC) & heading tree for documents
 
   gleann graph viz         --index <name> [--output <file.html>]
       Generate interactive HTML graph visualization (vis.js)
@@ -1154,6 +1289,8 @@ Usage:
 Requires: gleann index build <name> --docs <dir> --graph
 
 Examples:
+  gleann graph toc --index teydep
+  gleann graph toc docs/architecture.md --index my-docs
   gleann graph deps "pkg.Handler" --index my-code
   gleann graph callers "pkg.Handler" --index my-code
   gleann graph explain "pkg.Handler" --index my-code

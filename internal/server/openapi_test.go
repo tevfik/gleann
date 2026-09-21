@@ -71,6 +71,8 @@ func TestHandleOpenAPISpec(t *testing.T) {
 		"/api/indexes/{name}/ask",
 		"/api/indexes/{name}/build",
 		"/api/graph/{name}",
+		"/api/graph/{name}/toc",
+		"/api/graph/{name}/documents",
 		"/api/graph/{name}/query",
 		"/api/graph/{name}/index",
 	}

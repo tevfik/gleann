@@ -10,15 +10,17 @@ import (
 	"path/filepath"
 	"sync"
 	"time"
+
+	"github.com/tevfik/gleann/pkg/gleann"
 )
 
 // GraphQueryRequest is the request body for POST /api/graph/{name}/query.
 type GraphQueryRequest struct {
 	// Query is one of the predefined query types:
-	//   "callees", "callers", "symbols_in_file", "impact", "cypher"
+	//   "callees", "callers", "symbols_in_file", "impact", "cypher", "toc"
 	Query    string `json:"query"`
-	Symbol   string `json:"symbol,omitempty"`    // FQN for callees/callers/impact
-	File     string `json:"file,omitempty"`      // file path for symbols_in_file
+	Symbol   string `json:"symbol,omitempty"`    // FQN for callees/callers/impact/toc
+	File     string `json:"file,omitempty"`      // file path for symbols_in_file/toc
 	Cypher   string `json:"cypher,omitempty"`    // raw Cypher for advanced queries
 	MaxDepth int    `json:"max_depth,omitempty"` // max traversal depth for impact (default 5)
 }
@@ -82,6 +84,8 @@ type graphDBHandle interface {
 	Callers(fqn string) ([]GraphNode, error)
 	SymbolsInFile(path string) ([]GraphNode, error)
 	Impact(fqn string, maxDepth int) (*ImpactResponse, error)
+	DocumentTOC(path string) (*gleann.DocumentTOCInfo, error)
+	ListDocuments() ([]gleann.DocumentTOCInfo, error)
 	RawCypher(cypher string) ([]map[string]any, error)
 	FileCount() (int, error)
 	SymbolCount() (int, error)
@@ -233,8 +237,28 @@ func (s *Server) handleGraphQuery(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 
+	case "toc":
+		path := req.File
+		if path == "" {
+			path = req.Symbol
+		}
+		if path == "" {
+			writeError(w, http.StatusBadRequest, "file or symbol is required for toc query")
+			return
+		}
+		toc, tocErr := db.DocumentTOC(path)
+		if tocErr != nil {
+			writeError(w, http.StatusInternalServerError, "document toc failed: "+tocErr.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"toc":      toc,
+			"query_ms": time.Since(start).Milliseconds(),
+		})
+		return
+
 	default:
-		writeError(w, http.StatusBadRequest, fmt.Sprintf("unknown query type %q (use callees, callers, symbols_in_file)", req.Query))
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("unknown query type %q (use callees, callers, symbols_in_file, impact, cypher, toc)", req.Query))
 		return
 	}
 
@@ -331,3 +355,82 @@ func (s *Server) handleGraphIndex(w http.ResponseWriter, r *http.Request) {
 		"buildMs":  time.Since(start).Milliseconds(),
 	})
 }
+
+// handleDocumentTOC handles GET /api/graph/{name}/toc?path=...
+func (s *Server) handleDocumentTOC(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	if name == "" {
+		writeError(w, http.StatusBadRequest, "index name required")
+		return
+	}
+
+	docPath := r.URL.Query().Get("path")
+	if docPath == "" {
+		docPath = r.URL.Query().Get("vpath")
+	}
+
+	if s.graphPool == nil {
+		writeError(w, http.StatusServiceUnavailable, "graph database not available (build with -tags treesitter)")
+		return
+	}
+
+	db, err := s.graphPool.get(name)
+	if err != nil {
+		writeError(w, http.StatusNotFound, fmt.Sprintf("graph index %q not found: %v", name, err))
+		return
+	}
+
+	if docPath == "" {
+		// If no path specified, return all documents list
+		docs, err := db.ListDocuments()
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to list documents: "+err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"documents": docs,
+			"count":     len(docs),
+		})
+		return
+	}
+
+	toc, err := db.DocumentTOC(docPath)
+	if err != nil {
+		writeError(w, http.StatusNotFound, fmt.Sprintf("document %q not found in graph %q: %v", docPath, name, err))
+		return
+	}
+
+	writeJSON(w, http.StatusOK, toc)
+}
+
+// handleListDocuments handles GET /api/graph/{name}/documents.
+func (s *Server) handleListDocuments(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	if name == "" {
+		writeError(w, http.StatusBadRequest, "index name required")
+		return
+	}
+
+	if s.graphPool == nil {
+		writeError(w, http.StatusServiceUnavailable, "graph database not available (build with -tags treesitter)")
+		return
+	}
+
+	db, err := s.graphPool.get(name)
+	if err != nil {
+		writeError(w, http.StatusNotFound, fmt.Sprintf("graph index %q not found: %v", name, err))
+		return
+	}
+
+	docs, err := db.ListDocuments()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to list documents: "+err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"documents": docs,
+		"count":     len(docs),
+	})
+}
+

@@ -62,6 +62,7 @@ func TestNewServer_ToolNames(t *testing.T) {
 		srv.buildGraphNeighborsTool().Name:   true,
 		srv.buildDocumentLinksTool().Name:    true,
 		srv.buildReadFullDocumentTool().Name: true,
+		srv.buildDocumentTOCTool().Name:      true,
 	}
 
 	for _, tt := range tools {
@@ -376,4 +377,64 @@ func TestHandleReadFullDocument_Validation(t *testing.T) {
 		t.Errorf("expected successful file read via fallback, got error result")
 	}
 }
+
+func TestBuildDocumentTOCTool_Schema(t *testing.T) {
+	tmpDir := t.TempDir()
+	srv := NewServer(Config{
+		IndexDir:          tmpDir,
+		EmbeddingProvider: "ollama",
+		EmbeddingModel:    "bge-m3",
+		OllamaHost:        gleann.DefaultOllamaHost,
+		Version:           "test",
+	})
+
+	tool := srv.buildDocumentTOCTool()
+	if tool.Name != "gleann_document_toc" {
+		t.Errorf("expected tool name gleann_document_toc, got %q", tool.Name)
+	}
+
+	required := map[string]bool{}
+	for _, r := range tool.InputSchema.Required {
+		required[r] = true
+	}
+	if !required["index"] {
+		t.Errorf("expected required field index, got %v", tool.InputSchema.Required)
+	}
+}
+
+func TestHandleDocumentTOC_Validation(t *testing.T) {
+	tmpDir := t.TempDir()
+	srv := NewServer(Config{
+		IndexDir:          tmpDir,
+		EmbeddingProvider: "ollama",
+		EmbeddingModel:    "bge-m3",
+		OllamaHost:        gleann.DefaultOllamaHost,
+		Version:           "test",
+	})
+
+	// 1. Invalid arguments format
+	reqBad := mcp.CallToolRequest{}
+	reqBad.Params.Arguments = "invalid-type"
+	res, err := srv.handleDocumentTOC(nil, reqBad)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !res.IsError {
+		t.Errorf("expected error result for invalid arguments format")
+	}
+
+	// 2. Missing required index parameter
+	reqMissing := mcp.CallToolRequest{}
+	reqMissing.Params.Arguments = map[string]interface{}{
+		"index": "",
+	}
+	res2, err := srv.handleDocumentTOC(nil, reqMissing)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !res2.IsError {
+		t.Errorf("expected error result for empty index")
+	}
+}
+
 

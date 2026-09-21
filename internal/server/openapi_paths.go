@@ -237,6 +237,40 @@ func openAPIPathsGraph() map[string]any {
 				},
 			},
 		},
+		"/api/graph/{name}/toc": map[string]any{
+			"get": map[string]any{
+				"tags":        []string{"graph"},
+				"summary":     "Get hierarchical document Table of Contents (TOC)",
+				"description": "Returns hierarchical heading outline for a document, or all documents if path is omitted.",
+				"operationId": "graphDocumentTOC",
+				"parameters": []map[string]any{
+					paramName(),
+					{
+						"name":        "path",
+						"in":          "query",
+						"description": "Document virtual or relative path (e.g. docs/guide.md)",
+						"required":    false,
+						"schema":      map[string]any{"type": "string"},
+					},
+				},
+				"responses": map[string]any{
+					"200": map[string]any{"description": "Document TOC or document list"},
+					"404": map[string]any{"description": "Document not found"},
+				},
+			},
+		},
+		"/api/graph/{name}/documents": map[string]any{
+			"get": map[string]any{
+				"tags":        []string{"graph"},
+				"summary":     "List all indexed documents",
+				"description": "Returns all indexed documents with folder info, summaries, and heading counts.",
+				"operationId": "graphListDocuments",
+				"parameters":  []map[string]any{paramName()},
+				"responses": map[string]any{
+					"200": map[string]any{"description": "List of indexed documents"},
+				},
+			},
+		},
 		"/api/graph/{name}/query": map[string]any{
 			"post": map[string]any{
 				"tags":        []string{"graph"},

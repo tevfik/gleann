@@ -5,6 +5,7 @@ package kuzu
 import (
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 
 	gokuzu "github.com/kuzudb/go-kuzu"
@@ -245,6 +246,186 @@ func (g *DB) DocumentContext(path string) (*gleann.DocumentContextData, error) {
 		Breadcrumb: breadcrumb,
 		Headings:   headings,
 	}, nil
+}
+
+// DocumentTOC returns the hierarchical Table of Contents (TOC) tree of headings for a document.
+func (g *DB) DocumentTOC(path string) (*gleann.DocumentTOCInfo, error) {
+	// 1. Fetch Document info
+	cypher := fmt.Sprintf(`
+		MATCH (d:Document)
+		WHERE d.vpath = "%s" OR d.rpath = "%s"
+		OPTIONAL MATCH (f:Folder)-[:CONTAINS_DOC]->(d)
+		RETURN d.vpath AS vpath, d.rpath AS rpath, d.name AS name,
+		       coalesce(d.summary, "") AS summary, coalesce(f.name, "") AS folder
+	`, path, path)
+
+	res, err := g.conn.Query(cypher)
+	if err != nil {
+		return nil, fmt.Errorf("DocumentTOC document query: %w", err)
+	}
+	defer res.Close()
+
+	if !res.HasNext() {
+		return nil, fmt.Errorf("no Document found with path: %s", path)
+	}
+
+	row, err := res.Next()
+	if err != nil {
+		return nil, err
+	}
+	m, err := row.GetAsMap()
+	if err != nil {
+		return nil, err
+	}
+
+	vpath := strVal(m["vpath"])
+	rpath := strVal(m["rpath"])
+	name := strVal(m["name"])
+	if name == "" {
+		name = vpath
+	}
+	summary := strVal(m["summary"])
+	folder := strVal(m["folder"])
+
+	// 2. Fetch all headings directly attached to this document
+	headingsCypher := fmt.Sprintf(`
+		MATCH (d:Document)-[:HAS_HEADING]->(h:Heading)
+		WHERE d.vpath = "%s" OR d.rpath = "%s"
+		RETURN h.id AS id, h.name AS name, h.level AS level
+	`, path, path)
+
+	hres, err := g.conn.Query(headingsCypher)
+	if err != nil {
+		return nil, fmt.Errorf("DocumentTOC headings query: %w", err)
+	}
+	defer hres.Close()
+
+	headingMap := make(map[string]*gleann.DocumentHeadingItem)
+	totalNodes := 0
+
+	for hres.HasNext() {
+		hrow, err := hres.Next()
+		if err != nil {
+			continue
+		}
+		hm, err := hrow.GetAsMap()
+		if err != nil {
+			continue
+		}
+		id := strVal(hm["id"])
+		hName := strVal(hm["name"])
+		var level int
+		if lvl, ok := hm["level"].(int64); ok {
+			level = int(lvl)
+		}
+		if id != "" {
+			headingMap[id] = &gleann.DocumentHeadingItem{
+				ID:    id,
+				Title: hName,
+				Level: level,
+			}
+			totalNodes++
+		}
+	}
+
+	// 3. Fetch child relationships among all headings
+	childCypher := `
+		MATCH (p:Heading)-[:CHILD_HEADING]->(c:Heading)
+		RETURN p.id AS parent_id, c.id AS child_id
+	`
+	cres, err := g.conn.Query(childCypher)
+	parentSet := make(map[string]bool)
+	if err == nil {
+		defer cres.Close()
+		for cres.HasNext() {
+			crow, err := cres.Next()
+			if err != nil {
+				continue
+			}
+			cm, err := crow.GetAsMap()
+			if err != nil {
+				continue
+			}
+			parentID := strVal(cm["parent_id"])
+			childID := strVal(cm["child_id"])
+			parentHeading, hasP := headingMap[parentID]
+			childHeading, hasC := headingMap[childID]
+			if hasP && hasC {
+				parentHeading.Children = append(parentHeading.Children, *childHeading)
+				parentSet[childID] = true
+			}
+		}
+	}
+
+	// 4. Assemble root headings
+	var rootHeadings []gleann.DocumentHeadingItem
+	for id, h := range headingMap {
+		if !parentSet[id] {
+			rootHeadings = append(rootHeadings, *h)
+		}
+	}
+
+	sort.SliceStable(rootHeadings, func(i, j int) bool {
+		return rootHeadings[i].Level < rootHeadings[j].Level
+	})
+
+	return &gleann.DocumentTOCInfo{
+		VPath:      vpath,
+		RPath:      rpath,
+		Title:      name,
+		Summary:    summary,
+		Folder:     folder,
+		Headings:   rootHeadings,
+		TotalNodes: totalNodes,
+	}, nil
+}
+
+// ListDocuments lists all indexed Document nodes with summaries and heading counts.
+func (g *DB) ListDocuments() ([]gleann.DocumentTOCInfo, error) {
+	cypher := `
+		MATCH (d:Document)
+		OPTIONAL MATCH (f:Folder)-[:CONTAINS_DOC]->(d)
+		OPTIONAL MATCH (d)-[:HAS_HEADING]->(h:Heading)
+		RETURN d.vpath AS vpath, d.rpath AS rpath, d.name AS name,
+		       coalesce(d.summary, "") AS summary, coalesce(f.name, "") AS folder,
+		       count(h) AS heading_count
+		ORDER BY vpath ASC
+	`
+	res, err := g.conn.Query(cypher)
+	if err != nil {
+		return nil, fmt.Errorf("ListDocuments query: %w", err)
+	}
+	defer res.Close()
+
+	var docs []gleann.DocumentTOCInfo
+	for res.HasNext() {
+		row, err := res.Next()
+		if err != nil {
+			continue
+		}
+		m, err := row.GetAsMap()
+		if err != nil {
+			continue
+		}
+		var hCount int
+		if c, ok := m["heading_count"].(int64); ok {
+			hCount = int(c)
+		}
+		vpath := strVal(m["vpath"])
+		name := strVal(m["name"])
+		if name == "" {
+			name = vpath
+		}
+		docs = append(docs, gleann.DocumentTOCInfo{
+			VPath:      vpath,
+			RPath:      strVal(m["rpath"]),
+			Title:      name,
+			Summary:    strVal(m["summary"]),
+			Folder:     strVal(m["folder"]),
+			TotalNodes: hCount,
+		})
+	}
+	return docs, nil
 }
 
 // strVal safely converts an interface{} from a KuzuDB map to string, returning "" for nil.

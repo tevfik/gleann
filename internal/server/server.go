@@ -156,6 +156,8 @@ func (s *Server) Start() error {
 
 	// Graph API endpoints (KuzuDB-backed code graph).
 	mux.HandleFunc("GET /api/graph/{name}", s.handleGraphStats)
+	mux.HandleFunc("GET /api/graph/{name}/toc", s.handleDocumentTOC)
+	mux.HandleFunc("GET /api/graph/{name}/documents", s.handleListDocuments)
 	mux.HandleFunc("POST /api/graph/{name}/query", s.handleGraphQuery)
 	mux.HandleFunc("POST /api/graph/{name}/index", s.handleGraphIndex)
 

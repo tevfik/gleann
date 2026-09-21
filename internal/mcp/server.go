@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"math"
@@ -85,6 +86,7 @@ func NewServer(cfg Config) *Server {
 	s.AddTool(srv.buildGraphNeighborsTool(), srv.handleGraphNeighbors)
 	s.AddTool(srv.buildDocumentLinksTool(), srv.handleDocumentLinks)
 	s.AddTool(srv.buildReadFullDocumentTool(), srv.handleReadFullDocument)
+	s.AddTool(srv.buildDocumentTOCTool(), srv.handleDocumentTOC)
 	s.AddTool(srv.buildImpactTool(), srv.handleImpact)
 
 	// Progressive disclosure — compact search + batch fetch + citation lookup.
@@ -950,6 +952,130 @@ func (s *Server) handleReadFullDocument(ctx context.Context, request mcp.CallToo
 	}
 
 	return mcp.NewToolResultError(fmt.Sprintf("could not read full document for %q in index %q", vpath, indexName)), nil
+}
+
+// --- Document TOC & Structure Tool ---
+
+func (s *Server) buildDocumentTOCTool() mcp.Tool {
+	return mcp.Tool{
+		Name:        "gleann_document_toc",
+		Description: "Inspect the hierarchical Table of Contents (TOC) and heading outline for an indexed document, or list all indexed documents. Enables AI agents to understand document structure and sections before reading full content.",
+		InputSchema: mcp.ToolInputSchema{
+			Type: "object",
+			Properties: map[string]interface{}{
+				"index": map[string]interface{}{
+					"type":        "string",
+					"description": "Name of the index to query",
+				},
+				"vpath": map[string]interface{}{
+					"type":        "string",
+					"description": "Virtual or relative document path (e.g. 'docs/architecture.md'). If omitted, lists all indexed documents.",
+				},
+				"format": map[string]interface{}{
+					"type":        "string",
+					"description": "Output format: 'outline' (indented markdown hierarchy) or 'json'. Defaults to 'outline'.",
+					"enum":        []interface{}{"outline", "json"},
+				},
+			},
+			Required: []string{"index"},
+		},
+	}
+}
+
+func (s *Server) handleDocumentTOC(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	args, ok := request.Params.Arguments.(map[string]interface{})
+	if !ok {
+		return mcp.NewToolResultError("invalid arguments format"), nil
+	}
+
+	indexName, _ := args["index"].(string)
+	vpath, _ := args["vpath"].(string)
+	format, _ := args["format"].(string)
+	if format == "" {
+		format = "outline"
+	}
+
+	if indexName == "" {
+		return mcp.NewToolResultError("index is required"), nil
+	}
+
+	searcher, err := s.getSearcher(indexName)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("Error loading index %q: %v", indexName, err)), nil
+	}
+	db := searcher.GraphDB()
+	if db == nil {
+		return mcp.NewToolResultError(fmt.Sprintf("graph database not available for index %q", indexName)), nil
+	}
+
+	// 1. If vpath is empty, list all indexed documents
+	if vpath == "" {
+		docs, err := db.ListDocuments()
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("failed to list documents in %q: %v", indexName, err)), nil
+		}
+		if format == "json" {
+			data, _ := json.MarshalIndent(docs, "", "  ")
+			return mcp.NewToolResultText(string(data)), nil
+		}
+		var sb strings.Builder
+		fmt.Fprintf(&sb, "📑 Indexed Documents in %q (%d total):\n\n", indexName, len(docs))
+		if len(docs) == 0 {
+			sb.WriteString("No documents found in graph index.\n")
+		}
+		for _, doc := range docs {
+			folderInfo := ""
+			if doc.Folder != "" {
+				folderInfo = fmt.Sprintf(" [folder: %s]", doc.Folder)
+			}
+			fmt.Fprintf(&sb, "- **%s** (%d headings)%s\n", doc.VPath, doc.TotalNodes, folderInfo)
+			if doc.Summary != "" {
+				fmt.Fprintf(&sb, "  *Summary:* %s\n", doc.Summary)
+			}
+		}
+		return mcp.NewToolResultText(sb.String()), nil
+	}
+
+	// 2. Specific document TOC
+	toc, err := db.DocumentTOC(vpath)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("document %q not found in graph index %q: %v", vpath, indexName, err)), nil
+	}
+
+	if format == "json" {
+		data, _ := json.MarshalIndent(toc, "", "  ")
+		return mcp.NewToolResultText(string(data)), nil
+	}
+
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "# Document: %s\n", toc.Title)
+	fmt.Fprintf(&sb, "- **Path:** `%s`\n", toc.VPath)
+	if toc.Folder != "" {
+		fmt.Fprintf(&sb, "- **Folder:** `%s`\n", toc.Folder)
+	}
+	if toc.Summary != "" {
+		fmt.Fprintf(&sb, "- **Summary:** %s\n", toc.Summary)
+	}
+	fmt.Fprintf(&sb, "- **Total Headings:** %d\n\n", toc.TotalNodes)
+	sb.WriteString("## Table of Contents\n\n")
+
+	if len(toc.Headings) == 0 {
+		sb.WriteString("*(No headings indexed)*\n")
+	} else {
+		formatHeadingsOutline(&sb, toc.Headings, 0)
+	}
+
+	return mcp.NewToolResultText(sb.String()), nil
+}
+
+func formatHeadingsOutline(sb *strings.Builder, headings []gleann.DocumentHeadingItem, indent int) {
+	prefix := strings.Repeat("  ", indent)
+	for _, h := range headings {
+		fmt.Fprintf(sb, "%s- [H%d] %s\n", prefix, h.Level, h.Title)
+		if len(h.Children) > 0 {
+			formatHeadingsOutline(sb, h.Children, indent+1)
+		}
+	}
 }
 
 // --- Impact Analysis Tool ---

@@ -202,8 +202,9 @@ func sanitizeCSVField(s string) string {
 	s = strings.ReplaceAll(s, ",", ";")
 	// Remove backslashes to prevent escape-sequence misinterpretation
 	s = strings.ReplaceAll(s, `\`, "")
-	// Replace double-quotes with single-quotes
-	s = strings.ReplaceAll(s, `"`, `'`)
+	// Remove quotes to prevent Kuzu's CSV parser from choking on unmatched quotes
+	s = strings.ReplaceAll(s, `"`, "")
+	s = strings.ReplaceAll(s, `'`, "")
 	for strings.Contains(s, "  ") {
 		s = strings.ReplaceAll(s, "  ", " ")
 	}
@@ -472,7 +473,8 @@ func WriteHeadingNodesCSV(path string, headings []HeadingNode) error {
 
 // DeleteDocumentSectionsQuery returns Cypher to delete all Headings belonging to a document.
 func DeleteDocumentSectionsQuery(docVPath string) string {
-	return fmt.Sprintf(`MATCH (d:Document {vpath: %q})-[:HAS_HEADING]->(h:Heading) DETACH DELETE h`, docVPath)
+	prefix := "doc:" + docVPath + ":"
+	return fmt.Sprintf(`MATCH (h:Heading) WHERE h.id STARTS WITH %q DETACH DELETE h`, prefix)
 }
 
 // DeleteDocumentChunksQuery returns Cypher to delete all Chunks referencing headings or doc.

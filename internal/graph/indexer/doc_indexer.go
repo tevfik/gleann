@@ -177,12 +177,15 @@ func (di *DocIndexer) extractFromPlugin(result *gleann.PluginResult, sourcePath 
 	childHeadings []kuzu.EdgeChildHeading,
 ) {
 	var folderPath string
+	var mainDocVPath string
+	hasHeadingSeen := make(map[string]bool)
 
 	for _, node := range result.Nodes {
 		switch node.Type {
 		case "Document":
 			vpath := getStr(node.Data, "vpath", sourcePath)
 			rpath := getStr(node.Data, "rpath", sourcePath)
+			mainDocVPath = vpath
 
 			// Try to automatically parse folder from vpath
 			if strings.Contains(vpath, "/") {
@@ -209,21 +212,42 @@ func (di *DocIndexer) extractFromPlugin(result *gleann.PluginResult, sourcePath 
 				Summary: getStr(node.Data, "summary", ""),
 			})
 		case "Section":
+			secID := getStr(node.Data, "id", "")
 			headings = append(headings, kuzu.HeadingNode{
-				ID:    getStr(node.Data, "id", ""),
+				ID:    secID,
 				Name:  getStr(node.Data, "heading", ""),
 				Level: getInt64(node.Data, "level"),
 			})
+			if mainDocVPath != "" && secID != "" {
+				key := mainDocVPath + "->" + secID
+				if !hasHeadingSeen[key] {
+					hasHeadingSeen[key] = true
+					hasHeadings = append(hasHeadings, kuzu.EdgeHasHeading{
+						DocVPath:  mainDocVPath,
+						HeadingID: secID,
+					})
+				}
+			}
 		}
 	}
 
 	for _, edge := range result.Edges {
 		switch edge.Type {
 		case "HAS_SECTION":
-			hasHeadings = append(hasHeadings, kuzu.EdgeHasHeading{
-				DocVPath:  edge.From,
-				HeadingID: edge.To,
-			})
+			docVPath := strings.TrimPrefix(edge.From, "doc:")
+			if mainDocVPath != "" {
+				docVPath = mainDocVPath
+			}
+			if docVPath != "" && edge.To != "" {
+				key := docVPath + "->" + edge.To
+				if !hasHeadingSeen[key] {
+					hasHeadingSeen[key] = true
+					hasHeadings = append(hasHeadings, kuzu.EdgeHasHeading{
+						DocVPath:  docVPath,
+						HeadingID: edge.To,
+					})
+				}
+			}
 		case "HAS_SUBSECTION":
 			childHeadings = append(childHeadings, kuzu.EdgeChildHeading{
 				ParentID: edge.From,

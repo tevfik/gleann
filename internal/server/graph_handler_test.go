@@ -29,6 +29,10 @@ type mockGraphDB struct {
 	symbolCountErr error
 	edgeCounts     map[string]int
 	edgeCountErr   error
+	tocResult      *gleann.DocumentTOCInfo
+	tocErr         error
+	listDocsResult []gleann.DocumentTOCInfo
+	listDocsErr    error
 	closed         bool
 }
 
@@ -39,6 +43,12 @@ func (m *mockGraphDB) SymbolsInFile(path string) ([]GraphNode, error) {
 }
 func (m *mockGraphDB) Impact(fqn string, maxDepth int) (*ImpactResponse, error) {
 	return m.impactResult, m.impactErr
+}
+func (m *mockGraphDB) DocumentTOC(path string) (*gleann.DocumentTOCInfo, error) {
+	return m.tocResult, m.tocErr
+}
+func (m *mockGraphDB) ListDocuments() ([]gleann.DocumentTOCInfo, error) {
+	return m.listDocsResult, m.listDocsErr
 }
 func (m *mockGraphDB) RawCypher(cypher string) ([]map[string]any, error) {
 	return m.cypherResult, m.cypherErr
@@ -508,3 +518,115 @@ func TestGraphDBPool_CloseAll(t *testing.T) {
 
 // errTestFail is a reusable test error.
 var errTestFail = fmt.Errorf("test failure")
+
+// ── DocumentTOC and ListDocuments Tests ──────────────────────────────────
+
+func TestHandleGraphQuery_TOC(t *testing.T) {
+	db := &mockGraphDB{
+		tocResult: &gleann.DocumentTOCInfo{
+			VPath: "docs/test.md",
+			Title: "Test Doc",
+			Headings: []gleann.DocumentHeadingItem{
+				{ID: "h1", Title: "Section 1", Level: 1},
+			},
+			TotalNodes: 1,
+		},
+	}
+	s := newTestServerWithGraph(db)
+	body := `{"query":"toc","file":"docs/test.md"}`
+	req := httptest.NewRequest("POST", "/api/graph/test-index/query", bytes.NewBufferString(body))
+	req.SetPathValue("name", "test-index")
+	w := httptest.NewRecorder()
+	s.handleGraphQuery(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp map[string]any
+	json.NewDecoder(w.Body).Decode(&resp)
+	if _, ok := resp["toc"]; !ok {
+		t.Error("expected 'toc' key in response")
+	}
+}
+
+func TestHandleGraphQuery_TOC_MissingFile(t *testing.T) {
+	db := &mockGraphDB{}
+	s := newTestServerWithGraph(db)
+	body := `{"query":"toc"}`
+	req := httptest.NewRequest("POST", "/api/graph/test-index/query", bytes.NewBufferString(body))
+	req.SetPathValue("name", "test-index")
+	w := httptest.NewRecorder()
+	s.handleGraphQuery(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected 400, got %d", w.Code)
+	}
+}
+
+func TestHandleDocumentTOC_SpecificFile(t *testing.T) {
+	db := &mockGraphDB{
+		tocResult: &gleann.DocumentTOCInfo{
+			VPath: "docs/arch.md",
+			Title: "Architecture",
+			Headings: []gleann.DocumentHeadingItem{
+				{ID: "h1", Title: "Overview", Level: 1},
+			},
+			TotalNodes: 1,
+		},
+	}
+	s := newTestServerWithGraph(db)
+	req := httptest.NewRequest("GET", "/api/graph/test-index/toc?path=docs/arch.md", nil)
+	req.SetPathValue("name", "test-index")
+	w := httptest.NewRecorder()
+	s.handleDocumentTOC(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp gleann.DocumentTOCInfo
+	json.NewDecoder(w.Body).Decode(&resp)
+	if resp.Title != "Architecture" || len(resp.Headings) != 1 {
+		t.Errorf("unexpected TOC response: %+v", resp)
+	}
+}
+
+func TestHandleDocumentTOC_NoPath_ReturnsList(t *testing.T) {
+	db := &mockGraphDB{
+		listDocsResult: []gleann.DocumentTOCInfo{
+			{VPath: "docs/a.md", Title: "A", TotalNodes: 2},
+			{VPath: "docs/b.md", Title: "B", TotalNodes: 3},
+		},
+	}
+	s := newTestServerWithGraph(db)
+	req := httptest.NewRequest("GET", "/api/graph/test-index/toc", nil)
+	req.SetPathValue("name", "test-index")
+	w := httptest.NewRecorder()
+	s.handleDocumentTOC(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp map[string]any
+	json.NewDecoder(w.Body).Decode(&resp)
+	if resp["count"] != float64(2) {
+		t.Errorf("expected count 2, got %v", resp["count"])
+	}
+}
+
+func TestHandleListDocuments(t *testing.T) {
+	db := &mockGraphDB{
+		listDocsResult: []gleann.DocumentTOCInfo{
+			{VPath: "docs/a.md", Title: "A", TotalNodes: 2},
+		},
+	}
+	s := newTestServerWithGraph(db)
+	req := httptest.NewRequest("GET", "/api/graph/test-index/documents", nil)
+	req.SetPathValue("name", "test-index")
+	w := httptest.NewRecorder()
+	s.handleListDocuments(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp map[string]any
+	json.NewDecoder(w.Body).Decode(&resp)
+	if resp["count"] != float64(1) {
+		t.Errorf("expected count 1, got %v", resp["count"])
+	}
+}
+
