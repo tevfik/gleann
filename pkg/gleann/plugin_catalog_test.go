@@ -35,4 +35,18 @@ func TestFetchPluginCatalog(t *testing.T) {
 	if catalog[0].Name != "mock-plugin" {
 		t.Errorf("expected mock-plugin, got %s", catalog[0].Name)
 	}
+
+	// Test cache hit: even if RegistryURL is broken, it returns cached catalog
+	RegistryURL = "http://localhost:1"
+	cached := FetchPluginCatalog()
+	if len(cached) != 1 || cached[0].Name != "mock-plugin" {
+		t.Fatalf("expected cached mock-plugin, got %v", cached)
+	}
+
+	// Test invalidation: once cache is cleared, it falls back to defaultCatalog
+	InvalidatePluginCatalog()
+	afterInvalidate := FetchPluginCatalog()
+	if len(afterInvalidate) == 0 || afterInvalidate[0].Name != "gleann-plugin-docs" {
+		t.Fatalf("expected fallback after invalidate, got %v", afterInvalidate)
+	}
 }

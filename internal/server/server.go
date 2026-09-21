@@ -1209,8 +1209,15 @@ func withMiddleware(next http.Handler) http.Handler {
 		start := time.Now()
 		next.ServeHTTP(w, r)
 
-		// Skip health check logging.
-		if !strings.Contains(r.URL.Path, "health") {
+		// Logging: skip noisy high-frequency read-only polling requests in general logs.
+		isPolling := r.Method == http.MethodGet && (r.URL.Path == "/health" ||
+			r.URL.Path == "/api/tasks" ||
+			r.URL.Path == "/api/blocks/stats" ||
+			r.URL.Path == "/api/logs" ||
+			r.URL.Path == "/api/config" ||
+			r.URL.Path == "/api/plugins" ||
+			r.URL.Path == "/api/models/local")
+		if !isPolling {
 			log.Printf("%s %s %s", r.Method, r.URL.Path, time.Since(start))
 		}
 	}))))

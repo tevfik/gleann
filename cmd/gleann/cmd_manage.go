@@ -18,6 +18,7 @@ func cmdRemove(args []string) {
 	}
 
 	config := getConfig(args)
+	applySavedConfig(&config, args)
 	// Filter out flags from args to get only index names/patterns.
 	var patterns []string
 	for _, arg := range args {
@@ -117,6 +118,7 @@ func cmdTag(args []string) {
 
 	name := args[0]
 	config := getConfig(args)
+	applySavedConfig(&config, args)
 
 	addTagsStr := getFlag(args, "--add")
 	remTagsStr := getFlag(args, "--remove")
@@ -212,6 +214,7 @@ func cmdSet(args []string) {
 
 	name := args[0]
 	config := getConfig(args)
+	applySavedConfig(&config, args)
 
 	isPublic := hasFlag(args, "--public")
 	isPrivate := hasFlag(args, "--private")

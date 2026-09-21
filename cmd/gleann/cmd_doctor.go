@@ -217,27 +217,39 @@ func checkPlugins(ok, warn func(string)) {
 		return
 	}
 
-	var plugins []struct {
-		Name string `json:"name"`
-		Path string `json:"path"`
-	}
-	if err := json.Unmarshal(data, &plugins); err != nil {
-		warn(fmt.Sprintf("Invalid plugins.json: %v", err))
-		return
+	var reg gleann.PluginRegistry
+	if err := json.Unmarshal(data, &reg); err != nil || len(reg.Plugins) == 0 {
+		var legacy []gleann.Plugin
+		if errLegacy := json.Unmarshal(data, &legacy); errLegacy == nil {
+			reg.Plugins = legacy
+		} else if err != nil {
+			warn(fmt.Sprintf("Invalid plugins.json: %v", err))
+			return
+		}
 	}
 
-	if len(plugins) == 0 {
+	if len(reg.Plugins) == 0 {
 		ok("No plugins registered (this is fine — plugins are optional)")
 		return
 	}
 
-	ok(fmt.Sprintf("%d plugin(s) registered", len(plugins)))
-	for _, p := range plugins {
-		expanded := tui.ExpandPath(p.Path)
-		if _, err := os.Stat(expanded); err != nil {
-			warn(fmt.Sprintf("Plugin '%s' binary not found at %s", p.Name, expanded))
+	ok(fmt.Sprintf("%d plugin(s) registered", len(reg.Plugins)))
+	for _, p := range reg.Plugins {
+		cmdBinary := ""
+		if len(p.Command) > 0 {
+			cmdBinary = p.Command[0]
+		}
+		if cmdBinary != "" {
+			expanded := tui.ExpandPath(cmdBinary)
+			if _, err := os.Stat(expanded); err != nil {
+				warn(fmt.Sprintf("Plugin '%s' binary not found at %s", p.Name, expanded))
+			} else {
+				ok(fmt.Sprintf("Plugin '%s' binary exists (%s)", p.Name, expanded))
+			}
+		} else if p.URL != "" {
+			ok(fmt.Sprintf("Plugin '%s' configured via URL (%s)", p.Name, p.URL))
 		} else {
-			ok(fmt.Sprintf("Plugin '%s' binary exists", p.Name))
+			ok(fmt.Sprintf("Plugin '%s' registered", p.Name))
 		}
 	}
 }

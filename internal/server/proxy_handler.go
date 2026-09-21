@@ -90,13 +90,30 @@ func (s *Server) handleListModels(w http.ResponseWriter, r *http.Request) {
 		// Pure-LLM entry (no index).
 		{ID: "gleann/", Object: "model", Created: now, OwnedBy: "gleann"},
 	}
+	seenTags := make(map[string]bool)
 	for _, idx := range indexes {
+		// Governance: only expose public (MCP exposed) indexes to AI agents
+		if !idx.IsMCPExposed() {
+			continue
+		}
 		models = append(models, oaiModel{
 			ID:      "gleann/" + idx.Name,
 			Object:  "model",
 			Created: now,
 			OwnedBy: "gleann",
 		})
+		for _, tag := range idx.Tags {
+			cleanTag := strings.TrimPrefix(tag, "@")
+			if cleanTag != "" && !seenTags[cleanTag] {
+				seenTags[cleanTag] = true
+				models = append(models, oaiModel{
+					ID:      "gleann/@" + cleanTag,
+					Object:  "model",
+					Created: now,
+					OwnedBy: "gleann",
+				})
+			}
+		}
 	}
 
 	writeJSON(w, http.StatusOK, oaiModelList{Object: "list", Data: models})
@@ -312,6 +329,41 @@ func parseIndexFromModel(model string) []string {
 	return names
 }
 
+// expandProxyIndexNames expands any @tag references into public indexes that contain the tag.
+func (s *Server) expandProxyIndexNames(rawNames []string) ([]string, error) {
+	var expanded []string
+	seen := make(map[string]bool)
+
+	for _, name := range rawNames {
+		if strings.HasPrefix(name, "@") {
+			tag := strings.TrimPrefix(name, "@")
+			allIndexes, err := gleann.ListIndexes(s.config.IndexDir)
+			if err != nil {
+				return nil, err
+			}
+			found := false
+			for _, idx := range allIndexes {
+				if idx.IsMCPExposed() && idx.HasTag(tag) {
+					found = true
+					if !seen[idx.Name] {
+						seen[idx.Name] = true
+						expanded = append(expanded, idx.Name)
+					}
+				}
+			}
+			if !found {
+				return nil, fmt.Errorf("no public index found with tag %q", name)
+			}
+		} else {
+			if !seen[name] {
+				seen[name] = true
+				expanded = append(expanded, name)
+			}
+		}
+	}
+	return expanded, nil
+}
+
 // buildProxyMessages performs RAG retrieval (if indexNames non-empty) and
 // injects context into the message list as a leading system message.
 func (s *Server) buildProxyMessages(
@@ -330,12 +382,26 @@ func (s *Server) buildProxyMessages(
 		return messages, nil
 	}
 
+	// Expand any @tag references into public matching indexes.
+	resolvedNames, err := s.expandProxyIndexNames(indexNames)
+	if err != nil {
+		return nil, err
+	}
+	if len(resolvedNames) == 0 {
+		return messages, nil
+	}
+
 	// Load searcher(s) and search.
 	var contextParts []string
-	if len(indexNames) == 1 {
-		searcher, err := s.getSearcher(ctx, indexNames[0])
+	if len(resolvedNames) == 1 {
+		// Enforce governance: if index exists and is private, refuse proxy access.
+		if meta, err := gleann.GetIndexMeta(s.config.IndexDir, resolvedNames[0]); err == nil && !meta.IsMCPExposed() {
+			return nil, fmt.Errorf("index %q is private and not exposed via proxy", resolvedNames[0])
+		}
+
+		searcher, err := s.getSearcher(ctx, resolvedNames[0])
 		if err != nil {
-			return nil, fmt.Errorf("load index %q: %w", indexNames[0], err)
+			return nil, fmt.Errorf("load index %q: %w", resolvedNames[0], err)
 		}
 		results, err := searcher.Search(ctx, query, searchOpts...)
 		if err != nil {
@@ -351,7 +417,11 @@ func (s *Server) buildProxyMessages(
 	} else {
 		// Multi-index: search each individually, merge results.
 		all := make(map[string][]gleann.SearchResult)
-		for _, name := range indexNames {
+		for _, name := range resolvedNames {
+			// Skip private indexes in multi-index queries
+			if meta, err := gleann.GetIndexMeta(s.config.IndexDir, name); err == nil && !meta.IsMCPExposed() {
+				continue
+			}
 			searcher, err := s.getSearcher(ctx, name)
 			if err != nil {
 				continue // skip unavailable indexes
@@ -405,16 +475,39 @@ func lastUserContent(messages []oaiMessage) string {
 func (s *Server) proxyLLMConfig() gleann.ChatConfig {
 	cfg := gleann.DefaultChatConfig()
 
-	// Apply saved user config.
-	if s.config.OllamaHost != "" && !strings.Contains(s.config.OllamaHost, "(auto-scan") {
-		cfg.BaseURL = s.config.OllamaHost
+	// Apply saved user config with provider precedence.
+	if s.config.LLMProvider != "" {
+		switch strings.ToLower(s.config.LLMProvider) {
+		case "ollama":
+			cfg.Provider = gleann.LLMOllama
+			if s.config.OllamaHost != "" && !strings.Contains(s.config.OllamaHost, "(auto-scan") {
+				cfg.BaseURL = s.config.OllamaHost
+			}
+		case "openai":
+			cfg.Provider = gleann.LLMOpenAI
+			if s.config.OpenAIBaseURL != "" {
+				cfg.BaseURL = s.config.OpenAIBaseURL
+			}
+			if s.config.OpenAIAPIKey != "" {
+				cfg.APIKey = s.config.OpenAIAPIKey
+			}
+		}
+	} else {
+		if s.config.OllamaHost != "" && !strings.Contains(s.config.OllamaHost, "(auto-scan") {
+			cfg.BaseURL = s.config.OllamaHost
+		}
+		if s.config.OpenAIAPIKey != "" {
+			cfg.APIKey = s.config.OpenAIAPIKey
+			cfg.Provider = gleann.LLMOpenAI
+		}
+		if s.config.OpenAIBaseURL != "" {
+			cfg.BaseURL = s.config.OpenAIBaseURL
+			cfg.Provider = gleann.LLMOpenAI
+		}
 	}
-	if s.config.OpenAIAPIKey != "" {
-		cfg.APIKey = s.config.OpenAIAPIKey
-	}
-	if s.config.OpenAIBaseURL != "" {
-		cfg.BaseURL = s.config.OpenAIBaseURL
-		cfg.Provider = gleann.LLMOpenAI
+
+	if s.config.LLMModel != "" {
+		cfg.Model = s.config.LLMModel
 	}
 
 	return cfg

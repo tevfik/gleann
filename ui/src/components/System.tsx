@@ -17,6 +17,10 @@ export function System() {
 
   useEffect(() => {
     const fetchSystemInfo = () => {
+      if (document.visibilityState !== 'visible') {
+        return;
+      }
+
       fetch('/api/tasks')
         .then(res => res.json())
         .then(data => setTasks(data.tasks || []))
@@ -56,8 +60,17 @@ export function System() {
     };
 
     fetchSystemInfo();
-    const interval = setInterval(fetchSystemInfo, 5000);
-    return () => clearInterval(interval);
+    const interval = setInterval(fetchSystemInfo, 10000);
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        fetchSystemInfo();
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => {
+      clearInterval(interval);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
   }, []);
 
   useEffect(() => {

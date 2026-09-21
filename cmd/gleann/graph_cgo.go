@@ -17,6 +17,7 @@ import (
 	"github.com/tevfik/gleann/internal/graph/report"
 	"github.com/tevfik/gleann/internal/graph/viz"
 	"github.com/tevfik/gleann/pkg/gleann"
+	"github.com/tevfik/gleann/pkg/memory"
 )
 
 func init() {
@@ -409,6 +410,17 @@ func cmdGraphExplain(fqn string, db *kgraph.DB) {
 				fmt.Printf("    ← [%s] %s\n", c.Kind, c.FQN)
 			}
 		}
+		memories := searchLinkedMemories(fqn)
+		if len(memories) > 0 {
+			fmt.Printf("\n  🧠 Linked Memory & Architectural Context (%d):\n", len(memories))
+			for _, m := range memories {
+				content := strings.ReplaceAll(m.Content, "\n", " ")
+				if len(content) > 100 {
+					content = content[:97] + "..."
+				}
+				fmt.Printf("    • [%s] %s\n", m.Tier, content)
+			}
+		}
 		return
 	}
 
@@ -448,6 +460,43 @@ func cmdGraphExplain(fqn string, db *kgraph.DB) {
 			fmt.Printf("      📄 %s\n", f)
 		}
 	}
+
+	// Linked Memory Context
+	memories := searchLinkedMemories(target.FQN)
+	if len(memories) > 0 {
+		fmt.Printf("\n  🧠 Linked Memory & Architectural Context (%d):\n", len(memories))
+		for _, m := range memories {
+			content := strings.ReplaceAll(m.Content, "\n", " ")
+			if len(content) > 100 {
+				content = content[:97] + "..."
+			}
+			fmt.Printf("    • [%s] %s\n", m.Tier, content)
+		}
+	}
+}
+
+// searchLinkedMemories queries the memory engine for notes, decisions, or rules related to a symbol.
+func searchLinkedMemories(fqn string) []memory.Block {
+	parts := strings.Split(fqn, ".")
+	searchTerm := parts[len(parts)-1]
+	if len(parts) > 1 && len(searchTerm) < 4 {
+		searchTerm = parts[len(parts)-2] + " " + searchTerm
+	}
+
+	if rc := remoteMemoryClient(); rc != nil {
+		blocks, err := rc.Search(searchTerm)
+		if err == nil && len(blocks) > 0 {
+			return blocks
+		}
+	}
+
+	mgr, err := memory.DefaultManager()
+	if err != nil {
+		return nil
+	}
+	defer mgr.Close()
+	blocks, _ := mgr.Search(searchTerm)
+	return blocks
 }
 
 // cmdGraphPath finds and prints the shortest path between two symbols.

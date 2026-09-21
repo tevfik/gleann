@@ -24,6 +24,7 @@ import (
 
 func cmdList(args []string) {
 	config := getConfig(args)
+	applySavedConfig(&config, args)
 	asJSON := hasFlag(args, "--json")
 	tagFilter := getFlag(args, "--tag")
 	if tagFilter == "" {

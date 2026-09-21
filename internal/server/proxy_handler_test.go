@@ -7,6 +7,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -469,5 +471,98 @@ func TestMinScoreHeaderOverride_Invalid(t *testing.T) {
 
 	if w.Code == 0 {
 		t.Error("expected a response code")
+	}
+}
+
+func TestProxyGovernanceAndTagModels(t *testing.T) {
+	tmpDir := t.TempDir()
+	s := &Server{
+		config:    gleann.Config{IndexDir: tmpDir},
+		searchers: make(map[string]*gleann.LeannSearcher),
+	}
+
+	// Helper to write index metadata
+	writeMeta := func(m gleann.IndexMeta) {
+		dir := filepath.Join(tmpDir, m.Name)
+		_ = os.MkdirAll(dir, 0755)
+		data, _ := json.Marshal(m)
+		_ = os.WriteFile(filepath.Join(dir, m.Name+".meta.json"), data, 0644)
+	}
+
+	// 1. Create a public index with tags
+	pubMeta := gleann.IndexMeta{
+		Name:        "pub-idx",
+		MCPExposed:  new(bool),
+		Tags:        []string{"work", "docs"},
+		Description: "Public test index",
+	}
+	*pubMeta.MCPExposed = true
+	writeMeta(pubMeta)
+
+	// 2. Create a private index with tags
+	privMeta := gleann.IndexMeta{
+		Name:        "priv-idx",
+		MCPExposed:  new(bool),
+		Tags:        []string{"secret"},
+		Description: "Private test index",
+	}
+	*privMeta.MCPExposed = false
+	writeMeta(privMeta)
+
+	// 3. Test handleListModels: only public index and its tags should be returned
+	req := httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+	w := httptest.NewRecorder()
+	s.handleListModels(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+
+	var res oaiModelList
+	if err := json.NewDecoder(w.Body).Decode(&res); err != nil {
+		t.Fatal(err)
+	}
+
+	modelIDs := make(map[string]bool)
+	for _, m := range res.Data {
+		modelIDs[m.ID] = true
+	}
+
+	if !modelIDs["gleann/pub-idx"] {
+		t.Errorf("expected gleann/pub-idx in models, got %v", modelIDs)
+	}
+	if !modelIDs["gleann/@work"] {
+		t.Errorf("expected gleann/@work virtual tag model, got %v", modelIDs)
+	}
+	if !modelIDs["gleann/@docs"] {
+		t.Errorf("expected gleann/@docs virtual tag model, got %v", modelIDs)
+	}
+	if modelIDs["gleann/priv-idx"] {
+		t.Errorf("private index gleann/priv-idx should NOT be exposed in /v1/models")
+	}
+	if modelIDs["gleann/@secret"] {
+		t.Errorf("private tag gleann/@secret should NOT be exposed in /v1/models")
+	}
+
+	// 4. Test expandProxyIndexNames with @work tag
+	expanded, err := s.expandProxyIndexNames([]string{"@work"})
+	if err != nil {
+		t.Fatalf("unexpected error expanding @work: %v", err)
+	}
+	if len(expanded) != 1 || expanded[0] != "pub-idx" {
+		t.Fatalf("expected [pub-idx], got %v", expanded)
+	}
+
+	// 5. Test unknown tag returns error
+	_, err = s.expandProxyIndexNames([]string{"@nonexistent"})
+	if err == nil {
+		t.Fatal("expected error for nonexistent tag, got nil")
+	}
+
+	// 6. Test buildProxyMessages refuses private index
+	msgs := []oaiMessage{{Role: "user", Content: "test query"}}
+	_, err = s.buildProxyMessages(context.Background(), msgs, []string{"priv-idx"}, nil)
+	if err == nil || !strings.Contains(err.Error(), "private") {
+		t.Fatalf("expected error indicating private index, got %v", err)
 	}
 }
