@@ -10,4 +10,6 @@ type graphPool struct{}
 
 func (s *Server) initGraphPool()      { _ = s.gPool }
 func (s *Server) closeGraphPool()     {}
+func (s *Server) evictGraph(name string) {}
 func (s *Server) registerGraphTools() {}
+

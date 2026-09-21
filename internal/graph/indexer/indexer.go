@@ -588,9 +588,12 @@ func (idx *Indexer) IndexFiles(files []string) error {
 				skipped++
 				continue
 			}
-			// File missing on disk → drop its stale record and skip.
+			// File missing on disk → drop its stale record and delete its symbols from the graph.
 			if currentHash == "" {
 				_ = idx.hashStore.Remove(relPath)
+				if err := idx.db.RemoveFileSymbols(relPath); err != nil {
+					log.Printf("warning: RemoveFileSymbols(%s): %v", relPath, err)
+				}
 				skipped++
 				continue
 			}

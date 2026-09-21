@@ -7,6 +7,7 @@ import (
 	"log"
 	"math"
 	"os"
+	"os/exec"
 	"sort"
 	"strings"
 
@@ -41,6 +42,7 @@ type Server struct {
 	memPool     *mcpMemoryPool // Memory Engine: generic Entity/RELATES_TO graph
 	blockMem    *blockMemPool  // BBolt hierarchical memory blocks (pkg/memory)
 	gPool       *graphPool     // Community detection graph pool (treesitter only)
+	syncRunner  func(ctx context.Context, indexName, docsDir string, files []string) (string, error)
 }
 
 // NewServer initializes a new MCP server that exposes Gleann capabilities using the SDK.
@@ -122,6 +124,9 @@ func NewServer(cfg Config) *Server {
 	s.AddTool(srv.buildShellTool(), srv.handleShell)
 	s.AddTool(srv.buildReadTool(), srv.handleRead)
 	s.AddTool(srv.buildGainTool(), srv.handleGain)
+
+	// On-demand index synchronization tool
+	s.AddTool(srv.buildSyncTool(), srv.handleSync)
 
 	// Community detection tools — require treesitter build tag.
 	srv.initGraphPool()
@@ -260,6 +265,23 @@ func (s *Server) evictOldest() {
 		}
 		delete(s.searchers, oldest)
 	}
+}
+
+// evictIndex closes and removes any cached searcher and graph database handle for the given index.
+func (s *Server) evictIndex(name string) {
+	if searcher, ok := s.searchers[name]; ok {
+		if searcher != nil {
+			searcher.Close()
+		}
+		delete(s.searchers, name)
+		for i, n := range s.searcherLRU {
+			if n == name {
+				s.searcherLRU = append(s.searcherLRU[:i], s.searcherLRU[i+1:]...)
+				break
+			}
+		}
+	}
+	s.evictGraph(name)
 }
 
 // --- Resource Handlers ---
@@ -1292,3 +1314,101 @@ func (s *Server) handleSymbolsInFile(ctx context.Context, request mcp.CallToolRe
 
 	return mcp.NewToolResultText(sb.String()), nil
 }
+
+// --- Sync Tool ---
+
+func (s *Server) buildSyncTool() mcp.Tool {
+	return mcp.NewTool("gleann_sync",
+		mcp.WithDescription("Synchronize and incrementally update a Gleann index (vector search passages, AST code graph, and document outlines) with the latest workspace file changes. Call this after creating, editing, or deleting files so code intelligence tools immediately reflect the current codebase."),
+		mcp.WithString("index",
+			mcp.Required(),
+			mcp.Description("Name of the index to synchronize"),
+		),
+		mcp.WithString("docs_dir",
+			mcp.Description("Optional root directory of the codebase. Defaults to the source directory recorded when the index was built."),
+		),
+		mcp.WithArray("files",
+			mcp.Description("Optional list of specific file paths to sync. If omitted, all modified, added, and deleted files in the workspace are automatically detected and synced."),
+			mcp.Items(map[string]any{"type": "string"}),
+		),
+	)
+}
+
+func (s *Server) handleSync(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	indexName, err := request.RequireString("index")
+	if err != nil {
+		return mcp.NewToolResultError("missing required parameter: index"), nil
+	}
+
+	meta, err := gleann.GetIndexMeta(s.config.IndexDir, indexName)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("index %q not found in %s: %v", indexName, s.config.IndexDir, err)), nil
+	}
+
+	docsDir := request.GetString("docs_dir", "")
+	if docsDir == "" {
+		docsDir = meta.SourceDir
+	}
+	if docsDir == "" {
+		return mcp.NewToolResultError(fmt.Sprintf("index %q does not have a recorded source_dir; please specify docs_dir", indexName)), nil
+	}
+
+	var files []string
+	if args, ok := request.Params.Arguments.(map[string]interface{}); ok && args != nil {
+		if rawFiles, ok := args["files"].([]any); ok {
+			for _, rf := range rawFiles {
+				if str, ok := rf.(string); ok && strings.TrimSpace(str) != "" {
+					files = append(files, strings.TrimSpace(str))
+				}
+			}
+		} else if rawFiles, ok := args["files"].([]string); ok {
+			for _, str := range rawFiles {
+				if strings.TrimSpace(str) != "" {
+					files = append(files, strings.TrimSpace(str))
+				}
+			}
+		}
+	}
+
+	// Evict cached handles to release file locks before synchronizing
+	s.evictIndex(indexName)
+
+	runner := s.syncRunner
+	if runner == nil {
+		runner = s.defaultSyncRunner
+	}
+
+	output, runErr := runner(ctx, indexName, docsDir, files)
+	if runErr != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("sync failed for index %q: %v\nOutput: %s", indexName, runErr, output)), nil
+	}
+
+	res := map[string]any{
+		"status":  "success",
+		"index":   indexName,
+		"message": "Index synchronized successfully",
+		"details": strings.TrimSpace(output),
+	}
+	resBytes, _ := json.MarshalIndent(res, "", "  ")
+	return mcp.NewToolResultText(string(resBytes)), nil
+}
+
+func (s *Server) defaultSyncRunner(ctx context.Context, indexName, docsDir string, files []string) (string, error) {
+	exe, err := os.Executable()
+	if err != nil || exe == "" {
+		exe = "gleann"
+	}
+
+	cmdArgs := []string{"index", "sync", indexName, "--docs", docsDir}
+	if len(files) > 0 {
+		cmdArgs = append(cmdArgs, "--files", strings.Join(files, ","))
+	}
+	if s.config.IndexDir != "" {
+		cmdArgs = append(cmdArgs, "--index-dir", s.config.IndexDir)
+	}
+
+	cmd := exec.CommandContext(ctx, exe, cmdArgs...)
+	out, err := cmd.CombinedOutput()
+	return string(out), err
+}
+

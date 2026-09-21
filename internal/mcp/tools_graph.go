@@ -46,6 +46,15 @@ func (p *graphPool) get(name string) (*kgraph.DB, error) {
 	return db, nil
 }
 
+func (p *graphPool) close(name string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if db, ok := p.dbs[name]; ok {
+		db.Close()
+		delete(p.dbs, name)
+	}
+}
+
 func (p *graphPool) closeAll() {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -65,6 +74,13 @@ func (s *Server) initGraphPool() {
 func (s *Server) closeGraphPool() {
 	if s.gPool != nil {
 		s.gPool.closeAll()
+	}
+}
+
+// evictGraph closes and evicts the graph handle for a specific index.
+func (s *Server) evictGraph(name string) {
+	if s.gPool != nil {
+		s.gPool.close(name)
 	}
 }
 

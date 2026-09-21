@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"go.etcd.io/bbolt"
@@ -189,6 +190,148 @@ func (t *Tracker) RemoveByHash(ctx context.Context, hash string) error {
 	})
 }
 
+// GetRecordByPath returns the FileRecord for path, or nil if not tracked.
+func (t *Tracker) GetRecordByPath(ctx context.Context, path string) (*FileRecord, error) {
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		absPath = filepath.Clean(path)
+	}
+	var record *FileRecord
+	err = t.db.View(func(tx *bbolt.Tx) error {
+		pathsBucket := tx.Bucket(bucketPaths)
+		if pathsBucket == nil {
+			return nil
+		}
+		hash := pathsBucket.Get([]byte(path))
+		if hash == nil && absPath != path {
+			hash = pathsBucket.Get([]byte(absPath))
+		}
+		if hash == nil {
+			return nil
+		}
+		filesBucket := tx.Bucket(bucketFiles)
+		if filesBucket == nil {
+			return nil
+		}
+		val := filesBucket.Get(hash)
+		if val == nil {
+			return nil
+		}
+		var rec FileRecord
+		if err := json.Unmarshal(val, &rec); err != nil {
+			return err
+		}
+		record = &rec
+		return nil
+	})
+	return record, err
+}
+
+// ListPathsInDir returns all tracked paths located inside dir.
+func (t *Tracker) ListPathsInDir(ctx context.Context, dir string) ([]string, error) {
+	absDir, err := filepath.Abs(dir)
+	if err != nil {
+		absDir = filepath.Clean(dir)
+	}
+	var paths []string
+	err = t.db.View(func(tx *bbolt.Tx) error {
+		b := tx.Bucket(bucketPaths)
+		if b == nil {
+			return nil
+		}
+		return b.ForEach(func(k, v []byte) error {
+			p := string(k)
+			absP, err := filepath.Abs(p)
+			if err != nil {
+				absP = filepath.Clean(p)
+			}
+			if absP == absDir || strings.HasPrefix(absP, absDir+string(filepath.Separator)) {
+				paths = append(paths, p)
+			}
+			return nil
+		})
+	})
+	return paths, err
+}
+
+// RemovePath removes a path from tracking.
+func (t *Tracker) RemovePath(ctx context.Context, path string) error {
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		absPath = filepath.Clean(path)
+	}
+	return t.db.Update(func(tx *bbolt.Tx) error {
+		pathsBucket := tx.Bucket(bucketPaths)
+		if pathsBucket == nil {
+			return nil
+		}
+		pathsBucket.Delete([]byte(path))
+		if absPath != path {
+			pathsBucket.Delete([]byte(absPath))
+		}
+		return nil
+	})
+}
+
+// DetectChangedFiles compares the given currentFiles (all eligible files currently on disk in dir)
+// against the tracker's recorded state. It returns:
+// - changed: files that are new or whose content (SHA-256) differs from the recorded hash.
+// - deleted: files previously tracked under dir that are no longer present in currentFiles.
+// It uses fast mtime and file size heuristics to skip SHA-256 computation for untouched files.
+func (t *Tracker) DetectChangedFiles(ctx context.Context, dir string, currentFiles []string) (changed []string, deleted []string, err error) {
+	currentMap := make(map[string]bool, len(currentFiles))
+	for _, f := range currentFiles {
+		absF, err := filepath.Abs(f)
+		if err != nil {
+			absF = filepath.Clean(f)
+		}
+		currentMap[absF] = true
+	}
+
+	trackedPaths, err := t.ListPathsInDir(ctx, dir)
+	if err != nil {
+		return nil, nil, fmt.Errorf("list tracked paths: %w", err)
+	}
+
+	for _, tp := range trackedPaths {
+		absTP, err := filepath.Abs(tp)
+		if err != nil {
+			absTP = filepath.Clean(tp)
+		}
+		if !currentMap[absTP] {
+			deleted = append(deleted, tp)
+		}
+	}
+
+	for _, f := range currentFiles {
+		rec, _ := t.GetRecordByPath(ctx, f)
+		if rec == nil {
+			changed = append(changed, f)
+			continue
+		}
+
+		info, err := os.Stat(f)
+		if err != nil {
+			changed = append(changed, f)
+			continue
+		}
+
+		if info.ModTime().Unix() == rec.LastModified && info.Size() == rec.Size {
+			continue
+		}
+
+		currHash, err := ComputeHash(f)
+		if err != nil || currHash != rec.Hash {
+			changed = append(changed, f)
+		} else {
+			_ = t.UpsertRecord(ctx, rec.Hash, f, info.ModTime().Unix(), info.Size())
+		}
+	}
+
+	return changed, deleted, nil
+}
+
 func (t *Tracker) Close() error {
 	return t.db.Close()
 }
+

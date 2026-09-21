@@ -1070,3 +1070,174 @@ func initMultimodalProcessor(ollamaHost, flagModel string) *multimodal.Processor
 	}
 	return p
 }
+
+// cmdSync performs an on-demand incremental synchronization of an index.
+// It checks which files have been modified, added, or deleted in the workspace,
+// updating both the vector index and the AST code graph.
+//
+// Usage:
+//   gleann index sync <name> [--docs <dir>] [--files <file1,file2>] [--graph]
+func cmdSync(args []string) {
+	if len(args) < 1 || hasFlag(args, "--help") || hasFlag(args, "-h") {
+		fmt.Fprintln(os.Stderr, "usage: gleann index sync <name> [--docs <dir>] [--files <file1,file2>] [--graph]")
+		if hasFlag(args, "--help") || hasFlag(args, "-h") {
+			return
+		}
+		os.Exit(1)
+	}
+
+	name := args[0]
+	if strings.HasPrefix(name, "-") {
+		fmt.Fprintf(os.Stderr, "error: index name %q looks like a flag\nusage: gleann index sync <name> [--docs <dir>]\n", name)
+		os.Exit(1)
+	}
+
+	config := getConfig(args)
+	applySavedConfig(&config, args)
+
+	meta, err := gleann.GetIndexMeta(config.IndexDir, name)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: index %q not found in %s: %v\n", name, config.IndexDir, err)
+		os.Exit(1)
+	}
+
+	docsDir := getFlag(args, "--docs")
+	if docsDir == "" {
+		docsDir = meta.SourceDir
+	}
+	if docsDir == "" {
+		fmt.Fprintf(os.Stderr, "error: --docs flag required (index %q does not have a recorded source_dir)\n", name)
+		os.Exit(1)
+	}
+
+	absDocsDir, err := filepath.Abs(docsDir)
+	if err != nil {
+		absDocsDir = docsDir
+	}
+
+	// Determine if graph indexing is requested or exists.
+	buildGraph := hasFlag(args, "--graph")
+	if !buildGraph {
+		graphDir := filepath.Join(config.IndexDir, name+"_graph")
+		if fi, err := os.Stat(graphDir); err == nil && fi.IsDir() {
+			buildGraph = true
+		}
+	}
+
+	start := time.Now()
+	fmt.Printf("🔄 Synchronizing index %q with %s...\n", name, absDocsDir)
+
+	if err := initLlamaCPP(context.Background(), &config); err != nil {
+		fmt.Fprintf(os.Stderr, "error initializing llamacpp: %v\n", err)
+		os.Exit(1)
+	}
+
+	embedder := embedding.NewComputer(embedding.Options{
+		Provider:    embedding.Provider(config.EmbeddingProvider),
+		Model:       config.EmbeddingModel,
+		BaseURL:     config.OllamaHost,
+		BatchSize:   config.BatchSize,
+		Concurrency: config.Concurrency,
+	})
+	cachedEmbedder := embedding.NewCachedComputer(embedder, embedding.CacheOptions{})
+
+	tracker, err := vault.NewTracker(vault.DefaultDBPath())
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "warning: could not initialize vault tracker: %v\n", err)
+	} else {
+		defer tracker.Close()
+	}
+
+	filesFlag := getFlag(args, "--files")
+	var changedFiles []string
+	var deletedFiles []string
+
+	if filesFlag != "" {
+		for _, f := range strings.Split(filesFlag, ",") {
+			f = strings.TrimSpace(f)
+			if f == "" {
+				continue
+			}
+			absF := f
+			if !filepath.IsAbs(absF) {
+				absF = filepath.Join(absDocsDir, f)
+			}
+			if _, err := os.Stat(absF); err != nil {
+				deletedFiles = append(deletedFiles, absF)
+			} else {
+				changedFiles = append(changedFiles, absF)
+			}
+		}
+	} else {
+		pluginManager, _ := gleann.NewPluginManager()
+		if pluginManager != nil {
+			defer pluginManager.Close()
+			pluginManager.ResolveMultimodalPluginEnv()
+		}
+		nativeExtractor := gleann.NewNativeExtractor()
+		mmModel := getFlag(args, "--multimodal-model")
+		if mmModel == "" {
+			mmModel = config.MultimodalModel
+		}
+		mmProcessor := initMultimodalProcessor(config.OllamaHost, mmModel)
+
+		eligibleEntries, walkErr := collectEligibleFiles(absDocsDir, pluginManager, nativeExtractor, mmProcessor)
+		if walkErr != nil {
+			fmt.Fprintf(os.Stderr, "error scanning workspace: %v\n", walkErr)
+			os.Exit(1)
+		}
+
+		eligiblePaths := make([]string, len(eligibleEntries))
+		for i, e := range eligibleEntries {
+			eligiblePaths[i] = e.path
+		}
+
+		if tracker != nil {
+			ctx := context.Background()
+			cFiles, dFiles, dErr := tracker.DetectChangedFiles(ctx, absDocsDir, eligiblePaths)
+			if dErr != nil {
+				fmt.Fprintf(os.Stderr, "warning: change detection failed (%v), checking all files\n", dErr)
+				changedFiles = eligiblePaths
+			} else {
+				changedFiles = cFiles
+				deletedFiles = dFiles
+			}
+		} else {
+			changedFiles = eligiblePaths
+		}
+	}
+
+	allChanged := append(changedFiles, deletedFiles...)
+	if len(allChanged) == 0 {
+		fmt.Printf("⚡ Index %q is already up to date. No changes detected in %s.\n", name, time.Since(start).Round(time.Millisecond))
+		return
+	}
+
+	fmt.Printf("📦 Detected %d changed/new file(s) and %d deleted file(s)\n", len(changedFiles), len(deletedFiles))
+
+	if tracker != nil && len(deletedFiles) > 0 {
+		ctx := context.Background()
+		for _, df := range deletedFiles {
+			_ = tracker.RemovePath(ctx, df)
+		}
+	}
+
+	pDocs, ok := incrementalBuildIndex(name, absDocsDir, allChanged, config, cachedEmbedder, tracker)
+	if !ok {
+		fmt.Println("⚠️  Incremental vector update not supported or failed, running full rebuild...")
+		pDocs = buildIndex(name, absDocsDir, config, cachedEmbedder, tracker)
+	} else {
+		fmt.Printf("⚡ Vector index updated in %s\n", time.Since(start).Round(time.Millisecond))
+	}
+
+	if buildGraph {
+		buildGraphIndex(name, absDocsDir, config.IndexDir, pDocs, allChanged)
+	}
+
+	_ = gleann.UpdateIndexMeta(config.IndexDir, name, func(m *gleann.IndexMeta) {
+		m.SourceDir = absDocsDir
+	})
+
+	fmt.Printf("✅ Sync complete for %q in %s (%d files processed)\n", name, time.Since(start).Round(time.Millisecond), len(allChanged))
+}
+

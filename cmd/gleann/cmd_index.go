@@ -35,6 +35,8 @@ func cmdIndex(args []string) {
 		cmdInfo(subArgs)
 	case "watch":
 		cmdWatch(subArgs)
+	case "sync":
+		cmdSync(subArgs)
 	case "tag":
 		cmdTag(subArgs)
 	case "set":
@@ -54,6 +56,7 @@ func printIndexUsage() {
 Usage:
   gleann index list                         List all indexes
   gleann index build  <name> --docs <dir>   Build index from documents
+  gleann index sync   <name> [--docs <dir>] Sync index incrementally with workspace changes
   gleann index remove <name>                Remove an index
   gleann index rebuild <name> --docs <dir>  Remove & rebuild index from scratch
   gleann index info   <name>                Show index metadata

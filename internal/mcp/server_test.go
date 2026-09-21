@@ -1,6 +1,8 @@
 package mcp
 
 import (
+	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -52,6 +54,7 @@ func TestNewServer_ToolNames(t *testing.T) {
 		{"gleann_graph_neighbors", nil},
 		{"gleann_document_links", nil},
 		{"gleann_read_full_document", nil},
+		{"gleann_sync", nil},
 	}
 
 	// Build tools directly to verify their structure
@@ -63,6 +66,7 @@ func TestNewServer_ToolNames(t *testing.T) {
 		srv.buildDocumentLinksTool().Name:    true,
 		srv.buildReadFullDocumentTool().Name: true,
 		srv.buildDocumentTOCTool().Name:      true,
+		srv.buildSyncTool().Name:             true,
 	}
 
 	for _, tt := range tools {
@@ -436,5 +440,115 @@ func TestHandleDocumentTOC_Validation(t *testing.T) {
 		t.Errorf("expected error result for empty index")
 	}
 }
+
+func TestBuildSyncTool(t *testing.T) {
+	srv := &Server{}
+	tool := srv.buildSyncTool()
+
+	if tool.Name != "gleann_sync" {
+		t.Errorf("expected name gleann_sync, got %s", tool.Name)
+	}
+	if tool.Description == "" {
+		t.Errorf("expected non-empty description")
+	}
+
+	props := tool.InputSchema.Properties
+	if props["index"] == nil {
+		t.Errorf("expected property index")
+	}
+	if props["docs_dir"] == nil {
+		t.Errorf("expected property docs_dir")
+	}
+	if props["files"] == nil {
+		t.Errorf("expected property files")
+	}
+
+	required := make(map[string]bool)
+	for _, req := range tool.InputSchema.Required {
+		required[req] = true
+	}
+	if !required["index"] {
+		t.Errorf("expected required field index, got %v", tool.InputSchema.Required)
+	}
+}
+
+func TestHandleSync(t *testing.T) {
+	tmpDir := t.TempDir()
+	srv := NewServer(Config{
+		IndexDir:          tmpDir,
+		EmbeddingProvider: "ollama",
+		EmbeddingModel:    "bge-m3",
+		OllamaHost:        gleann.DefaultOllamaHost,
+		Version:           "test",
+	})
+
+	// 1. Missing index parameter
+	reqMissing := mcp.CallToolRequest{}
+	reqMissing.Params.Arguments = map[string]interface{}{}
+	res, err := srv.handleSync(nil, reqMissing)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !res.IsError {
+		t.Errorf("expected error result for missing index")
+	}
+
+	// 2. Non-existent index
+	reqNonExistent := mcp.CallToolRequest{}
+	reqNonExistent.Params.Arguments = map[string]interface{}{
+		"index": "non-existent-index",
+	}
+	res, err = srv.handleSync(nil, reqNonExistent)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !res.IsError {
+		t.Errorf("expected error result for nonexistent index")
+	}
+
+	// 3. Existing index with mocked syncRunner
+	testIndex := "test-sync-idx"
+	idxDir := filepath.Join(tmpDir, testIndex)
+	_ = os.MkdirAll(idxDir, 0755)
+	meta := gleann.IndexMeta{
+		Name:      testIndex,
+		SourceDir: "/tmp/mock-source",
+	}
+	metaBytes, _ := json.Marshal(meta)
+	_ = os.WriteFile(filepath.Join(idxDir, testIndex+".meta.json"), metaBytes, 0644)
+
+	var capturedIndex, capturedDocs string
+	var capturedFiles []string
+	srv.syncRunner = func(ctx context.Context, idx, docs string, files []string) (string, error) {
+		capturedIndex = idx
+		capturedDocs = docs
+		capturedFiles = files
+		return "Mock sync complete: 2 files processed", nil
+	}
+
+	reqValid := mcp.CallToolRequest{}
+	reqValid.Params.Arguments = map[string]interface{}{
+		"index": testIndex,
+		"files": []interface{}{"file1.go", "file2.go"},
+	}
+	res, err = srv.handleSync(nil, reqValid)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if res.IsError {
+		t.Fatalf("expected success, got error: %v", res)
+	}
+
+	if capturedIndex != testIndex {
+		t.Errorf("expected index %s, got %s", testIndex, capturedIndex)
+	}
+	if capturedDocs != "/tmp/mock-source" {
+		t.Errorf("expected docs /tmp/mock-source, got %s", capturedDocs)
+	}
+	if len(capturedFiles) != 2 || capturedFiles[0] != "file1.go" {
+		t.Errorf("expected files [file1.go, file2.go], got %v", capturedFiles)
+	}
+}
+
 
 

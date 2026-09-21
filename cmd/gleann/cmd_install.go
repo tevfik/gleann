@@ -386,6 +386,7 @@ Key graph / search commands:
 - ` + "`gleann search <name> <query> --rerank`" + ` — add cross-encoder reranking
 - ` + "`gleann ask <name> <question>`" + ` — RAG-powered Q&A from indexed content
 - ` + "`gleann index list`" + ` — list available indexes
+- ` + "`gleann index sync <name> [--docs <dir>]`" + ` — incrementally sync index after code changes
 - ` + "`gleann index watch <name> --docs <dir>`" + ` — auto-rebuild on file changes
 - ` + "`gleann graph explain <symbol> --index <name>`" + ` — callers, callees, blast radius
 - ` + "`gleann graph query <pattern> --index <name>`" + ` — find symbols by pattern
@@ -429,8 +430,10 @@ extracts facts, resolves contradictions, and promotes important information acro
 ### 3 — MCP tools (when gleann mcp is running)
 
 **Search & graph:**
-` + "`gleann_search`" + ` · ` + "`gleann_search_multi`" + ` · ` + "`gleann_ask`" + ` · ` + "`gleann_graph_neighbors`" + ` · ` + "`gleann_impact`" + ` · ` + "`gleann_read_full_document`" + `
+` + "`gleann_search`" + ` · ` + "`gleann_search_multi`" + ` · ` + "`gleann_ask`" + ` · ` + "`gleann_graph_neighbors`" + ` · ` + "`gleann_impact`" + ` · ` + "`gleann_read_full_document`" + ` · ` + "`gleann_document_toc`" + ` · ` + "`gleann_sync`" + `
 ` + "`inject_knowledge_graph`" + ` · ` + "`delete_graph_entity`" + ` · ` + "`traverse_knowledge_graph`" + `
+
+- ` + "`gleann_sync`" + ` — call this after creating, editing, or deleting files to incrementally refresh vector passages and AST graph!
 
 **Memory (always-available, no build tag):**
 - ` + "`memory_remember`" + ` — store fact with tier/label/tags/scope
@@ -440,7 +443,7 @@ extracts facts, resolves contradictions, and promotes important information acro
 - ` + "`memory_context`" + ` — returns the compiled ` + "`<memory_context>`" + ` window that gleann
   injects into LLM system prompts — call this at session start to recall everything
 
-**Workflow:** call ` + "`memory_context`" + ` at the start of every session, then call
+**Workflow:** call ` + "`memory_context`" + ` at the start of every session, use ` + "`gleann_sync`" + ` after modifying files so code intelligence tools immediately reflect changes, then call
 ` + "`memory_remember`" + ` whenever you learn something important about the codebase.
 `
 

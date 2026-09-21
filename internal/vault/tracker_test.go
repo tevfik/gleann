@@ -91,3 +91,86 @@ func TestTracker(t *testing.T) {
 		t.Fatal("Expected error finding removed hash")
 	}
 }
+
+func TestDetectChangedFiles(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "vault.db")
+	tracker, err := NewTracker(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tracker.Close()
+
+	ctx := context.Background()
+
+	f1 := filepath.Join(tmpDir, "file1.txt")
+	f2 := filepath.Join(tmpDir, "file2.txt")
+	_ = os.WriteFile(f1, []byte("content 1"), 0644)
+	_ = os.WriteFile(f2, []byte("content 2"), 0644)
+
+	// Phase 1: Not tracked yet -> both should be detected as changed
+	changed, deleted, err := tracker.DetectChangedFiles(ctx, tmpDir, []string{f1, f2})
+	if err != nil {
+		t.Fatalf("DetectChangedFiles: %v", err)
+	}
+	if len(changed) != 2 || len(deleted) != 0 {
+		t.Fatalf("Expected 2 changed, 0 deleted, got changed=%v, deleted=%v", changed, deleted)
+	}
+
+	// Upsert both
+	_, _ = tracker.UpsertFile(ctx, f1)
+	_, _ = tracker.UpsertFile(ctx, f2)
+
+	// Phase 2: Tracked & unchanged -> 0 changed, 0 deleted
+	changed, deleted, err = tracker.DetectChangedFiles(ctx, tmpDir, []string{f1, f2})
+	if err != nil {
+		t.Fatalf("DetectChangedFiles: %v", err)
+	}
+	if len(changed) != 0 || len(deleted) != 0 {
+		t.Fatalf("Expected 0 changed, 0 deleted, got changed=%v, deleted=%v", changed, deleted)
+	}
+
+	// Phase 3: Modify f1 content
+	_ = os.WriteFile(f1, []byte("content 1 - modified"), 0644)
+
+	changed, deleted, err = tracker.DetectChangedFiles(ctx, tmpDir, []string{f1, f2})
+	if err != nil {
+		t.Fatalf("DetectChangedFiles: %v", err)
+	}
+	if len(changed) != 1 || changed[0] != f1 {
+		t.Fatalf("Expected [f1] changed, got %v", changed)
+	}
+	if len(deleted) != 0 {
+		t.Fatalf("Expected 0 deleted, got %v", deleted)
+	}
+
+	// Re-track f1
+	_, _ = tracker.UpsertFile(ctx, f1)
+
+	// Phase 4: Delete f2, add f3
+	_ = os.Remove(f2)
+	f3 := filepath.Join(tmpDir, "file3.txt")
+	_ = os.WriteFile(f3, []byte("content 3"), 0644)
+
+	changed, deleted, err = tracker.DetectChangedFiles(ctx, tmpDir, []string{f1, f3})
+	if err != nil {
+		t.Fatalf("DetectChangedFiles: %v", err)
+	}
+	if len(changed) != 1 || changed[0] != f3 {
+		t.Fatalf("Expected [f3] changed, got %v", changed)
+	}
+	if len(deleted) != 1 || deleted[0] != f2 {
+		t.Fatalf("Expected [f2] deleted, got %v", deleted)
+	}
+
+	// Clean up deleted path
+	_ = tracker.RemovePath(ctx, f2)
+	changed, deleted, err = tracker.DetectChangedFiles(ctx, tmpDir, []string{f1, f3})
+	if err != nil {
+		t.Fatalf("DetectChangedFiles: %v", err)
+	}
+	if len(deleted) != 0 {
+		t.Fatalf("Expected 0 deleted after cleanup, got %v", deleted)
+	}
+}
+
