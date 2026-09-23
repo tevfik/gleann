@@ -4,6 +4,7 @@ package server
 
 import (
 	"bytes"
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -75,7 +76,7 @@ func TestMemoryStub_HandleMemoryTraverse(t *testing.T) {
 func TestMemoryStub_StopMemoryPool(t *testing.T) {
 	s := &Server{config: gleann.Config{}, searchers: make(map[string]*gleann.LeannSearcher)}
 	// Should not panic.
-	s.stopMemoryPool(nil)
+	s.stopMemoryPool(context.Background())
 }
 
 func TestMemoryStub_CloseAll(t *testing.T) {

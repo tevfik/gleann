@@ -22,6 +22,7 @@ var payloadBytes []byte
 var (
 	version = "dev"
 	commit  = "none"
+	_       = commit
 )
 
 func main() {

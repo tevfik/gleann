@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"os"
@@ -652,7 +653,7 @@ func TestBuildProxyMessages_EmptyIndexes(t *testing.T) {
 		searchers: make(map[string]*gleann.LeannSearcher),
 	}
 	msgs := []oaiMessage{{Role: "user", Content: "hello"}}
-	result, err := s.buildProxyMessages(nil, msgs, nil, nil)
+	result, err := s.buildProxyMessages(context.Background(), msgs, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -667,7 +668,7 @@ func TestBuildProxyMessages_NoUserMessage(t *testing.T) {
 		searchers: make(map[string]*gleann.LeannSearcher),
 	}
 	msgs := []oaiMessage{{Role: "system", Content: "you are helpful"}}
-	result, err := s.buildProxyMessages(nil, msgs, []string{"idx"}, nil)
+	result, err := s.buildProxyMessages(context.Background(), msgs, []string{"idx"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -682,7 +683,7 @@ func TestBuildProxyMessages_SingleIndexFails(t *testing.T) {
 		searchers: make(map[string]*gleann.LeannSearcher),
 	}
 	msgs := []oaiMessage{{Role: "user", Content: "hello"}}
-	_, err := s.buildProxyMessages(nil, msgs, []string{"nonexistent"}, nil)
+	_, err := s.buildProxyMessages(context.Background(), msgs, []string{"nonexistent"}, nil)
 	if err == nil {
 		t.Fatal("expected error for nonexistent index")
 	}
@@ -694,7 +695,7 @@ func TestBuildProxyMessages_MultiIndexAllFail(t *testing.T) {
 		searchers: make(map[string]*gleann.LeannSearcher),
 	}
 	msgs := []oaiMessage{{Role: "user", Content: "hello"}}
-	result, err := s.buildProxyMessages(nil, msgs, []string{"idx1", "idx2"}, nil)
+	result, err := s.buildProxyMessages(context.Background(), msgs, []string{"idx1", "idx2"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

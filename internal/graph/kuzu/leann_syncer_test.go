@@ -38,31 +38,6 @@ func (m *mockLeannBuilder) recordRemove(name string, sources []string) {
 	m.removeSrcs = append(m.removeSrcs, sources...)
 }
 
-// mockEmbedder implements gleann.EmbeddingComputer for tests.
-type mockEmbedder struct {
-	dim int
-}
-
-func (e *mockEmbedder) Compute(_ context.Context, texts []string) ([][]float32, error) {
-	out := make([][]float32, len(texts))
-	for i := range texts {
-		out[i] = make([]float32, e.dim)
-		for j := range out[i] {
-			out[i][j] = float32(i+1) * 0.1
-		}
-	}
-	return out, nil
-}
-
-func (e *mockEmbedder) ComputeSingle(_ context.Context, _ string) ([]float32, error) {
-	v := make([]float32, e.dim)
-	v[0] = 1.0
-	return v, nil
-}
-
-func (e *mockEmbedder) Dimensions() int   { return e.dim }
-func (e *mockEmbedder) ModelName() string { return "mock-embed" }
-
 // ── Thin wrapper to intercept LeannBuilder calls ──────────────────────────────
 
 // testableBuilder wraps a real LeannBuilder but intercepts calls for verification.

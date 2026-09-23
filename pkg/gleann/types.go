@@ -98,9 +98,7 @@ func (m IndexMeta) IsMCPExposed() bool {
 // HasTag returns true if this index contains the specified tag (case-insensitive).
 func (m IndexMeta) HasTag(tag string) bool {
 	tag = strings.TrimSpace(strings.ToLower(tag))
-	if strings.HasPrefix(tag, "@") {
-		tag = strings.TrimPrefix(tag, "@")
-	}
+	tag = strings.TrimPrefix(tag, "@")
 	for _, t := range m.Tags {
 		if strings.EqualFold(strings.TrimSpace(t), tag) {
 			return true

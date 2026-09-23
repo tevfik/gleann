@@ -13,7 +13,6 @@ import (
 // This mirrors Python LEANN's LeannBuilder.
 type LeannBuilder struct {
 	config   Config
-	passages *PassageManager
 	backend  BackendBuilder
 	embedder EmbeddingComputer
 	chunker  Chunker

@@ -158,7 +158,7 @@ func benchHNSW(n, dim, numQueries, k, efSearch int) BenchResult {
 }
 
 func main() {
-	fmt.Println(fmt.Sprintf("%s", "================================================================="))
+	fmt.Println("=================================================================")
 	fmt.Println("  gleann-go Pure Go HNSW Benchmark")
 	fmt.Printf("  Go %s, GOMAXPROCS=%d\n", runtime.Version(), runtime.GOMAXPROCS(0))
 	fmt.Printf("  PID: %d\n", os.Getpid())

@@ -165,7 +165,7 @@ func TestDetectChangedFiles(t *testing.T) {
 
 	// Clean up deleted path
 	_ = tracker.RemovePath(ctx, f2)
-	changed, deleted, err = tracker.DetectChangedFiles(ctx, tmpDir, []string{f1, f3})
+	_, deleted, err = tracker.DetectChangedFiles(ctx, tmpDir, []string{f1, f3})
 	if err != nil {
 		t.Fatalf("DetectChangedFiles: %v", err)
 	}

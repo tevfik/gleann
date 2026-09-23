@@ -71,4 +71,8 @@ func (s *Server) handleMemoryTraverse(w http.ResponseWriter, _ *http.Request) {
 	writeError(w, http.StatusNotImplemented, "Memory Engine requires CGO (build with -tags treesitter)")
 }
 
-func (s *Server) stopMemoryPool(_ context.Context) {}
+func (s *Server) stopMemoryPool(_ context.Context) {
+	if s.memoryPool != nil {
+		s.memoryPool.closeAll()
+	}
+}

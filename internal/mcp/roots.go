@@ -37,9 +37,7 @@ func (s *Server) handleRootsListChanged(ctx context.Context, notification mcp.JS
 	primaryRoot := res.Roots[0].URI
 
 	// Convert file:///home/user/project to /home/user/project
-	if strings.HasPrefix(primaryRoot, "file://") {
-		primaryRoot = strings.TrimPrefix(primaryRoot, "file://")
-	}
+	primaryRoot = strings.TrimPrefix(primaryRoot, "file://")
 
 	rootMutex.Lock()
 	activeRoot = primaryRoot

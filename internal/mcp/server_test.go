@@ -175,7 +175,7 @@ func TestHandleList_EmptyIndexDir(t *testing.T) {
 	})
 
 	// Create a mock MCP request
-	result, err := srv.handleList(nil, createEmptyCallToolRequest())
+	result, err := srv.handleList(context.Background(), createEmptyCallToolRequest())
 	if err != nil {
 		t.Fatalf("handleList returned error: %v", err)
 	}
@@ -205,7 +205,7 @@ func TestHandleList_WithIndexes(t *testing.T) {
 		Version:           "test",
 	})
 
-	result, err := srv.handleList(nil, createEmptyCallToolRequest())
+	result, err := srv.handleList(context.Background(), createEmptyCallToolRequest())
 	if err != nil {
 		t.Fatalf("handleList returned error: %v", err)
 	}
@@ -341,7 +341,7 @@ func TestHandleReadFullDocument_Validation(t *testing.T) {
 	// 1. Invalid arguments format
 	reqBad := mcp.CallToolRequest{}
 	reqBad.Params.Arguments = "invalid-type"
-	res, err := srv.handleReadFullDocument(nil, reqBad)
+	res, err := srv.handleReadFullDocument(context.Background(), reqBad)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -355,7 +355,7 @@ func TestHandleReadFullDocument_Validation(t *testing.T) {
 		"index": "",
 		"vpath": "",
 	}
-	res2, err := srv.handleReadFullDocument(nil, reqMissing)
+	res2, err := srv.handleReadFullDocument(context.Background(), reqMissing)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -375,7 +375,7 @@ func TestHandleReadFullDocument_Validation(t *testing.T) {
 		"index": "nonexistent-index",
 		"vpath": testFilePath,
 	}
-	res3, err := srv.handleReadFullDocument(nil, reqFallback)
+	res3, err := srv.handleReadFullDocument(context.Background(), reqFallback)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -422,7 +422,7 @@ func TestHandleDocumentTOC_Validation(t *testing.T) {
 	// 1. Invalid arguments format
 	reqBad := mcp.CallToolRequest{}
 	reqBad.Params.Arguments = "invalid-type"
-	res, err := srv.handleDocumentTOC(nil, reqBad)
+	res, err := srv.handleDocumentTOC(context.Background(), reqBad)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -435,7 +435,7 @@ func TestHandleDocumentTOC_Validation(t *testing.T) {
 	reqMissing.Params.Arguments = map[string]interface{}{
 		"index": "",
 	}
-	res2, err := srv.handleDocumentTOC(nil, reqMissing)
+	res2, err := srv.handleDocumentTOC(context.Background(), reqMissing)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -493,7 +493,7 @@ func TestHandleSync(t *testing.T) {
 	// 1. Auto-resolves index and docs_dir when omitted
 	reqOmitted := mcp.CallToolRequest{}
 	reqOmitted.Params.Arguments = map[string]interface{}{}
-	res, err := srv.handleSync(nil, reqOmitted)
+	res, err := srv.handleSync(context.Background(), reqOmitted)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -512,7 +512,7 @@ func TestHandleSync(t *testing.T) {
 	reqNoDocsDir.Params.Arguments = map[string]interface{}{
 		"index": "auto-cwd-idx",
 	}
-	res, err = srv.handleSync(nil, reqNoDocsDir)
+	res, err = srv.handleSync(context.Background(), reqNoDocsDir)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -529,7 +529,7 @@ func TestHandleSync(t *testing.T) {
 		"index":    "new-auto-idx",
 		"docs_dir": "/tmp/new-repo",
 	}
-	res, err = srv.handleSync(nil, reqAutoBuild)
+	res, err = srv.handleSync(context.Background(), reqAutoBuild)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -562,7 +562,7 @@ func TestHandleSync(t *testing.T) {
 		"files": []interface{}{"file1.go", "file2.go"},
 		"mode":  "docs",
 	}
-	res, err = srv.handleSync(nil, reqValid)
+	res, err = srv.handleSync(context.Background(), reqValid)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -602,7 +602,7 @@ func TestHandleSync(t *testing.T) {
 	}
 
 	// First call should wait timeout and return in_progress
-	resSlow, err := srv.handleSync(nil, reqSlow)
+	resSlow, err := srv.handleSync(context.Background(), reqSlow)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -619,7 +619,7 @@ func TestHandleSync(t *testing.T) {
 	}
 
 	// Second concurrent call should return immediately with in_progress and NOT invoke syncRunner again
-	resConcurrent, err := srv.handleSync(nil, reqSlow)
+	resConcurrent, err := srv.handleSync(context.Background(), reqSlow)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -635,7 +635,7 @@ func TestHandleSync(t *testing.T) {
 
 	// Wait for background task to complete and unregister
 	for i := 0; i < 50; i++ {
-		resFinal, err := srv.handleSync(nil, reqSlow)
+		resFinal, err := srv.handleSync(context.Background(), reqSlow)
 		if err == nil && !resFinal.IsError {
 			var m map[string]any
 			tc := resFinal.Content[0].(mcp.TextContent).Text

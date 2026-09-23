@@ -50,7 +50,7 @@ func TestDedupeHeadings(t *testing.T) {
 }
 
 func TestDedupeEmptyAndSingle(t *testing.T) {
-	if got := dedupeFolders(nil); got != nil && len(got) != 0 {
+	if got := dedupeFolders(nil); len(got) != 0 {
 		t.Errorf("dedupeFolders(nil) = %v, want empty", got)
 	}
 	one := []kuzu.DocumentNode{{VPath: "only"}}

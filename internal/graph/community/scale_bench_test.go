@@ -111,7 +111,7 @@ func TestScaleBenchmarkReport(t *testing.T) {
 		_ = GenerateRepoMap(nodes, edges, rmCfg)
 		mapTime := time.Since(start)
 
-		riskStr := fmt.Sprintf("%s", riskTime)
+		riskStr := riskTime.String()
 		if s.nodes > 5000 {
 			riskStr = "skipped (O(n²))"
 		}

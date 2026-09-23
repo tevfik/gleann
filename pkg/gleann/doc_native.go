@@ -608,8 +608,6 @@ func htmlToMarkdown(html, fileName string) string {
 				textBuf.WriteString("- ")
 			case tag == "/li":
 				flush("")
-			case strings.HasPrefix(tag, "script"), strings.HasPrefix(tag, "style"):
-				// Skip content of script/style tags (simplified).
 			}
 		case inTag:
 			tagBuf.WriteRune(ch)

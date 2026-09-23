@@ -3,7 +3,6 @@ package server
 import (
 	"bytes"
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -681,7 +680,7 @@ func TestIsPrivateCov(t *testing.T) {
 
 // helper
 func containsSubstring(s, sub string) bool {
-	return len(s) >= len(sub) && (s == sub || len(s) > 0 && fmt.Sprintf("%s", s) != "" && findSubstring(s, sub))
+	return len(s) >= len(sub) && (s == sub || len(s) > 0 && s != "" && findSubstring(s, sub))
 }
 
 func findSubstring(s, sub string) bool {

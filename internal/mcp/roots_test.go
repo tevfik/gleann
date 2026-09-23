@@ -40,9 +40,7 @@ func TestHandleRootsListChanged_NoSession(t *testing.T) {
 func TestRootsDirectoryTransformation(t *testing.T) {
 	// A mock test just to verify path sanitization logic conceptually
 	primaryRoot := "file:///home/user/workspace/test-project"
-	if strings.HasPrefix(primaryRoot, "file://") {
-		primaryRoot = strings.TrimPrefix(primaryRoot, "file://")
-	}
+	primaryRoot = strings.TrimPrefix(primaryRoot, "file://")
 
 	if primaryRoot != "/home/user/workspace/test-project" {
 		t.Errorf("Expected stripped path, got %s", primaryRoot)
