@@ -297,6 +297,28 @@ func buildIndex(name, docsDir string, config gleann.Config, embedder gleann.Embe
 	return pluginDocs
 }
 
+func makeFileRecord(path string, info os.FileInfo, data []byte) *vault.FileRecord {
+	if info == nil {
+		return nil
+	}
+	var hash string
+	if len(data) > 0 {
+		h := sha256.Sum256(data)
+		hash = hex.EncodeToString(h[:])
+	} else {
+		h, err := vault.ComputeHash(path)
+		if err == nil {
+			hash = h
+		}
+	}
+	return &vault.FileRecord{
+		Hash:         hash,
+		Path:         path,
+		LastModified: info.ModTime().Unix(),
+		Size:         info.Size(),
+	}
+}
+
 func readDocuments(dir string, chunkSize, chunkOverlap int, tracker *vault.Tracker, mmProcessor *multimodal.Processor, mode IndexMode, noPlugins bool) ([]gleann.Item, []*PluginDoc, error) {
 	// Load plugins once and manage their lifecycles only when plugins are allowed
 	var pluginManager *gleann.PluginManager
@@ -331,8 +353,9 @@ func readDocuments(dir string, chunkSize, chunkOverlap int, tracker *vault.Track
 	}
 
 	type result struct {
-		items []gleann.Item
-		err   error
+		items  []gleann.Item
+		record *vault.FileRecord
+		err    error
 	}
 
 	jobCh := make(chan fileEntry, len(files))
@@ -395,7 +418,7 @@ func readDocuments(dir string, chunkSize, chunkOverlap int, tracker *vault.Track
 							})
 							pluginDocsMu.Unlock()
 
-							resCh <- result{items: items}
+							resCh <- result{items: items, record: makeFileRecord(fe.path, fe.info, data)}
 							continue
 						}
 					}
@@ -457,7 +480,7 @@ func readDocuments(dir string, chunkSize, chunkOverlap int, tracker *vault.Track
 							pluginDocsMu.Unlock()
 						}
 
-						resCh <- result{items: items}
+						resCh <- result{items: items, record: makeFileRecord(fe.path, fe.info, data)}
 						continue
 					}
 					// Fallback to native if AnalyzePDF fails
@@ -522,7 +545,7 @@ func readDocuments(dir string, chunkSize, chunkOverlap int, tracker *vault.Track
 						pluginDocsMu.Unlock()
 					}
 
-					resCh <- result{items: items}
+					resCh <- result{items: items, record: makeFileRecord(fe.path, fe.info, data)}
 					continue
 				}
 
@@ -531,7 +554,7 @@ func readDocuments(dir string, chunkSize, chunkOverlap int, tracker *vault.Track
 					mr := mmProcessor.ProcessFile(fe.path)
 					if mr.Error != nil {
 						fmt.Fprintf(os.Stderr, "Warning: multimodal processing failed for %s: %v\n", filepath.Base(fe.path), mr.Error)
-						resCh <- result{}
+						resCh <- result{record: makeFileRecord(fe.path, fe.info, data)}
 						continue
 					}
 					if desc := strings.TrimSpace(mr.Description); desc != "" {
@@ -552,9 +575,9 @@ func readDocuments(dir string, chunkSize, chunkOverlap int, tracker *vault.Track
 							},
 						}}
 						fmt.Printf("🎨 Multimodal: %s → %d chars\n", filepath.Base(fe.path), len(desc))
-						resCh <- result{items: items}
+						resCh <- result{items: items, record: makeFileRecord(fe.path, fe.info, data)}
 					} else {
-						resCh <- result{}
+						resCh <- result{record: makeFileRecord(fe.path, fe.info, data)}
 					}
 					continue
 				}
@@ -562,7 +585,7 @@ func readDocuments(dir string, chunkSize, chunkOverlap int, tracker *vault.Track
 				if data == nil {
 					data, err = os.ReadFile(fe.path)
 					if err != nil {
-						resCh <- result{err: nil} // skip unreadable
+						resCh <- result{err: nil, record: makeFileRecord(fe.path, fe.info, nil)} // skip unreadable
 						continue
 					}
 				}
@@ -573,13 +596,13 @@ func readDocuments(dir string, chunkSize, chunkOverlap int, tracker *vault.Track
 					check = check[:512]
 				}
 				if bytes.ContainsRune(check, 0) {
-					resCh <- result{}
+					resCh <- result{record: makeFileRecord(fe.path, fe.info, data)}
 					continue
 				}
 
 				text := string(data)
 				if len(strings.TrimSpace(text)) == 0 {
-					resCh <- result{}
+					resCh <- result{record: makeFileRecord(fe.path, fe.info, data)}
 					continue
 				}
 
@@ -589,9 +612,7 @@ func readDocuments(dir string, chunkSize, chunkOverlap int, tracker *vault.Track
 				if tracker != nil {
 					h := sha256.Sum256(data)
 					hash := hex.EncodeToString(h[:])
-					if err := tracker.UpsertRecord(context.Background(), hash, fe.path, fe.info.ModTime().Unix(), fe.info.Size()); err == nil {
-						metadata["hash"] = hash
-					}
+					metadata["hash"] = hash
 				}
 
 				var rawChunks []chunking.Chunk
@@ -621,7 +642,7 @@ func readDocuments(dir string, chunkSize, chunkOverlap int, tracker *vault.Track
 							pluginDocsMu.Unlock()
 						}
 
-						resCh <- result{items: items}
+						resCh <- result{items: items, record: makeFileRecord(fe.path, fe.info, data)}
 						continue
 					}
 					// No headings found — fall through to code/sentence chunking.
@@ -640,7 +661,7 @@ func readDocuments(dir string, chunkSize, chunkOverlap int, tracker *vault.Track
 						Metadata: rc.Metadata,
 					})
 				}
-				resCh <- result{items: chunks}
+				resCh <- result{items: chunks, record: makeFileRecord(fe.path, fe.info, data)}
 			}
 		}()
 	}
@@ -653,9 +674,17 @@ func readDocuments(dir string, chunkSize, chunkOverlap int, tracker *vault.Track
 
 	// Collect results.
 	var allItems []gleann.Item
+	var records []vault.FileRecord
 	for range files {
 		r := <-resCh
 		allItems = append(allItems, r.items...)
+		if r.record != nil && r.record.Hash != "" {
+			records = append(records, *r.record)
+		}
+	}
+
+	if tracker != nil && len(records) > 0 {
+		_ = tracker.BatchUpsertRecords(context.Background(), records)
 	}
 
 	return allItems, pluginDocs, nil
@@ -713,6 +742,12 @@ func collectEligibleFiles(dir string, pluginManager *gleann.PluginManager, nativ
 		if ignoreMatcher.Match(relPath, false) {
 			return nil
 		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			target, err := os.Stat(path)
+			if err != nil || target.IsDir() {
+				return nil // Skip dangling symlinks and symlinks to directories
+			}
+		}
 
 		ext := strings.ToLower(filepath.Ext(path))
 
@@ -753,9 +788,9 @@ func collectEligibleFiles(dir string, pluginManager *gleann.PluginManager, nativ
 // readDocumentsForFiles reads and chunks only the specified files.
 // This is used for incremental indexing in watch mode where only changed files
 // need processing — much faster than re-reading the entire directory.
-func readDocumentsForFiles(dir string, filePaths []string, chunkSize, chunkOverlap int, tracker *vault.Tracker, mmProcessor *multimodal.Processor, mode IndexMode, noPlugins bool) ([]gleann.Item, []*PluginDoc, error) {
+func readDocumentsForFiles(dir string, filePaths []string, chunkSize, chunkOverlap int, tracker *vault.Tracker, mmProcessor *multimodal.Processor, mode IndexMode, noPlugins bool) ([]gleann.Item, []*PluginDoc, []vault.FileRecord, error) {
 	if len(filePaths) == 0 {
-		return nil, nil, nil
+		return nil, nil, nil, nil
 	}
 
 	var pluginManager *gleann.PluginManager
@@ -775,6 +810,7 @@ func readDocumentsForFiles(dir string, filePaths []string, chunkSize, chunkOverl
 
 	var allItems []gleann.Item
 	var pluginDocs []*PluginDoc
+	var records []vault.FileRecord
 
 	for _, filePath := range filePaths {
 		info, err := os.Stat(filePath)
@@ -798,13 +834,22 @@ func readDocumentsForFiles(dir string, filePaths []string, chunkSize, chunkOverl
 		switch mode {
 		case IndexModeCode:
 			if isOfficeDocExtension(ext) || binaryExts[ext] {
+				if rec := makeFileRecord(filePath, info, nil); rec != nil && rec.Hash != "" {
+					records = append(records, *rec)
+				}
 				continue
 			}
 			if !isCodeExtension(ext) && !isDocumentationExtension(ext) {
+				if rec := makeFileRecord(filePath, info, nil); rec != nil && rec.Hash != "" {
+					records = append(records, *rec)
+				}
 				continue
 			}
 		case IndexModeDocs:
 			if !isOfficeDocExtension(ext) && !isDocumentationExtension(ext) {
+				if rec := makeFileRecord(filePath, info, nil); rec != nil && rec.Hash != "" {
+					records = append(records, *rec)
+				}
 				continue
 			}
 		}
@@ -824,6 +869,9 @@ func readDocumentsForFiles(dir string, filePaths []string, chunkSize, chunkOverl
 						allItems = append(allItems, gleann.Item{Text: ch.Text, Metadata: ch.Metadata})
 					}
 					pluginDocs = append(pluginDocs, &PluginDoc{Result: pResult, SourcePath: relPath})
+					if rec := makeFileRecord(filePath, info, nil); rec != nil && rec.Hash != "" {
+						records = append(records, *rec)
+					}
 					continue
 				}
 			}
@@ -880,6 +928,9 @@ func readDocumentsForFiles(dir string, filePaths []string, chunkSize, chunkOverl
 						SourcePath: relPath,
 					})
 				}
+				if rec := makeFileRecord(filePath, info, nil); rec != nil && rec.Hash != "" {
+					records = append(records, *rec)
+				}
 				continue
 			}
 			fmt.Fprintf(os.Stderr, "Warning: incremental vision extraction failed for %s, falling back to native text: %v\n", filepath.Base(filePath), perr)
@@ -921,6 +972,9 @@ func readDocumentsForFiles(dir string, filePaths []string, chunkSize, chunkOverl
 					}
 				}
 			}
+			if rec := makeFileRecord(filePath, info, nil); rec != nil && rec.Hash != "" {
+				records = append(records, *rec)
+			}
 			continue
 		}
 
@@ -942,6 +996,9 @@ func readDocumentsForFiles(dir string, filePaths []string, chunkSize, chunkOverl
 					})
 				}
 			}
+			if rec := makeFileRecord(filePath, info, nil); rec != nil && rec.Hash != "" {
+				records = append(records, *rec)
+			}
 			continue
 		}
 
@@ -955,22 +1012,26 @@ func readDocumentsForFiles(dir string, filePaths []string, chunkSize, chunkOverl
 			check = check[:512]
 		}
 		if bytes.ContainsRune(check, 0) {
+			if rec := makeFileRecord(filePath, info, data); rec != nil && rec.Hash != "" {
+				records = append(records, *rec)
+			}
 			continue
 		}
 
 		text := string(data)
 		if len(strings.TrimSpace(text)) == 0 {
+			if rec := makeFileRecord(filePath, info, data); rec != nil && rec.Hash != "" {
+				records = append(records, *rec)
+			}
 			continue
 		}
 
 		metadata := map[string]any{"source": relPath}
 
-		if tracker != nil {
-			h := sha256.Sum256(data)
-			hash := hex.EncodeToString(h[:])
-			if err := tracker.UpsertRecord(context.Background(), hash, filePath, info.ModTime().Unix(), info.Size()); err == nil {
-				metadata["hash"] = hash
-			}
+		rec := makeFileRecord(filePath, info, data)
+		if rec != nil && rec.Hash != "" {
+			metadata["hash"] = rec.Hash
+			records = append(records, *rec)
 		}
 
 		// Markdown files get heading-aware chunking.
@@ -1002,7 +1063,7 @@ func readDocumentsForFiles(dir string, filePaths []string, chunkSize, chunkOverl
 		}
 	}
 
-	return allItems, pluginDocs, nil
+	return allItems, pluginDocs, records, nil
 }
 
 // incrementalBuildIndex attempts to incrementally update the index for changed files.
@@ -1027,11 +1088,18 @@ func incrementalBuildIndex(name, docsDir string, changedFiles []string, config g
 
 	// Read and chunk only the changed files.
 	mmProcessor := initMultimodalProcessor(config.OllamaHost, config.MultimodalModel)
-	items, pluginDocs, err := readDocumentsForFiles(docsDir, existingFiles,
+	items, pluginDocs, records, err := readDocumentsForFiles(docsDir, existingFiles,
 		config.ChunkConfig.ChunkSize, config.ChunkConfig.ChunkOverlap, tracker, mmProcessor, mode, noPlugins)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "incremental: error reading changed files: %v\n", err)
 		return nil, false
+	}
+
+	if len(items) == 0 && len(removeSources) == 0 {
+		if tracker != nil && len(records) > 0 {
+			_ = tracker.BatchUpsertRecords(context.Background(), records)
+		}
+		return pluginDocs, true
 	}
 
 	builder, err := gleann.NewBuilder(config, embedder)
@@ -1045,6 +1113,10 @@ func incrementalBuildIndex(name, docsDir string, changedFiles []string, config g
 		// UpdateIndex may fail if backend doesn't support removal (e.g., FAISS).
 		fmt.Fprintf(os.Stderr, "incremental update failed (%v), falling back to full rebuild\n", err)
 		return nil, false
+	}
+
+	if tracker != nil && len(records) > 0 {
+		_ = tracker.BatchUpsertRecords(ctx, records)
 	}
 
 	return pluginDocs, true
@@ -1242,6 +1314,119 @@ func initMultimodalProcessor(ollamaHost, flagModel string) *multimodal.Processor
 	return p
 }
 
+// bootstrapTrackerFromIndex populates vault.db with all files that already exist in the index or were present before the index was created.
+// This prevents existing large indexes from being treated as completely unindexed when tracker state is missing or out of sync.
+func bootstrapTrackerFromIndex(ctx context.Context, tracker *vault.Tracker, docsDir, basePath string, eligiblePaths []string, indexTime time.Time) {
+	sources := make(map[string]bool)
+
+	// Step 1: Collect sources from passages.db if present.
+	passagesPath := basePath + ".passages.db"
+	if _, err := os.Stat(passagesPath); err == nil {
+		pm := gleann.NewReadOnlyPassageManager(basePath)
+		if err := pm.Load(); err == nil {
+			_ = pm.ForEachPassage(func(p gleann.Passage) error {
+				if src, ok := p.Metadata["source"].(string); ok && src != "" {
+					sources[src] = true
+				}
+				return nil
+			})
+			pm.Close()
+		}
+	}
+
+	// Step 2: Identify missing files that were already present when the index was built.
+	var missingPaths []string
+	for src := range sources {
+		fullPath := src
+		if !filepath.IsAbs(fullPath) {
+			fullPath = filepath.Join(docsDir, src)
+		}
+		if rec, _ := tracker.GetRecordByPath(ctx, fullPath); rec == nil {
+			missingPaths = append(missingPaths, fullPath)
+		}
+	}
+
+	if !indexTime.IsZero() {
+		for _, path := range eligiblePaths {
+			if rec, _ := tracker.GetRecordByPath(ctx, path); rec == nil {
+				if info, err := os.Stat(path); err == nil && !info.IsDir() {
+					if info.ModTime().Before(indexTime) || info.ModTime().Equal(indexTime) {
+						missingPaths = append(missingPaths, path)
+					}
+				}
+			}
+		}
+	}
+
+	if len(missingPaths) == 0 {
+		return
+	}
+
+	// De-duplicate missingPaths
+	pathMap := make(map[string]bool, len(missingPaths))
+	var uniquePaths []string
+	for _, p := range missingPaths {
+		if !pathMap[p] {
+			pathMap[p] = true
+			uniquePaths = append(uniquePaths, p)
+		}
+	}
+
+	fmt.Printf("🔍 Synchronizing file tracker with %d existing file(s)...\n", len(uniquePaths))
+	start := time.Now()
+
+	type statRes struct {
+		rec *vault.FileRecord
+	}
+	jobs := make(chan string, len(uniquePaths))
+	results := make(chan statRes, len(uniquePaths))
+
+	nWorkers := runtime.NumCPU()
+	if nWorkers > 16 {
+		nWorkers = 16
+	}
+	if nWorkers < 1 {
+		nWorkers = 1
+	}
+
+	var wg sync.WaitGroup
+	for i := 0; i < nWorkers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for path := range jobs {
+				info, err := os.Stat(path)
+				if err != nil || info.IsDir() {
+					results <- statRes{rec: nil}
+					continue
+				}
+				rec := makeFileRecord(path, info, nil)
+				results <- statRes{rec: rec}
+			}
+		}()
+	}
+
+	for _, p := range uniquePaths {
+		jobs <- p
+	}
+	close(jobs)
+
+	wg.Wait()
+	close(results)
+
+	var records []vault.FileRecord
+	for res := range results {
+		if res.rec != nil && res.rec.Hash != "" {
+			records = append(records, *res.rec)
+		}
+	}
+
+	if len(records) > 0 {
+		_ = tracker.BatchUpsertRecords(ctx, records)
+		fmt.Printf("✅ Tracker synchronized with %d existing file(s) in %s\n", len(records), time.Since(start).Round(time.Millisecond))
+	}
+}
+
 // cmdSync performs an on-demand incremental synchronization of an index.
 // It checks which files have been modified, added, or deleted in the workspace,
 // updating both the vector index and the AST code graph.
@@ -1375,6 +1560,13 @@ func cmdSync(args []string) {
 
 		if tracker != nil {
 			ctx := context.Background()
+			basePath := filepath.Join(config.IndexDir, name, name)
+			indexTime := meta.UpdatedAt
+			if indexTime.IsZero() {
+				indexTime = meta.CreatedAt
+			}
+			bootstrapTrackerFromIndex(ctx, tracker, absDocsDir, basePath, eligiblePaths, indexTime)
+
 			cFiles, dFiles, dErr := tracker.DetectChangedFiles(ctx, absDocsDir, eligiblePaths)
 			if dErr != nil {
 				fmt.Fprintf(os.Stderr, "warning: change detection failed (%v), checking all files\n", dErr)
@@ -1413,11 +1605,10 @@ func cmdSync(args []string) {
 	}
 
 	fmt.Printf("📦 Detected %d changed/new file(s) and %d deleted file(s)\n", len(changedFiles), len(deletedFiles))
-
-	if tracker != nil && len(deletedFiles) > 0 {
-		ctx := context.Background()
-		for _, df := range deletedFiles {
-			_ = tracker.RemovePath(ctx, df)
+	if len(changedFiles) > 0 && len(changedFiles) <= 5 {
+		for _, cf := range changedFiles {
+			rel, _ := filepath.Rel(absDocsDir, cf)
+			fmt.Printf("  ↳ %s\n", rel)
 		}
 	}
 
@@ -1425,12 +1616,20 @@ func cmdSync(args []string) {
 	if !ok {
 		fmt.Println("⚠️  Incremental vector update not supported or failed, running full rebuild...")
 		pDocs = buildIndex(name, absDocsDir, config, cachedEmbedder, tracker, mode, noPlugins)
+		if buildGraph {
+			buildGraphIndex(name, absDocsDir, config.IndexDir, pDocs, nil)
+		}
 	} else {
 		fmt.Printf("⚡ Vector index updated in %s\n", time.Since(start).Round(time.Millisecond))
-	}
-
-	if buildGraph {
-		buildGraphIndex(name, absDocsDir, config.IndexDir, pDocs, allChanged)
+		if tracker != nil && len(deletedFiles) > 0 {
+			ctx := context.Background()
+			for _, f := range deletedFiles {
+				_ = tracker.RemovePath(ctx, f)
+			}
+		}
+		if buildGraph {
+			buildGraphIndex(name, absDocsDir, config.IndexDir, pDocs, allChanged)
+		}
 	}
 
 	_ = gleann.UpdateIndexMeta(config.IndexDir, name, func(m *gleann.IndexMeta) {

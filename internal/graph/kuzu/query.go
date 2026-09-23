@@ -33,14 +33,30 @@ func consumeCallees(res *gokuzu.QueryResult) ([]gleann.Callee, error) {
 	return out, nil
 }
 
-// Callees returns all symbols directly called by the given symbol FQN.
+// Callees returns all symbols directly called by the given symbol FQN or name.
 func (g *DB) Callees(callerFQN string) ([]gleann.Callee, error) {
+	clean := strings.TrimSpace(callerFQN)
+	parts := strings.FieldsFunc(clean, func(r rune) bool {
+		return r == ':' || r == '.' || r == '/'
+	})
+	baseName := clean
+	if len(parts) > 0 {
+		baseName = parts[len(parts)-1]
+	}
+
 	cypher := fmt.Sprintf(
-		`MATCH (a:Symbol {fqn: %q})-[:CALLS]->(b:Symbol)
-         RETURN b.fqn AS fqn, b.name AS name, b.kind AS kind`,
-		callerFQN,
+		`MATCH (a:Symbol)-[:CALLS]->(b:Symbol)
+         WHERE a.fqn = %q OR a.name = %q OR a.name = %q OR a.fqn ENDS WITH %q OR a.fqn ENDS WITH %q
+         RETURN DISTINCT b.fqn AS fqn, b.name AS name, b.kind AS kind`,
+		clean, clean, baseName, "::"+clean, "."+clean,
 	)
-	res, err := g.conn.Query(cypher)
+	conn, err := g.NewConn()
+	if err != nil {
+		return nil, err
+	}
+	defer conn.Close()
+
+	res, err := conn.Query(cypher)
 	if err != nil {
 		return nil, err
 	}
@@ -48,14 +64,30 @@ func (g *DB) Callees(callerFQN string) ([]gleann.Callee, error) {
 	return consumeCallees(res)
 }
 
-// Callers returns all symbols that call the given FQN.
+// Callers returns all symbols that call the given FQN or name.
 func (g *DB) Callers(calleeFQN string) ([]gleann.Callee, error) {
+	clean := strings.TrimSpace(calleeFQN)
+	parts := strings.FieldsFunc(clean, func(r rune) bool {
+		return r == ':' || r == '.' || r == '/'
+	})
+	baseName := clean
+	if len(parts) > 0 {
+		baseName = parts[len(parts)-1]
+	}
+
 	cypher := fmt.Sprintf(
-		`MATCH (a:Symbol)-[:CALLS]->(b:Symbol {fqn: %q})
-         RETURN a.fqn AS fqn, a.name AS name, a.kind AS kind`,
-		calleeFQN,
+		`MATCH (a:Symbol)-[:CALLS]->(b:Symbol)
+         WHERE b.fqn = %q OR b.name = %q OR b.name = %q OR b.fqn ENDS WITH %q OR b.fqn ENDS WITH %q
+         RETURN DISTINCT a.fqn AS fqn, a.name AS name, a.kind AS kind`,
+		clean, clean, baseName, "::"+clean, "."+clean,
 	)
-	res, err := g.conn.Query(cypher)
+	conn, err := g.NewConn()
+	if err != nil {
+		return nil, err
+	}
+	defer conn.Close()
+
+	res, err := conn.Query(cypher)
 	if err != nil {
 		return nil, err
 	}
@@ -70,7 +102,13 @@ func (g *DB) SymbolsInFile(filePath string) ([]gleann.Callee, error) {
          RETURN s.fqn AS fqn, s.name AS name, s.kind AS kind`,
 		filePath,
 	)
-	res, err := g.conn.Query(cypher)
+	conn, err := g.NewConn()
+	if err != nil {
+		return nil, err
+	}
+	defer conn.Close()
+
+	res, err := conn.Query(cypher)
 	if err != nil {
 		return nil, err
 	}
@@ -89,7 +127,13 @@ func (g *DB) SymbolsInFileDetailed(filePath string) ([]gleann.SymbolInfo, error)
                 s.name AS name, s.line AS line, s.weight AS weight`,
 		filePath,
 	)
-	res, err := g.conn.Query(cypher)
+	conn, err := g.NewConn()
+	if err != nil {
+		return nil, err
+	}
+	defer conn.Close()
+
+	res, err := conn.Query(cypher)
 	if err != nil {
 		return nil, err
 	}
@@ -134,9 +178,11 @@ func (g *DB) DocumentSymbols(docPath string) ([]gleann.SymbolInfo, error) {
 	defer conn.Close()
 
 	cypher := fmt.Sprintf(`
-		MATCH (d:Document {path: "%s"})-[:HAS_SECTION]->(sec:Section)-[:HAS_CHUNK]->(c:DocChunk)-[:EXPLAINS]->(sym:Symbol)
-		RETURN sym.fqn AS fqn, sym.kind AS kind, sym.file AS file, sym.name AS name
-	`, docPath)
+		MATCH (d:Document)
+		WHERE d.vpath = "%s" OR d.rpath = "%s" OR d.vpath ENDS WITH "%s" OR d.rpath ENDS WITH "%s"
+		MATCH (d)-[:HAS_CHUNK_DOC]->(c:Chunk)-[:EXPLAINS]->(sym:Symbol)
+		RETURN DISTINCT sym.fqn AS fqn, sym.kind AS kind, sym.file AS file, sym.name AS name
+	`, docPath, docPath, docPath, docPath)
 
 	res, err := conn.Query(cypher)
 	if err != nil {
@@ -176,7 +222,13 @@ func (g *DB) DocumentContext(path string) (*gleann.DocumentContextData, error) {
 		       coalesce(d.summary, "") AS summary, coalesce(f.name, "") AS folder
 	`, path, path)
 
-	res, err := g.conn.Query(cypher)
+	conn, err := g.NewConn()
+	if err != nil {
+		return nil, fmt.Errorf("error opening graph connection: %w", err)
+	}
+	defer conn.Close()
+
+	res, err := conn.Query(cypher)
 	if err != nil {
 		return nil, fmt.Errorf("DocumentContext query: %w", err)
 	}
@@ -205,7 +257,7 @@ func (g *DB) DocumentContext(path string) (*gleann.DocumentContextData, error) {
 	`, path, path)
 
 	var headings []string
-	if hres, err := g.conn.Query(headingCypher); err == nil {
+	if hres, err := conn.Query(headingCypher); err == nil {
 		defer hres.Close()
 		for hres.HasNext() {
 			if hrow, err := hres.Next(); err == nil {
@@ -259,7 +311,13 @@ func (g *DB) DocumentTOC(path string) (*gleann.DocumentTOCInfo, error) {
 		       coalesce(d.summary, "") AS summary, coalesce(f.name, "") AS folder
 	`, path, path)
 
-	res, err := g.conn.Query(cypher)
+	conn, err := g.NewConn()
+	if err != nil {
+		return nil, fmt.Errorf("error opening graph connection: %w", err)
+	}
+	defer conn.Close()
+
+	res, err := conn.Query(cypher)
 	if err != nil {
 		return nil, fmt.Errorf("DocumentTOC document query: %w", err)
 	}
@@ -294,7 +352,7 @@ func (g *DB) DocumentTOC(path string) (*gleann.DocumentTOCInfo, error) {
 		RETURN h.id AS id, h.name AS name, h.level AS level
 	`, path, path)
 
-	hres, err := g.conn.Query(headingsCypher)
+	hres, err := conn.Query(headingsCypher)
 	if err != nil {
 		return nil, fmt.Errorf("DocumentTOC headings query: %w", err)
 	}
@@ -333,7 +391,7 @@ func (g *DB) DocumentTOC(path string) (*gleann.DocumentTOCInfo, error) {
 		MATCH (p:Heading)-[:CHILD_HEADING]->(c:Heading)
 		RETURN p.id AS parent_id, c.id AS child_id
 	`
-	cres, err := g.conn.Query(childCypher)
+	cres, err := conn.Query(childCypher)
 	parentSet := make(map[string]bool)
 	if err == nil {
 		defer cres.Close()
@@ -391,7 +449,13 @@ func (g *DB) ListDocuments() ([]gleann.DocumentTOCInfo, error) {
 		       count(h) AS heading_count
 		ORDER BY vpath ASC
 	`
-	res, err := g.conn.Query(cypher)
+	conn, err := g.NewConn()
+	if err != nil {
+		return nil, fmt.Errorf("error opening graph connection: %w", err)
+	}
+	defer conn.Close()
+
+	res, err := conn.Query(cypher)
 	if err != nil {
 		return nil, fmt.Errorf("ListDocuments query: %w", err)
 	}
@@ -459,7 +523,13 @@ func (g *DB) FullDocument(path string) (string, error) {
 		ORDER BY c.start_char ASC
 	`, path, path)
 
-	res, err := g.conn.Query(cypher)
+	conn, err := g.NewConn()
+	if err != nil {
+		return "", fmt.Errorf("error opening graph connection: %w", err)
+	}
+	defer conn.Close()
+
+	res, err := conn.Query(cypher)
 	if err != nil {
 		return "", fmt.Errorf("FullDocument query: %w", err)
 	}
@@ -541,12 +611,18 @@ func (g *DB) Impact(fqn string, maxDepth int) (*gleann.ImpactResult, error) {
 	// Step 3: Collect affected files from all affected symbols.
 	fileSet := make(map[string]bool)
 	allAffected := append(result.DirectCallers, result.TransitiveCallers...)
+	conn, err := g.NewConn()
+	if err != nil {
+		return nil, fmt.Errorf("error opening graph connection: %w", err)
+	}
+	defer conn.Close()
+
 	for _, sym := range allAffected {
 		cypher := fmt.Sprintf(
 			`MATCH (f:CodeFile)-[:DECLARES]->(s:Symbol {fqn: %q}) RETURN f.path AS path`,
 			sym,
 		)
-		res, err := g.conn.Query(cypher)
+		res, err := conn.Query(cypher)
 		if err != nil {
 			continue
 		}
@@ -586,6 +662,12 @@ func (g *DB) Neighbors(fqn string, maxDepth int) ([]gleann.GraphEdge, error) {
 	visited := map[string]bool{fqn: true}
 	frontier := []string{fqn}
 
+	conn, err := g.NewConn()
+	if err != nil {
+		return nil, err
+	}
+	defer conn.Close()
+
 	for depth := 0; depth < maxDepth && len(frontier) > 0; depth++ {
 		var nextFrontier []string
 		for _, node := range frontier {
@@ -594,7 +676,7 @@ func (g *DB) Neighbors(fqn string, maxDepth int) ([]gleann.GraphEdge, error) {
 				`MATCH (a:Symbol {fqn: %q})-[:CALLS]->(b:Symbol) RETURN b.fqn AS fqn, b.name AS name, b.kind AS kind`,
 				node,
 			)
-			if res, err := g.conn.Query(cypher); err == nil {
+			if res, err := conn.Query(cypher); err == nil {
 				for res.HasNext() {
 					row, _ := res.Next()
 					m, _ := row.GetAsMap()
@@ -616,7 +698,7 @@ func (g *DB) Neighbors(fqn string, maxDepth int) ([]gleann.GraphEdge, error) {
 				`MATCH (a:Symbol)-[:CALLS]->(b:Symbol {fqn: %q}) RETURN a.fqn AS fqn, a.name AS name, a.kind AS kind`,
 				node,
 			)
-			if res, err := g.conn.Query(cypher); err == nil {
+			if res, err := conn.Query(cypher); err == nil {
 				for res.HasNext() {
 					row, _ := res.Next()
 					m, _ := row.GetAsMap()
@@ -638,7 +720,7 @@ func (g *DB) Neighbors(fqn string, maxDepth int) ([]gleann.GraphEdge, error) {
 				`MATCH (a:Symbol {fqn: %q})-[:IMPLEMENTS]->(b:Symbol) RETURN b.fqn AS fqn, b.name AS name, b.kind AS kind`,
 				node,
 			)
-			if res, err := g.conn.Query(cypher); err == nil {
+			if res, err := conn.Query(cypher); err == nil {
 				for res.HasNext() {
 					row, _ := res.Next()
 					m, _ := row.GetAsMap()
@@ -660,7 +742,7 @@ func (g *DB) Neighbors(fqn string, maxDepth int) ([]gleann.GraphEdge, error) {
 				`MATCH (a:Symbol {fqn: %q})-[:REFERENCES]->(b:Symbol) RETURN b.fqn AS fqn, b.name AS name, b.kind AS kind`,
 				node,
 			)
-			if res, err := g.conn.Query(cypher); err == nil {
+			if res, err := conn.Query(cypher); err == nil {
 				for res.HasNext() {
 					row, _ := res.Next()
 					m, _ := row.GetAsMap()
@@ -695,6 +777,12 @@ func (g *DB) ShortestPath(fromFQN, toFQN string) ([]gleann.PathStep, error) {
 	queue := []bfsNode{{fqn: fromFQN}}
 	parents := map[string]bfsNode{fromFQN: {fqn: fromFQN}}
 
+	conn, err := g.NewConn()
+	if err != nil {
+		return nil, err
+	}
+	defer conn.Close()
+
 	for len(queue) > 0 && len(visited) < 1000 {
 		current := queue[0]
 		queue = queue[1:]
@@ -718,7 +806,7 @@ func (g *DB) ShortestPath(fromFQN, toFQN string) ([]gleann.PathStep, error) {
 			`MATCH (a:Symbol {fqn: %q})-[:CALLS]->(b:Symbol) RETURN b.fqn AS fqn`,
 			current.fqn,
 		)
-		if res, err := g.conn.Query(cypher); err == nil {
+		if res, err := conn.Query(cypher); err == nil {
 			for res.HasNext() {
 				row, _ := res.Next()
 				m, _ := row.GetAsMap()
@@ -737,7 +825,7 @@ func (g *DB) ShortestPath(fromFQN, toFQN string) ([]gleann.PathStep, error) {
 			`MATCH (a:Symbol)-[:CALLS]->(b:Symbol {fqn: %q}) RETURN a.fqn AS fqn`,
 			current.fqn,
 		)
-		if res, err := g.conn.Query(cypher); err == nil {
+		if res, err := conn.Query(cypher); err == nil {
 			for res.HasNext() {
 				row, _ := res.Next()
 				m, _ := row.GetAsMap()
@@ -756,7 +844,7 @@ func (g *DB) ShortestPath(fromFQN, toFQN string) ([]gleann.PathStep, error) {
 			`MATCH (a:Symbol {fqn: %q})-[:IMPLEMENTS]->(b:Symbol) RETURN b.fqn AS fqn`,
 			current.fqn,
 		)
-		if res, err := g.conn.Query(cypher); err == nil {
+		if res, err := conn.Query(cypher); err == nil {
 			for res.HasNext() {
 				row, _ := res.Next()
 				m, _ := row.GetAsMap()
@@ -783,7 +871,12 @@ func (g *DB) SymbolSearch(pattern string) ([]gleann.Callee, error) {
 		 LIMIT 50`,
 		strings.ToLower(pattern), strings.ToLower(pattern),
 	)
-	res, err := g.conn.Query(cypher)
+	conn, err := g.NewConn()
+	if err != nil {
+		return nil, err
+	}
+	defer conn.Close()
+	res, err := conn.Query(cypher)
 	if err != nil {
 		return nil, err
 	}
@@ -795,8 +888,14 @@ func (g *DB) SymbolSearch(pattern string) ([]gleann.Callee, error) {
 func (g *DB) Stats() (*gleann.GraphStats, error) {
 	stats := &gleann.GraphStats{}
 
+	conn, err := g.NewConn()
+	if err != nil {
+		return nil, err
+	}
+	defer conn.Close()
+
 	// Count files
-	if res, err := g.conn.Query(`MATCH (f:CodeFile) RETURN count(f) AS cnt`); err == nil {
+	if res, err := conn.Query(`MATCH (f:CodeFile) RETURN count(f) AS cnt`); err == nil {
 		if res.HasNext() {
 			row, _ := res.Next()
 			m, _ := row.GetAsMap()
@@ -806,7 +905,7 @@ func (g *DB) Stats() (*gleann.GraphStats, error) {
 	}
 
 	// Count symbols
-	if res, err := g.conn.Query(`MATCH (s:Symbol) RETURN count(s) AS cnt`); err == nil {
+	if res, err := conn.Query(`MATCH (s:Symbol) RETURN count(s) AS cnt`); err == nil {
 		if res.HasNext() {
 			row, _ := res.Next()
 			m, _ := row.GetAsMap()
@@ -816,7 +915,7 @@ func (g *DB) Stats() (*gleann.GraphStats, error) {
 	}
 
 	// Count CALLS edges
-	if res, err := g.conn.Query(`MATCH ()-[r:CALLS]->() RETURN count(r) AS cnt`); err == nil {
+	if res, err := conn.Query(`MATCH ()-[r:CALLS]->() RETURN count(r) AS cnt`); err == nil {
 		if res.HasNext() {
 			row, _ := res.Next()
 			m, _ := row.GetAsMap()
@@ -826,7 +925,7 @@ func (g *DB) Stats() (*gleann.GraphStats, error) {
 	}
 
 	// Count DECLARES edges
-	if res, err := g.conn.Query(`MATCH ()-[r:DECLARES]->() RETURN count(r) AS cnt`); err == nil {
+	if res, err := conn.Query(`MATCH ()-[r:DECLARES]->() RETURN count(r) AS cnt`); err == nil {
 		if res.HasNext() {
 			row, _ := res.Next()
 			m, _ := row.GetAsMap()
@@ -836,7 +935,7 @@ func (g *DB) Stats() (*gleann.GraphStats, error) {
 	}
 
 	// Count IMPLEMENTS edges
-	if res, err := g.conn.Query(`MATCH ()-[r:IMPLEMENTS]->() RETURN count(r) AS cnt`); err == nil {
+	if res, err := conn.Query(`MATCH ()-[r:IMPLEMENTS]->() RETURN count(r) AS cnt`); err == nil {
 		if res.HasNext() {
 			row, _ := res.Next()
 			m, _ := row.GetAsMap()

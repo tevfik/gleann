@@ -238,3 +238,16 @@ vet:
 		docker run --rm -v $$(pwd):/app -w /app golang:1.25-alpine go vet ./...; \
 	fi
 	@echo "✅ go vet passed"
+
+# ── Lint / Vulnerability Scan ──────────────────────────────────────────────
+.PHONY: lint
+lint:
+	@command -v staticcheck >/dev/null 2>&1 || { echo "installing staticcheck..."; go install honnef.co/go/tools/cmd/staticcheck@latest; }
+	@command -v govulncheck >/dev/null 2>&1 || { echo "installing govulncheck..."; go install golang.org/x/vuln/cmd/govulncheck@latest; }
+	@echo "── staticcheck ──"
+	staticcheck ./...
+	@echo "── govulncheck ──"
+	govulncheck ./...
+	@echo "── go mod tidy -diff ──"
+	go mod tidy -diff
+	@echo "✅ lint passed"

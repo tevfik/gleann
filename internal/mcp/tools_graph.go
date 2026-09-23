@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 
@@ -204,7 +205,10 @@ func (s *Server) handleRiskAnalysis(ctx context.Context, request mcpsdk.CallTool
 
 	indexName, _ := args["index"].(string)
 	if indexName == "" {
-		return mcpsdk.NewToolResultError("index is required"), nil
+		indexName = s.resolveIndexName()
+		if indexName == "" {
+			return mcpsdk.NewToolResultError("index is required"), nil
+		}
 	}
 
 	topN := 20
@@ -219,7 +223,98 @@ func (s *Server) handleRiskAnalysis(ctx context.Context, request mcpsdk.CallTool
 		return mcpsdk.NewToolResultError(fmt.Sprintf("Error opening graph %q: %v", indexName, err)), nil
 	}
 
-	// Build community graph and export for analysis.
+	// Check graph size to choose between in-memory PageRank and fast Cypher aggregation
+	var totalSymbols int64
+	if cntRes, err := db.Conn().Query(`MATCH (s:Symbol) RETURN count(s) AS c`); err == nil {
+		if cntRes.HasNext() {
+			row, _ := cntRes.Next()
+			m, _ := row.GetAsMap()
+			if c, ok := m["c"].(int64); ok {
+				totalSymbols = c
+			}
+		}
+		cntRes.Close()
+	}
+
+	if totalSymbols == 0 {
+		return mcpsdk.NewToolResultText("No nodes in graph. Build index with --graph flag."), nil
+	}
+
+	var sb strings.Builder
+
+	if totalSymbols > 2000 {
+		// Fast path for large graphs: aggregate hub symbols directly in KùzuDB in milliseconds
+		if byFile {
+			query := fmt.Sprintf(`
+				MATCH (caller:Symbol)-[:CALLS]->(s:Symbol)
+				WHERE s.file IS NOT NULL AND s.file <> ''
+				RETURN s.file AS file, s.name AS top_symbol, count(caller) AS callers
+				ORDER BY callers DESC
+				LIMIT %d
+			`, topN)
+			res, err := db.Conn().Query(query)
+			if err != nil {
+				return mcpsdk.NewToolResultError(fmt.Sprintf("Query error: %v", err)), nil
+			}
+			defer res.Close()
+			sb.WriteString(fmt.Sprintf("File Risk Analysis — %s (top %d)\n\n", indexName, topN))
+			sb.WriteString(fmt.Sprintf("%-50s %-10s %-8s %s\n", "FILE", "RISK", "SCORE", "TOP SYMBOL"))
+			sb.WriteString(strings.Repeat("─", 90) + "\n")
+			for res.HasNext() {
+				row, _ := res.Next()
+				m, _ := row.GetAsMap()
+				callers := m["callers"].(int64)
+				risk := "LOW"
+				if callers >= 50 {
+					risk = "CRITICAL"
+				} else if callers >= 20 {
+					risk = "HIGH"
+				} else if callers >= 5 {
+					risk = "MEDIUM"
+				}
+				score := float64(callers) / 100.0
+				sb.WriteString(fmt.Sprintf("%-50s %-10s %.4f   %s\n",
+					truncPath(fmt.Sprint(m["file"]), 48), risk, score, fmt.Sprint(m["top_symbol"])))
+			}
+		} else {
+			query := fmt.Sprintf(`
+				MATCH (caller:Symbol)-[:CALLS]->(s:Symbol)
+				WHERE s.file IS NOT NULL AND s.file <> '' AND s.kind <> 'macro'
+				RETURN s.name AS name, s.kind AS kind, s.file AS file, count(caller) AS in_degree
+				ORDER BY in_degree DESC
+				LIMIT %d
+			`, topN)
+			res, err := db.Conn().Query(query)
+			if err != nil {
+				return mcpsdk.NewToolResultError(fmt.Sprintf("Query error: %v", err)), nil
+			}
+			defer res.Close()
+			sb.WriteString(fmt.Sprintf("Symbol Risk Analysis — %s (top %d)\n\n", indexName, topN))
+			sb.WriteString(fmt.Sprintf("%-40s %-10s %-10s %-6s %-6s %-6s %s\n",
+				"SYMBOL", "KIND", "RISK", "IN", "OUT", "BLAST", "SCORE"))
+			sb.WriteString(strings.Repeat("─", 100) + "\n")
+			for res.HasNext() {
+				row, _ := res.Next()
+				m, _ := row.GetAsMap()
+				inDeg := m["in_degree"].(int64)
+				risk := "LOW"
+				if inDeg >= 50 {
+					risk = "CRITICAL"
+				} else if inDeg >= 20 {
+					risk = "HIGH"
+				} else if inDeg >= 5 {
+					risk = "MEDIUM"
+				}
+				score := float64(inDeg) / 100.0
+				sb.WriteString(fmt.Sprintf("%-40s %-10s %-10s %-6d %-6d %-6d %.4f\n",
+					truncPath(fmt.Sprint(m["name"]), 38), fmt.Sprint(m["kind"]), risk,
+					inDeg, 0, inDeg, score))
+			}
+		}
+		return mcpsdk.NewToolResultText(sb.String()), nil
+	}
+
+	// Small graph: full in-memory community graph analysis
 	g := community.NewGraph()
 	loadGraphFromKuzu(db, g)
 	nodes, edges := g.ExportForAnalysis()
@@ -230,8 +325,6 @@ func (s *Server) handleRiskAnalysis(ctx context.Context, request mcpsdk.CallTool
 
 	cfg := community.DefaultRiskConfig()
 	allScores := community.ComputeRiskScores(nodes, edges, cfg)
-
-	var sb strings.Builder
 
 	if byFile {
 		fileSummary := community.FileRiskSummary(allScores)
@@ -283,10 +376,11 @@ func (s *Server) buildRepoMapTool() mcpsdk.Tool {
 					"description": "Approximate token budget for the map (default 2000)",
 				},
 			},
-			Required: []string{"index"},
+			Required: []string{},
 		},
 	}
 }
+
 
 func (s *Server) handleRepoMap(ctx context.Context, request mcpsdk.CallToolRequest) (*mcpsdk.CallToolResult, error) {
 	args, ok := request.Params.Arguments.(map[string]interface{})
@@ -296,15 +390,19 @@ func (s *Server) handleRepoMap(ctx context.Context, request mcpsdk.CallToolReque
 
 	indexName, _ := args["index"].(string)
 	if indexName == "" {
-		return mcpsdk.NewToolResultError("index is required"), nil
+		indexName = s.resolveIndexName()
+		if indexName == "" {
+			return mcpsdk.NewToolResultError("index is required"), nil
+		}
 	}
 
-	cfg := community.DefaultRepoMapConfig()
-	if topK, ok := args["top_k"].(float64); ok && topK > 0 {
-		cfg.TopK = int(topK)
+	topK := 30
+	if t, ok := args["top_k"].(float64); ok && t > 0 {
+		topK = int(t)
 	}
-	if maxTokens, ok := args["max_tokens"].(float64); ok && maxTokens > 0 {
-		cfg.MaxTokens = int(maxTokens)
+	maxTokens := 2000
+	if mt, ok := args["max_tokens"].(float64); ok && mt > 0 {
+		maxTokens = int(mt)
 	}
 
 	db, err := s.gPool.get(indexName)
@@ -312,16 +410,179 @@ func (s *Server) handleRepoMap(ctx context.Context, request mcpsdk.CallToolReque
 		return mcpsdk.NewToolResultError(fmt.Sprintf("Error opening graph %q: %v", indexName, err)), nil
 	}
 
-	g := community.NewGraph()
-	loadGraphFromKuzu(db, g)
-	nodes, edges := g.ExportForAnalysis()
+	// Fast path: query top hub symbols directly from KùzuDB in milliseconds
+	// filtering out third-party submodules, vendored libraries, and tests to deliver clean architecture.
+	candidateLimit := topK * 10
+	if candidateLimit < 100 {
+		candidateLimit = 100
+	}
 
-	if len(nodes) == 0 {
+	query := fmt.Sprintf(`
+		MATCH (caller:Symbol)-[:CALLS]->(s:Symbol)
+		WHERE s.file IS NOT NULL AND s.file <> '' AND s.kind <> 'macro'
+		RETURN s.fqn AS fqn, s.name AS name, s.kind AS kind, s.file AS file, count(caller) AS callers
+		ORDER BY callers DESC
+		LIMIT %d
+	`, candidateLimit)
+
+	type repoMapItem struct {
+		FQN   string
+		Name  string
+		Kind  string
+		File  string
+		Score float64
+	}
+	var cleanItems []repoMapItem
+	var fallbackItems []repoMapItem
+
+	res, err := db.Conn().Query(query)
+	if err == nil {
+		for res.HasNext() {
+			row, err := res.Next()
+			if err != nil {
+				break
+			}
+			m, _ := row.GetAsMap()
+			score := 0.0
+			if sc, ok := m["callers"].(int64); ok {
+				score = float64(sc)
+			}
+			item := repoMapItem{
+				FQN:   fmt.Sprint(m["fqn"]),
+				Name:  fmt.Sprint(m["name"]),
+				Kind:  fmt.Sprint(m["kind"]),
+				File:  fmt.Sprint(m["file"]),
+				Score: score,
+			}
+			if isNoisePath(item.File) || isNoiseSymbol(item.Name, item.Kind) {
+				fallbackItems = append(fallbackItems, item)
+			} else {
+				cleanItems = append(cleanItems, item)
+			}
+		}
+		res.Close()
+	}
+
+	var items []repoMapItem
+	if len(cleanItems) >= topK {
+		items = cleanItems[:topK]
+	} else {
+		items = append(items, cleanItems...)
+		needed := topK - len(items)
+		if needed > len(fallbackItems) {
+			needed = len(fallbackItems)
+		}
+		items = append(items, fallbackItems[:needed]...)
+	}
+
+	// Fallback if no CALLS edges exist in the graph (e.g. declarations only)
+	if len(items) == 0 {
+		fallbackQuery := fmt.Sprintf(`
+			MATCH (s:Symbol)
+			WHERE s.file IS NOT NULL AND s.file <> '' AND s.kind <> 'macro'
+			RETURN s.fqn AS fqn, s.name AS name, s.kind AS kind, s.file AS file, 1 AS callers
+			LIMIT %d
+		`, candidateLimit)
+		resFallback, err := db.Conn().Query(fallbackQuery)
+		if err == nil {
+			for resFallback.HasNext() {
+				row, err := resFallback.Next()
+				if err != nil {
+					break
+				}
+				m, _ := row.GetAsMap()
+				item := repoMapItem{
+					FQN:   fmt.Sprint(m["fqn"]),
+					Name:  fmt.Sprint(m["name"]),
+					Kind:  fmt.Sprint(m["kind"]),
+					File:  fmt.Sprint(m["file"]),
+					Score: 1.0,
+				}
+				if isNoisePath(item.File) || isNoiseSymbol(item.Name, item.Kind) {
+					fallbackItems = append(fallbackItems, item)
+				} else {
+					cleanItems = append(cleanItems, item)
+				}
+			}
+			resFallback.Close()
+
+			if len(cleanItems) >= topK {
+				items = cleanItems[:topK]
+			} else {
+				items = append(items, cleanItems...)
+				needed := topK - len(items)
+				if needed > len(fallbackItems) {
+					needed = len(fallbackItems)
+				}
+				items = append(items, fallbackItems[:needed]...)
+			}
+		}
+	}
+
+	if len(items) == 0 {
 		return mcpsdk.NewToolResultText("No nodes in graph. Build index with --graph flag."), nil
 	}
 
-	repoMap := community.GenerateRepoMap(nodes, edges, cfg)
-	return mcpsdk.NewToolResultText(repoMap), nil
+	// Group by file
+	type entry struct {
+		id    string
+		kind  string
+		score float64
+	}
+	fileGroups := make(map[string][]entry)
+	for _, it := range items {
+		f := it.File
+		if f == "" {
+			f = "(unknown)"
+		}
+		name := it.Name
+		if name == "" {
+			name = it.FQN
+		}
+		fileGroups[f] = append(fileGroups[f], entry{id: name, kind: it.Kind, score: it.Score})
+	}
+
+	// Sort files by total score
+	type fileEntry struct {
+		file    string
+		total   float64
+		entries []entry
+	}
+	var files []fileEntry
+	for f, entries := range fileGroups {
+		total := 0.0
+		for _, e := range entries {
+			total += e.score
+		}
+		files = append(files, fileEntry{file: f, total: total, entries: entries})
+	}
+	sort.Slice(files, func(i, j int) bool {
+		return files[i].total > files[j].total
+	})
+
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("## Repository Map — %s (by importance)\n\n", indexName))
+	tokenEstimate := 10
+	for _, fe := range files {
+		line := fmt.Sprintf("### %s\n", fe.file)
+		tokenEstimate += len(line) / 4
+		if maxTokens > 0 && tokenEstimate > maxTokens {
+			break
+		}
+		sb.WriteString(line)
+
+		for _, e := range fe.entries {
+			sym := fmt.Sprintf("- %s `%s`\n", e.kind, e.id)
+			tokenEstimate += len(sym) / 4
+			if maxTokens > 0 && tokenEstimate > maxTokens {
+				break
+			}
+			sb.WriteString(sym)
+		}
+		sb.WriteString("\n")
+	}
+
+	return mcpsdk.NewToolResultText(sb.String()), nil
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────

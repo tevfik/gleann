@@ -27,10 +27,12 @@ func cmdMCP(args []string) {
 
 	fs := flag.NewFlagSet("gleann mcp", flag.ExitOnError)
 	cleanNames := fs.Bool("clean-names", false, "Strip 'gleann_' prefix from tool names for clients that namespace automatically (e.g. OpenCode)")
+	llmModel := fs.String("llm-model", "", "LLM model to use for ask/batch_ask tools")
+	llmProvider := fs.String("llm-provider", "", "LLM provider to use for ask/batch_ask tools")
 	_ = fs.Parse(args)
 
 	isClean := *cleanNames || os.Getenv("GLEANN_MCP_CLEAN_NAMES") == "1" || os.Getenv("GLEANN_MCP_STRIP_PREFIX") == "1"
-	runMCPServer(isClean)
+	runMCPServer(isClean, *llmModel, *llmProvider)
 }
 
 func printMCPUsage() {
@@ -40,6 +42,8 @@ func printMCPUsage() {
 
 Options for mcp:
   --clean-names     Strip 'gleann_' prefix from tool names for clients that namespace (OpenCode, etc.)
+  --llm-model       LLM model to use for ask/batch_ask tools
+  --llm-provider    LLM provider to use for ask/batch_ask tools
 
 Options for install:
   --target <name>   Target platform: all, claude-code, cursor, gemini, antigravity, vscode, opencode
@@ -48,13 +52,15 @@ Options for install:
   --name <name>     MCP server name in configuration (default: gleann)`)
 }
 
-func runMCPServer(cleanNames bool) {
+func runMCPServer(cleanNames bool, flagModel, flagProvider string) {
 	savedCfg := tui.LoadSavedConfig()
 
 	cfg := mcp.Config{
 		EmbeddingProvider: DefaultProvider,
 		EmbeddingModel:    DefaultEmbeddingModel,
 		OllamaHost:        gleann.DefaultOllamaHost,
+		LLMProvider:       DefaultLLMProvider,
+		LLMModel:          DefaultLLMModel,
 		Version:           version,
 		CleanToolNames:    cleanNames,
 	}
@@ -78,9 +84,28 @@ func runMCPServer(cleanNames bool) {
 		if savedCfg.OpenAIBaseURL != "" {
 			cfg.OpenAIBaseURL = savedCfg.OpenAIBaseURL
 		}
+		if savedCfg.LLMProvider != "" {
+			cfg.LLMProvider = savedCfg.LLMProvider
+		}
+		if savedCfg.LLMModel != "" {
+			cfg.LLMModel = savedCfg.LLMModel
+		}
 		if savedCfg.IndexDir != "" {
 			cfg.IndexDir = tui.ExpandPath(savedCfg.IndexDir)
 		}
+	}
+
+	if envProvider := os.Getenv("GLEANN_LLM_PROVIDER"); envProvider != "" {
+		cfg.LLMProvider = envProvider
+	}
+	if envModel := os.Getenv("GLEANN_LLM_MODEL"); envModel != "" {
+		cfg.LLMModel = envModel
+	}
+	if flagProvider != "" {
+		cfg.LLMProvider = flagProvider
+	}
+	if flagModel != "" {
+		cfg.LLMModel = flagModel
 	}
 
 	server := mcp.NewServer(cfg)

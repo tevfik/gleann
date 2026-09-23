@@ -83,8 +83,8 @@ func (s *LeannSearcher) Load(ctx context.Context, name string) error {
 			name, s.meta.EmbeddingModel, s.meta.Dimensions, s.config.EmbeddingModel, name)
 	}
 
-	// Load passages.
-	s.passages = NewPassageManager(basePath)
+	// Load passages in read-only mode (shared flock)
+	s.passages = NewReadOnlyPassageManager(basePath)
 	if err := s.passages.Load(); err != nil {
 		return fmt.Errorf("load passages: %w", err)
 	}
@@ -333,6 +333,10 @@ func (s *LeannSearcher) Search(ctx context.Context, query string, opts ...Search
 		})
 	}
 
+	if len(sortedResults) > 0 && len(results) == 0 {
+		log.Printf("⚠  WARNING: Index %q backend returned %d candidate vectors, but none were found in the passages database! The index is desynchronized. Run: gleann index rebuild %s", s.meta.Name, len(sortedResults), s.meta.Name)
+	}
+
 	// Apply metadata filters if configured.
 	if len(searchOpts.MetadataFilters) > 0 {
 		engine := NewMetadataFilterEngine(searchOpts.MetadataFilters)
@@ -493,6 +497,10 @@ func (s *LeannSearcher) GraphDB() GraphDB {
 // PassageManager returns the internal passage manager containing all indexed chunks.
 func (s *LeannSearcher) PassageManager() *PassageManager {
 	return s.passages
+}
+
+func (s *LeannSearcher) Backend() BackendSearcher {
+	return s.backend
 }
 
 // SearchOption modifies search parameters.

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/tevfik/gleann/pkg/gleann"
@@ -141,6 +142,19 @@ func (s *Server) handleRead(ctx context.Context, request mcp.CallToolRequest) (*
 	}
 
 	content, err := gleann.ReadFileWithMode(path, opts)
+	if err != nil && !filepath.IsAbs(path) {
+		idxName := s.resolveIndexName()
+		if idxName != "" {
+			if meta, mErr := gleann.GetIndexMeta(s.config.IndexDir, idxName); mErr == nil && meta.SourceDir != "" {
+				cand := filepath.Join(meta.SourceDir, path)
+				if c, cErr := gleann.ReadFileWithMode(cand, opts); cErr == nil {
+					content = c
+					err = nil
+					path = cand
+				}
+			}
+		}
+	}
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("read error: %v", err)), nil
 	}

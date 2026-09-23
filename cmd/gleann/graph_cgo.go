@@ -484,7 +484,12 @@ func cmdGraphExplain(fqn string, db *kgraph.DB) {
 		fmt.Printf("    Direct callers:     %d\n", len(impact.DirectCallers))
 		fmt.Printf("    Transitive callers: %d\n", len(impact.TransitiveCallers))
 		fmt.Printf("    Affected files:     %d\n", len(impact.AffectedFiles))
-		for _, f := range impact.AffectedFiles {
+		maxShow := 20
+		for i, f := range impact.AffectedFiles {
+			if i >= maxShow {
+				fmt.Printf("      ... and %d more files\n", len(impact.AffectedFiles)-maxShow)
+				break
+			}
 			fmt.Printf("      📄 %s\n", f)
 		}
 	}

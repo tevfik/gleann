@@ -28,6 +28,8 @@ type Config struct {
 	OllamaHost        string
 	OpenAIAPIKey      string
 	OpenAIBaseURL     string
+	LLMProvider       string
+	LLMModel          string
 	Version           string
 	CleanToolNames    bool
 }
@@ -42,6 +44,7 @@ type Server struct {
 	embedder       gleann.EmbeddingComputer
 	config         gleann.Config
 	cleanToolNames bool
+	searcherMu     sync.Mutex
 	searchers      map[string]*gleann.LeannSearcher
 	searcherLRU    []string       // tracks access order: most recent at end
 	memPool        *mcpMemoryPool // Memory Engine: generic Entity/RELATES_TO graph
@@ -90,6 +93,8 @@ func NewServer(cfg Config) *Server {
 	glCfg.OllamaHost = cfg.OllamaHost
 	glCfg.OpenAIAPIKey = cfg.OpenAIAPIKey
 	glCfg.OpenAIBaseURL = cfg.OpenAIBaseURL
+	glCfg.LLMProvider = cfg.LLMProvider
+	glCfg.LLMModel = cfg.LLMModel
 
 	embedder := embedding.NewComputer(embedding.Options{
 		Provider: embedding.Provider(cfg.EmbeddingProvider),
@@ -215,6 +220,15 @@ func (s *Server) Close() {
 	if s.blockMem != nil {
 		s.blockMem.close()
 	}
+	s.searcherMu.Lock()
+	for _, searcher := range s.searchers {
+		if searcher != nil {
+			searcher.Close()
+		}
+	}
+	s.searchers = make(map[string]*gleann.LeannSearcher)
+	s.searcherLRU = nil
+	s.searcherMu.Unlock()
 	s.closeGraphPool()
 }
 
@@ -274,15 +288,35 @@ func (s *Server) getSearcher(name string) (*gleann.LeannSearcher, error) {
 		}
 	}
 
+	s.searcherMu.Lock()
 	if searcher, ok := s.searchers[name]; ok {
 		s.touchLRU(name)
+		s.searcherMu.Unlock()
 		return searcher, nil
 	}
+	s.searcherMu.Unlock()
 
 	searcher := gleann.NewSearcher(s.config, s.embedder)
+	// Enable BM25 hybrid scoring by default for MCP-facing search/ask tools.
+	// Pure dense-vector search misses exact keyword/symbol matches that
+	// lexical scoring catches (e.g. an agent searching for a precise
+	// function or error-message string). The scorer must be set before
+	// Load() because the BM25 index is built as part of loading the
+	// searcher. Large corpora (>100k passages) fall back to a streaming
+	// build inside Load, so this stays safe for big indexes too.
+	searcher.SetScorer(gleann.NewBM25Adapter())
 	ctx := context.Background()
 	if err := searcher.Load(ctx, name); err != nil {
 		return nil, err
+	}
+
+	s.searcherMu.Lock()
+	defer s.searcherMu.Unlock()
+
+	// Double-check in case another goroutine loaded the same index concurrently
+	if existing, ok := s.searchers[name]; ok {
+		s.touchLRU(name)
+		return existing, nil
 	}
 
 	// Evict oldest if at capacity.
@@ -296,6 +330,7 @@ func (s *Server) getSearcher(name string) (*gleann.LeannSearcher, error) {
 }
 
 // touchLRU moves name to the end of the LRU list (most recently used).
+// Caller must hold s.searcherMu.
 func (s *Server) touchLRU(name string) {
 	for i, n := range s.searcherLRU {
 		if n == name {
@@ -307,6 +342,7 @@ func (s *Server) touchLRU(name string) {
 }
 
 // evictOldest removes the least recently used searcher from the cache.
+// Caller must hold s.searcherMu.
 func (s *Server) evictOldest() {
 	if len(s.searcherLRU) == 0 {
 		return
@@ -323,6 +359,7 @@ func (s *Server) evictOldest() {
 
 // evictIndex closes and removes any cached searcher and graph database handle for the given index.
 func (s *Server) evictIndex(name string) {
+	s.searcherMu.Lock()
 	if searcher, ok := s.searchers[name]; ok {
 		if searcher != nil {
 			searcher.Close()
@@ -335,6 +372,7 @@ func (s *Server) evictIndex(name string) {
 			}
 		}
 	}
+	s.searcherMu.Unlock()
 	s.evictGraph(name)
 }
 
@@ -451,7 +489,7 @@ func (s *Server) handleReadResource(ctx context.Context, request mcp.ReadResourc
 func (s *Server) buildSearchTool() mcp.Tool {
 	return mcp.Tool{
 		Name:        "gleann_search",
-		Description: "Perform a semantic vector search across an indexed repository or memory graph. Use this to retrieve information.",
+		Description: "Semantic search across indexed code and documents. Returns ranked text passages with their source file paths. Each result shows the file path in a 'Source:' line — use gleann_read with that path to read the full source file. Workflow: search → identify relevant file from results → gleann_read to get complete code.",
 		InputSchema: mcp.ToolInputSchema{
 			Type: "object",
 			Properties: map[string]interface{}{
@@ -544,35 +582,17 @@ func (s *Server) handleSearch(ctx context.Context, request mcp.CallToolRequest) 
 
 	// Auto-resolve index if empty
 	if indexName == "" {
-		if envIdx := os.Getenv("GLEANN_INDEX"); envIdx != "" {
-			indexName = envIdx
-		} else {
-			indexes, err := gleann.ListIndexes(s.config.IndexDir)
-			if err == nil {
-				var exposed []gleann.IndexMeta
+		indexName = s.resolveIndexName()
+		if indexName == "" {
+			if indexes, err := gleann.ListIndexes(s.config.IndexDir); err == nil {
+				var count int
 				for _, idx := range indexes {
 					if idx.IsMCPExposed() {
-						exposed = append(exposed, idx)
+						count++
 					}
 				}
-
-				// Check if current working directory name matches an index
-				if cwd, err := os.Getwd(); err == nil {
-					base := filepath.Base(cwd)
-					for _, idx := range exposed {
-						if strings.EqualFold(idx.Name, base) {
-							indexName = idx.Name
-							break
-						}
-					}
-				}
-
-				if indexName == "" {
-					if len(exposed) == 1 {
-						indexName = exposed[0].Name
-					} else if len(exposed) > 1 {
-						indexName = "@all"
-					}
+				if count > 1 {
+					indexName = "@all"
 				}
 			}
 		}
@@ -706,14 +726,15 @@ func (s *Server) handleSearch(ctx context.Context, request mcp.CallToolRequest) 
 
 	var sb strings.Builder
 	for i, r := range results {
-		source := ""
-		if idxName, ok := r.Metadata["_index"].(string); ok {
-			source = fmt.Sprintf(" [index: %s]", idxName)
-		}
+		sb.WriteString(fmt.Sprintf("---\nResult [%d] (Score: %.4f)\n", i+1, r.Score))
 		if metaSource, ok := r.Metadata["source"]; ok {
-			source += fmt.Sprintf(" [%v]", metaSource)
+			sb.WriteString(fmt.Sprintf("Source: %v\n", metaSource))
 		}
-		sb.WriteString(fmt.Sprintf("---\nResult [%d]%s (Score: %.4f):\n%s\n", i+1, source, r.Score, r.Text))
+		if idxName, ok := r.Metadata["_index"].(string); ok {
+			sb.WriteString(fmt.Sprintf("Index: %s\n", idxName))
+		}
+		sb.WriteString(r.Text)
+		sb.WriteString("\n")
 
 		// Append graph context if available.
 		if r.GraphContext != nil && len(r.GraphContext.Symbols) > 0 {
@@ -728,6 +749,17 @@ func (s *Server) handleSearch(ctx context.Context, request mcp.CallToolRequest) 
 				}
 			}
 		}
+	}
+
+	// Collect unique source files for the footer hint
+	sourceFiles := make(map[string]struct{})
+	for _, r := range results {
+		if src, ok := r.Metadata["source"].(string); ok && src != "" {
+			sourceFiles[src] = struct{}{}
+		}
+	}
+	if len(sourceFiles) > 0 {
+		sb.WriteString("\n---\nTip: To read the full source code of any file above, use gleann_read with the Source path.\n")
 	}
 
 	// Log to active session if one is running.
@@ -859,6 +891,21 @@ func (s *Server) handleAsk(ctx context.Context, request mcp.CallToolRequest) (*m
 	}
 
 	chatConfig := gleann.DefaultChatConfig()
+	if s.config.LLMModel != "" {
+		chatConfig.Model = s.config.LLMModel
+	}
+	if s.config.LLMProvider != "" {
+		chatConfig.Provider = gleann.LLMProvider(s.config.LLMProvider)
+	}
+	if s.config.OllamaHost != "" {
+		chatConfig.BaseURL = s.config.OllamaHost
+	}
+	if s.config.OpenAIAPIKey != "" {
+		chatConfig.APIKey = s.config.OpenAIAPIKey
+	}
+	if s.config.OpenAIBaseURL != "" && chatConfig.Provider == gleann.LLMOpenAI {
+		chatConfig.BaseURL = s.config.OpenAIBaseURL
+	}
 	chat := gleann.NewChat(searcher, chatConfig)
 
 	var searchOpts []gleann.SearchOption
@@ -883,7 +930,7 @@ func (s *Server) handleAsk(ctx context.Context, request mcp.CallToolRequest) (*m
 func (s *Server) buildGraphNeighborsTool() mcp.Tool {
 	return mcp.Tool{
 		Name:        "gleann_graph_neighbors",
-		Description: "Query the code graph to find caller/callee relationships for a given node. Use this to understand code architecture and dependencies without semantic searching.",
+		Description: "Find caller/callee relationships for a code symbol in the AST graph. Input a fully-qualified name (e.g. 'MyClass::method') or partial name. Returns who calls this symbol and what it calls. Use gleann_search first to discover symbol names if you don't know the exact FQN.",
 		InputSchema: mcp.ToolInputSchema{
 			Type: "object",
 			Properties: map[string]interface{}{
@@ -937,21 +984,43 @@ func (s *Server) handleGraphNeighbors(ctx context.Context, request mcp.CallToolR
 	var sb strings.Builder
 	sb.WriteString(fmt.Sprintf("Graph Neighbors for %s:\n\n", nodeFqn))
 
-	sb.WriteString("=== Callers (Symbols that call this node) ===\n")
+	const maxNeighbors = 25
+	sb.WriteString(fmt.Sprintf("=== Callers (Symbols that call this node - %d total) ===\n", len(callers)))
 	if len(callers) == 0 {
 		sb.WriteString("None found.\n")
 	} else {
-		for _, c := range callers {
+		for i, c := range callers {
+			if i >= maxNeighbors {
+				sb.WriteString(fmt.Sprintf("... and %d more callers\n", len(callers)-maxNeighbors))
+				break
+			}
 			sb.WriteString(fmt.Sprintf("- %s (%s)\n", c.FQN, c.Kind))
 		}
 	}
 
-	sb.WriteString("\n=== Callees (Symbols this node calls) ===\n")
+	sb.WriteString(fmt.Sprintf("\n=== Callees (Symbols this node calls - %d total) ===\n", len(callees)))
 	if len(callees) == 0 {
 		sb.WriteString("None found.\n")
 	} else {
-		for _, c := range callees {
+		for i, c := range callees {
+			if i >= maxNeighbors {
+				sb.WriteString(fmt.Sprintf("... and %d more callees\n", len(callees)-maxNeighbors))
+				break
+			}
 			sb.WriteString(fmt.Sprintf("- %s (%s)\n", c.FQN, c.Kind))
+		}
+	}
+
+	if len(callers) == 0 && len(callees) == 0 {
+		if matches, err := db.SymbolSearch(nodeFqn); err == nil && len(matches) > 0 {
+			sb.WriteString("\nTip: No direct relationships found for this exact name. Did you mean one of these symbols?\n")
+			limit := len(matches)
+			if limit > 5 {
+				limit = 5
+			}
+			for _, m := range matches[:limit] {
+				sb.WriteString(fmt.Sprintf("  - %s (%s)\n", m.FQN, m.Kind))
+			}
 		}
 	}
 
@@ -1027,7 +1096,7 @@ func (s *Server) handleDocumentLinks(ctx context.Context, request mcp.CallToolRe
 func (s *Server) buildReadFullDocumentTool() mcp.Tool {
 	return mcp.Tool{
 		Name:        "gleann_read_full_document",
-		Description: "Retrieve the complete text of an indexed document using its virtual or relative path (e.g. 'docs/architecture.md'). Uses KuzuDB path resolution and returns the intact document.",
+		Description: "Retrieve the complete text of an indexed document (e.g. markdown docs, architecture notes) using its virtual path. For reading source code files, use gleann_read instead — it's faster and supports mode-aware compression.",
 		InputSchema: mcp.ToolInputSchema{
 			Type: "object",
 			Properties: map[string]interface{}{
@@ -1072,12 +1141,18 @@ func (s *Server) handleReadFullDocument(ctx context.Context, request mcp.CallToo
 	if data, err := os.ReadFile(vpath); err == nil && len(data) > 0 {
 		return mcp.NewToolResultText(string(data)), nil
 	}
+	if searcher != nil && searcher.Meta().SourceDir != "" {
+		cand := filepath.Join(searcher.Meta().SourceDir, vpath)
+		if data, err := os.ReadFile(cand); err == nil && len(data) > 0 {
+			return mcp.NewToolResultText(string(data)), nil
+		}
+	}
 
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("Error loading index %q: %v", indexName, err)), nil
 	}
 
-	return mcp.NewToolResultError(fmt.Sprintf("could not read full document for %q in index %q", vpath, indexName)), nil
+	return mcp.NewToolResultError(fmt.Sprintf("document %q not found in index %q (or on disk). Do not guess markdown file paths. Use gleann_search to locate relevant passages, or check available documents using gleann_document_toc.", vpath, indexName)), nil
 }
 
 // --- Document TOC & Structure Tool ---
@@ -1209,7 +1284,7 @@ func formatHeadingsOutline(sb *strings.Builder, headings []gleann.DocumentHeadin
 func (s *Server) buildImpactTool() mcp.Tool {
 	return mcp.Tool{
 		Name:        "gleann_impact",
-		Description: "Analyze the blast radius of changing a symbol. Returns all direct and transitive callers plus affected files. Use this before making code changes to understand the impact.",
+		Description: "Analyze blast radius of changing a code symbol. Returns direct callers, transitive callers (BFS), and affected files ranked by relevance (core files first, submodules last). Use gleann_search or gleann_graph_neighbors first to find the exact symbol FQN.",
 		InputSchema: mcp.ToolInputSchema{
 			Type: "object",
 			Properties: map[string]interface{}{
@@ -1266,35 +1341,74 @@ func (s *Server) handleImpact(ctx context.Context, request mcp.CallToolRequest) 
 	var sb strings.Builder
 	sb.WriteString(fmt.Sprintf("Impact Analysis for %s (depth: %d):\n\n", symbol, impact.Depth))
 
-	sb.WriteString("=== Direct Callers ===\n")
+	const maxItems = 20
+
+	sb.WriteString(fmt.Sprintf("=== Direct Callers (%d total) ===\n", len(impact.DirectCallers)))
 	if len(impact.DirectCallers) == 0 {
 		sb.WriteString("None found.\n")
 	} else {
-		for _, c := range impact.DirectCallers {
+		for i, c := range impact.DirectCallers {
+			if i >= maxItems {
+				sb.WriteString(fmt.Sprintf("... and %d more direct callers\n", len(impact.DirectCallers)-maxItems))
+				break
+			}
 			sb.WriteString(fmt.Sprintf("- %s\n", c))
 		}
 	}
 
-	sb.WriteString("\n=== Transitive Callers ===\n")
+	sb.WriteString(fmt.Sprintf("\n=== Transitive Callers (%d total) ===\n", len(impact.TransitiveCallers)))
 	if len(impact.TransitiveCallers) == 0 {
 		sb.WriteString("None found.\n")
 	} else {
-		for _, c := range impact.TransitiveCallers {
+		for i, c := range impact.TransitiveCallers {
+			if i >= maxItems {
+				sb.WriteString(fmt.Sprintf("... and %d more transitive callers\n", len(impact.TransitiveCallers)-maxItems))
+				break
+			}
 			sb.WriteString(fmt.Sprintf("- %s\n", c))
 		}
 	}
 
-	sb.WriteString("\n=== Affected Files ===\n")
-	if len(impact.AffectedFiles) == 0 {
+	// Partition affected files so core project files appear before noise/submodule files
+	var cleanFiles, noiseFiles []string
+	for _, f := range impact.AffectedFiles {
+		if isNoisePath(f) {
+			noiseFiles = append(noiseFiles, f)
+		} else {
+			cleanFiles = append(cleanFiles, f)
+		}
+	}
+	orderedFiles := append(cleanFiles, noiseFiles...)
+
+	sb.WriteString(fmt.Sprintf("\n=== Affected Files (%d total: %d core, %d submodules/tests) ===\n",
+		len(impact.AffectedFiles), len(cleanFiles), len(noiseFiles)))
+	if len(orderedFiles) == 0 {
 		sb.WriteString("None found.\n")
 	} else {
-		for _, f := range impact.AffectedFiles {
+		for i, f := range orderedFiles {
+			if i >= maxItems {
+				sb.WriteString(fmt.Sprintf("... and %d more affected files\n", len(orderedFiles)-maxItems))
+				break
+			}
 			sb.WriteString(fmt.Sprintf("- %s\n", f))
 		}
 	}
 
 	total := len(impact.DirectCallers) + len(impact.TransitiveCallers)
-	sb.WriteString(fmt.Sprintf("\nTotal: %d affected symbols, %d affected files\n", total, len(impact.AffectedFiles)))
+	sb.WriteString(fmt.Sprintf("\nTotal blast radius: %d affected symbols across %d files\n", total, len(impact.AffectedFiles)))
+
+	if total == 0 {
+		if matches, err := db.SymbolSearch(symbol); err == nil && len(matches) > 0 {
+			sb.WriteString("\nTip: No callers found for this exact name. Did you mean one of these symbols in the graph?\n")
+			limit := len(matches)
+			if limit > 5 {
+				limit = 5
+			}
+			for _, m := range matches[:limit] {
+				sb.WriteString(fmt.Sprintf("  - %s (%s)\n", m.FQN, m.Kind))
+			}
+		}
+	}
 
 	return mcp.NewToolResultText(sb.String()), nil
 }
@@ -1423,7 +1537,7 @@ func (s *Server) handleSymbolsInFile(ctx context.Context, request mcp.CallToolRe
 
 func (s *Server) buildSyncTool() mcp.Tool {
 	return mcp.NewTool("gleann_sync",
-		mcp.WithDescription("Synchronize, update, or initialize a Gleann index (vector search passages, AST code graph, and document outlines) with workspace files. Defaults to fast 'code' mode (source code & AST graph only, zero office doc plugins). Auto-resolves index name and docs_dir from current workspace directory if omitted."),
+		mcp.WithDescription("Synchronize, update, or initialize a Gleann index (vector search passages, AST code graph, and document outlines) with workspace files. Defaults to fast 'code' mode. For large repositories, synchronization runs asynchronously in the background. If in_progress is returned, DO NOT sleep or block in a loop; immediately inform the user that background synchronization is in progress and continue."),
 		mcp.WithString("index",
 			mcp.Description("Name of the index to synchronize or create. If omitted, automatically inferred from the workspace directory name."),
 		),
@@ -1592,12 +1706,13 @@ func (s *Server) handleSync(ctx context.Context, request mcp.CallToolRequest) (*
 				actionMsg = "Sync"
 			}
 			res := map[string]any{
-				"status":  "in_progress",
-				"index":   indexName,
-				"mode":    existing.mode,
-				"action":  "in_progress",
-				"message": fmt.Sprintf("%s for %q is already actively running in the background (started %s ago). Please wait for completion.", actionMsg, indexName, elapsed),
-				"elapsed": elapsed.String(),
+				"status":                "in_progress",
+				"index":                 indexName,
+				"mode":                  existing.mode,
+				"action":                "in_progress",
+				"message":               fmt.Sprintf("%s for %q is actively running in the background (started %s ago). DO NOT sleep or block. The current index remains available for search. You must immediately inform the user that synchronization is actively progressing in the background and proceed with other tasks.", actionMsg, indexName, elapsed),
+				"elapsed":               elapsed.String(),
+				"instruction_for_agent": "CRITICAL: Do NOT execute sleep commands or poll repeatedly in a loop. Inform the user immediately that background synchronization is active and continue.",
 			}
 			resBytes, _ := json.MarshalIndent(res, "", "  ")
 			return mcp.NewToolResultText(string(resBytes)), nil
@@ -1671,12 +1786,13 @@ func (s *Server) handleSync(ctx context.Context, request mcp.CallToolRequest) (*
 		}
 		elapsedStr := waitTimeout.String()
 		res := map[string]any{
-			"status":  "in_progress",
-			"index":   indexName,
-			"mode":    mode,
-			"action":  actionMsg,
-			"message": fmt.Sprintf("%s for %q. Because this is a large codebase, indexing is progressing asynchronously in the background. You can check status anytime by calling gleann_sync.", actionMsg, indexName),
-			"elapsed": elapsedStr,
+			"status":                "in_progress",
+			"index":                 indexName,
+			"mode":                  mode,
+			"action":                actionMsg,
+			"message":               fmt.Sprintf("%s for %q. Because this is a large codebase, indexing is progressing asynchronously in the background. The current index remains available for search. DO NOT sleep or block.", actionMsg, indexName),
+			"elapsed":               elapsedStr,
+			"instruction_for_agent": "CRITICAL: Do NOT execute sleep commands or poll in a loop. Inform the user immediately that background synchronization has started and continue.",
 		}
 		resBytes, _ := json.MarshalIndent(res, "", "  ")
 		return mcp.NewToolResultText(string(resBytes)), nil
@@ -1708,5 +1824,38 @@ func (s *Server) defaultSyncRunner(ctx context.Context, opts SyncOptions) (strin
 	cmd := exec.CommandContext(ctx, exe, cmdArgs...)
 	out, err := cmd.CombinedOutput()
 	return string(out), err
+}
+
+// resolveIndexName tries to auto-detect an exposed index name if none is provided.
+// It checks GLEANN_INDEX, current working directory match, and single exposed index fallback.
+func (s *Server) resolveIndexName() string {
+	if envIdx := os.Getenv("GLEANN_INDEX"); envIdx != "" {
+		return envIdx
+	}
+	indexes, err := gleann.ListIndexes(s.config.IndexDir)
+	if err != nil {
+		return ""
+	}
+	var exposed []gleann.IndexMeta
+	for _, idx := range indexes {
+		if idx.IsMCPExposed() {
+			exposed = append(exposed, idx)
+		}
+	}
+
+	// Check if current working directory name matches an index
+	if cwd, err := os.Getwd(); err == nil {
+		base := filepath.Base(cwd)
+		for _, idx := range exposed {
+			if strings.EqualFold(idx.Name, base) {
+				return idx.Name
+			}
+		}
+	}
+
+	if len(exposed) == 1 {
+		return exposed[0].Name
+	}
+	return ""
 }
 

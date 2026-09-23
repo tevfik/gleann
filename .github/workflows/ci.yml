@@ -152,3 +152,27 @@ jobs:
       - uses: actions/checkout@v4
       - name: Run doc-drift detector
         run: bash scripts/doc-drift.sh
+
+  # ── Static Analysis & Vulnerability Scan ─────────────────────
+  lint:
+    name: Lint & Vuln Scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+      - name: staticcheck
+        uses: dominikh/staticcheck-action@v1
+        with:
+          version: latest
+          install-go: false
+      - name: govulncheck
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          govulncheck ./...
+      - name: go mod tidy check
+        run: |
+          go mod tidy -diff

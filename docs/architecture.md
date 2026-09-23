@@ -1,4 +1,4 @@
-git s# Architecture & Design
+# Architecture & Design
 
 ## Overview
 

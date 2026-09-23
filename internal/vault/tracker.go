@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -136,6 +137,57 @@ func (t *Tracker) UpsertRecord(ctx context.Context, hash, path string, modTime, 
 		}
 		return nil
 	})
+}
+
+// BatchUpsertRecords writes multiple file records into the database in a single transaction.
+func (t *Tracker) BatchUpsertRecords(ctx context.Context, records []FileRecord) error {
+	if len(records) == 0 {
+		return nil
+	}
+	return t.db.Update(func(tx *bbolt.Tx) error {
+		filesBucket := tx.Bucket(bucketFiles)
+		pathsBucket := tx.Bucket(bucketPaths)
+
+		for _, record := range records {
+			data, err := json.Marshal(record)
+			if err != nil {
+				continue
+			}
+			if err := filesBucket.Put([]byte(record.Hash), data); err != nil {
+				return err
+			}
+			if err := pathsBucket.Put([]byte(record.Path), []byte(record.Hash)); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
+type pathMtime struct {
+	path  string
+	mtime time.Time
+}
+
+// SortFilesByNewest sorts file paths by modification time in descending order (newest first).
+func SortFilesByNewest(paths []string) {
+	if len(paths) <= 1 {
+		return
+	}
+	items := make([]pathMtime, len(paths))
+	for i, p := range paths {
+		var mt time.Time
+		if fi, err := os.Stat(p); err == nil {
+			mt = fi.ModTime()
+		}
+		items[i] = pathMtime{path: p, mtime: mt}
+	}
+	sort.Slice(items, func(i, j int) bool {
+		return items[i].mtime.After(items[j].mtime)
+	})
+	for i, item := range items {
+		paths[i] = item.path
+	}
 }
 
 // GetPathByHash finds the current actual path of a file, enabling robust recomputations.
@@ -303,6 +355,7 @@ func (t *Tracker) DetectChangedFiles(ctx context.Context, dir string, currentFil
 		}
 	}
 
+	var touchedRecords []FileRecord
 	for _, f := range currentFiles {
 		rec, _ := t.GetRecordByPath(ctx, f)
 		if rec == nil {
@@ -312,8 +365,7 @@ func (t *Tracker) DetectChangedFiles(ctx context.Context, dir string, currentFil
 
 		info, err := os.Stat(f)
 		if err != nil {
-			changed = append(changed, f)
-			continue
+			continue // skip broken symlinks or unreadable files
 		}
 
 		if info.ModTime().Unix() == rec.LastModified && info.Size() == rec.Size {
@@ -324,10 +376,20 @@ func (t *Tracker) DetectChangedFiles(ctx context.Context, dir string, currentFil
 		if err != nil || currHash != rec.Hash {
 			changed = append(changed, f)
 		} else {
-			_ = t.UpsertRecord(ctx, rec.Hash, f, info.ModTime().Unix(), info.Size())
+			touchedRecords = append(touchedRecords, FileRecord{
+				Hash:         rec.Hash,
+				Path:         f,
+				LastModified: info.ModTime().Unix(),
+				Size:         info.Size(),
+			})
 		}
 	}
 
+	if len(touchedRecords) > 0 {
+		_ = t.BatchUpsertRecords(ctx, touchedRecords)
+	}
+
+	SortFilesByNewest(changed)
 	return changed, deleted, nil
 }
 

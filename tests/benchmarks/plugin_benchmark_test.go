@@ -468,6 +468,15 @@ func TestPluginBenchmark(t *testing.T) {
 		}
 	}
 
+	// Committed result/report files are golden snapshots, not test output.
+	// Only rewrite them when explicitly asked (GLEANN_UPDATE_BENCHMARKS=1),
+	// otherwise every `go test ./...` run would leave the working tree
+	// dirty with fresh timestamps/latencies on every invocation.
+	if os.Getenv("GLEANN_UPDATE_BENCHMARKS") == "" {
+		t.Log("skipping benchmark report write (set GLEANN_UPDATE_BENCHMARKS=1 to refresh committed reports)")
+		return
+	}
+
 	// Write results JSON
 	resultsDir := filepath.Join("..", "..", "tests", "e2e", "results")
 	os.MkdirAll(resultsDir, 0o755)

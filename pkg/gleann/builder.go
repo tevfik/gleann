@@ -56,10 +56,8 @@ func (b *LeannBuilder) Build(ctx context.Context, name string, items []Item) err
 
 	// Initialize passage manager and store passages.
 	pm := NewPassageManager(basePath)
-	defer pm.Close()
-	b.passages = pm
-
 	ids, err := pm.Add(items)
+	_ = pm.Close()
 	if err != nil {
 		return fmt.Errorf("add passages: %w", err)
 	}
@@ -142,18 +140,20 @@ func (b *LeannBuilder) UpdateIndex(ctx context.Context, name string, newItems []
 		return fmt.Errorf("read existing index: %w", err)
 	}
 
-	pm := NewPassageManager(basePath)
-	if err := pm.Load(); err != nil {
-		return fmt.Errorf("load passages: %w", err)
-	}
-	defer pm.Close()
-
 	// Step 1: Remove old passages and vectors for changed sources.
+	var removedIDs []int64
 	if len(removeSources) > 0 {
-		removedIDs, err := pm.RemoveBySource(removeSources)
+		pm := NewPassageManager(basePath)
+		if err := pm.Load(); err != nil {
+			return fmt.Errorf("load passages: %w", err)
+		}
+		ids, err := pm.RemoveBySource(removeSources)
+		_ = pm.Close()
 		if err != nil {
 			return fmt.Errorf("remove passages by source: %w", err)
 		}
+		removedIDs = ids
+
 		if len(removedIDs) > 0 {
 			indexData, err = b.backend.RemoveVectors(ctx, indexData, removedIDs)
 			if err != nil {
@@ -164,7 +164,12 @@ func (b *LeannBuilder) UpdateIndex(ctx context.Context, name string, newItems []
 
 	// Step 2: Add new items.
 	if len(newItems) > 0 {
+		pm := NewPassageManager(basePath)
+		if err := pm.Load(); err != nil {
+			return fmt.Errorf("load passages: %w", err)
+		}
 		ids, err := pm.Add(newItems)
+		_ = pm.Close()
 		if err != nil {
 			return fmt.Errorf("add passages: %w", err)
 		}
@@ -200,7 +205,13 @@ func (b *LeannBuilder) UpdateIndex(ctx context.Context, name string, newItems []
 	if err := json.Unmarshal(metaData, &meta); err != nil {
 		return fmt.Errorf("unmarshal metadata: %w", err)
 	}
-	meta.NumPassages = pm.Count()
+
+	readPM := NewReadOnlyPassageManager(basePath)
+	if err := readPM.Load(); err == nil {
+		meta.NumPassages = readPM.Count()
+		_ = readPM.Close()
+	}
+
 	meta.UpdatedAt = time.Now()
 	updatedMeta, err := json.MarshalIndent(meta, "", "  ")
 	if err != nil {

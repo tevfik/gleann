@@ -19,6 +19,7 @@ var bucketPassages = []byte("passages")
 type PassageManager struct {
 	mu       sync.RWMutex
 	basePath string
+	readOnly bool
 	db       *bbolt.DB
 
 	// Optional caching for LoadAll() callers like BM25
@@ -29,6 +30,16 @@ type PassageManager struct {
 func NewPassageManager(basePath string) *PassageManager {
 	return &PassageManager{
 		basePath: basePath,
+	}
+}
+
+// NewReadOnlyPassageManager creates a new PassageManager with read-only access.
+// Read-only instances acquire shared file locks (flock LOCK_SH) allowing unlimited
+// concurrent readers across processes and goroutines without blocking or timing out.
+func NewReadOnlyPassageManager(basePath string) *PassageManager {
+	return &PassageManager{
+		basePath: basePath,
+		readOnly: true,
 	}
 }
 
@@ -44,24 +55,31 @@ func (pm *PassageManager) ensureDB() error {
 		return nil
 	}
 
-	dir := filepath.Dir(pm.basePath)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return fmt.Errorf("create directory: %w", err)
+	if !pm.readOnly {
+		dir := filepath.Dir(pm.basePath)
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return fmt.Errorf("create directory: %w", err)
+		}
 	}
 
-	options := &bbolt.Options{Timeout: 5 * time.Second}
+	options := &bbolt.Options{
+		Timeout:  5 * time.Second,
+		ReadOnly: pm.readOnly,
+	}
 	db, err := bbolt.Open(pm.dbPath(), 0644, options)
 	if err != nil {
 		return fmt.Errorf("open bbolt: %w", err)
 	}
 
-	err = db.Update(func(tx *bbolt.Tx) error {
-		_, err := tx.CreateBucketIfNotExists(bucketPassages)
-		return err
-	})
-	if err != nil {
-		db.Close()
-		return fmt.Errorf("create bucket: %w", err)
+	if !pm.readOnly {
+		err = db.Update(func(tx *bbolt.Tx) error {
+			_, err := tx.CreateBucketIfNotExists(bucketPassages)
+			return err
+		})
+		if err != nil {
+			db.Close()
+			return fmt.Errorf("create bucket: %w", err)
+		}
 	}
 
 	pm.db = db
@@ -70,6 +88,9 @@ func (pm *PassageManager) ensureDB() error {
 
 // Add adds passages to the manager and writes them to disk.
 func (pm *PassageManager) Add(items []Item) ([]int64, error) {
+	if pm.readOnly {
+		return nil, fmt.Errorf("passage manager is read-only")
+	}
 	if err := pm.ensureDB(); err != nil {
 		return nil, err
 	}
@@ -359,6 +380,9 @@ func (pm *PassageManager) Close() error {
 // RemoveBySource removes all passages whose metadata["source"] matches any of
 // the given relative paths. Returns the IDs of removed passages.
 func (pm *PassageManager) RemoveBySource(sources []string) ([]int64, error) {
+	if pm.readOnly {
+		return nil, fmt.Errorf("passage manager is read-only")
+	}
 	if err := pm.ensureDB(); err != nil {
 		return nil, err
 	}
@@ -415,6 +439,9 @@ func (pm *PassageManager) RemoveBySource(sources []string) ([]int64, error) {
 
 // Delete removes all files associated with this passage manager.
 func (pm *PassageManager) Delete() error {
+	if pm.readOnly {
+		return fmt.Errorf("passage manager is read-only")
+	}
 	pm.mu.Lock()
 	defer pm.mu.Unlock()
 

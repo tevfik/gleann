@@ -48,7 +48,7 @@ const DefaultChatTimeout = 10 * time.Minute
 
 // DefaultModelName is the default LLM model name used across Gleann.
 // Update this to change the out-of-the-box experience.
-const DefaultModelName = "nemotron-3-nano:4b"
+const DefaultModelName = "qwen3.5:4b"
 
 // DefaultOllamaContextWindow is the num_ctx used when --no-limit is in effect
 // (MaxTokens <= 0). The model's metadata may impose a smaller cap; Ollama
@@ -84,12 +84,21 @@ func ollamaContextWindow(maxTokens int) int {
 
 // DefaultChatConfig returns default chat configuration.
 func DefaultChatConfig() ChatConfig {
+	var think *bool
+	if v := os.Getenv("GLEANN_THINK"); v != "" {
+		b := v == "1" || strings.EqualFold(v, "true")
+		think = &b
+	} else {
+		f := false
+		think = &f
+	}
 	return ChatConfig{
 		Provider:    LLMOllama,
 		Model:       DefaultModelName,
 		BaseURL:     DefaultOllamaHost,
 		Temperature: 0.7,
 		MaxTokens:   2048,
+		Think:       think,
 		SystemPrompt: "You are a helpful assistant. Answer questions based on the provided context. " +
 			"If the context doesn't contain enough information, say so clearly.",
 	}

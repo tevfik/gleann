@@ -271,6 +271,13 @@ func louvain(g *Graph) map[string]int {
 		strength[id] = s
 	}
 
+	// Precompute sigmaTot (total edge weight for each community).
+	// Initially, each node is in its own community, so sigmaTot[commID] = strength[nodeID].
+	sigmaTot := make(map[int]float64, len(g.neighbors))
+	for id, comm := range membership {
+		sigmaTot[comm] = strength[id]
+	}
+
 	// Iterate until no improvement.
 	for pass := 0; pass < 50; pass++ {
 		improved := false
@@ -284,23 +291,19 @@ func louvain(g *Graph) map[string]int {
 				commWeights[membership[nbr]] += w
 			}
 
-			// Compute sigma_tot for current community (excluding this node).
-			sigmaTot := make(map[int]float64)
-			for nid, comm := range membership {
-				sigmaTot[comm] += strength[nid]
-			}
-
 			bestComm := currentComm
 			bestDelta := 0.0
+
+			// sigmaOld is the community weight without this node.
+			sigmaOld := sigmaTot[currentComm] - ki
+			kiInOld := commWeights[currentComm]
 
 			for comm, kiIn := range commWeights {
 				if comm == currentComm {
 					continue
 				}
 				// Modularity gain of moving node to comm.
-				sigmaOld := sigmaTot[currentComm] - ki
 				sigmaNew := sigmaTot[comm]
-				kiInOld := commWeights[currentComm]
 
 				deltaRemove := -2.0 * (kiInOld - (sigmaOld*ki)/m2) / m2
 				deltaAdd := 2.0 * (kiIn - (sigmaNew*ki)/m2) / m2
@@ -313,6 +316,8 @@ func louvain(g *Graph) map[string]int {
 			}
 
 			if bestComm != currentComm && bestDelta > 1e-10 {
+				sigmaTot[currentComm] -= ki
+				sigmaTot[bestComm] += ki
 				membership[nodeID] = bestComm
 				improved = true
 			}

@@ -7,7 +7,7 @@ const (
 
 	// DefaultLLMModel is the default LLM model for ask/chat commands.
 	// Must match pkg/gleann.DefaultModelName — update both together.
-	DefaultLLMModel = "nemotron-3-nano:4b"
+	DefaultLLMModel = "qwen3.5:4b"
 
 	// DefaultProvider is the default embedding provider.
 	DefaultProvider = "ollama"

@@ -50,9 +50,13 @@ func (s *Server) handleRootsListChanged(ctx context.Context, notification mcp.JS
 	log.Printf("Roots changed. Gleann active workspace updated to: %s. IndexDir is now: %s", primaryRoot, s.config.IndexDir)
 
 	// Clear the cached searchers since the index directory has changed
+	s.searcherMu.Lock()
 	for k, searcher := range s.searchers {
-		searcher.Close()
+		if searcher != nil {
+			searcher.Close()
+		}
 		delete(s.searchers, k)
 	}
 	s.searcherLRU = []string{}
+	s.searcherMu.Unlock()
 }
