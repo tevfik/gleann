@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	mcpsdk "github.com/mark3labs/mcp-go/mcp"
+	"github.com/tevfik/gleann/pkg/memory"
 )
 
 // ── Tool builders: schema validation ───────────────────────────
@@ -470,6 +471,7 @@ func TestMemoryRememberAndSearch(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)
 	t.Setenv("USERPROFILE", tmp)
+	t.Setenv("GLEANN_MEMORY_DIR", tmp)
 
 	s := testMCPServer()
 	defer s.Close()
@@ -519,6 +521,7 @@ func TestMemoryRememberAndList(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)
 	t.Setenv("USERPROFILE", tmp)
+	t.Setenv("GLEANN_MEMORY_DIR", tmp)
 
 	s := testMCPServer()
 	defer s.Close()
@@ -564,6 +567,7 @@ func TestMemoryRememberAndForget(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)
 	t.Setenv("USERPROFILE", tmp)
+	t.Setenv("GLEANN_MEMORY_DIR", tmp)
 
 	s := testMCPServer()
 	defer s.Close()
@@ -591,6 +595,7 @@ func TestMemoryContext(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)
 	t.Setenv("USERPROFILE", tmp)
+	t.Setenv("GLEANN_MEMORY_DIR", tmp)
 
 	s := testMCPServer()
 	defer s.Close()
@@ -651,6 +656,7 @@ func TestBlockMemPoolGetAndClose(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)
 	t.Setenv("USERPROFILE", tmp)
+	t.Setenv("GLEANN_MEMORY_DIR", tmp)
 
 	pool := &blockMemPool{}
 	mgr, err := pool.get()
@@ -686,3 +692,458 @@ func TestSessionLogNoSession(t *testing.T) {
 	// Should not panic even without an active session.
 	s.sessionLog("search", "testidx", "query", 5)
 }
+
+func TestMemoryAutoRepoScopeAndIsolation(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+	t.Setenv("USERPROFILE", tmp)
+	t.Setenv("GLEANN_MEMORY_DIR", tmp)
+
+	s := testMCPServer()
+	defer s.Close()
+
+	ctx := context.Background()
+
+	// 1. Remember in scope repoA
+	_, err := s.handleMemoryRemember(ctx, makeCallToolReq(map[string]any{
+		"content": "Secret config for Project Alpha",
+		"scope":   "org/repoA",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// 2. Remember in scope repoB
+	_, err = s.handleMemoryRemember(ctx, makeCallToolReq(map[string]any{
+		"content": "Secret config for Project Beta",
+		"scope":   "org/repoB",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// 3. Search within repoA scope — must NOT see repoB
+	resA, err := s.handleMemorySearch(ctx, makeCallToolReq(map[string]any{
+		"query": "Secret config",
+		"scope": "org/repoA",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	textA := resA.Content[0].(mcpsdk.TextContent).Text
+	if !strings.Contains(textA, "Project Alpha") {
+		t.Errorf("expected Project Alpha in repoA search, got: %s", textA)
+	}
+	if strings.Contains(textA, "Project Beta") {
+		t.Errorf("repoB memory leaked into repoA scope search: %s", textA)
+	}
+
+	// 4. Search within repoB scope — must NOT see repoA
+	resB, err := s.handleMemorySearch(ctx, makeCallToolReq(map[string]any{
+		"query": "Secret config",
+		"scope": "org/repoB",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	textB := resB.Content[0].(mcpsdk.TextContent).Text
+	if !strings.Contains(textB, "Project Beta") {
+		t.Errorf("expected Project Beta in repoB search, got: %s", textB)
+	}
+	if strings.Contains(textB, "Project Alpha") {
+		t.Errorf("repoA memory leaked into repoB scope search: %s", textB)
+	}
+
+	// 5. Search with scope 'all' — sees both
+	resAll, err := s.handleMemorySearch(ctx, makeCallToolReq(map[string]any{
+		"query": "Secret config",
+		"scope": "all",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	textAll := resAll.Content[0].(mcpsdk.TextContent).Text
+	if !strings.Contains(textAll, "Project Alpha") || !strings.Contains(textAll, "Project Beta") {
+		t.Errorf("scope 'all' should find both projects, got: %s", textAll)
+	}
+}
+
+func TestMemoryProvenanceFields(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+	t.Setenv("USERPROFILE", tmp)
+	t.Setenv("GLEANN_MEMORY_DIR", tmp)
+
+	s := testMCPServer()
+	defer s.Close()
+
+	ctx := context.Background()
+
+	// 1. Remember with provenance fields
+	res, err := s.handleMemoryRemember(ctx, makeCallToolReq(map[string]any{
+		"content": "Store uses BoltDB bucket 'blocks'",
+		"tier":    "long",
+		"label":   "architecture",
+		"repo":    "github.com/tevfik/gleann",
+		"paths":   []interface{}{"pkg/memory/store.go", "pkg/memory/block.go"},
+		"symbols": []interface{}{"OpenStore", "Block"},
+		"commit":  "abcdef123456",
+	}))
+	if err != nil {
+		t.Fatalf("remember failed: %v", err)
+	}
+	text := res.Content[0].(mcpsdk.TextContent).Text
+	if !strings.Contains(text, "symbols: OpenStore, Block") {
+		t.Errorf("expected symbols in response, got: %s", text)
+	}
+	if !strings.Contains(text, "files: pkg/memory/store.go, pkg/memory/block.go") {
+		t.Errorf("expected files in response, got: %s", text)
+	}
+
+	// 2. Verify stored block fields in store
+	mgr, err := s.blockMem.get()
+	if err != nil {
+		t.Fatal(err)
+	}
+	blocks, err := mgr.Store().List(memory.TierLong)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(blocks) != 1 {
+		t.Fatalf("expected 1 block, got %d", len(blocks))
+	}
+	b := blocks[0]
+	if b.Repo != "github.com/tevfik/gleann" {
+		t.Errorf("expected repo 'github.com/tevfik/gleann', got %q", b.Repo)
+	}
+	if len(b.Paths) != 2 || b.Paths[0] != "pkg/memory/store.go" {
+		t.Errorf("unexpected paths: %v", b.Paths)
+	}
+	if len(b.Symbols) != 2 || b.Symbols[0] != "OpenStore" {
+		t.Errorf("unexpected symbols: %v", b.Symbols)
+	}
+	if b.Commit != "abcdef123456" {
+		t.Errorf("expected commit abcdef123456, got %q", b.Commit)
+	}
+
+	// 3. Test Context rendering includes symbols
+	ctxRes, err := s.handleMemoryContext(ctx, makeCallToolReq(map[string]any{
+		"scope": "github.com/tevfik/gleann",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctxText := ctxRes.Content[0].(mcpsdk.TextContent).Text
+	if !strings.Contains(ctxText, "(symbols: OpenStore, Block)") {
+		t.Errorf("context window should include symbols, got: %s", ctxText)
+	}
+
+	// 4. Mark block suspect and check context warning
+	b.Suspect = true
+	b.StaleReason = "symbol OpenStore signature changed"
+	if err := mgr.Store().Update(&b); err != nil {
+		t.Fatal(err)
+	}
+
+	ctxRes2, err := s.handleMemoryContext(ctx, makeCallToolReq(map[string]any{
+		"scope": "github.com/tevfik/gleann",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctxText2 := ctxRes2.Content[0].(mcpsdk.TextContent).Text
+	if !strings.Contains(ctxText2, "<suspect_memory>") || !strings.Contains(ctxText2, "[⚠️ SUSPECT: symbol OpenStore signature changed]") {
+		t.Errorf("context window should display suspect warning in suspect_memory, got: %s", ctxText2)
+	}
+}
+
+func TestMemoryDedupAndContradiction_MCP(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+	t.Setenv("USERPROFILE", tmp)
+	t.Setenv("GLEANN_MEMORY_DIR", tmp)
+
+	s := testMCPServer()
+	defer s.Close()
+
+	ctx := context.Background()
+
+	// 1. Remember fact first time
+	res1, err := s.handleMemoryRemember(ctx, makeCallToolReq(map[string]any{
+		"content": "Database uses BoltDB for persistent storage",
+		"tier":    "long",
+		"scope":   "project-alpha",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text1 := res1.Content[0].(mcpsdk.TextContent).Text
+	if strings.Contains(text1, "reinforced") {
+		t.Fatalf("first remember should not be marked reinforced: %s", text1)
+	}
+
+	// 2. Remember exact same fact second time -> should dedup and reinforce
+	res2, err := s.handleMemoryRemember(ctx, makeCallToolReq(map[string]any{
+		"content": "Database uses BoltDB for persistent storage",
+		"tier":    "long",
+		"scope":   "project-alpha",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text2 := res2.Content[0].(mcpsdk.TextContent).Text
+	if !strings.Contains(text2, "reinforced 2x") {
+		t.Fatalf("expected reinforced 2x notice on dedup, got: %s", text2)
+	}
+
+	// Verify only 1 block exists in store with confirms = 1
+	mgr, err := s.blockMem.get()
+	if err != nil {
+		t.Fatal(err)
+	}
+	blocks, err := mgr.ListScoped("project-alpha", memory.TierLong)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(blocks) != 1 {
+		t.Fatalf("expected 1 deduplicated block, got %d", len(blocks))
+	}
+	if blocks[0].Confirms != 1 {
+		t.Errorf("expected Confirms=1, got %d", blocks[0].Confirms)
+	}
+}
+
+func TestMemoryStalenessDetection_MCP(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+	t.Setenv("USERPROFILE", tmp)
+	t.Setenv("GLEANN_MEMORY_DIR", tmp)
+
+	s := testMCPServer()
+	defer s.Close()
+
+	ctx := context.Background()
+
+	// 1. Remember a fact with symbols and paths
+	_, err := s.handleMemoryRemember(ctx, makeCallToolReq(map[string]any{
+		"content": "Router uses chi mux with auth middleware",
+		"tier":    "long",
+		"scope":   "web-repo",
+		"paths":   []interface{}{"internal/router/router.go"},
+		"symbols": []interface{}{"SetupRouter"},
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// 2. Context before change: normal <long_term_memory>
+	ctxBefore, err := s.handleMemoryContext(ctx, makeCallToolReq(map[string]any{"scope": "web-repo"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	tb := ctxBefore.Content[0].(mcpsdk.TextContent).Text
+	if !strings.Contains(tb, "<long_term_memory>") || strings.Contains(tb, "<suspect_memory>") {
+		t.Errorf("expected clean long term memory, got: %s", tb)
+	}
+
+	// 3. Mark symbol suspect via MarkSuspect
+	mgr, err := s.blockMem.get()
+	if err != nil {
+		t.Fatal(err)
+	}
+	n, err := mgr.MarkSuspect(nil, []string{"SetupRouter"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Fatalf("expected 1 block marked suspect, got %d", n)
+	}
+
+	// 4. Context after change: block isolated in <suspect_memory> with warning
+	ctxAfter, err := s.handleMemoryContext(ctx, makeCallToolReq(map[string]any{"scope": "web-repo"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ta := ctxAfter.Content[0].(mcpsdk.TextContent).Text
+	if !strings.Contains(ta, "<suspect_memory>") {
+		t.Errorf("expected suspect_memory section, got: %s", ta)
+	}
+	if !strings.Contains(ta, "[⚠️ SUSPECT: symbol SetupRouter was modified]") {
+		t.Errorf("expected suspect warning with symbol reason, got: %s", ta)
+	}
+}
+
+func TestSessionEndPromotion_MCP(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+	t.Setenv("USERPROFILE", tmp)
+	t.Setenv("GLEANN_MEMORY_DIR", tmp)
+
+	s := testMCPServer()
+	defer s.Close()
+
+	ctx := context.Background()
+
+	// 1. Start work session
+	_, err := s.handleSessionStart(ctx, makeCallToolReq(map[string]any{
+		"name": "refactor-session-xyz",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// 2. Log events
+	s.sessionLog("search", "myidx", "memory architecture", 3)
+	s.sessionLog("ask", "myidx", "how does dedup work", 1)
+
+	// 3. End session
+	endRes, err := s.handleSessionEnd(ctx, makeCallToolReq(map[string]any{
+		"summary": "Completed memory deduplication and staleness check",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	endText := endRes.Content[0].(mcpsdk.TextContent).Text
+	if !strings.Contains(endText, "refactor-session-xyz") {
+		t.Errorf("unexpected end response: %s", endText)
+	}
+
+	// 4. Verify that session logs were promoted to medium-term and summary to long-term
+	mgr, err := s.blockMem.get()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	medBlocks, err := mgr.Store().List(memory.TierMedium)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// At least the session start and log events promoted
+	if len(medBlocks) == 0 {
+		t.Errorf("expected promoted medium-term blocks after session end, got 0")
+	}
+
+	longBlocks, err := mgr.Store().List(memory.TierLong)
+	if err != nil {
+		t.Fatal(err)
+	}
+	foundSummary := false
+	for _, lb := range longBlocks {
+		if lb.Label == "session_summary" && strings.Contains(lb.Content, "refactor-session-xyz") {
+			foundSummary = true
+			break
+		}
+	}
+	if !foundSummary {
+		t.Errorf("expected session_summary block in long-term memory")
+	}
+}
+
+func TestMCP_SearchTool_RerankSchemaAndOptions(t *testing.T) {
+	s := testMCPServer()
+	defer s.Close()
+
+	tool := s.buildSearchTool()
+	props := tool.InputSchema.Properties
+	if props["rerank"] == nil {
+		t.Fatal("gleann_search should have 'rerank' property")
+	}
+	if props["include_tests"] == nil {
+		t.Fatal("gleann_search should have 'include_tests' property")
+	}
+	if props["kind"] == nil {
+		t.Fatal("gleann_search should have 'kind' property")
+	}
+
+	toolIDs := s.buildSearchIDsTool()
+	propsIDs := toolIDs.InputSchema.Properties
+	if propsIDs["rerank"] == nil {
+		t.Fatal("gleann_search_ids should have 'rerank' property")
+	}
+}
+
+func TestMCP_ToolProfiles(t *testing.T) {
+	// 1. Default (core profile)
+	srvCore := NewServer(Config{
+		IndexDir:          "/tmp/test-mcp-core",
+		EmbeddingProvider: "ollama",
+		EmbeddingModel:    "test",
+		ToolsProfile:      "core",
+	})
+	defer srvCore.Close()
+
+	coreExpected := []string{
+		"gleann_search",
+		"gleann_read",
+		"gleann_graph_neighbors",
+		"gleann_impact",
+		"memory_remember",
+		"memory_context",
+		"memory_search",
+		"memory_forget",
+		"gleann_sync",
+	}
+	for _, tool := range coreExpected {
+		if !srvCore.isToolEnabled(tool) {
+			t.Errorf("core profile should enable %q", tool)
+		}
+	}
+
+	coreDisabled := []string{
+		"gleann_list",
+		"gleann_ask",
+		"gleann_batch_ask",
+		"gleann_shell",
+		"gleann_gain",
+		"inject_knowledge_graph",
+		"gleann_communities",
+	}
+	for _, tool := range coreDisabled {
+		if srvCore.isToolEnabled(tool) {
+			t.Errorf("core profile should NOT enable %q", tool)
+		}
+	}
+
+	// 2. Full profile
+	srvFull := NewServer(Config{
+		IndexDir:          "/tmp/test-mcp-full",
+		EmbeddingProvider: "ollama",
+		EmbeddingModel:    "test",
+		ToolsProfile:      "full",
+	})
+	defer srvFull.Close()
+
+	for _, tool := range append(coreExpected, coreDisabled...) {
+		if !srvFull.isToolEnabled(tool) {
+			t.Errorf("full profile should enable %q", tool)
+		}
+	}
+
+	// 3. Custom profile with aliases (e.g. "search,symbol,recall")
+	srvCustom := NewServer(Config{
+		IndexDir:          "/tmp/test-mcp-custom",
+		EmbeddingProvider: "ollama",
+		EmbeddingModel:    "test",
+		ToolsProfile:      "search,symbol,recall",
+	})
+	defer srvCustom.Close()
+
+	if !srvCustom.isToolEnabled("gleann_search") {
+		t.Errorf("custom profile should enable gleann_search")
+	}
+	if !srvCustom.isToolEnabled("gleann_graph_neighbors") {
+		t.Errorf("custom profile should enable gleann_graph_neighbors via 'symbol' alias")
+	}
+	if !srvCustom.isToolEnabled("memory_context") {
+		t.Errorf("custom profile should enable memory_context via 'recall' alias")
+	}
+	if !srvCustom.isToolEnabled("memory_search") {
+		t.Errorf("custom profile should enable memory_search via 'recall' alias")
+	}
+	if srvCustom.isToolEnabled("gleann_read") {
+		t.Errorf("custom profile should NOT enable gleann_read")
+	}
+}
+
+
+

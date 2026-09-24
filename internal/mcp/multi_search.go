@@ -22,6 +22,12 @@ func (s *Server) buildSearchMultiTool() mcp.Tool {
 		mcp.WithNumber("top_k",
 			mcp.Description("Maximum number of results to return (default: 10)"),
 		),
+		mcp.WithBoolean("include_tests",
+			mcp.Description("If true, includes test files and test functions without score demotion. Default is false."),
+		),
+		mcp.WithString("kind",
+			mcp.Description("Filter by content type: 'code' (source code), 'docs' (documentation and markdown), or 'all'. Default is 'all'."),
+		),
 	)
 }
 
@@ -49,6 +55,12 @@ func (s *Server) handleSearchMulti(ctx context.Context, request mcp.CallToolRequ
 	var opts []gleann.SearchOption
 	if topK, ok := args["top_k"].(float64); ok && topK > 0 {
 		opts = append(opts, gleann.WithTopK(int(topK)))
+	}
+	if incTests, ok := args["include_tests"].(bool); ok {
+		opts = append(opts, gleann.WithIncludeTests(incTests))
+	}
+	if kind, ok := args["kind"].(string); ok && kind != "" {
+		opts = append(opts, gleann.WithKind(kind))
 	}
 
 	results, err := gleann.SearchMultiple(ctx, s.config, s.embedder, names, query, opts...)

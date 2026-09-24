@@ -63,6 +63,19 @@ func (s *Server) buildSearchIDsTool() mcp.Tool {
 					"type": "string",
 					"enum": []string{"and", "or"},
 				},
+				"include_tests": map[string]interface{}{
+					"type":        "boolean",
+					"description": "If true, includes test files and test functions without score demotion. Default is false (test code is demoted in favor of production code).",
+				},
+				"kind": map[string]interface{}{
+					"type":        "string",
+					"description": "Filter by content type: 'code' (source code), 'docs' (documentation and markdown), or 'all'. Default is 'all'.",
+					"enum":        []string{"all", "code", "docs"},
+				},
+				"rerank": map[string]interface{}{
+					"type":        "boolean",
+					"description": "If true, re-score candidates using a cross-encoder reranker for higher precision.",
+				},
 			},
 			Required: []string{"index", "query"},
 		},
@@ -103,6 +116,15 @@ func (s *Server) handleSearchIDs(ctx context.Context, request mcp.CallToolReques
 	if filters, logic := parseFilters(args); len(filters) > 0 {
 		searchOpts = append(searchOpts, gleann.WithMetadataFilter(filters...))
 		searchOpts = append(searchOpts, gleann.WithFilterLogic(logic))
+	}
+	if incTests, ok := args["include_tests"].(bool); ok {
+		searchOpts = append(searchOpts, gleann.WithIncludeTests(incTests))
+	}
+	if kind, ok := args["kind"].(string); ok && kind != "" {
+		searchOpts = append(searchOpts, gleann.WithKind(kind))
+	}
+	if rerank, ok := args["rerank"].(bool); ok && rerank {
+		searchOpts = append(searchOpts, gleann.WithReranker(true))
 	}
 
 	results, err := searcher.Search(ctx, query, searchOpts...)

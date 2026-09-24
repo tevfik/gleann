@@ -66,14 +66,14 @@ jobs:
           path: test.log
 
       - name: Test (unit, treesitter tag)
-        # Runs the indexer and kuzu packages that require CGo + the
+        # Runs the indexer, kuzu, and community packages that require CGo + the
         # `treesitter` build tag. The default-tag run above silently
         # skips these packages because every .go file inside them is
         # build-tag-gated. We need this second pass to actually cover
         # the AST/query/heuristics code paths.
         if: matrix.os != 'windows-latest'
         timeout-minutes: 10
-        run: GOTOOLCHAIN=local CGO_ENABLED=1 go test -tags treesitter -race -timeout 8m -coverprofile=coverage-ts.out ./internal/graph/indexer/... ./internal/graph/kuzu/...
+        run: GOTOOLCHAIN=local CGO_ENABLED=1 go test -tags treesitter -race -timeout 8m -coverprofile=coverage-ts.out ./internal/graph/indexer/... ./internal/graph/kuzu/... ./internal/graph/community/...
         shell: bash
 
       - name: Test (unit, treesitter tag — modules/chunking)

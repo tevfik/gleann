@@ -440,6 +440,8 @@ type searchRequest struct {
 	MetadataFilters     []gleann.MetadataFilter `json:"metadata_filters,omitempty"`
 	FilterLogic         string                  `json:"filter_logic,omitempty"`
 	GraphContext        bool                    `json:"graph_context,omitempty"`
+	IncludeTests        bool                    `json:"include_tests,omitempty"`
+	Kind                string                  `json:"kind,omitempty"`
 }
 
 type searchResponse struct {
@@ -493,11 +495,15 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 	if req.GraphContext {
 		opts = append(opts, gleann.WithGraphContext(true))
 	}
+	if req.IncludeTests {
+		opts = append(opts, gleann.WithIncludeTests(true))
+	}
+	if req.Kind != "" {
+		opts = append(opts, gleann.WithKind(req.Kind))
+	}
 
 	// Set up per-request reranker if requested.
 	if req.Rerank || s.config.SearchConfig.UseReranker {
-		opts = append(opts, gleann.WithReranker(true))
-		// Ensure the searcher has a reranker configured.
 		rerankModel := req.RerankModel
 		if rerankModel == "" {
 			rerankModel = s.config.SearchConfig.RerankerConfig.Model
@@ -511,7 +517,7 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 			BaseURL:  s.config.OllamaHost,
 			APIKey:   s.config.OpenAIAPIKey,
 		}
-		searcher.SetReranker(gleann.NewReranker(rerankerCfg))
+		opts = append(opts, gleann.WithCustomReranker(gleann.NewReranker(rerankerCfg)))
 	}
 
 	results, err := searcher.Search(r.Context(), req.Query, opts...)

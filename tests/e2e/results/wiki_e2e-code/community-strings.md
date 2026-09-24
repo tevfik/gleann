@@ -1,23 +1,18 @@
 # Community: strings
 
-**3 symbols** | Cohesion: 0.333
+**2 symbols** | Cohesion: 0.500
 
 ## Symbols
 
 | Symbol | Kind |
 |--------|------|
-| `code.parseGo` | function |
-| `strings.Contains` | function |
-| `strings.Split` | function |
+| `code.extractGoFuncName` | function |
+| `strings.IndexAny` | function |
 
 ## External Connections
 
-- `code.parseGo` ↔ `strings.HasPrefix`
-- `strings.Contains` ↔ `code.parseTypeScript`
-- `code.append` ↔ `code.parseGo`
-- `code.parseGo` ↔ `strings.TrimSpace`
-- `code.parseGo` ↔ `code.Parser.Parse`
-- `code.parseGo` ↔ `code.extractGoTypeName`
+- `strings.TrimSpace` ↔ `code.extractGoFuncName`
+- `strings.IndexAny` ↔ `code.extractTSFuncName`
 
 ---
 [← Back to Index](index.md)

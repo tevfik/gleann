@@ -1,0 +1,122 @@
+[
+  {
+    "id": "task-001",
+    "description": "Find Okapi BM25 scoring and term frequency implementation",
+    "query": "BM25 scoring term frequency inverse document frequency idf",
+    "gold_files": ["modules/bm25/bm25.go"]
+  },
+  {
+    "id": "task-002",
+    "description": "Find KuzuDB schema initialization and table creation",
+    "query": "initialize KùzuDB graph schema create node table Symbol File CALLS",
+    "gold_files": ["internal/graph/kuzu/db.go"]
+  },
+  {
+    "id": "task-003",
+    "description": "Find Cypher queries for symbol callers and callees",
+    "query": "query callers callees Cypher FQN resolution graph neighbors",
+    "gold_files": ["internal/graph/kuzu/query.go"]
+  },
+  {
+    "id": "task-004",
+    "description": "Find AST code indexer and test symbol detection",
+    "query": "AST indexer tree-sitter extract symbols test functions isTestSymbol",
+    "gold_files": ["internal/graph/indexer/indexer.go"]
+  },
+  {
+    "id": "task-005",
+    "description": "Find repository file walker and gitignore exclusion rules",
+    "query": "file walker nested gitignore submodules exclusion ignore rules",
+    "gold_files": ["pkg/walker/walker.go"]
+  },
+  {
+    "id": "task-006",
+    "description": "Find persistent BBolt memory storage and tier management",
+    "query": "bbolt memory store open database tiers short medium long",
+    "gold_files": ["pkg/memory/store.go"]
+  },
+  {
+    "id": "task-007",
+    "description": "Find remote memory client and single writer daemon probe",
+    "query": "remote memory client daemon probe REST auto-spawn bbolt lock",
+    "gold_files": ["pkg/memory/remote.go"]
+  },
+  {
+    "id": "task-008",
+    "description": "Find Model Context Protocol MCP server dispatch and tool handlers",
+    "query": "MCP server register tools dispatch requests handle tool call",
+    "gold_files": ["internal/mcp/server.go"]
+  },
+  {
+    "id": "task-009",
+    "description": "Find MCP graph navigation and blast radius impact analysis tools",
+    "query": "graph MCP tools graph_neighbors navigate_symbol impact blast radius",
+    "gold_files": ["internal/mcp/tools_graph.go"]
+  },
+  {
+    "id": "task-010",
+    "description": "Find hybrid vector and BM25 searcher implementation",
+    "query": "hybrid searcher vector retrieval alpha combine BM25 scores",
+    "gold_files": ["pkg/gleann/searcher.go"]
+  },
+  {
+    "id": "task-011",
+    "description": "Find HTTP daemon serve command and model auto-setup",
+    "query": "serve command background daemon listen port start HTTP server",
+    "gold_files": ["cmd/gleann/cmd_serve.go"]
+  },
+  {
+    "id": "task-012",
+    "description": "Find index build command and embedding generation pipeline",
+    "query": "build index command read documents compute embeddings passages",
+    "gold_files": ["cmd/gleann/cmd_build.go"]
+  },
+  {
+    "id": "task-013",
+    "description": "Find file hash tracking and index quarantine logic",
+    "query": "file content hash sha256 lock detection quarantine filehash",
+    "gold_files": ["internal/graph/indexer/filehash.go"]
+  },
+  {
+    "id": "task-014",
+    "description": "Find MCP session tracking and logging tools",
+    "query": "session start session end session status log events persistent memory",
+    "gold_files": ["internal/mcp/session_tools.go"]
+  },
+  {
+    "id": "task-015",
+    "description": "Find REST server endpoints for memory blocks and search",
+    "query": "REST API server handlers /api/blocks context stats compact",
+    "gold_files": ["internal/server/server.go"]
+  },
+  {
+    "id": "task-016",
+    "description": "Find AST-based chunking for code definitions",
+    "query": "AST chunking tree-sitter chunk definitions functions classes",
+    "gold_files": ["modules/chunking/ast_chunker.go"]
+  },
+  {
+    "id": "task-017",
+    "description": "Find benchmark evaluation metrics and runner",
+    "query": "benchmark runner evaluation Recall@K MRR summary report",
+    "gold_files": ["pkg/benchmark/benchmark.go"]
+  },
+  {
+    "id": "task-018",
+    "description": "Find agent role configuration and system prompts",
+    "query": "agent roles system prompts specialized personas role catalog",
+    "gold_files": ["pkg/roles/roles.go"]
+  },
+  {
+    "id": "task-019",
+    "description": "Find git commit vault tracker and delta indexing",
+    "query": "vault tracker git commit diff incremental re-indexing sha cache",
+    "gold_files": ["internal/vault/tracker.go"]
+  },
+  {
+    "id": "task-020",
+    "description": "Find BM25 adapter connecting scorer to searcher passages",
+    "query": "BM25 adapter ScoreDocIDs AddDocuments indexed passages",
+    "gold_files": ["pkg/gleann/bm25_adapter.go"]
+  }
+]

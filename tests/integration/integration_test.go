@@ -3,6 +3,7 @@ package integration
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"math"
 	"math/rand"
 	"os"
@@ -442,4 +443,69 @@ func randomSentence(seed int) string {
 		parts[i] = words[r.Intn(len(words))]
 	}
 	return strings.Join(parts, " ")
+}
+
+func TestSearch_MetadataFilterBeforeTruncation(t *testing.T) {
+	dir := t.TempDir()
+	config := gleann.DefaultConfig()
+	config.IndexDir = dir
+	config.Backend = "hnsw"
+	config.HNSWConfig.UseMmap = false
+
+	embedder := &mockEmbeddingComputer{dim: 16}
+	builder, err := gleann.NewBuilder(config, embedder)
+	if err != nil {
+		t.Fatalf("NewBuilder: %v", err)
+	}
+
+	ctx := context.Background()
+	var items []gleann.Item
+	for i := 0; i < 5; i++ {
+		items = append(items, gleann.Item{
+			Text:     fmt.Sprintf("document description markdown %d", i),
+			Metadata: map[string]any{"source": fmt.Sprintf("doc_%d.md", i)},
+		})
+	}
+	for i := 0; i < 5; i++ {
+		items = append(items, gleann.Item{
+			Text:     fmt.Sprintf("go source code implementation %d", i),
+			Metadata: map[string]any{"source": fmt.Sprintf("code_%d.go", i)},
+		})
+	}
+
+	if err := builder.Build(ctx, "filter-test", items); err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+
+	searcher := gleann.NewSearcher(config, embedder)
+	defer searcher.Close()
+	if err := searcher.Load(ctx, "filter-test"); err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	filter := gleann.MetadataFilter{
+		Field:    "source",
+		Operator: "endswith",
+		Value:    ".go",
+	}
+
+	// Request topK=3 with the .go filter
+	results, err := searcher.Search(ctx, "code implementation",
+		gleann.WithTopK(3),
+		gleann.WithMetadataFilters([]gleann.MetadataFilter{filter}),
+	)
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+
+	if len(results) != 3 {
+		t.Fatalf("expected exactly 3 filtered results, got %d", len(results))
+	}
+
+	for _, r := range results {
+		src, _ := r.Metadata["source"].(string)
+		if !strings.HasSuffix(src, ".go") {
+			t.Errorf("expected source to end with .go, got %s", src)
+		}
+	}
 }

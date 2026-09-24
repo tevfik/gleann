@@ -32,6 +32,7 @@ type Config struct {
 	LLMModel          string
 	Version           string
 	CleanToolNames    bool
+	ToolsProfile      string // "core" (default), "full", or comma-separated list of tool names
 }
 
 // maxCachedSearchers is the maximum number of searchers to keep in memory.
@@ -44,6 +45,7 @@ type Server struct {
 	embedder       gleann.EmbeddingComputer
 	config         gleann.Config
 	cleanToolNames bool
+	toolsProfile   string
 	searcherMu     sync.Mutex
 	searchers      map[string]*gleann.LeannSearcher
 	searcherLRU    []string       // tracks access order: most recent at end
@@ -108,11 +110,19 @@ func NewServer(cfg Config) *Server {
 		mcpServer:      s,
 		config:         glCfg,
 		cleanToolNames: cfg.CleanToolNames,
+		toolsProfile:   cfg.ToolsProfile,
 		embedder:       embedder,
 		searchers:      make(map[string]*gleann.LeannSearcher),
 		memPool:        newMCPMemoryPool(cfg.IndexDir),
 		blockMem:       &blockMemPool{},
 		syncTasks:      make(map[string]*syncTask),
+	}
+	if srv.toolsProfile == "" {
+		if envProfile := os.Getenv("GLEANN_TOOLS"); envProfile != "" {
+			srv.toolsProfile = envProfile
+		} else {
+			srv.toolsProfile = "core"
+		}
 	}
 
 	// Wire VectorSyncer factory (build-tag gated; no-op when !treesitter).
@@ -195,9 +205,47 @@ func NewServer(cfg Config) *Server {
 	return srv
 }
 
-// addTool registers a tool with the MCP server, stripping the "gleann_" prefix
-// if cleanToolNames is enabled (for clients like OpenCode that namespace automatically).
+// isToolEnabled checks whether a tool belongs to the active tools profile.
+func (s *Server) isToolEnabled(name string) bool {
+	profile := strings.TrimSpace(strings.ToLower(s.toolsProfile))
+	if profile == "full" || profile == "all" {
+		return true
+	}
+	if profile == "" || profile == "core" {
+		switch name {
+		case "gleann_search", "gleann_read", "gleann_graph_neighbors", "gleann_impact",
+			"memory_remember", "memory_context", "memory_search", "memory_forget", "gleann_sync":
+			return true
+		default:
+			return false
+		}
+	}
+	// Custom comma-separated list of tool names
+	parts := strings.Split(profile, ",")
+	clean := strings.TrimPrefix(name, "gleann_")
+	clean = strings.TrimPrefix(clean, "memory_")
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p == name || p == clean || p == "gleann_"+p || p == "memory_"+p {
+			return true
+		}
+		// Aliases
+		if p == "symbol" && (name == "gleann_graph_neighbors" || name == "gleann_navigate_symbol") {
+			return true
+		}
+		if p == "recall" && (name == "memory_context" || name == "memory_search") {
+			return true
+		}
+	}
+	return false
+}
+
+// addTool registers a tool with the MCP server if enabled by the active tools profile.
+// Strips the "gleann_" prefix if cleanToolNames is enabled.
 func (s *Server) addTool(tool mcp.Tool, handler server.ToolHandlerFunc) {
+	if !s.isToolEnabled(tool.Name) {
+		return
+	}
 	if s.cleanToolNames {
 		tool.Name = strings.TrimPrefix(tool.Name, "gleann_")
 	}
@@ -296,15 +344,45 @@ func (s *Server) getSearcher(name string) (*gleann.LeannSearcher, error) {
 	}
 	s.searcherMu.Unlock()
 
-	searcher := gleann.NewSearcher(s.config, s.embedder)
+	embedder := s.embedder
+	if meta, err := gleann.GetIndexMeta(s.config.IndexDir, name); err == nil && meta.EmbeddingModel != "" {
+		if embedder == nil || embedder.ModelName() != meta.EmbeddingModel {
+			// Auto-adapt to the index's embedding model using the configured provider
+			embedder = embedding.NewComputer(embedding.Options{
+				Provider:    embedding.Provider(s.config.EmbeddingProvider),
+				Model:       meta.EmbeddingModel,
+				BaseURL:     s.config.OllamaHost,
+				BatchSize:   s.config.BatchSize,
+				Concurrency: s.config.Concurrency,
+			})
+		}
+	}
+
+	searcher := gleann.NewSearcher(s.config, embedder)
 	// Enable BM25 hybrid scoring by default for MCP-facing search/ask tools.
-	// Pure dense-vector search misses exact keyword/symbol matches that
-	// lexical scoring catches (e.g. an agent searching for a precise
-	// function or error-message string). The scorer must be set before
-	// Load() because the BM25 index is built as part of loading the
-	// searcher. Large corpora (>100k passages) fall back to a streaming
-	// build inside Load, so this stays safe for big indexes too.
 	searcher.SetScorer(gleann.NewBM25Adapter())
+
+	// Configure reranker if enabled via config or environment
+	if s.config.SearchConfig.UseReranker || os.Getenv("GLEANN_RERANK") == "1" || os.Getenv("GLEANN_RERANK") == "true" {
+		rerankModel := s.config.SearchConfig.RerankerConfig.Model
+		if rerankModel == "" {
+			rerankModel = os.Getenv("GLEANN_RERANK_MODEL")
+		}
+		if rerankModel == "" {
+			rerankModel = "bge-reranker-v2-m3"
+		}
+		provider := gleann.RerankerProvider(s.config.EmbeddingProvider)
+		if pEnv := os.Getenv("GLEANN_RERANK_PROVIDER"); pEnv != "" {
+			provider = gleann.RerankerProvider(pEnv)
+		}
+		rerankerCfg := gleann.RerankerConfig{
+			Provider: provider,
+			Model:    rerankModel,
+			BaseURL:  s.config.OllamaHost,
+		}
+		searcher.SetReranker(gleann.NewReranker(rerankerCfg))
+	}
+
 	ctx := context.Background()
 	if err := searcher.Load(ctx, name); err != nil {
 		return nil, err
@@ -527,6 +605,19 @@ func (s *Server) buildSearchTool() mcp.Tool {
 					"type":        "boolean",
 					"description": "If true, enrich results with graph context (callers/callees from the AST-based code graph).",
 				},
+				"include_tests": map[string]interface{}{
+					"type":        "boolean",
+					"description": "If true, includes test files and test functions without score demotion. Default is false (test code is demoted in favor of production code).",
+				},
+				"kind": map[string]interface{}{
+					"type":        "string",
+					"description": "Filter by content type: 'code' (source code), 'docs' (documentation and markdown), or 'all'. Default is 'all'.",
+					"enum":        []string{"all", "code", "docs"},
+				},
+				"rerank": map[string]interface{}{
+					"type":        "boolean",
+					"description": "If true, re-score candidates using a cross-encoder reranker for higher precision.",
+				},
 			},
 			Required: []string{"index", "query"},
 		},
@@ -610,6 +701,15 @@ func (s *Server) handleSearch(ctx context.Context, request mcp.CallToolRequest) 
 	}
 	if gc, ok := args["graph_context"].(bool); ok && gc {
 		searchOpts = append(searchOpts, gleann.WithGraphContext(true))
+	}
+	if incTests, ok := args["include_tests"].(bool); ok {
+		searchOpts = append(searchOpts, gleann.WithIncludeTests(incTests))
+	}
+	if kind, ok := args["kind"].(string); ok && kind != "" {
+		searchOpts = append(searchOpts, gleann.WithKind(kind))
+	}
+	if rerank, ok := args["rerank"].(bool); ok && rerank {
+		searchOpts = append(searchOpts, gleann.WithReranker(true))
 	}
 
 	var results []gleann.SearchResult
@@ -703,7 +803,7 @@ func (s *Server) handleSearch(ctx context.Context, request mcp.CallToolRequest) 
 
 	// Apply Context Field Theory (Φ) re-ranking when graph context is requested.
 	// Build lightweight signals from graph structure data if available.
-	if _, ok := args["graph_context"].(bool); ok {
+	if gc, ok := args["graph_context"].(bool); ok && gc {
 		cft := gleann.DefaultContextField()
 		signalMap := make(map[string]gleann.ContextSignal, len(results))
 		for _, r := range results {
@@ -985,16 +1085,51 @@ func (s *Server) handleGraphNeighbors(ctx context.Context, request mcp.CallToolR
 	sb.WriteString(fmt.Sprintf("Graph Neighbors for %s:\n\n", nodeFqn))
 
 	const maxNeighbors = 25
-	sb.WriteString(fmt.Sprintf("=== Callers (Symbols that call this node - %d total) ===\n", len(callers)))
-	if len(callers) == 0 {
-		sb.WriteString("None found.\n")
+	var prodCallers, testCallers []gleann.Callee
+	for _, c := range callers {
+		if c.IsTest {
+			testCallers = append(testCallers, c)
+		} else {
+			prodCallers = append(prodCallers, c)
+		}
+	}
+
+	sb.WriteString(fmt.Sprintf("=== Callers (%d production, %d test) ===\n", len(prodCallers), len(testCallers)))
+	if len(prodCallers) == 0 {
+		sb.WriteString("No production callers found.\n")
 	} else {
-		for i, c := range callers {
+		for i, c := range prodCallers {
 			if i >= maxNeighbors {
-				sb.WriteString(fmt.Sprintf("... and %d more callers\n", len(callers)-maxNeighbors))
+				sb.WriteString(fmt.Sprintf("... and %d more production callers\n", len(prodCallers)-maxNeighbors))
 				break
 			}
-			sb.WriteString(fmt.Sprintf("- %s (%s)\n", c.FQN, c.Kind))
+			loc := ""
+			if c.File != "" {
+				if c.Line > 0 {
+					loc = fmt.Sprintf(" [%s:%d]", c.File, c.Line)
+				} else {
+					loc = fmt.Sprintf(" [%s]", c.File)
+				}
+			}
+			sb.WriteString(fmt.Sprintf("- %s (%s)%s\n", c.FQN, c.Kind, loc))
+		}
+	}
+	if len(testCallers) > 0 {
+		sb.WriteString(fmt.Sprintf("\nTest Callers (%d total):\n", len(testCallers)))
+		for i, c := range testCallers {
+			if i >= 10 {
+				sb.WriteString(fmt.Sprintf("... and %d more test callers\n", len(testCallers)-10))
+				break
+			}
+			loc := ""
+			if c.File != "" {
+				if c.Line > 0 {
+					loc = fmt.Sprintf(" [%s:%d]", c.File, c.Line)
+				} else {
+					loc = fmt.Sprintf(" [%s]", c.File)
+				}
+			}
+			sb.WriteString(fmt.Sprintf("  [test] %s (%s)%s\n", c.FQN, c.Kind, loc))
 		}
 	}
 
@@ -1007,7 +1142,15 @@ func (s *Server) handleGraphNeighbors(ctx context.Context, request mcp.CallToolR
 				sb.WriteString(fmt.Sprintf("... and %d more callees\n", len(callees)-maxNeighbors))
 				break
 			}
-			sb.WriteString(fmt.Sprintf("- %s (%s)\n", c.FQN, c.Kind))
+			loc := ""
+			if c.File != "" {
+				if c.Line > 0 {
+					loc = fmt.Sprintf(" [%s:%d]", c.File, c.Line)
+				} else {
+					loc = fmt.Sprintf(" [%s]", c.File)
+				}
+			}
+			sb.WriteString(fmt.Sprintf("- %s (%s)%s\n", c.FQN, c.Kind, loc))
 		}
 	}
 
@@ -1766,6 +1909,12 @@ func (s *Server) handleSync(ctx context.Context, request mcp.CallToolRequest) (*
 		actionMsg := "Index synchronized successfully"
 		if isNew {
 			actionMsg = "Index built successfully"
+		}
+
+		if len(opts.Files) > 0 {
+			if mgr, err := s.blockMem.get(); err == nil {
+				_, _ = mgr.MarkSuspect(opts.Files, nil)
+			}
 		}
 
 		res := map[string]any{

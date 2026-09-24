@@ -20,6 +20,8 @@ type multiSearchRequest struct {
 	RerankModel string                  `json:"rerank_model,omitempty"`
 	Filters     []gleann.MetadataFilter `json:"metadata_filters,omitempty"`
 	FilterLogic string                  `json:"filter_logic,omitempty"`
+	IncludeTests bool                   `json:"include_tests,omitempty"`
+	Kind        string                  `json:"kind,omitempty"`
 }
 
 // multiSearchResponse is the response for POST /api/search.
@@ -61,6 +63,12 @@ func (s *Server) handleMultiSearch(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Rerank {
 		opts = append(opts, gleann.WithReranker(true))
+	}
+	if req.IncludeTests {
+		opts = append(opts, gleann.WithIncludeTests(true))
+	}
+	if req.Kind != "" {
+		opts = append(opts, gleann.WithKind(req.Kind))
 	}
 
 	start := time.Now()

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -15,6 +16,7 @@ import (
 	"github.com/tevfik/gleann/internal/embedding"
 	"github.com/tevfik/gleann/pkg/benchmark"
 	"github.com/tevfik/gleann/pkg/gleann"
+	"github.com/tevfik/gleann/pkg/walker"
 )
 
 // cmdBenchmark implements `gleann benchmark` / `gleann bench`.
@@ -37,6 +39,12 @@ func cmdBenchmark(args []string) {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
 			topK = n
 		}
+	}
+
+	// Mode 0: Agent-level task evaluation suite (T25)
+	if suite == "agent" || hasFlag(args, "--agent") {
+		runAgentBenchmark(asJSON, outputFile)
+		return
 	}
 
 	// Mode 1: SWE-Bench / ContextBench evaluation mode.
@@ -80,24 +88,37 @@ func runContextBenchmark(config gleann.Config, indexName, tasksFile string, topK
 	}
 	defer searcher.Close()
 
-	// Load tasks from file or auto-generate from index
+	// Load tasks from file (enforce realistic task dataset)
+	if tasksFile == "" {
+		defaultTasks := filepath.Join("bench", "tasks", indexName+".json")
+		if _, err := os.Stat(defaultTasks); err == nil {
+			tasksFile = defaultTasks
+		} else {
+			defaultGleann := filepath.Join("bench", "tasks", "gleann.json")
+			if _, err := os.Stat(defaultGleann); err == nil {
+				tasksFile = defaultGleann
+			}
+		}
+	}
+
+	if tasksFile == "" {
+		fmt.Fprintln(os.Stderr, "error: --tasks <file.json> is required. See bench/tasks/gleann.json for example.")
+		os.Exit(1)
+	}
+
 	var tasks []benchmark.Task
-	if tasksFile != "" {
-		data, err := os.ReadFile(tasksFile)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "error reading tasks file %s: %v\n", tasksFile, err)
-			os.Exit(1)
-		}
-		if err := json.Unmarshal(data, &tasks); err != nil {
-			fmt.Fprintf(os.Stderr, "error parsing tasks json: %v\n", err)
-			os.Exit(1)
-		}
-	} else {
-		tasks = generateSampleTasks(searcher)
+	data, err := os.ReadFile(tasksFile)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error reading tasks file %s: %v\n", tasksFile, err)
+		os.Exit(1)
+	}
+	if err := json.Unmarshal(data, &tasks); err != nil {
+		fmt.Fprintf(os.Stderr, "error parsing tasks json: %v\n", err)
+		os.Exit(1)
 	}
 
 	if len(tasks) == 0 {
-		fmt.Fprintln(os.Stderr, "error: no benchmark tasks available")
+		fmt.Fprintln(os.Stderr, "error: no benchmark tasks found in tasks file")
 		os.Exit(1)
 	}
 
@@ -107,9 +128,18 @@ func runContextBenchmark(config gleann.Config, indexName, tasksFile string, topK
 
 	runner := benchmark.NewRunner(tasks)
 
-	// Strategy 1: BM25 (Lexical baseline)
+	// Strategy 1: Ripgrep (Lexical baseline)
+	runner.RegisterStrategy("Ripgrep", func(ctx context.Context, query string, k int) ([]string, int, error) {
+		return runRipgrepSearch(query, k)
+	})
+
+	// Strategy 2: BM25 (Pure lexical full-corpus retrieval)
 	runner.RegisterStrategy("BM25", func(ctx context.Context, query string, k int) ([]string, int, error) {
-		results, err := searcher.Search(ctx, query, gleann.WithTopK(k), gleann.WithHybridAlpha(0.0))
+		results, err := searcher.SearchBM25(ctx, query, k)
+		if err != nil {
+			// Fallback to alpha 0 if BM25 direct topK not supported
+			results, err = searcher.Search(ctx, query, gleann.WithTopK(k), gleann.WithHybridAlpha(0.0))
+		}
 		if err != nil {
 			return nil, 0, err
 		}
@@ -117,7 +147,7 @@ func runContextBenchmark(config gleann.Config, indexName, tasksFile string, topK
 		return paths, tokens, nil
 	})
 
-	// Strategy 2: Vector (DiskANN+PQ or HNSW)
+	// Strategy 3: Vector (DiskANN+PQ or HNSW)
 	vectorLabel := fmt.Sprintf("Vector (%s)", strings.ToUpper(config.Backend))
 	if config.Backend == "" || config.Backend == "diskann" {
 		vectorLabel = "Vector (DiskANN+PQ)"
@@ -131,7 +161,7 @@ func runContextBenchmark(config gleann.Config, indexName, tasksFile string, topK
 		return paths, tokens, nil
 	})
 
-	// Strategy 3: Hybrid (Vector + BM25)
+	// Strategy 4: Hybrid (Vector + BM25)
 	runner.RegisterStrategy("Hybrid", func(ctx context.Context, query string, k int) ([]string, int, error) {
 		results, err := searcher.Search(ctx, query, gleann.WithTopK(k), gleann.WithHybridAlpha(0.5))
 		if err != nil {
@@ -141,10 +171,10 @@ func runContextBenchmark(config gleann.Config, indexName, tasksFile string, topK
 		return paths, tokens, nil
 	})
 
-	// Strategy 4: GraphRAG (if graph exists)
+	// Strategy 5: GraphRAG (if graph exists)
 	if searcher.GraphDB() != nil {
 		runner.RegisterStrategy("GraphRAG", func(ctx context.Context, query string, k int) ([]string, int, error) {
-			results, err := searcher.Search(ctx, query, gleann.WithTopK(k), gleann.WithHybridAlpha(0.6))
+			results, err := searcher.SearchGraphRAG(ctx, query, k)
 			if err != nil {
 				return nil, 0, err
 			}
@@ -207,57 +237,49 @@ func extractResults(results []gleann.SearchResult) ([]string, int) {
 	return paths, tokens
 }
 
-func generateSampleTasks(searcher *gleann.LeannSearcher) []benchmark.Task {
-	pm := searcher.PassageManager()
-	if pm == nil {
-		return nil
+// runRipgrepSearch executes a fast ripgrep lookup for key terms in the query.
+func runRipgrepSearch(query string, topK int) ([]string, int, error) {
+	words := strings.Fields(query)
+	if len(words) == 0 {
+		return nil, 0, nil
 	}
 
-	total := pm.Count()
-	if total == 0 {
-		return nil
+	// Pick the most specific query terms (longest word or keyword)
+	var term string
+	for _, w := range words {
+		cleaned := strings.Trim(w, `",':;()[]{}*`)
+		if len(cleaned) > len(term) {
+			term = cleaned
+		}
 	}
 
-	sampleLimit := 10
-	if total < sampleLimit {
-		sampleLimit = total
+	if term == "" {
+		return nil, 0, nil
 	}
 
-	var tasks []benchmark.Task
-	for i := 0; i < sampleLimit; i++ {
-		p, err := pm.Get(int64(i))
-		if err != nil || len(p.Text) < 20 {
-			continue
-		}
-		filePath := getMetaStr(p.Metadata, "file")
-		if filePath == "" {
-			filePath = getMetaStr(p.Metadata, "source")
-		}
-		if filePath == "" {
-			continue
-		}
-
-		lines := strings.Split(p.Text, "\n")
-		firstLine := strings.TrimSpace(lines[0])
-		if len(firstLine) > 60 {
-			firstLine = firstLine[:60]
-		}
-		firstLine = strings.TrimPrefix(firstLine, "//")
-		firstLine = strings.TrimPrefix(firstLine, "#")
-		firstLine = strings.TrimSpace(firstLine)
-
-		if firstLine == "" {
-			continue
-		}
-
-		tasks = append(tasks, benchmark.Task{
-			ID:          fmt.Sprintf("task-%03d", len(tasks)+1),
-			Description: "Find context for " + filepath.Base(filePath),
-			Query:       firstLine,
-			GoldFiles:   []string{filePath},
-		})
+	cmd := exec.Command("rg", "-l", "-i", "--max-count", "1", term)
+	out, err := cmd.Output()
+	if err != nil {
+		// Fallback to standard grep
+		cmd = exec.Command("grep", "-l", "-r", "-i", "-m", "1", "--exclude-dir=.git", term, ".")
+		out, err = cmd.Output()
 	}
-	return tasks
+
+	var matchedFiles []string
+	if err == nil {
+		lines := strings.Split(string(out), "\n")
+		for _, line := range lines {
+			line = strings.TrimSpace(line)
+			line = strings.TrimPrefix(line, "./")
+			if line != "" {
+				matchedFiles = append(matchedFiles, line)
+				if len(matchedFiles) >= topK {
+					break
+				}
+			}
+		}
+	}
+	return matchedFiles, 0, nil
 }
 
 // runTokenReductionAnalysis runs the legacy token reduction benchmark.
@@ -303,15 +325,12 @@ func runTokenReductionAnalysis(config gleann.Config, indexName, docsDir string, 
 }
 
 func countCorpusTokens(dir string) (tokens, files int, bytes int64) {
-	filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
+	opts := walker.Options{
+		IncludeSubmodules: false,
+		FollowSymlinks:    true,
+	}
+	_ = walker.Walk(dir, opts, func(path string, d fs.DirEntry, err error) error {
 		if err != nil || d.IsDir() {
-			name := ""
-			if d != nil {
-				name = d.Name()
-			}
-			if strings.HasPrefix(name, ".") || name == "node_modules" || name == "vendor" {
-				return filepath.SkipDir
-			}
 			return nil
 		}
 
@@ -405,18 +424,48 @@ func benchFormatBytes(b int64) string {
 	return fmt.Sprintf("%.1f %cB", float64(b)/float64(div), "KMGTPE"[exp])
 }
 
+func runAgentBenchmark(asJSON bool, outputFile string) {
+	ctx := context.Background()
+	summary, err := benchmark.RunAgentEvaluation(ctx, nil)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error running agent benchmark: %v\n", err)
+		os.Exit(1)
+	}
+
+	if outputFile != "" {
+		if err := summary.WriteReport(outputFile, asJSON); err != nil {
+			fmt.Fprintf(os.Stderr, "error writing report to %s: %v\n", outputFile, err)
+			os.Exit(1)
+		}
+		fmt.Printf("Report saved to %s\n", outputFile)
+	}
+
+	if asJSON {
+		data, _ := json.MarshalIndent(summary, "", "  ")
+		fmt.Println(string(data))
+	} else {
+		fmt.Println(summary.FormatMarkdown())
+	}
+}
+
 func printBenchmarkUsage() {
 	fmt.Println(`gleann benchmark / gleann bench — Retrieval & token reduction evaluation
 
 Usage:
-  # 1. SWE-Bench / ContextBench Retrieval Quality Evaluation:
+  # 1. Agent-Level Task Evaluation Suite (T25):
+  gleann bench --agent [--output <report.md>] [--json]
+  gleann bench --suite agent [--output <report.md>] [--json]
+
+  # 2. SWE-Bench / ContextBench Retrieval Quality Evaluation:
   gleann bench --index <name> [--tasks <file.json>] [--top-k <n>] [--output <report.md>] [--json]
 
-  # 2. Token Reduction Analysis:
+  # 3. Token Reduction Analysis:
   gleann benchmark --index <name> --docs <dir> [--top-k <n>]
 
 Options:
-  --index <name>      Index name (required)
+  --agent             Run agent-level 4-task evaluation suite (T25)
+  --suite <name>      Evaluation suite: agent, contextbench
+  --index <name>      Index name (required for retrieval benchmarks)
   --tasks <file>      SWE-Bench/ContextBench task file (optional, auto-generates if omitted)
   --docs <dir>        Source directory for token reduction analysis
   --top-k <n>         Number of retrieved passages (default: 10)
@@ -424,6 +473,8 @@ Options:
   --json              Output raw JSON metrics
 
 Examples:
+  gleann bench --agent
+  gleann bench --agent --output docs/evaluation.md
   gleann bench --index my-code
   gleann bench --index my-code --output report.md
   gleann benchmark --index my-code --docs ./src/`)

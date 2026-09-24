@@ -6,13 +6,12 @@
 
 | Symbol | Kind |
 |--------|------|
-| `code.FilterByKind` | function |
-| `code.append` | function |
+| `code.extractGoTypeName` | function |
+| `strings.TrimPrefix` | function |
 
 ## External Connections
 
-- `code.parsePython` ↔ `code.append`
-- `code.LeakyBucket` ↔ `code.append`
+- `code.extractGoTypeName` ↔ `code.parseGo`
 
 ---
 [← Back to Index](index.md)

@@ -474,6 +474,7 @@ func TestBuildSyncTool(t *testing.T) {
 
 func TestHandleSync(t *testing.T) {
 	tmpDir := t.TempDir()
+	t.Setenv("GLEANN_MEMORY_DIR", tmpDir)
 	srv := NewServer(Config{
 		IndexDir:          tmpDir,
 		EmbeddingProvider: "ollama",
@@ -481,6 +482,7 @@ func TestHandleSync(t *testing.T) {
 		OllamaHost:        gleann.DefaultOllamaHost,
 		Version:           "test",
 	})
+	defer srv.Close()
 
 	var capturedOpts SyncOptions
 	srv.syncRunner = func(ctx context.Context, opts SyncOptions) (string, error) {

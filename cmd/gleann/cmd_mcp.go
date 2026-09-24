@@ -29,10 +29,11 @@ func cmdMCP(args []string) {
 	cleanNames := fs.Bool("clean-names", false, "Strip 'gleann_' prefix from tool names for clients that namespace automatically (e.g. OpenCode)")
 	llmModel := fs.String("llm-model", "", "LLM model to use for ask/batch_ask tools")
 	llmProvider := fs.String("llm-provider", "", "LLM provider to use for ask/batch_ask tools")
+	toolsProfile := fs.String("tools", "", "Tools profile: core (default, ~9 essential tools), full, or comma-separated list")
 	_ = fs.Parse(args)
 
 	isClean := *cleanNames || os.Getenv("GLEANN_MCP_CLEAN_NAMES") == "1" || os.Getenv("GLEANN_MCP_STRIP_PREFIX") == "1"
-	runMCPServer(isClean, *llmModel, *llmProvider)
+	runMCPServer(isClean, *llmModel, *llmProvider, *toolsProfile)
 }
 
 func printMCPUsage() {
@@ -42,6 +43,7 @@ func printMCPUsage() {
 
 Options for mcp:
   --clean-names     Strip 'gleann_' prefix from tool names for clients that namespace (OpenCode, etc.)
+  --tools <profile> Tools profile: core (default, ~9 tools), full (all tools), or comma-separated list
   --llm-model       LLM model to use for ask/batch_ask tools
   --llm-provider    LLM provider to use for ask/batch_ask tools
 
@@ -52,7 +54,7 @@ Options for install:
   --name <name>     MCP server name in configuration (default: gleann)`)
 }
 
-func runMCPServer(cleanNames bool, flagModel, flagProvider string) {
+func runMCPServer(cleanNames bool, flagModel, flagProvider, toolsProfile string) {
 	savedCfg := tui.LoadSavedConfig()
 
 	cfg := mcp.Config{
@@ -63,6 +65,7 @@ func runMCPServer(cleanNames bool, flagModel, flagProvider string) {
 		LLMModel:          DefaultLLMModel,
 		Version:           version,
 		CleanToolNames:    cleanNames,
+		ToolsProfile:      toolsProfile,
 	}
 
 	homeDir, _ := os.UserHomeDir()

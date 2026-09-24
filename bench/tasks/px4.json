@@ -1,0 +1,122 @@
+[
+  {
+    "id": "task-001",
+    "description": "Find multicopter position control module and PID position controller",
+    "query": "multicopter position controller PID velocity setpoints mc_pos_control",
+    "gold_files": ["src/modules/mc_pos_control/PositionControl/PositionControl.cpp"]
+  },
+  {
+    "id": "task-002",
+    "description": "Find commander state machine and arming checks",
+    "query": "commander arming state machine preflight checks safety switch",
+    "gold_files": ["src/modules/commander/Commander.cpp"]
+  },
+  {
+    "id": "task-003",
+    "description": "Find rate control and angular rate setpoint handling",
+    "query": "rate control angular rates roll pitch yaw setpoints mc_rate_control",
+    "gold_files": ["src/modules/mc_rate_control/MulticopterRateControl.cpp"]
+  },
+  {
+    "id": "task-004",
+    "description": "Find attitude estimator and EKF2 sensor fusion",
+    "query": "EKF2 attitude estimator extended kalman filter sensor fusion IMU GPS",
+    "gold_files": ["src/modules/ekf2/EKF2.cpp"]
+  },
+  {
+    "id": "task-005",
+    "description": "Find actuator mixer and motor output allocation",
+    "query": "mixer motor output PWM allocation matrix actuator_motors",
+    "gold_files": ["src/lib/mixer_module/mixer_module.cpp"]
+  },
+  {
+    "id": "task-006",
+    "description": "Find battery status monitor and low voltage fail-safe",
+    "query": "battery monitor voltage current state of charge warning failsafe",
+    "gold_files": ["src/modules/battery_status/battery_status.cpp"]
+  },
+  {
+    "id": "task-007",
+    "description": "Find GPS driver parsing u-blox protocol messages",
+    "query": "ublox GPS driver parse UBX protocol messages nav pvt",
+    "gold_files": ["src/drivers/gps/devices/src/ubx.cpp"]
+  },
+  {
+    "id": "task-008",
+    "description": "Find mavlink receiver and telemetry stream handler",
+    "query": "mavlink stream telemetry message handler send receive",
+    "gold_files": ["src/modules/mavlink/mavlink_receiver.cpp"]
+  },
+  {
+    "id": "task-009",
+    "description": "Find optical flow sensor integration and velocity estimation",
+    "query": "optical flow sensor integration ground distance velocity",
+    "gold_files": ["src/modules/ekf2/EKF/optflow_fusion.cpp"]
+  },
+  {
+    "id": "task-010",
+    "description": "Find fixed-wing attitude and pitch controller",
+    "query": "fixed wing attitude control pitch roll elevator rudder fw_att_control",
+    "gold_files": ["src/modules/fw_att_control/FixedwingAttitudeControl.cpp"]
+  },
+  {
+    "id": "task-011",
+    "description": "Find failsafe state machine and return to land behavior",
+    "query": "failsafe state machine return to launch RTL land action",
+    "gold_files": ["src/modules/commander/failsafe/failsafe.cpp"]
+  },
+  {
+    "id": "task-012",
+    "description": "Find land detector for multicopter ground contact",
+    "query": "land detector multicopter ground contact touchdown disarm",
+    "gold_files": ["src/modules/land_detector/MulticopterLandDetector.cpp"]
+  },
+  {
+    "id": "task-013",
+    "description": "Find sensor gyro and accelerometer temperature calibration",
+    "query": "sensor temperature calibration gyro accel thermal bias",
+    "gold_files": ["src/modules/sensors/temperature_compensation/TemperatureCompensation.cpp"]
+  },
+  {
+    "id": "task-014",
+    "description": "Find parameter management system and param metadata",
+    "query": "parameters system param find get set broadcast flash storage",
+    "gold_files": ["src/lib/parameters/parameters.cpp"]
+  },
+  {
+    "id": "task-015",
+    "description": "Find uORB message bus publication and subscription",
+    "query": "uORB message bus publish subscribe advertise topic queue",
+    "gold_files": ["src/modules/uORB/uORBManager.cpp"]
+  },
+  {
+    "id": "task-016",
+    "description": "Find flight mode transitions and manual control input",
+    "query": "flight mode transitions manual stabilize position mission rc input",
+    "gold_files": ["src/modules/commander/state_machine_helper.cpp"]
+  },
+  {
+    "id": "task-017",
+    "description": "Find dataman flight mission and waypoint storage",
+    "query": "dataman mission waypoints storage read write geofence safe points",
+    "gold_files": ["src/modules/dataman/dataman.cpp"]
+  },
+  {
+    "id": "task-018",
+    "description": "Find distance sensor lidar driver interface",
+    "query": "distance sensor lidar rangefinder range measurement obstacle",
+    "gold_files": ["src/drivers/distance_sensor/lightware_laser/lightware_laser.cpp"]
+  },
+  {
+    "id": "task-019",
+    "description": "Find geofence violation checks and flight termination",
+    "query": "geofence violation check polygon breach altitude limit flight termination",
+    "gold_files": ["src/modules/navigator/geofence.cpp"]
+  },
+  {
+    "id": "task-020",
+    "description": "Find logger ulog writer and flight log recording",
+    "query": "logger ulog writer record sdcard message drop flight logging",
+    "gold_files": ["src/modules/logger/logger.cpp"]
+  }
+]

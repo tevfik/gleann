@@ -13,7 +13,8 @@
 
 ## External Connections
 
-- `code.Lock` ↔ `code.LeakyBucket`
+- `code.LeakyBucket` ↔ `code.Lock`
+- `code._InMemoryStore` ↔ `code.Lock`
 
 ---
 [← Back to Index](index.md)
