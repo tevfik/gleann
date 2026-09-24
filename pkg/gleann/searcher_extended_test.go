@@ -1,10 +1,12 @@
 package gleann
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -88,7 +90,71 @@ func TestSearchOptions(t *testing.T) {
 	if !cfg.UseGraphContext {
 		t.Error("UseGraphContext should be true")
 	}
+
+	WithIncludeTests(true)(&cfg)
+	if !cfg.IncludeTests {
+		t.Error("IncludeTests should be true")
+	}
+
+	WithKind("code")(&cfg)
+	if cfg.Kind != "code" {
+		t.Errorf("Kind = %q, want 'code'", cfg.Kind)
+	}
 }
+
+type dimMockEmbedder struct {
+	dims int
+}
+
+func (d *dimMockEmbedder) Compute(ctx context.Context, texts []string) ([][]float32, error) {
+	return make([][]float32, len(texts)), nil
+}
+
+func (d *dimMockEmbedder) ComputeSingle(ctx context.Context, text string) ([]float32, error) {
+	return make([]float32, d.dims), nil
+}
+
+func (d *dimMockEmbedder) Dimensions() int {
+	return d.dims
+}
+
+func (d *dimMockEmbedder) ModelName() string {
+	return "dim-mock"
+}
+
+func TestSearcher_DimensionMismatchError(t *testing.T) {
+	tmpDir := t.TempDir()
+	indexName := "test_dim_mismatch"
+	idxDir := filepath.Join(tmpDir, indexName)
+	os.MkdirAll(idxDir, 0755)
+
+	basePath := filepath.Join(idxDir, indexName)
+	meta := IndexMeta{
+		Name:           indexName,
+		Backend:        "mock-hybrid-backend",
+		EmbeddingModel: "model-1024",
+		Dimensions:     1024,
+	}
+	metaBytes, _ := meta.MarshalJSON()
+	os.WriteFile(basePath+".meta.json", metaBytes, 0644)
+	os.WriteFile(basePath+".index", []byte("mock"), 0644)
+
+	cfg := DefaultConfig()
+	cfg.IndexDir = tmpDir
+
+	// Embedder has 768 dimensions while index expects 1024
+	embedder := &dimMockEmbedder{dims: 768}
+	s := NewSearcher(cfg, embedder)
+
+	err := s.Load(context.Background(), indexName)
+	if err == nil {
+		t.Fatal("expected dimension mismatch error, got nil")
+	}
+	if !strings.Contains(err.Error(), "embedding dimension mismatch") {
+		t.Errorf("expected 'embedding dimension mismatch' in error, got: %v", err)
+	}
+}
+
 
 func TestListIndexes(t *testing.T) {
 	tmpDir := t.TempDir()

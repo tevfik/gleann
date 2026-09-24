@@ -10,6 +10,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/tevfik/gleann/pkg/gleann"
+	"github.com/tevfik/gleann/pkg/walker"
 )
 
 func cmdTokens(args []string) {
@@ -46,15 +47,12 @@ func cmdTokens(args []string) {
 	counts := make(map[gleann.ReadMode]int)
 	fileCount := 0
 
-	err = filepath.WalkDir(absPath, func(p string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return nil
-		}
-		if d.IsDir() {
-			name := d.Name()
-			if strings.HasPrefix(name, ".") || name == "node_modules" || name == "vendor" {
-				return filepath.SkipDir
-			}
+	opts := walker.Options{
+		IncludeSubmodules: false,
+		FollowSymlinks:    true,
+	}
+	err = walker.Walk(absPath, opts, func(p string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
 			return nil
 		}
 

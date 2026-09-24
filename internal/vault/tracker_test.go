@@ -174,3 +174,42 @@ func TestDetectChangedFiles(t *testing.T) {
 	}
 }
 
+func TestTracker_LockDoesNotDeleteDB(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "vault.db")
+
+	tracker1, err := NewTracker(dbPath)
+	if err != nil {
+		t.Fatalf("first NewTracker: %v", err)
+	}
+	defer tracker1.Close()
+
+	ctx := context.Background()
+	testFile := filepath.Join(tmpDir, "sample.txt")
+	_ = os.WriteFile(testFile, []byte("content"), 0644)
+	if _, err := tracker1.UpsertFile(ctx, testFile); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+
+	infoBefore, err := os.Stat(dbPath)
+	if err != nil {
+		t.Fatalf("stat before: %v", err)
+	}
+
+	// Attempt second open while tracker1 holds the lock.
+	tracker2, err := NewTracker(dbPath)
+	if err == nil {
+		tracker2.Close()
+		t.Fatal("expected error opening locked db, got nil")
+	}
+
+	// Verify that the file was NOT deleted.
+	infoAfter, err := os.Stat(dbPath)
+	if err != nil {
+		t.Fatalf("db file was deleted or cannot be stated: %v", err)
+	}
+	if infoAfter.Size() != infoBefore.Size() {
+		t.Fatalf("db file size changed unexpectedly: before=%d, after=%d", infoBefore.Size(), infoAfter.Size())
+	}
+}
+

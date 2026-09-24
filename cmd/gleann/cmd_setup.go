@@ -183,7 +183,7 @@ func runAutoSetup(args []string) {
 		defer tracker.Close()
 	}
 
-	items, pluginDocs, err := readDocuments(absDir, config.ChunkConfig.ChunkSize, config.ChunkConfig.ChunkOverlap, tracker, nil, IndexModeAll, false)
+	items, pluginDocs, err := readDocuments(absDir, config.ChunkConfig.ChunkSize, config.ChunkConfig.ChunkOverlap, tracker, nil, IndexModeAll, false, false)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error reading documents: %v\n", err)
 		os.Exit(1)
@@ -218,7 +218,7 @@ func runAutoSetup(args []string) {
 	fmt.Printf("  ✅ Done — %d passages indexed in %s\n", len(items), elapsed.Round(time.Millisecond))
 
 	if buildGraph {
-		buildGraphIndex(indexName, absDir, config.IndexDir, pluginDocs, nil)
+		buildGraphIndex(indexName, absDir, config.IndexDir, pluginDocs, nil, false)
 		graphReportPath := filepath.Join(absDir, "GRAPH_REPORT.md")
 		if err := generateGraphReportFile(indexName, config.IndexDir, absDir, graphReportPath); err == nil {
 			fmt.Printf("  📊 GRAPH_REPORT.md automatically generated in %s\n", graphReportPath)

@@ -233,17 +233,17 @@ func isCodeBoundary(line string) bool {
 	return false
 }
 
-// IsCodeFile checks if a filename looks like a code file.
+// IsCodeFile checks if a filename looks like a source code file.
 func IsCodeFile(filename string) bool {
 	codeExts := map[string]bool{
-		".go": true, ".py": true, ".js": true, ".ts": true,
-		".java": true, ".c": true, ".cpp": true, ".h": true,
-		".rs": true, ".rb": true, ".php": true, ".swift": true,
-		".kt": true, ".scala": true, ".cs": true, ".r": true,
-		".lua": true, ".sh": true, ".bash": true, ".zsh": true,
-		".sql": true, ".html": true, ".css": true, ".scss": true,
-		".yaml": true, ".yml": true, ".toml": true, ".json": true,
-		".xml": true, ".rst": true, ".tex": true,
+		".go": true, ".py": true, ".js": true, ".jsx": true,
+		".ts": true, ".tsx": true, ".java": true, ".c": true,
+		".cpp": true, ".cc": true, ".cxx": true, ".h": true,
+		".hpp": true, ".rs": true, ".rb": true, ".php": true,
+		".swift": true, ".kt": true, ".kts": true, ".scala": true,
+		".cs": true, ".r": true, ".lua": true, ".sh": true,
+		".bash": true, ".zsh": true, ".zig": true, ".vue": true,
+		".svelte": true, ".m": true, ".mm": true,
 	}
 
 	for ext := range codeExts {

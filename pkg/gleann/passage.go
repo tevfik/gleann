@@ -152,7 +152,7 @@ func (pm *PassageManager) Get(id int64) (Passage, error) {
 	}
 
 	pm.mu.RLock()
-	if pm.cached != nil && id >= 0 && id < int64(len(pm.cached)) {
+	if pm.cached != nil && id >= 0 && id < int64(len(pm.cached)) && pm.cached[id].ID == id {
 		p := pm.cached[id]
 		pm.mu.RUnlock()
 		return p, nil
@@ -196,7 +196,7 @@ func (pm *PassageManager) GetBatch(ids []int64) ([]Passage, error) {
 
 		for i, id := range ids {
 			pm.mu.RLock()
-			if pm.cached != nil && id >= 0 && id < int64(len(pm.cached)) {
+			if pm.cached != nil && id >= 0 && id < int64(len(pm.cached)) && pm.cached[id].ID == id {
 				passages[i] = pm.cached[id]
 				pm.mu.RUnlock()
 				continue

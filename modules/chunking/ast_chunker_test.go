@@ -420,3 +420,64 @@ func min(a, b int) int {
 	}
 	return b
 }
+
+func TestASTChunker_SymbolMetadataAndHeader(t *testing.T) {
+	chunker := NewASTChunker(DefaultASTChunkerConfig())
+
+	goSource := `package service
+
+// ProcessData handles customer requests
+func ProcessData(req string) (string, error) {
+	return "ok", nil
+}
+
+// TestHelper validates processing
+func TestHelper(t any) {}
+`
+
+	chunks := chunker.ChunkWithMetadata(goSource, map[string]any{
+		"file": "internal/service/processor_test.go",
+	})
+
+	if len(chunks) < 2 {
+		t.Fatalf("expected at least 2 chunks, got %d", len(chunks))
+	}
+
+	foundProcess := false
+	foundTest := false
+	for _, ch := range chunks {
+		name, _ := ch.Metadata["name"].(string)
+		if name == "ProcessData" {
+			foundProcess = true
+			if ch.Metadata["kind"] != "function" {
+				t.Errorf("expected kind function, got %v", ch.Metadata["kind"])
+			}
+			if ch.Metadata["lang"] != "go" {
+				t.Errorf("expected lang go, got %v", ch.Metadata["lang"])
+			}
+			if ch.Metadata["ext"] != ".go" {
+				t.Errorf("expected ext .go, got %v", ch.Metadata["ext"])
+			}
+			if ch.Metadata["start_line"].(int) <= 0 || ch.Metadata["end_line"].(int) <= 0 {
+				t.Errorf("invalid line range: %v-%v", ch.Metadata["start_line"], ch.Metadata["end_line"])
+			}
+			if !strings.HasPrefix(ch.Text, "// file: internal/service/processor_test.go — ") {
+				t.Errorf("expected context header, got: %s", ch.Text)
+			}
+		}
+		if name == "TestHelper" {
+			foundTest = true
+			if isTest, ok := ch.Metadata["is_test"].(bool); !ok || !isTest {
+				t.Errorf("expected is_test=true for TestHelper in _test.go")
+			}
+		}
+	}
+
+	if !foundProcess {
+		t.Errorf("ProcessData chunk not found")
+	}
+	if !foundTest {
+		t.Errorf("TestHelper chunk not found")
+	}
+}
+

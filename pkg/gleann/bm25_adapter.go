@@ -26,17 +26,15 @@ func NewBM25AdapterWithParams(k1, b float64) *BM25Adapter {
 // Score scores the query against the given passages.
 // Returns a slice of float32 scores, one per passage, in the same order.
 func (a *BM25Adapter) Score(query string, passages []Passage) []float32 {
-	// Ensure all passages are indexed.
-	for _, p := range passages {
-		a.scorer.AddDocument(p.ID, p.Text)
+	ids := make([]int64, len(passages))
+	for i, p := range passages {
+		ids[i] = p.ID
+		if !a.scorer.HasDocument(p.ID) {
+			a.scorer.AddDocument(p.ID, p.Text)
+		}
 	}
 
-	allScores := a.scorer.Score(query)
-	result := make([]float32, len(passages))
-	for i, p := range passages {
-		result[i] = allScores[p.ID]
-	}
-	return result
+	return a.scorer.ScoreDocIDs(query, ids)
 }
 
 // AddDocuments adds passages to the BM25 index.
@@ -57,3 +55,9 @@ func (a *BM25Adapter) AddDocument(p Passage) {
 func (a *BM25Adapter) IndexedCount() int {
 	return a.scorer.DocCount()
 }
+
+// TopK returns the top K passage IDs sorted by BM25 score.
+func (a *BM25Adapter) TopK(query string, k int) ([]int64, []float32) {
+	return a.scorer.TopK(query, k)
+}
+

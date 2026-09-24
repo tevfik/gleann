@@ -127,6 +127,45 @@ func TestTokenizeEmpty(t *testing.T) {
 	}
 }
 
+func TestTokenize_CamelCase(t *testing.T) {
+	cases := []struct {
+		input    string
+		expected []string
+	}{
+		{
+			input:    "OpenStore",
+			expected: []string{"openstore", "open", "store"},
+		},
+		{
+			input:    "ASTChunker",
+			expected: []string{"astchunker", "ast", "chunker"},
+		},
+		{
+			input:    "getDatabaseURL",
+			expected: []string{"getdatabaseurl", "get", "database", "url"},
+		},
+		{
+			input:    "sha256Hash",
+			expected: []string{"sha256hash", "sha", "256", "hash"},
+		},
+	}
+
+	for _, tc := range cases {
+		tokens := tokenize(tc.input)
+		// Check that all expected tokens are present
+		found := make(map[string]bool)
+		for _, tok := range tokens {
+			found[tok] = true
+		}
+		for _, exp := range tc.expected {
+			if !found[exp] {
+				t.Errorf("input %q: expected token %q not found in %v", tc.input, exp, tokens)
+			}
+		}
+	}
+}
+
+
 func TestStopWords(t *testing.T) {
 	if !isStopWord("the") {
 		t.Error("'the' should be a stop word")
@@ -156,5 +195,30 @@ func BenchmarkScore(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		s.Score("sample document benchmark")
+	}
+}
+
+func TestScore_NoStatisticDriftOnRepeatedQueries(t *testing.T) {
+	s := NewScorer()
+	s.AddDocument(1, "func OpenStore(path string) (*Store, error)")
+	s.AddDocument(2, "func CloseStore(s *Store) error")
+
+	initialScore := s.ScoreDocIDs("OpenStore", []int64{1})[0]
+	if initialScore <= 0 {
+		t.Fatalf("expected positive score, got %f", initialScore)
+	}
+
+	// Re-add the same document 1000 times
+	for i := 0; i < 1000; i++ {
+		s.AddDocument(1, "func OpenStore(path string) (*Store, error)")
+	}
+
+	if count := s.DocCount(); count != 2 {
+		t.Fatalf("expected DocCount to remain 2, got %d", count)
+	}
+
+	finalScore := s.ScoreDocIDs("OpenStore", []int64{1})[0]
+	if finalScore != initialScore {
+		t.Fatalf("score drifted! initial=%f, final=%f", initialScore, finalScore)
 	}
 }

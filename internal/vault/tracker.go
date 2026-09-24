@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -46,6 +47,9 @@ func DefaultDBPath() string {
 func NewTracker(dbPath string) (*Tracker, error) {
 	db, err := bbolt.Open(dbPath, 0644, &bbolt.Options{Timeout: 5 * time.Second})
 	if err != nil {
+		if errors.Is(err, bbolt.ErrTimeout) || os.IsPermission(err) {
+			return nil, fmt.Errorf("open bbolt: %w", err)
+		}
 		// If it's an old SQLite database or corrupted, remove it and try again.
 		os.Remove(dbPath)
 		db, err = bbolt.Open(dbPath, 0644, &bbolt.Options{Timeout: 5 * time.Second})

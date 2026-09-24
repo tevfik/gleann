@@ -59,6 +59,18 @@ func (s *Scorer) AddDocument(id int64, text string) {
 }
 
 func (s *Scorer) addDocumentLocked(id int64, text string) {
+	if oldTF, exists := s.docTermFreqs[id]; exists {
+		// Document already indexed. Subtract previous stats to prevent IDF/stat drift.
+		for term := range oldTF {
+			s.df[term]--
+			if s.df[term] <= 0 {
+				delete(s.df, term)
+			}
+		}
+		s.totalLen -= s.docLens[id]
+		s.docCount--
+	}
+
 	tokens := tokenize(text)
 	tf := make(map[string]int)
 	for _, token := range tokens {
@@ -133,11 +145,45 @@ func (s *Scorer) Score(query string) map[int64]float32 {
 }
 
 // ScoreDocIDs computes BM25 scores for the query against specific document IDs.
+// Evaluates only the candidate documents in O(len(ids) * terms) instead of scanning the full corpus.
 func (s *Scorer) ScoreDocIDs(query string, ids []int64) []float32 {
-	allScores := s.Score(query)
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	queryTerms := tokenize(query)
 	scores := make([]float32, len(ids))
+	if s.docCount == 0 || len(ids) == 0 || len(queryTerms) == 0 {
+		return scores
+	}
+
 	for i, id := range ids {
-		scores[i] = allScores[id]
+		tf, ok := s.docTermFreqs[id]
+		if !ok {
+			continue
+		}
+		docLen := float64(s.docLens[id])
+		score := float64(0)
+
+		for _, term := range queryTerms {
+			termFreq, ok := tf[term]
+			if !ok {
+				continue
+			}
+
+			// IDF component.
+			docFreq := s.df[term]
+			idf := math.Log(1 + (float64(s.docCount)-float64(docFreq)+0.5)/(float64(docFreq)+0.5))
+
+			// TF component with length normalization.
+			tfNorm := (float64(termFreq) * (s.k1 + 1)) /
+				(float64(termFreq) + s.k1*(1-s.b+s.b*docLen/s.avgDocLen))
+
+			score += idf * tfNorm
+		}
+
+		if score > 0 {
+			scores[i] = float32(score)
+		}
 	}
 	return scores
 }
@@ -181,17 +227,69 @@ func (s *Scorer) DocCount() int {
 	return s.docCount
 }
 
-// tokenize splits text into lowercase tokens.
+// splitCamelWords splits camelCase, PascalCase, or letter-digit compound words into sub-words.
+func splitCamelWords(s string) []string {
+	var words []string
+	runes := []rune(s)
+	n := len(runes)
+	if n == 0 {
+		return nil
+	}
+
+	start := 0
+	for i := 1; i < n; i++ {
+		prev := runes[i-1]
+		curr := runes[i]
+
+		// Lowercase -> Uppercase (e.g. "openStore" -> "open", "Store")
+		if unicode.IsLower(prev) && unicode.IsUpper(curr) {
+			words = append(words, string(runes[start:i]))
+			start = i
+			continue
+		}
+
+		// Upper -> Upper followed by Lower (e.g. "ASTChunker" -> "AST", "Chunker")
+		if i+1 < n && unicode.IsUpper(prev) && unicode.IsUpper(curr) && unicode.IsLower(runes[i+1]) {
+			words = append(words, string(runes[start:i]))
+			start = i
+			continue
+		}
+
+		// Letter <-> Digit transition (e.g. "sha256" -> "sha", "256", "256bit" -> "256", "bit")
+		if (unicode.IsLetter(prev) && unicode.IsDigit(curr)) || (unicode.IsDigit(prev) && unicode.IsLetter(curr)) {
+			words = append(words, string(runes[start:i]))
+			start = i
+			continue
+		}
+	}
+	if start < n {
+		words = append(words, string(runes[start:]))
+	}
+	return words
+}
+
+// tokenize splits text into lowercase tokens, expanding camelCase/PascalCase compound words.
 func tokenize(text string) []string {
-	text = strings.ToLower(text)
 	words := strings.FieldsFunc(text, func(r rune) bool {
 		return !unicode.IsLetter(r) && !unicode.IsDigit(r)
 	})
-	// Simple stop word removal.
-	filtered := make([]string, 0, len(words))
+
+	filtered := make([]string, 0, len(words)*2)
 	for _, w := range words {
-		if len(w) > 1 && !isStopWord(w) {
-			filtered = append(filtered, w)
+		lower := strings.ToLower(w)
+		if len(lower) > 1 && !isStopWord(lower) {
+			filtered = append(filtered, lower)
+		}
+
+		// If the word contains camelCase/PascalCase or letter-digit transitions, add sub-tokens.
+		parts := splitCamelWords(w)
+		if len(parts) > 1 {
+			for _, part := range parts {
+				partLower := strings.ToLower(part)
+				if len(partLower) > 1 && !isStopWord(partLower) && partLower != lower {
+					filtered = append(filtered, partLower)
+				}
+			}
 		}
 	}
 	return filtered
@@ -212,3 +310,4 @@ var stopWords = map[string]bool{
 func isStopWord(word string) bool {
 	return stopWords[word]
 }
+

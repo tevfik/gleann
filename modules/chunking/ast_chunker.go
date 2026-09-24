@@ -664,12 +664,42 @@ func (c *ASTChunker) chunkSlidingWindow(source, filename string, lang Language) 
 	return chunks
 }
 
-// splitOversizedChunk splits a chunk that exceeds MaxChunkSize into smaller pieces.
+// IsTestSymbol reports whether the file or symbol name indicates a test.
+func IsTestSymbol(filePath, name string) bool {
+	base := filepath.Base(filePath)
+	if strings.HasSuffix(base, "_test.go") ||
+		strings.HasPrefix(base, "test_") ||
+		strings.HasSuffix(base, "_test.py") ||
+		strings.HasSuffix(base, ".spec.ts") ||
+		strings.HasSuffix(base, ".spec.js") ||
+		strings.HasSuffix(base, ".test.ts") ||
+		strings.HasSuffix(base, ".test.js") ||
+		strings.HasSuffix(base, "Test.java") {
+		return true
+	}
+	if strings.HasPrefix(name, "Test") ||
+		strings.HasPrefix(name, "Benchmark") ||
+		strings.HasPrefix(name, "Fuzz") ||
+		strings.HasPrefix(name, "test_") {
+		return true
+	}
+	return false
+}
+
+// splitOversizedChunk splits a chunk that exceeds MaxChunkSize into smaller pieces with overlap.
 func (c *ASTChunker) splitOversizedChunk(chunk CodeChunk) []CodeChunk {
 	lines := strings.Split(chunk.Text, "\n")
 	maxLines := c.config.MaxChunkSize / 40
 	if maxLines < 10 {
 		maxLines = 10
+	}
+
+	overlapLines := c.config.ChunkOverlap / 40
+	if overlapLines < 1 && c.config.ChunkOverlap > 0 {
+		overlapLines = 2
+	}
+	if overlapLines >= maxLines {
+		overlapLines = maxLines / 2
 	}
 
 	var result []CodeChunk
@@ -692,7 +722,13 @@ func (c *ASTChunker) splitOversizedChunk(chunk CodeChunk) []CodeChunk {
 			})
 		}
 
-		start = end
+		if end >= len(lines) {
+			break
+		}
+		start = end - overlapLines
+		if start < 0 {
+			start = 0
+		}
 	}
 
 	return result
@@ -708,33 +744,88 @@ func (c *ASTChunker) Chunk(text string) []string {
 	return result
 }
 
-// ChunkWithMetadata implements the gleann Chunker interface with metadata.
+// ChunkWithMetadata implements the gleann Chunker interface with rich symbol metadata and context headers.
 func (c *ASTChunker) ChunkWithMetadata(text string, metadata map[string]any) []Chunk {
 	filename := "unknown.txt"
-	if fp, ok := metadata["file_path"].(string); ok {
+	if fp, ok := metadata["file"].(string); ok && fp != "" {
 		filename = fp
-	} else if src, ok := metadata["source"].(string); ok {
+	} else if fp, ok := metadata["file_path"].(string); ok && fp != "" {
+		filename = fp
+	} else if src, ok := metadata["source"].(string); ok && src != "" {
 		filename = src
 	}
 
 	chunks := c.ChunkCode(text, filename)
+	if len(chunks) == 0 && strings.TrimSpace(text) != "" {
+		// Fallback for files with no extracted symbols
+		chunks = []CodeChunk{{
+			Text:      text,
+			StartLine: 1,
+			EndLine:   strings.Count(text, "\n") + 1,
+			NodeType:  "file",
+			Name:      filepath.Base(filename),
+		}}
+	}
+
+	lang := DetectLanguage(filename)
+	ext := filepath.Ext(filename)
+	isVendor := strings.Contains(filename, "vendor/") || strings.Contains(filename, "third_party/")
+
 	items := make([]Chunk, len(chunks))
 	for i, ch := range chunks {
 		merged := copyMetadata(metadata)
 		for k, v := range ch.Metadata {
 			merged[k] = v
 		}
+
+		if _, exists := merged["source"]; !exists {
+			merged["source"] = filename
+		}
+		if _, exists := merged["file"]; !exists {
+			merged["file"] = filename
+		}
 		merged["start_line"] = ch.StartLine
 		merged["end_line"] = ch.EndLine
 		merged["node_type"] = ch.NodeType
+		merged["kind"] = ch.NodeType
+		merged["lang"] = string(lang)
+		merged["ext"] = ext
+		merged["is_test"] = IsTestSymbol(filename, ch.Name)
+		merged["is_vendor"] = isVendor
+		merged["chunk_index"] = i
+		merged["total_chunks"] = len(chunks)
+
+		fqn := ch.Name
+		if fqn == "" {
+			fqn = filepath.Base(filename)
+		} else if !strings.Contains(fqn, "/") && !strings.Contains(fqn, ":") {
+			fqn = filename + ":" + ch.Name
+		}
+		merged["fqn"] = fqn
 		if ch.Name != "" {
 			merged["name"] = ch.Name
 		}
-		if len(ch.OutboundCalls) > 0 {
-			merged["outbound_calls"] = ch.OutboundCalls
+
+		// Extract first line as signature
+		firstLine := strings.TrimSpace(strings.SplitN(ch.Text, "\n", 2)[0])
+		if len(firstLine) > 120 {
+			firstLine = firstLine[:120]
 		}
+		merged["signature"] = firstLine
+
+		// Prepend context header comment for LLM & embedding alignment
+		commentPrefix := "//"
+		if lang == LangPython || lang == LangRuby || lang == LangElixir || ext == ".sh" || ext == ".bash" {
+			commentPrefix = "#"
+		}
+		header := fmt.Sprintf("%s file: %s — %s\n", commentPrefix, filename, fqn)
+		chunkText := ch.Text
+		if !strings.HasPrefix(chunkText, commentPrefix+" file:") {
+			chunkText = header + chunkText
+		}
+
 		items[i] = Chunk{
-			Text:     ch.Text,
+			Text:     chunkText,
 			Metadata: merged,
 		}
 	}

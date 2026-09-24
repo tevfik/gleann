@@ -3,6 +3,7 @@ package gleann
 
 import (
 	"fmt"
+	"path/filepath"
 	"strings"
 )
 
@@ -82,9 +83,48 @@ func (e *MetadataFilterEngine) FilterResults(results []SearchResult) []SearchRes
 	return filtered
 }
 
+// resolveMetadataField resolves metadata value with support for common aliases (type<->kind, source<->file, ext).
+func resolveMetadataField(field string, metadata map[string]any) (any, bool) {
+	if val, ok := metadata[field]; ok {
+		return val, true
+	}
+	switch field {
+	case "type":
+		if val, ok := metadata["kind"]; ok {
+			return val, true
+		}
+	case "kind":
+		if val, ok := metadata["type"]; ok {
+			return val, true
+		}
+	case "source":
+		if val, ok := metadata["file"]; ok {
+			return val, true
+		}
+	case "file":
+		if val, ok := metadata["source"]; ok {
+			return val, true
+		}
+	case "ext", "extension":
+		if val, ok := metadata["ext"]; ok {
+			return val, true
+		}
+		if val, ok := metadata["extension"]; ok {
+			return val, true
+		}
+		for _, key := range []string{"file", "source"} {
+			if pathVal, ok := metadata[key].(string); ok && pathVal != "" {
+				return filepath.Ext(pathVal), true
+			}
+		}
+	}
+	return nil, false
+}
+
 // evaluateFilter evaluates a single filter condition.
 func evaluateFilter(f MetadataFilter, metadata map[string]any) bool {
-	value, exists := metadata[f.Field]
+	value, exists := resolveMetadataField(f.Field, metadata)
+
 
 	// Handle exists operator.
 	if f.Operator == OpExists {

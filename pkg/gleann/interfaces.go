@@ -113,6 +113,12 @@ type Scorer interface {
 	AddDocuments(passages []Passage)
 }
 
+// TopKScorer is an optional interface for scorers that support querying top K directly across all indexed documents.
+type TopKScorer interface {
+	Scorer
+	TopK(query string, k int) ([]int64, []float32)
+}
+
 // Reranker re-scores search results using a cross-encoder or similar model
 // for higher-quality ranking than bi-encoder embeddings alone.
 type Reranker interface {
@@ -123,28 +129,33 @@ type Reranker interface {
 
 // Callee holds a single symbol FQN returned from a graph traversal.
 type Callee struct {
-	FQN  string
-	Name string
-	Kind string
+	FQN    string `json:"fqn"`
+	Name   string `json:"name"`
+	Kind   string `json:"kind"`
+	File   string `json:"file,omitempty"`
+	Line   int64  `json:"line,omitempty"`
+	IsTest bool   `json:"is_test,omitempty"`
 }
 
 // SymbolInfo holds detailed information for a symbol.
 type SymbolInfo struct {
-	FQN    string
-	Kind   string
-	File   string
-	Name   string
-	Line   int64
-	Weight float64
+	FQN    string  `json:"fqn"`
+	Kind   string  `json:"kind"`
+	File   string  `json:"file"`
+	Name   string  `json:"name"`
+	Line   int64   `json:"line"`
+	Weight float64 `json:"weight"`
+	IsTest bool    `json:"is_test,omitempty"`
 }
 
 // ImpactResult holds the blast radius analysis for a symbol change.
 type ImpactResult struct {
-	Symbol            string   `json:"symbol"`             // The symbol being changed
-	DirectCallers     []string `json:"direct_callers"`     // Symbols that directly call this
-	TransitiveCallers []string `json:"transitive_callers"` // Symbols reachable via transitive callers
-	AffectedFiles     []string `json:"affected_files"`     // Files containing affected symbols
-	Depth             int      `json:"depth"`              // Max traversal depth used
+	Symbol            string   `json:"symbol"`                 // The symbol being changed
+	DirectCallers     []string `json:"direct_callers"`         // Symbols that directly call this (production)
+	TestCallers       []string `json:"test_callers,omitempty"` // Test symbols that call this
+	TransitiveCallers []string `json:"transitive_callers"`     // Symbols reachable via transitive callers
+	AffectedFiles     []string `json:"affected_files"`         // Files containing affected symbols
+	Depth             int      `json:"depth"`                  // Max traversal depth used
 }
 
 // GraphEdge represents a single edge in a graph traversal result.

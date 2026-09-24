@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -33,6 +34,7 @@ func NewSearcher(config Config, embedder EmbeddingComputer) *LeannSearcher {
 	return &LeannSearcher{
 		config:   config,
 		embedder: embedder,
+		scorer:   NewBM25Adapter(),
 	}
 }
 
@@ -81,6 +83,12 @@ func (s *LeannSearcher) Load(ctx context.Context, name string) error {
 			"but current config uses %q — search results will be incorrect! "+
 			"To migrate to the new model, run: gleann index rebuild %s --docs <dir>",
 			name, s.meta.EmbeddingModel, s.meta.Dimensions, s.config.EmbeddingModel, name)
+	}
+
+	// Strictly validate embedding dimensions to prevent backend crashes or corruption.
+	if s.embedder != nil && s.meta.Dimensions > 0 && s.embedder.Dimensions() > 0 && s.embedder.Dimensions() != s.meta.Dimensions {
+		return fmt.Errorf("embedding dimension mismatch: index %q expects %d dims (%s), but embedder provides %d dims (%s). Rebuild index: gleann index rebuild %s --docs <dir>",
+			name, s.meta.Dimensions, s.meta.EmbeddingModel, s.embedder.Dimensions(), s.embedder.ModelName(), name)
 	}
 
 	// Load passages in read-only mode (shared flock)
@@ -195,9 +203,22 @@ func (s *LeannSearcher) Search(ctx context.Context, query string, opts ...Search
 
 	// When reranking is enabled, fetch more candidates from stage-1
 	// so the reranker has a richer pool to work with.
+	activeReranker := searchOpts.CustomReranker
+	if activeReranker == nil {
+		activeReranker = s.reranker
+	}
+
 	retrieveK := topK * 2
-	if s.reranker != nil && searchOpts.UseReranker {
+	if activeReranker != nil && searchOpts.UseReranker {
 		retrieveK = topK * 4
+		if retrieveK < 50 {
+			retrieveK = 50
+		}
+	}
+	if len(searchOpts.MetadataFilters) > 0 {
+		if retrieveK < topK*4 {
+			retrieveK = topK * 4
+		}
 		if retrieveK < 50 {
 			retrieveK = 50
 		}
@@ -257,87 +278,167 @@ func (s *LeannSearcher) Search(ctx context.Context, query string, opts ...Search
 		}
 	}
 
-	// Hybrid search with BM25.
+	// Hybrid search with BM25 (RRF: Reciprocal Rank Fusion)
 	alpha := searchOpts.HybridAlpha
 	finalScores := make(map[int64]float32)
 
+	// If BM25 scorer is configured and alpha < 1.0, perform full-corpus lexical retrieval
+	var bm25IDs []int64
 	if s.scorer != nil && alpha < 1.0 {
-		// Score only the FAISS candidates instead of the entire corpus.
-		// BM25Adapter.Score maps by p.ID, so using a subset is correct and
-		// reduces complexity from O(n_total) to O(retrieveK).
-		candidatePassages := make([]Passage, 0, len(ids))
-		for _, id := range ids {
-			if p, err := s.passages.Get(id); err == nil {
-				candidatePassages = append(candidatePassages, p)
-			}
+		if topKScorer, ok := s.scorer.(TopKScorer); ok {
+			bm25IDs, _ = topKScorer.TopK(query, retrieveK)
 		}
-		bm25Scores := s.scorer.Score(query, candidatePassages)
+	}
 
-		// Normalize BM25 scores.
-		maxBM25 := float32(0)
-		for _, score := range bm25Scores {
-			if score > maxBM25 {
-				maxBM25 = score
-			}
+	if len(bm25IDs) > 0 && alpha < 1.0 {
+		// Reciprocal Rank Fusion (RRF with k = 60)
+		const kRRF = 60.0
+		rrfScores := make(map[int64]float32)
+
+		for i, id := range ids {
+			rank := float32(i + 1)
+			rrfScores[id] += alpha * (1.0 / (kRRF + rank))
 		}
-
-		// Build score map indexed by passage ID.
-		bm25ByID := make(map[int64]float32, len(candidatePassages))
-		for i, p := range candidatePassages {
-			if maxBM25 > 0 {
-				bm25ByID[p.ID] = bm25Scores[i] / maxBM25
-			}
+		for i, id := range bm25IDs {
+			rank := float32(i + 1)
+			rrfScores[id] += (1.0 - alpha) * (1.0 / (kRRF + rank))
 		}
 
-		// Merge vector scores and BM25 scores for all candidates.
-		for _, id := range ids {
-			vs := vectorScores[id]
-			bs := bm25ByID[id] // 0 if not found
-			finalScores[id] = alpha*vs + (1-alpha)*bs
+		// Normalize RRF scores relative to theoretical maximum rank 1 in both
+		maxRRFPossible := alpha*(1.0/(kRRF+1.0)) + (1.0-alpha)*(1.0/(kRRF+1.0))
+		if maxRRFPossible <= 0 {
+			maxRRFPossible = 1.0 / (kRRF + 1.0)
+		}
+		for id, rrf := range rrfScores {
+			normScore := rrf / maxRRFPossible
+			if normScore > 1.0 {
+				normScore = 1.0
+			}
+			finalScores[id] = normScore
 		}
 	} else {
 		finalScores = vectorScores
 	}
 
-	// Sort by score.
-	type scored struct {
-		id    int64
-		score float32
-	}
-	sortedResults := make([]scored, 0, len(finalScores))
+	// Build results and apply boosts/penalties:
+	// 1. Symbol / FQN exact match boost (+0.35 to +0.5)
+	// 2. Kind filtering ("code" vs "docs")
+	// 3. Test / vendor demotion (unless searchOpts.IncludeTests is true or query mentions test)
+	qClean := strings.TrimSpace(query)
+	qLower := strings.ToLower(qClean)
+	queryMentionsTest := strings.Contains(qLower, "test") || strings.Contains(qLower, "benchmark")
+
+	results := make([]SearchResult, 0, len(finalScores))
 	for id, score := range finalScores {
-		if score >= searchOpts.MinScore {
-			sortedResults = append(sortedResults, scored{id: id, score: score})
-		}
-	}
-	sort.Slice(sortedResults, func(i, j int) bool {
-		return sortedResults[i].score > sortedResults[j].score
-	})
-
-	if len(sortedResults) > topK {
-		sortedResults = sortedResults[:topK]
-	}
-
-	// Build results.
-	results := make([]SearchResult, 0, len(sortedResults))
-	for _, sr := range sortedResults {
-		passage, err := s.passages.Get(sr.id)
+		passage, err := s.passages.Get(id)
 		if err != nil {
 			continue
 		}
-		results = append(results, SearchResult{
-			ID:       sr.id,
-			Text:     passage.Text,
-			Score:    sr.score,
-			Metadata: passage.Metadata,
-		})
+
+		// Kind filter: "code" vs "docs"
+		if searchOpts.Kind != "" && searchOpts.Kind != "all" {
+			isDoc := false
+			if k, ok := passage.Metadata["kind"].(string); ok && (k == "doc" || k == "documentation") {
+				isDoc = true
+			} else if ext, ok := passage.Metadata["ext"].(string); ok && (ext == ".md" || ext == ".txt" || ext == ".rst" || ext == ".markdown") {
+				isDoc = true
+			} else if src, ok := passage.Metadata["source"].(string); ok && (strings.HasSuffix(src, ".md") || strings.HasSuffix(src, ".txt") || strings.HasSuffix(src, ".rst") || strings.HasSuffix(src, ".markdown")) {
+				isDoc = true
+			} else if file, ok := passage.Metadata["file"].(string); ok && (strings.HasSuffix(file, ".md") || strings.HasSuffix(file, ".txt") || strings.HasSuffix(file, ".rst") || strings.HasSuffix(file, ".markdown")) {
+				isDoc = true
+			}
+
+			if searchOpts.Kind == "code" && isDoc {
+				continue
+			}
+			if searchOpts.Kind == "docs" && !isDoc {
+				continue
+			}
+		}
+
+		// Symbol and FQN boost
+		if name, ok := passage.Metadata["name"].(string); ok && name != "" {
+			if strings.EqualFold(qClean, name) {
+				score += 0.5 // Exact symbol match
+			} else if strings.Contains(qLower, strings.ToLower(name)) && len(name) >= 3 {
+				score += 0.2 // Query contains symbol name
+			}
+		}
+		if fqn, ok := passage.Metadata["fqn"].(string); ok && fqn != "" {
+			if strings.EqualFold(qClean, fqn) || strings.HasSuffix(strings.ToLower(fqn), "."+qLower) {
+				score += 0.5 // Exact FQN match
+			}
+			// Graph-assisted ranking (T13): boost symbols with verified AST callers/centrality
+			if s.graphDB != nil {
+				if callers, err := s.graphDB.Callers(fqn); err == nil && len(callers) > 0 {
+					boost := float32(math.Log(1.0+float64(len(callers)))) * 0.05
+					if boost > 0.15 {
+						boost = 0.15
+					}
+					score += boost
+				}
+			}
+		}
+
+		// Test demotion
+		isTest := false
+		if it, ok := passage.Metadata["is_test"].(bool); ok && it {
+			isTest = true
+		} else {
+			for _, key := range []string{"source", "file"} {
+				if path, ok := passage.Metadata[key].(string); ok && path != "" {
+					base := filepath.Base(path)
+					if strings.HasSuffix(base, "_test.go") || strings.HasPrefix(base, "test_") ||
+						strings.HasSuffix(base, ".spec.ts") || strings.Contains(path, "/test/") ||
+						strings.Contains(path, "/tests/") {
+						isTest = true
+						break
+					}
+				}
+			}
+		}
+		if isTest && !searchOpts.IncludeTests && !queryMentionsTest {
+			score *= 0.5
+		}
+
+		// Vendor demotion
+		isVendor := false
+		if iv, ok := passage.Metadata["is_vendor"].(bool); ok && iv {
+			isVendor = true
+		} else {
+			for _, key := range []string{"source", "file"} {
+				if path, ok := passage.Metadata[key].(string); ok && path != "" {
+					if strings.Contains(path, "vendor/") || strings.Contains(path, "third_party/") || strings.Contains(path, "node_modules/") {
+						isVendor = true
+						break
+					}
+				}
+			}
+		}
+		if isVendor {
+			score *= 0.3
+		}
+
+		if score >= searchOpts.MinScore {
+			results = append(results, SearchResult{
+				ID:       id,
+				Text:     passage.Text,
+				Score:    score,
+				Metadata: passage.Metadata,
+			})
+		}
 	}
 
-	if len(sortedResults) > 0 && len(results) == 0 {
-		log.Printf("⚠  WARNING: Index %q backend returned %d candidate vectors, but none were found in the passages database! The index is desynchronized. Run: gleann index rebuild %s", s.meta.Name, len(sortedResults), s.meta.Name)
+	// Sort by score descending.
+	sort.Slice(results, func(i, j int) bool {
+		return results[i].Score > results[j].Score
+	})
+
+	if len(finalScores) > 0 && len(results) == 0 && searchOpts.MinScore == 0 && searchOpts.Kind == "" {
+		log.Printf("⚠  WARNING: Index %q backend returned candidate vectors, but none were found in the passages database! The index is desynchronized. Run: gleann index rebuild %s", s.meta.Name, s.meta.Name)
 	}
 
-	// Apply metadata filters if configured.
+	// Apply metadata filters if configured (BEFORE topK truncation).
 	if len(searchOpts.MetadataFilters) > 0 {
 		engine := NewMetadataFilterEngine(searchOpts.MetadataFilters)
 		if searchOpts.FilterLogic != "" {
@@ -346,9 +447,16 @@ func (s *LeannSearcher) Search(ctx context.Context, query string, opts ...Search
 		results = engine.FilterResults(results)
 	}
 
+	// Truncate to topK if not reranking (reranker handles topK internally).
+	if !(s.reranker != nil && searchOpts.UseReranker) {
+		if len(results) > topK {
+			results = results[:topK]
+		}
+	}
+
 	// Reranking stage: re-score results with cross-encoder if configured.
-	if s.reranker != nil && searchOpts.UseReranker {
-		reranked, err := s.reranker.Rerank(ctx, query, results, topK)
+	if activeReranker != nil && searchOpts.UseReranker {
+		reranked, err := activeReranker.Rerank(ctx, query, results, topK)
 		if err != nil {
 			// Log but don't fail — fall back to original ranking.
 			fmt.Fprintf(os.Stderr, "reranker warning: %v (using original ranking)\n", err)
@@ -534,6 +642,14 @@ func WithReranker(enabled bool) SearchOption {
 	}
 }
 
+// WithCustomReranker sets a custom reranker instance for this search without modifying the searcher.
+func WithCustomReranker(r Reranker) SearchOption {
+	return func(c *SearchConfig) {
+		c.UseReranker = true
+		c.CustomReranker = r
+	}
+}
+
 // WithGraphContext enables graph-augmented search.
 // Each result is enriched with symbols from the same source file
 // and their caller/callee relationships from the code graph.
@@ -542,6 +658,31 @@ func WithGraphContext(enabled bool) SearchOption {
 		c.UseGraphContext = enabled
 	}
 }
+
+// WithMetadataFilters sets metadata filter conditions for the search.
+func WithMetadataFilters(filters []MetadataFilter, logic ...string) SearchOption {
+	return func(c *SearchConfig) {
+		c.MetadataFilters = filters
+		if len(logic) > 0 {
+			c.FilterLogic = logic[0]
+		}
+	}
+}
+
+// WithIncludeTests enables or disables test inclusion without score demotion.
+func WithIncludeTests(include bool) SearchOption {
+	return func(c *SearchConfig) {
+		c.IncludeTests = include
+	}
+}
+
+// WithKind sets the artifact kind filter ("code", "docs", or "all").
+func WithKind(kind string) SearchOption {
+	return func(c *SearchConfig) {
+		c.Kind = kind
+	}
+}
+
 
 // ListIndexes returns all available indexes in the configured directory.
 func ListIndexes(indexDir string) ([]IndexMeta, error) {
@@ -661,4 +802,110 @@ func cosineSimilarity(a, b []float32) float32 {
 	}
 	return dot / denominator
 }
+
+// SearchBM25 performs pure lexical retrieval using the configured BM25 scorer across the entire corpus.
+// It directly retrieves the top-K matching passages without requiring vector embeddings.
+func (s *LeannSearcher) SearchBM25(ctx context.Context, query string, topK int) ([]SearchResult, error) {
+	if s.scorer == nil {
+		return nil, fmt.Errorf("BM25 scorer is not configured")
+	}
+
+	topKScorer, ok := s.scorer.(TopKScorer)
+	if !ok {
+		return nil, fmt.Errorf("configured scorer does not support direct TopK corpus retrieval")
+	}
+
+	ids, scores := topKScorer.TopK(query, topK)
+	results := make([]SearchResult, 0, len(ids))
+	for i, id := range ids {
+		p, err := s.passages.Get(id)
+		if err != nil {
+			continue
+		}
+		results = append(results, SearchResult{
+			ID:       id,
+			Score:    scores[i],
+			Text:     p.Text,
+			Metadata: p.Metadata,
+		})
+	}
+	return results, nil
+}
+
+// SearchGraphRAG performs graph-augmented hybrid retrieval. If a knowledge graph is available,
+// it enriches seed retrieval candidates with caller/callee neighborhood context.
+func (s *LeannSearcher) SearchGraphRAG(ctx context.Context, query string, topK int) ([]SearchResult, error) {
+	// First retrieve hybrid candidates
+	baseResults, err := s.Search(ctx, query, WithTopK(topK), WithHybridAlpha(0.5))
+	if err != nil {
+		return nil, err
+	}
+
+	if s.graphDB == nil {
+		return baseResults, nil
+	}
+
+	// Extract candidate file paths and symbol names to probe graph neighbors
+	seenPaths := make(map[string]bool)
+	for _, r := range baseResults {
+		if path, ok := r.Metadata["file"].(string); ok && path != "" {
+			seenPaths[path] = true
+		} else if path, ok := r.Metadata["source"].(string); ok && path != "" {
+			seenPaths[path] = true
+		}
+	}
+
+	// Look up graph callers and callees for terms in query
+	words := strings.Fields(query)
+	for _, w := range words {
+		w = strings.Trim(w, `",':;()[]{}*`)
+		if len(w) < 3 {
+			continue
+		}
+		// Probe callees / callers for potential symbol matches
+		callees, err := s.graphDB.Callees(w)
+		if err == nil {
+			for _, c := range callees {
+				if c.File != "" && !seenPaths[c.File] {
+					seenPaths[c.File] = true
+					// Inject graph-discovered file context
+					baseResults = append(baseResults, SearchResult{
+						ID:    -1,
+						Score: 0.85,
+						Text:  fmt.Sprintf("// Graph relation: %s calls %s (line %d in %s)", w, c.Name, c.Line, c.File),
+						Metadata: map[string]any{
+							"file":   c.File,
+							"source": c.File,
+							"graph":  true,
+						},
+					})
+				}
+			}
+		}
+		callers, err := s.graphDB.Callers(w)
+		if err == nil {
+			for _, c := range callers {
+				if c.File != "" && !seenPaths[c.File] {
+					seenPaths[c.File] = true
+					baseResults = append(baseResults, SearchResult{
+						ID:    -1,
+						Score: 0.80,
+						Text:  fmt.Sprintf("// Graph relation: %s called by %s (line %d in %s)", w, c.Name, c.Line, c.File),
+						Metadata: map[string]any{
+							"file":   c.File,
+							"source": c.File,
+							"graph":  true,
+						},
+					})
+				}
+			}
+		}
+	}
+
+	if len(baseResults) > topK {
+		baseResults = baseResults[:topK]
+	}
+	return baseResults, nil
+}
+
 

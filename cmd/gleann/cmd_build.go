@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -21,7 +22,7 @@ import (
 	"github.com/tevfik/gleann/internal/vault"
 	"github.com/tevfik/gleann/modules/chunking"
 	"github.com/tevfik/gleann/pkg/gleann"
-	"github.com/tevfik/gleann/pkg/gleannignore"
+	"github.com/tevfik/gleann/pkg/walker"
 )
 
 // IndexMode represents the filtering mode for indexing.
@@ -63,6 +64,7 @@ Options:
                             code - fast source code & AST graph only
                             docs - documents only (pdf, docx, etc.)
                             all  - index everything (default)
+  --include-submodules    Include Git submodule directories (default: excluded)
   --tag <tag>             Assign governance tag(s) (comma-separated or multiple)
   --desc <description>    Human-readable description for semantic MCP routing
   --mcp                   Expose index to MCP tools (default: true)
@@ -145,9 +147,11 @@ func cmdBuild(args []string) {
 		defer tracker.Close()
 	}
 
+	includeSubmodules := hasFlag(args, "--include-submodules")
+
 	// Read documents from directory.
 	fmt.Printf("📂 Reading documents from %s...\n", docsDir)
-	items, pluginDocs, err := readDocuments(docsDir, config.ChunkConfig.ChunkSize, config.ChunkConfig.ChunkOverlap, tracker, mmProcessor, mode, noPlugins)
+	items, pluginDocs, err := readDocuments(docsDir, config.ChunkConfig.ChunkSize, config.ChunkConfig.ChunkOverlap, tracker, mmProcessor, mode, noPlugins, includeSubmodules)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error reading documents: %v\n", err)
 		os.Exit(1)
@@ -204,20 +208,20 @@ func cmdBuild(args []string) {
 	}
 
 	if buildGraph {
-		buildGraphIndex(name, docsDir, config.IndexDir, pluginDocs, nil)
-		if !hasFlag(args, "--no-report") {
+		buildGraphIndex(name, docsDir, config.IndexDir, pluginDocs, nil, includeSubmodules)
+		if hasFlag(args, "--report") || hasFlag(args, "--graph-report") {
 			graphReportPath := filepath.Join(docsDir, "GRAPH_REPORT.md")
 			if err := generateGraphReportFile(name, config.IndexDir, docsDir, graphReportPath); err == nil {
-				fmt.Printf("📊 GRAPH_REPORT.md automatically generated in %s\n", graphReportPath)
+				fmt.Printf("📊 GRAPH_REPORT.md generated in %s\n", graphReportPath)
 			}
 		}
 	}
 
-	if !hasFlag(args, "--no-agents") {
+	if hasFlag(args, "--agents") || hasFlag(args, "--write-agents") {
 		agentsPath := filepath.Join(docsDir, "AGENTS.md")
 		content := getAgentsMDContent(name)
 		if err := appendOrCreateFile(agentsPath, content, "gleann: Code Intelligence"); err == nil {
-			fmt.Printf("🤖 AGENTS.md automatically generated/updated in %s\n", agentsPath)
+			fmt.Printf("🤖 AGENTS.md generated/updated in %s\n", agentsPath)
 		}
 	}
 }
@@ -267,9 +271,9 @@ Options:
 	cmdBuild(args)
 }
 
-func buildIndex(name, docsDir string, config gleann.Config, embedder gleann.EmbeddingComputer, tracker *vault.Tracker, mode IndexMode, noPlugins bool) []*PluginDoc {
+func buildIndex(name, docsDir string, config gleann.Config, embedder gleann.EmbeddingComputer, tracker *vault.Tracker, mode IndexMode, noPlugins bool, includeSubmodules bool) []*PluginDoc {
 	mmProcessor := initMultimodalProcessor(config.OllamaHost, config.MultimodalModel)
-	items, pluginDocs, err := readDocuments(docsDir, config.ChunkConfig.ChunkSize, config.ChunkConfig.ChunkOverlap, tracker, mmProcessor, mode, noPlugins)
+	items, pluginDocs, err := readDocuments(docsDir, config.ChunkConfig.ChunkSize, config.ChunkConfig.ChunkOverlap, tracker, mmProcessor, mode, noPlugins, includeSubmodules)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error reading documents: %v\n", err)
 		return nil
@@ -319,7 +323,11 @@ func makeFileRecord(path string, info os.FileInfo, data []byte) *vault.FileRecor
 	}
 }
 
-func readDocuments(dir string, chunkSize, chunkOverlap int, tracker *vault.Tracker, mmProcessor *multimodal.Processor, mode IndexMode, noPlugins bool) ([]gleann.Item, []*PluginDoc, error) {
+func readDocuments(dir string, chunkSize, chunkOverlap int, tracker *vault.Tracker, mmProcessor *multimodal.Processor, mode IndexMode, noPlugins bool, includeSubmodules bool) ([]gleann.Item, []*PluginDoc, error) {
+	if abs, err := filepath.Abs(dir); err == nil {
+		dir = abs
+	}
+
 	// Load plugins once and manage their lifecycles only when plugins are allowed
 	var pluginManager *gleann.PluginManager
 	if !noPlugins && mode != IndexModeCode {
@@ -334,7 +342,7 @@ func readDocuments(dir string, chunkSize, chunkOverlap int, tracker *vault.Track
 	nativeExtractor := gleann.NewNativeExtractor()
 
 	// Phase 1: collect eligible file paths (serial walk is fast — just syscalls).
-	files, walkErr := collectEligibleFiles(dir, pluginManager, nativeExtractor, mmProcessor, mode)
+	files, walkErr := collectEligibleFiles(dir, pluginManager, nativeExtractor, mmProcessor, mode, includeSubmodules)
 	if walkErr != nil {
 		return nil, nil, walkErr
 	}
@@ -369,7 +377,10 @@ func readDocuments(dir string, chunkSize, chunkOverlap int, tracker *vault.Track
 		go func() {
 			// Each worker gets its own splitter instances (they are not thread-safe).
 			splitter := chunking.NewSentenceSplitter(chunkSize, chunkOverlap)
-			codeSplitter := chunking.NewCodeChunker(chunkSize, chunkOverlap)
+			astCfg := chunking.DefaultASTChunkerConfig()
+			astCfg.MaxChunkSize = chunkSize
+			astCfg.ChunkOverlap = chunkOverlap
+			codeSplitter := chunking.NewASTChunker(astCfg)
 			mdChunker := chunking.NewMarkdownChunker(chunkSize, chunkOverlap)
 
 			for fe := range jobCh {
@@ -519,6 +530,9 @@ func readDocuments(dir string, chunkSize, chunkOverlap int, tracker *vault.Track
 									"extractor":    "native",
 									"chunk_index":  idx,
 									"total_chunks": len(textChunks),
+									"kind":         "docs",
+									"is_test":      false,
+									"is_vendor":    false,
 								},
 							})
 						}
@@ -606,8 +620,16 @@ func readDocuments(dir string, chunkSize, chunkOverlap int, tracker *vault.Track
 					continue
 				}
 
-				relPath, _ := filepath.Rel(dir, fe.path)
-				metadata := map[string]any{"source": relPath}
+				relPath, rerr := filepath.Rel(dir, fe.path)
+				if rerr != nil || relPath == "" {
+					relPath = filepath.Base(fe.path)
+				}
+				relPath = filepath.ToSlash(relPath)
+				metadata := map[string]any{
+					"source":    relPath,
+					"file":      relPath,
+					"file_path": relPath,
+				}
 
 				if tracker != nil {
 					h := sha256.Sum256(data)
@@ -651,6 +673,9 @@ func readDocuments(dir string, chunkSize, chunkOverlap int, tracker *vault.Track
 				if chunking.IsCodeFile(fe.path) {
 					rawChunks = codeSplitter.ChunkWithMetadata(text, metadata)
 				} else {
+					metadata["kind"] = "docs"
+					metadata["is_test"] = false
+					metadata["is_vendor"] = false
 					rawChunks = splitter.ChunkWithMetadata(text, metadata)
 				}
 
@@ -711,42 +736,25 @@ var binaryExts = map[string]bool{
 }
 
 // collectEligibleFiles walks dir and returns files eligible for indexing,
-// respecting .gleannignore, hidden dirs, and binary extensions.
-func collectEligibleFiles(dir string, pluginManager *gleann.PluginManager, nativeExtractor *gleann.NativeExtractor, mmProcessor *multimodal.Processor, mode IndexMode) ([]fileEntry, error) {
-	ignoreMatcher := gleannignore.Load(dir)
+// respecting .gitignore/.gleannignore, submodules, hidden dirs, and binary extensions.
+func collectEligibleFiles(dir string, pluginManager *gleann.PluginManager, nativeExtractor *gleann.NativeExtractor, mmProcessor *multimodal.Processor, mode IndexMode, includeSubmodules bool) ([]fileEntry, error) {
+	opts := walker.Options{
+		IncludeSubmodules: includeSubmodules,
+		FollowSymlinks:    true,
+	}
 
 	var files []fileEntry
-	err := filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
+	err := walker.Walk(dir, opts, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
-		base := filepath.Base(path)
-		relPath, _ := filepath.Rel(dir, path)
-
-		if info.IsDir() {
-			if strings.HasPrefix(base, ".") && path != dir {
-				return filepath.SkipDir
-			}
-			if base == "node_modules" || base == "vendor" || base == "dist" || base == "build" || base == ".next" || base == ".venv" || base == "__pycache__" {
-				return filepath.SkipDir
-			}
-			if relPath != "." && ignoreMatcher.Match(relPath, true) {
-				return filepath.SkipDir
-			}
+		if d.IsDir() {
 			return nil
 		}
 
-		if strings.HasPrefix(base, ".") {
+		info, err := d.Info()
+		if err != nil {
 			return nil
-		}
-		if ignoreMatcher.Match(relPath, false) {
-			return nil
-		}
-		if info.Mode()&os.ModeSymlink != 0 {
-			target, err := os.Stat(path)
-			if err != nil || target.IsDir() {
-				return nil // Skip dangling symlinks and symlinks to directories
-			}
 		}
 
 		ext := strings.ToLower(filepath.Ext(path))
@@ -788,9 +796,12 @@ func collectEligibleFiles(dir string, pluginManager *gleann.PluginManager, nativ
 // readDocumentsForFiles reads and chunks only the specified files.
 // This is used for incremental indexing in watch mode where only changed files
 // need processing — much faster than re-reading the entire directory.
-func readDocumentsForFiles(dir string, filePaths []string, chunkSize, chunkOverlap int, tracker *vault.Tracker, mmProcessor *multimodal.Processor, mode IndexMode, noPlugins bool) ([]gleann.Item, []*PluginDoc, []vault.FileRecord, error) {
+func readDocumentsForFiles(dir string, filePaths []string, chunkSize, chunkOverlap int, tracker *vault.Tracker, mmProcessor *multimodal.Processor, mode IndexMode, noPlugins bool, includeSubmodules bool) ([]gleann.Item, []*PluginDoc, []vault.FileRecord, error) {
 	if len(filePaths) == 0 {
 		return nil, nil, nil, nil
+	}
+	if abs, err := filepath.Abs(dir); err == nil {
+		dir = abs
 	}
 
 	var pluginManager *gleann.PluginManager
@@ -802,10 +813,13 @@ func readDocumentsForFiles(dir string, filePaths []string, chunkSize, chunkOverl
 		}
 	}
 	nativeExtractor := gleann.NewNativeExtractor()
-	ignoreMatcher := gleannignore.Load(dir)
+	ignoreMatcher := walker.NewMatcher(dir, includeSubmodules, nil)
 
 	splitter := chunking.NewSentenceSplitter(chunkSize, chunkOverlap)
-	codeSplitter := chunking.NewCodeChunker(chunkSize, chunkOverlap)
+	astCfg := chunking.DefaultASTChunkerConfig()
+	astCfg.MaxChunkSize = chunkSize
+	astCfg.ChunkOverlap = chunkOverlap
+	codeSplitter := chunking.NewASTChunker(astCfg)
 	mdChunker := chunking.NewMarkdownChunker(chunkSize, chunkOverlap)
 
 	var allItems []gleann.Item
@@ -818,13 +832,16 @@ func readDocumentsForFiles(dir string, filePaths []string, chunkSize, chunkOverl
 			continue
 		}
 
-		base := filepath.Base(filePath)
-		relPath, _ := filepath.Rel(dir, filePath)
-
-		if strings.HasPrefix(base, ".") {
-			continue
+		absFilePath := filePath
+		if afp, err := filepath.Abs(filePath); err == nil {
+			absFilePath = afp
 		}
-		if ignoreMatcher.Match(relPath, false) {
+		relPath, rerr := filepath.Rel(dir, absFilePath)
+		if rerr != nil || relPath == "" {
+			relPath = filepath.Base(filePath)
+		}
+		relPath = filepath.ToSlash(relPath)
+		if ignoreMatcher.ShouldIgnore(relPath, false) {
 			continue
 		}
 
@@ -1026,7 +1043,11 @@ func readDocumentsForFiles(dir string, filePaths []string, chunkSize, chunkOverl
 			continue
 		}
 
-		metadata := map[string]any{"source": relPath}
+		metadata := map[string]any{
+			"source":    relPath,
+			"file":      relPath,
+			"file_path": relPath,
+		}
 
 		rec := makeFileRecord(filePath, info, data)
 		if rec != nil && rec.Hash != "" {
@@ -1056,6 +1077,9 @@ func readDocumentsForFiles(dir string, filePaths []string, chunkSize, chunkOverl
 		if chunking.IsCodeFile(filePath) {
 			rawChunks = codeSplitter.ChunkWithMetadata(text, metadata)
 		} else {
+			metadata["kind"] = "docs"
+			metadata["is_test"] = false
+			metadata["is_vendor"] = false
 			rawChunks = splitter.ChunkWithMetadata(text, metadata)
 		}
 		for _, rc := range rawChunks {
@@ -1069,7 +1093,7 @@ func readDocumentsForFiles(dir string, filePaths []string, chunkSize, chunkOverl
 // incrementalBuildIndex attempts to incrementally update the index for changed files.
 // It removes old passages for changed/deleted sources and adds new chunks.
 // Returns plugin docs and true on success, or nil and false if a full rebuild is needed.
-func incrementalBuildIndex(name, docsDir string, changedFiles []string, config gleann.Config, embedder gleann.EmbeddingComputer, tracker *vault.Tracker, mode IndexMode, noPlugins bool) ([]*PluginDoc, bool) {
+func incrementalBuildIndex(name, docsDir string, changedFiles []string, config gleann.Config, embedder gleann.EmbeddingComputer, tracker *vault.Tracker, mode IndexMode, noPlugins bool, includeSubmodules bool) ([]*PluginDoc, bool) {
 	// Classify changes: existing files need re-chunking, missing files are deletions.
 	var existingFiles []string
 	var removeSources []string
@@ -1089,7 +1113,7 @@ func incrementalBuildIndex(name, docsDir string, changedFiles []string, config g
 	// Read and chunk only the changed files.
 	mmProcessor := initMultimodalProcessor(config.OllamaHost, config.MultimodalModel)
 	items, pluginDocs, records, err := readDocumentsForFiles(docsDir, existingFiles,
-		config.ChunkConfig.ChunkSize, config.ChunkConfig.ChunkOverlap, tracker, mmProcessor, mode, noPlugins)
+		config.ChunkConfig.ChunkSize, config.ChunkConfig.ChunkOverlap, tracker, mmProcessor, mode, noPlugins, includeSubmodules)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "incremental: error reading changed files: %v\n", err)
 		return nil, false
@@ -1207,12 +1231,13 @@ Options:
 	defer watcher.Close()
 
 	mode, noPlugins := parseIndexMode(args)
+	includeSubmodules := hasFlag(args, "--include-submodules")
 
 	// Initial build.
-	pluginDocs := buildIndex(name, docsDir, config, cachedEmbedder, tracker, mode, noPlugins)
+	pluginDocs := buildIndex(name, docsDir, config, cachedEmbedder, tracker, mode, noPlugins, includeSubmodules)
 
 	if buildGraph {
-		buildGraphIndex(name, docsDir, config.IndexDir, pluginDocs, nil)
+		buildGraphIndex(name, docsDir, config.IndexDir, pluginDocs, nil, includeSubmodules)
 	}
 
 	// Accumulate changed file paths from fsnotify events.
@@ -1260,16 +1285,16 @@ Options:
 
 			fmt.Printf("🔄 %d file(s) changed, updating index %q...\n", len(files), name)
 			start := time.Now()
-			pDocs, ok := incrementalBuildIndex(name, docsDir, files, config, cachedEmbedder, tracker, mode, noPlugins)
+			pDocs, ok := incrementalBuildIndex(name, docsDir, files, config, cachedEmbedder, tracker, mode, noPlugins, includeSubmodules)
 			if !ok {
 				// Fall back to full rebuild.
-				pDocs = buildIndex(name, docsDir, config, cachedEmbedder, tracker, mode, noPlugins)
+				pDocs = buildIndex(name, docsDir, config, cachedEmbedder, tracker, mode, noPlugins, includeSubmodules)
 			} else {
 				fmt.Printf("⚡ Incremental update complete in %s\n", time.Since(start).Round(time.Millisecond))
 			}
 
 			if buildGraph {
-				buildGraphIndex(name, docsDir, config.IndexDir, pDocs, files)
+				buildGraphIndex(name, docsDir, config.IndexDir, pDocs, files, includeSubmodules)
 			}
 
 			// drain any queued up builds during sleep
@@ -1512,6 +1537,7 @@ func cmdSync(args []string) {
 	}
 
 	filesFlag := getFlag(args, "--files")
+	includeSubmodules := hasFlag(args, "--include-submodules")
 	var changedFiles []string
 	var deletedFiles []string
 
@@ -1547,7 +1573,7 @@ func cmdSync(args []string) {
 		}
 		mmProcessor := initMultimodalProcessor(config.OllamaHost, mmModel)
 
-		eligibleEntries, walkErr := collectEligibleFiles(absDocsDir, pluginManager, nativeExtractor, mmProcessor, mode)
+		eligibleEntries, walkErr := collectEligibleFiles(absDocsDir, pluginManager, nativeExtractor, mmProcessor, mode, includeSubmodules)
 		if walkErr != nil {
 			fmt.Fprintf(os.Stderr, "error scanning workspace: %v\n", walkErr)
 			os.Exit(1)
@@ -1612,12 +1638,12 @@ func cmdSync(args []string) {
 		}
 	}
 
-	pDocs, ok := incrementalBuildIndex(name, absDocsDir, allChanged, config, cachedEmbedder, tracker, mode, noPlugins)
+	pDocs, ok := incrementalBuildIndex(name, absDocsDir, allChanged, config, cachedEmbedder, tracker, mode, noPlugins, includeSubmodules)
 	if !ok {
 		fmt.Println("⚠️  Incremental vector update not supported or failed, running full rebuild...")
-		pDocs = buildIndex(name, absDocsDir, config, cachedEmbedder, tracker, mode, noPlugins)
+		pDocs = buildIndex(name, absDocsDir, config, cachedEmbedder, tracker, mode, noPlugins, includeSubmodules)
 		if buildGraph {
-			buildGraphIndex(name, absDocsDir, config.IndexDir, pDocs, nil)
+			buildGraphIndex(name, absDocsDir, config.IndexDir, pDocs, nil, includeSubmodules)
 		}
 	} else {
 		fmt.Printf("⚡ Vector index updated in %s\n", time.Since(start).Round(time.Millisecond))
@@ -1628,7 +1654,7 @@ func cmdSync(args []string) {
 			}
 		}
 		if buildGraph {
-			buildGraphIndex(name, absDocsDir, config.IndexDir, pDocs, allChanged)
+			buildGraphIndex(name, absDocsDir, config.IndexDir, pDocs, allChanged, includeSubmodules)
 		}
 	}
 

@@ -5,9 +5,9 @@ import (
 	"log"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/fsnotify/fsnotify"
+	"github.com/tevfik/gleann/pkg/walker"
 )
 
 // Watcher provides near-real-time filesystem updates to the Tracker.
@@ -32,15 +32,16 @@ func NewWatcher(tracker *Tracker) (*Watcher, error) {
 	}, nil
 }
 
-// AddDirectory recursively adds directories to be watched.
+// AddDirectory recursively adds directories to be watched, skipping ignored directories (vendor, node_modules, gitignored, etc.).
 func (w *Watcher) AddDirectory(dir string) error {
+	matcher := walker.NewMatcher(dir, false, nil)
 	err := filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
 		}
 		if info.IsDir() {
-			// Skip hidden directories (e.g. .git, .gleann)
-			if strings.HasPrefix(filepath.Base(path), ".") && path != dir {
+			rel, _ := filepath.Rel(dir, path)
+			if path != dir && matcher.ShouldIgnore(rel, true) {
 				return filepath.SkipDir
 			}
 			if err := w.watcher.Add(path); err != nil {

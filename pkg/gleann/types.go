@@ -341,6 +341,9 @@ type SearchConfig struct {
 	// RerankerConfig configures the reranker when UseReranker is true.
 	RerankerConfig RerankerConfig `json:"reranker_config,omitempty"`
 
+	// CustomReranker provides a per-request reranker instance without mutating shared searchers.
+	CustomReranker Reranker `json:"-"`
+
 	// HybridAlpha is the weight for vector vs BM25 (0.0 = BM25 only, 1.0 = vector only).
 	HybridAlpha float32 `json:"hybrid_alpha"`
 
@@ -362,6 +365,13 @@ type SearchConfig struct {
 	// indexed for BM25. Set to 0 for no limit (default: 0).
 	// Recommended: 50000–100000 for systems with limited RAM.
 	MaxBM25Passages int `json:"max_bm25_passages,omitempty"`
+
+	// IncludeTests when false (default) demotes test passages in search results.
+	// When true, test passages are scored equally without demotion penalty.
+	IncludeTests bool `json:"include_tests,omitempty"`
+
+	// Kind filters results by "code" or "docs". Empty or "all" includes both.
+	Kind string `json:"kind,omitempty"`
 }
 
 // DefaultConfig returns a Config with sensible defaults.

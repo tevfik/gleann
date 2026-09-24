@@ -81,9 +81,9 @@ Examples:
 
 	searcher := gleann.NewSearcher(config, embedder)
 
-	// Set up BM25 hybrid scoring if --hybrid is specified.
-	if hasFlag(args, "--hybrid") {
-		searcher.SetScorer(gleann.NewBM25Adapter())
+	// Set up BM25 hybrid scoring by default (disable with --no-hybrid).
+	if hasFlag(args, "--no-hybrid") {
+		searcher.SetScorer(nil)
 	}
 
 	// Set up reranker if --rerank is specified.
@@ -111,10 +111,18 @@ Examples:
 	if hasFlag(args, "--graph") {
 		searchOpts = append(searchOpts, gleann.WithGraphContext(true))
 	}
-	if alphaStr := getFlag(args, "--hybrid-alpha"); alphaStr != "" {
+	if hasFlag(args, "--no-hybrid") {
+		searchOpts = append(searchOpts, gleann.WithHybridAlpha(1.0))
+	} else if alphaStr := getFlag(args, "--hybrid-alpha"); alphaStr != "" {
 		if alpha, err := strconv.ParseFloat(alphaStr, 32); err == nil {
 			searchOpts = append(searchOpts, gleann.WithHybridAlpha(float32(alpha)))
 		}
+	}
+	if hasFlag(args, "--include-tests") {
+		searchOpts = append(searchOpts, gleann.WithIncludeTests(true))
+	}
+	if kind := getFlag(args, "--kind"); kind != "" {
+		searchOpts = append(searchOpts, gleann.WithKind(kind))
 	}
 
 	// Multi-index search: comma-separated names or --all.

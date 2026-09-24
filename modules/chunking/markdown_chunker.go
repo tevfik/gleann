@@ -1,6 +1,7 @@
 package chunking
 
 import (
+	"path/filepath"
 	"strings"
 )
 
@@ -109,6 +110,9 @@ func (mc *MarkdownChunker) ChunkDocument(doc *StructuredDocument) []MarkdownChun
 				"heading_level": section.Level,
 				"chunk_index":   i,
 				"total_chunks":  len(textChunks),
+				"kind":          "docs",
+				"is_test":       false,
+				"is_vendor":     false,
 			}
 			if section.Summary != "" {
 				metadata["section_summary"] = section.Summary
@@ -146,6 +150,10 @@ func (mc *MarkdownChunker) ChunkMarkdown(markdown string, source string) []Markd
 					"source":       source,
 					"chunk_index":  i,
 					"total_chunks": len(textChunks),
+					"kind":         "docs",
+					"ext":          filepath.Ext(source),
+					"is_test":      false,
+					"is_vendor":    false,
 				},
 			})
 		}
@@ -159,9 +167,11 @@ func (mc *MarkdownChunker) ChunkMarkdown(markdown string, source string) []Markd
 		Markdown: markdown,
 	}
 	chunks := mc.ChunkDocument(doc)
-	// Inject source into all metadata.
+	// Inject source and ext into all metadata.
+	ext := filepath.Ext(source)
 	for i := range chunks {
 		chunks[i].Metadata["source"] = source
+		chunks[i].Metadata["ext"] = ext
 	}
 	return chunks
 }
