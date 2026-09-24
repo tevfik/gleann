@@ -88,6 +88,12 @@ Rate-limited requests receive `429 Too Many Requests` with a `Retry-After: 1` he
 |----------|---------|-------------|
 | `GLEANN_BLOCK_CHAR_LIMIT` | `0` (unlimited) | Default character limit for memory blocks. When set, new blocks are auto-truncated if they exceed this limit |
 
+## MCP Server Settings
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `GLEANN_TOOLS` | `core` | MCP tool profile: `core` (essential 9 tools), `full` (all tools), or comma-separated list of tool names/aliases |
+
 ## A2A Protocol (Agent-to-Agent)
 
 | Variable | Default | Description |

@@ -196,17 +196,42 @@ gives agents persistent knowledge across sessions.
 
 | Tool | Description |
 |------|-------------|
-| `gleann_memory_remember` | Store a fact in long-term memory |
-| `gleann_memory_forget` | Delete a memory block by ID or content match |
-| `gleann_memory_search` | Full-text search across all memory tiers |
-| `gleann_memory_list` | List memory blocks (optional tier filter) |
-| `gleann_memory_context` | Show compiled memory context the LLM currently receives |
+| `memory_remember` | Store a fact in long-term memory |
+| `memory_forget` | Delete a memory block by ID or content match |
+| `memory_search` | Full-text search across all memory tiers |
+| `memory_list` | List memory blocks (optional tier filter) |
+| `memory_context` | Show compiled memory context the LLM currently receives |
+
+### Index Synchronization Tool
+
+| Tool | Description |
+|------|-------------|
+| `gleann_sync` | Incrementally synchronize index and AST graph after code modifications |
 
 ### Batch Query Tool
 
 | Tool | Description |
 |------|-------------|
 | `gleann_batch_ask` | Run 1–10 questions concurrently against a single index, returning all answers in one response |
+
+### Tool Profiles (`--tools`)
+
+Gleann supports scoping the MCP surface to prevent token bloat in client context windows:
+
+```bash
+# Core profile (default, 9 essential tools for fast coding agent loops)
+gleann mcp --tools core
+
+# Full profile (all tools registered)
+gleann mcp --tools full
+
+# Custom comma-separated list or aliases (e.g. search, recall, symbol, sync)
+gleann mcp --tools "search,read,symbol,recall,sync"
+```
+
+The `core` profile exposes: `gleann_search`, `gleann_read`, `gleann_graph_neighbors`, `gleann_impact`, `memory_remember`, `memory_context`, `memory_search`, `memory_forget`, `gleann_sync`.
+
+You can also set the default profile using the `GLEANN_TOOLS` environment variable. Passing `--clean-names` strips the `gleann_` prefix (e.g. `search`, `read`, `impact`).
 
 ### Context-Intelligence Tools
 

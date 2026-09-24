@@ -50,15 +50,11 @@ type Indexer struct {
 //   - root:   root directory of the codebase
 func New(db *kuzu.DB, module, root string) *Indexer {
 	cfg := chunking.DefaultASTChunkerConfig()
-	cleanRoot := filepath.Clean(root)
-	if realRoot, err := filepath.EvalSymlinks(cleanRoot); err == nil {
-		cleanRoot = realRoot
-	}
 	return &Indexer{
 		db:      db,
 		chunker: chunking.NewASTChunker(cfg),
 		module:  strings.TrimSuffix(module, "/"),
-		root:    cleanRoot,
+		root:    filepath.Clean(root),
 		tracker: NewChangeTracker(),
 	}
 }
@@ -347,9 +343,7 @@ func isTestSymbol(filePath, name string) bool {
 // It processes files concurrently using a worker pool of runtime.NumCPU() goroutines.
 // AST Parsing is highly parallelized, but database write execution is done together in one massive transaction at the end.
 func (idx *Indexer) IndexDir(root string) error {
-	if realRoot, err := filepath.EvalSymlinks(root); err == nil {
-		root = realRoot
-	}
+	root = filepath.Clean(root)
 	type job struct{ path, src string }
 	jobs := make(chan job, 64)
 	type docResult struct {
@@ -908,7 +902,19 @@ func (idx *Indexer) IndexFiles(files []string) error {
 
 // relPath converts an absolute path to a path relative to idx.root.
 func (idx *Indexer) relPath(absPath string) string {
-	rel, err := filepath.Rel(idx.root, absPath)
+	cleanAbs := filepath.Clean(absPath)
+	if rel, err := filepath.Rel(idx.root, cleanAbs); err == nil && !strings.HasPrefix(rel, "..") {
+		return rel
+	}
+	// Try after resolving symlinks on both (handles e.g. /var vs /private/var on macOS)
+	realRoot, err1 := filepath.EvalSymlinks(idx.root)
+	realAbs, err2 := filepath.EvalSymlinks(cleanAbs)
+	if err1 == nil && err2 == nil {
+		if rel, err := filepath.Rel(realRoot, realAbs); err == nil && !strings.HasPrefix(rel, "..") {
+			return rel
+		}
+	}
+	rel, err := filepath.Rel(idx.root, cleanAbs)
 	if err != nil {
 		return absPath
 	}

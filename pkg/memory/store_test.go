@@ -361,8 +361,9 @@ func TestDefaultStorePath(t *testing.T) {
 	}
 
 	os.Setenv("GLEANN_MEMORY_DIR", "/custom/mem/dir")
-	if got := DefaultStorePath(); got != "/custom/mem/dir/memory.db" {
-		t.Errorf("expected %q, got %q", "/custom/mem/dir/memory.db", got)
+	expectedCustom := filepath.Join("/custom/mem/dir", "memory.db")
+	if got := DefaultStorePath(); got != expectedCustom {
+		t.Errorf("expected %q, got %q", expectedCustom, got)
 	}
 }
 

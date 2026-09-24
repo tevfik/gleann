@@ -25,6 +25,7 @@ import (
 	"time"
 
 	bolt "go.etcd.io/bbolt"
+	bolterrors "go.etcd.io/bbolt/errors"
 )
 
 var (
@@ -72,7 +73,7 @@ func NewFileHashStore(path string) (*FileHashStore, error) {
 	}
 	db, err := bolt.Open(path, 0o644, &bolt.Options{Timeout: 5 * time.Second})
 	if err != nil {
-		if errors.Is(err, bolt.ErrTimeout) || os.IsPermission(err) {
+		if errors.Is(err, bolterrors.ErrTimeout) || os.IsPermission(err) {
 			return nil, fmt.Errorf("open hash store: %w", err)
 		}
 		// Recover from a corrupt store by recreating it.

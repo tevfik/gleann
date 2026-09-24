@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"go.etcd.io/bbolt"
+	bolterrors "go.etcd.io/bbolt/errors"
 )
 
 var (
@@ -47,7 +48,7 @@ func DefaultDBPath() string {
 func NewTracker(dbPath string) (*Tracker, error) {
 	db, err := bbolt.Open(dbPath, 0644, &bbolt.Options{Timeout: 5 * time.Second})
 	if err != nil {
-		if errors.Is(err, bbolt.ErrTimeout) || os.IsPermission(err) {
+		if errors.Is(err, bolterrors.ErrTimeout) || os.IsPermission(err) {
 			return nil, fmt.Errorf("open bbolt: %w", err)
 		}
 		// If it's an old SQLite database or corrupted, remove it and try again.

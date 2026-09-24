@@ -21,14 +21,14 @@ gleann includes an optional tree-sitter backend for precise AST-aware code chunk
 # Build with tree-sitter support
 go build -tags treesitter -o gleann ./cmd/gleann/
 
-# Run tree-sitter tests
-go test -tags treesitter ./internal/chunking/ -v -run TestTreeSitter
+# Run tree-sitter chunker tests
+go test -tags treesitter ./modules/chunking/ -v
 
 # Both FAISS and tree-sitter
 go build -tags "faiss treesitter" -o gleann ./cmd/gleann/
 ```
 
-Without `-tags treesitter`, all non-Go languages use regex patterns and the binary remains pure Go.
+With `-tags treesitter`, the build pipeline uses `modules/chunking.ASTChunker` as the default code chunker, extracting rich symbol metadata (`fqn`, `kind`, `signature`, `parent_symbol`, `doc`, `is_test`, `is_vendor`) and injecting symbol boundary headers into passage text. Without `-tags treesitter`, non-Go languages use regex fallback patterns while Go files use native `go/ast`.
 
 ## What Tree-sitter Improves
 

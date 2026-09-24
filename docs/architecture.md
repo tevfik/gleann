@@ -244,9 +244,9 @@ External Agent (e.g. Cursor, Claude)
 | Scoped Memory Blocks | — | ✅ (conversation/session isolation) |
 | OpenAI-Compatible Proxy | — | ✅ (`/v1/chat/completions`) |
 | File Sync (incremental) | ✅ | ✅ |
-| Hybrid Search (BM25) | — | ✅ |
+| Hybrid Search (BM25) | — | ✅ (BM25 + DiskANN RRF $k=60$ + symbol boost) |
 | REST API Server | — | ✅ |
-| DiskANN Backend | ✅ | — |
+| DiskANN Backend | ✅ | ✅ (native pure Go Vamana graph + PQ) |
 | IVF Backend | ✅ | — |
 | Local Embeddings (torch) | ✅ | — |
 | Interactive TUI | ✅ | ✅ (Bubble Tea) |
@@ -255,12 +255,34 @@ External Agent (e.g. Cursor, Claude)
 
 | Dimension | Python LEANN | gleann-go |
 |-----------|-------------|-----------|
-| Language | Python 3.10+ | Go 1.24+ |
-| Deployment | `pip install` + system deps | Single binary (~2.5 MB) |
+| Language | Python 3.10+ | Go 1.25+ |
+| Deployment | `pip install` + system deps | Single binary |
 | Embedding Server | ZMQ (external process) | Goroutine pool (in-process) |
 | Concurrency | asyncio / threading | Goroutines + channels |
-| AST Parser | tree-sitter (C bindings) | go/ast + optional tree-sitter |
+| AST Parser | tree-sitter (C bindings) | Tree-sitter AST Chunker (default) + go/ast fallback |
 | Storage Format | Custom binary | CSR binary (`GLEN` magic) |
-| Backends | 3 (HNSW, DiskANN, IVF) | 2 (Pure Go HNSW, FAISS CGo) |
-| CLI Framework | Click | flag (stdlib) + Bubble Tea TUI |
+| Backends | 3 (HNSW, DiskANN, IVF) | 4 (`diskann`, `hnsw`, `faiss`, `faiss-hybrid`) |
+| CLI Framework | Click | cobra CLI + Bubble Tea TUI |
+| File Walker | os.walk | unified `pkg/walker` + `.gleannignore` |
 | External Dependencies | ~40 PyPI packages | 0 (pure Go default) |
+
+---
+
+## Component Lifecycle & Scope Boundary (Frozen Components)
+
+In alignment with the core mission of `gleann` as a lean, reliable agent memory and code intelligence layer, the following peripheral components are **FROZEN** (maintenance only / no new feature development):
+
+- **TUI Chat & Onboarding** (`internal/tui`): Kept for basic manual inspection; active development frozen.
+- **Multimodal Layer** (`internal/multimodal`): Peripheral vision/audio ingestion frozen.
+- **A2A Protocol** (`internal/a2a`): Agent-to-Agent protocol frozen.
+- **Webhooks & Event Bus consumers** (`internal/eventbus` peripheral consumers): Frozen.
+- **OpenAI-Compatible Proxy** (`/v1/chat/completions`): Frozen.
+- **Plugins & Packs** (`internal/plugins`): Dynamic plugin system frozen.
+- **System Service Management** (`internal/service`): Background daemon/service helpers frozen.
+- **Vault / Secret Management** (`internal/vault`): Secret tracking frozen.
+
+**Active Core Focus:**
+1. High-accuracy, low-token Vector & Hybrid Code Search (pure Go HNSW + CSR + Okapi BM25).
+2. AST Code Graph & Call Graph navigation with exact FQN resolution (KùzuDB + Tree-sitter).
+3. Session-persistent, deduplicated, scoped Agent Memory (`pkg/memory`).
+
