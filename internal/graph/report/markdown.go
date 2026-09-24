@@ -4,6 +4,7 @@
 package report
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 	"strings"
@@ -26,8 +27,21 @@ func WriteMarkdown(w io.Writer, result *community.Result, opts Options) error {
 		maxNodes = 20
 	}
 
+	var buf bytes.Buffer
+	maxBytes := 50 * 1024
+	truncated := false
+
 	p := func(format string, args ...any) {
-		fmt.Fprintf(w, format+"\n", args...)
+		if truncated {
+			return
+		}
+		line := fmt.Sprintf(format+"\n", args...)
+		if buf.Len()+len(line) > maxBytes-64 {
+			buf.WriteString("\n*(Report truncated at 50 KB max size limit)*\n")
+			truncated = true
+			return
+		}
+		buf.WriteString(line)
 	}
 
 	p("# Graph Report: %s", opts.IndexName)
@@ -38,6 +52,14 @@ func WriteMarkdown(w io.Writer, result *community.Result, opts Options) error {
 	}
 	p("")
 
+	// Filter god nodes
+	var filteredGodNodes []community.GodNode
+	for _, g := range result.GodNodes {
+		if !isExcludedReportSymbol(g.ID) {
+			filteredGodNodes = append(filteredGodNodes, g)
+		}
+	}
+
 	// Summary
 	p("## Summary")
 	p("")
@@ -47,7 +69,7 @@ func WriteMarkdown(w io.Writer, result *community.Result, opts Options) error {
 	p("| Edges | %d |", result.EdgeCount)
 	p("| Communities | %d |", len(result.Communities))
 	p("| Modularity (Q) | %.4f |", result.Modularity)
-	p("| God Nodes | %d |", len(result.GodNodes))
+	p("| God Nodes | %d |", len(filteredGodNodes))
 	p("| Cross-Community Edges | %d |", len(result.SurprisingEdges))
 	p("")
 
@@ -62,14 +84,14 @@ func WriteMarkdown(w io.Writer, result *community.Result, opts Options) error {
 	p("")
 
 	// God Nodes
-	if len(result.GodNodes) > 0 {
+	if len(filteredGodNodes) > 0 {
 		p("## God Nodes (High-Degree Hubs)")
 		p("")
 		p("These symbols have an unusually high number of connections, making them central to the codebase.")
 		p("")
 		p("| Rank | Symbol | Kind | In° | Out° | Total° |")
 		p("|------|--------|------|-----|------|--------|")
-		for i, g := range result.GodNodes {
+		for i, g := range filteredGodNodes {
 			name := shortName(g.ID)
 			p("| %d | `%s` | %s | %d | %d | %d |", i+1, name, g.Kind, g.InDeg, g.OutDeg, g.TotalDeg)
 		}
@@ -78,33 +100,56 @@ func WriteMarkdown(w io.Writer, result *community.Result, opts Options) error {
 		p("")
 	}
 
-	// Communities
+	// Communities (limit to top 15 communities)
 	if len(result.Communities) > 0 {
 		p("## Communities")
 		p("")
 		p("Detected via the Louvain algorithm. Each community represents a group of tightly-connected symbols.")
 		p("")
 
-		for _, c := range result.Communities {
+		maxCommunities := 15
+		displayedCommunities := result.Communities
+		if len(displayedCommunities) > maxCommunities {
+			displayedCommunities = displayedCommunities[:maxCommunities]
+		}
+
+		for _, c := range displayedCommunities {
 			p("### Community %d: %s (%d nodes, cohesion=%.3f)", c.ID, c.Label, c.NodeCount, c.Cohesion)
 			p("")
 
-			displayed := c.Nodes
+			var validNodes []string
+			for _, nid := range c.Nodes {
+				if !isExcludedReportSymbol(nid) {
+					validNodes = append(validNodes, nid)
+				}
+			}
+
+			displayed := validNodes
 			if len(displayed) > maxNodes {
 				displayed = displayed[:maxNodes]
 			}
 			for _, nid := range displayed {
 				p("- `%s`", shortName(nid))
 			}
-			if len(c.Nodes) > maxNodes {
-				p("- ... and %d more", len(c.Nodes)-maxNodes)
+			if len(validNodes) > maxNodes {
+				p("- ... and %d more", len(validNodes)-maxNodes)
 			}
 			p("")
 		}
+		if len(result.Communities) > maxCommunities {
+			p("*(%d additional communities omitted)*\n", len(result.Communities)-maxCommunities)
+		}
 	}
 
-	// Surprising Edges
-	if len(result.SurprisingEdges) > 0 {
+	// Surprising Edges (filter excluded symbols)
+	var validEdges []community.SurprisingEdge
+	for _, e := range result.SurprisingEdges {
+		if !isExcludedReportSymbol(e.From) && !isExcludedReportSymbol(e.To) {
+			validEdges = append(validEdges, e)
+		}
+	}
+
+	if len(validEdges) > 0 {
 		p("## Cross-Community Edges (Surprising Connections)")
 		p("")
 		p("These edges connect symbols in different communities, indicating inter-module coupling.")
@@ -112,7 +157,7 @@ func WriteMarkdown(w io.Writer, result *community.Result, opts Options) error {
 		p("")
 		p("| From | To | Communities | Score |")
 		p("|------|----|------------|-------|")
-		for _, e := range result.SurprisingEdges {
+		for _, e := range validEdges {
 			score := surprisingScore(e)
 			p("| `%s` | `%s` | %d → %d | %.2f |", shortName(e.From), shortName(e.To), e.FromCommunity, e.ToCommunity, score)
 		}
@@ -134,7 +179,21 @@ func WriteMarkdown(w io.Writer, result *community.Result, opts Options) error {
 		p("")
 	}
 
-	return nil
+	_, err := w.Write(buf.Bytes())
+	return err
+}
+
+func isExcludedReportSymbol(fqn string) bool {
+	lower := strings.ToLower(fqn)
+	if strings.Contains(lower, "_test.") || strings.HasSuffix(lower, "_test") ||
+		strings.Contains(lower, "/test_") || strings.Contains(lower, ".test") {
+		return true
+	}
+	if strings.HasPrefix(lower, "builtin.") || strings.HasPrefix(lower, "vendor/") ||
+		strings.HasPrefix(lower, "third_party/") {
+		return true
+	}
+	return false
 }
 
 // surprisingScore computes a composite score for a surprising edge.

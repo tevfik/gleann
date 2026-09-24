@@ -23,6 +23,10 @@ import (
 
 func init() {
 	gleann.GraphDBOpener = func(dir string) (gleann.GraphDB, error) {
+		db, err := kgraph.OpenReadOnly(dir)
+		if err == nil {
+			return db, nil
+		}
 		return kgraph.Open(dir)
 	}
 }
@@ -33,11 +37,14 @@ func init() {
 //
 // If changedFiles is non-empty, only those files are re-indexed (incremental mode).
 // If changedFiles is nil or empty, a full re-index of the directory is performed.
-func buildGraphIndex(name, docsDir, indexDir string, pluginDocs []*PluginDoc, changedFiles []string) {
+func buildGraphIndex(name, docsDir, indexDir string, pluginDocs []*PluginDoc, changedFiles []string, includeSubmodules bool) {
 	// Resolve docsDir to absolute path to avoid cwd-dependent issues.
 	absDocsDir, err := filepath.Abs(docsDir)
 	if err != nil {
 		absDocsDir = docsDir
+	}
+	if realPath, err := filepath.EvalSymlinks(absDocsDir); err == nil {
+		absDocsDir = realPath
 	}
 
 	fmt.Printf("🕸️  Building API Graph Index from %s...\n", absDocsDir)
@@ -55,7 +62,7 @@ func buildGraphIndex(name, docsDir, indexDir string, pluginDocs []*PluginDoc, ch
 	module := indexer.DetectGoModule(absDocsDir)
 
 	// 1. AST code indexing.
-	idx := indexer.New(db, module, absDocsDir)
+	idx := indexer.New(db, module, absDocsDir).WithIncludeSubmodules(includeSubmodules)
 
 	// Attach a content-hash store so incremental updates skip files whose
 	// on-disk content matches the previously indexed version. The store
@@ -162,10 +169,11 @@ func cmdGraph(args []string) {
 			}
 		}
 		if indexName == "" || docsDir == "" {
-			fmt.Fprintln(os.Stderr, "usage: gleann graph build <name> [--docs <dir>]")
+			fmt.Fprintln(os.Stderr, "usage: gleann graph build <name> [--docs <dir>] [--include-submodules]")
 			os.Exit(1)
 		}
-		buildGraphIndex(indexName, docsDir, config.IndexDir, nil, nil)
+		includeSubmodules := hasFlag(args, "--include-submodules")
+		buildGraphIndex(indexName, docsDir, config.IndexDir, nil, nil, includeSubmodules)
 		return
 	case "help", "--help":
 		printGraphUsage()

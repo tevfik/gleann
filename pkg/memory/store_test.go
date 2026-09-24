@@ -349,11 +349,20 @@ func TestManagerEndSession(t *testing.T) {
 }
 
 func TestDefaultStorePath(t *testing.T) {
+	orig := os.Getenv("GLEANN_MEMORY_DIR")
+	defer os.Setenv("GLEANN_MEMORY_DIR", orig)
+
+	os.Unsetenv("GLEANN_MEMORY_DIR")
 	path := DefaultStorePath()
 	home, _ := os.UserHomeDir()
 	expected := filepath.Join(home, ".gleann", "memory", "memory.db")
 	if path != expected {
 		t.Errorf("expected %q, got %q", expected, path)
+	}
+
+	os.Setenv("GLEANN_MEMORY_DIR", "/custom/mem/dir")
+	if got := DefaultStorePath(); got != "/custom/mem/dir/memory.db" {
+		t.Errorf("expected %q, got %q", "/custom/mem/dir/memory.db", got)
 	}
 }
 

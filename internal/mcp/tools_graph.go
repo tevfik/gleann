@@ -14,6 +14,7 @@ import (
 	mcpsdk "github.com/mark3labs/mcp-go/mcp"
 	"github.com/tevfik/gleann/internal/graph/community"
 	kgraph "github.com/tevfik/gleann/internal/graph/kuzu"
+	"github.com/tevfik/gleann/pkg/gleann"
 )
 
 // ── Graph DB pool for community detection ────────────────────────────────
@@ -410,20 +411,10 @@ func (s *Server) handleRepoMap(ctx context.Context, request mcpsdk.CallToolReque
 		return mcpsdk.NewToolResultError(fmt.Sprintf("Error opening graph %q: %v", indexName, err)), nil
 	}
 
-	// Fast path: query top hub symbols directly from KùzuDB in milliseconds
-	// filtering out third-party submodules, vendored libraries, and tests to deliver clean architecture.
 	candidateLimit := topK * 10
 	if candidateLimit < 100 {
 		candidateLimit = 100
 	}
-
-	query := fmt.Sprintf(`
-		MATCH (caller:Symbol)-[:CALLS]->(s:Symbol)
-		WHERE s.file IS NOT NULL AND s.file <> '' AND s.kind <> 'macro'
-		RETURN s.fqn AS fqn, s.name AS name, s.kind AS kind, s.file AS file, count(caller) AS callers
-		ORDER BY callers DESC
-		LIMIT %d
-	`, candidateLimit)
 
 	type repoMapItem struct {
 		FQN   string
@@ -435,23 +426,21 @@ func (s *Server) handleRepoMap(ctx context.Context, request mcpsdk.CallToolReque
 	var cleanItems []repoMapItem
 	var fallbackItems []repoMapItem
 
-	res, err := db.Conn().Query(query)
-	if err == nil {
-		for res.HasNext() {
-			row, err := res.Next()
-			if err != nil {
-				break
+	// Primary path: compute true PageRank centrality across the entire AST code graph
+	if g, err := community.LoadGraphFromKuzu(db); err == nil && g.NodeCount() > 0 {
+		nodes, edges := g.ExportForAnalysis()
+		ranks := community.PageRank(nodes, edges, 0.85, 30)
+
+		for _, n := range nodes {
+			if n.Kind == "file" || n.File == "" || n.Kind == "macro" {
+				continue
 			}
-			m, _ := row.GetAsMap()
-			score := 0.0
-			if sc, ok := m["callers"].(int64); ok {
-				score = float64(sc)
-			}
+			score := ranks[n.ID]
 			item := repoMapItem{
-				FQN:   fmt.Sprint(m["fqn"]),
-				Name:  fmt.Sprint(m["name"]),
-				Kind:  fmt.Sprint(m["kind"]),
-				File:  fmt.Sprint(m["file"]),
+				FQN:   n.ID,
+				Name:  n.Name,
+				Kind:  n.Kind,
+				File:  n.File,
 				Score: score,
 			}
 			if isNoisePath(item.File) || isNoiseSymbol(item.Name, item.Kind) {
@@ -460,7 +449,56 @@ func (s *Server) handleRepoMap(ctx context.Context, request mcpsdk.CallToolReque
 				cleanItems = append(cleanItems, item)
 			}
 		}
-		res.Close()
+
+		sort.Slice(cleanItems, func(i, j int) bool {
+			return cleanItems[i].Score > cleanItems[j].Score
+		})
+		sort.Slice(fallbackItems, func(i, j int) bool {
+			return fallbackItems[i].Score > fallbackItems[j].Score
+		})
+	}
+
+	// Secondary path: if no graph/edges loaded, fallback to Cypher caller count query
+	if len(cleanItems) == 0 && len(fallbackItems) == 0 {
+		candidateLimit := topK * 10
+		if candidateLimit < 100 {
+			candidateLimit = 100
+		}
+		query := fmt.Sprintf(`
+			MATCH (caller:Symbol)-[:CALLS]->(s:Symbol)
+			WHERE s.file IS NOT NULL AND s.file <> '' AND s.kind <> 'macro'
+			RETURN s.fqn AS fqn, s.name AS name, s.kind AS kind, s.file AS file, count(caller) AS callers
+			ORDER BY callers DESC
+			LIMIT %d
+		`, candidateLimit)
+
+		res, err := db.Conn().Query(query)
+		if err == nil {
+			for res.HasNext() {
+				row, err := res.Next()
+				if err != nil {
+					break
+				}
+				m, _ := row.GetAsMap()
+				score := 0.0
+				if sc, ok := m["callers"].(int64); ok {
+					score = float64(sc)
+				}
+				item := repoMapItem{
+					FQN:   fmt.Sprint(m["fqn"]),
+					Name:  fmt.Sprint(m["name"]),
+					Kind:  fmt.Sprint(m["kind"]),
+					File:  fmt.Sprint(m["file"]),
+					Score: score,
+				}
+				if isNoisePath(item.File) || isNoiseSymbol(item.Name, item.Kind) {
+					fallbackItems = append(fallbackItems, item)
+				} else {
+					cleanItems = append(cleanItems, item)
+				}
+			}
+			res.Close()
+		}
 	}
 
 	var items []repoMapItem
@@ -697,16 +735,39 @@ func (s *Server) handleNavigateSymbol(ctx context.Context, request mcpsdk.CallTo
 		// Get callers.
 		callers, err := db.Callers(m.FQN)
 		if err == nil && len(callers) > 0 {
+			var prodCallers, testCallers []gleann.Callee
+			for _, c := range callers {
+				if c.IsTest {
+					testCallers = append(testCallers, c)
+				} else {
+					prodCallers = append(prodCallers, c)
+				}
+			}
+
 			sb.WriteString("  Callers:\n")
-			limit := len(callers)
+			limit := len(prodCallers)
 			if limit > 10 {
 				limit = 10
 			}
-			for _, c := range callers[:limit] {
-				sb.WriteString(fmt.Sprintf("    ← %s (%s)\n", c.FQN, c.Kind))
+			for _, c := range prodCallers[:limit] {
+				loc := ""
+				if c.File != "" {
+					if c.Line > 0 {
+						loc = fmt.Sprintf(" [%s:%d]", c.File, c.Line)
+					} else {
+						loc = fmt.Sprintf(" [%s]", c.File)
+					}
+				}
+				sb.WriteString(fmt.Sprintf("    ← %s (%s)%s\n", c.FQN, c.Kind, loc))
 			}
-			if len(callers) > 10 {
-				sb.WriteString(fmt.Sprintf("    ... and %d more\n", len(callers)-10))
+			if len(prodCallers) > 10 {
+				sb.WriteString(fmt.Sprintf("    ... and %d more production callers\n", len(prodCallers)-10))
+			}
+			if len(testCallers) > 0 {
+				sb.WriteString(fmt.Sprintf("    [+ %d test caller(s)]\n", len(testCallers)))
+			}
+			if len(prodCallers) == 0 && len(testCallers) == 0 {
+				sb.WriteString("    none\n")
 			}
 		} else {
 			sb.WriteString("  Callers: none\n")
@@ -721,7 +782,15 @@ func (s *Server) handleNavigateSymbol(ctx context.Context, request mcpsdk.CallTo
 				limit = 10
 			}
 			for _, c := range callees[:limit] {
-				sb.WriteString(fmt.Sprintf("    → %s (%s)\n", c.FQN, c.Kind))
+				loc := ""
+				if c.File != "" {
+					if c.Line > 0 {
+						loc = fmt.Sprintf(" [%s:%d]", c.File, c.Line)
+					} else {
+						loc = fmt.Sprintf(" [%s]", c.File)
+					}
+				}
+				sb.WriteString(fmt.Sprintf("    → %s (%s)%s\n", c.FQN, c.Kind, loc))
 			}
 			if len(callees) > 10 {
 				sb.WriteString(fmt.Sprintf("    ... and %d more\n", len(callees)-10))
@@ -730,10 +799,11 @@ func (s *Server) handleNavigateSymbol(ctx context.Context, request mcpsdk.CallTo
 			sb.WriteString("  Callees: none\n")
 		}
 
-		// For depth > 1, recurse one more level on callees.
+		// For depth > 1, recurse on callees.
 		if depth > 1 && len(callees) > 0 {
 			sb.WriteString("  2nd-level callees:\n")
 			seen := make(map[string]bool)
+			var secondLevel []gleann.Callee
 			count := 0
 			for _, c := range callees {
 				if count >= 20 {
@@ -744,10 +814,36 @@ func (s *Server) handleNavigateSymbol(ctx context.Context, request mcpsdk.CallTo
 					for _, sc := range sub {
 						if !seen[sc.FQN] {
 							seen[sc.FQN] = true
+							secondLevel = append(secondLevel, sc)
 							sb.WriteString(fmt.Sprintf("    %s → %s (%s)\n", c.FQN, sc.FQN, sc.Kind))
 							count++
 							if count >= 20 {
 								break
+							}
+						}
+					}
+				}
+			}
+
+			// If depth >= 3, recurse to 3rd-level callees
+			if depth >= 3 && len(secondLevel) > 0 {
+				sb.WriteString("  3rd-level callees:\n")
+				seen3 := make(map[string]bool)
+				count3 := 0
+				for _, sc := range secondLevel {
+					if count3 >= 20 {
+						break
+					}
+					sub3, err := db.Callees(sc.FQN)
+					if err == nil {
+						for _, ssc := range sub3 {
+							if !seen[ssc.FQN] && !seen3[ssc.FQN] {
+								seen3[ssc.FQN] = true
+								sb.WriteString(fmt.Sprintf("    %s → %s (%s)\n", sc.FQN, ssc.FQN, ssc.Kind))
+								count3++
+								if count3 >= 20 {
+									break
+								}
 							}
 						}
 					}

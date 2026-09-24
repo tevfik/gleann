@@ -35,39 +35,120 @@ type RemoteClient struct {
 }
 
 var (
-	remoteOnce sync.Once
-	remoteVal  *RemoteClient
+	remoteMu      sync.RWMutex
+	remoteVal     *RemoteClient
+	lastProbeTime time.Time
+	probeTTL      = 2 * time.Second
 )
+
+func probeAddress(addr string) bool {
+	client := &http.Client{Timeout: remoteProbeTOms * time.Millisecond}
+	resp, err := client.Get(addr + remoteProbePath)
+	if err != nil {
+		return false
+	}
+	resp.Body.Close()
+	return resp.StatusCode == http.StatusOK
+}
 
 // Remote returns a cached RemoteClient if a gleann server is reachable
 // at GLEANN_REMOTE_ADDR (default http://localhost:8080), or nil if unreachable
-// or disabled via GLEANN_REMOTE_ADDR="off".
+// or disabled via GLEANN_REMOTE_ADDR="off". Re-probes periodically (every 2s).
 func Remote() *RemoteClient {
-	remoteOnce.Do(func() {
-		addr := os.Getenv("GLEANN_REMOTE_ADDR")
-		if addr == "off" {
-			return
-		}
-		if addr == "" {
-			addr = DefaultRemoteAddr
-		}
-		addr = strings.TrimRight(addr, "/")
+	addr := os.Getenv("GLEANN_REMOTE_ADDR")
+	if addr == "off" {
+		return nil
+	}
+	if addr == "" {
+		addr = DefaultRemoteAddr
+	}
+	addr = strings.TrimRight(addr, "/")
 
-		client := &http.Client{Timeout: remoteProbeTOms * time.Millisecond}
-		resp, err := client.Get(addr + remoteProbePath)
-		if err != nil {
-			return
-		}
-		resp.Body.Close()
-		if resp.StatusCode != http.StatusOK {
-			return
-		}
+	remoteMu.RLock()
+	if remoteVal != nil && time.Since(lastProbeTime) < probeTTL {
+		c := remoteVal
+		remoteMu.RUnlock()
+		return c
+	}
+	remoteMu.RUnlock()
+
+	remoteMu.Lock()
+	defer remoteMu.Unlock()
+
+	// Double check under lock
+	if remoteVal != nil && time.Since(lastProbeTime) < probeTTL {
+		return remoteVal
+	}
+
+	lastProbeTime = time.Now()
+	if probeAddress(addr) {
 		remoteVal = &RemoteClient{
 			base:   addr,
 			client: &http.Client{Timeout: 30 * time.Second},
 		}
-	})
+	} else {
+		remoteVal = nil
+	}
 	return remoteVal
+}
+
+// EnsureDaemon ensures a gleann daemon is running at addr (default http://localhost:8080).
+// If not reachable, it auto-spawns `gleann serve` in the background.
+func EnsureDaemon(addr string) (*RemoteClient, error) {
+	if c := Remote(); c != nil {
+		return c, nil
+	}
+
+	envAddr := os.Getenv("GLEANN_REMOTE_ADDR")
+	if envAddr == "off" {
+		return nil, fmt.Errorf("remote daemon disabled via GLEANN_REMOTE_ADDR=off")
+	}
+
+	if addr == "" {
+		addr = envAddr
+	}
+	if addr == "" {
+		addr = DefaultRemoteAddr
+	}
+	addr = strings.TrimRight(addr, "/")
+
+	// Attempt to spawn gleann serve
+	binPath, err := os.Executable()
+	if err != nil {
+		binPath = "gleann"
+	}
+
+	// Extract port or host:port
+	serveAddr := addr
+	if strings.HasPrefix(serveAddr, "http://") {
+		serveAddr = strings.TrimPrefix(serveAddr, "http://")
+	} else if strings.HasPrefix(serveAddr, "https://") {
+		serveAddr = strings.TrimPrefix(serveAddr, "https://")
+	}
+
+	cmd := spawnDaemonCmd(binPath, serveAddr)
+	if err := cmd.Start(); err != nil {
+		return nil, fmt.Errorf("auto-spawn daemon: %w", err)
+	}
+
+	// Wait up to 2 seconds for daemon to become ready
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		time.Sleep(100 * time.Millisecond)
+		if probeAddress(addr) {
+			remoteMu.Lock()
+			lastProbeTime = time.Now()
+			remoteVal = &RemoteClient{
+				base:   addr,
+				client: &http.Client{Timeout: 30 * time.Second},
+			}
+			c := remoteVal
+			remoteMu.Unlock()
+			return c, nil
+		}
+	}
+
+	return nil, fmt.Errorf("daemon at %s failed to become healthy within 2s", addr)
 }
 
 // NewRemoteClient creates a RemoteClient pointing to the given base URL.
@@ -80,8 +161,30 @@ func NewRemoteClient(baseURL string) *RemoteClient {
 
 // ResetRemoteForTesting resets the cached RemoteClient singleton.
 func ResetRemoteForTesting() {
-	remoteOnce = sync.Once{}
+	remoteMu.Lock()
+	defer remoteMu.Unlock()
 	remoteVal = nil
+	lastProbeTime = time.Time{}
+}
+
+// AddScopedNote adds a scoped note (e.g. for session tracking) via REST.
+func (r *RemoteClient) AddScopedNote(scope string, tier Tier, label, content string) (*Block, error) {
+	return r.AddBlock(&Block{
+		Scope:   scope,
+		Tier:    tier,
+		Label:   label,
+		Content: content,
+		Source:  "mcp-session",
+	})
+}
+
+// ListScoped returns blocks filtered by scope and tier via REST.
+func (r *RemoteClient) ListScoped(scope string, tier Tier) ([]Block, error) {
+	u := fmt.Sprintf("%s/api/blocks?scope=%s", r.base, url.QueryEscape(scope))
+	if tier != "" {
+		u += "&tier=" + string(tier)
+	}
+	return r.fetchBlocks(u)
 }
 
 // ── Read operations ──────────────────────────────────────────────────────────
@@ -98,6 +201,15 @@ func (r *RemoteClient) List(tier Tier) ([]Block, error) {
 // Search performs full-text search across memory blocks.
 func (r *RemoteClient) Search(query string) ([]Block, error) {
 	u := fmt.Sprintf("%s/api/blocks/search?q=%s", r.base, url.QueryEscape(query))
+	return r.fetchBlocks(u)
+}
+
+// SearchScoped performs full-text search across memory blocks visible to a scope.
+func (r *RemoteClient) SearchScoped(scope, query string) ([]Block, error) {
+	u := fmt.Sprintf("%s/api/blocks/search?q=%s", r.base, url.QueryEscape(query))
+	if scope != "" {
+		u += "&scope=" + url.QueryEscape(scope)
+	}
 	return r.fetchBlocks(u)
 }
 
@@ -161,8 +273,14 @@ func (r *RemoteClient) AddBlock(b *Block) (*Block, error) {
 		"tags":       b.Tags,
 		"source":     b.Source,
 		"metadata":   b.Metadata,
-		"char_limit": b.CharLimit,
-		"scope":      b.Scope,
+		"char_limit":   b.CharLimit,
+		"scope":        b.Scope,
+		"repo":         b.Repo,
+		"paths":        b.Paths,
+		"symbols":      b.Symbols,
+		"commit":       b.Commit,
+		"suspect":      b.Suspect,
+		"stale_reason": b.StaleReason,
 	}
 	if b.ExpiresAt != nil {
 		// Pass duration from now if expires in future.

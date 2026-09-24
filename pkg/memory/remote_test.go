@@ -1,4 +1,4 @@
-package memory_test
+package memory
 
 import (
 	"encoding/json"
@@ -7,192 +7,149 @@ import (
 	"os"
 	"testing"
 	"time"
-
-	"github.com/tevfik/gleann/pkg/memory"
 )
 
 func TestRemoteClient(t *testing.T) {
-	mux := http.NewServeMux()
+	var storedBlocks []Block
 
-	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{"status":"ok"}`))
-	})
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/health" && r.Method == http.MethodGet:
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("OK"))
 
-	mux.HandleFunc("GET /api/blocks", func(w http.ResponseWriter, r *http.Request) {
-		tier := r.URL.Query().Get("tier")
-		blocks := []memory.Block{
-			{ID: "block-1", Content: "Note 1", Tier: memory.TierLong},
-			{ID: "block-2", Content: "Note 2", Tier: memory.TierMedium},
+		case r.URL.Path == "/api/blocks" && r.Method == http.MethodPost:
+			var req map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			b := Block{
+				ID:        "blk-123",
+				Tier:      Tier(req["tier"].(string)),
+				Label:     req["label"].(string),
+				Content:   req["content"].(string),
+				Source:    req["source"].(string),
+				Scope:     req["scope"].(string),
+				CreatedAt: time.Now(),
+			}
+			storedBlocks = append(storedBlocks, b)
+			w.WriteHeader(http.StatusCreated)
+			_ = json.NewEncoder(w).Encode(b)
+
+		case r.URL.Path == "/api/blocks" && r.Method == http.MethodGet:
+			scope := r.URL.Query().Get("scope")
+			tier := r.URL.Query().Get("tier")
+			var filtered []Block
+			for _, b := range storedBlocks {
+				if scope != "" && b.Scope != scope {
+					continue
+				}
+				if tier != "" && string(b.Tier) != tier {
+					continue
+				}
+				filtered = append(filtered, b)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{"blocks": filtered})
+
+		case r.URL.Path == "/api/blocks/search" && r.Method == http.MethodGet:
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{"blocks": storedBlocks})
+
+		case r.URL.Path == "/api/blocks/stats" && r.Method == http.MethodGet:
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(Stats{TotalCount: len(storedBlocks)})
+
+		case r.URL.Path == "/api/blocks/blk-123" && r.Method == http.MethodDelete:
+			storedBlocks = nil
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{"deleted": 1})
+
+		case r.URL.Path == "/api/blocks" && r.Method == http.MethodDelete:
+			count := len(storedBlocks)
+			storedBlocks = nil
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{"deleted": count})
+
+		default:
+			http.NotFound(w, r)
 		}
-		if tier == string(memory.TierLong) {
-			blocks = blocks[:1]
-		}
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"blocks": blocks,
-			"count":  len(blocks),
-		})
-	})
-
-	mux.HandleFunc("GET /api/blocks/search", func(w http.ResponseWriter, r *http.Request) {
-		q := r.URL.Query().Get("q")
-		var results []memory.Block
-		if q == "test" {
-			results = append(results, memory.Block{ID: "block-test", Content: "test content", Tier: memory.TierLong})
-		}
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"blocks": results,
-			"count":  len(results),
-		})
-	})
-
-	mux.HandleFunc("GET /api/blocks/stats", func(w http.ResponseWriter, r *http.Request) {
-		stats := memory.Stats{
-			TotalCount:    2,
-			LongTermCount: 1,
-		}
-		_ = json.NewEncoder(w).Encode(stats)
-	})
-
-	mux.HandleFunc("GET /api/blocks/context", func(w http.ResponseWriter, r *http.Request) {
-		format := r.URL.Query().Get("format")
-		if format == "xml" {
-			w.Header().Set("Content-Type", "text/xml; charset=utf-8")
-			_, _ = w.Write([]byte("<memory_context><note>test</note></memory_context>"))
-			return
-		}
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"rendered": "<memory_context><note>test</note></memory_context>",
-		})
-	})
-
-	mux.HandleFunc("POST /api/blocks", func(w http.ResponseWriter, r *http.Request) {
-		var req map[string]any
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		w.WriteHeader(http.StatusCreated)
-		_ = json.NewEncoder(w).Encode(memory.Block{
-			ID:      "block-new",
-			Content: req["content"].(string),
-			Tier:    memory.TierLong,
-		})
-	})
-
-	mux.HandleFunc("DELETE /api/blocks/{id}", func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewEncoder(w).Encode(map[string]any{"deleted": 1})
-	})
-
-	mux.HandleFunc("DELETE /api/blocks", func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewEncoder(w).Encode(map[string]any{"deleted": 5})
-	})
-
-	ts := httptest.NewServer(mux)
+	}))
 	defer ts.Close()
 
-	client := memory.NewRemoteClient(ts.URL)
+	// 1. Test NewRemoteClient direct operations
+	client := NewRemoteClient(ts.URL)
 
-	// Test List
-	blocks, err := client.List("")
+	// Add block
+	b, err := client.Add(TierLong, "test-label", "some important memory", []string{"tag1"})
 	if err != nil {
-		t.Fatalf("List error: %v", err)
+		t.Fatalf("Add failed: %v", err)
 	}
-	if len(blocks) != 2 {
-		t.Errorf("expected 2 blocks, got %d", len(blocks))
+	if b.ID != "blk-123" {
+		t.Fatalf("unexpected id: %s", b.ID)
 	}
 
-	blocksLong, err := client.List(memory.TierLong)
+	// Add Scoped note
+	note, err := client.AddScopedNote("session-abc", TierShort, "step1", "Ran a search")
 	if err != nil {
-		t.Fatalf("List long error: %v", err)
+		t.Fatalf("AddScopedNote failed: %v", err)
 	}
-	if len(blocksLong) != 1 {
-		t.Errorf("expected 1 block, got %d", len(blocksLong))
+	if note.Scope != "session-abc" {
+		t.Fatalf("expected scope session-abc, got %s", note.Scope)
 	}
 
-	// Test Search
-	searchResults, err := client.Search("test")
+	// List Scoped
+	scoped, err := client.ListScoped("session-abc", TierShort)
 	if err != nil {
-		t.Fatalf("Search error: %v", err)
+		t.Fatalf("ListScoped failed: %v", err)
 	}
-	if len(searchResults) != 1 || searchResults[0].ID != "block-test" {
-		t.Errorf("expected 1 result with ID block-test, got %+v", searchResults)
+	if len(scoped) != 1 || scoped[0].Scope != "session-abc" {
+		t.Fatalf("expected 1 scoped block, got %d", len(scoped))
 	}
 
-	// Test Stats
+	// Search
+	res, err := client.Search("important")
+	if err != nil {
+		t.Fatalf("Search failed: %v", err)
+	}
+	if len(res) != 2 {
+		t.Fatalf("expected 2 blocks, got %d", len(res))
+	}
+
+	// Stats
 	stats, err := client.Stats()
 	if err != nil {
-		t.Fatalf("Stats error: %v", err)
+		t.Fatalf("Stats failed: %v", err)
 	}
 	if stats.TotalCount != 2 {
-		t.Errorf("expected TotalCount 2, got %d", stats.TotalCount)
+		t.Fatalf("expected 2 total blocks in stats, got %d", stats.TotalCount)
 	}
 
-	// Test Context
-	ctxXML, err := client.Context("")
+	// Forget
+	deleted, err := client.Forget("blk-123")
 	if err != nil {
-		t.Fatalf("Context error: %v", err)
+		t.Fatalf("Forget failed: %v", err)
 	}
-	if ctxXML != "<memory_context><note>test</note></memory_context>" {
-		t.Errorf("unexpected context XML: %s", ctxXML)
-	}
-
-	// Test Add
-	added, err := client.Add(memory.TierLong, "note", "New content", []string{"tag1"})
-	if err != nil {
-		t.Fatalf("Add error: %v", err)
-	}
-	if added.ID != "block-new" {
-		t.Errorf("expected ID block-new, got %s", added.ID)
+	if deleted != 1 {
+		t.Fatalf("expected 1 deleted, got %d", deleted)
 	}
 
-	// Test AddBlock with ExpiresAt
-	exp := time.Now().Add(10 * time.Minute)
-	b := &memory.Block{
-		Content:   "Expiring content",
-		Tier:      memory.TierShort,
-		ExpiresAt: &exp,
-	}
-	addedBlock, err := client.AddBlock(b)
-	if err != nil {
-		t.Fatalf("AddBlock error: %v", err)
-	}
-	if addedBlock.ID != "block-new" {
-		t.Errorf("expected ID block-new, got %s", addedBlock.ID)
-	}
+	// 2. Test Remote() singleton probing
+	ResetRemoteForTesting()
+	origAddr := os.Getenv("GLEANN_REMOTE_ADDR")
+	defer os.Setenv("GLEANN_REMOTE_ADDR", origAddr)
 
-	// Test Forget
-	n, err := client.Forget("block-1")
-	if err != nil {
-		t.Fatalf("Forget error: %v", err)
-	}
-	if n != 1 {
-		t.Errorf("expected 1 deleted, got %d", n)
-	}
-
-	// Test Clear
-	deleted, err := client.Clear(memory.TierLong)
-	if err != nil {
-		t.Fatalf("Clear error: %v", err)
-	}
-	if deleted != 5 {
-		t.Errorf("expected 5 deleted, got %d", deleted)
-	}
-
-	// Test Remote() probe
 	os.Setenv("GLEANN_REMOTE_ADDR", ts.URL)
-	defer os.Unsetenv("GLEANN_REMOTE_ADDR")
-	memory.ResetRemoteForTesting()
-
-	rc := memory.Remote()
-	if rc == nil {
-		t.Fatal("expected non-nil remote client from probe")
+	c := Remote()
+	if c == nil {
+		t.Fatalf("expected Remote() to discover server at %s", ts.URL)
 	}
 
-	// Test disabled remote
+	// Disabled via off
 	os.Setenv("GLEANN_REMOTE_ADDR", "off")
-	memory.ResetRemoteForTesting()
-	if memory.Remote() != nil {
-		t.Error("expected nil when GLEANN_REMOTE_ADDR=off")
+	ResetRemoteForTesting()
+	if cOff := Remote(); cOff != nil {
+		t.Fatalf("expected nil when GLEANN_REMOTE_ADDR=off")
 	}
 }

@@ -474,3 +474,38 @@ func TestFileHashStoreManyEntries(t *testing.T) {
 		t.Errorf("Count after Clear: want 0, got %d", got)
 	}
 }
+
+func TestFileHashStore_LockDoesNotDeleteDB(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "hashes.db")
+	store1, err := indexer.NewFileHashStore(dbPath)
+	if err != nil {
+		t.Fatalf("NewFileHashStore #1: %v", err)
+	}
+	defer store1.Close()
+
+	if err := store1.Mark("main.go", "hash123", "go", 10, 100); err != nil {
+		t.Fatalf("Mark: %v", err)
+	}
+
+	infoBefore, err := os.Stat(dbPath)
+	if err != nil {
+		t.Fatalf("stat before: %v", err)
+	}
+
+	// Try to open a second store on the same locked DB.
+	store2, err := indexer.NewFileHashStore(dbPath)
+	if err == nil {
+		store2.Close()
+		t.Fatal("expected error opening locked db, got nil")
+	}
+
+	// Verify file was NOT deleted!
+	infoAfter, err := os.Stat(dbPath)
+	if err != nil {
+		t.Fatalf("db file was deleted or cannot be stated: %v", err)
+	}
+	if infoAfter.Size() != infoBefore.Size() {
+		t.Fatalf("db file size changed unexpectedly: before=%d, after=%d", infoBefore.Size(), infoAfter.Size())
+	}
+}

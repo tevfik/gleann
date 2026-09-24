@@ -16,6 +16,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	kuzu "github.com/kuzudb/go-kuzu"
@@ -52,12 +53,26 @@ func ExecOn(conn *kuzu.Connection, cypher string) error {
 }
 
 // Open opens (or creates) a KuzuDB database at the given directory path.
+func isLockError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "lock") ||
+		strings.Contains(msg, "resource temporarily unavailable") ||
+		strings.Contains(msg, "already open") ||
+		strings.Contains(msg, "permission denied") ||
+		strings.Contains(msg, "access is denied") ||
+		strings.Contains(msg, "busy")
+}
+
+// Open creates or connects to a KuzuDB embedded database in dir.
 // Pass an empty string to use in-memory mode.
 //
 // Corrupted on-disk databases are automatically quarantined (renamed to
 // <dir>.corrupted-<unix-ts>) and a fresh database is created in their place,
-// unless GLEANN_KUZU_AUTOREPAIR=0 is set. This recovers from upstream
-// crashes that leave behind a half-written WAL/header.
+// unless GLEANN_KUZU_AUTOREPAIR=0 is set or the error indicates a file lock / busy state.
+// This recovers from upstream crashes that leave behind a half-written WAL/header.
 func Open(dir string) (*DB, error) {
 	if dir == "" {
 		db, err := kuzu.OpenInMemoryDatabase(kuzu.DefaultSystemConfig())
@@ -73,6 +88,12 @@ func Open(dir string) (*DB, error) {
 		return finishOpen(db)
 	}
 	openErr := fmt.Errorf("kuzu open: %w", err)
+
+	// Do not quarantine or delete data if the failure is due to a lock,
+	// permission issue, or another process currently holding the database.
+	if isLockError(err) {
+		return nil, openErr
+	}
 
 	// Best-effort auto-repair: only attempt when the directory actually
 	// exists (so a missing-path error is surfaced as-is) and the user has
@@ -113,6 +134,26 @@ func finishOpen(db *kuzu.Database) (*DB, error) {
 	return g, nil
 }
 
+// OpenReadOnly opens an existing KuzuDB database in read-only mode, bypassing write lock contention.
+func OpenReadOnly(dir string) (*DB, error) {
+	if dir == "" {
+		return Open("")
+	}
+	dbPath := filepath.Clean(dir)
+	cfg := kuzu.DefaultSystemConfig()
+	cfg.ReadOnly = true
+	db, err := kuzu.OpenDatabase(dbPath, cfg)
+	if err != nil {
+		return nil, fmt.Errorf("kuzu open read-only: %w", err)
+	}
+	conn, err := kuzu.OpenConnection(db)
+	if err != nil {
+		db.Close()
+		return nil, fmt.Errorf("kuzu connection: %w", err)
+	}
+	return &DB{db: db, conn: conn}, nil
+}
+
 // Close releases all database resources.
 func (g *DB) Close() {
 	if g.conn != nil {
@@ -143,13 +184,14 @@ func (g *DB) initSchema() error {
 			PRIMARY KEY (path)
 		)`,
 		`CREATE NODE TABLE IF NOT EXISTS Symbol(
-			fqn    STRING,
-			kind   STRING,
-			file   STRING,
-			line   INT64,
-			name   STRING,
-			doc    STRING,
-			weight DOUBLE DEFAULT 1.0,
+			fqn     STRING,
+			kind    STRING,
+			file    STRING,
+			line    INT64,
+			name    STRING,
+			doc     STRING,
+			weight  DOUBLE DEFAULT 1.0,
+			is_test BOOLEAN DEFAULT false,
 			PRIMARY KEY (fqn)
 		)`,
 
@@ -276,6 +318,8 @@ func (g *DB) initSchema() error {
 			return fmt.Errorf("DDL error (%q): %w", ddl[:min(40, len(ddl))], err)
 		}
 	}
+	// Migration for existing tables created before is_test column was added
+	_ = g.exec("ALTER TABLE Symbol ADD is_test BOOLEAN DEFAULT false")
 	return nil
 }
 

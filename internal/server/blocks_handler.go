@@ -32,9 +32,15 @@ type blockAddRequest struct {
 	Source    string            `json:"source,omitempty"` // origin tag
 	Tags      []string          `json:"tags,omitempty"`
 	Metadata  map[string]string `json:"metadata,omitempty"`
-	ExpiresIn string            `json:"expires_in,omitempty"` // e.g. "24h", "7d"
-	CharLimit int               `json:"char_limit,omitempty"` // max characters (0 = use default)
-	Scope     string            `json:"scope,omitempty"`      // isolation scope (e.g. conversation ID)
+	ExpiresIn   string            `json:"expires_in,omitempty"`   // e.g. "24h", "7d"
+	CharLimit   int               `json:"char_limit,omitempty"`   // max characters (0 = use default)
+	Scope       string            `json:"scope,omitempty"`        // isolation scope (e.g. conversation ID)
+	Repo        string            `json:"repo,omitempty"`         // provenance repository identifier
+	Paths       []string          `json:"paths,omitempty"`        // provenance file paths
+	Symbols     []string          `json:"symbols,omitempty"`      // provenance symbol names/FQNs
+	Commit      string            `json:"commit,omitempty"`       // provenance commit hash
+	Suspect     bool              `json:"suspect,omitempty"`      // whether block is marked suspect/stale
+	StaleReason string            `json:"stale_reason,omitempty"` // reason for staleness/suspicion
 }
 
 // ── lazy blockMem accessor ────────────────────────────────────────────────────
@@ -161,9 +167,15 @@ func (s *Server) handleAddBlock(w http.ResponseWriter, r *http.Request) {
 		Content:   req.Content,
 		Source:    source,
 		Tags:      req.Tags,
-		Metadata:  req.Metadata,
-		CharLimit: req.CharLimit,
-		Scope:     req.Scope,
+		Metadata:    req.Metadata,
+		CharLimit:   req.CharLimit,
+		Scope:       req.Scope,
+		Repo:        req.Repo,
+		Paths:       req.Paths,
+		Symbols:     req.Symbols,
+		Commit:      req.Commit,
+		Suspect:     req.Suspect,
+		StaleReason: req.StaleReason,
 	}
 
 	// Parse optional expiry.
@@ -177,12 +189,13 @@ func (s *Server) handleAddBlock(w http.ResponseWriter, r *http.Request) {
 		block.ExpiresAt = &exp
 	}
 
-	if err := mgr.Store().Add(block); err != nil {
+	saved, err := mgr.RememberBlock(block)
+	if err != nil {
 		writeError(w, http.StatusInternalServerError, "add block: "+err.Error())
 		return
 	}
 
-	writeJSON(w, http.StatusCreated, block)
+	writeJSON(w, http.StatusCreated, saved)
 }
 
 // ── DELETE /api/blocks/{id} ───────────────────────────────────────────────────

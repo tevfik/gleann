@@ -463,3 +463,174 @@ func TestDocumentContextAndFullDocument(t *testing.T) {
 	}
 }
 
+func TestCallersCallees_ExactFQNMatching(t *testing.T) {
+	db, err := kgraph.Open("")
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer db.Close()
+
+	// Define two different Store structs with the same method name "Close"
+	symStoreAClose := kgraph.SymbolNode{
+		FQN:  "pkg/a.StoreA.Close",
+		Kind: "method",
+		File: "pkg/a/store.go",
+		Line: 50,
+		Name: "Close",
+	}
+	symStoreBClose := kgraph.SymbolNode{
+		FQN:  "pkg/b.StoreB.Close",
+		Kind: "method",
+		File: "pkg/b/store.go",
+		Line: 80,
+		Name: "Close",
+	}
+
+	symWorkerA := kgraph.SymbolNode{
+		FQN:  "pkg/a.WorkerA.Run",
+		Kind: "method",
+		File: "pkg/a/worker.go",
+		Line: 20,
+		Name: "Run",
+	}
+	symWorkerB := kgraph.SymbolNode{
+		FQN:  "pkg/b.WorkerB.Run",
+		Kind: "method",
+		File: "pkg/b/worker.go",
+		Line: 35,
+		Name: "Run",
+	}
+
+	for _, sym := range []kgraph.SymbolNode{symStoreAClose, symStoreBClose, symWorkerA, symWorkerB} {
+		if err := db.UpsertSymbol(sym); err != nil {
+			t.Fatalf("UpsertSymbol %s: %v", sym.FQN, err)
+		}
+	}
+
+	// WorkerA -> StoreA.Close
+	if err := db.AddCalls(symWorkerA.FQN, symStoreAClose.FQN); err != nil {
+		t.Fatalf("AddCalls A: %v", err)
+	}
+	// WorkerB -> StoreB.Close
+	if err := db.AddCalls(symWorkerB.FQN, symStoreBClose.FQN); err != nil {
+		t.Fatalf("AddCalls B: %v", err)
+	}
+
+	// 1. Callers with exact FQN "pkg/a.StoreA.Close" must ONLY return WorkerA, NOT WorkerB
+	callersA, err := db.Callers("pkg/a.StoreA.Close")
+	if err != nil {
+		t.Fatalf("Callers(pkg/a.StoreA.Close): %v", err)
+	}
+	if len(callersA) != 1 {
+		t.Fatalf("Expected exactly 1 caller for StoreA.Close, got %d: %+v", len(callersA), callersA)
+	}
+	if callersA[0].FQN != symWorkerA.FQN {
+		t.Errorf("Expected caller %q, got %q", symWorkerA.FQN, callersA[0].FQN)
+	}
+	if callersA[0].File != symWorkerA.File || callersA[0].Line != symWorkerA.Line {
+		t.Errorf("Caller file/line mismatch: got %s:%d, want %s:%d", callersA[0].File, callersA[0].Line, symWorkerA.File, symWorkerA.Line)
+	}
+
+	// 2. Callees with exact FQN "pkg/a.WorkerA.Run" must return StoreA.Close with File and Line
+	calleesA, err := db.Callees("pkg/a.WorkerA.Run")
+	if err != nil {
+		t.Fatalf("Callees(pkg/a.WorkerA.Run): %v", err)
+	}
+	if len(calleesA) != 1 {
+		t.Fatalf("Expected exactly 1 callee, got %d: %+v", len(calleesA), calleesA)
+	}
+	if calleesA[0].FQN != symStoreAClose.FQN {
+		t.Errorf("Expected callee %q, got %q", symStoreAClose.FQN, calleesA[0].FQN)
+	}
+	if calleesA[0].File != "pkg/a/store.go" || calleesA[0].Line != 50 {
+		t.Errorf("Callee file/line mismatch: got %s:%d, want pkg/a/store.go:50", calleesA[0].File, calleesA[0].Line)
+	}
+
+	// 3. ResolveSymbolCandidates for "Close" must find both candidates
+	candidates, err := db.ResolveSymbolCandidates("Close")
+	if err != nil {
+		t.Fatalf("ResolveSymbolCandidates(Close): %v", err)
+	}
+	if len(candidates) != 2 {
+		t.Errorf("Expected 2 candidates for Close, got %d: %+v", len(candidates), candidates)
+	}
+}
+
+func TestProductionVsTestCallers_Separation(t *testing.T) {
+	db, err := kgraph.Open("")
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer db.Close()
+
+	symTarget := kgraph.SymbolNode{
+		FQN:    "pkg.Store.OpenStore",
+		Kind:   "method",
+		File:   "pkg/store.go",
+		Line:   10,
+		Name:   "OpenStore",
+		IsTest: false,
+	}
+	symProdCaller := kgraph.SymbolNode{
+		FQN:    "pkg.Service.Start",
+		Kind:   "method",
+		File:   "pkg/service.go",
+		Line:   25,
+		Name:   "Start",
+		IsTest: false,
+	}
+	symTestCaller := kgraph.SymbolNode{
+		FQN:    "pkg.TestOpenStore",
+		Kind:   "function",
+		File:   "pkg/store_test.go",
+		Line:   15,
+		Name:   "TestOpenStore",
+		IsTest: true,
+	}
+
+	for _, s := range []kgraph.SymbolNode{symTarget, symProdCaller, symTestCaller} {
+		if err := db.UpsertSymbol(s); err != nil {
+			t.Fatalf("UpsertSymbol %s: %v", s.FQN, err)
+		}
+	}
+
+	// Add CALLS from both prod and test
+	if err := db.AddCalls(symProdCaller.FQN, symTarget.FQN); err != nil {
+		t.Fatalf("AddCalls prod: %v", err)
+	}
+	if err := db.AddCalls(symTestCaller.FQN, symTarget.FQN); err != nil {
+		t.Fatalf("AddCalls test: %v", err)
+	}
+
+	// 1. Verify Callers ordering: production callers must be FIRST
+	callers, err := db.Callers(symTarget.FQN)
+	if err != nil {
+		t.Fatalf("Callers: %v", err)
+	}
+	if len(callers) != 2 {
+		t.Fatalf("Expected 2 callers, got %d: %+v", len(callers), callers)
+	}
+	if callers[0].FQN != symProdCaller.FQN || callers[0].IsTest {
+		t.Errorf("Expected first caller to be production caller %q (is_test=false), got %q (is_test=%v)",
+			symProdCaller.FQN, callers[0].FQN, callers[0].IsTest)
+	}
+	if callers[1].FQN != symTestCaller.FQN || !callers[1].IsTest {
+		t.Errorf("Expected second caller to be test caller %q (is_test=true), got %q (is_test=%v)",
+			symTestCaller.FQN, callers[1].FQN, callers[1].IsTest)
+	}
+
+	// 2. Verify Impact analysis separates test callers
+	impact, err := db.Impact(symTarget.FQN, 3)
+	if err != nil {
+		t.Fatalf("Impact: %v", err)
+	}
+	if len(impact.DirectCallers) != 1 || impact.DirectCallers[0] != symProdCaller.FQN {
+		t.Errorf("Impact.DirectCallers expected [%s], got %+v", symProdCaller.FQN, impact.DirectCallers)
+	}
+	if len(impact.TestCallers) != 1 || impact.TestCallers[0] != symTestCaller.FQN {
+		t.Errorf("Impact.TestCallers expected [%s], got %+v", symTestCaller.FQN, impact.TestCallers)
+	}
+}
+
+
+

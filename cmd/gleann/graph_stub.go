@@ -8,7 +8,7 @@ import (
 )
 
 // buildGraphIndex is a no-op stub when built without CGo/tree-sitter support.
-func buildGraphIndex(name, docsDir, indexDir string, pluginDocs []*PluginDoc, changedFiles []string) {
+func buildGraphIndex(name, docsDir, indexDir string, pluginDocs []*PluginDoc, changedFiles []string, includeSubmodules bool) {
 	fmt.Fprintln(os.Stderr, "⚠️  Graph indexing requires CGo (build with -tags treesitter).")
 }
 

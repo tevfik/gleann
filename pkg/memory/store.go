@@ -35,6 +35,12 @@ func DefaultStorePath() string {
 	if env := os.Getenv("GLEANN_MEMORY_DIR"); env != "" {
 		return filepath.Join(env, "memory.db")
 	}
+	if home := os.Getenv("HOME"); home != "" {
+		return filepath.Join(home, ".gleann", "memory", "memory.db")
+	}
+	if home := os.Getenv("USERPROFILE"); home != "" {
+		return filepath.Join(home, ".gleann", "memory", "memory.db")
+	}
 	home, _ := os.UserHomeDir()
 	return filepath.Join(home, ".gleann", "memory", "memory.db")
 }
@@ -90,10 +96,57 @@ func (s *Store) Path() string {
 
 // Add stores a new memory block. Short-term blocks are kept in-memory;
 // medium and long-term blocks are persisted to BBolt.
+// If an identical block already exists (same content, scope, tier), it is deduplicated
+// by reinforcing confidence (Confirms++) and merging any tags or provenance.
 func (s *Store) Add(block *Block) error {
 	if block.ID == "" {
 		block.ID = generateBlockID(block)
 	}
+
+	// Check if block already exists with this ID in the same tier for deduplication
+	existing, err := s.Get(block.ID)
+	if err == nil && existing != nil && existing.Tier == block.Tier {
+		existing.Confirm()
+		existing.UpdatedAt = time.Now()
+		for _, tag := range block.Tags {
+			if !containsTag(existing.Tags, tag) {
+				existing.Tags = append(existing.Tags, tag)
+			}
+		}
+		if existing.Repo == "" {
+			existing.Repo = block.Repo
+		}
+		if existing.Commit == "" {
+			existing.Commit = block.Commit
+		}
+		for _, p := range block.Paths {
+			found := false
+			for _, ep := range existing.Paths {
+				if ep == p {
+					found = true
+					break
+				}
+			}
+			if !found {
+				existing.Paths = append(existing.Paths, p)
+			}
+		}
+		for _, sym := range block.Symbols {
+			found := false
+			for _, es := range existing.Symbols {
+				if es == sym {
+					found = true
+					break
+				}
+			}
+			if !found {
+				existing.Symbols = append(existing.Symbols, sym)
+			}
+		}
+		*block = *existing
+		return s.Update(existing)
+	}
+
 	if block.CreatedAt.IsZero() {
 		block.CreatedAt = time.Now()
 	}
@@ -588,10 +641,106 @@ func (s *Store) BuildContext() (*ContextWindow, error) {
 
 func generateBlockID(block *Block) string {
 	h := sha256.New()
-	h.Write([]byte(block.Content))
-	h.Write([]byte(block.Label))
-	h.Write([]byte(time.Now().Format(time.RFC3339Nano)))
+	norm := strings.ToLower(strings.TrimSpace(block.Content))
+	h.Write([]byte(norm))
+	h.Write([]byte("|"))
+	h.Write([]byte(block.Scope))
+	h.Write([]byte("|"))
+	h.Write([]byte(string(block.Tier)))
 	return fmt.Sprintf("%x", h.Sum(nil))[:16]
+}
+
+// MarkSuspect flags any stored memory blocks whose Paths or Symbols intersect
+// with the provided changed files or changed symbols. Returns the number of blocks marked suspect.
+func (s *Store) MarkSuspect(changedFiles []string, changedSymbols []string) (int, error) {
+	if len(changedFiles) == 0 && len(changedSymbols) == 0 {
+		return 0, nil
+	}
+
+	fileSet := make(map[string]struct{}, len(changedFiles)*2)
+	for _, f := range changedFiles {
+		clean := filepath.Clean(f)
+		fileSet[clean] = struct{}{}
+		fileSet[filepath.Base(clean)] = struct{}{}
+	}
+
+	symSet := make(map[string]struct{}, len(changedSymbols)*2)
+	for _, sym := range changedSymbols {
+		symSet[sym] = struct{}{}
+		if idx := strings.LastIndex(sym, "."); idx >= 0 {
+			symSet[sym[idx+1:]] = struct{}{}
+		}
+	}
+
+	count := 0
+
+	// Check short-term
+	for i := range s.shortTerm {
+		b := &s.shortTerm[i]
+		if b.Suspect {
+			continue
+		}
+		if reason, matches := matchesProvenance(b, fileSet, symSet); matches {
+			b.Suspect = true
+			b.StaleReason = reason
+			b.UpdatedAt = time.Now()
+			count++
+		}
+	}
+
+	// Check persistent BBolt blocks
+	err := s.db.Update(func(tx *bolt.Tx) error {
+		b := tx.Bucket(bucketBlocks)
+		c := b.Cursor()
+		for k, v := c.First(); k != nil; k, v = c.Next() {
+			var block Block
+			if err := json.Unmarshal(v, &block); err != nil {
+				continue
+			}
+			if block.Suspect {
+				continue
+			}
+			if reason, matches := matchesProvenance(&block, fileSet, symSet); matches {
+				block.Suspect = true
+				block.StaleReason = reason
+				block.UpdatedAt = time.Now()
+				data, err := json.Marshal(&block)
+				if err != nil {
+					return err
+				}
+				if err := b.Put(k, data); err != nil {
+					return err
+				}
+				count++
+			}
+		}
+		return nil
+	})
+
+	return count, err
+}
+
+func matchesProvenance(b *Block, fileSet map[string]struct{}, symSet map[string]struct{}) (string, bool) {
+	for _, s := range b.Symbols {
+		if _, ok := symSet[s]; ok {
+			return fmt.Sprintf("symbol %s was modified", s), true
+		}
+		if idx := strings.LastIndex(s, "."); idx >= 0 {
+			if _, ok := symSet[s[idx+1:]]; ok {
+				return fmt.Sprintf("symbol %s was modified", s), true
+			}
+		}
+	}
+	for _, p := range b.Paths {
+		clean := filepath.Clean(p)
+		if _, ok := fileSet[clean]; ok {
+			return fmt.Sprintf("file %s was modified", p), true
+		}
+		if _, ok := fileSet[filepath.Base(clean)]; ok {
+			return fmt.Sprintf("file %s was modified", p), true
+		}
+	}
+	return "", false
 }
 
 func containsTag(tags []string, query string) bool {

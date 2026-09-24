@@ -50,13 +50,19 @@ func (s *Server) sessionLog(action, index, query string, resultCount int) {
 		return
 	}
 
+	content := fmt.Sprintf("[%s] %s on index=%q query=%q → %d results",
+		time.Now().Format("15:04:05"), action, index, query, resultCount)
+
+	if rc := remoteMemoryClient(); rc != nil {
+		_, _ = rc.AddScopedNote(name, memory.TierShort, fmt.Sprintf("log#%d", count), content)
+		return
+	}
+
 	mgr, err := s.blockMem.get()
 	if err != nil {
 		return
 	}
 
-	content := fmt.Sprintf("[%s] %s on index=%q query=%q → %d results",
-		time.Now().Format("15:04:05"), action, index, query, resultCount)
 	_, _ = mgr.AddScopedNote(name, memory.TierShort, fmt.Sprintf("log#%d", count), content)
 }
 
@@ -100,13 +106,12 @@ func (s *Server) handleSessionStart(_ context.Context, request mcp.CallToolReque
 	serverSession.logCount = 0
 	serverSession.mu.Unlock()
 
-	mgr, err := s.blockMem.get()
-	if err != nil {
-		return mcp.NewToolResultError(fmt.Sprintf("session storage unavailable: %v", err)), nil
-	}
-
 	note := fmt.Sprintf("Session started at %s", time.Now().Format(time.RFC3339))
-	_, _ = mgr.AddScopedNote(name, memory.TierMedium, "session_start", note)
+	if rc := remoteMemoryClient(); rc != nil {
+		_, _ = rc.AddScopedNote(name, memory.TierMedium, "session_start", note)
+	} else if mgr, err := s.blockMem.get(); err == nil {
+		_, _ = mgr.AddScopedNote(name, memory.TierMedium, "session_start", note)
+	}
 
 	msg := fmt.Sprintf("Session %q started. All search/ask calls will be logged.", name)
 	if prev != "" && prev != name {
@@ -157,9 +162,11 @@ func (s *Server) handleSessionEnd(_ context.Context, request mcp.CallToolRequest
 		content += "\n\nSummary: " + userSummary
 	}
 
-	mgr, err := s.blockMem.get()
-	if err == nil {
+	if rc := remoteMemoryClient(); rc != nil {
+		_, _ = rc.AddScopedNote(name, memory.TierLong, "session_summary", content)
+	} else if mgr, err := s.blockMem.get(); err == nil {
 		_, _ = mgr.AddScopedNote(name, memory.TierLong, "session_summary", content)
+		_ = mgr.EndSession()
 	}
 
 	return mcp.NewToolResultText(content), nil

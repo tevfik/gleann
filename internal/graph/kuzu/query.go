@@ -24,18 +24,78 @@ func consumeCallees(res *gokuzu.QueryResult) ([]gleann.Callee, error) {
 		if err != nil {
 			return nil, err
 		}
-		out = append(out, gleann.Callee{
+		c := gleann.Callee{
 			FQN:  fmt.Sprint(m["fqn"]),
 			Name: fmt.Sprint(m["name"]),
 			Kind: fmt.Sprint(m["kind"]),
-		})
+		}
+		if fileVal, ok := m["file"]; ok && fileVal != nil {
+			c.File = fmt.Sprint(fileVal)
+		}
+		if lineVal, ok := m["line"]; ok && lineVal != nil {
+			if l, ok := lineVal.(int64); ok {
+				c.Line = l
+			} else if lStr := fmt.Sprint(lineVal); lStr != "" && lStr != "<nil>" {
+				var lInt int64
+				fmt.Sscanf(lStr, "%d", &lInt)
+				c.Line = lInt
+			}
+		}
+		if tVal, ok := m["is_test"]; ok && tVal != nil {
+			if b, ok := tVal.(bool); ok {
+				c.IsTest = b
+			}
+		}
+		out = append(out, c)
 	}
 	return out, nil
 }
 
 // Callees returns all symbols directly called by the given symbol FQN or name.
+// It prioritizes exact FQN match, then receiver/qualified suffix, then base name.
 func (g *DB) Callees(callerFQN string) ([]gleann.Callee, error) {
 	clean := strings.TrimSpace(callerFQN)
+	conn, err := g.NewConn()
+	if err != nil {
+		return nil, err
+	}
+	defer conn.Close()
+
+	// 1. Try exact FQN match first to avoid merging unrelated symbols with the same name
+	exactCypher := fmt.Sprintf(
+		`MATCH (a:Symbol)-[:CALLS]->(b:Symbol)
+         WHERE a.fqn = %q
+         RETURN DISTINCT b.fqn AS fqn, b.name AS name, b.kind AS kind, b.file AS file, b.line AS line, b.is_test AS is_test
+         ORDER BY is_test ASC`,
+		clean,
+	)
+	if res, err := conn.Query(exactCypher); err == nil {
+		results, err := consumeCallees(res)
+		res.Close()
+		if err == nil && len(results) > 0 {
+			return results, nil
+		}
+	}
+
+	// 2. Try receiver / qualified suffix match if query contains '.' or '::' or '/'
+	if strings.ContainsAny(clean, ".:/") {
+		suffixCypher := fmt.Sprintf(
+			`MATCH (a:Symbol)-[:CALLS]->(b:Symbol)
+             WHERE a.fqn ENDS WITH %q OR a.fqn ENDS WITH %q OR a.fqn ENDS WITH %q
+             RETURN DISTINCT b.fqn AS fqn, b.name AS name, b.kind AS kind, b.file AS file, b.line AS line, b.is_test AS is_test
+             ORDER BY is_test ASC`,
+			"::"+clean, "."+clean, "/"+clean,
+		)
+		if res, err := conn.Query(suffixCypher); err == nil {
+			results, err := consumeCallees(res)
+			res.Close()
+			if err == nil && len(results) > 0 {
+				return results, nil
+			}
+		}
+	}
+
+	// 3. Fall back to base name matching
 	parts := strings.FieldsFunc(clean, func(r rune) bool {
 		return r == ':' || r == '.' || r == '/'
 	})
@@ -44,19 +104,14 @@ func (g *DB) Callees(callerFQN string) ([]gleann.Callee, error) {
 		baseName = parts[len(parts)-1]
 	}
 
-	cypher := fmt.Sprintf(
+	fallbackCypher := fmt.Sprintf(
 		`MATCH (a:Symbol)-[:CALLS]->(b:Symbol)
-         WHERE a.fqn = %q OR a.name = %q OR a.name = %q OR a.fqn ENDS WITH %q OR a.fqn ENDS WITH %q
-         RETURN DISTINCT b.fqn AS fqn, b.name AS name, b.kind AS kind`,
-		clean, clean, baseName, "::"+clean, "."+clean,
+         WHERE a.name = %q OR a.fqn = %q
+         RETURN DISTINCT b.fqn AS fqn, b.name AS name, b.kind AS kind, b.file AS file, b.line AS line, b.is_test AS is_test
+         ORDER BY is_test ASC`,
+		baseName, clean,
 	)
-	conn, err := g.NewConn()
-	if err != nil {
-		return nil, err
-	}
-	defer conn.Close()
-
-	res, err := conn.Query(cypher)
+	res, err := conn.Query(fallbackCypher)
 	if err != nil {
 		return nil, err
 	}
@@ -65,8 +120,51 @@ func (g *DB) Callees(callerFQN string) ([]gleann.Callee, error) {
 }
 
 // Callers returns all symbols that call the given FQN or name.
+// It prioritizes exact FQN match, then receiver/qualified suffix, then base name.
+// Production callers (is_test=false) are ordered before test callers.
 func (g *DB) Callers(calleeFQN string) ([]gleann.Callee, error) {
 	clean := strings.TrimSpace(calleeFQN)
+	conn, err := g.NewConn()
+	if err != nil {
+		return nil, err
+	}
+	defer conn.Close()
+
+	// 1. Try exact FQN match first to prevent blast radius blowout
+	exactCypher := fmt.Sprintf(
+		`MATCH (a:Symbol)-[:CALLS]->(b:Symbol)
+         WHERE b.fqn = %q
+         RETURN DISTINCT a.fqn AS fqn, a.name AS name, a.kind AS kind, a.file AS file, a.line AS line, a.is_test AS is_test
+         ORDER BY is_test ASC`,
+		clean,
+	)
+	if res, err := conn.Query(exactCypher); err == nil {
+		results, err := consumeCallees(res)
+		res.Close()
+		if err == nil && len(results) > 0 {
+			return results, nil
+		}
+	}
+
+	// 2. Try receiver / qualified suffix match if query contains '.' or '::' or '/'
+	if strings.ContainsAny(clean, ".:/") {
+		suffixCypher := fmt.Sprintf(
+			`MATCH (a:Symbol)-[:CALLS]->(b:Symbol)
+             WHERE b.fqn ENDS WITH %q OR b.fqn ENDS WITH %q OR b.fqn ENDS WITH %q
+             RETURN DISTINCT a.fqn AS fqn, a.name AS name, a.kind AS kind, a.file AS file, a.line AS line, a.is_test AS is_test
+             ORDER BY is_test ASC`,
+			"::"+clean, "."+clean, "/"+clean,
+		)
+		if res, err := conn.Query(suffixCypher); err == nil {
+			results, err := consumeCallees(res)
+			res.Close()
+			if err == nil && len(results) > 0 {
+				return results, nil
+			}
+		}
+	}
+
+	// 3. Fall back to base name matching
 	parts := strings.FieldsFunc(clean, func(r rune) bool {
 		return r == ':' || r == '.' || r == '/'
 	})
@@ -75,19 +173,14 @@ func (g *DB) Callers(calleeFQN string) ([]gleann.Callee, error) {
 		baseName = parts[len(parts)-1]
 	}
 
-	cypher := fmt.Sprintf(
+	fallbackCypher := fmt.Sprintf(
 		`MATCH (a:Symbol)-[:CALLS]->(b:Symbol)
-         WHERE b.fqn = %q OR b.name = %q OR b.name = %q OR b.fqn ENDS WITH %q OR b.fqn ENDS WITH %q
-         RETURN DISTINCT a.fqn AS fqn, a.name AS name, a.kind AS kind`,
-		clean, clean, baseName, "::"+clean, "."+clean,
+         WHERE b.name = %q OR b.fqn = %q
+         RETURN DISTINCT a.fqn AS fqn, a.name AS name, a.kind AS kind, a.file AS file, a.line AS line, a.is_test AS is_test
+         ORDER BY is_test ASC`,
+		baseName, clean,
 	)
-	conn, err := g.NewConn()
-	if err != nil {
-		return nil, err
-	}
-	defer conn.Close()
-
-	res, err := conn.Query(cypher)
+	res, err := conn.Query(fallbackCypher)
 	if err != nil {
 		return nil, err
 	}
@@ -99,7 +192,7 @@ func (g *DB) Callers(calleeFQN string) ([]gleann.Callee, error) {
 func (g *DB) SymbolsInFile(filePath string) ([]gleann.Callee, error) {
 	cypher := fmt.Sprintf(
 		`MATCH (f:CodeFile {path: %q})-[:DECLARES]->(s:Symbol)
-         RETURN s.fqn AS fqn, s.name AS name, s.kind AS kind`,
+         RETURN s.fqn AS fqn, s.name AS name, s.kind AS kind, s.file AS file, s.line AS line`,
 		filePath,
 	)
 	conn, err := g.NewConn()
@@ -114,6 +207,73 @@ func (g *DB) SymbolsInFile(filePath string) ([]gleann.Callee, error) {
 	}
 	defer res.Close()
 	return consumeCallees(res)
+}
+
+// ResolveSymbolCandidates returns all symbols matching the query (exact FQN, suffix, or name).
+// Useful for disambiguating ambiguous symbol names across packages.
+func (g *DB) ResolveSymbolCandidates(query string) ([]gleann.SymbolInfo, error) {
+	clean := strings.TrimSpace(query)
+	if clean == "" {
+		return nil, nil
+	}
+
+	conn, err := g.NewConn()
+	if err != nil {
+		return nil, err
+	}
+	defer conn.Close()
+
+	parts := strings.FieldsFunc(clean, func(r rune) bool {
+		return r == ':' || r == '.' || r == '/'
+	})
+	baseName := clean
+	if len(parts) > 0 {
+		baseName = parts[len(parts)-1]
+	}
+
+	cypher := fmt.Sprintf(
+		`MATCH (s:Symbol)
+         WHERE s.fqn = %q OR s.fqn ENDS WITH %q OR s.fqn ENDS WITH %q OR s.name = %q
+         RETURN DISTINCT s.fqn AS fqn, s.name AS name, s.kind AS kind, s.file AS file, s.line AS line, s.weight AS weight
+         ORDER BY weight DESC`,
+		clean, "::"+clean, "."+clean, baseName,
+	)
+
+	res, err := conn.Query(cypher)
+	if err != nil {
+		return nil, err
+	}
+	defer res.Close()
+
+	var out []gleann.SymbolInfo
+	for res.HasNext() {
+		row, err := res.Next()
+		if err != nil {
+			return nil, err
+		}
+		m, err := row.GetAsMap()
+		if err != nil {
+			return nil, err
+		}
+		info := gleann.SymbolInfo{
+			FQN:  fmt.Sprint(m["fqn"]),
+			Name: fmt.Sprint(m["name"]),
+			Kind: fmt.Sprint(m["kind"]),
+			File: fmt.Sprint(m["file"]),
+		}
+		if lineVal, ok := m["line"]; ok && lineVal != nil {
+			if l, ok := lineVal.(int64); ok {
+				info.Line = l
+			}
+		}
+		if weightVal, ok := m["weight"]; ok && weightVal != nil {
+			if w, ok := weightVal.(float64); ok {
+				info.Weight = w
+			}
+		}
+		out = append(out, info)
+	}
+	return out, nil
 }
 
 // SymbolsInFileDetailed returns all symbols declared in the given file
@@ -575,18 +735,24 @@ func (g *DB) Impact(fqn string, maxDepth int) (*gleann.ImpactResult, error) {
 	if err != nil {
 		return nil, fmt.Errorf("direct callers query: %w", err)
 	}
+	var prodQueue []string
 	for _, c := range directCallers {
-		result.DirectCallers = append(result.DirectCallers, c.FQN)
+		if c.IsTest {
+			result.TestCallers = append(result.TestCallers, c.FQN)
+		} else {
+			result.DirectCallers = append(result.DirectCallers, c.FQN)
+			prodQueue = append(prodQueue, c.FQN)
+		}
 	}
 
-	// Step 2: Transitive callers via BFS.
+	// Step 2: Transitive callers via BFS (traverse through production callers).
 	visited := make(map[string]bool)
 	visited[fqn] = true
-	queue := make([]string, 0, len(directCallers))
-	for _, c := range directCallers {
-		if !visited[c.FQN] {
-			visited[c.FQN] = true
-			queue = append(queue, c.FQN)
+	queue := make([]string, 0, len(prodQueue))
+	for _, sym := range prodQueue {
+		if !visited[sym] {
+			visited[sym] = true
+			queue = append(queue, sym)
 		}
 	}
 
@@ -600,8 +766,12 @@ func (g *DB) Impact(fqn string, maxDepth int) (*gleann.ImpactResult, error) {
 			for _, c := range callers {
 				if !visited[c.FQN] {
 					visited[c.FQN] = true
-					nextQueue = append(nextQueue, c.FQN)
-					result.TransitiveCallers = append(result.TransitiveCallers, c.FQN)
+					if c.IsTest {
+						result.TestCallers = append(result.TestCallers, c.FQN)
+					} else {
+						nextQueue = append(nextQueue, c.FQN)
+						result.TransitiveCallers = append(result.TransitiveCallers, c.FQN)
+					}
 				}
 			}
 		}

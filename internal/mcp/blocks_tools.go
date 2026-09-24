@@ -17,6 +17,9 @@ package mcp
 import (
 	"context"
 	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 
@@ -54,6 +57,7 @@ func (p *blockMemPool) close() {
 	defer p.mu.Unlock()
 
 	if p.mgr != nil {
+		_ = p.mgr.EndSession()
 		_ = p.mgr.Close()
 		p.mgr = nil
 	}
@@ -64,6 +68,52 @@ func (p *blockMemPool) close() {
 // is running in the background.
 func remoteMemoryClient() *memory.RemoteClient {
 	return memory.Remote()
+}
+
+// detectRepoScope returns the normalized git remote origin or root directory name as the memory scope.
+// E.g. "github.com/tevfik/gleann" or working dir basename.
+func detectRepoScope() string {
+	// 1. Try git remote get-url origin
+	cmd := exec.Command("git", "config", "--get", "remote.origin.url")
+	if out, err := cmd.Output(); err == nil {
+		raw := strings.TrimSpace(string(out))
+		if raw != "" {
+			return normalizeGitRemote(raw)
+		}
+	}
+	// 2. Try git rev-parse --show-toplevel
+	cmd = exec.Command("git", "rev-parse", "--show-toplevel")
+	if out, err := cmd.Output(); err == nil {
+		top := strings.TrimSpace(string(out))
+		if top != "" {
+			return filepath.Base(top)
+		}
+	}
+	// 3. Fallback to current working directory basename
+	if wd, err := os.Getwd(); err == nil {
+		return filepath.Base(wd)
+	}
+	return "global"
+}
+
+func normalizeGitRemote(remote string) string {
+	s := remote
+	s = strings.TrimPrefix(s, "git@")
+	s = strings.TrimPrefix(s, "https://")
+	s = strings.TrimPrefix(s, "http://")
+	s = strings.TrimPrefix(s, "ssh://")
+	s = strings.Replace(s, ":", "/", 1)
+	s = strings.TrimSuffix(s, ".git")
+	s = strings.Trim(s, "/")
+	return s
+}
+
+func detectGitCommit() string {
+	cmd := exec.Command("git", "rev-parse", "HEAD")
+	if out, err := cmd.Output(); err == nil {
+		return strings.TrimSpace(string(out))
+	}
+	return ""
 }
 
 // ── Tool: memory_remember ─────────────────────────────────────────────────────
@@ -103,7 +153,25 @@ func (s *Server) buildMemoryRememberTool() mcpsdk.Tool {
 				},
 				"scope": map[string]interface{}{
 					"type":        "string",
-					"description": "Isolate this block to a specific scope (e.g. conversation ID). Empty = global.",
+					"description": "Isolate this block to a specific scope (e.g. conversation ID). Empty = auto repo scope.",
+				},
+				"repo": map[string]interface{}{
+					"type":        "string",
+					"description": "Repository identifier (e.g. github.com/tevfik/gleann). Defaults to current repo.",
+				},
+				"paths": map[string]interface{}{
+					"type":        "array",
+					"items":       map[string]interface{}{"type": "string"},
+					"description": "Relative file paths related to this memory (e.g. ['pkg/memory/block.go'])",
+				},
+				"symbols": map[string]interface{}{
+					"type":        "array",
+					"items":       map[string]interface{}{"type": "string"},
+					"description": "FQN or symbol names related to this memory (e.g. ['Block', 'pkg/memory.OpenStore'])",
+				},
+				"commit": map[string]interface{}{
+					"type":        "string",
+					"description": "Git commit hash when memory was recorded (auto-detected from git HEAD if omitted)",
 				},
 			},
 			Required: []string{"content"},
@@ -155,6 +223,41 @@ func (s *Server) handleMemoryRemember(ctx context.Context, req mcpsdk.CallToolRe
 	}
 
 	scope, _ := args["scope"].(string)
+	if scope == "" {
+		scope = detectRepoScope()
+	}
+
+	repo, _ := args["repo"].(string)
+	if repo == "" {
+		repo = scope
+	}
+
+	var paths []string
+	if raw, ok := args["paths"]; ok && raw != nil {
+		if rawSlice, ok := raw.([]interface{}); ok {
+			for _, p := range rawSlice {
+				if str, ok := p.(string); ok && str != "" {
+					paths = append(paths, str)
+				}
+			}
+		}
+	}
+
+	var symbols []string
+	if raw, ok := args["symbols"]; ok && raw != nil {
+		if rawSlice, ok := raw.([]interface{}); ok {
+			for _, sym := range rawSlice {
+				if str, ok := sym.(string); ok && str != "" {
+					symbols = append(symbols, str)
+				}
+			}
+		}
+	}
+
+	commit, _ := args["commit"].(string)
+	if commit == "" {
+		commit = detectGitCommit()
+	}
 
 	block := &memory.Block{
 		Tier:      tier,
@@ -164,6 +267,18 @@ func (s *Server) handleMemoryRemember(ctx context.Context, req mcpsdk.CallToolRe
 		Tags:      tags,
 		CharLimit: charLimit,
 		Scope:     scope,
+		Repo:      repo,
+		Paths:     paths,
+		Symbols:   symbols,
+		Commit:    commit,
+	}
+
+	prov := ""
+	if len(symbols) > 0 {
+		prov += fmt.Sprintf(" [symbols: %s]", strings.Join(symbols, ", "))
+	}
+	if len(paths) > 0 {
+		prov += fmt.Sprintf(" [files: %s]", strings.Join(paths, ", "))
 	}
 
 	if rc := remoteMemoryClient(); rc != nil {
@@ -171,8 +286,12 @@ func (s *Server) handleMemoryRemember(ctx context.Context, req mcpsdk.CallToolRe
 		if err != nil {
 			return mcpsdk.NewToolResultError("remember failed (remote): " + err.Error()), nil
 		}
+		dedupNotice := ""
+		if created.Confirms > 0 {
+			dedupNotice = fmt.Sprintf(" (reinforced %dx)", created.Confirms+1)
+		}
 		return mcpsdk.NewToolResultText(fmt.Sprintf(
-			"Remembered (ID: %s, tier: %s): %s", created.ID, tier, content,
+			"Remembered (ID: %s, tier: %s%s): %s%s", created.ID, created.Tier, dedupNotice, created.Content, prov,
 		)), nil
 	}
 
@@ -181,12 +300,18 @@ func (s *Server) handleMemoryRemember(ctx context.Context, req mcpsdk.CallToolRe
 		return mcpsdk.NewToolResultError("open memory store: " + err.Error()), nil
 	}
 
-	if err := mgr.Store().Add(block); err != nil {
+	saved, err := mgr.RememberBlock(block)
+	if err != nil {
 		return mcpsdk.NewToolResultError("remember failed: " + err.Error()), nil
 	}
 
+	dedupNotice := ""
+	if saved.Confirms > 0 {
+		dedupNotice = fmt.Sprintf(" (reinforced %dx)", saved.Confirms+1)
+	}
+
 	return mcpsdk.NewToolResultText(fmt.Sprintf(
-		"Remembered (ID: %s, tier: %s): %s", block.ID, tier, content,
+		"Remembered (ID: %s, tier: %s%s): %s%s", saved.ID, saved.Tier, dedupNotice, saved.Content, prov,
 	)), nil
 }
 
@@ -246,13 +371,17 @@ func (s *Server) handleMemoryForget(ctx context.Context, req mcpsdk.CallToolRequ
 func (s *Server) buildMemorySearchTool() mcpsdk.Tool {
 	return mcpsdk.Tool{
 		Name:        "memory_search",
-		Description: "Full-text search across all memory tiers. Returns matching blocks with their IDs, tiers, and content. Use this to check what gleann currently remembers about a topic.",
+		Description: "Full-text search across memory blocks. Matches against content, label, and tags. Scoped by default to the current repository plus global memories.",
 		InputSchema: mcpsdk.ToolInputSchema{
 			Type: "object",
 			Properties: map[string]interface{}{
 				"query": map[string]interface{}{
 					"type":        "string",
 					"description": "Search query — matches against content, label, and tags",
+				},
+				"scope": map[string]interface{}{
+					"type":        "string",
+					"description": "Filter memories by scope (default: current git repository + global). Pass 'all' or '*' to search across all scopes.",
 				},
 			},
 			Required: []string{"query"},
@@ -271,9 +400,22 @@ func (s *Server) handleMemorySearch(ctx context.Context, req mcpsdk.CallToolRequ
 		return mcpsdk.NewToolResultError("query is required"), nil
 	}
 
+	scope, _ := args["scope"].(string)
+	if scope == "" {
+		scope = detectRepoScope()
+	} else if scope == "all" || scope == "*" {
+		scope = ""
+	}
+
 	var blocks []memory.Block
 	if rc := remoteMemoryClient(); rc != nil {
-		b, err := rc.Search(query)
+		var b []memory.Block
+		var err error
+		if scope != "" {
+			b, err = rc.SearchScoped(scope, query)
+		} else {
+			b, err = rc.Search(query)
+		}
 		if err != nil {
 			return mcpsdk.NewToolResultError("search failed (remote): " + err.Error()), nil
 		}
@@ -284,11 +426,15 @@ func (s *Server) handleMemorySearch(ctx context.Context, req mcpsdk.CallToolRequ
 			return mcpsdk.NewToolResultError("open memory store: " + err.Error()), nil
 		}
 
-		b, err := mgr.Search(query)
-		if err != nil {
-			return mcpsdk.NewToolResultError("search failed: " + err.Error()), nil
+		var searchErr error
+		if scope != "" {
+			blocks, searchErr = mgr.SearchScoped(scope, query)
+		} else {
+			blocks, searchErr = mgr.Search(query)
 		}
-		blocks = b
+		if searchErr != nil {
+			return mcpsdk.NewToolResultError("search failed: " + searchErr.Error()), nil
+		}
 	}
 
 	if len(blocks) == 0 {
@@ -311,7 +457,7 @@ func (s *Server) handleMemorySearch(ctx context.Context, req mcpsdk.CallToolRequ
 func (s *Server) buildMemoryListTool() mcpsdk.Tool {
 	return mcpsdk.Tool{
 		Name:        "memory_list",
-		Description: "List all memory blocks, optionally filtered by tier. Returns structured data about each block including ID, tier, label, content, tags, and timestamps.",
+		Description: "List memory blocks, optionally filtered by tier and scope. Scoped by default to the current repository plus global memories.",
 		InputSchema: mcpsdk.ToolInputSchema{
 			Type: "object",
 			Properties: map[string]interface{}{
@@ -319,6 +465,10 @@ func (s *Server) buildMemoryListTool() mcpsdk.Tool {
 					"type":        "string",
 					"enum":        []string{"short", "medium", "long", ""},
 					"description": "Filter by tier (omit to list all tiers)",
+				},
+				"scope": map[string]interface{}{
+					"type":        "string",
+					"description": "Filter memories by scope (default: current git repository + global). Pass 'all' or '*' to list all scopes.",
 				},
 			},
 		},
@@ -329,6 +479,7 @@ func (s *Server) handleMemoryList(ctx context.Context, req mcpsdk.CallToolReques
 	args, _ := req.Params.Arguments.(map[string]any)
 
 	var tier memory.Tier
+	scope := ""
 	if args != nil {
 		if tierStr, _ := args["tier"].(string); tierStr != "" {
 			t, err := memory.ParseTier(tierStr)
@@ -337,11 +488,24 @@ func (s *Server) handleMemoryList(ctx context.Context, req mcpsdk.CallToolReques
 			}
 			tier = t
 		}
+		scope, _ = args["scope"].(string)
+	}
+
+	if scope == "" {
+		scope = detectRepoScope()
+	} else if scope == "all" || scope == "*" {
+		scope = ""
 	}
 
 	var blocks []memory.Block
 	if rc := remoteMemoryClient(); rc != nil {
-		b, err := rc.List(tier)
+		var b []memory.Block
+		var err error
+		if scope != "" {
+			b, err = rc.ListScoped(scope, tier)
+		} else {
+			b, err = rc.List(tier)
+		}
 		if err != nil {
 			return mcpsdk.NewToolResultError("list failed (remote): " + err.Error()), nil
 		}
@@ -352,11 +516,15 @@ func (s *Server) handleMemoryList(ctx context.Context, req mcpsdk.CallToolReques
 			return mcpsdk.NewToolResultError("open memory store: " + err.Error()), nil
 		}
 
-		b, err := mgr.List(tier)
-		if err != nil {
-			return mcpsdk.NewToolResultError("list failed: " + err.Error()), nil
+		var listErr error
+		if scope != "" {
+			blocks, listErr = mgr.ListScoped(scope, tier)
+		} else {
+			blocks, listErr = mgr.List(tier)
 		}
-		blocks = b
+		if listErr != nil {
+			return mcpsdk.NewToolResultError("list failed: " + listErr.Error()), nil
+		}
 	}
 
 	if len(blocks) == 0 {
@@ -388,19 +556,35 @@ func (s *Server) buildMemoryContextTool() mcpsdk.Tool {
 	return mcpsdk.Tool{
 		Name: "memory_context",
 		Description: "Build and return the compiled <memory_context> window — the exact string " +
-			"that gleann injects into LLM system prompts. Use this to inspect what the AI " +
-			"currently 'knows' from persistent memory before generating a response.",
+			"that gleann injects into LLM system prompts. Scoped by default to the current repository plus global memories.",
 		InputSchema: mcpsdk.ToolInputSchema{
-			Type:       "object",
-			Properties: map[string]interface{}{},
+			Type: "object",
+			Properties: map[string]interface{}{
+				"scope": map[string]interface{}{
+					"type":        "string",
+					"description": "Scope for memory context (default: current git repository + global). Pass 'all' or '*' for all scopes.",
+				},
+			},
 		},
 	}
 }
 
 func (s *Server) handleMemoryContext(ctx context.Context, req mcpsdk.CallToolRequest) (*mcpsdk.CallToolResult, error) {
+	args, _ := req.Params.Arguments.(map[string]any)
+	scope := ""
+	if args != nil {
+		scope, _ = args["scope"].(string)
+	}
+
+	if scope == "" {
+		scope = detectRepoScope()
+	} else if scope == "all" || scope == "*" {
+		scope = ""
+	}
+
 	var rendered string
 	if rc := remoteMemoryClient(); rc != nil {
-		r, err := rc.Context("")
+		r, err := rc.Context(scope)
 		if err != nil {
 			return mcpsdk.NewToolResultError("build context (remote): " + err.Error()), nil
 		}
@@ -411,7 +595,8 @@ func (s *Server) handleMemoryContext(ctx context.Context, req mcpsdk.CallToolReq
 			return mcpsdk.NewToolResultError("open memory store: " + err.Error()), nil
 		}
 
-		cw, err := mgr.BuildContext()
+		s.checkStaleBlocks(mgr, scope)
+		cw, err := mgr.BuildScopedContext(scope)
 		if err != nil {
 			return mcpsdk.NewToolResultError("build context: " + err.Error()), nil
 		}
@@ -419,7 +604,33 @@ func (s *Server) handleMemoryContext(ctx context.Context, req mcpsdk.CallToolReq
 	}
 
 	if rendered == "" {
-		return mcpsdk.NewToolResultText("Memory is empty — no blocks stored yet."), nil
+		return mcpsdk.NewToolResultText("Memory is empty — no blocks stored yet for scope."), nil
 	}
 	return mcpsdk.NewToolResultText(rendered), nil
 }
+
+func (s *Server) checkStaleBlocks(mgr *memory.Manager, scope string) {
+	blocks, err := mgr.ListScoped(scope, "")
+	if err != nil {
+		return
+	}
+	var modifiedFiles []string
+	for _, b := range blocks {
+		if b.Suspect || len(b.Paths) == 0 {
+			continue
+		}
+		for _, p := range b.Paths {
+			fi, err := os.Stat(p)
+			if err != nil {
+				continue
+			}
+			if fi.ModTime().After(b.UpdatedAt) {
+				modifiedFiles = append(modifiedFiles, p)
+			}
+		}
+	}
+	if len(modifiedFiles) > 0 {
+		_, _ = mgr.MarkSuspect(modifiedFiles, nil)
+	}
+}
+

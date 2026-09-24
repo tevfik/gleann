@@ -28,17 +28,19 @@ import (
 
 	"github.com/tevfik/gleann/internal/graph/kuzu"
 	"github.com/tevfik/gleann/modules/chunking"
+	"github.com/tevfik/gleann/pkg/walker"
 )
 
 // Indexer walks a codebase and populates a KuzuDB graph with AST relationships.
 type Indexer struct {
-	db        *kuzu.DB
-	chunker   *chunking.ASTChunker
-	module    string         // Go module prefix, e.g. "github.com/tevfik/gleann"
-	root      string         // absolute root path used to derive relative package paths
-	writeMu   sync.Mutex     // Ensures only one KuzuDB write transaction occurs at a time
-	hashStore *FileHashStore // optional: persists per-file content hashes for incremental skip
-	tracker   *ChangeTracker // tracks file mtimes for incremental indexing
+	db                *kuzu.DB
+	chunker           *chunking.ASTChunker
+	module            string         // Go module prefix, e.g. "github.com/tevfik/gleann"
+	root              string         // absolute root path used to derive relative package paths
+	writeMu           sync.Mutex     // Ensures only one KuzuDB write transaction occurs at a time
+	hashStore         *FileHashStore // optional: persists per-file content hashes for incremental skip
+	tracker           *ChangeTracker // tracks file mtimes for incremental indexing
+	includeSubmodules bool           // whether to index Git submodules
 }
 
 // New creates a new Indexer.
@@ -48,13 +50,23 @@ type Indexer struct {
 //   - root:   root directory of the codebase
 func New(db *kuzu.DB, module, root string) *Indexer {
 	cfg := chunking.DefaultASTChunkerConfig()
+	cleanRoot := filepath.Clean(root)
+	if realRoot, err := filepath.EvalSymlinks(cleanRoot); err == nil {
+		cleanRoot = realRoot
+	}
 	return &Indexer{
 		db:      db,
 		chunker: chunking.NewASTChunker(cfg),
 		module:  strings.TrimSuffix(module, "/"),
-		root:    filepath.Clean(root),
+		root:    cleanRoot,
 		tracker: NewChangeTracker(),
 	}
+}
+
+// WithIncludeSubmodules configures whether Git submodules are indexed.
+func (idx *Indexer) WithIncludeSubmodules(include bool) *Indexer {
+	idx.includeSubmodules = include
+	return idx
 }
 
 // WithHashStore attaches a FileHashStore for incremental skip.
@@ -261,6 +273,7 @@ func (idx *Indexer) indexFileOnConn(absPath, source string) (file *kuzu.FileNode
 			Name:   ch.Name,
 			Doc:    doc,
 			Weight: weight,
+			IsTest: isTestSymbol(relPath, ch.Name),
 		}
 		symbols = append(symbols, sym)
 		declares = append(declares, kuzu.EdgeDeclares{FilePath: relPath, SymbolFQN: fqn})
@@ -290,13 +303,53 @@ func (idx *Indexer) indexFileOnConn(absPath, source string) (file *kuzu.FileNode
 		}
 	}
 
+	for i := range symbols {
+		if !symbols[i].IsTest {
+			symbols[i].IsTest = isTestSymbol(symbols[i].File, symbols[i].Name)
+		}
+	}
+
 	return fileNode, symbols, declares, calls, impls, refs, nil
+}
+
+// isTestSymbol returns true if the symbol is in a test file or is a test function/benchmark.
+func isTestSymbol(filePath, name string) bool {
+	base := filepath.Base(filePath)
+	cleanPath := filepath.ToSlash(filePath)
+
+	// Test directories
+	if strings.Contains(cleanPath, "/test/") || strings.Contains(cleanPath, "/tests/") || strings.Contains(cleanPath, "/testing/") {
+		return true
+	}
+
+	// File naming conventions
+	if strings.HasSuffix(base, "_test.go") ||
+		strings.HasPrefix(base, "test_") ||
+		strings.HasSuffix(base, "_test.py") ||
+		strings.HasSuffix(base, ".spec.ts") ||
+		strings.HasSuffix(base, ".test.ts") ||
+		strings.HasSuffix(base, ".spec.js") ||
+		strings.HasSuffix(base, ".test.js") ||
+		strings.HasSuffix(base, "_spec.rb") ||
+		strings.HasSuffix(base, "Test.java") {
+		return true
+	}
+
+	// Function naming conventions
+	if strings.HasPrefix(name, "Test") || strings.HasPrefix(name, "Benchmark") || strings.HasPrefix(name, "Fuzz") || strings.HasPrefix(name, "test_") {
+		return true
+	}
+
+	return false
 }
 
 // IndexDir recursively indexes all supported source files under root.
 // It processes files concurrently using a worker pool of runtime.NumCPU() goroutines.
 // AST Parsing is highly parallelized, but database write execution is done together in one massive transaction at the end.
 func (idx *Indexer) IndexDir(root string) error {
+	if realRoot, err := filepath.EvalSymlinks(root); err == nil {
+		root = realRoot
+	}
 	type job struct{ path, src string }
 	jobs := make(chan job, 64)
 	type docResult struct {
@@ -356,17 +409,18 @@ func (idx *Indexer) IndexDir(root string) error {
 		close(docDone)
 	}()
 
+	opts := walker.Options{
+		IncludeSubmodules: idx.includeSubmodules,
+		FollowSymlinks:    true,
+	}
+
 	g.Go(func() error {
 		defer close(jobs)
-		return filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		return walker.Walk(root, opts, func(path string, d fs.DirEntry, err error) error {
 			if err != nil {
 				return err
 			}
 			if d.IsDir() {
-				name := d.Name()
-				if strings.HasPrefix(name, ".") || name == "vendor" || name == "node_modules" {
-					return filepath.SkipDir
-				}
 				return nil
 			}
 			if !chunking.IsCodeSourceFile(path) {

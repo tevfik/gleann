@@ -32,6 +32,7 @@ type SymbolNode struct {
 	Name   string  // short name, e.g. "MyFunc"
 	Doc    string  // documentation comment (optional)
 	Weight float64 // language-aware importance (default 1.0)
+	IsTest bool    // true if defined in a test file or is a test function
 }
 
 // EdgeDeclares represents a DECLARES relationship matching KuzuDB schema (FROM CodeFile TO Symbol).
@@ -65,8 +66,8 @@ func (g *DB) UpsertSymbol(s SymbolNode) error {
 	}
 	cypher := fmt.Sprintf(
 		`MERGE (sym:Symbol {fqn: %q})
-         ON CREATE SET sym.kind=%q, sym.file=%q, sym.line=%d, sym.name=%q, sym.doc=%q, sym.weight=%f`,
-		s.FQN, s.Kind, s.File, s.Line, s.Name, s.Doc, w,
+         ON CREATE SET sym.kind=%q, sym.file=%q, sym.line=%d, sym.name=%q, sym.doc=%q, sym.weight=%f, sym.is_test=%t`,
+		s.FQN, s.Kind, s.File, s.Line, s.Name, s.Doc, w, s.IsTest,
 	)
 	return g.exec(cypher)
 }
@@ -230,7 +231,7 @@ func WriteSymbolNodesCSV(path string, symbols []SymbolNode) error {
 	defer f.Close()
 
 	w := csv.NewWriter(f)
-	if err := w.Write([]string{"fqn", "kind", "file", "line", "name", "doc", "weight"}); err != nil {
+	if err := w.Write([]string{"fqn", "kind", "file", "line", "name", "doc", "weight", "is_test"}); err != nil {
 		return err
 	}
 	seenFQN := make(map[string]bool, len(symbols))
@@ -248,6 +249,7 @@ func WriteSymbolNodesCSV(path string, symbols []SymbolNode) error {
 		if err := w.Write([]string{
 			cleanFQN, SanitizeCSVField(sym.Kind), SanitizeCSVField(sym.File), fmt.Sprintf("%d", sym.Line), SanitizeCSVField(sym.Name), SanitizeCSVField(sym.Doc),
 			strconv.FormatFloat(weight, 'f', -1, 64),
+			strconv.FormatBool(sym.IsTest),
 		}); err != nil {
 			return err
 		}

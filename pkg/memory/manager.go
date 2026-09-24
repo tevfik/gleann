@@ -72,12 +72,11 @@ func (m *Manager) Store() *Store {
 
 // Remember adds important information to long-term memory.
 // This is the /remember command equivalent.
+// Remember adds important information to long-term memory.
+// This is the /remember command equivalent.
 // Performs contradiction checking against existing blocks and records confirmation
 // for blocks that agree with the new content.
 func (m *Manager) Remember(content string, tags ...string) (*Block, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
 	block := &Block{
 		Tier:    TierLong,
 		Label:   "user_memory",
@@ -85,10 +84,19 @@ func (m *Manager) Remember(content string, tags ...string) (*Block, error) {
 		Source:  "user",
 		Tags:    tags,
 	}
+	return m.RememberBlock(block)
+}
+
+// RememberBlock stores any memory block, executing contradiction checks against
+// existing knowledge and deduplicating identical memories (Confirms++).
+func (m *Manager) RememberBlock(block *Block) (*Block, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	m.applyDefaults(block)
 
 	// Check for contradictions with existing long-term blocks.
-	if contradictions := m.checkContradictions(content); len(contradictions) > 0 {
+	if contradictions := m.checkContradictions(block.Content); len(contradictions) > 0 {
 		// Mark the new block metadata with contradiction info.
 		if block.Metadata == nil {
 			block.Metadata = make(map[string]string)
@@ -110,6 +118,13 @@ func (m *Manager) Remember(content string, tags ...string) (*Block, error) {
 		return nil, err
 	}
 	return block, nil
+}
+
+// MarkSuspect flags stored memory blocks associated with modified files or symbols as suspect.
+func (m *Manager) MarkSuspect(changedFiles []string, changedSymbols []string) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.store.MarkSuspect(changedFiles, changedSymbols)
 }
 
 // Forget removes a memory block by ID or content match.
@@ -269,12 +284,7 @@ func (m *Manager) Stats() (*Stats, error) {
 
 // ── Context ───────────────────────────────────────────────────────
 
-// BuildContext compiles memory into a ContextWindow for LLM injection.
-// Automatically filters out low-validity (< 0.2) or expired blocks to keep context clean.
-func (m *Manager) BuildContext() (*ContextWindow, error) {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-
+func (m *Manager) buildContextLocked() (*ContextWindow, error) {
 	cw, err := m.store.BuildContext()
 	if err != nil {
 		return nil, err
@@ -286,13 +296,21 @@ func (m *Manager) BuildContext() (*ContextWindow, error) {
 	return cw, nil
 }
 
+// BuildContext compiles memory into a ContextWindow for LLM injection.
+// Automatically filters out low-validity (< 0.2) or expired blocks to keep context clean.
+func (m *Manager) BuildContext() (*ContextWindow, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.buildContextLocked()
+}
+
 // BuildScopedContext compiles memory visible to a specific scope.
 // Includes both global blocks (scope="") and blocks matching the given scope.
 func (m *Manager) BuildScopedContext(scope string) (*ContextWindow, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	cw, err := m.BuildContext()
+	cw, err := m.buildContextLocked()
 	if err != nil {
 		return nil, err
 	}
@@ -378,6 +396,7 @@ func (m *Manager) EndSession() error {
 				continue
 			}
 			b.Tier = TierMedium
+			b.ID = ""
 			b.UpdatedAt = time.Now()
 			if err := m.store.Add(&b); err != nil {
 				remaining = append(remaining, b)

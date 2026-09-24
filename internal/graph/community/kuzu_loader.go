@@ -8,10 +8,8 @@ import (
 	kgraph "github.com/tevfik/gleann/internal/graph/kuzu"
 )
 
-// FromKuzu loads the code graph from a KuzuDB instance and runs community detection.
-// godNodeThreshold: minimum total degree for god node classification (default 5).
-// maxSurprising: maximum surprising edges to return (default 20).
-func FromKuzu(db *kgraph.DB, godNodeThreshold, maxSurprising int) (*Result, error) {
+// LoadGraphFromKuzu loads the AST code graph (symbols and CALLS, DECLARES, IMPLEMENTS edges) from KuzuDB into an in-memory Graph.
+func LoadGraphFromKuzu(db *kgraph.DB) (*Graph, error) {
 	g := NewGraph()
 
 	// 1. Load all Symbol nodes.
@@ -59,28 +57,26 @@ func FromKuzu(db *kgraph.DB, godNodeThreshold, maxSurprising int) (*Result, erro
 
 	// 3. Load DECLARES edges (file→symbol, lower weight).
 	res3, err := db.Conn().Query(`MATCH (f:CodeFile)-[:DECLARES]->(s:Symbol) RETURN f.path AS from, s.fqn AS to`)
-	if err != nil {
-		return nil, fmt.Errorf("load declares: %w", err)
+	if err == nil {
+		defer res3.Close()
+		for res3.HasNext() {
+			row, err := res3.Next()
+			if err != nil {
+				continue
+			}
+			m, err := row.GetAsMap()
+			if err != nil {
+				continue
+			}
+			filePath := str(m["from"])
+			symFQN := str(m["to"])
+			if g.nodes[filePath] == nil {
+				g.AddNode(Node{ID: filePath, Name: filePath, Kind: "file"})
+			}
+			g.AddEdge(filePath, symFQN, 0.3)
+		}
+		res3.Close()
 	}
-	defer res3.Close()
-	for res3.HasNext() {
-		row, err := res3.Next()
-		if err != nil {
-			continue
-		}
-		m, err := row.GetAsMap()
-		if err != nil {
-			continue
-		}
-		filePath := str(m["from"])
-		symFQN := str(m["to"])
-		// Add file nodes on demand.
-		if g.nodes[filePath] == nil {
-			g.AddNode(Node{ID: filePath, Name: filePath, Kind: "file"})
-		}
-		g.AddEdge(filePath, symFQN, 0.3) // lower weight for structural edges
-	}
-	res3.Close()
 
 	// 4. Load IMPLEMENTS edges.
 	res4, err := db.Conn().Query(`MATCH (a:Symbol)-[:IMPLEMENTS]->(b:Symbol) RETURN a.fqn AS from, b.fqn AS to`)
@@ -100,6 +96,15 @@ func FromKuzu(db *kgraph.DB, godNodeThreshold, maxSurprising int) (*Result, erro
 		res4.Close()
 	}
 
+	return g, nil
+}
+
+// FromKuzu loads the code graph from a KuzuDB instance and runs community detection.
+func FromKuzu(db *kgraph.DB, godNodeThreshold, maxSurprising int) (*Result, error) {
+	g, err := LoadGraphFromKuzu(db)
+	if err != nil {
+		return nil, err
+	}
 	return Detect(g, godNodeThreshold, maxSurprising)
 }
 

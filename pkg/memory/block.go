@@ -10,6 +10,7 @@ package memory
 
 import (
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -56,6 +57,14 @@ type Block struct {
 	// Scope isolates the block to a specific context (e.g. conversation ID,
 	// session ID, or a named group). Empty string means global (visible everywhere).
 	Scope string `json:"scope,omitempty"`
+
+	// Provenance fields linking this memory to specific code entities.
+	Repo        string   `json:"repo,omitempty"`         // Repository identifier (e.g. "github.com/tevfik/gleann")
+	Paths       []string `json:"paths,omitempty"`        // Relative file paths related to this memory
+	Symbols     []string `json:"symbols,omitempty"`      // FQN symbol names related to this memory
+	Commit      string   `json:"commit,omitempty"`       // Git commit hash when memory was recorded
+	Suspect     bool     `json:"suspect,omitempty"`      // True if underlying code has changed or fact is suspect
+	StaleReason string   `json:"stale_reason,omitempty"` // Reason for suspicion/staleness
 
 	// Validity scoring — Bayesian-inspired confidence tracking.
 	// Confirms counts how many times this fact was reinforced by new information.
@@ -135,24 +144,30 @@ func (cw *ContextWindow) Render() string {
 	}
 
 	var b []byte
-
 	b = append(b, "<memory_context>\n"...)
 
-	if len(cw.LongTerm) > 0 {
-		b = append(b, "<long_term_memory>\n"...)
-		for _, block := range cw.LongTerm {
-			b = append(b, fmt.Sprintf("[%s] %s\n", block.Label, block.Content)...)
+	var suspectBlocks []Block
+
+	renderTier := func(blocks []Block, tag string) {
+		var active []Block
+		for _, blk := range blocks {
+			if blk.Suspect {
+				suspectBlocks = append(suspectBlocks, blk)
+			} else {
+				active = append(active, blk)
+			}
 		}
-		b = append(b, "</long_term_memory>\n"...)
+		if len(active) > 0 {
+			b = append(b, fmt.Sprintf("<%s>\n", tag)...)
+			for _, blk := range active {
+				b = append(b, renderBlockLine(blk)...)
+			}
+			b = append(b, fmt.Sprintf("</%s>\n", tag)...)
+		}
 	}
 
-	if len(cw.MediumTerm) > 0 {
-		b = append(b, "<medium_term_memory>\n"...)
-		for _, block := range cw.MediumTerm {
-			b = append(b, fmt.Sprintf("[%s] %s\n", block.Label, block.Content)...)
-		}
-		b = append(b, "</medium_term_memory>\n"...)
-	}
+	renderTier(cw.LongTerm, "long_term_memory")
+	renderTier(cw.MediumTerm, "medium_term_memory")
 
 	if len(cw.Summaries) > 0 {
 		b = append(b, "<conversation_summaries>\n"...)
@@ -162,16 +177,36 @@ func (cw *ContextWindow) Render() string {
 		b = append(b, "</conversation_summaries>\n"...)
 	}
 
-	if len(cw.ShortTerm) > 0 {
-		b = append(b, "<short_term_memory>\n"...)
-		for _, block := range cw.ShortTerm {
-			b = append(b, fmt.Sprintf("[%s] %s\n", block.Label, block.Content)...)
+	renderTier(cw.ShortTerm, "short_term_memory")
+
+	if len(suspectBlocks) > 0 {
+		b = append(b, "<suspect_memory>\n<!-- Warning: The following memories may be stale due to recent code changes. Verify against active code! -->\n"...)
+		for _, sb := range suspectBlocks {
+			b = append(b, renderBlockLine(sb)...)
 		}
-		b = append(b, "</short_term_memory>\n"...)
+		b = append(b, "</suspect_memory>\n"...)
 	}
 
 	b = append(b, "</memory_context>"...)
 	return string(b)
+}
+
+func renderBlockLine(block Block) string {
+	prefix := fmt.Sprintf("[%s]", block.Label)
+	if block.Suspect {
+		reason := block.StaleReason
+		if reason == "" {
+			reason = "code changed"
+		}
+		prefix += fmt.Sprintf(" [⚠️ SUSPECT: %s]", reason)
+	}
+	prov := ""
+	if len(block.Symbols) > 0 {
+		prov += fmt.Sprintf(" (symbols: %s)", strings.Join(block.Symbols, ", "))
+	} else if len(block.Paths) > 0 {
+		prov += fmt.Sprintf(" (files: %s)", strings.Join(block.Paths, ", "))
+	}
+	return fmt.Sprintf("%s %s%s\n", prefix, block.Content, prov)
 }
 
 func (cw *ContextWindow) isEmpty() bool {
