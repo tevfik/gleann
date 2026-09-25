@@ -3,7 +3,9 @@ package gleann
 import (
 	"context"
 	"fmt"
+	"os"
 	"sort"
+	"strings"
 	"sync"
 
 	"golang.org/x/sync/errgroup"
@@ -17,16 +19,72 @@ type MultiSearchResult struct {
 
 // SearchMultiple searches across multiple indexes concurrently and merges
 // results by score. Each result is tagged with the originating index name.
-// If names is nil, all available indexes in indexDir are searched.
+// If names is nil, all accessible indexes in indexDir are searched.
 func SearchMultiple(ctx context.Context, config Config, embedder EmbeddingComputer, names []string, query string, opts ...SearchOption) ([]MultiSearchResult, error) {
+	tagEnv := os.Getenv("GLEANN_TAGS")
+	var allowedTags []string
+	if tagEnv != "" {
+		for _, t := range strings.Split(tagEnv, ",") {
+			t = strings.TrimSpace(t)
+			if t != "" {
+				allowedTags = append(allowedTags, t)
+			}
+		}
+	}
+
 	if len(names) == 0 {
 		indexes, err := ListIndexes(config.IndexDir)
 		if err != nil {
 			return nil, fmt.Errorf("list indexes: %w", err)
 		}
 		for _, idx := range indexes {
+			if !idx.IsMCPExposed() {
+				continue
+			}
+			if len(allowedTags) > 0 && !idx.HasAnyTag(allowedTags) {
+				continue
+			}
 			names = append(names, idx.Name)
 		}
+	} else {
+		var expanded []string
+		seen := make(map[string]bool)
+		for _, name := range names {
+			name = strings.TrimSpace(name)
+			if strings.HasPrefix(name, "@") {
+				tagName := strings.TrimPrefix(name, "@")
+				tagged, err := ListIndexesByTag(config.IndexDir, tagName)
+				if err != nil {
+					continue
+				}
+				for _, idx := range tagged {
+					if !idx.IsMCPExposed() {
+						continue
+					}
+					if len(allowedTags) > 0 && !idx.HasAnyTag(allowedTags) {
+						continue
+					}
+					if !seen[idx.Name] {
+						seen[idx.Name] = true
+						expanded = append(expanded, idx.Name)
+					}
+				}
+			} else {
+				if meta, err := GetIndexMeta(config.IndexDir, name); err == nil {
+					if !meta.IsMCPExposed() {
+						continue
+					}
+					if len(allowedTags) > 0 && !meta.HasAnyTag(allowedTags) {
+						continue
+					}
+				}
+				if !seen[name] {
+					seen[name] = true
+					expanded = append(expanded, name)
+				}
+			}
+		}
+		names = expanded
 	}
 
 	if len(names) == 0 {

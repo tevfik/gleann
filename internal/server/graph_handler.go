@@ -153,6 +153,11 @@ func (s *Server) handleGraphQuery(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if err := s.checkIndexAccess(r, name); err != nil {
+		writeError(w, http.StatusForbidden, err.Error())
+		return
+	}
+
 	var req GraphQueryRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
@@ -282,6 +287,11 @@ func (s *Server) handleGraphStats(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if err := s.checkIndexAccess(r, name); err != nil {
+		writeError(w, http.StatusForbidden, err.Error())
+		return
+	}
+
 	if s.graphPool == nil {
 		writeJSON(w, http.StatusOK, GraphStatsResponse{
 			Name:      name,
@@ -325,6 +335,11 @@ func (s *Server) handleGraphIndex(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if err := s.checkIndexAccess(r, name); err != nil {
+		writeError(w, http.StatusForbidden, err.Error())
+		return
+	}
+
 	var req GraphIndexRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
@@ -361,6 +376,11 @@ func (s *Server) handleDocumentTOC(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	if name == "" {
 		writeError(w, http.StatusBadRequest, "index name required")
+		return
+	}
+
+	if err := s.checkIndexAccess(r, name); err != nil {
+		writeError(w, http.StatusForbidden, err.Error())
 		return
 	}
 
@@ -408,6 +428,11 @@ func (s *Server) handleListDocuments(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	if name == "" {
 		writeError(w, http.StatusBadRequest, "index name required")
+		return
+	}
+
+	if err := s.checkIndexAccess(r, name); err != nil {
+		writeError(w, http.StatusForbidden, err.Error())
 		return
 	}
 

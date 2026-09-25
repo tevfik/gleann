@@ -45,17 +45,42 @@ func (s *Server) mountA2A(mux *http.ServeMux) {
 	srv.Mount(mux)
 }
 
-// a2aSearchHandler performs semantic search across all indexes.
+// a2aSearchHandler performs semantic search across targeted or accessible indexes.
 func (s *Server) a2aSearchHandler(ctx a2a.SkillContext) (string, error) {
-	indexes, err := gleann.ListIndexes(s.config.IndexDir)
-	if err != nil || len(indexes) == 0 {
-		return "", fmt.Errorf("no indexes available; build one with 'gleann index build'")
+	target := ""
+	if t, ok := ctx.Metadata["target"].(string); ok && t != "" {
+		target = t
+	} else if idx, ok := ctx.Metadata["index"].(string); ok && idx != "" {
+		target = idx
+	} else if p, ok := ctx.Metadata["project"].(string); ok && p != "" {
+		target = p
 	}
 
-	// Search across all indexes.
+	var targetIndexes []string
+	if target != "" {
+		if !s.isIndexAccessible(target) {
+			return "", fmt.Errorf("access denied or index %q not accessible", target)
+		}
+		targetIndexes = []string{target}
+	} else {
+		indexes, err := gleann.ListIndexes(s.config.IndexDir)
+		if err != nil || len(indexes) == 0 {
+			return "", fmt.Errorf("no indexes available; build one with 'gleann index build'")
+		}
+		for _, idx := range indexes {
+			if s.isIndexAccessibleMeta(&idx) {
+				targetIndexes = append(targetIndexes, idx.Name)
+			}
+		}
+		if len(targetIndexes) == 0 {
+			return "No accessible indexes found", nil
+		}
+	}
+
+	// Search across targetIndexes.
 	var results []string
-	for _, idx := range indexes {
-		searcher, err := s.getSearcher(context.Background(), idx.Name)
+	for _, idxName := range targetIndexes {
+		searcher, err := s.getSearcher(context.Background(), idxName)
 		if err != nil {
 			continue
 		}
@@ -68,7 +93,7 @@ func (s *Server) a2aSearchHandler(ctx a2a.SkillContext) (string, error) {
 			if len(snippet) > 300 {
 				snippet = snippet[:300] + "..."
 			}
-			results = append(results, fmt.Sprintf("[%s] (score: %.3f) %s", idx.Name, h.Score, snippet))
+			results = append(results, fmt.Sprintf("[%s] (score: %.3f) %s", idxName, h.Score, snippet))
 		}
 		if len(results) >= 10 {
 			break
@@ -83,20 +108,38 @@ func (s *Server) a2aSearchHandler(ctx a2a.SkillContext) (string, error) {
 
 // a2aAskHandler performs RAG question answering using the LLM.
 func (s *Server) a2aAskHandler(ctx a2a.SkillContext) (string, error) {
-	indexes, err := gleann.ListIndexes(s.config.IndexDir)
-	if err != nil || len(indexes) == 0 {
-		return "", fmt.Errorf("no indexes available for RAG")
+	targetIndex := ""
+	if t, ok := ctx.Metadata["target"].(string); ok && t != "" {
+		targetIndex = t
+	} else if idx, ok := ctx.Metadata["index"].(string); ok && idx != "" {
+		targetIndex = idx
+	} else if p, ok := ctx.Metadata["project"].(string); ok && p != "" {
+		targetIndex = p
 	}
 
-	// Use the first available index.
-	indexName := indexes[0].Name
-	if idx, ok := ctx.Metadata["index"].(string); ok && idx != "" {
-		indexName = idx
+	if targetIndex != "" {
+		if !s.isIndexAccessible(targetIndex) {
+			return "", fmt.Errorf("index %q not available or access denied", targetIndex)
+		}
+	} else {
+		indexes, err := gleann.ListIndexes(s.config.IndexDir)
+		if err != nil || len(indexes) == 0 {
+			return "", fmt.Errorf("no indexes available for RAG")
+		}
+		for _, idx := range indexes {
+			if s.isIndexAccessibleMeta(&idx) {
+				targetIndex = idx.Name
+				break
+			}
+		}
+		if targetIndex == "" {
+			return "", fmt.Errorf("no accessible index available for RAG")
+		}
 	}
 
-	searcher, err := s.getSearcher(context.Background(), indexName)
+	searcher, err := s.getSearcher(context.Background(), targetIndex)
 	if err != nil {
-		return "", fmt.Errorf("index %q not available: %v", indexName, err)
+		return "", fmt.Errorf("index %q not available: %v", targetIndex, err)
 	}
 
 	// Build LLM config from server settings.
@@ -194,15 +237,35 @@ func (s *Server) a2aCodeHandler(ctx a2a.SkillContext) (string, error) {
 		return "", fmt.Errorf("code graph not available (build with -tags treesitter)")
 	}
 
-	// Resolve index name: prefer metadata, then first available index.
-	indexName, _ := ctx.Metadata["index"].(string)
-	if indexName == "" {
+	targetIndex := ""
+	if t, ok := ctx.Metadata["target"].(string); ok && t != "" {
+		targetIndex = t
+	} else if idx, ok := ctx.Metadata["index"].(string); ok && idx != "" {
+		targetIndex = idx
+	} else if p, ok := ctx.Metadata["project"].(string); ok && p != "" {
+		targetIndex = p
+	}
+
+	if targetIndex != "" {
+		if !s.isIndexAccessible(targetIndex) {
+			return "", fmt.Errorf("access denied or index %q not accessible", targetIndex)
+		}
+	} else {
 		indexes, err := gleann.ListIndexes(s.config.IndexDir)
 		if err != nil || len(indexes) == 0 {
 			return "", fmt.Errorf("no indexes available for code analysis")
 		}
-		indexName = indexes[0].Name
+		for _, idx := range indexes {
+			if s.isIndexAccessibleMeta(&idx) {
+				targetIndex = idx.Name
+				break
+			}
+		}
+		if targetIndex == "" {
+			return "", fmt.Errorf("no accessible index available for code analysis")
+		}
 	}
+	indexName := targetIndex
 
 	db, err := s.graphPool.get(indexName)
 	if err != nil {

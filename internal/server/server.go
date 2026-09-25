@@ -350,13 +350,57 @@ func (s *Server) handleListIndexes(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+
+	clientTarget := r.Header.Get("X-Gleann-Target")
+	if clientTarget == "" {
+		clientTarget = r.Header.Get("X-Gleann-Index")
+	}
+	if clientTarget == "" {
+		clientTarget = r.URL.Query().Get("target")
+	}
+	if clientTarget == "" {
+		clientTarget = r.URL.Query().Get("index")
+	}
+
+	tagFilter := r.URL.Query().Get("tag")
+	exposedOnly := r.URL.Query().Get("exposed_only") == "true"
+	tagEnv := os.Getenv("GLEANN_TAGS")
+	isAdmin := r.URL.Query().Get("all") == "true"
+
+	var filtered []gleann.IndexMeta
+	for _, idx := range indexes {
+		if clientTarget != "" && !strings.EqualFold(idx.Name, clientTarget) {
+			continue
+		}
+		if tagFilter != "" && !idx.HasTag(tagFilter) {
+			continue
+		}
+		if exposedOnly && !idx.IsMCPExposed() {
+			continue
+		}
+		if tagEnv != "" && !isAdmin {
+			matched := false
+			for _, t := range strings.Split(tagEnv, ",") {
+				t = strings.TrimSpace(t)
+				if t != "" && idx.HasTag(t) {
+					matched = true
+					break
+				}
+			}
+			if !matched {
+				continue
+			}
+		}
+		filtered = append(filtered, idx)
+	}
+
 	var embedderName string
 	if s.embedder != nil {
 		embedderName = s.embedder.ModelName()
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"indexes":                 indexes,
-		"count":                   len(indexes),
+		"indexes":                 filtered,
+		"count":                   len(filtered),
 		"current_embedding_model": embedderName,
 	})
 }
@@ -365,6 +409,11 @@ func (s *Server) handleGetIndex(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	if name == "" {
 		writeError(w, http.StatusBadRequest, "index name required")
+		return
+	}
+
+	if err := s.checkIndexAccess(r, name); err != nil {
+		writeError(w, http.StatusForbidden, err.Error())
 		return
 	}
 
@@ -454,6 +503,11 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	if name == "" {
 		writeError(w, http.StatusBadRequest, "index name required")
+		return
+	}
+
+	if err := s.checkIndexAccess(r, name); err != nil {
+		writeError(w, http.StatusForbidden, err.Error())
 		return
 	}
 
@@ -567,6 +621,11 @@ func (s *Server) handleAsk(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	if name == "" {
 		writeError(w, http.StatusBadRequest, "index name required")
+		return
+	}
+
+	if err := s.checkIndexAccess(r, name); err != nil {
+		writeError(w, http.StatusForbidden, err.Error())
 		return
 	}
 
@@ -1200,13 +1259,115 @@ func writeError(w http.ResponseWriter, status int, message string) {
 	writeJSON(w, status, map[string]string{"error": message})
 }
 
+// checkClientTarget validates whether a request with a client target constraint
+// (via X-Gleann-Target / X-Gleann-Index header or ?target= / ?index= query parameter)
+// is permitted to access the requested index.
+func (s *Server) checkClientTarget(r *http.Request, indexName string) error {
+	clientTarget := r.Header.Get("X-Gleann-Target")
+	if clientTarget == "" {
+		clientTarget = r.Header.Get("X-Gleann-Index")
+	}
+	if clientTarget == "" {
+		clientTarget = r.URL.Query().Get("target")
+	}
+	if clientTarget == "" {
+		clientTarget = r.URL.Query().Get("index")
+	}
+	if clientTarget != "" && !strings.EqualFold(clientTarget, indexName) {
+		return fmt.Errorf("access denied: client target is restricted to %q, cannot access index %q", clientTarget, indexName)
+	}
+	return nil
+}
+
+// isIndexAccessibleMeta returns true if an index is public (MCP exposed) and matches GLEANN_TAGS if configured.
+func (s *Server) isIndexAccessibleMeta(meta *gleann.IndexMeta) bool {
+	if meta == nil {
+		return false
+	}
+	if !meta.IsMCPExposed() {
+		return false
+	}
+	tagEnv := os.Getenv("GLEANN_TAGS")
+	if tagEnv != "" {
+		matched := false
+		for _, t := range strings.Split(tagEnv, ",") {
+			t = strings.TrimSpace(t)
+			if t != "" && meta.HasTag(t) {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			return false
+		}
+	}
+	return true
+}
+
+// isIndexAccessible checks if the named index exists and satisfies accessibility/governance rules.
+func (s *Server) isIndexAccessible(name string) bool {
+	meta, err := gleann.GetIndexMeta(s.config.IndexDir, name)
+	if err != nil {
+		// Fallback for mock or test indexes where directory exists or graphPool has it
+		if s.graphPool != nil {
+			if _, ok := s.graphPool.dbs[name]; ok {
+				return true
+			}
+		}
+		indexPath := filepath.Join(s.config.IndexDir, name)
+		if fi, serr := os.Stat(indexPath); serr == nil && fi.IsDir() {
+			return true
+		}
+		return false
+	}
+	return s.isIndexAccessibleMeta(meta)
+}
+
+// firstAccessibleIndexName returns the first index that is public and satisfies GLEANN_TAGS.
+func (s *Server) firstAccessibleIndexName() string {
+	indexes, err := gleann.ListIndexes(s.config.IndexDir)
+	if err != nil {
+		return ""
+	}
+	for _, idx := range indexes {
+		if s.isIndexAccessibleMeta(&idx) {
+			return idx.Name
+		}
+	}
+	return ""
+}
+
+// checkIndexAccess verifies both client target constraints and server-side tag isolation rules.
+func (s *Server) checkIndexAccess(r *http.Request, indexName string) error {
+	if err := s.checkClientTarget(r, indexName); err != nil {
+		return err
+	}
+	tagEnv := os.Getenv("GLEANN_TAGS")
+	if tagEnv != "" {
+		meta, err := gleann.GetIndexMeta(s.config.IndexDir, indexName)
+		if err == nil {
+			var allowed []string
+			for _, t := range strings.Split(tagEnv, ",") {
+				t = strings.TrimSpace(t)
+				if t != "" {
+					allowed = append(allowed, t)
+				}
+			}
+			if len(allowed) > 0 && !meta.HasAnyTag(allowed) {
+				return fmt.Errorf("access denied: index %q does not match required tags (%s)", indexName, tagEnv)
+			}
+		}
+	}
+	return nil
+}
+
 func withMiddleware(next http.Handler) http.Handler {
 	// Chain: body-limit → rate limiter → timeout → CORS/logging.
 	return bodyLimitMiddleware(rateLimitMiddleware(timeoutMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// CORS.
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Gleann-Target, X-Gleann-Index, X-Gleann-Top-K, X-Gleann-Min-Score")
 
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusOK)

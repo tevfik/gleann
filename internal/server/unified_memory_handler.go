@@ -32,6 +32,8 @@ type UnifiedIngestRequest struct {
 	// Project sets scope to "project:{name}" and targets matching index.
 	// Overrides Scope if both are set.
 	Project string `json:"project,omitempty"`
+	// Target is an alias for Project to isolate ingest to a specific target index and scope.
+	Target string `json:"target,omitempty"`
 }
 
 // IngestFact is a piece of knowledge to remember.
@@ -73,6 +75,32 @@ func (s *Server) handleUnifiedIngest(w http.ResponseWriter, r *http.Request) {
 	if len(req.Facts) == 0 && len(req.Relationships) == 0 {
 		writeError(w, http.StatusBadRequest, "at least one fact or relationship required")
 		return
+	}
+
+	// Resolve target / client constraint
+	clientTarget := r.Header.Get("X-Gleann-Target")
+	if clientTarget == "" {
+		clientTarget = r.Header.Get("X-Gleann-Index")
+	}
+	if clientTarget == "" {
+		clientTarget = r.URL.Query().Get("target")
+	}
+	if clientTarget == "" {
+		clientTarget = r.URL.Query().Get("index")
+	}
+
+	if req.Target != "" && req.Project == "" {
+		req.Project = req.Target
+	}
+
+	if clientTarget != "" {
+		if req.Project != "" && !strings.EqualFold(req.Project, clientTarget) {
+			writeError(w, http.StatusForbidden, fmt.Sprintf("access denied: client target is restricted to %q, cannot ingest to project %q", clientTarget, req.Project))
+			return
+		}
+		if req.Project == "" {
+			req.Project = clientTarget
+		}
 	}
 
 	// Resolve project shorthand → scope + default index for relationships.
@@ -152,11 +180,19 @@ func (s *Server) handleUnifiedIngest(w http.ResponseWriter, r *http.Request) {
 			}
 			indexName := rel.Index
 			if indexName == "" {
-				indexName = s.firstIndexName()
+				if req.Project != "" {
+					indexName = req.Project
+				} else {
+					indexName = s.firstAccessibleIndexName()
+				}
 			}
 			if indexName == "" {
-				resp.Errors = append(resp.Errors, "no index available for graph relationships")
+				resp.Errors = append(resp.Errors, "no accessible index available for graph relationships")
 				break
+			}
+			if !s.isIndexAccessible(indexName) {
+				resp.Errors = append(resp.Errors, fmt.Sprintf("access denied: index %q is not accessible", indexName))
+				continue
 			}
 
 			if err := s.injectGraphRelationship(r, indexName, rel); err != nil {
@@ -192,6 +228,8 @@ type UnifiedRecallRequest struct {
 	Relations []string `json:"relations,omitempty"` // Filter graph edges by relation types
 	// Project sets scope to "project:{name}" and index to matching name.
 	Project string `json:"project,omitempty"`
+	// Target is an alias for Project to isolate recall to a specific target index and scope.
+	Target string `json:"target,omitempty"`
 }
 
 // UnifiedRecallResponse merges results from all memory layers.
@@ -263,11 +301,38 @@ func (s *Server) handleUnifiedRecall(w http.ResponseWriter, r *http.Request) {
 		req.Depth = 2
 	}
 
+	clientTarget := r.Header.Get("X-Gleann-Target")
+	if clientTarget == "" {
+		clientTarget = r.Header.Get("X-Gleann-Index")
+	}
+	if clientTarget == "" {
+		clientTarget = r.URL.Query().Get("target")
+	}
+	if clientTarget == "" {
+		clientTarget = r.URL.Query().Get("index")
+	}
+
+	if req.Target != "" && req.Project == "" {
+		req.Project = req.Target
+	}
+
+	if clientTarget != "" {
+		if req.Project != "" && !strings.EqualFold(req.Project, clientTarget) {
+			writeError(w, http.StatusForbidden, fmt.Sprintf("access denied: client target is restricted to %q, cannot recall from project %q", clientTarget, req.Project))
+			return
+		}
+		if req.Index != "" && !strings.EqualFold(req.Index, clientTarget) {
+			writeError(w, http.StatusForbidden, fmt.Sprintf("access denied: client target is restricted to %q, cannot recall from index %q", clientTarget, req.Index))
+			return
+		}
+		if req.Project == "" && req.Index == "" {
+			req.Project = clientTarget
+		}
+	}
+
 	// Resolve project shorthand → scope + index.
 	if req.Project != "" {
-		if req.Scope == "" {
-			req.Scope = "project:" + req.Project
-		}
+		req.Scope = "project:" + req.Project
 		if req.Index == "" {
 			req.Index = req.Project
 		}
@@ -399,8 +464,14 @@ func (s *Server) recallGraph(_ context.Context, _ UnifiedRecallRequest) *RecallG
 
 func (s *Server) recallVector(ctx context.Context, req UnifiedRecallRequest) []RecallHit {
 	indexName := req.Index
-	if indexName == "" {
-		indexName = s.firstIndexName()
+	if indexName != "" {
+		if !s.isIndexAccessible(indexName) {
+			return nil
+		}
+	} else {
+		if req.Project == "" && req.Target == "" {
+			indexName = s.firstAccessibleIndexName()
+		}
 	}
 	if indexName == "" {
 		return nil

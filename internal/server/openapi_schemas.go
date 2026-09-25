@@ -82,7 +82,11 @@ func openAPISchemasSearch() map[string]any {
 			"required": []string{"query"},
 			"properties": map[string]any{
 				"query":            map[string]any{"type": "string", "description": "Search query text"},
-				"indexes":          map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Index names to search (omit for all)"},
+				"target":           map[string]any{"description": "Target index name or list of target names for client isolation"},
+				"targets":          map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Explicit list of target index names"},
+				"index":            map[string]any{"type": "string", "description": "Single target index name"},
+				"indexes":          map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Index names to search (omit for all accessible)"},
+				"project":          map[string]any{"type": "string", "description": "Project target index shorthand"},
 				"top_k":            map[string]any{"type": "integer", "default": 10},
 				"hybrid_alpha":     map[string]any{"type": "number", "format": "float", "default": 0.7},
 				"min_score":        map[string]any{"type": "number", "format": "float"},
@@ -627,6 +631,7 @@ func openAPISchemasUnifiedMemory() map[string]any {
 				},
 				"scope":   map[string]any{"type": "string", "description": "Isolate facts to a conversation/agent scope (default: global)"},
 				"project": map[string]any{"type": "string", "description": "Project shorthand: sets scope to 'project:{name}' and defaults relationship index to this name"},
+				"target":  map[string]any{"type": "string", "description": "Target project/index alias for client isolation"},
 			},
 		},
 		"UnifiedIngestResponse": map[string]any{
@@ -655,6 +660,7 @@ func openAPISchemasUnifiedMemory() map[string]any {
 				"before":    map[string]any{"type": "string", "description": "Filter blocks created before (RFC3339 or Go duration like \"7d\")"},
 				"relations": map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Filter graph edges by relation types"},
 				"project":   map[string]any{"type": "string", "description": "Project shorthand: sets scope to 'project:{name}' and index to matching name"},
+				"target":    map[string]any{"type": "string", "description": "Target project/index alias for client isolation"},
 			},
 		},
 		"UnifiedRecallResponse": map[string]any{

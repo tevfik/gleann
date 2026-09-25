@@ -498,6 +498,57 @@ func TestUnifiedIngest_ProjectOverridesScope(t *testing.T) {
 	}
 }
 
+func TestUnifiedMemory_TargetParameterIsolation(t *testing.T) {
+	s := newUnifiedTestServer(t)
+
+	// 1. Ingest with target: "tenant-a" and "tenant-b"
+	bodyA := `{"target": "tenant-a", "facts": [{"content": "tenant-a secret token"}]}`
+	reqA := httptest.NewRequest("POST", "/api/memory/ingest", bytes.NewBufferString(bodyA))
+	wA := httptest.NewRecorder()
+	s.handleUnifiedIngest(wA, reqA)
+	if wA.Code != http.StatusOK {
+		t.Fatalf("ingest A failed: %s", wA.Body.String())
+	}
+
+	bodyB := `{"target": "tenant-b", "facts": [{"content": "tenant-b secret token"}]}`
+	reqB := httptest.NewRequest("POST", "/api/memory/ingest", bytes.NewBufferString(bodyB))
+	wB := httptest.NewRecorder()
+	s.handleUnifiedIngest(wB, reqB)
+	if wB.Code != http.StatusOK {
+		t.Fatalf("ingest B failed: %s", wB.Body.String())
+	}
+
+	// 2. Recall with target: "tenant-a"
+	recallBody := `{"target": "tenant-a", "query": "secret token", "layers": ["blocks"]}`
+	reqRecall := httptest.NewRequest("POST", "/api/memory/recall", bytes.NewBufferString(recallBody))
+	wRecall := httptest.NewRecorder()
+	s.handleUnifiedRecall(wRecall, reqRecall)
+	if wRecall.Code != http.StatusOK {
+		t.Fatalf("recall failed: %s", wRecall.Body.String())
+	}
+
+	var resp UnifiedRecallResponse
+	json.NewDecoder(wRecall.Body).Decode(&resp)
+	if len(resp.Blocks) == 0 {
+		t.Fatal("expected at least 1 block for tenant-a")
+	}
+	for _, b := range resp.Blocks {
+		if b.Content == "tenant-b secret token" {
+			t.Errorf("LEAK: tenant-b secret token was returned when querying target tenant-a")
+		}
+	}
+
+	// 3. Header X-Gleann-Target restriction: client restricted to tenant-a tries to query tenant-b
+	crossRecall := `{"target": "tenant-b", "query": "secret", "layers": ["blocks"]}`
+	reqCross := httptest.NewRequest("POST", "/api/memory/recall", bytes.NewBufferString(crossRecall))
+	reqCross.Header.Set("X-Gleann-Target", "tenant-a")
+	wCross := httptest.NewRecorder()
+	s.handleUnifiedRecall(wCross, reqCross)
+	if wCross.Code != http.StatusForbidden {
+		t.Errorf("expected 403 Forbidden for cross-target recall, got %d", wCross.Code)
+	}
+}
+
 func contains(s, substr string) bool {
 	return bytes.Contains([]byte(s), []byte(substr))
 }

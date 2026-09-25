@@ -126,6 +126,11 @@ func (s *Server) handleMemoryInject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if err := s.checkIndexAccess(r, name); err != nil {
+		writeError(w, http.StatusForbidden, err.Error())
+		return
+	}
+
 	var payload gleann.GraphInjectionPayload
 	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
@@ -163,6 +168,11 @@ func (s *Server) handleMemoryDeleteNode(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	if err := s.checkIndexAccess(r, name); err != nil {
+		writeError(w, http.StatusForbidden, err.Error())
+		return
+	}
+
 	svc, err := s.memoryPool.get(name)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, fmt.Sprintf("open memory store %q: %v", name, err))
@@ -186,6 +196,11 @@ func (s *Server) handleMemoryDeleteEdge(w http.ResponseWriter, r *http.Request) 
 	name := r.PathValue("name")
 	if name == "" {
 		writeError(w, http.StatusBadRequest, "index name required")
+		return
+	}
+
+	if err := s.checkIndexAccess(r, name); err != nil {
+		writeError(w, http.StatusForbidden, err.Error())
 		return
 	}
 
@@ -223,6 +238,11 @@ func (s *Server) handleMemoryTraverse(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	if name == "" {
 		writeError(w, http.StatusBadRequest, "index name required")
+		return
+	}
+
+	if err := s.checkIndexAccess(r, name); err != nil {
+		writeError(w, http.StatusForbidden, err.Error())
 		return
 	}
 
