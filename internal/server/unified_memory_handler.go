@@ -504,15 +504,6 @@ func (s *Server) recallVector(ctx context.Context, req UnifiedRecallRequest) []R
 	return hits
 }
 
-// firstIndexName returns the name of the first available index.
-func (s *Server) firstIndexName() string {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	for name := range s.searchers {
-		return name
-	}
-	return ""
-}
 
 func parseTier(tier string) memory.Tier {
 	switch strings.ToLower(tier) {
