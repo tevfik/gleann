@@ -270,7 +270,13 @@ func (s *Server) handleSearchBlocks(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "query parameter 'q' is required")
 		return
 	}
+	// Client target isolation: ?target= (bot REST convention) is an
+	// alias for ?scope=. Without this a foreign target was ignored
+	// and the search ran across ALL scopes.
 	scope := r.URL.Query().Get("scope")
+	if scope == "" {
+		scope = r.URL.Query().Get("target")
+	}
 
 	mgr, err := s.blockManager()
 	if err != nil {
@@ -314,7 +320,20 @@ func (s *Server) handleBlockContext(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Client target isolation: accept both ?target= and ?scope=.
+	// The bot/agent clients send ?target=<scope> (the REST memory
+	// API convention); before this fix a foreign target was silently
+	// ignored and the FULL memory window was returned to any caller.
 	scope := r.URL.Query().Get("scope")
+	if scope == "" {
+		scope = r.URL.Query().Get("target")
+		if scope != "" {
+			if v := r.Header.Get("X-Gleann-Target"); v != "" && v != scope {
+				writeError(w, http.StatusForbidden, "access denied: target mismatch between header and query")
+				return
+			}
+		}
+	}
 
 	var cw *memory.ContextWindow
 	if scope != "" {
