@@ -467,30 +467,50 @@ export function Chat() {
                 if (data.error) {
                   setMessages(prev => {
                     const newMsgs = [...prev];
-                    const lastMsg = newMsgs[newMsgs.length - 1];
-                    lastMsg.content += `\n❌ **Error:** ${data.error}`;
+                    const lastIdx = newMsgs.length - 1;
+                    if (lastIdx >= 0) {
+                      newMsgs[lastIdx] = {
+                        ...newMsgs[lastIdx],
+                        content: newMsgs[lastIdx].content + `\n❌ **Error:** ${data.error}`,
+                      };
+                    }
                     return newMsgs;
                   });
                 } else if (data.sources) {
                   setMessages(prev => {
                     const newMsgs = [...prev];
-                    const lastMsg = newMsgs[newMsgs.length - 1];
-                    lastMsg.sources = data.sources;
+                    const lastIdx = newMsgs.length - 1;
+                    if (lastIdx >= 0) {
+                      newMsgs[lastIdx] = {
+                        ...newMsgs[lastIdx],
+                        sources: data.sources,
+                      };
+                    }
                     return newMsgs;
                   });
                 } else if (data.status) {
                   setMessages(prev => {
                     const newMsgs = [...prev];
-                    const lastMsg = newMsgs[newMsgs.length - 1];
-                    lastMsg.status = data.status;
+                    const lastIdx = newMsgs.length - 1;
+                    if (lastIdx >= 0) {
+                      newMsgs[lastIdx] = {
+                        ...newMsgs[lastIdx],
+                        status: data.status,
+                      };
+                    }
                     return newMsgs;
                   });
                 } else if (data.token) {
                   setMessages(prev => {
                     const newMsgs = [...prev];
-                    const lastMsg = newMsgs[newMsgs.length - 1];
-                    lastMsg.content += data.token;
-                    lastMsg.status = undefined; // Clear status when tokens arrive
+                    const lastIdx = newMsgs.length - 1;
+                    if (lastIdx >= 0) {
+                      newMsgs[lastIdx] = {
+                        ...newMsgs[lastIdx],
+                        content: newMsgs[lastIdx].content + data.token,
+                        status: undefined,
+                      };
+                    }
                     return newMsgs;
                   });
                 } else if (data.conversation_id) {
@@ -515,8 +535,13 @@ export function Chat() {
     } catch (error) {
       setMessages(prev => {
         const newMsgs = [...prev];
-        const lastMsg = newMsgs[newMsgs.length - 1];
-        lastMsg.content = `❌ Connection Error: Failed to reach the Gleann backend. Please ensure the index is built and the server is running.`;
+        const lastIdx = newMsgs.length - 1;
+        if (lastIdx >= 0) {
+          newMsgs[lastIdx] = {
+            ...newMsgs[lastIdx],
+            content: `❌ Connection Error: Failed to reach the Gleann backend. Please ensure the index is built and the server is running.`,
+          };
+        }
         return newMsgs;
       });
     } finally {
