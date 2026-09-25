@@ -17,6 +17,7 @@ package server
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strconv"
 	"time"
@@ -35,12 +36,37 @@ type blockAddRequest struct {
 	ExpiresIn   string            `json:"expires_in,omitempty"`   // e.g. "24h", "7d"
 	CharLimit   int               `json:"char_limit,omitempty"`   // max characters (0 = use default)
 	Scope       string            `json:"scope,omitempty"`        // isolation scope (e.g. conversation ID)
+	Target      string            `json:"target,omitempty"`       // client target isolation (alias for scope)
 	Repo        string            `json:"repo,omitempty"`         // provenance repository identifier
 	Paths       []string          `json:"paths,omitempty"`        // provenance file paths
 	Symbols     []string          `json:"symbols,omitempty"`      // provenance symbol names/FQNs
 	Commit      string            `json:"commit,omitempty"`       // provenance commit hash
 	Suspect     bool              `json:"suspect,omitempty"`      // whether block is marked suspect/stale
 	StaleReason string            `json:"stale_reason,omitempty"` // reason for staleness/suspicion
+}
+
+// resolveTargetScope extracts scope from ?scope=, ?target=, or X-Gleann-Target header.
+// If both header and query target are specified and mismatch, it returns an error.
+func resolveTargetScope(r *http.Request) (string, error) {
+	headerTarget := r.Header.Get("X-Gleann-Target")
+	if headerTarget == "" {
+		headerTarget = r.Header.Get("X-Gleann-Index")
+	}
+
+	scope := r.URL.Query().Get("scope")
+	if scope == "" {
+		scope = r.URL.Query().Get("target")
+	}
+
+	if headerTarget != "" {
+		if scope != "" && scope != headerTarget {
+			return "", fmt.Errorf("access denied: target mismatch between header (%q) and query (%q)", headerTarget, scope)
+		}
+		if scope == "" {
+			scope = headerTarget
+		}
+	}
+	return scope, nil
 }
 
 // ── lazy blockMem accessor ────────────────────────────────────────────────────
@@ -81,7 +107,11 @@ func (s *Server) blockManager() (*memory.Manager, error) {
 //	GET /api/blocks?scope=conversation_id
 func (s *Server) handleListBlocks(w http.ResponseWriter, r *http.Request) {
 	tierStr := r.URL.Query().Get("tier")
-	scope := r.URL.Query().Get("scope")
+	scope, err := resolveTargetScope(r)
+	if err != nil {
+		writeError(w, http.StatusForbidden, err.Error())
+		return
+	}
 
 	var tier memory.Tier
 	if tierStr != "" {
@@ -134,6 +164,23 @@ func (s *Server) handleAddBlock(w http.ResponseWriter, r *http.Request) {
 	if req.Content == "" {
 		writeError(w, http.StatusBadRequest, "content is required")
 		return
+	}
+
+	headerTarget := r.Header.Get("X-Gleann-Target")
+	if headerTarget == "" {
+		headerTarget = r.Header.Get("X-Gleann-Index")
+	}
+	if req.Scope == "" && req.Target != "" {
+		req.Scope = req.Target
+	}
+	if headerTarget != "" {
+		if req.Scope != "" && req.Scope != headerTarget {
+			writeError(w, http.StatusForbidden, fmt.Sprintf("access denied: target mismatch between header (%q) and body (%q)", headerTarget, req.Scope))
+			return
+		}
+		if req.Scope == "" {
+			req.Scope = headerTarget
+		}
 	}
 
 	mgr, err := s.blockManager()
@@ -270,12 +317,11 @@ func (s *Server) handleSearchBlocks(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "query parameter 'q' is required")
 		return
 	}
-	// Client target isolation: ?target= (bot REST convention) is an
-	// alias for ?scope=. Without this a foreign target was ignored
-	// and the search ran across ALL scopes.
-	scope := r.URL.Query().Get("scope")
-	if scope == "" {
-		scope = r.URL.Query().Get("target")
+
+	scope, err := resolveTargetScope(r)
+	if err != nil {
+		writeError(w, http.StatusForbidden, err.Error())
+		return
 	}
 
 	mgr, err := s.blockManager()
@@ -320,19 +366,10 @@ func (s *Server) handleBlockContext(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Client target isolation: accept both ?target= and ?scope=.
-	// The bot/agent clients send ?target=<scope> (the REST memory
-	// API convention); before this fix a foreign target was silently
-	// ignored and the FULL memory window was returned to any caller.
-	scope := r.URL.Query().Get("scope")
-	if scope == "" {
-		scope = r.URL.Query().Get("target")
-		if scope != "" {
-			if v := r.Header.Get("X-Gleann-Target"); v != "" && v != scope {
-				writeError(w, http.StatusForbidden, "access denied: target mismatch between header and query")
-				return
-			}
-		}
+	scope, err := resolveTargetScope(r)
+	if err != nil {
+		writeError(w, http.StatusForbidden, err.Error())
+		return
 	}
 
 	var cw *memory.ContextWindow

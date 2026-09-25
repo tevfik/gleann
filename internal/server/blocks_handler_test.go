@@ -480,3 +480,104 @@ func TestHandleBlockContext_ScopeFilter(t *testing.T) {
 		t.Error("expected non-empty rendered context")
 	}
 }
+
+func TestHandleBlockContext_TargetIsolation(t *testing.T) {
+	_, mux := newBlocksTestServer(t)
+	doBlockAdd(t, mux, blockAddRequest{Content: "bot test secret", Scope: "matrixbot:test"})
+	doBlockAdd(t, mux, blockAddRequest{Content: "other bot secret", Scope: "matrixbot:other"})
+
+	// 1. ?target=matrixbot:test returns only matching target
+	r1 := httptest.NewRequest(http.MethodGet, "/api/blocks/context?target=matrixbot:test", nil)
+	w1 := httptest.NewRecorder()
+	mux.ServeHTTP(w1, r1)
+	if w1.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w1.Code, w1.Body.String())
+	}
+	var resp1 map[string]any
+	json.NewDecoder(w1.Body).Decode(&resp1)
+	rendered1 := resp1["rendered"].(string)
+	if !contains(rendered1, "bot test secret") {
+		t.Error("expected bot test secret in rendered context")
+	}
+	if contains(rendered1, "other bot secret") {
+		t.Error("other bot secret leaked into matrixbot:test context")
+	}
+
+	// 2. Header X-Gleann-Target: matrixbot:test
+	r2 := httptest.NewRequest(http.MethodGet, "/api/blocks/context", nil)
+	r2.Header.Set("X-Gleann-Target", "matrixbot:test")
+	w2 := httptest.NewRecorder()
+	mux.ServeHTTP(w2, r2)
+	if w2.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w2.Code, w2.Body.String())
+	}
+
+	// 3. Header and Query target mismatch -> 403 Forbidden
+	r3 := httptest.NewRequest(http.MethodGet, "/api/blocks/context?target=matrixbot:other", nil)
+	r3.Header.Set("X-Gleann-Target", "matrixbot:test")
+	w3 := httptest.NewRecorder()
+	mux.ServeHTTP(w3, r3)
+	if w3.Code != http.StatusForbidden {
+		t.Errorf("expected 403 Forbidden on target mismatch, got %d", w3.Code)
+	}
+}
+
+func TestHandleSearchBlocks_TargetIsolation(t *testing.T) {
+	_, mux := newBlocksTestServer(t)
+	doBlockAdd(t, mux, blockAddRequest{Content: "secret token alpha", Scope: "tenant:alpha"})
+	doBlockAdd(t, mux, blockAddRequest{Content: "secret token beta", Scope: "tenant:beta"})
+
+	// Search with ?target=tenant:alpha
+	r := httptest.NewRequest(http.MethodGet, "/api/blocks/search?q=secret&target=tenant:alpha", nil)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp map[string]any
+	json.NewDecoder(w.Body).Decode(&resp)
+	if resp["count"].(float64) != 1 {
+		t.Errorf("expected 1 result, got %v", resp["count"])
+	}
+
+	// Target mismatch -> 403
+	rBad := httptest.NewRequest(http.MethodGet, "/api/blocks/search?q=secret&target=tenant:beta", nil)
+	rBad.Header.Set("X-Gleann-Target", "tenant:alpha")
+	wBad := httptest.NewRecorder()
+	mux.ServeHTTP(wBad, rBad)
+	if wBad.Code != http.StatusForbidden {
+		t.Errorf("expected 403 Forbidden on target mismatch, got %d", wBad.Code)
+	}
+}
+
+func TestHandleAddBlock_TargetField(t *testing.T) {
+	_, mux := newBlocksTestServer(t)
+
+	// Add block using Target field
+	w := doBlockAdd(t, mux, blockAddRequest{
+		Content: "targeted knowledge",
+		Target:  "project:xyz",
+	})
+	if w.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	var block memory.Block
+	json.NewDecoder(w.Body).Decode(&block)
+	if block.Scope != "project:xyz" {
+		t.Errorf("expected scope = 'project:xyz', got %q", block.Scope)
+	}
+
+	// Add block with header mismatch -> 403
+	b, _ := json.Marshal(blockAddRequest{
+		Content: "cross tenant attempt",
+		Target:  "tenant:other",
+	})
+	r := httptest.NewRequest(http.MethodPost, "/api/blocks", bytes.NewReader(b))
+	r.Header.Set("Content-Type", "application/json")
+	r.Header.Set("X-Gleann-Target", "tenant:mine")
+	wBad := httptest.NewRecorder()
+	mux.ServeHTTP(wBad, r)
+	if wBad.Code != http.StatusForbidden {
+		t.Errorf("expected 403 Forbidden on header/body target mismatch, got %d", wBad.Code)
+	}
+}

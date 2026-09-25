@@ -316,6 +316,8 @@ func openAPISchemasBlocks() map[string]any {
 				"tags":       map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
 				"metadata":   map[string]any{"type": "object", "additionalProperties": map[string]any{"type": "string"}},
 				"expires_in": map[string]any{"type": "string", "example": "24h", "description": "Go duration string (e.g. 24h, 7d). Omit for no expiry."},
+				"scope":      map[string]any{"type": "string", "description": "Isolation scope (e.g. conversation or project ID)"},
+				"target":     map[string]any{"type": "string", "description": "Client target isolation (alias for scope)"},
 			},
 		},
 		"MemoryStats": map[string]any{
