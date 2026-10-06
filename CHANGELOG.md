@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [v1.8.1] — 2026-10-06
+
+### Fixed
+- **Embedded Llama.cpp Runner & Inference**:
+  - Automatically configured `--embedding` flag when spawning embedded `llama-server` process to enable native embedding inference.
+  - Tuned default CPU batch size (`32`) and concurrency (`2`) for local llama.cpp embeddings to prevent memory thrashing and CPU thread contention.
+  - Added robust response parsing for OpenAI-compatible embedding servers returning all zero indices (e.g. `llama-server`).
+  - Unified base URL routing and API key propagation across CLI commands, REST server, MCP server, and interactive TUI chat.
+- **Test Suite Isolation**:
+  - Fixed test cleanup in MCP remote routing tests to prevent race conditions during full concurrent test runs.
+  - Consolidated embedder computer initialization (`newEmbedder`) across `cmd/gleann` commands, eliminating duplicate code and unused imports.
+
 ## [v1.8.0] — 2026-09-25
 
 ### Added
