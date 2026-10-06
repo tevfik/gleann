@@ -13,7 +13,6 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/tevfik/gleann/internal/embedding"
 	"github.com/tevfik/gleann/pkg/benchmark"
 	"github.com/tevfik/gleann/pkg/gleann"
 	"github.com/tevfik/gleann/pkg/walker"
@@ -71,13 +70,7 @@ func runContextBenchmark(config gleann.Config, indexName, tasksFile string, topK
 
 	ctx := context.Background()
 
-	embedder := embedding.NewComputer(embedding.Options{
-		Provider:    embedding.Provider(config.EmbeddingProvider),
-		Model:       config.EmbeddingModel,
-		BaseURL:     config.OllamaHost,
-		BatchSize:   config.BatchSize,
-		Concurrency: config.Concurrency,
-	})
+	embedder := newEmbedder(config)
 
 	searcher := gleann.NewSearcher(config, embedder)
 	searcher.SetScorer(gleann.NewBM25Adapter())

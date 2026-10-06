@@ -77,10 +77,14 @@ func (s *Server) Bus() *eventbus.Bus {
 // NewServer creates a new REST API server.
 // version is the build-time version string (injected via -ldflags).
 func NewServer(config gleann.Config, addr, version string) *Server {
+	baseURL := config.OllamaHost
+	if config.EmbeddingProvider == "openai" && config.OpenAIBaseURL != "" {
+		baseURL = config.OpenAIBaseURL
+	}
 	embedder := embedding.NewComputer(embedding.Options{
 		Provider: embedding.Provider(config.EmbeddingProvider),
 		Model:    config.EmbeddingModel,
-		BaseURL:  config.OllamaHost,
+		BaseURL:  baseURL,
 		APIKey:   config.OpenAIAPIKey,
 	})
 
@@ -1442,10 +1446,14 @@ func (s *Server) handleUpdateConfig(w http.ResponseWriter, r *http.Request) {
 
 	s.mu.Lock()
 	s.config = newConfig
+	baseURL := newConfig.OllamaHost
+	if newConfig.EmbeddingProvider == "openai" && newConfig.OpenAIBaseURL != "" {
+		baseURL = newConfig.OpenAIBaseURL
+	}
 	s.embedder = embedding.NewComputer(embedding.Options{
 		Provider: embedding.Provider(newConfig.EmbeddingProvider),
 		Model:    newConfig.EmbeddingModel,
-		BaseURL:  newConfig.OllamaHost,
+		BaseURL:  baseURL,
 		APIKey:   newConfig.OpenAIAPIKey,
 	})
 	s.mu.Unlock()

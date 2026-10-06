@@ -63,6 +63,8 @@ func NewComputer(opts Options) *Computer {
 	if opts.BatchSize <= 0 {
 		if opts.Provider == ProviderOllama {
 			opts.BatchSize = 256 // Optimized for stability and GPU throughput without OOM
+		} else if opts.Provider == ProviderLlamaCPP {
+			opts.BatchSize = 32 // Optimal for local CPU llama-server without memory or token limit contention
 		} else {
 			opts.BatchSize = 100 // External APIs handle larger batches
 		}
@@ -87,6 +89,9 @@ func NewComputer(opts Options) *Computer {
 	} else if opts.Provider == ProviderLlamaCPP && (strings.Contains(opts.BaseURL, "11434") || strings.Contains(opts.BaseURL, "(auto-scan")) {
 		// Prevent cross-contamination from shared Config.OllamaHost defaults in callers
 		opts.BaseURL = gleann.DefaultLlamaCPPHost
+	} else if opts.Provider == ProviderOpenAI && opts.APIKey != "gleann-embedded" && (strings.Contains(opts.BaseURL, "11434") || strings.Contains(opts.BaseURL, "(auto-scan")) {
+		// Prevent accidental contamination from Config.OllamaHost in OpenAI provider
+		opts.BaseURL = resolveOpenAIBaseURL()
 	}
 
 	if opts.APIKey == "" {
@@ -103,6 +108,8 @@ func NewComputer(opts Options) *Computer {
 	if opts.Concurrency <= 0 {
 		if opts.Provider == ProviderOllama {
 			opts.Concurrency = 2 // Prevents GPU VRAM exhaustion and thread contention
+		} else if opts.Provider == ProviderLlamaCPP {
+			opts.Concurrency = 2 // Embedded CPU server performs best with low concurrency
 		} else {
 			opts.Concurrency = 20 // External providers
 		}
@@ -203,9 +210,9 @@ func (c *Computer) Compute(ctx context.Context, texts []string) ([][]float32, er
 
 			err = retry.Do(ctx, retry.DefaultPolicy(), func() error {
 				switch c.provider {
-				case ProviderOllama, ProviderLlamaCPP:
+				case ProviderOllama:
 					embeddings, err = c.computeOllama(ctx, batch)
-				case ProviderOpenAI:
+				case ProviderOpenAI, ProviderLlamaCPP:
 					embeddings, err = c.computeOpenAI(ctx, batch)
 				case ProviderGemini:
 					embeddings, err = c.computeGemini(ctx, batch)
@@ -230,9 +237,9 @@ func (c *Computer) Compute(ctx context.Context, texts []string) ([][]float32, er
 						// Aggressively truncate on retry.
 						truncated := TruncateToTokenLimit(text, GetModelTokenLimit(c.model)/2)
 						switch c.provider {
-						case ProviderOllama, ProviderLlamaCPP:
+						case ProviderOllama:
 							single, singleErr = c.computeOllama(ctx, []string{truncated})
-						case ProviderOpenAI:
+						case ProviderOpenAI, ProviderLlamaCPP:
 							single, singleErr = c.computeOpenAI(ctx, []string{truncated})
 						case ProviderGemini:
 							single, singleErr = c.computeGemini(ctx, []string{truncated})
@@ -531,9 +538,32 @@ func (c *Computer) computeOpenAI(ctx context.Context, texts []string) ([][]float
 
 	// Sort by index to preserve order.
 	embeddings := make([][]float32, len(texts))
-	for _, d := range result.Data {
-		if d.Index < len(embeddings) {
-			embeddings[d.Index] = d.Embedding
+	allZeros := true
+	for i, d := range result.Data {
+		if d.Index != 0 || i == 0 {
+			if d.Index != 0 {
+				allZeros = false
+			}
+		}
+	}
+	if len(result.Data) > 1 && allZeros {
+		// Server didn't populate index field, assume sequential order
+		for i, d := range result.Data {
+			if i < len(embeddings) {
+				embeddings[i] = d.Embedding
+			}
+		}
+	} else {
+		for _, d := range result.Data {
+			if d.Index < len(embeddings) {
+				embeddings[d.Index] = d.Embedding
+			}
+		}
+	}
+
+	for i, emb := range embeddings {
+		if emb == nil {
+			return nil, fmt.Errorf("missing embedding at index %d from response (%d total returned for %d texts)", i, len(result.Data), len(texts))
 		}
 	}
 

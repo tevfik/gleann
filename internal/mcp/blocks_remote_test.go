@@ -81,8 +81,10 @@ func TestMCPMemoryRemoteRouting(t *testing.T) {
 	defer ts.Close()
 
 	os.Setenv("GLEANN_REMOTE_ADDR", ts.URL)
-	defer os.Unsetenv("GLEANN_REMOTE_ADDR")
-	defer memory.ResetRemoteForTesting()
+	defer func() {
+		_ = os.Setenv("GLEANN_REMOTE_ADDR", "off")
+		memory.ResetRemoteForTesting()
+	}()
 	memory.ResetRemoteForTesting()
 
 	srv := &Server{

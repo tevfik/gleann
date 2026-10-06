@@ -122,13 +122,7 @@ func cmdBuild(args []string) {
 		os.Exit(1)
 	}
 
-	embedder := embedding.NewComputer(embedding.Options{
-		Provider:    embedding.Provider(config.EmbeddingProvider),
-		Model:       config.EmbeddingModel,
-		BaseURL:     config.OllamaHost,
-		BatchSize:   config.BatchSize,
-		Concurrency: config.Concurrency,
-	})
+	embedder := newEmbedder(config)
 
 	// Wrap with embedding cache for rebuild efficiency.
 	cachedEmbedder := embedding.NewCachedComputer(embedder, embedding.CacheOptions{})
@@ -1196,13 +1190,7 @@ Options:
 		os.Exit(1)
 	}
 
-	embedder := embedding.NewComputer(embedding.Options{
-		Provider:    embedding.Provider(config.EmbeddingProvider),
-		Model:       config.EmbeddingModel,
-		BaseURL:     config.OllamaHost,
-		BatchSize:   config.BatchSize,
-		Concurrency: config.Concurrency,
-	})
+	embedder := newEmbedder(config)
 
 	// Wrap with embedding cache for rebuild efficiency.
 	cachedEmbedder := embedding.NewCachedComputer(embedder, embedding.CacheOptions{})
@@ -1520,13 +1508,7 @@ func cmdSync(args []string) {
 		os.Exit(1)
 	}
 
-	embedder := embedding.NewComputer(embedding.Options{
-		Provider:    embedding.Provider(config.EmbeddingProvider),
-		Model:       config.EmbeddingModel,
-		BaseURL:     config.OllamaHost,
-		BatchSize:   config.BatchSize,
-		Concurrency: config.Concurrency,
-	})
+	embedder := newEmbedder(config)
 	cachedEmbedder := embedding.NewCachedComputer(embedder, embedding.CacheOptions{})
 
 	tracker, err := vault.NewTracker(vault.DefaultDBPath())

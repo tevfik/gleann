@@ -13,7 +13,6 @@ import (
 
 	"github.com/charmbracelet/glamour"
 	"github.com/mattn/go-isatty"
-	"github.com/tevfik/gleann/internal/embedding"
 	"github.com/tevfik/gleann/internal/tui"
 	"github.com/tevfik/gleann/pkg/conversations"
 	"github.com/tevfik/gleann/pkg/gleann"
@@ -536,13 +535,7 @@ func cmdChat(args []string) {
 		os.Exit(1)
 	}
 
-	embedder := embedding.NewComputer(embedding.Options{
-		Provider:    embedding.Provider(cfg.EmbeddingProvider),
-		Model:       cfg.EmbeddingModel,
-		BaseURL:     cfg.OllamaHost,
-		BatchSize:   cfg.BatchSize,
-		Concurrency: cfg.Concurrency,
-	})
+	embedder := newEmbedder(cfg)
 
 	ctx := context.Background()
 
@@ -679,13 +672,7 @@ func createAskSearcher(ctx context.Context, name string, args []string, config g
 		return gleann.NullSearcher{}
 	}
 
-	embedder := embedding.NewComputer(embedding.Options{
-		Provider:    embedding.Provider(config.EmbeddingProvider),
-		Model:       config.EmbeddingModel,
-		BaseURL:     config.OllamaHost,
-		BatchSize:   config.BatchSize,
-		Concurrency: config.Concurrency,
-	})
+	embedder := newEmbedder(config)
 
 	indexNames := strings.Split(name, ",")
 

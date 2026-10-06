@@ -9,7 +9,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/tevfik/gleann/internal/embedding"
 	"github.com/tevfik/gleann/pkg/gleann"
 )
 
@@ -71,13 +70,7 @@ Examples:
 		os.Exit(1)
 	}
 
-	embedder := embedding.NewComputer(embedding.Options{
-		Provider:    embedding.Provider(config.EmbeddingProvider),
-		Model:       config.EmbeddingModel,
-		BaseURL:     config.OllamaHost,
-		BatchSize:   config.BatchSize,
-		Concurrency: config.Concurrency,
-	})
+	embedder := newEmbedder(config)
 
 	searcher := gleann.NewSearcher(config, embedder)
 

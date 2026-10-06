@@ -98,10 +98,19 @@ func NewServer(cfg Config) *Server {
 	glCfg.LLMProvider = cfg.LLMProvider
 	glCfg.LLMModel = cfg.LLMModel
 
+	baseURL := cfg.OllamaHost
+	apiKey := ""
+	if cfg.EmbeddingProvider == "openai" {
+		if cfg.OpenAIBaseURL != "" {
+			baseURL = cfg.OpenAIBaseURL
+		}
+		apiKey = cfg.OpenAIAPIKey
+	}
 	embedder := embedding.NewComputer(embedding.Options{
 		Provider: embedding.Provider(cfg.EmbeddingProvider),
 		Model:    cfg.EmbeddingModel,
-		BaseURL:  cfg.OllamaHost,
+		BaseURL:  baseURL,
+		APIKey:   apiKey,
 	})
 
 	s := server.NewMCPServer("gleann-mcp", version, server.WithRoots())
@@ -348,10 +357,19 @@ func (s *Server) getSearcher(name string) (*gleann.LeannSearcher, error) {
 	if meta, err := gleann.GetIndexMeta(s.config.IndexDir, name); err == nil && meta.EmbeddingModel != "" {
 		if embedder == nil || embedder.ModelName() != meta.EmbeddingModel {
 			// Auto-adapt to the index's embedding model using the configured provider
+			baseURL := s.config.OllamaHost
+			apiKey := ""
+			if s.config.EmbeddingProvider == "openai" {
+				if s.config.OpenAIBaseURL != "" {
+					baseURL = s.config.OpenAIBaseURL
+				}
+				apiKey = s.config.OpenAIAPIKey
+			}
 			embedder = embedding.NewComputer(embedding.Options{
 				Provider:    embedding.Provider(s.config.EmbeddingProvider),
 				Model:       meta.EmbeddingModel,
-				BaseURL:     s.config.OllamaHost,
+				BaseURL:     baseURL,
+				APIKey:      apiKey,
 				BatchSize:   s.config.BatchSize,
 				Concurrency: s.config.Concurrency,
 			})

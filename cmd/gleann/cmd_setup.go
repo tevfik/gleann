@@ -193,13 +193,7 @@ func runAutoSetup(args []string) {
 		os.Exit(1)
 	}
 
-	embedder := embedding.NewComputer(embedding.Options{
-		Provider:    embedding.Provider(config.EmbeddingProvider),
-		Model:       config.EmbeddingModel,
-		BaseURL:     config.OllamaHost,
-		BatchSize:   config.BatchSize,
-		Concurrency: config.Concurrency,
-	})
+	embedder := newEmbedder(config)
 	cachedEmbedder := embedding.NewCachedComputer(embedder, embedding.CacheOptions{})
 
 	builder, err := gleann.NewBuilder(config, cachedEmbedder)

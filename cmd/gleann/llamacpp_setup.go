@@ -23,6 +23,7 @@ func initLlamaCPP(ctx context.Context, config *gleann.Config) error {
 
 	fmt.Printf("🚀 Starting embedded llama.cpp server for model %s\n", config.EmbeddingModel)
 	globalLlamaRunner = llamacpp.NewRunner(config.EmbeddingModel)
+	globalLlamaRunner.SetEmbedding(true)
 
 	if err := globalLlamaRunner.Start(ctx); err != nil {
 		return fmt.Errorf("failed to start embedded llama-server: %w", err)
@@ -31,7 +32,14 @@ func initLlamaCPP(ctx context.Context, config *gleann.Config) error {
 	// Override configuration to use the internal server
 	config.EmbeddingProvider = "openai"
 	config.OpenAIBaseURL = globalLlamaRunner.BaseURL()
+	config.OllamaHost = globalLlamaRunner.BaseURL()
 	config.OpenAIAPIKey = "gleann-embedded"
+	if config.BatchSize <= 0 {
+		config.BatchSize = 32
+	}
+	if config.Concurrency <= 0 {
+		config.Concurrency = 2
+	}
 
 	fmt.Printf("✅ Embedded llama-server is ready at %s\n", config.OpenAIBaseURL)
 	return nil

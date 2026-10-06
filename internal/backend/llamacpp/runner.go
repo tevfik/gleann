@@ -18,6 +18,7 @@ type Runner struct {
 	cmd       *exec.Cmd
 	port      int
 	modelPath string
+	embedding bool
 }
 
 // NewRunner creates a new Runner instance.
@@ -25,6 +26,11 @@ func NewRunner(modelPath string) *Runner {
 	return &Runner{
 		modelPath: modelPath,
 	}
+}
+
+// SetEmbedding configures whether the server should be launched in embedding mode.
+func (r *Runner) SetEmbedding(embedding bool) {
+	r.embedding = embedding
 }
 
 // Start extracts the embedded binary, finds a free port, and starts the server.
@@ -56,13 +62,18 @@ func (r *Runner) Start(ctx context.Context) error {
 	r.port = port
 
 	// 4. Start the process
-	r.cmd = exec.CommandContext(ctx, exePath,
+	args := []string{
 		"--model", r.modelPath,
 		"--host", "127.0.0.1",
 		"--port", fmt.Sprintf("%d", port),
 		"--mlock",       // Optional: prevent swapping
 		"--log-disable", // Keep stdout clean
-	)
+	}
+	if r.embedding {
+		args = append(args, "--embedding")
+	}
+
+	r.cmd = exec.CommandContext(ctx, exePath, args...)
 
 	// Inject LD_LIBRARY_PATH so dynamic linker finds .so libraries in ~/.gleann/bin
 	destDir := filepath.Dir(exePath)

@@ -264,10 +264,19 @@ func runChatFlow() error {
 		fmt.Printf("✅ Embedded llama-server is ready at %s\n", embHost)
 	}
 
+	apiKey := ""
+	if cfg.EmbeddingProvider == "openai" {
+		apiKey = cfg.OpenAIAPIKey
+		if cfg.OpenAIBaseURL != "" && (embHost == "" || embHost == cfg.OllamaHost) {
+			embHost = cfg.OpenAIBaseURL
+		}
+	}
+
 	embedder := embedding.NewComputer(embedding.Options{
 		Provider: embedding.Provider(cfg.EmbeddingProvider),
 		Model:    cfg.EmbeddingModel,
 		BaseURL:  embHost,
+		APIKey:   apiKey,
 	})
 	searcher := gleann.NewSearcher(cfg, embedder)
 	ctx := context.Background()
