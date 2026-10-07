@@ -505,7 +505,7 @@ _gleann() {
                     return
                     ;;
                 --provider)
-                    COMPREPLY=($(compgen -W "ollama openai anthropic llamacpp" -- "$cur"))
+                    COMPREPLY=($(compgen -W "ollama openai anthropic llamacpp eif" -- "$cur"))
                     return
                     ;;
                 --extensions)

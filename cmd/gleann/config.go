@@ -243,6 +243,9 @@ func newEmbedder(cfg gleann.Config) *embedding.Computer {
 			baseURL = cfg.OpenAIBaseURL
 		}
 		apiKey = cfg.OpenAIAPIKey
+	case "eif":
+		baseURL = ""
+		apiKey = ""
 	case "gemini":
 		apiKey = cfg.OpenAIAPIKey
 	}

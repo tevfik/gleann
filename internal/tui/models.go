@@ -30,6 +30,8 @@ func fetchModels(provider, host, apiKey string) ([]ModelInfo, error) {
 		return fetchOpenAIModels(host, apiKey)
 	case "llamacpp":
 		return fetchLlamaCPPModels(host)
+	case "eif":
+		return fetchEIFModels(host)
 	default:
 		return nil, fmt.Errorf("unsupported provider: %s", provider)
 	}
@@ -294,3 +296,59 @@ func fetchLlamaCPPModels(host string) ([]ModelInfo, error) {
 
 	return models, nil
 }
+
+// --- EIF-Runtime: local .gguf & .eifm BERT scanning ---
+
+func fetchEIFModels(host string) ([]ModelInfo, error) {
+	var searchDirs []string
+
+	// host can be a specific directory for scanning models.
+	if host != "" && !strings.Contains(host, "auto-scan") && !strings.HasPrefix(host, "http://") {
+		searchDirs = []string{host}
+	} else {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return nil, err
+		}
+		searchDirs = []string{
+			DefaultModelsDir(),
+			filepath.Join(home, "models"),
+			filepath.Join(home, ".cache", "lm-studio", "models"),
+			filepath.Join(home, ".cache", "huggingface", "hub"),
+		}
+	}
+
+	var models []ModelInfo
+
+	for _, dir := range searchDirs {
+		if _, err := os.Stat(dir); err != nil {
+			continue // skip missing dirs
+		}
+
+		filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
+			if err != nil {
+				return nil
+			}
+			name := strings.ToLower(info.Name())
+			if !info.IsDir() && (strings.HasSuffix(name, ".gguf") || strings.HasSuffix(name, ".eifm")) {
+				models = append(models, ModelInfo{
+					Name: info.Name(),
+					Size: formatModelSize(info.Size()),
+					Tag:  path, // Store full path in Tag for direct zero-copy loading
+				})
+			}
+			return nil
+		})
+	}
+
+	if len(models) == 0 {
+		return nil, fmt.Errorf("no .gguf or .eifm models found in %v", searchDirs)
+	}
+
+	sort.Slice(models, func(i, j int) bool {
+		return models[i].Name < models[j].Name
+	})
+
+	return models, nil
+}
+

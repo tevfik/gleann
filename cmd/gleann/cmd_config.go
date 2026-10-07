@@ -180,6 +180,13 @@ func cmdConfigValidate() {
 			resp.Body.Close()
 		}
 	}
+
+	// Verify EIF model file if configured
+	if cfg.EmbeddingProvider == "eif" && cfg.EmbeddingModel != "" {
+		if _, err := os.Stat(cfg.EmbeddingModel); err != nil {
+			fmt.Printf("\n⚠️  EIF model file not found at: %s\n   Hint: Place a valid BERT model (.gguf or .eifm) in ~/.gleann/models/\n", cfg.EmbeddingModel)
+		}
+	}
 }
 
 func valueOrDefault(s, def string) string {

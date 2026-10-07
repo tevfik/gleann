@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"path/filepath"
 	"runtime"
 	"strings"
 
@@ -337,6 +338,9 @@ func buildBackendOptions() []string {
 
 func buildEmbProviders() []string {
 	providers := []string{"ollama", "openai", "llamacpp"}
+	if gleann.IsEIFSupported() {
+		providers = append(providers, "eif")
+	}
 	if gleann.IsNativeSupported() {
 		providers = append(providers, "native")
 	}
@@ -478,6 +482,13 @@ func (m OnboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						{Name: "(Download) BGE-M3 (Multilingual)", Tag: "bge-m3-q4_k_m.gguf"},
 						{Name: "(Download) Nomic-Embed-Text", Tag: "nomic-embed-text-v1.5.Q4_K_M.gguf"},
 						{Name: "(Custom) Enter HF Repo...", Tag: "custom"},
+					}
+				} else if m.embProviders[m.embProviderIdx] == "eif" {
+					m.fetchErr = "No local models found. Add a BERT model (.gguf / .eifm) to ~/.gleann/models"
+					m.embModels = []ModelInfo{
+						{Name: "all-MiniLM-L6-v2 (GGUF)", Tag: filepath.Join(DefaultModelsDir(), "minilm.gguf")},
+						{Name: "all-MiniLM-L6-v2 (EIFM)", Tag: filepath.Join(DefaultModelsDir(), "minilm_bert.eifm")},
+						{Name: "(Custom) Enter model path...", Tag: "custom"},
 					}
 				} else {
 					m.embModels = []ModelInfo{{Name: "bge-m3"}, {Name: "nomic-embed-text"}, {Name: "text-embedding-3-small"}}
@@ -735,7 +746,7 @@ func (m OnboardModel) handleMenuKeys(key string) (tea.Model, tea.Cmd) {
 		}
 		target := item.phase
 		if target == phaseEmbHost {
-			if m.embProviders[m.embProviderIdx] == "llamacpp" || m.embProviders[m.embProviderIdx] == "native" {
+			if m.embProviders[m.embProviderIdx] == "llamacpp" || m.embProviders[m.embProviderIdx] == "native" || m.embProviders[m.embProviderIdx] == "eif" {
 				return m, nil
 			}
 			if m.embProviders[m.embProviderIdx] == "openai" {
@@ -825,7 +836,7 @@ func (m OnboardModel) handleEmbProviderKeys(key string) (tea.Model, tea.Cmd) {
 			m.embHostInput.Focus()
 			m.phase = phaseEmbHost
 			return m, textinput.Blink
-		} else if prov == "llamacpp" || prov == "native" || prov == "sentence-transformers" {
+		} else if prov == "llamacpp" || prov == "native" || prov == "sentence-transformers" || prov == "eif" {
 			m.phase = phaseEmbFetching
 			return m, m.fetchEmbModels()
 		}
@@ -993,8 +1004,11 @@ func (m OnboardModel) fetchRerankModels() tea.Cmd {
 func (m *OnboardModel) buildResult() {
 	embModel := "bge-m3"
 	if len(m.embModels) > 0 && m.embModelIdx < len(m.embModels) {
-		if m.embProviders[m.embProviderIdx] == "llamacpp" {
+		if m.embProviders[m.embProviderIdx] == "llamacpp" || m.embProviders[m.embProviderIdx] == "eif" {
 			embModel = m.embModels[m.embModelIdx].Tag
+			if embModel == "" {
+				embModel = m.embModels[m.embModelIdx].Name
+			}
 		} else {
 			embModel = m.embModels[m.embModelIdx].Name
 		}
@@ -1055,8 +1069,8 @@ func (m *OnboardModel) buildResult() {
 		LlamaCPPConfig:     llamaCfg,
 	}
 
-	// Clean up fields if it was repurposed for llamacpp or native.
-	if m.result.EmbeddingProvider == "llamacpp" || m.result.EmbeddingProvider == "native" {
+	// Clean up fields if it was repurposed for llamacpp or native or eif.
+	if m.result.EmbeddingProvider == "llamacpp" || m.result.EmbeddingProvider == "native" || m.result.EmbeddingProvider == "eif" {
 		m.result.OllamaHost = ""
 	}
 	if m.result.LLMProvider == "llamacpp" {
@@ -1150,6 +1164,9 @@ func (m OnboardModel) View() tea.View {
 			"Local models via Ollama (free, private)",
 			"OpenAI embedding API (cloud)",
 			"Embedded llama.cpp server (local, isolated)",
+		}
+		if gleann.IsEIFSupported() {
+			descriptions = append(descriptions, "EIF-Runtime (In-process CPU SIMD — zero daemon, GGUF/EIFM)")
 		}
 		if gleann.IsNativeSupported() {
 			descriptions = append(descriptions, "Native engine (Candle/Rust — fast, no dependencies)")
@@ -1355,7 +1372,7 @@ func (m OnboardModel) settingsMenuValues() []string {
 		} else if k != "" {
 			embHostOrKey = "****"
 		}
-	} else if embProv == "llamacpp" && embHostOrKey == "" {
+	} else if (embProv == "llamacpp" || embProv == "eif") && embHostOrKey == "" {
 		embHostOrKey = "(auto-scan default dirs)"
 	}
 
@@ -1642,6 +1659,10 @@ func (m OnboardModel) renderSummary() string {
 		rows = append(rows, row{"Ollama Host", m.embHostInput.Value()})
 	} else if m.embProviders[m.embProviderIdx] == "native" {
 		rows = append(rows, row{"Native Engine", "Enabled (Rust/Candle)"})
+	} else if m.embProviders[m.embProviderIdx] == "eif" {
+		rows = append(rows, row{"EIF Engine", "In-Process (C99 SIMD / GGUF)"})
+	} else if m.embProviders[m.embProviderIdx] == "llamacpp" {
+		rows = append(rows, row{"Llama Engine", "Embedded llama-server"})
 	} else {
 		mask := m.embKeyInput.Value()
 		if len(mask) > 8 {

@@ -2,6 +2,7 @@ package tui
 
 import (
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -939,3 +940,42 @@ func TestViewHistoryWithItems(t *testing.T) {
 		t.Error("should show conversation title")
 	}
 }
+
+// ── fetchEIFModels ─────────────────────────────────────────────
+
+func TestFetchEIFModels(t *testing.T) {
+	// With an empty temp dir, should return error (no .gguf or .eifm found).
+	tmp := t.TempDir()
+	_, err := fetchEIFModels(tmp)
+	if err == nil {
+		t.Error("expected error when no .gguf or .eifm files found")
+	}
+}
+
+func TestFetchEIFModelsWithGGUFAndEIFM(t *testing.T) {
+	tmp := t.TempDir()
+	os.WriteFile(filepath.Join(tmp, "model_a.gguf"), []byte("fake gguf"), 0o644)
+	os.WriteFile(filepath.Join(tmp, "model_b.eifm"), []byte("fake eifm"), 0o644)
+	os.WriteFile(filepath.Join(tmp, "notes.txt"), []byte("ignored"), 0o644)
+
+	models, err := fetchEIFModels(tmp)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(models) != 2 {
+		t.Fatalf("expected 2 models, got %d", len(models))
+	}
+	if models[0].Name != "model_a.gguf" || models[1].Name != "model_b.eifm" {
+		t.Errorf("unexpected models: %+v", models)
+	}
+
+	// Test via fetchModels dispatcher
+	dispatched, err := fetchModels("eif", tmp, "")
+	if err != nil {
+		t.Fatalf("unexpected error from fetchModels: %v", err)
+	}
+	if len(dispatched) != 2 {
+		t.Fatalf("expected 2 models from fetchModels, got %d", len(dispatched))
+	}
+}
+

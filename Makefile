@@ -102,6 +102,16 @@ build-cgo: prepare-assets
 	fi
 	@echo "✅ Built $(BUILD_DIR)/gleann-cgo (with CGo and tree-sitter)"
 
+.PHONY: build-eif
+build-eif: prepare-assets
+	@mkdir -p $(BUILD_DIR)
+	@if command -v go >/dev/null 2>&1; then \
+		CGO_ENABLED=1 go build -tags "eif" -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/gleann-eif $(CMD); \
+	elif command -v docker >/dev/null 2>&1; then \
+		docker run --rm -v gleann-go-cache:/go/pkg/mod -v gleann-build-cache:/root/.cache/go-build -v $$(pwd):/app -w /app golang:1.25 sh -c "CGO_ENABLED=1 go build -buildvcs=false -tags 'eif' -ldflags '$(LDFLAGS)' -o $(BUILD_DIR)/gleann-eif $(CMD) && chown -R $$(id -u):$$(id -g) /app/$(BUILD_DIR)"; \
+	fi
+	@echo "✅ Built $(BUILD_DIR)/gleann-eif (with EIF-Runtime in-process BERT)"
+
 .PHONY: build-rust-core
 build-rust-core:
 	@if [ -d ext/gleann-core-rs ] && command -v cargo >/dev/null 2>&1; then \
