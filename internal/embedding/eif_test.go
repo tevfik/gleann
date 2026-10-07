@@ -76,3 +76,7 @@ func TestEIFComputerGGUF(t *testing.T) {
 func TestEIFComputerEIFM(t *testing.T) {
 	testEmbeddingWithModel(t, "minilm_bert.eifm")
 }
+
+func TestEIFComputerMultilingualE5(t *testing.T) {
+	testEmbeddingWithModel(t, "multilingual-e5-small-q8_0.gguf")
+}

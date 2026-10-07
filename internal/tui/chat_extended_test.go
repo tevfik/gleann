@@ -1041,3 +1041,35 @@ func TestChatModelRepeatPenaltySlashCommand(t *testing.T) {
 	}
 }
 
+func TestChatModelScreenshotCommand(t *testing.T) {
+	chat := gleann.NewChat(nil, gleann.DefaultChatConfig())
+	m := NewChatModel(chat, "idx", "mdl")
+
+	// Test screenshot with explicit image file
+	tmpFile := filepath.Join(t.TempDir(), "test.png")
+	// Write dummy 1x1 png (minimal png header)
+	pngBytes := []byte{0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52}
+	_ = os.WriteFile(tmpFile, pngBytes, 0o644)
+
+	updated, _, handled := m.handleSlashCommand("/screenshot " + tmpFile)
+	if !handled {
+		t.Fatal("expected /screenshot command to be handled")
+	}
+	cm := updated.(ChatModel)
+	if len(cm.pendingImages) != 1 {
+		t.Errorf("expected 1 pending image, got %d", len(cm.pendingImages))
+	}
+
+	// Test /image without args shows usage
+	updated2, _, handled2 := m.handleSlashCommand("/image")
+	if !handled2 {
+		t.Fatal("expected /image command to be handled")
+	}
+	cm2 := updated2.(ChatModel)
+	lastMsg := cm2.messages[len(cm2.messages)-1].content
+	if !strings.Contains(lastMsg, "Usage:") {
+		t.Errorf("expected usage message, got %q", lastMsg)
+	}
+}
+
+

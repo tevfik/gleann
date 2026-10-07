@@ -223,8 +223,8 @@ func TestUpdateSettings_DownNavigation(t *testing.T) {
 
 	result, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyDown})
 	cm := result.(ChatModel)
-	if cm.settingsCursor != fieldMaxTokens {
-		t.Errorf("expected cursor=fieldMaxTokens, got %d", cm.settingsCursor)
+	if cm.settingsCursor != fieldRepeatPenalty {
+		t.Errorf("expected cursor=fieldRepeatPenalty, got %d", cm.settingsCursor)
 	}
 }
 

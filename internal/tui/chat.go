@@ -6,9 +6,12 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
+	"time"
 
 	"charm.land/bubbles/v2/key"
 	"charm.land/bubbles/v2/spinner"
@@ -63,13 +66,13 @@ type settingsField int
 
 const (
 	fieldTemperature settingsField = iota
+	fieldRepeatPenalty
 	fieldMaxTokens
 	fieldTopK
 	fieldLLMModel
 	fieldRerankToggle
 	fieldRerankModel
 	fieldRole
-	fieldRepeatPenalty
 	fieldSystemPrompt
 	fieldCount // sentinel
 )
@@ -1273,6 +1276,12 @@ func (m ChatModel) viewSettings() string {
 		m.temperature/2.0, panelW))
 	b.WriteString("\n")
 
+	// Repeat Penalty.
+	b.WriteString(m.renderSlider(fieldRepeatPenalty, "Repeat Penalty",
+		fmt.Sprintf("%.2f", m.repeatPenalty),
+		(m.repeatPenalty-1.0)/1.0, panelW))
+	b.WriteString("\n")
+
 	// Max Tokens.
 	b.WriteString(m.renderSlider(fieldMaxTokens, "Max Tokens",
 		fmt.Sprintf("%d", m.maxTokens),
@@ -1400,12 +1409,6 @@ func (m ChatModel) viewSettings() string {
 		}
 		b.WriteString("\n")
 	}
-
-	// Repeat Penalty.
-	b.WriteString(m.renderSlider(fieldRepeatPenalty, "Repeat Penalty",
-		fmt.Sprintf("%.2f", m.repeatPenalty),
-		(m.repeatPenalty-1.0)/1.0, panelW))
-	b.WriteString("\n")
 
 	// System Prompt.
 	if m.editingPrompt {
@@ -1658,6 +1661,92 @@ func (m *ChatModel) handleImageCommand(path string) string {
 
 	return fmt.Sprintf("📷 Queued `%s` (%s, %d KB). Send your next message to analyze it.",
 		filepath.Base(absPath), ext[1:], info.Size()/1024)
+}
+
+// handleScreenshotCommand captures a screenshot from screen or clipboard,
+// saves it to ~/.gleann/screenshots/screenshot_<timestamp>.png, and queues it for the next message.
+func (m *ChatModel) handleScreenshotCommand(path string) string {
+	if path != "" {
+		return m.handleImageCommand(path)
+	}
+
+	home, err := os.UserHomeDir()
+	if err != nil {
+		home = "."
+	}
+	shotsDir := filepath.Join(home, ".gleann", "screenshots")
+	_ = os.MkdirAll(shotsDir, 0o755)
+	target := filepath.Join(shotsDir, fmt.Sprintf("screenshot_%s.png", time.Now().Format("20060102_150405")))
+
+	captured := false
+	if runtime.GOOS == "linux" {
+		// 1. Try clipboard image via wl-paste (Wayland)
+		if data, err := exec.Command("wl-paste", "-t", "image/png").Output(); err == nil && len(data) > 0 {
+			if err := os.WriteFile(target, data, 0o644); err == nil {
+				captured = true
+			}
+		}
+		// 2. Try clipboard image via xclip (X11)
+		if !captured {
+			if data, err := exec.Command("xclip", "-selection", "clipboard", "-t", "image/png", "-o").Output(); err == nil && len(data) > 0 {
+				if err := os.WriteFile(target, data, 0o644); err == nil {
+					captured = true
+				}
+			}
+		}
+		// 3. Try interactive / screen capture tools: scrot, maim, gnome-screenshot
+		if !captured {
+			if err := exec.Command("scrot", "-s", target).Run(); err == nil {
+				captured = true
+			}
+		}
+		if !captured {
+			if err := exec.Command("maim", "-s", target).Run(); err == nil {
+				captured = true
+			}
+		}
+		if !captured {
+			if err := exec.Command("gnome-screenshot", "-f", target).Run(); err == nil {
+				captured = true
+			}
+		}
+		// 4. Fallback: Python PIL ImageGrab (zero external Linux binary dependencies)
+		if !captured {
+			pyCmd := fmt.Sprintf("from PIL import ImageGrab; im = ImageGrab.grab(); im.save(%q)", target)
+			if err := exec.Command("python3", "-c", pyCmd).Run(); err == nil {
+				if info, err := os.Stat(target); err == nil && info.Size() > 0 {
+					captured = true
+				}
+			}
+		}
+	} else if runtime.GOOS == "darwin" {
+		// macOS: pngpaste or screencapture
+		if err := exec.Command("pngpaste", target).Run(); err == nil {
+			captured = true
+		}
+		if !captured {
+			if err := exec.Command("screencapture", "-i", target).Run(); err == nil {
+				captured = true
+			}
+		}
+	} else if runtime.GOOS == "windows" {
+		// Windows PowerShell clipboard
+		psCmd := fmt.Sprintf(`Add-Type -AssemblyName System.Windows.Forms; $img = [System.Windows.Forms.Clipboard]::GetImage(); if ($img) { $img.Save(%q, [System.Drawing.Imaging.ImageFormat]::Png) }`, target)
+		if err := exec.Command("powershell", "-NoProfile", "-Command", psCmd).Run(); err == nil {
+			if info, err := os.Stat(target); err == nil && info.Size() > 0 {
+				captured = true
+			}
+		}
+	}
+
+	if !captured {
+		return "⚠ Could not capture screenshot or clipboard image automatically.\n\n" +
+			"💡 **Tip:** Take a screenshot and queue the image file using:\n" +
+			"  `/image <filepath>` (e.g. `/image screenshot.png`)\n\n" +
+			"To enable automatic capture on Linux, install `xclip` (`sudo apt install xclip`) or `wl-clipboard`."
+	}
+
+	return m.handleImageCommand(target)
 }
 
 // handleAudioCommand loads an audio file and queues it for multimodal LLM input.
@@ -2356,6 +2445,7 @@ func (m ChatModel) handleSlashCommand(input string) (tea.Model, tea.Cmd, bool) {
 				"Sampling: /repeat <val> — set repetition penalty (e.g. 1.1, 1.2)\n" +
 				"Memory:   /remember <text> • /forget <query> • /memories • /new\n" +
 				"Media:    /image <path> — queue image for next message\n" +
+				"          /screenshot — capture screen/clipboard to analyze\n" +
 				"Files:    /attach <path> — add file/dir to session context • /detach <path>\n" +
 				"Index:    /index <name> — switch index • /index info — show stats\n" +
 				"Budget:   /budget — show token usage\n" +
@@ -2508,6 +2598,31 @@ func (m ChatModel) handleSlashCommand(input string) (tea.Model, tea.Cmd, bool) {
 			role:    "system",
 			content: fmt.Sprintf("🆕 New conversation started — index %q, model: %s", m.indexName, m.modelName),
 		})
+		m.textarea.Reset()
+		m.viewport.SetContent(m.renderMessages())
+		m.viewport.GotoBottom()
+		return m, nil, true
+
+	case input == "/image":
+		result := m.handleImageCommand("")
+		m.messages = append(m.messages, chatMsg{role: "system", content: result})
+		m.textarea.Reset()
+		m.viewport.SetContent(m.renderMessages())
+		m.viewport.GotoBottom()
+		return m, nil, true
+
+	case input == "/screenshot" || input == "/shot" || input == "/paste-image":
+		result := m.handleScreenshotCommand("")
+		m.messages = append(m.messages, chatMsg{role: "system", content: result})
+		m.textarea.Reset()
+		m.viewport.SetContent(m.renderMessages())
+		m.viewport.GotoBottom()
+		return m, nil, true
+
+	case strings.HasPrefix(input, "/screenshot "):
+		arg := strings.TrimSpace(strings.TrimPrefix(input, "/screenshot "))
+		result := m.handleScreenshotCommand(arg)
+		m.messages = append(m.messages, chatMsg{role: "system", content: result})
 		m.textarea.Reset()
 		m.viewport.SetContent(m.renderMessages())
 		m.viewport.GotoBottom()
