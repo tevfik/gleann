@@ -88,11 +88,21 @@ tasks:
       - CGO_ENABLED=1 go build -tags "native" -ldflags "{{.LDFLAGS}}" -o {{.BUILD_DIR}}/gleann-native {{.CMD}}
       - echo "✅ Built {{.BUILD_DIR}}/gleann-native"
 
+  build-eif-lib:
+    desc: Build eif-runtime static library
+    cmds:
+      - |
+        if [ -d ext/eif-runtime ] && [ -f ext/eif-runtime/CMakeLists.txt ]; then
+          echo "🔧 Building eif-runtime static library..."
+          mkdir -p ext/eif-runtime/build
+          (cd ext/eif-runtime/build && cmake -DCMAKE_BUILD_TYPE=Release .. && make eif_runtime_static)
+        fi
+
   full:
     desc: Build FAISS + tree-sitter single-executable binary (gleann-full)
-    deps: [build-rust-core, prepare-assets]
+    deps: [build-rust-core, build-eif-lib, prepare-assets]
     cmds:
-      - echo "🔧 Building {{.BINARY_FULL}} with FAISS + tree-sitter + native..."
+      - echo "🔧 Building {{.BINARY_FULL}} with FAISS + tree-sitter + native + eif..."
       - mkdir -p {{.BUILD_DIR}}/stage
       - cp ext/gleann-core-rs/target/release/libgleann_core_rs.{{.SO_EXT}} {{.BUILD_DIR}}/stage/ 2>/dev/null || true
       - cp {{.FAISS_LIB_DIR}}/libfaiss* {{.BUILD_DIR}}/stage/ 2>/dev/null || true
@@ -112,7 +122,7 @@ tasks:
         CGO_CFLAGS="-w -I{{.FAISS_INC_DIR}} $CGO_CFLAGS" \
         CGO_CXXFLAGS="-w -I{{.FAISS_INC_DIR}} $CGO_CXXFLAGS" \
         CGO_LDFLAGS="{{.RPATH_FLAGS}} {{.ZNOW_FLAG}} -L{{.FAISS_LIB_DIR}} -lfaiss_c -lfaiss -L{{.BUILD_DIR}}/stage -lgleann_core_rs $CGO_LDFLAGS" \
-        go build -tags "faiss treesitter native" -ldflags "{{.LDFLAGS}}" -o {{.BUILD_DIR}}/stage/gleann-full-bin {{.CMD}}
+        go build -tags "faiss treesitter native eif" -ldflags "{{.LDFLAGS}}" -o {{.BUILD_DIR}}/stage/gleann-full-bin {{.CMD}}
       - |
         go mod download github.com/kuzudb/go-kuzu
         KUZU_DIR=$(go list -m -f '{{`{{.Dir}}`}}' github.com/kuzudb/go-kuzu 2>/dev/null || true)
