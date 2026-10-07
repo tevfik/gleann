@@ -1,0 +1,3 @@
+[submodule "ext/eif-runtime"]
+	path = ext/eif-runtime
+	url = https://github.com/tevfik/eif-runtime.git
