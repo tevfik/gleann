@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -574,6 +575,9 @@ func cmdChat(args []string) {
 		if savedCfg.OllamaHost != "" {
 			chatCfg.BaseURL = savedCfg.OllamaHost
 		}
+		if savedCfg.RepeatPenalty > 0 {
+			chatCfg.RepeatPenalty = savedCfg.RepeatPenalty
+		}
 	}
 	if chatCfg.Provider == gleann.LLMOllama && chatCfg.BaseURL == "" {
 		chatCfg.BaseURL = cfg.OllamaHost
@@ -585,6 +589,15 @@ func cmdChat(args []string) {
 	}
 	if llmProvider := getFlag(args, "--llm-provider"); llmProvider != "" {
 		chatCfg.Provider = gleann.LLMProvider(llmProvider)
+	}
+	if repStr := getFlag(args, "--repeat-penalty"); repStr != "" {
+		if val, err := strconv.ParseFloat(repStr, 64); err == nil && val >= 0 {
+			chatCfg.RepeatPenalty = val
+		}
+	} else if repStr := getFlag(args, "--repetition-penalty"); repStr != "" {
+		if val, err := strconv.ParseFloat(repStr, 64); err == nil && val >= 0 {
+			chatCfg.RepeatPenalty = val
+		}
 	}
 
 	applyLlamaChatOverride(&chatCfg)
@@ -660,6 +673,7 @@ func printCmdAskUsage() {
 	fmt.Fprintln(os.Stderr, "  --word-wrap N        Wrap output at N columns (default: terminal width)")
 	fmt.Fprintln(os.Stderr, "  --no-cache           Do not save conversation")
 	fmt.Fprintln(os.Stderr, "  --no-limit           Remove token limit (unlimited output)")
+	fmt.Fprintln(os.Stderr, "  --repeat-penalty N   Repetition penalty for LLM sampling (e.g. 1.1, 1.2)")
 	os.Exit(1)
 }
 
@@ -719,6 +733,7 @@ func extractPositionalArgs(args []string) ([]string, []string) {
 		"--rerank-model": true, "--top-k": true, "--metric": true,
 		"--model": true, "--provider": true, "--host": true,
 		"--attach": true, "--image": true,
+		"--repeat-penalty": true, "--repetition-penalty": true,
 	}
 	for i := 0; i < len(args); i++ {
 		if (args[i] == "--attach" || args[i] == "--image") && i+1 < len(args) {
@@ -835,6 +850,15 @@ func buildChatConfig(args []string, config gleann.Config) gleann.ChatConfig {
 	}
 	if llmProvider := getFlag(args, "--llm-provider"); llmProvider != "" {
 		chatConfig.Provider = gleann.LLMProvider(llmProvider)
+	}
+	if repStr := getFlag(args, "--repeat-penalty"); repStr != "" {
+		if val, err := strconv.ParseFloat(repStr, 64); err == nil && val >= 0 {
+			chatConfig.RepeatPenalty = val
+		}
+	} else if repStr := getFlag(args, "--repetition-penalty"); repStr != "" {
+		if val, err := strconv.ParseFloat(repStr, 64); err == nil && val >= 0 {
+			chatConfig.RepeatPenalty = val
+		}
 	}
 
 	if hasFlag(args, "--smart-context") || hasFlag(args, "--compress-context") {

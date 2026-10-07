@@ -356,3 +356,28 @@ func containsString(s, sub string) bool {
 	}
 	return false
 }
+
+func TestChatRepeatPenalty(t *testing.T) {
+	cfg := DefaultChatConfig()
+	chat := NewChat(NullSearcher{}, cfg)
+
+	if chat.RepeatPenalty() != 1.1 {
+		t.Errorf("expected default RepeatPenalty=1.1, got %f", chat.RepeatPenalty())
+	}
+
+	chat.SetRepeatPenalty(1.25)
+	if chat.RepeatPenalty() != 1.25 {
+		t.Errorf("expected RepeatPenalty=1.25, got %f", chat.RepeatPenalty())
+	}
+	if chat.Config().RepeatPenalty != 1.25 {
+		t.Errorf("expected Config().RepeatPenalty=1.25, got %f", chat.Config().RepeatPenalty)
+	}
+}
+
+func TestDefaultChatConfigRepeatPenaltyEnv(t *testing.T) {
+	t.Setenv("GLEANN_REPEAT_PENALTY", "1.35")
+	cfg := DefaultChatConfig()
+	if cfg.RepeatPenalty != 1.35 {
+		t.Errorf("expected RepeatPenalty=1.35 from env, got %f", cfg.RepeatPenalty)
+	}
+}

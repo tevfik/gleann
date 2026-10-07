@@ -218,6 +218,9 @@ func runChatFlow() error {
 		if savedCfg.OpenAIKey != "" {
 			chatCfg.APIKey = savedCfg.OpenAIKey
 		}
+		if savedCfg.RepeatPenalty > 0 {
+			chatCfg.RepeatPenalty = savedCfg.RepeatPenalty
+		}
 
 		if savedCfg.LLMProvider == "llamacpp" {
 			fmt.Printf("🚀 Starting embedded llama.cpp server for chat model %s\n", chatCfg.Model)

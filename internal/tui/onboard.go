@@ -79,10 +79,11 @@ type OnboardResult struct {
 	LlamaCPPConfig gleann.LlamaCPPConfig `json:"llamacpp_config,omitempty"`
 
 	// Chat settings (persisted from settings panel).
-	SystemPrompt string  `json:"system_prompt,omitempty"`
-	Temperature  float64 `json:"temperature,omitempty"`
-	MaxTokens    int     `json:"max_tokens,omitempty"`
-	TopK         int     `json:"top_k,omitempty"`
+	SystemPrompt  string  `json:"system_prompt,omitempty"`
+	Temperature   float64 `json:"temperature,omitempty"`
+	RepeatPenalty float64 `json:"repeat_penalty,omitempty"`
+	MaxTokens     int     `json:"max_tokens,omitempty"`
+	TopK          int     `json:"top_k,omitempty"`
 
 	// Vector backend.
 	Backend string `json:"backend,omitempty"`

@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -34,10 +35,11 @@ type ChatConfig struct {
 	Model        string        `json:"model"`
 	BaseURL      string        `json:"base_url,omitempty"`
 	APIKey       string        `json:"api_key,omitempty"`
-	Temperature  float64       `json:"temperature,omitempty"`
-	MaxTokens    int           `json:"max_tokens,omitempty"`
-	SystemPrompt string        `json:"system_prompt,omitempty"`
-	Timeout      time.Duration `json:"timeout,omitempty"` // HTTP client timeout; 0 uses DefaultChatTimeout
+	Temperature     float64       `json:"temperature,omitempty"`
+	RepeatPenalty   float64       `json:"repeat_penalty,omitempty"`
+	MaxTokens       int           `json:"max_tokens,omitempty"`
+	SystemPrompt    string        `json:"system_prompt,omitempty"`
+	Timeout         time.Duration `json:"timeout,omitempty"` // HTTP client timeout; 0 uses DefaultChatTimeout
 	Think           *bool         `json:"think,omitempty"`   // Ollama: nil=model default, false=disable thinking
 	Format          any           `json:"format,omitempty"`  // Native structured output (JSON schema/format)
 	CompressContext bool          `json:"compress_context,omitempty"` // Smart AST-guided context compression
@@ -92,13 +94,26 @@ func DefaultChatConfig() ChatConfig {
 		f := false
 		think = &f
 	}
+
+	var repPenalty float64 = 1.1
+	if v := os.Getenv("GLEANN_REPEAT_PENALTY"); v != "" {
+		if f, err := strconv.ParseFloat(v, 64); err == nil && f > 0 {
+			repPenalty = f
+		}
+	} else if v := os.Getenv("GLEANN_REPETITION_PENALTY"); v != "" {
+		if f, err := strconv.ParseFloat(v, 64); err == nil && f > 0 {
+			repPenalty = f
+		}
+	}
+
 	return ChatConfig{
-		Provider:    LLMOllama,
-		Model:       DefaultModelName,
-		BaseURL:     DefaultOllamaHost,
-		Temperature: 0.7,
-		MaxTokens:   2048,
-		Think:       think,
+		Provider:      LLMOllama,
+		Model:         DefaultModelName,
+		BaseURL:       DefaultOllamaHost,
+		Temperature:   0.7,
+		RepeatPenalty: repPenalty,
+		MaxTokens:     2048,
+		Think:         think,
 		SystemPrompt: "You are a helpful assistant. Answer questions based on the provided context. " +
 			"If the context doesn't contain enough information, say so clearly.",
 	}
@@ -581,6 +596,16 @@ func (c *LeannChat) SetTemperature(t float64) {
 	c.config.Temperature = t
 }
 
+// SetRepeatPenalty updates the repetition penalty for subsequent requests.
+func (c *LeannChat) SetRepeatPenalty(r float64) {
+	c.config.RepeatPenalty = r
+}
+
+// RepeatPenalty returns the current repetition penalty.
+func (c *LeannChat) RepeatPenalty() float64 {
+	return c.config.RepeatPenalty
+}
+
 // SetMaxTokens updates the max tokens for subsequent requests.
 func (c *LeannChat) SetMaxTokens(n int) {
 	c.config.MaxTokens = n
@@ -678,6 +703,9 @@ func (c *LeannChat) chatOllama(ctx context.Context, messages []ChatMessage) (str
 			"temperature": c.config.Temperature,
 		},
 	}
+	if c.config.RepeatPenalty > 0 {
+		reqBody.Options["repeat_penalty"] = c.config.RepeatPenalty
+	}
 	if c.config.MaxTokens != 0 {
 		reqBody.Options["num_predict"] = c.config.MaxTokens
 	}
@@ -771,6 +799,7 @@ type openAIChatRequest struct {
 	Model          string        `json:"model"`
 	Messages       []ChatMessage `json:"messages"`
 	Temperature    float64       `json:"temperature,omitempty"`
+	RepeatPenalty  float64       `json:"repeat_penalty,omitempty"`
 	MaxTokens      int           `json:"max_tokens,omitempty"`
 	ResponseFormat any           `json:"response_format,omitempty"`
 }
@@ -780,6 +809,7 @@ type openAIMultimodalRequest struct {
 	Model          string        `json:"model"`
 	Messages       []interface{} `json:"messages"`
 	Temperature    float64       `json:"temperature,omitempty"`
+	RepeatPenalty  float64       `json:"repeat_penalty,omitempty"`
 	MaxTokens      int           `json:"max_tokens,omitempty"`
 	ResponseFormat any           `json:"response_format,omitempty"`
 }
@@ -832,6 +862,7 @@ func (c *LeannChat) chatOpenAI(ctx context.Context, messages []ChatMessage) (str
 			Model:          c.config.Model,
 			Messages:       toOpenAIMultimodalMessages(messages),
 			Temperature:    c.config.Temperature,
+			RepeatPenalty:  c.config.RepeatPenalty,
 			MaxTokens:      c.config.MaxTokens,
 			ResponseFormat: c.config.Format,
 		}
@@ -841,6 +872,7 @@ func (c *LeannChat) chatOpenAI(ctx context.Context, messages []ChatMessage) (str
 			Model:          c.config.Model,
 			Messages:       messages,
 			Temperature:    c.config.Temperature,
+			RepeatPenalty:  c.config.RepeatPenalty,
 			MaxTokens:      c.config.MaxTokens,
 			ResponseFormat: c.config.Format,
 		}
@@ -1058,6 +1090,9 @@ func (c *LeannChat) chatOllamaStream(ctx context.Context, messages []ChatMessage
 			"temperature": c.config.Temperature,
 		},
 	}
+	if c.config.RepeatPenalty > 0 {
+		reqBody.Options["repeat_penalty"] = c.config.RepeatPenalty
+	}
 	if c.config.MaxTokens != 0 {
 		reqBody.Options["num_predict"] = c.config.MaxTokens
 	}
@@ -1160,6 +1195,9 @@ func (c *LeannChat) chatOpenAIStream(ctx context.Context, messages []ChatMessage
 		"messages":    msgs,
 		"temperature": c.config.Temperature,
 		"stream":      true,
+	}
+	if c.config.RepeatPenalty > 0 {
+		reqBody["repeat_penalty"] = c.config.RepeatPenalty
 	}
 	if c.config.MaxTokens > 0 {
 		reqBody["max_tokens"] = c.config.MaxTokens

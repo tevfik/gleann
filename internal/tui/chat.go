@@ -7,6 +7,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"charm.land/bubbles/v2/key"
@@ -68,6 +69,7 @@ const (
 	fieldRerankToggle
 	fieldRerankModel
 	fieldRole
+	fieldRepeatPenalty
 	fieldSystemPrompt
 	fieldCount // sentinel
 )
@@ -75,6 +77,10 @@ const (
 var temperaturePresets = []float64{
 	0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0,
 	1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8, 1.9, 2.0,
+}
+
+var repeatPenaltyPresets = []float64{
+	1.0, 1.05, 1.1, 1.15, 1.2, 1.25, 1.3, 1.35, 1.4, 1.5, 1.6, 1.8, 2.0,
 }
 
 var maxTokensPresets = []int{
@@ -108,6 +114,7 @@ type ChatModel struct {
 	showSettings   bool
 	settingsCursor settingsField
 	temperature    float64
+	repeatPenalty  float64
 	maxTokens      int
 	topK           int
 	systemPrompt   string
@@ -252,6 +259,10 @@ func NewChatModel(chat *gleann.LeannChat, indexName, modelName string) ChatModel
 
 	// Start with defaults from the chat config provided by caller.
 	temperature := cfg.Temperature
+	repeatPenalty := cfg.RepeatPenalty
+	if repeatPenalty <= 0 {
+		repeatPenalty = 1.1
+	}
 	maxTokens := cfg.MaxTokens
 	topK := 10
 	systemPrompt := cfg.SystemPrompt
@@ -267,6 +278,9 @@ func NewChatModel(chat *gleann.LeannChat, indexName, modelName string) ChatModel
 		if savedCfg.Temperature > 0 {
 			temperature = savedCfg.Temperature
 		}
+		if savedCfg.RepeatPenalty > 0 {
+			repeatPenalty = savedCfg.RepeatPenalty
+		}
 		if savedCfg.MaxTokens > 0 {
 			maxTokens = savedCfg.MaxTokens
 		}
@@ -277,6 +291,7 @@ func NewChatModel(chat *gleann.LeannChat, indexName, modelName string) ChatModel
 
 	// Apply loaded settings to the chat engine immediately.
 	chat.SetTemperature(temperature)
+	chat.SetRepeatPenalty(repeatPenalty)
 	chat.SetMaxTokens(maxTokens)
 	chat.SetSystemPrompt(systemPrompt)
 
@@ -329,6 +344,7 @@ func NewChatModel(chat *gleann.LeannChat, indexName, modelName string) ChatModel
 		spinner:           sp,
 		messages:          initialMessages,
 		temperature:       temperature,
+		repeatPenalty:     repeatPenalty,
 		maxTokens:         maxTokens,
 		topK:              topK,
 		systemPrompt:      systemPrompt,
@@ -885,11 +901,23 @@ func (m *ChatModel) adjustSetting(dir int) {
 				m.roleIdx = len(m.roleNames) - 1
 			}
 		}
+
+	case fieldRepeatPenalty:
+		idx := findClosestFloat(repeatPenaltyPresets, m.repeatPenalty)
+		idx += dir
+		if idx < 0 {
+			idx = 0
+		}
+		if idx >= len(repeatPenaltyPresets) {
+			idx = len(repeatPenaltyPresets) - 1
+		}
+		m.repeatPenalty = repeatPenaltyPresets[idx]
 	}
 }
 
 func (m *ChatModel) applySettings() {
 	m.chat.SetTemperature(m.temperature)
+	m.chat.SetRepeatPenalty(m.repeatPenalty)
 	m.chat.SetMaxTokens(m.maxTokens)
 	m.chat.SetSystemPrompt(m.systemPrompt)
 
@@ -937,8 +965,8 @@ func (m *ChatModel) applySettings() {
 	}
 	m.messages = append(m.messages, chatMsg{
 		role: "system",
-		content: fmt.Sprintf("Settings updated — model: %s • temp: %.1f • max tokens: %d • top-k: %d • reranker: %s%s",
-			m.modelName, m.temperature, m.maxTokens, m.topK, rerankStatus, roleInfo),
+		content: fmt.Sprintf("Settings updated — model: %s • temp: %.1f • repeat penalty: %.2f • max tokens: %d • top-k: %d • reranker: %s%s",
+			m.modelName, m.temperature, m.repeatPenalty, m.maxTokens, m.topK, rerankStatus, roleInfo),
 	})
 	if m.ready {
 		m.viewport.SetContent(m.renderMessages())
@@ -950,6 +978,7 @@ func (m *ChatModel) applySettings() {
 		cfg.LLMModel = m.modelName
 		cfg.SystemPrompt = m.systemPrompt
 		cfg.Temperature = m.temperature
+		cfg.RepeatPenalty = m.repeatPenalty
 		cfg.MaxTokens = m.maxTokens
 		cfg.TopK = m.topK
 		cfg.RerankEnabled = m.rerankEnabled
@@ -1097,6 +1126,12 @@ func (m ChatModel) View() tea.View {
 	tempBadge := lipgloss.NewStyle().
 		Foreground(ColorAccent).
 		Render(fmt.Sprintf(" • t=%.1f", m.temperature))
+	repBadge := ""
+	if m.repeatPenalty > 0 {
+		repBadge = lipgloss.NewStyle().
+			Foreground(ColorAccent).
+			Render(fmt.Sprintf(" • rep=%.2f", m.repeatPenalty))
+	}
 	// Token budget badge.
 	budgetBadge := ""
 	if m.tokensSent > 0 || m.tokensReceived > 0 {
@@ -1131,7 +1166,7 @@ func (m ChatModel) View() tea.View {
 			Render(fmt.Sprintf(" • 📎×%d", len(m.attachedFiles)))
 	}
 
-	b.WriteString(header + indexBadge + modelBadge + tempBadge + budgetBadge + imageBadge + attachBadge + "\n")
+	b.WriteString(header + indexBadge + modelBadge + tempBadge + repBadge + budgetBadge + imageBadge + attachBadge + "\n")
 	sep := lipgloss.NewStyle().Foreground(ColorMuted).Render(strings.Repeat("─", m.width-2))
 	b.WriteString(sep + "\n")
 
@@ -1365,6 +1400,12 @@ func (m ChatModel) viewSettings() string {
 		}
 		b.WriteString("\n")
 	}
+
+	// Repeat Penalty.
+	b.WriteString(m.renderSlider(fieldRepeatPenalty, "Repeat Penalty",
+		fmt.Sprintf("%.2f", m.repeatPenalty),
+		(m.repeatPenalty-1.0)/1.0, panelW))
+	b.WriteString("\n")
 
 	// System Prompt.
 	if m.editingPrompt {
@@ -2312,6 +2353,7 @@ func (m ChatModel) handleSlashCommand(input string) (tea.Model, tea.Cmd, bool) {
 		m.messages = append(m.messages, chatMsg{
 			role: "system",
 			content: "Commands: /clear • /settings • /history • /help • /quit\n" +
+				"Sampling: /repeat <val> — set repetition penalty (e.g. 1.1, 1.2)\n" +
 				"Memory:   /remember <text> • /forget <query> • /memories • /new\n" +
 				"Media:    /image <path> — queue image for next message\n" +
 				"Files:    /attach <path> — add file/dir to session context • /detach <path>\n" +
@@ -2342,6 +2384,38 @@ func (m ChatModel) handleSlashCommand(input string) (tea.Model, tea.Cmd, bool) {
 		m.showHistory = true
 		m.textarea.Reset()
 		m.textarea.Blur()
+		return m, nil, true
+
+	case strings.HasPrefix(input, "/repeat ") || strings.HasPrefix(input, "/repeat-penalty ") || strings.HasPrefix(input, "/penalty "):
+		var valStr string
+		if strings.HasPrefix(input, "/repeat ") {
+			valStr = strings.TrimPrefix(input, "/repeat ")
+		} else if strings.HasPrefix(input, "/repeat-penalty ") {
+			valStr = strings.TrimPrefix(input, "/repeat-penalty ")
+		} else {
+			valStr = strings.TrimPrefix(input, "/penalty ")
+		}
+		valStr = strings.TrimSpace(valStr)
+		val, err := strconv.ParseFloat(valStr, 64)
+		if err != nil || val < 0.5 || val > 3.0 {
+			m.messages = append(m.messages, chatMsg{
+				role:    "system",
+				content: "Usage: /repeat <value> (e.g. 1.0, 1.1, 1.2 — typical range 1.0 - 2.0)",
+			})
+		} else {
+			m.repeatPenalty = val
+			m.chat.SetRepeatPenalty(val)
+			_ = UpdateConfig(func(cfg *OnboardResult) {
+				cfg.RepeatPenalty = val
+			})
+			m.messages = append(m.messages, chatMsg{
+				role:    "system",
+				content: fmt.Sprintf("✅ Repetition penalty set to %.2f", val),
+			})
+		}
+		m.textarea.Reset()
+		m.viewport.SetContent(m.renderMessages())
+		m.viewport.GotoBottom()
 		return m, nil, true
 
 	case strings.HasPrefix(input, "/remember "):

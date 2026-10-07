@@ -979,3 +979,65 @@ func TestFetchEIFModelsWithGGUFAndEIFM(t *testing.T) {
 	}
 }
 
+func TestChatModelRepeatPenaltySettings(t *testing.T) {
+	chat := gleann.NewChat(nil, gleann.DefaultChatConfig())
+	m := NewChatModel(chat, "idx", "mdl")
+	m.width = 100
+	m.height = 40
+	m.showSettings = true
+	m.settingsCursor = fieldRepeatPenalty
+	m.repeatPenalty = 1.1
+
+	// Increase repeat penalty
+	updated, _ := m.Update(tea.KeyPressMsg{Code: 'l'})
+	cm := updated.(ChatModel)
+	if cm.repeatPenalty <= 1.1 {
+		t.Errorf("repeatPenalty = %f, expected increase", cm.repeatPenalty)
+	}
+
+	// Render slider check
+	slider := cm.viewSettings()
+	if !strings.Contains(slider, "Repeat Penalty") {
+		t.Error("settings view should contain 'Repeat Penalty'")
+	}
+}
+
+func TestChatModelRepeatPenaltySlashCommand(t *testing.T) {
+	chat := gleann.NewChat(nil, gleann.DefaultChatConfig())
+	m := NewChatModel(chat, "idx", "mdl")
+
+	// Valid /repeat command
+	updated, _, handled := m.handleSlashCommand("/repeat 1.25")
+	if !handled {
+		t.Fatal("expected /repeat command to be handled")
+	}
+	cm := updated.(ChatModel)
+	if cm.repeatPenalty != 1.25 {
+		t.Errorf("expected repeatPenalty=1.25, got %f", cm.repeatPenalty)
+	}
+	if cm.chat.RepeatPenalty() != 1.25 {
+		t.Errorf("expected chat.RepeatPenalty=1.25, got %f", cm.chat.RepeatPenalty())
+	}
+
+	// Valid /penalty alias
+	updated2, _, handled2 := m.handleSlashCommand("/penalty 1.4")
+	if !handled2 {
+		t.Fatal("expected /penalty command to be handled")
+	}
+	cm2 := updated2.(ChatModel)
+	if cm2.repeatPenalty != 1.4 {
+		t.Errorf("expected repeatPenalty=1.4, got %f", cm2.repeatPenalty)
+	}
+
+	// Invalid input
+	updated3, _, handled3 := m.handleSlashCommand("/repeat invalid")
+	if !handled3 {
+		t.Fatal("expected /repeat with invalid input to be handled")
+	}
+	cm3 := updated3.(ChatModel)
+	lastMsg := cm3.messages[len(cm3.messages)-1].content
+	if !strings.Contains(lastMsg, "Usage:") {
+		t.Errorf("expected usage message, got %q", lastMsg)
+	}
+}
+
