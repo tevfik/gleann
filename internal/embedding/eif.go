@@ -15,7 +15,6 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"strings"
 	"sync"
 	"unsafe"
 )
@@ -36,24 +35,12 @@ var (
 
 func resolveEIFModelPath(model string) (string, error) {
 	if model == "" {
-		model = "minilm_bert.eifm"
+		model = "minilm.gguf"
 	}
 
 	// 1. Direct path check
 	if _, err := os.Stat(model); err == nil {
 		return model, nil
-	}
-
-	// If given a .gguf path, check for sibling .eifm
-	if strings.HasSuffix(model, ".gguf") {
-		candidate := strings.TrimSuffix(model, ".gguf") + "_bert.eifm"
-		if _, err := os.Stat(candidate); err == nil {
-			return candidate, nil
-		}
-		candidate2 := strings.TrimSuffix(model, ".gguf") + ".eifm"
-		if _, err := os.Stat(candidate2); err == nil {
-			return candidate2, nil
-		}
 	}
 
 	// 2. Check ~/.gleann/models/

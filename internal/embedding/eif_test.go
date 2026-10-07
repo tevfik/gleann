@@ -22,10 +22,10 @@ func cosineSimilarity(a, b []float32) float32 {
 	return dot / (float32(math.Sqrt(float64(normA))) * float32(math.Sqrt(float64(normB))))
 }
 
-func TestEIFComputer(t *testing.T) {
+func testEmbeddingWithModel(t *testing.T, modelName string) {
 	comp := NewComputer(Options{
 		Provider: ProviderEIF,
-		Model:    "minilm_bert.eifm",
+		Model:    modelName,
 	})
 
 	ctx := context.Background()
@@ -40,16 +40,16 @@ func TestEIFComputer(t *testing.T) {
 	elapsed := time.Since(t0)
 
 	if err != nil {
-		t.Fatalf("EIF Compute failed: %v", err)
+		t.Fatalf("[%s] EIF Compute failed: %v", modelName, err)
 	}
 
 	if len(embeddings) != 3 {
-		t.Fatalf("expected 3 embeddings, got %d", len(embeddings))
+		t.Fatalf("[%s] expected 3 embeddings, got %d", modelName, len(embeddings))
 	}
 
 	for i, emb := range embeddings {
 		if len(emb) != 384 {
-			t.Errorf("text %d: expected dim 384, got %d", i, len(emb))
+			t.Errorf("[%s] text %d: expected dim 384, got %d", modelName, i, len(emb))
 		}
 	}
 
@@ -57,12 +57,22 @@ func TestEIFComputer(t *testing.T) {
 	sim13 := cosineSimilarity(embeddings[0], embeddings[2])
 	sim23 := cosineSimilarity(embeddings[1], embeddings[2])
 
-	t.Logf("Computed %d embeddings in %v (avg %.2f ms/emb)", len(texts), elapsed, float64(elapsed.Milliseconds())/float64(len(texts)))
-	t.Logf("Sim(1, 2) [Sorting vs Ordering]: %.4f", sim12)
-	t.Logf("Sim(1, 3) [Sorting vs Pizza]:    %.4f", sim13)
-	t.Logf("Sim(2, 3) [Ordering vs Pizza]:   %.4f", sim23)
+	t.Logf("[%s] Computed %d embeddings in %v (avg %.2f ms/emb)",
+		modelName, len(texts), elapsed, float64(elapsed.Milliseconds())/float64(len(texts)))
+	t.Logf("[%s] Sim(1, 2) [Sorting vs Ordering]: %.4f", modelName, sim12)
+	t.Logf("[%s] Sim(1, 3) [Sorting vs Pizza]:    %.4f", modelName, sim13)
+	t.Logf("[%s] Sim(2, 3) [Ordering vs Pizza]:   %.4f", modelName, sim23)
 
 	if sim12 <= sim13 || sim12 <= sim23 {
-		t.Errorf("Semantic clustering check failed: sim12=%.4f should be greater than sim13=%.4f and sim23=%.4f", sim12, sim13, sim23)
+		t.Errorf("[%s] Semantic clustering check failed: sim12=%.4f should be greater than sim13=%.4f and sim23=%.4f",
+			modelName, sim12, sim13, sim23)
 	}
+}
+
+func TestEIFComputerGGUF(t *testing.T) {
+	testEmbeddingWithModel(t, "minilm.gguf")
+}
+
+func TestEIFComputerEIFM(t *testing.T) {
+	testEmbeddingWithModel(t, "minilm_bert.eifm")
 }
