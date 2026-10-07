@@ -2,6 +2,30 @@
 
 All notable changes to this project will be documented in this file.
 
+## [v1.8.2] — 2026-10-07
+
+### Added
+- **In-Process EIF-Runtime Integration**:
+  - Embedded high-performance C99 `eif-runtime` engine as a Git submodule (`ext/eif-runtime`) compiled directly into `gleann-full` standalone binaries.
+  - Zero-heap, zero-copy `mmap` CPU inference achieving 450+ embeddings/sec for MiniLM and 90+ embeddings/sec for 12-layer models.
+  - Added native EIF provider support (`ProviderEIF = "eif"`) across TUI onboarding wizard, model scanner, CLI indexing, and Go embedding computers.
+  - Supported direct loading of both `.eifm` binary models and GGUF (`.gguf`, `_q8_0.gguf`) BERT-family models without external Python or server dependencies.
+- **Multimodal Chat & Screenshot Capture**:
+  - Added `/screenshot` (and `/shot`, `/paste-image`) slash commands to interactive TUI chat.
+  - Automatic clipboard image capture via `wl-paste` (Wayland), `xclip` (X11), `pngpaste` (macOS), or PowerShell (Windows) with automatic screen capture fallback.
+  - Queued images are formatted and sent seamlessly alongside user prompts to vision/multimodal models (Ollama, OpenAI, Anthropic).
+- **Repetition Penalty Configuration**:
+  - Added configurable repetition penalty across CLI flags (`--repeat-penalty`, `--repetition-penalty`), environment variables (`GLEANN_REPEAT_PENALTY`), TUI settings slider, and interactive slash commands (`/repeat <val>`, `/penalty <val>`).
+  - Seamlessly propagated across Ollama (`options.repeat_penalty`) and OpenAI/llama.cpp APIs.
+
+### Fixed
+- **EIF-Runtime BERT Engine Robustness**:
+  - Added support for quantized `Q8_0` position embeddings (`position_embd.weight`) in GGUF models with on-the-fly FP32 dequantization, fixing NaN generation in models such as Multilingual-E5.
+  - Added dynamic vocabulary hash table allocation (up to 512K slots) to support large multilingual models (250K+ tokens) without collision drops.
+  - Added detection and mapping for SentencePiece / LLaMA special tokens (`<s>`, `</s>`, `<unk>`, `<pad>`) via GGUF metadata (`tokenizer.ggml.bos_token_id` / `eos_token_id`).
+- **TUI Settings Alignment**:
+  - Positioned Repetition Penalty slider directly below Temperature in TUI Settings menu for intuitive keyboard navigation.
+
 ## [v1.8.1] — 2026-10-06
 
 ### Fixed
