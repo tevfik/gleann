@@ -70,3 +70,7 @@ se/
 tests/benchmarks/multilang_benchmark.sh
 tests/benchmarks/results/
 patch.py:text
+
+# Host-extracted FAISS build libraries
+deps/faiss_install/lib/libopenblas*
+deps/faiss_install/lib/libgfortran*

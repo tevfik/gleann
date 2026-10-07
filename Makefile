@@ -1,4 +1,7 @@
 # Gleann Makefile
+export PATH := $(HOME)/.local/go/bin:$(PATH)
+ORIGINAL_HOME ?= $(HOME)
+export PYTHONUSERBASE ?= $(ORIGINAL_HOME)/.local
 # Usage:
 #   make               — build pure Go binary (gleann)
 #   make full          — build FAISS + tree-sitter binary (gleann-full)
@@ -102,8 +105,17 @@ build-cgo: prepare-assets
 	fi
 	@echo "✅ Built $(BUILD_DIR)/gleann-cgo (with CGo and tree-sitter)"
 
+.PHONY: build-eif-lib
+build-eif-lib:
+	@if [ -d ext/eif-runtime ] && command -v cmake >/dev/null 2>&1; then \
+		echo "🔧 Building eif-runtime static library..."; \
+		mkdir -p ext/eif-runtime/build && \
+		cmake -B ext/eif-runtime/build -S ext/eif-runtime -DCMAKE_BUILD_TYPE=Release && \
+		cmake --build ext/eif-runtime/build --target eif_runtime_static; \
+	fi
+
 .PHONY: build-eif
-build-eif: prepare-assets
+build-eif: build-eif-lib prepare-assets
 	@mkdir -p $(BUILD_DIR)
 	@if command -v go >/dev/null 2>&1; then \
 		CGO_ENABLED=1 go build -tags "eif" -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/gleann-eif $(CMD); \
@@ -119,7 +131,7 @@ build-rust-core:
 		cd ext/gleann-core-rs && cargo build --release; \
 	fi
 
-# ── Full Binary (Tree-sitter + KuzuDB CGo) ───────────────────────────────────
+# ── Full Binary (Tree-sitter + KuzuDB CGo + EIF-Runtime) ─────────────────────
 .PHONY: builder-image
 builder-image:
 	@if command -v docker >/dev/null 2>&1; then \
@@ -132,19 +144,22 @@ builder-image:
 .PHONY: full
 full: $(BINARY_FULL)
 
-$(BINARY_FULL): prepare-assets builder-image
-	@echo "🔧 Building $(BINARY_FULL) with FAISS + Tree-sitter + KuzuDB CGo (standalone single executable)..."
+$(BINARY_FULL): build-eif-lib prepare-assets builder-image
+	@echo "🔧 Building $(BINARY_FULL) with FAISS + Tree-sitter + KuzuDB CGo + EIF Runtime (standalone single executable)..."
 	@mkdir -p $(BUILD_DIR)/stage
 	@if command -v go >/dev/null 2>&1; then \
 		CGO_ENABLED=1 \
 		CGO_CFLAGS="-w -I$(FAISS_INC_DIR)" \
 		CGO_CXXFLAGS="-w -I$(FAISS_INC_DIR)" \
 		CGO_LDFLAGS="$(RPATH_FLAGS) -L$(FAISS_LIB_DIR) -lfaiss_c -lfaiss -lopenblas -lgomp -lstdc++ -lm" \
-		go build -tags "treesitter,faiss" -ldflags "$(LDFLAGS) -extldflags '$(RPATH_FLAGS)'" -o $(BUILD_DIR)/stage/gleann-full-bin $(CMD) && \
+		go build -tags "treesitter,faiss,eif" -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/stage/gleann-full-bin $(CMD) && \
 		go mod download github.com/kuzudb/go-kuzu && \
 		KUZU_DIR=$$(go list -m -f '{{.Dir}}' github.com/kuzudb/go-kuzu 2>/dev/null || true); \
 		if [ -z "$$KUZU_DIR" ]; then KUZU_DIR=$$(find $$(go env GOPATH)/pkg/mod/github.com/kuzudb/go-kuzu* -maxdepth 0 2>/dev/null | head -n 1); fi; \
 		cp "$$KUZU_DIR/lib/dynamic/linux-amd64/libkuzu.so" $(BUILD_DIR)/stage/ 2>/dev/null || true; \
+		cp -L $(FAISS_LIB_DIR)/libopenblas.so.0 $(BUILD_DIR)/stage/ 2>/dev/null || cp -L /usr/lib/x86_64-linux-gnu/libopenblas.so.0 $(BUILD_DIR)/stage/ 2>/dev/null || true; \
+		cp -L /usr/lib/x86_64-linux-gnu/libgomp.so.1 $(BUILD_DIR)/stage/ 2>/dev/null || true; \
+		cp -L $(FAISS_LIB_DIR)/libgfortran.so.5 $(BUILD_DIR)/stage/ 2>/dev/null || cp -L /usr/lib/x86_64-linux-gnu/libgfortran.so.5 $(BUILD_DIR)/stage/ 2>/dev/null || true; \
 		if command -v patchelf >/dev/null 2>&1; then \
 			patchelf --set-rpath '$$ORIGIN:$$ORIGIN/../lib:/usr/local/lib:$(USER_LIB_DIR)' $(BUILD_DIR)/stage/gleann-full-bin 2>/dev/null || true; \
 			for so in $(BUILD_DIR)/stage/*.so*; do \
@@ -219,19 +234,39 @@ install: $(BINARY_FULL)
 	@echo "✅ Installed $(BINARY_FULL) → $(INSTALL_DIR)/gleann"
 
 # ── Tests ────────────────────────────────────────────────────────────────────
+ORIGINAL_GOPATH ?= $(shell go env GOPATH 2>/dev/null || echo $(HOME)/go)
+
 .PHONY: test
 test:
 	@if command -v go >/dev/null 2>&1; then \
-		mkdir -p build/test-home; \
-		GLEANN_TEST_MODE=true HOME=$(shell pwd)/build/test-home go test -race -timeout 120s $$(go list ./... | grep -v /tests/benchmarks); \
+		mkdir -p /tmp/gleann-test-home; \
+		GLEANN_TEST_MODE=true GOPATH=$(ORIGINAL_GOPATH) HOME=/tmp/gleann-test-home go test -race -timeout 120s $$(go list ./... | grep -v /tests/benchmarks); \
 	elif command -v docker >/dev/null 2>&1; then \
 		docker run --rm -v $$(pwd):/app -w /app golang:1.25-bookworm sh -c "go test -v -timeout 120s \$$(go list ./... | grep -v /tests/benchmarks)"; \
 	fi
 
+.PHONY: test-integration
+test-integration:
+	@if command -v go >/dev/null 2>&1; then \
+		mkdir -p /tmp/gleann-test-home; \
+		GLEANN_TEST_MODE=true GOPATH=$(ORIGINAL_GOPATH) HOME=/tmp/gleann-test-home go test -v -timeout 5m ./tests/integration/...; \
+	elif command -v docker >/dev/null 2>&1; then \
+		docker run --rm --network host -v $$(pwd):/app -w /app golang:1.25-alpine sh -c "go test -v -timeout 5m ./tests/integration/..."; \
+	fi
+
 .PHONY: test-e2e
 test-e2e:
-	@if command -v docker >/dev/null 2>&1; then \
-		docker run --rm --network host -v $$(pwd):/app -w /app golang:1.25-alpine sh -c "go test -v -timeout 5m ./tests/integration/..."; \
+	@if command -v go >/dev/null 2>&1; then \
+		mkdir -p /tmp/gleann-test-home; \
+		GLEANN_TEST_MODE=true GOPATH=$(ORIGINAL_GOPATH) HOME=/tmp/gleann-test-home go test -v -timeout 5m ./tests/e2e/...; \
+	elif command -v docker >/dev/null 2>&1; then \
+		docker run --rm --network host -v $$(pwd):/app -w /app golang:1.25-alpine sh -c "go test -v -timeout 5m ./tests/e2e/..."; \
+	fi
+
+.PHONY: test-eif
+test-eif: build-eif-lib
+	@if command -v go >/dev/null 2>&1; then \
+		go test -v -tags "eif" ./internal/embedding -run TestEIF; \
 	fi
 
 # ── Clean ────────────────────────────────────────────────────────────────────
