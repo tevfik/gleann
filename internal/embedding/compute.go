@@ -30,6 +30,7 @@ const (
 	ProviderOpenAI   Provider = "openai"
 	ProviderGemini   Provider = "gemini"
 	ProviderNative   Provider = "native"
+	ProviderEIF      Provider = "eif"
 	ProviderMock     Provider = "mock"
 )
 
@@ -65,6 +66,8 @@ func NewComputer(opts Options) *Computer {
 			opts.BatchSize = 256 // Optimized for stability and GPU throughput without OOM
 		} else if opts.Provider == ProviderLlamaCPP {
 			opts.BatchSize = 32 // Optimal for local CPU llama-server without memory or token limit contention
+		} else if opts.Provider == ProviderEIF {
+			opts.BatchSize = 64 // In-process eif-runtime CPU batch
 		} else {
 			opts.BatchSize = 100 // External APIs handle larger batches
 		}
@@ -110,6 +113,8 @@ func NewComputer(opts Options) *Computer {
 			opts.Concurrency = 2 // Prevents GPU VRAM exhaustion and thread contention
 		} else if opts.Provider == ProviderLlamaCPP {
 			opts.Concurrency = 2 // Embedded CPU server performs best with low concurrency
+		} else if opts.Provider == ProviderEIF {
+			opts.Concurrency = 1 // EIF runtime handles multi-core OpenMP parallelization internally
 		} else {
 			opts.Concurrency = 20 // External providers
 		}
@@ -218,6 +223,8 @@ func (c *Computer) Compute(ctx context.Context, texts []string) ([][]float32, er
 					embeddings, err = c.computeGemini(ctx, batch)
 				case ProviderNative:
 					embeddings, err = c.computeNative(ctx, batch)
+				case ProviderEIF:
+					embeddings, err = c.computeEIF(ctx, batch)
 				case ProviderMock:
 					embeddings, err = c.computeMock(ctx, batch)
 				default:
@@ -245,6 +252,8 @@ func (c *Computer) Compute(ctx context.Context, texts []string) ([][]float32, er
 							single, singleErr = c.computeGemini(ctx, []string{truncated})
 						case ProviderNative:
 							single, singleErr = c.computeNative(ctx, []string{truncated})
+						case ProviderEIF:
+							single, singleErr = c.computeEIF(ctx, []string{truncated})
 						case ProviderMock:
 							single, singleErr = c.computeMock(ctx, []string{truncated})
 						default:
