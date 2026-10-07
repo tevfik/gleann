@@ -15,6 +15,8 @@ vars:
   USER_BIN_DIR: '{{.HOME}}/.local/bin'
   UNAME_S:
     sh: uname -s
+  UNAME_M:
+    sh: uname -m
   
   # Platform detection logic
   RPATH_FLAGS: '{{if eq .UNAME_S "Darwin"}}-Wl,-rpath,@loader_path -Wl,-rpath,@executable_path{{else}}-Wl,-rpath,\$$ORIGIN{{end}}'
@@ -131,9 +133,10 @@ tasks:
         fi
         if [ "{{.UNAME_S}}" = "Darwin" ]; then
           cp "$KUZU_DIR/lib/dynamic/darwin/libkuzu.dylib" {{.BUILD_DIR}}/stage/
-        else
-          cp "$KUZU_DIR/lib/dynamic/linux-amd64/libkuzu.so" {{.BUILD_DIR}}/stage/ 2>/dev/null || \
+        elif [ "$GOARCH" = "arm64" ] || [ "{{.UNAME_M}}" = "aarch64" ] || [ "{{.UNAME_M}}" = "arm64" ]; then
           cp "$KUZU_DIR/lib/dynamic/linux-arm64/libkuzu.so" {{.BUILD_DIR}}/stage/
+        else
+          cp "$KUZU_DIR/lib/dynamic/linux-amd64/libkuzu.so" {{.BUILD_DIR}}/stage/
         fi
       - |
         if [ ! -f {{.BUILD_DIR}}/stage/libkuzu.* ]; then
