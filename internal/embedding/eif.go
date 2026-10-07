@@ -4,7 +4,9 @@ package embedding
 
 /*
 #cgo CFLAGS: -I${SRCDIR}/../../ext/eif-runtime/include -O3
-#cgo LDFLAGS: ${SRCDIR}/../../ext/eif-runtime/build/libeif_runtime.a -lm -fopenmp
+#cgo linux LDFLAGS: ${SRCDIR}/../../ext/eif-runtime/build/libeif_runtime.a -lm -fopenmp
+#cgo darwin LDFLAGS: ${SRCDIR}/../../ext/eif-runtime/build/libeif_runtime.a -lm
+#cgo windows LDFLAGS: ${SRCDIR}/../../ext/eif-runtime/build/libeif_runtime.a -lm
 #include "eif_bert.h"
 #include <stdlib.h>
 */
