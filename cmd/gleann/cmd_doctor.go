@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/tevfik/gleann/internal/tui"
@@ -42,20 +43,35 @@ func cmdDoctor() {
 	host := "http://localhost:11434"
 	if cfg != nil && cfg.OllamaHost != "" {
 		host = cfg.OllamaHost
+	} else if envHost := os.Getenv("OLLAMA_HOST"); envHost != "" {
+		host = envHost
 	}
+	if !strings.HasPrefix(host, "http://") && !strings.HasPrefix(host, "https://") {
+		host = "http://" + host
+	}
+
+	ollamaUsed := cfg == nil || cfg.EmbeddingProvider == "ollama" || cfg.LLMProvider == "ollama"
 
 	client := &http.Client{Timeout: 5 * time.Second}
 	resp, err := client.Get(host + "/api/tags")
 	if err != nil {
-		fail(fmt.Sprintf("Cannot reach Ollama at %s — is it running?", host))
-		fail("  Fix: ollama serve   (or systemctl start ollama)")
+		if ollamaUsed {
+			fail(fmt.Sprintf("Cannot reach Ollama at %s — is it running?", host))
+			fail("  Fix: ollama serve   (or systemctl start ollama)")
+		} else {
+			warn(fmt.Sprintf("Cannot reach Ollama at %s (optional — current providers: emb=%s, llm=%s)", host, cfg.EmbeddingProvider, cfg.LLMProvider))
+		}
 	} else {
 		resp.Body.Close()
 		if resp.StatusCode == http.StatusOK {
 			ok(fmt.Sprintf("Ollama reachable at %s", host))
 			checkModels(cfg, host, ok, warn, fail)
 		} else {
-			fail(fmt.Sprintf("Ollama returned HTTP %d at %s", resp.StatusCode, host))
+			if ollamaUsed {
+				fail(fmt.Sprintf("Ollama returned HTTP %d at %s", resp.StatusCode, host))
+			} else {
+				warn(fmt.Sprintf("Ollama returned HTTP %d at %s (optional)", resp.StatusCode, host))
+			}
 		}
 	}
 

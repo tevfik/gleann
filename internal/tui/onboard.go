@@ -597,6 +597,9 @@ func (m OnboardModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	// ── Text inputs ──
 	case phaseEmbHost:
 		if key == "enter" {
+			if m.embHostInput.Value() != "" && m.embProviders[m.embProviderIdx] == "ollama" && m.llmProviders[m.llmProviderIdx] == "ollama" {
+				m.llmHostInput.SetValue(m.embHostInput.Value())
+			}
 			if m.menuMode {
 				m.phase = phaseMenu
 				return m, nil
@@ -616,6 +619,9 @@ func (m OnboardModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 	case phaseLLMHost:
 		if key == "enter" {
+			if m.llmHostInput.Value() != "" && m.embProviders[m.embProviderIdx] == "ollama" && m.llmProviders[m.llmProviderIdx] == "ollama" {
+				m.embHostInput.SetValue(m.llmHostInput.Value())
+			}
 			if m.menuMode {
 				m.phase = phaseMenu
 				return m, nil
@@ -748,9 +754,12 @@ func (m OnboardModel) handleMenuKeys(key string) (tea.Model, tea.Cmd) {
 		target := item.phase
 		if target == phaseEmbHost {
 			if m.embProviders[m.embProviderIdx] == "llamacpp" || m.embProviders[m.embProviderIdx] == "native" || m.embProviders[m.embProviderIdx] == "eif" {
-				return m, nil
-			}
-			if m.embProviders[m.embProviderIdx] == "openai" {
+				if m.llmProviders[m.llmProviderIdx] == "ollama" {
+					target = phaseLLMHost
+				} else {
+					return m, nil
+				}
+			} else if m.embProviders[m.embProviderIdx] == "openai" {
 				target = phaseEmbAPIKey
 			}
 		}
@@ -833,7 +842,9 @@ func (m OnboardModel) handleEmbProviderKeys(key string) (tea.Model, tea.Cmd) {
 		}
 		prov := m.embProviders[m.embProviderIdx]
 		if prov == "ollama" {
-			m.embHostInput.SetValue(gleann.DefaultOllamaHost)
+			if m.embHostInput.Value() == "" {
+				m.embHostInput.SetValue(gleann.DefaultOllamaHost)
+			}
 			m.embHostInput.Focus()
 			m.phase = phaseEmbHost
 			return m, textinput.Blink
@@ -871,7 +882,13 @@ func (m OnboardModel) handleLLMProviderKeys(key string) (tea.Model, tea.Cmd) {
 			return m, m.fetchLLMModels()
 		}
 		if prov == "ollama" {
-			m.llmHostInput.SetValue(gleann.DefaultOllamaHost)
+			if m.llmHostInput.Value() == "" {
+				if m.embHostInput.Value() != "" && m.embProviders[m.embProviderIdx] == "ollama" {
+					m.llmHostInput.SetValue(m.embHostInput.Value())
+				} else {
+					m.llmHostInput.SetValue(gleann.DefaultOllamaHost)
+				}
+			}
 			m.llmHostInput.Focus()
 			m.phase = phaseLLMHost
 			return m, textinput.Blink
@@ -1045,10 +1062,23 @@ func (m *OnboardModel) buildResult() {
 		llamaCfg = gleann.DefaultConfig().LlamaCPPConfig
 	}
 
+	ollamaHost := ""
+	if m.embProviders[m.embProviderIdx] == "ollama" && m.embHostInput.Value() != "" {
+		ollamaHost = m.embHostInput.Value()
+	} else if m.llmProviders[m.llmProviderIdx] == "ollama" && m.llmHostInput.Value() != "" {
+		ollamaHost = m.llmHostInput.Value()
+	} else if m.existingCfg != nil && m.existingCfg.OllamaHost != "" {
+		ollamaHost = m.existingCfg.OllamaHost
+	} else if m.embHostInput.Value() != "" && m.embProviders[m.embProviderIdx] != "llamacpp" {
+		ollamaHost = m.embHostInput.Value()
+	} else if m.llmHostInput.Value() != "" {
+		ollamaHost = m.llmHostInput.Value()
+	}
+
 	m.result = OnboardResult{
 		EmbeddingProvider:  m.embProviders[m.embProviderIdx],
 		EmbeddingModel:     embModel,
-		OllamaHost:         m.embHostInput.Value(),
+		OllamaHost:         ollamaHost,
 		OpenAIKey:          m.embKeyInput.Value(),
 		OpenAIBaseURL:      m.openAIBaseURL(),
 		AnthropicKey:       m.llmKeyInput.Value(),
@@ -1070,12 +1100,14 @@ func (m *OnboardModel) buildResult() {
 		LlamaCPPConfig:     llamaCfg,
 	}
 
-	// Clean up fields if it was repurposed for llamacpp or native or eif.
-	if m.result.EmbeddingProvider == "llamacpp" || m.result.EmbeddingProvider == "native" || m.result.EmbeddingProvider == "eif" {
+	// Clean up fields if neither embedding nor LLM uses Ollama
+	if (m.result.EmbeddingProvider == "llamacpp" || m.result.EmbeddingProvider == "native") && m.result.LLMProvider != "ollama" {
+		m.result.OllamaHost = ""
+	} else if m.result.EmbeddingProvider == "llamacpp" && m.result.LLMProvider == "ollama" && m.result.OllamaHost == gleann.DefaultOllamaHost {
 		m.result.OllamaHost = ""
 	}
-	if m.result.LLMProvider == "llamacpp" {
-		// Nothing to clean up since LLMHost is just transient
+	if m.result.LLMProvider == "llamacpp" && m.result.EmbeddingProvider != "ollama" {
+		m.result.OllamaHost = ""
 	}
 
 	// Preserve chat settings from existing config.

@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/tevfik/gleann/internal/tui"
@@ -27,9 +28,11 @@ func cmdConfig(args []string) {
 		cmdConfigEdit()
 	case "validate":
 		cmdConfigValidate()
+	case "set":
+		cmdConfigSet(args[1:])
 	default:
 		fmt.Fprintf(os.Stderr, "unknown config subcommand: %s\n", sub)
-		fmt.Fprintln(os.Stderr, "usage: gleann config <show|path|edit|validate>")
+		fmt.Fprintln(os.Stderr, "usage: gleann config <show|path|edit|validate|set>")
 		os.Exit(1)
 	}
 }
@@ -195,3 +198,56 @@ func valueOrDefault(s, def string) string {
 	}
 	return s
 }
+
+func cmdConfigSet(args []string) {
+	if len(args) < 2 {
+		fmt.Fprintln(os.Stderr, "usage: gleann config set <key> <value>")
+		fmt.Fprintln(os.Stderr, "examples:")
+		fmt.Fprintln(os.Stderr, "  gleann config set ollama_host http://localhost:11435")
+		fmt.Fprintln(os.Stderr, "  gleann config set embedding_provider eif")
+		fmt.Fprintln(os.Stderr, "  gleann config set llm_model qwen2.5:7b")
+		os.Exit(1)
+	}
+	key := strings.ToLower(args[0])
+	val := args[1]
+
+	err := tui.UpdateConfig(func(cfg *tui.OnboardResult) {
+		switch key {
+		case "ollama_host", "ollama-host", "host":
+			if !strings.HasPrefix(val, "http://") && !strings.HasPrefix(val, "https://") {
+				val = "http://" + val
+			}
+			cfg.OllamaHost = val
+		case "embedding_provider", "emb_provider":
+			cfg.EmbeddingProvider = val
+		case "embedding_model", "emb_model":
+			cfg.EmbeddingModel = val
+		case "llm_provider":
+			cfg.LLMProvider = val
+		case "llm_model":
+			cfg.LLMModel = val
+		case "openai_api_key", "openai_key":
+			cfg.OpenAIKey = val
+		case "openai_base_url":
+			cfg.OpenAIBaseURL = val
+		case "anthropic_api_key", "anthropic_key":
+			cfg.AnthropicKey = val
+		case "index_dir", "index-dir":
+			cfg.IndexDir = val
+		case "server_addr", "server-addr":
+			cfg.ServerAddr = val
+		case "backend":
+			cfg.Backend = val
+		default:
+			fmt.Fprintf(os.Stderr, "unknown config key: %s\n", key)
+			os.Exit(1)
+		}
+		cfg.Completed = true
+	})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error updating config: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Printf("✅ Updated %s = %s\n", key, val)
+}
+
