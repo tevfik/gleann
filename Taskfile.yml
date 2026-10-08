@@ -100,6 +100,14 @@ tasks:
           (cd ext/eif-runtime/build && cmake -DCMAKE_BUILD_TYPE=Release .. && make eif_runtime_static)
         fi
 
+  build-eif:
+    desc: Build standalone gleann with embedded EIF runtime (no FAISS/Kuzu dependencies)
+    deps: [build-eif-lib, prepare-assets]
+    cmds:
+      - mkdir -p {{.BUILD_DIR}}
+      - CGO_ENABLED=1 go build -tags "eif" -ldflags "{{.LDFLAGS}}" -o {{.BUILD_DIR}}/gleann-eif {{.CMD}}
+      - echo "✅ Built {{.BUILD_DIR}}/gleann-eif (embedded EIF runtime)"
+
   full:
     desc: Build FAISS + tree-sitter single-executable binary (gleann-full)
     deps: [build-rust-core, build-eif-lib, prepare-assets]
