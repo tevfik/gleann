@@ -213,9 +213,13 @@ func cmdConfigSet(args []string) {
 
 	err := tui.UpdateConfig(func(cfg *tui.OnboardResult) {
 		switch key {
-		case "ollama_host", "ollama-host", "host":
-			if !strings.HasPrefix(val, "http://") && !strings.HasPrefix(val, "https://") {
-				val = "http://" + val
+		case "ollama_host", "ollama-host", "host", "port":
+			if !strings.Contains(val, "://") {
+				if !strings.Contains(val, ":") {
+					val = "http://localhost:" + val
+				} else {
+					val = "http://" + val
+				}
 			}
 			cfg.OllamaHost = val
 		case "embedding_provider", "emb_provider":

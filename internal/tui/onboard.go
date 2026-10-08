@@ -597,8 +597,19 @@ func (m OnboardModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	// ── Text inputs ──
 	case phaseEmbHost:
 		if key == "enter" {
-			if m.embHostInput.Value() != "" && m.embProviders[m.embProviderIdx] == "ollama" && m.llmProviders[m.llmProviderIdx] == "ollama" {
-				m.llmHostInput.SetValue(m.embHostInput.Value())
+			val := m.embHostInput.Value()
+			if val != "" && m.embProviders[m.embProviderIdx] == "ollama" {
+				if !strings.Contains(val, "://") {
+					if !strings.Contains(val, ":") {
+						val = "http://localhost:" + val
+					} else {
+						val = "http://" + val
+					}
+					m.embHostInput.SetValue(val)
+				}
+				if m.llmProviders[m.llmProviderIdx] == "ollama" {
+					m.llmHostInput.SetValue(val)
+				}
 			}
 			if m.menuMode {
 				m.phase = phaseMenu
@@ -619,8 +630,19 @@ func (m OnboardModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 	case phaseLLMHost:
 		if key == "enter" {
-			if m.llmHostInput.Value() != "" && m.embProviders[m.embProviderIdx] == "ollama" && m.llmProviders[m.llmProviderIdx] == "ollama" {
-				m.embHostInput.SetValue(m.llmHostInput.Value())
+			val := m.llmHostInput.Value()
+			if val != "" && m.llmProviders[m.llmProviderIdx] == "ollama" {
+				if !strings.Contains(val, "://") {
+					if !strings.Contains(val, ":") {
+						val = "http://localhost:" + val
+					} else {
+						val = "http://" + val
+					}
+					m.llmHostInput.SetValue(val)
+				}
+				if m.embProviders[m.embProviderIdx] == "ollama" {
+					m.embHostInput.SetValue(val)
+				}
 			}
 			if m.menuMode {
 				m.phase = phaseMenu
@@ -849,6 +871,9 @@ func (m OnboardModel) handleEmbProviderKeys(key string) (tea.Model, tea.Cmd) {
 			m.phase = phaseEmbHost
 			return m, textinput.Blink
 		} else if prov == "llamacpp" || prov == "native" || prov == "sentence-transformers" || prov == "eif" {
+			if prov == "eif" || prov == "native" {
+				m.embHostInput.SetValue("")
+			}
 			m.phase = phaseEmbFetching
 			return m, m.fetchEmbModels()
 		}
@@ -1063,16 +1088,58 @@ func (m *OnboardModel) buildResult() {
 	}
 
 	ollamaHost := ""
-	if m.embProviders[m.embProviderIdx] == "ollama" && m.embHostInput.Value() != "" {
-		ollamaHost = m.embHostInput.Value()
-	} else if m.llmProviders[m.llmProviderIdx] == "ollama" && m.llmHostInput.Value() != "" {
-		ollamaHost = m.llmHostInput.Value()
-	} else if m.existingCfg != nil && m.existingCfg.OllamaHost != "" {
-		ollamaHost = m.existingCfg.OllamaHost
-	} else if m.embHostInput.Value() != "" && m.embProviders[m.embProviderIdx] != "llamacpp" {
-		ollamaHost = m.embHostInput.Value()
-	} else if m.llmHostInput.Value() != "" {
-		ollamaHost = m.llmHostInput.Value()
+	embIsOllama := m.embProviders[m.embProviderIdx] == "ollama"
+	llmIsOllama := m.llmProviders[m.llmProviderIdx] == "ollama"
+
+	if embIsOllama && llmIsOllama {
+		if m.llmHostInput.Value() != "" && m.llmHostInput.Value() != gleann.DefaultOllamaHost {
+			ollamaHost = m.llmHostInput.Value()
+		} else if m.embHostInput.Value() != "" {
+			ollamaHost = m.embHostInput.Value()
+		} else {
+			ollamaHost = m.llmHostInput.Value()
+		}
+	} else if llmIsOllama {
+		if m.llmHostInput.Value() != "" && m.llmHostInput.Value() != gleann.DefaultOllamaHost {
+			ollamaHost = m.llmHostInput.Value()
+		} else if m.embHostInput.Value() != "" && m.embHostInput.Value() != gleann.DefaultOllamaHost {
+			ollamaHost = m.embHostInput.Value()
+		} else if m.existingCfg != nil && m.existingCfg.OllamaHost != "" {
+			ollamaHost = m.existingCfg.OllamaHost
+		} else if m.embProviders[m.embProviderIdx] == "llamacpp" {
+			ollamaHost = ""
+		} else if m.llmHostInput.Value() != "" {
+			ollamaHost = m.llmHostInput.Value()
+		} else {
+			ollamaHost = gleann.DefaultOllamaHost
+		}
+	} else if embIsOllama {
+		if m.embHostInput.Value() != "" {
+			ollamaHost = m.embHostInput.Value()
+		} else if m.existingCfg != nil && m.existingCfg.OllamaHost != "" {
+			ollamaHost = m.existingCfg.OllamaHost
+		} else {
+			ollamaHost = gleann.DefaultOllamaHost
+		}
+	} else {
+		// Neither embedding nor LLM is Ollama (e.g. EIF + OpenAI)
+		if m.llmHostInput.Value() != "" && m.llmHostInput.Value() != gleann.DefaultOllamaHost {
+			ollamaHost = m.llmHostInput.Value()
+		} else if m.embHostInput.Value() != "" && m.embHostInput.Value() != gleann.DefaultOllamaHost && m.embProviders[m.embProviderIdx] != "eif" && m.embProviders[m.embProviderIdx] != "llamacpp" {
+			ollamaHost = m.embHostInput.Value()
+		} else {
+			ollamaHost = ""
+		}
+	}
+
+	if ollamaHost != "" {
+		if !strings.Contains(ollamaHost, "://") {
+			if !strings.Contains(ollamaHost, ":") {
+				ollamaHost = "http://localhost:" + ollamaHost
+			} else {
+				ollamaHost = "http://" + ollamaHost
+			}
+		}
 	}
 
 	m.result = OnboardResult{
@@ -1101,12 +1168,7 @@ func (m *OnboardModel) buildResult() {
 	}
 
 	// Clean up fields if neither embedding nor LLM uses Ollama
-	if (m.result.EmbeddingProvider == "llamacpp" || m.result.EmbeddingProvider == "native") && m.result.LLMProvider != "ollama" {
-		m.result.OllamaHost = ""
-	} else if m.result.EmbeddingProvider == "llamacpp" && m.result.LLMProvider == "ollama" && m.result.OllamaHost == gleann.DefaultOllamaHost {
-		m.result.OllamaHost = ""
-	}
-	if m.result.LLMProvider == "llamacpp" && m.result.EmbeddingProvider != "ollama" {
+	if !embIsOllama && !llmIsOllama && m.result.OllamaHost == gleann.DefaultOllamaHost {
 		m.result.OllamaHost = ""
 	}
 
@@ -1395,9 +1457,6 @@ func (m OnboardModel) settingsMenuValues() []string {
 
 	// Show host or masked API key depending on provider.
 	embHostOrKey := host
-	if strings.HasPrefix(embHostOrKey, "http://") && embProv == "llamacpp" {
-		embHostOrKey = ""
-	}
 	if embProv == "openai" {
 		k := m.embKeyInput.Value()
 		if len(k) > 8 {
@@ -1405,7 +1464,11 @@ func (m OnboardModel) settingsMenuValues() []string {
 		} else if k != "" {
 			embHostOrKey = "****"
 		}
-	} else if (embProv == "llamacpp" || embProv == "eif") && embHostOrKey == "" {
+	} else if embProv == "eif" {
+		embHostOrKey = "(in-process CGO runtime)"
+	} else if embProv == "native" {
+		embHostOrKey = "(in-process Candle/Rust)"
+	} else if embProv == "llamacpp" {
 		embHostOrKey = "(auto-scan default dirs)"
 	}
 

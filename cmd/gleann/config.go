@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/mattn/go-isatty"
 	"github.com/tevfik/gleann/internal/embedding"
@@ -155,7 +156,15 @@ func getConfig(args []string) gleann.Config {
 			}
 		case "--host":
 			if i+1 < len(args) {
-				config.OllamaHost = args[i+1]
+				host := args[i+1]
+				if !strings.Contains(host, "://") {
+					if !strings.Contains(host, ":") {
+						host = "http://localhost:" + host
+					} else {
+						host = "http://" + host
+					}
+				}
+				config.OllamaHost = host
 				i++
 			}
 		}
@@ -189,6 +198,18 @@ func hasFlag(args []string, flag string) bool {
 func applySavedConfig(config *gleann.Config, args []string) {
 	savedCfg := tui.LoadSavedConfig()
 	if savedCfg == nil {
+		if getFlag(args, "--host") == "" {
+			if envHost := os.Getenv("OLLAMA_HOST"); envHost != "" {
+				if !strings.Contains(envHost, "://") {
+					if !strings.Contains(envHost, ":") {
+						envHost = "http://localhost:" + envHost
+					} else {
+						envHost = "http://" + envHost
+					}
+				}
+				config.OllamaHost = envHost
+			}
+		}
 		return
 	}
 	if getFlag(args, "--provider") == "" && savedCfg.EmbeddingProvider != "" {
@@ -197,8 +218,27 @@ func applySavedConfig(config *gleann.Config, args []string) {
 	if getFlag(args, "--model") == "" && savedCfg.EmbeddingModel != "" {
 		config.EmbeddingModel = savedCfg.EmbeddingModel
 	}
-	if getFlag(args, "--host") == "" && savedCfg.OllamaHost != "" {
-		config.OllamaHost = savedCfg.OllamaHost
+	if getFlag(args, "--host") == "" {
+		if savedCfg.OllamaHost != "" {
+			host := savedCfg.OllamaHost
+			if !strings.Contains(host, "://") {
+				if !strings.Contains(host, ":") {
+					host = "http://localhost:" + host
+				} else {
+					host = "http://" + host
+				}
+			}
+			config.OllamaHost = host
+		} else if envHost := os.Getenv("OLLAMA_HOST"); envHost != "" {
+			if !strings.Contains(envHost, "://") {
+				if !strings.Contains(envHost, ":") {
+					envHost = "http://localhost:" + envHost
+				} else {
+					envHost = "http://" + envHost
+				}
+			}
+			config.OllamaHost = envHost
+		}
 	}
 	if savedCfg.OpenAIKey != "" && config.OpenAIAPIKey == "" {
 		config.OpenAIAPIKey = savedCfg.OpenAIKey

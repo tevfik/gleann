@@ -492,3 +492,59 @@ func TestOnboardPhaseNavigation(t *testing.T) {
 		t.Errorf("embProviderIdx = %d after up, want 0", om2.embProviderIdx)
 	}
 }
+
+func TestBuildResultEIFWithOllamaLLMCustomPort(t *testing.T) {
+	m := NewOnboardModel()
+	// Set embedding provider to eif
+	m.embProviders = []string{"ollama", "eif"}
+	m.embProviderIdx = 1
+	// Set LLM provider to ollama
+	m.llmProviders = []string{"ollama", "openai"}
+	m.llmProviderIdx = 0
+	m.llmHostInput.SetValue("http://localhost:11435")
+
+	m.buildResult()
+
+	if m.result.EmbeddingProvider != "eif" {
+		t.Errorf("EmbeddingProvider = %q, want eif", m.result.EmbeddingProvider)
+	}
+	if m.result.LLMProvider != "ollama" {
+		t.Errorf("LLMProvider = %q, want ollama", m.result.LLMProvider)
+	}
+	if m.result.OllamaHost != "http://localhost:11435" {
+		t.Errorf("OllamaHost = %q, want http://localhost:11435", m.result.OllamaHost)
+	}
+}
+
+func TestBuildResultEIFWithOpenAILLM(t *testing.T) {
+	m := NewOnboardModel()
+	m.embProviders = []string{"ollama", "eif"}
+	m.embProviderIdx = 1
+	m.llmProviders = []string{"ollama", "openai"}
+	m.llmProviderIdx = 1
+	m.embKeyInput.SetValue("sk-test")
+
+	m.buildResult()
+
+	if m.result.EmbeddingProvider != "eif" {
+		t.Errorf("EmbeddingProvider = %q, want eif", m.result.EmbeddingProvider)
+	}
+	if m.result.OllamaHost != "" {
+		t.Errorf("OllamaHost = %q, want empty when Ollama not used", m.result.OllamaHost)
+	}
+}
+
+func TestMenuModeEIFDisplay(t *testing.T) {
+	m := NewOnboardModel()
+	m.embProviders = []string{"eif"}
+	m.embProviderIdx = 0
+
+	vals := m.settingsMenuValues()
+	if len(vals) < 2 {
+		t.Fatalf("expected at least 2 settings menu values, got %d", len(vals))
+	}
+	if vals[1] != "(in-process CGO runtime)" {
+		t.Errorf("menu value for EIF host = %q, want (in-process CGO runtime)", vals[1])
+	}
+}
+
