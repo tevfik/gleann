@@ -775,12 +775,8 @@ func (m OnboardModel) handleMenuKeys(key string) (tea.Model, tea.Cmd) {
 		}
 		target := item.phase
 		if target == phaseEmbHost {
-			if m.embProviders[m.embProviderIdx] == "llamacpp" || m.embProviders[m.embProviderIdx] == "native" || m.embProviders[m.embProviderIdx] == "eif" {
-				if m.llmProviders[m.llmProviderIdx] == "ollama" {
-					target = phaseLLMHost
-				} else {
-					return m, nil
-				}
+			if m.embProviders[m.embProviderIdx] == "native" {
+				return m, nil
 			} else if m.embProviders[m.embProviderIdx] == "openai" {
 				target = phaseEmbAPIKey
 			}
@@ -1273,9 +1269,9 @@ func (m OnboardModel) View() tea.View {
 			descriptions))
 
 	case phaseEmbHost:
-		if m.embProviders[m.embProviderIdx] == "llamacpp" {
+		if m.embProviders[m.embProviderIdx] == "llamacpp" || m.embProviders[m.embProviderIdx] == "eif" {
 			b.WriteString(m.renderInput("2", "Embed Model Search Path",
-				"Optional: Provide an absolute folder to scan for .gguf files, or leave blank to search default dirs.",
+				"Optional: Provide an absolute folder to scan for .gguf / .eifm files, or leave blank to search default dirs.",
 				&m.embHostInput))
 		} else {
 			b.WriteString(m.renderInput("2", "Ollama URL",
@@ -1457,6 +1453,9 @@ func (m OnboardModel) settingsMenuValues() []string {
 
 	// Show host or masked API key depending on provider.
 	embHostOrKey := host
+	if strings.HasPrefix(embHostOrKey, "http://") && (embProv == "llamacpp" || embProv == "eif" || embProv == "native") {
+		embHostOrKey = ""
+	}
 	if embProv == "openai" {
 		k := m.embKeyInput.Value()
 		if len(k) > 8 {
@@ -1465,11 +1464,15 @@ func (m OnboardModel) settingsMenuValues() []string {
 			embHostOrKey = "****"
 		}
 	} else if embProv == "eif" {
-		embHostOrKey = "(in-process CGO runtime)"
+		if embHostOrKey == "" {
+			embHostOrKey = "(in-process CGO runtime)"
+		}
 	} else if embProv == "native" {
 		embHostOrKey = "(in-process Candle/Rust)"
 	} else if embProv == "llamacpp" {
-		embHostOrKey = "(auto-scan default dirs)"
+		if embHostOrKey == "" {
+			embHostOrKey = "(auto-scan default dirs)"
+		}
 	}
 
 	llmHostOrKey := m.llmHostInput.Value()
