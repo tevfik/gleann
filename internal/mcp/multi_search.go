@@ -28,6 +28,9 @@ func (s *Server) buildSearchMultiTool() mcp.Tool {
 		mcp.WithString("kind",
 			mcp.Description("Filter by content type: 'code' (source code), 'docs' (documentation and markdown), or 'all'. Default is 'all'."),
 		),
+		mcp.WithNumber("max_tokens",
+			mcp.Description("Optional strict token budget for the response (minimum 32). When exceeded, subsequent results degrade to locators (citations only) and extra results are dropped to guarantee context limit."),
+		),
 	)
 }
 
@@ -70,6 +73,28 @@ func (s *Server) handleSearchMulti(ctx context.Context, request mcp.CallToolRequ
 
 	if len(results) == 0 {
 		return mcp.NewToolResultText("No results found across indexes."), nil
+	}
+
+	maxTokens := 0
+	if mt, ok := args["max_tokens"].(float64); ok && mt > 0 {
+		maxTokens = int(mt)
+	}
+
+	if maxTokens > 0 {
+		searchResults := make([]gleann.SearchResult, len(results))
+		for i, r := range results {
+			sr := r.SearchResult
+			if sr.Metadata == nil {
+				sr.Metadata = make(map[string]any)
+			}
+			sr.Metadata["_index"] = r.Index
+			searchResults[i] = sr
+		}
+		output, _ := gleann.FormatSearchResultsWithBudget(searchResults, gleann.TokenBudgetOptions{
+			MaxTokens:  maxTokens,
+			IncludeTip: true,
+		})
+		return mcp.NewToolResultText(output), nil
 	}
 
 	var sb strings.Builder

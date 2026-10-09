@@ -40,6 +40,9 @@ func getConfig(args []string) gleann.Config {
 	}
 
 	config.IndexDir = tui.DefaultIndexDir()
+	if envDir := os.Getenv("GLEANN_INDEX_DIR"); envDir != "" {
+		config.IndexDir = tui.ExpandPath(envDir)
+	}
 
 	for i := 0; i < len(args); i++ {
 		switch args[i] {

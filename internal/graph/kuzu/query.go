@@ -1037,7 +1037,7 @@ func (g *DB) SymbolSearch(pattern string) ([]gleann.Callee, error) {
 	cypher := fmt.Sprintf(
 		`MATCH (s:Symbol)
 		 WHERE lower(s.fqn) CONTAINS %q OR lower(s.name) CONTAINS %q
-		 RETURN s.fqn AS fqn, s.name AS name, s.kind AS kind
+		 RETURN s.fqn AS fqn, s.name AS name, s.kind AS kind, s.file AS file, s.line AS line, s.is_test AS is_test
 		 LIMIT 50`,
 		strings.ToLower(pattern), strings.ToLower(pattern),
 	)

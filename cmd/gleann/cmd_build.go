@@ -5,12 +5,14 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io/fs"
 	"os"
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -24,6 +26,8 @@ import (
 	"github.com/tevfik/gleann/pkg/gleann"
 	"github.com/tevfik/gleann/pkg/walker"
 )
+
+var exitFunc = os.Exit
 
 // IndexMode represents the filtering mode for indexing.
 type IndexMode string
@@ -64,6 +68,11 @@ Options:
                             code - fast source code & AST graph only
                             docs - documents only (pdf, docx, etc.)
                             all  - index everything (default)
+  --dry-run               Estimate workload & Graham makespan bounds without indexing
+  --max-minutes <n>       Maximum acceptable minutes before halting for decision gate (Exit 4)
+  --approve <action>      Decision approval: proceed, fast, or cancel
+  --yes, -y               Auto-approve decision gate (proceed)
+  --progress <surface>    Progress reporting surface: plain (default), json, none
   --include-submodules    Include Git submodule directories (default: excluded)
   --tag <tag>             Assign governance tag(s) (comma-separated or multiple)
   --desc <description>    Human-readable description for semantic MCP routing
@@ -76,7 +85,8 @@ Options:
 
 Examples:
   gleann index build core --docs ./src --graph --mode code
-  gleann index build docs --docs ./documentation --tag docs,work`)
+  gleann index build docs --docs ./documentation --tag docs,work
+  gleann index build repo --docs ./src --max-minutes 5 --approve fast`)
 }
 
 func cmdBuild(args []string) {
@@ -85,22 +95,86 @@ func cmdBuild(args []string) {
 		if hasFlag(args, "--help") || hasFlag(args, "-h") {
 			return
 		}
-		os.Exit(1)
+		exitFunc(1)
+		return
 	}
 
 	name := args[0]
 	if strings.HasPrefix(name, "-") {
 		fmt.Fprintf(os.Stderr, "error: index name %q looks like a flag\nusage: gleann index build <name> --docs <dir>\n", name)
-		os.Exit(1)
+		exitFunc(1)
+		return
 	}
 	docsDir := getFlag(args, "--docs")
 	if docsDir == "" {
 		fmt.Fprintln(os.Stderr, "error: --docs flag required")
-		os.Exit(1)
+		exitFunc(1)
+		return
 	}
 	buildGraph := hasFlag(args, "--graph")
 
 	mode, noPlugins := parseIndexMode(args)
+
+	dryRun := hasFlag(args, "--dry-run")
+	maxMinutesStr := getFlag(args, "--max-minutes")
+	var maxMinutes float64
+	if maxMinutesStr != "" {
+		if val, err := strconv.ParseFloat(maxMinutesStr, 64); err == nil {
+			maxMinutes = val
+		}
+	}
+	approve := getFlag(args, "--approve")
+	if approve == "" && (hasFlag(args, "--yes") || hasFlag(args, "-y")) {
+		approve = "proceed"
+	}
+	jsonOutput := hasFlag(args, "--json")
+	progressSurface := gleann.ProgressSurface(getFlag(args, "--progress"))
+	pacer := gleann.NewPacer(progressSurface, os.Stderr)
+
+	// Pre-flight job estimation using Graham (1969) list scheduling bounds
+	est, err := gleann.EstimateJob(docsDir, runtime.NumCPU())
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error estimating job: %v\n", err)
+		exitFunc(1)
+		return
+	}
+
+	if dryRun {
+		if jsonOutput {
+			data, _ := json.MarshalIndent(est, "", "  ")
+			fmt.Println(string(data))
+		} else {
+			fmt.Printf("📊 Pre-flight Job Estimate for %s:\n", docsDir)
+			fmt.Printf("   Files: %d\n", est.FileCount)
+			fmt.Printf("   Total Size: %s\n", formatSize(est.TotalBytes))
+			fmt.Printf("   Sampled Read Rate: %.1f MB/s\n", est.SampledRate/(1024*1024))
+			fmt.Printf("   Workers: %d\n", est.Workers)
+			fmt.Printf("   Graham Makespan Bounds: %.2fs - %.2fs (%.2fm - %.2fm)\n",
+				est.EstimatedSecLow, est.EstimatedSecHigh,
+				est.EstimatedSecLow/60.0, est.EstimatedSecHigh/60.0)
+		}
+		return
+	}
+
+	gate := gleann.EvaluateDecisionGate(est, maxMinutes, approve)
+	if gate.Triggered {
+		data, _ := json.MarshalIndent(gate, "", "  ")
+		fmt.Println(string(data))
+		exitFunc(4)
+		return
+	}
+
+	if gate.Action == gleann.GateActionCancel {
+		fmt.Println("Indexing cancelled by approval flag.")
+		return
+	}
+
+	if gate.Action == gleann.GateActionFast {
+		fmt.Println("⚡ Approval mode 'fast' selected: switching to code-only indexing.")
+		mode = IndexModeCode
+		noPlugins = true
+	}
+
 	if mode == IndexModeCode {
 		fmt.Printf("⚡ Index mode: CODE (fast code & AST graph, skipping office doc plugins)\n")
 	} else if mode == IndexModeDocs {
@@ -119,7 +193,8 @@ func cmdBuild(args []string) {
 
 	if err := initLlamaCPP(context.Background(), &config); err != nil {
 		fmt.Fprintf(os.Stderr, "error initializing llamacpp: %v\n", err)
-		os.Exit(1)
+		exitFunc(1)
+		return
 	}
 
 	embedder := newEmbedder(config)
@@ -130,7 +205,8 @@ func cmdBuild(args []string) {
 	builder, err := gleann.NewBuilder(config, cachedEmbedder)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		os.Exit(1)
+		exitFunc(1)
+		return
 	}
 
 	// Initialize vault tracker
@@ -144,26 +220,32 @@ func cmdBuild(args []string) {
 	includeSubmodules := hasFlag(args, "--include-submodules")
 
 	// Read documents from directory.
+	pacer.Tick("read_documents", 0, est.FileCount, 0, est.TotalBytes, true)
 	fmt.Printf("📂 Reading documents from %s...\n", docsDir)
 	items, pluginDocs, err := readDocuments(docsDir, config.ChunkConfig.ChunkSize, config.ChunkConfig.ChunkOverlap, tracker, mmProcessor, mode, noPlugins, includeSubmodules)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error reading documents: %v\n", err)
-		os.Exit(1)
+		exitFunc(1)
+		return
 	}
 
 	if len(items) == 0 {
 		fmt.Fprintln(os.Stderr, "error: no documents found")
-		os.Exit(1)
+		exitFunc(1)
+		return
 	}
 
 	fmt.Printf("📝 Found %d text chunks\n", len(items))
 	fmt.Printf("🔧 Building index %q (backend: %s) with model %s...\n", name, config.Backend, config.EmbeddingModel)
 
+	pacer.Tick("vector_index", 0, len(items), est.TotalBytes, est.TotalBytes, true)
 	start := time.Now()
 	ctx := context.Background()
 	if err := builder.Build(ctx, name, items); err != nil {
+		pacer.Done(false, 1, est.FileCount, est.TotalBytes)
 		fmt.Fprintf(os.Stderr, "error building index: %v\n", err)
-		os.Exit(1)
+		exitFunc(1)
+		return
 	}
 
 	tagsFlag := getFlag(args, "--tags")
@@ -192,7 +274,6 @@ func cmdBuild(args []string) {
 		}
 	})
 
-
 	elapsed := time.Since(start)
 	fmt.Printf("✅ Vector Index %q built: %d passages in %s\n", name, len(items), elapsed.Round(time.Millisecond))
 
@@ -218,6 +299,24 @@ func cmdBuild(args []string) {
 			fmt.Printf("🤖 AGENTS.md generated/updated in %s\n", agentsPath)
 		}
 	}
+	// Build and persist Manifest for instant diffing and Merkle tree verification
+	manifestPath := filepath.Join(config.IndexDir, name, name+".manifest.json")
+	var manifestFiles []string
+	seenFiles := make(map[string]bool)
+	for _, it := range items {
+		if src, ok := it.Metadata["source"].(string); ok && src != "" && !seenFiles[src] {
+			seenFiles[src] = true
+			if !filepath.IsAbs(src) {
+				src = filepath.Join(docsDir, src)
+			}
+			manifestFiles = append(manifestFiles, src)
+		}
+	}
+	if mf, mErr := gleann.BuildManifest(name, docsDir, manifestFiles); mErr == nil {
+		_ = gleann.SaveManifest(manifestPath, mf)
+	}
+
+	pacer.Done(true, 0, est.FileCount, est.TotalBytes)
 }
 
 // cmdRebuild removes an existing index and rebuilds it from scratch.
@@ -664,7 +763,15 @@ func readDocuments(dir string, chunkSize, chunkOverlap int, tracker *vault.Track
 					// No headings found — fall through to code/sentence chunking.
 				}
 
-				if chunking.IsCodeFile(fe.path) {
+				isCode := chunking.IsCodeFile(fe.path)
+				if !isCode {
+					s := walker.SniffBytes(fe.path, data)
+					if s.Category == walker.CategoryCode || s.Category == walker.CategoryConfig {
+						isCode = true
+					}
+				}
+
+				if isCode {
 					rawChunks = codeSplitter.ChunkWithMetadata(text, metadata)
 				} else {
 					metadata["kind"] = "docs"
@@ -753,31 +860,74 @@ func collectEligibleFiles(dir string, pluginManager *gleann.PluginManager, nativ
 
 		ext := strings.ToLower(filepath.Ext(path))
 
+		// Fast path: skip obvious binary extensions
+		if binaryExts[ext] {
+			return nil
+		}
+
+		// Fast path: skip minified bundles
+		if strings.Contains(strings.ToLower(filepath.Base(path)), ".min.") {
+			return nil
+		}
+
+		isStdCode := isCodeExtension(ext)
+		isStdDoc := isDocumentationExtension(ext)
+		isStdOffice := isOfficeDocExtension(ext)
+
+		var sniffResult *walker.SniffResult
+		getSniff := func() walker.SniffResult {
+			if sniffResult == nil {
+				res, _ := walker.SniffFile(path)
+				sniffResult = &res
+			}
+			return *sniffResult
+		}
+
 		switch mode {
 		case IndexModeCode:
 			// Code mode: source code, configs, and documentation text.
 			// Office docs, binary files, and massive data dumps (>1MB) are skipped.
-			if isOfficeDocExtension(ext) || binaryExts[ext] || info.Size() > 1<<20 {
+			if isStdOffice || info.Size() > 1<<20 {
 				return nil
 			}
-			if !isCodeExtension(ext) && !isDocumentationExtension(ext) {
-				return nil
+			if !isStdCode && !isStdDoc {
+				s := getSniff()
+				if s.IsBinary || s.IsMinified {
+					return nil
+				}
+				if s.Category != walker.CategoryCode && s.Category != walker.CategoryConfig && s.Category != walker.CategoryDoc {
+					return nil
+				}
+			} else {
+				// Verify text content for small files with code/doc extensions (protect against disguised binaries)
+				if info.Size() > 0 && info.Size() < 2048 {
+					s := getSniff()
+					if s.IsBinary || s.IsMinified {
+						return nil
+					}
+				}
 			}
 		case IndexModeDocs:
 			// Docs mode: office docs and documentation text. Pure code files are skipped.
-			if (!isOfficeDocExtension(ext) && !isDocumentationExtension(ext)) || info.Size() > 10<<20 {
+			if (!isStdOffice && !isStdDoc) || info.Size() > 10<<20 {
 				return nil
+			}
+			if !isStdOffice {
+				s := getSniff()
+				if s.IsBinary || s.IsMinified {
+					return nil
+				}
 			}
 		case IndexModeAll, "":
-			hasPlugin := pluginManager != nil && pluginManager.FindDocumentExtractor(ext) != nil
-			hasNative := nativeExtractor.CanHandle(ext)
 			hasMultimodal := mmProcessor != nil && mmProcessor.CanProcess(path)
-
-			if !hasPlugin && !hasNative && !hasMultimodal && binaryExts[ext] {
-				return nil
-			}
-			if !hasPlugin && !hasNative && !hasMultimodal && info.Size() > 1<<20 {
-				return nil
+			if !isStdOffice && !hasMultimodal {
+				if info.Size() > 1<<20 {
+					return nil
+				}
+				s := getSniff()
+				if s.IsBinary || s.IsMinified {
+					return nil
+				}
 			}
 		}
 
@@ -1503,14 +1653,6 @@ func cmdSync(args []string) {
 	start := time.Now()
 	fmt.Printf("🔄 Synchronizing index %q with %s...\n", name, absDocsDir)
 
-	if err := initLlamaCPP(context.Background(), &config); err != nil {
-		fmt.Fprintf(os.Stderr, "error initializing llamacpp: %v\n", err)
-		os.Exit(1)
-	}
-
-	embedder := newEmbedder(config)
-	cachedEmbedder := embedding.NewCachedComputer(embedder, embedding.CacheOptions{})
-
 	tracker, err := vault.NewTracker(vault.DefaultDBPath())
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "warning: could not initialize vault tracker: %v\n", err)
@@ -1522,6 +1664,9 @@ func cmdSync(args []string) {
 	includeSubmodules := hasFlag(args, "--include-submodules")
 	var changedFiles []string
 	var deletedFiles []string
+	var eligiblePaths []string
+	manifestPath := filepath.Join(config.IndexDir, name, name+".manifest.json")
+	var newManifest *gleann.Manifest
 
 	if filesFlag != "" {
 		for _, f := range strings.Split(filesFlag, ",") {
@@ -1561,30 +1706,58 @@ func cmdSync(args []string) {
 			os.Exit(1)
 		}
 
-		eligiblePaths := make([]string, len(eligibleEntries))
+		eligiblePaths = make([]string, len(eligibleEntries))
 		for i, e := range eligibleEntries {
 			eligiblePaths[i] = e.path
 		}
 
-		if tracker != nil {
-			ctx := context.Background()
-			basePath := filepath.Join(config.IndexDir, name, name)
-			indexTime := meta.UpdatedAt
-			if indexTime.IsZero() {
-				indexTime = meta.CreatedAt
+		existingManifest, _ := gleann.LoadManifest(manifestPath)
+		if existingManifest != nil {
+			diff, nm, dErr := gleann.QuickDiffDirectory(existingManifest, absDocsDir, eligiblePaths)
+			if dErr == nil {
+				newManifest = nm
+				if diff.IsEmpty() {
+					rootShort := existingManifest.RootHash
+					if len(rootShort) > 12 {
+						rootShort = rootShort[:12]
+					}
+					fmt.Printf("⚡ Index %q is already up to date (Merkle root %s verified in %s). No changes detected.\n",
+						name, rootShort, time.Since(start).Round(time.Millisecond))
+					return
+				}
+				for _, a := range diff.Added {
+					changedFiles = append(changedFiles, filepath.Join(absDocsDir, a))
+				}
+				for _, m := range diff.Modified {
+					changedFiles = append(changedFiles, filepath.Join(absDocsDir, m))
+				}
+				for _, d := range diff.Deleted {
+					deletedFiles = append(deletedFiles, filepath.Join(absDocsDir, d))
+				}
 			}
-			bootstrapTrackerFromIndex(ctx, tracker, absDocsDir, basePath, eligiblePaths, indexTime)
+		}
 
-			cFiles, dFiles, dErr := tracker.DetectChangedFiles(ctx, absDocsDir, eligiblePaths)
-			if dErr != nil {
-				fmt.Fprintf(os.Stderr, "warning: change detection failed (%v), checking all files\n", dErr)
-				changedFiles = eligiblePaths
+		if existingManifest == nil || (len(changedFiles) == 0 && len(deletedFiles) == 0) {
+			if tracker != nil {
+				ctx := context.Background()
+				basePath := filepath.Join(config.IndexDir, name, name)
+				indexTime := meta.UpdatedAt
+				if indexTime.IsZero() {
+					indexTime = meta.CreatedAt
+				}
+				bootstrapTrackerFromIndex(ctx, tracker, absDocsDir, basePath, eligiblePaths, indexTime)
+
+				cFiles, dFiles, dErr := tracker.DetectChangedFiles(ctx, absDocsDir, eligiblePaths)
+				if dErr != nil {
+					fmt.Fprintf(os.Stderr, "warning: change detection failed (%v), checking all files\n", dErr)
+					changedFiles = eligiblePaths
+				} else {
+					changedFiles = cFiles
+					deletedFiles = dFiles
+				}
 			} else {
-				changedFiles = cFiles
-				deletedFiles = dFiles
+				changedFiles = eligiblePaths
 			}
-		} else {
-			changedFiles = eligiblePaths
 		}
 	}
 
@@ -1620,6 +1793,14 @@ func cmdSync(args []string) {
 		}
 	}
 
+	if err := initLlamaCPP(context.Background(), &config); err != nil {
+		fmt.Fprintf(os.Stderr, "error initializing llamacpp: %v\n", err)
+		os.Exit(1)
+	}
+
+	embedder := newEmbedder(config)
+	cachedEmbedder := embedding.NewCachedComputer(embedder, embedding.CacheOptions{})
+
 	pDocs, ok := incrementalBuildIndex(name, absDocsDir, allChanged, config, cachedEmbedder, tracker, mode, noPlugins, includeSubmodules)
 	if !ok {
 		fmt.Println("⚠️  Incremental vector update not supported or failed, running full rebuild...")
@@ -1643,6 +1824,14 @@ func cmdSync(args []string) {
 	_ = gleann.UpdateIndexMeta(config.IndexDir, name, func(m *gleann.IndexMeta) {
 		m.SourceDir = absDocsDir
 	})
+
+	if newManifest != nil {
+		_ = gleann.SaveManifest(manifestPath, newManifest)
+	} else if len(eligiblePaths) > 0 {
+		if mf, mErr := gleann.BuildManifest(name, absDocsDir, eligiblePaths); mErr == nil {
+			_ = gleann.SaveManifest(manifestPath, mf)
+		}
+	}
 
 	fmt.Printf("✅ Sync complete for %q in %s (%d files processed)\n", name, time.Since(start).Round(time.Millisecond), len(allChanged))
 }
