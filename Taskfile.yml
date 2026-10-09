@@ -101,7 +101,8 @@ tasks:
         if [ -f ext/eif-runtime/CMakeLists.txt ]; then
           echo "🔧 Building eif-runtime static library..."
           mkdir -p ext/eif-runtime/build
-          (cd ext/eif-runtime/build && cmake -DCMAKE_BUILD_TYPE=Release .. && make eif_runtime_static)
+          cmake -B ext/eif-runtime/build -S ext/eif-runtime -DCMAKE_BUILD_TYPE=Release
+          cmake --build ext/eif-runtime/build --target eif_runtime_static
         fi
 
   build-eif:
@@ -176,7 +177,7 @@ tasks:
         fi
       - tar czf cmd/gleann-full-launcher/payload.tar.gz -C {{.BUILD_DIR}}/stage .
       - CGO_ENABLED=0 go build -ldflags "{{.LDFLAGS}}" -o {{.BINARY_FULL}} ./cmd/gleann-full-launcher
-      - tar -czf cmd/gleann-full-launcher/payload.tar.gz --files-from /dev/null
+      - tar -czf cmd/gleann-full-launcher/payload.tar.gz -T /dev/null 2>/dev/null || tar -czf cmd/gleann-full-launcher/payload.tar.gz --files-from /dev/null 2>/dev/null || true
       - rm -rf {{.BUILD_DIR}}/stage
       - echo "✅ Built single standalone {{.BINARY_FULL}}"
 

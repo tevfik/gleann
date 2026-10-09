@@ -5,6 +5,7 @@ package embedding
 import (
 	"context"
 	"math"
+	"strings"
 	"testing"
 	"time"
 )
@@ -40,6 +41,9 @@ func testEmbeddingWithModel(t *testing.T, modelName string) {
 	elapsed := time.Since(t0)
 
 	if err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			t.Skipf("[%s] model file not found on disk, skipping: %v", modelName, err)
+		}
 		t.Fatalf("[%s] EIF Compute failed: %v", modelName, err)
 	}
 

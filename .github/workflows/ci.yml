@@ -124,11 +124,7 @@ jobs:
 
       - name: Set up Rust (for native tag)
         if: matrix.tags == 'native'
-        uses: actions-rs/toolchain@v1
-        with:
-          profile: minimal
-          toolchain: stable
-          override: true
+        uses: dtolnay/rust-toolchain@stable
 
       - name: Build Rust Core (for native tag)
         if: matrix.tags == 'native'
@@ -138,11 +134,13 @@ jobs:
         run: |
           if [ -n "${{ matrix.tags }}" ]; then
             # Add RPATH for Linux to find the shared library during build-time checks if needed
-            # (though -o /dev/null might skip some runtime checks, ld still needs the lib)
+            # (though -o build_check_bin might skip some runtime checks, ld still needs the lib)
             export CGO_LDFLAGS="-L$(pwd)/ext/gleann-core-rs/target/release"
-            go build -tags "${{ matrix.tags }}" -o /dev/null ./cmd/gleann/
+            go build -tags "${{ matrix.tags }}" -o build_check_bin ./cmd/gleann/
+            rm -f build_check_bin
           else
-            go build -o /dev/null ./cmd/gleann/
+            go build -o build_check_bin ./cmd/gleann/
+            rm -f build_check_bin
           fi
         shell: bash
 
