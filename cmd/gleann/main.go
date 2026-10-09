@@ -25,6 +25,8 @@ func main() {
 		cmdIndex(args)
 	case "search":
 		cmdSearch(args)
+	case "def":
+		cmdDef(args)
 	case "ask":
 		cmdAsk(args)
 	case "serve":
@@ -88,6 +90,7 @@ Usage:
 
 Core Commands:
   search    <name> <query>     Semantic vector search across an index
+  def       <symbol>           Find where a symbol is defined (Go-to-Definition)
   ask       <name> <question>  RAG question-answering with LLM synthesis
   chat      [name]             Interactive terminal chat session
   serve     [--addr :8080]     Start REST API & Web UI server

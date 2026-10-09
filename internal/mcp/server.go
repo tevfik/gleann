@@ -140,6 +140,7 @@ func NewServer(cfg Config) *Server {
 	// Register tools natively with the SDK (respecting cleanToolNames)
 	srv.addTool(srv.buildSearchTool(), srv.handleSearch)
 	srv.addTool(srv.buildSearchMultiTool(), srv.handleSearchMulti)
+	srv.addTool(srv.buildDefTool(), srv.handleDef)
 	srv.addTool(srv.buildListTool(), srv.handleList)
 	srv.addTool(srv.buildAskTool(), srv.handleAsk)
 	srv.addTool(srv.buildGraphNeighborsTool(), srv.handleGraphNeighbors)
@@ -222,7 +223,7 @@ func (s *Server) isToolEnabled(name string) bool {
 	}
 	if profile == "" || profile == "core" {
 		switch name {
-		case "gleann_search", "gleann_read", "gleann_graph_neighbors", "gleann_impact",
+		case "gleann_search", "gleann_read", "gleann_def", "gleann_graph_neighbors", "gleann_impact",
 			"memory_remember", "memory_context", "memory_search", "memory_forget", "gleann_sync":
 			return true
 		default:
