@@ -94,7 +94,11 @@ tasks:
     desc: Build eif-runtime static library
     cmds:
       - |
-        if [ -d ext/eif-runtime ] && [ -f ext/eif-runtime/CMakeLists.txt ]; then
+        if [ ! -f ext/eif-runtime/CMakeLists.txt ]; then
+          echo "📦 Initializing ext/eif-runtime submodule..."
+          git submodule update --init --recursive ext/eif-runtime
+        fi
+        if [ -f ext/eif-runtime/CMakeLists.txt ]; then
           echo "🔧 Building eif-runtime static library..."
           mkdir -p ext/eif-runtime/build
           (cd ext/eif-runtime/build && cmake -DCMAKE_BUILD_TYPE=Release .. && make eif_runtime_static)

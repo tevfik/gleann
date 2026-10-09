@@ -107,11 +107,17 @@ build-cgo: prepare-assets
 
 .PHONY: build-eif-lib
 build-eif-lib:
-	@if [ -d ext/eif-runtime ] && command -v cmake >/dev/null 2>&1; then \
+	@if [ ! -f ext/eif-runtime/CMakeLists.txt ]; then \
+		echo "📦 Initializing ext/eif-runtime submodule..."; \
+		git submodule update --init --recursive ext/eif-runtime; \
+	fi
+	@if [ -f ext/eif-runtime/CMakeLists.txt ] && command -v cmake >/dev/null 2>&1; then \
 		echo "🔧 Building eif-runtime static library..."; \
 		mkdir -p ext/eif-runtime/build && \
 		cmake -B ext/eif-runtime/build -S ext/eif-runtime -DCMAKE_BUILD_TYPE=Release && \
 		cmake --build ext/eif-runtime/build --target eif_runtime_static; \
+	elif ! command -v cmake >/dev/null 2>&1; then \
+		echo "⚠️ Warning: cmake not found. Please install cmake to build eif-runtime."; \
 	fi
 
 .PHONY: build-eif
