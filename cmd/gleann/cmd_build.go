@@ -5,12 +5,14 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io/fs"
 	"os"
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -24,6 +26,8 @@ import (
 	"github.com/tevfik/gleann/pkg/gleann"
 	"github.com/tevfik/gleann/pkg/walker"
 )
+
+var exitFunc = os.Exit
 
 // IndexMode represents the filtering mode for indexing.
 type IndexMode string
@@ -64,6 +68,11 @@ Options:
                             code - fast source code & AST graph only
                             docs - documents only (pdf, docx, etc.)
                             all  - index everything (default)
+  --dry-run               Estimate workload & Graham makespan bounds without indexing
+  --max-minutes <n>       Maximum acceptable minutes before halting for decision gate (Exit 4)
+  --approve <action>      Decision approval: proceed, fast, or cancel
+  --yes, -y               Auto-approve decision gate (proceed)
+  --progress <surface>    Progress reporting surface: plain (default), json, none
   --include-submodules    Include Git submodule directories (default: excluded)
   --tag <tag>             Assign governance tag(s) (comma-separated or multiple)
   --desc <description>    Human-readable description for semantic MCP routing
@@ -76,7 +85,8 @@ Options:
 
 Examples:
   gleann index build core --docs ./src --graph --mode code
-  gleann index build docs --docs ./documentation --tag docs,work`)
+  gleann index build docs --docs ./documentation --tag docs,work
+  gleann index build repo --docs ./src --max-minutes 5 --approve fast`)
 }
 
 func cmdBuild(args []string) {
@@ -85,22 +95,86 @@ func cmdBuild(args []string) {
 		if hasFlag(args, "--help") || hasFlag(args, "-h") {
 			return
 		}
-		os.Exit(1)
+		exitFunc(1)
+		return
 	}
 
 	name := args[0]
 	if strings.HasPrefix(name, "-") {
 		fmt.Fprintf(os.Stderr, "error: index name %q looks like a flag\nusage: gleann index build <name> --docs <dir>\n", name)
-		os.Exit(1)
+		exitFunc(1)
+		return
 	}
 	docsDir := getFlag(args, "--docs")
 	if docsDir == "" {
 		fmt.Fprintln(os.Stderr, "error: --docs flag required")
-		os.Exit(1)
+		exitFunc(1)
+		return
 	}
 	buildGraph := hasFlag(args, "--graph")
 
 	mode, noPlugins := parseIndexMode(args)
+
+	dryRun := hasFlag(args, "--dry-run")
+	maxMinutesStr := getFlag(args, "--max-minutes")
+	var maxMinutes float64
+	if maxMinutesStr != "" {
+		if val, err := strconv.ParseFloat(maxMinutesStr, 64); err == nil {
+			maxMinutes = val
+		}
+	}
+	approve := getFlag(args, "--approve")
+	if approve == "" && (hasFlag(args, "--yes") || hasFlag(args, "-y")) {
+		approve = "proceed"
+	}
+	jsonOutput := hasFlag(args, "--json")
+	progressSurface := gleann.ProgressSurface(getFlag(args, "--progress"))
+	pacer := gleann.NewPacer(progressSurface, os.Stderr)
+
+	// Pre-flight job estimation using Graham (1969) list scheduling bounds
+	est, err := gleann.EstimateJob(docsDir, runtime.NumCPU())
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error estimating job: %v\n", err)
+		exitFunc(1)
+		return
+	}
+
+	if dryRun {
+		if jsonOutput {
+			data, _ := json.MarshalIndent(est, "", "  ")
+			fmt.Println(string(data))
+		} else {
+			fmt.Printf("📊 Pre-flight Job Estimate for %s:\n", docsDir)
+			fmt.Printf("   Files: %d\n", est.FileCount)
+			fmt.Printf("   Total Size: %s\n", formatSize(est.TotalBytes))
+			fmt.Printf("   Sampled Read Rate: %.1f MB/s\n", est.SampledRate/(1024*1024))
+			fmt.Printf("   Workers: %d\n", est.Workers)
+			fmt.Printf("   Graham Makespan Bounds: %.2fs - %.2fs (%.2fm - %.2fm)\n",
+				est.EstimatedSecLow, est.EstimatedSecHigh,
+				est.EstimatedSecLow/60.0, est.EstimatedSecHigh/60.0)
+		}
+		return
+	}
+
+	gate := gleann.EvaluateDecisionGate(est, maxMinutes, approve)
+	if gate.Triggered {
+		data, _ := json.MarshalIndent(gate, "", "  ")
+		fmt.Println(string(data))
+		exitFunc(4)
+		return
+	}
+
+	if gate.Action == gleann.GateActionCancel {
+		fmt.Println("Indexing cancelled by approval flag.")
+		return
+	}
+
+	if gate.Action == gleann.GateActionFast {
+		fmt.Println("⚡ Approval mode 'fast' selected: switching to code-only indexing.")
+		mode = IndexModeCode
+		noPlugins = true
+	}
+
 	if mode == IndexModeCode {
 		fmt.Printf("⚡ Index mode: CODE (fast code & AST graph, skipping office doc plugins)\n")
 	} else if mode == IndexModeDocs {
@@ -119,7 +193,8 @@ func cmdBuild(args []string) {
 
 	if err := initLlamaCPP(context.Background(), &config); err != nil {
 		fmt.Fprintf(os.Stderr, "error initializing llamacpp: %v\n", err)
-		os.Exit(1)
+		exitFunc(1)
+		return
 	}
 
 	embedder := newEmbedder(config)
@@ -130,7 +205,8 @@ func cmdBuild(args []string) {
 	builder, err := gleann.NewBuilder(config, cachedEmbedder)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		os.Exit(1)
+		exitFunc(1)
+		return
 	}
 
 	// Initialize vault tracker
@@ -144,26 +220,32 @@ func cmdBuild(args []string) {
 	includeSubmodules := hasFlag(args, "--include-submodules")
 
 	// Read documents from directory.
+	pacer.Tick("read_documents", 0, est.FileCount, 0, est.TotalBytes, true)
 	fmt.Printf("📂 Reading documents from %s...\n", docsDir)
 	items, pluginDocs, err := readDocuments(docsDir, config.ChunkConfig.ChunkSize, config.ChunkConfig.ChunkOverlap, tracker, mmProcessor, mode, noPlugins, includeSubmodules)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error reading documents: %v\n", err)
-		os.Exit(1)
+		exitFunc(1)
+		return
 	}
 
 	if len(items) == 0 {
 		fmt.Fprintln(os.Stderr, "error: no documents found")
-		os.Exit(1)
+		exitFunc(1)
+		return
 	}
 
 	fmt.Printf("📝 Found %d text chunks\n", len(items))
 	fmt.Printf("🔧 Building index %q (backend: %s) with model %s...\n", name, config.Backend, config.EmbeddingModel)
 
+	pacer.Tick("vector_index", 0, len(items), est.TotalBytes, est.TotalBytes, true)
 	start := time.Now()
 	ctx := context.Background()
 	if err := builder.Build(ctx, name, items); err != nil {
+		pacer.Done(false, 1, est.FileCount, est.TotalBytes)
 		fmt.Fprintf(os.Stderr, "error building index: %v\n", err)
-		os.Exit(1)
+		exitFunc(1)
+		return
 	}
 
 	tagsFlag := getFlag(args, "--tags")
@@ -192,7 +274,6 @@ func cmdBuild(args []string) {
 		}
 	})
 
-
 	elapsed := time.Since(start)
 	fmt.Printf("✅ Vector Index %q built: %d passages in %s\n", name, len(items), elapsed.Round(time.Millisecond))
 
@@ -218,6 +299,8 @@ func cmdBuild(args []string) {
 			fmt.Printf("🤖 AGENTS.md generated/updated in %s\n", agentsPath)
 		}
 	}
+
+	pacer.Done(true, 0, est.FileCount, est.TotalBytes)
 }
 
 // cmdRebuild removes an existing index and rebuilds it from scratch.
