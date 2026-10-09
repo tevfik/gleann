@@ -1570,21 +1570,24 @@ func (s *Server) handleIndexPath(w http.ResponseWriter, r *http.Request) {
 		buildArgs = append(buildArgs, fmt.Sprintf("--mcp=%t", *req.MCPExposed))
 	}
 
+	binPath := getBinaryPath()
 	if s.bgManager != nil {
 		s.bgManager.Submit(background.TaskTypeAutoIndex, func(progress func(pct float64, msg string)) error {
 			progress(0.1, fmt.Sprintf("Building index '%s' from '%s'", name, req.Path))
-			cmd := exec.Command(os.Args[0], buildArgs...)
-			if err := cmd.Run(); err != nil {
-				return fmt.Errorf("indexing failed: %w", err)
+			cmd := exec.Command(binPath, buildArgs...)
+			out, err := cmd.CombinedOutput()
+			if err != nil {
+				return fmt.Errorf("indexing failed: %w: %s", err, strings.TrimSpace(string(out)))
 			}
 			progress(1.0, fmt.Sprintf("Index '%s' built successfully from '%s'", name, req.Path))
 			return nil
 		})
 	} else {
 		go func() {
-			cmd := exec.Command(os.Args[0], buildArgs...)
-			if err := cmd.Run(); err != nil {
-				log.Printf("Background index build failed for %s: %v", req.Path, err)
+			cmd := exec.Command(binPath, buildArgs...)
+			out, err := cmd.CombinedOutput()
+			if err != nil {
+				log.Printf("Background index build failed for %s: %v: %s", req.Path, err, strings.TrimSpace(string(out)))
 			}
 		}()
 	}
@@ -1594,6 +1597,14 @@ func (s *Server) handleIndexPath(w http.ResponseWriter, r *http.Request) {
 		"path":   req.Path,
 		"index":  name,
 	})
+}
+
+// getBinaryPath returns the resolved absolute path to current running executable.
+func getBinaryPath() string {
+	if exe, err := os.Executable(); err == nil && exe != "" {
+		return exe
+	}
+	return os.Args[0]
 }
 
 // handleUpload handles binary and text file uploads via multipart form data.
@@ -1626,11 +1637,11 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 	io.Copy(dest, file)
 	dest.Close()
 
-	cmd := exec.Command(os.Args[0], "index", "build", name, "--docs", tmpDir)
+	cmd := exec.Command(getBinaryPath(), "index", "build", name, "--docs", tmpDir)
 	out, errCmd := cmd.CombinedOutput()
 	if errCmd != nil {
 		fmt.Fprintf(os.Stderr, "handleUpload index build failed: %v\nOutput: %s\n", errCmd, out)
-		writeError(w, http.StatusInternalServerError, "failed to index file: "+errCmd.Error())
+		writeError(w, http.StatusInternalServerError, "failed to index file: "+errCmd.Error()+": "+strings.TrimSpace(string(out)))
 		return
 	}
 	os.RemoveAll(tmpDir) // cleanup after success

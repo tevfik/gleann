@@ -49,13 +49,20 @@ func resolveEIFModelPath(model string) (string, error) {
 	home, err := os.UserHomeDir()
 	if err == nil {
 		modelsDir := filepath.Join(home, ".gleann", "models")
+		base := filepath.Base(model)
 		candidates := []string{
 			filepath.Join(modelsDir, model),
+			filepath.Join(modelsDir, base),
 			filepath.Join(modelsDir, model+".gguf"),
+			filepath.Join(modelsDir, base+".gguf"),
 			filepath.Join(modelsDir, model+"-q8_0.gguf"),
+			filepath.Join(modelsDir, base+"-q8_0.gguf"),
 			filepath.Join(modelsDir, model+"_q8_0.gguf"),
+			filepath.Join(modelsDir, base+"_q8_0.gguf"),
 			filepath.Join(modelsDir, model+".eifm"),
+			filepath.Join(modelsDir, base+".eifm"),
 			filepath.Join(modelsDir, model+"_bert.eifm"),
+			filepath.Join(modelsDir, base+"_bert.eifm"),
 			filepath.Join(modelsDir, "minilm_bert.eifm"),
 			filepath.Join(modelsDir, "multilingual-e5-small-q8_0.gguf"),
 		}
