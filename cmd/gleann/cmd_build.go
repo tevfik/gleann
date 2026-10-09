@@ -747,7 +747,15 @@ func readDocuments(dir string, chunkSize, chunkOverlap int, tracker *vault.Track
 					// No headings found — fall through to code/sentence chunking.
 				}
 
-				if chunking.IsCodeFile(fe.path) {
+				isCode := chunking.IsCodeFile(fe.path)
+				if !isCode {
+					s := walker.SniffBytes(fe.path, data)
+					if s.Category == walker.CategoryCode || s.Category == walker.CategoryConfig {
+						isCode = true
+					}
+				}
+
+				if isCode {
 					rawChunks = codeSplitter.ChunkWithMetadata(text, metadata)
 				} else {
 					metadata["kind"] = "docs"
@@ -836,31 +844,74 @@ func collectEligibleFiles(dir string, pluginManager *gleann.PluginManager, nativ
 
 		ext := strings.ToLower(filepath.Ext(path))
 
+		// Fast path: skip obvious binary extensions
+		if binaryExts[ext] {
+			return nil
+		}
+
+		// Fast path: skip minified bundles
+		if strings.Contains(strings.ToLower(filepath.Base(path)), ".min.") {
+			return nil
+		}
+
+		isStdCode := isCodeExtension(ext)
+		isStdDoc := isDocumentationExtension(ext)
+		isStdOffice := isOfficeDocExtension(ext)
+
+		var sniffResult *walker.SniffResult
+		getSniff := func() walker.SniffResult {
+			if sniffResult == nil {
+				res, _ := walker.SniffFile(path)
+				sniffResult = &res
+			}
+			return *sniffResult
+		}
+
 		switch mode {
 		case IndexModeCode:
 			// Code mode: source code, configs, and documentation text.
 			// Office docs, binary files, and massive data dumps (>1MB) are skipped.
-			if isOfficeDocExtension(ext) || binaryExts[ext] || info.Size() > 1<<20 {
+			if isStdOffice || info.Size() > 1<<20 {
 				return nil
 			}
-			if !isCodeExtension(ext) && !isDocumentationExtension(ext) {
-				return nil
+			if !isStdCode && !isStdDoc {
+				s := getSniff()
+				if s.IsBinary || s.IsMinified {
+					return nil
+				}
+				if s.Category != walker.CategoryCode && s.Category != walker.CategoryConfig && s.Category != walker.CategoryDoc {
+					return nil
+				}
+			} else {
+				// Verify text content for small files with code/doc extensions (protect against disguised binaries)
+				if info.Size() > 0 && info.Size() < 2048 {
+					s := getSniff()
+					if s.IsBinary || s.IsMinified {
+						return nil
+					}
+				}
 			}
 		case IndexModeDocs:
 			// Docs mode: office docs and documentation text. Pure code files are skipped.
-			if (!isOfficeDocExtension(ext) && !isDocumentationExtension(ext)) || info.Size() > 10<<20 {
+			if (!isStdOffice && !isStdDoc) || info.Size() > 10<<20 {
 				return nil
+			}
+			if !isStdOffice {
+				s := getSniff()
+				if s.IsBinary || s.IsMinified {
+					return nil
+				}
 			}
 		case IndexModeAll, "":
-			hasPlugin := pluginManager != nil && pluginManager.FindDocumentExtractor(ext) != nil
-			hasNative := nativeExtractor.CanHandle(ext)
 			hasMultimodal := mmProcessor != nil && mmProcessor.CanProcess(path)
-
-			if !hasPlugin && !hasNative && !hasMultimodal && binaryExts[ext] {
-				return nil
-			}
-			if !hasPlugin && !hasNative && !hasMultimodal && info.Size() > 1<<20 {
-				return nil
+			if !isStdOffice && !hasMultimodal {
+				if info.Size() > 1<<20 {
+					return nil
+				}
+				s := getSniff()
+				if s.IsBinary || s.IsMinified {
+					return nil
+				}
 			}
 		}
 
