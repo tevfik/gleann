@@ -636,6 +636,10 @@ func (s *Server) buildSearchTool() mcp.Tool {
 					"type":        "boolean",
 					"description": "If true, re-score candidates using a cross-encoder reranker for higher precision.",
 				},
+				"max_tokens": map[string]interface{}{
+					"type":        "integer",
+					"description": "Optional strict token budget for the response (minimum 32). When exceeded, subsequent results degrade to locators (citations only) and extra results are dropped to guarantee context limit.",
+				},
 			},
 			Required: []string{"index", "query"},
 		},
@@ -842,48 +846,21 @@ func (s *Server) handleSearch(ctx context.Context, request mcp.CallToolRequest) 
 		results = cft.EnrichSearchResults(results, signalMap)
 	}
 
-	var sb strings.Builder
-	for i, r := range results {
-		sb.WriteString(fmt.Sprintf("---\nResult [%d] (Score: %.4f)\n", i+1, r.Score))
-		if metaSource, ok := r.Metadata["source"]; ok {
-			sb.WriteString(fmt.Sprintf("Source: %v\n", metaSource))
-		}
-		if idxName, ok := r.Metadata["_index"].(string); ok {
-			sb.WriteString(fmt.Sprintf("Index: %s\n", idxName))
-		}
-		sb.WriteString(r.Text)
-		sb.WriteString("\n")
-
-		// Append graph context if available.
-		if r.GraphContext != nil && len(r.GraphContext.Symbols) > 0 {
-			sb.WriteString("Graph Context:\n")
-			for _, sym := range r.GraphContext.Symbols {
-				sb.WriteString(fmt.Sprintf("  • %s (%s)\n", sym.FQN, sym.Kind))
-				if len(sym.Callers) > 0 {
-					sb.WriteString(fmt.Sprintf("    ← callers: %s\n", strings.Join(sym.Callers, ", ")))
-				}
-				if len(sym.Callees) > 0 {
-					sb.WriteString(fmt.Sprintf("    → callees: %s\n", strings.Join(sym.Callees, ", ")))
-				}
-			}
-		}
+	maxTokens := 0
+	if mt, ok := args["max_tokens"].(float64); ok && mt > 0 {
+		maxTokens = int(mt)
 	}
 
-	// Collect unique source files for the footer hint
-	sourceFiles := make(map[string]struct{})
-	for _, r := range results {
-		if src, ok := r.Metadata["source"].(string); ok && src != "" {
-			sourceFiles[src] = struct{}{}
-		}
+	budgetOpts := gleann.TokenBudgetOptions{
+		MaxTokens:  maxTokens,
+		IncludeTip: true,
 	}
-	if len(sourceFiles) > 0 {
-		sb.WriteString("\n---\nTip: To read the full source code of any file above, use gleann_read with the Source path.\n")
-	}
+	output, _ := gleann.FormatSearchResultsWithBudget(results, budgetOpts)
 
 	// Log to active session if one is running.
 	s.sessionLog("search", indexName, query, len(results))
 
-	return mcp.NewToolResultText(sb.String()), nil
+	return mcp.NewToolResultText(output), nil
 }
 
 // --- List Tool ---
