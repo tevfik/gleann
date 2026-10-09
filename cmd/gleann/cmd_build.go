@@ -299,6 +299,22 @@ func cmdBuild(args []string) {
 			fmt.Printf("🤖 AGENTS.md generated/updated in %s\n", agentsPath)
 		}
 	}
+	// Build and persist Manifest for instant diffing and Merkle tree verification
+	manifestPath := filepath.Join(config.IndexDir, name, name+".manifest.json")
+	var manifestFiles []string
+	seenFiles := make(map[string]bool)
+	for _, it := range items {
+		if src, ok := it.Metadata["source"].(string); ok && src != "" && !seenFiles[src] {
+			seenFiles[src] = true
+			if !filepath.IsAbs(src) {
+				src = filepath.Join(docsDir, src)
+			}
+			manifestFiles = append(manifestFiles, src)
+		}
+	}
+	if mf, mErr := gleann.BuildManifest(name, docsDir, manifestFiles); mErr == nil {
+		_ = gleann.SaveManifest(manifestPath, mf)
+	}
 
 	pacer.Done(true, 0, est.FileCount, est.TotalBytes)
 }
@@ -1637,14 +1653,6 @@ func cmdSync(args []string) {
 	start := time.Now()
 	fmt.Printf("🔄 Synchronizing index %q with %s...\n", name, absDocsDir)
 
-	if err := initLlamaCPP(context.Background(), &config); err != nil {
-		fmt.Fprintf(os.Stderr, "error initializing llamacpp: %v\n", err)
-		os.Exit(1)
-	}
-
-	embedder := newEmbedder(config)
-	cachedEmbedder := embedding.NewCachedComputer(embedder, embedding.CacheOptions{})
-
 	tracker, err := vault.NewTracker(vault.DefaultDBPath())
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "warning: could not initialize vault tracker: %v\n", err)
@@ -1656,6 +1664,9 @@ func cmdSync(args []string) {
 	includeSubmodules := hasFlag(args, "--include-submodules")
 	var changedFiles []string
 	var deletedFiles []string
+	var eligiblePaths []string
+	manifestPath := filepath.Join(config.IndexDir, name, name+".manifest.json")
+	var newManifest *gleann.Manifest
 
 	if filesFlag != "" {
 		for _, f := range strings.Split(filesFlag, ",") {
@@ -1695,30 +1706,58 @@ func cmdSync(args []string) {
 			os.Exit(1)
 		}
 
-		eligiblePaths := make([]string, len(eligibleEntries))
+		eligiblePaths = make([]string, len(eligibleEntries))
 		for i, e := range eligibleEntries {
 			eligiblePaths[i] = e.path
 		}
 
-		if tracker != nil {
-			ctx := context.Background()
-			basePath := filepath.Join(config.IndexDir, name, name)
-			indexTime := meta.UpdatedAt
-			if indexTime.IsZero() {
-				indexTime = meta.CreatedAt
+		existingManifest, _ := gleann.LoadManifest(manifestPath)
+		if existingManifest != nil {
+			diff, nm, dErr := gleann.QuickDiffDirectory(existingManifest, absDocsDir, eligiblePaths)
+			if dErr == nil {
+				newManifest = nm
+				if diff.IsEmpty() {
+					rootShort := existingManifest.RootHash
+					if len(rootShort) > 12 {
+						rootShort = rootShort[:12]
+					}
+					fmt.Printf("⚡ Index %q is already up to date (Merkle root %s verified in %s). No changes detected.\n",
+						name, rootShort, time.Since(start).Round(time.Millisecond))
+					return
+				}
+				for _, a := range diff.Added {
+					changedFiles = append(changedFiles, filepath.Join(absDocsDir, a))
+				}
+				for _, m := range diff.Modified {
+					changedFiles = append(changedFiles, filepath.Join(absDocsDir, m))
+				}
+				for _, d := range diff.Deleted {
+					deletedFiles = append(deletedFiles, filepath.Join(absDocsDir, d))
+				}
 			}
-			bootstrapTrackerFromIndex(ctx, tracker, absDocsDir, basePath, eligiblePaths, indexTime)
+		}
 
-			cFiles, dFiles, dErr := tracker.DetectChangedFiles(ctx, absDocsDir, eligiblePaths)
-			if dErr != nil {
-				fmt.Fprintf(os.Stderr, "warning: change detection failed (%v), checking all files\n", dErr)
-				changedFiles = eligiblePaths
+		if existingManifest == nil || (len(changedFiles) == 0 && len(deletedFiles) == 0) {
+			if tracker != nil {
+				ctx := context.Background()
+				basePath := filepath.Join(config.IndexDir, name, name)
+				indexTime := meta.UpdatedAt
+				if indexTime.IsZero() {
+					indexTime = meta.CreatedAt
+				}
+				bootstrapTrackerFromIndex(ctx, tracker, absDocsDir, basePath, eligiblePaths, indexTime)
+
+				cFiles, dFiles, dErr := tracker.DetectChangedFiles(ctx, absDocsDir, eligiblePaths)
+				if dErr != nil {
+					fmt.Fprintf(os.Stderr, "warning: change detection failed (%v), checking all files\n", dErr)
+					changedFiles = eligiblePaths
+				} else {
+					changedFiles = cFiles
+					deletedFiles = dFiles
+				}
 			} else {
-				changedFiles = cFiles
-				deletedFiles = dFiles
+				changedFiles = eligiblePaths
 			}
-		} else {
-			changedFiles = eligiblePaths
 		}
 	}
 
@@ -1754,6 +1793,14 @@ func cmdSync(args []string) {
 		}
 	}
 
+	if err := initLlamaCPP(context.Background(), &config); err != nil {
+		fmt.Fprintf(os.Stderr, "error initializing llamacpp: %v\n", err)
+		os.Exit(1)
+	}
+
+	embedder := newEmbedder(config)
+	cachedEmbedder := embedding.NewCachedComputer(embedder, embedding.CacheOptions{})
+
 	pDocs, ok := incrementalBuildIndex(name, absDocsDir, allChanged, config, cachedEmbedder, tracker, mode, noPlugins, includeSubmodules)
 	if !ok {
 		fmt.Println("⚠️  Incremental vector update not supported or failed, running full rebuild...")
@@ -1777,6 +1824,14 @@ func cmdSync(args []string) {
 	_ = gleann.UpdateIndexMeta(config.IndexDir, name, func(m *gleann.IndexMeta) {
 		m.SourceDir = absDocsDir
 	})
+
+	if newManifest != nil {
+		_ = gleann.SaveManifest(manifestPath, newManifest)
+	} else if len(eligiblePaths) > 0 {
+		if mf, mErr := gleann.BuildManifest(name, absDocsDir, eligiblePaths); mErr == nil {
+			_ = gleann.SaveManifest(manifestPath, mf)
+		}
+	}
 
 	fmt.Printf("✅ Sync complete for %q in %s (%d files processed)\n", name, time.Since(start).Round(time.Millisecond), len(allChanged))
 }
