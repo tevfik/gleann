@@ -101,7 +101,7 @@ tasks:
         if [ -f ext/eif-runtime/CMakeLists.txt ]; then
           echo "🔧 Building eif-runtime static library..."
           mkdir -p ext/eif-runtime/build
-          cmake -B ext/eif-runtime/build -S ext/eif-runtime -DCMAKE_BUILD_TYPE=Release
+          cmake -B ext/eif-runtime/build -S ext/eif-runtime -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_FLAGS="-D_DARWIN_C_SOURCE=1 -D_POSIX_C_SOURCE=200809L $CMAKE_C_FLAGS"
           cmake --build ext/eif-runtime/build --target eif_runtime_static
         fi
 
