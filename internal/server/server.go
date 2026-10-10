@@ -1235,9 +1235,9 @@ func (s *Server) getSearcher(ctx context.Context, name string) (*gleann.LeannSea
 		return searcher, nil
 	}
 
-	// Check model compatibility before loading native FAISS bindings to prevent segfaults.
+	// Check model compatibility if dynamic resolution is not configured.
 	if meta, err := gleann.GetIndexMeta(s.config.IndexDir, name); err == nil {
-		if meta.EmbeddingModel != "" && meta.EmbeddingModel != s.embedder.ModelName() {
+		if s.config.EmbedderResolver == nil && meta.EmbeddingModel != "" && s.embedder != nil && meta.EmbeddingModel != s.embedder.ModelName() {
 			return nil, fmt.Errorf("model mismatch: index uses '%s', current is '%s'. please delete and recreate index", meta.EmbeddingModel, s.embedder.ModelName())
 		}
 	}

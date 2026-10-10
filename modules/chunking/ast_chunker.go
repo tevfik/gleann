@@ -110,6 +110,10 @@ type ASTChunkerConfig struct {
 	// This improves embedding quality by giving LLMs semantic context.
 	// Only effective when tree-sitter is enabled (-tags treesitter).
 	ChunkExpansion bool
+
+	// SignaturesOnly extracts only function/class/struct signatures and docstrings,
+	// omitting large implementation bodies to optimize embedding throughput and speed.
+	SignaturesOnly bool
 }
 
 // DefaultASTChunkerConfig returns reasonable defaults.
@@ -273,6 +277,13 @@ func (c *ASTChunker) chunkGo(source, filename string) []CodeChunk {
 			}
 
 			text := joinLines(lines, start-1, end)
+			if c.config.SignaturesOnly && d.Type != nil {
+				sigEnd := fset.Position(d.Type.End()).Line
+				if sigEnd >= start && sigEnd <= len(lines) {
+					text = joinLines(lines, start-1, sigEnd)
+					end = sigEnd
+				}
+			}
 			chunks = append(chunks, CodeChunk{
 				Text:      text,
 				StartLine: start,
@@ -593,6 +604,18 @@ func (c *ASTChunker) chunkByPattern(source, filename string, patterns []boundary
 		}
 
 		text := joinLines(lines, startLine, endLine)
+		if c.config.SignaturesOnly && (b.nodeType == "function" || b.nodeType == "method") {
+			sigEnd := startLine + 1
+			for l := startLine; l < endLine && l < startLine+5; l++ {
+				sigEnd = l + 1
+				lineStr := lines[l]
+				if strings.Contains(lineStr, "{") || strings.HasSuffix(strings.TrimSpace(lineStr), ":") {
+					break
+				}
+			}
+			text = joinLines(lines, startLine, sigEnd)
+			endLine = sigEnd
+		}
 		if strings.TrimSpace(text) == "" {
 			continue
 		}

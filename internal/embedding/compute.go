@@ -34,6 +34,9 @@ const (
 	ProviderMock     Provider = "mock"
 )
 
+// ProgressCallback is called when a batch of embeddings completes with completed items and total items.
+type ProgressCallback func(completed, total int)
+
 // Computer computes embeddings using a specified provider.
 type Computer struct {
 	provider       Provider
@@ -46,6 +49,9 @@ type Computer struct {
 	promptTemplate string
 	client         *http.Client
 	mu             sync.Mutex
+
+	progressCb ProgressCallback
+	cbMu       sync.RWMutex
 }
 
 // Options configures the embedding computer.
@@ -148,6 +154,13 @@ func NewComputer(opts Options) *Computer {
 	}
 }
 
+// SetProgressCallback registers a callback invoked as embedding batches complete.
+func (c *Computer) SetProgressCallback(cb ProgressCallback) {
+	c.cbMu.Lock()
+	defer c.cbMu.Unlock()
+	c.progressCb = cb
+}
+
 // Compute computes embeddings for the given texts.
 func (c *Computer) Compute(ctx context.Context, texts []string) ([][]float32, error) {
 	if len(texts) == 0 {
@@ -183,6 +196,7 @@ func (c *Computer) Compute(ctx context.Context, texts []string) ([][]float32, er
 	// Calculate number of batches to avoid math.Ceil overhead
 	numBatches := (len(processedTexts) + c.batchSize - 1) / c.batchSize
 	var processedBatches atomic.Int32
+	var processedItems atomic.Int64
 
 	if len(processedTexts) > 50 {
 		fmt.Printf("🚀 Starting embedding computation for %d items over %d batches (concurrency: %d)\n", len(processedTexts), numBatches, c.concurrency)
@@ -235,7 +249,7 @@ func (c *Computer) Compute(ctx context.Context, texts []string) ([][]float32, er
 
 			if err != nil {
 				// Retry one-by-one if batch fails (e.g., one text too long).
-				fmt.Printf("⚠️ Batch %d failed, retrying one-by-one: %v\n", startIdx, err)
+				fmt.Fprintf(os.Stderr, "⚠️ Batch %d failed, retrying one-by-one: %v\n", startIdx, err)
 				if len(batch) > 1 {
 					var singleRetryEmbeddings [][]float32
 					for j, text := range batch {
@@ -294,11 +308,18 @@ func (c *Computer) Compute(ctx context.Context, texts []string) ([][]float32, er
 				allEmbeddings[startIdx+i] = emb
 			}
 
-			// Atomic progress tracking — no mutex needed
+			// Atomic progress tracking
 			current := processedBatches.Add(1)
-			if len(processedTexts) > 50 {
-				if current%50 == 0 || current == int32(numBatches) {
-					fmt.Printf("⏳ Embeddings progress: %d / %d batches complete...\n", current, numBatches)
+			doneCount := int(processedItems.Add(int64(len(batch))))
+
+			c.cbMu.RLock()
+			cb := c.progressCb
+			c.cbMu.RUnlock()
+			if cb != nil {
+				cb(doneCount, len(processedTexts))
+			} else if len(processedTexts) > 50 {
+				if current%10 == 0 || current == int32(numBatches) {
+					fmt.Printf("⏳ Embeddings progress: %d / %d batches (%d/%d items) complete...\n", current, numBatches, doneCount, len(processedTexts))
 				}
 			}
 		}(start, end, processedTexts[start:end])
@@ -336,6 +357,11 @@ func (c *Computer) ComputeSingle(ctx context.Context, text string) ([]float32, e
 func (c *Computer) Dimensions() int {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if c.dimensions == 0 && c.provider == ProviderEIF {
+		if d := c.getEIFDim(); d > 0 {
+			c.dimensions = d
+		}
+	}
 	return c.dimensions
 }
 

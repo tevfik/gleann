@@ -234,6 +234,8 @@ func runChatFlow() error {
 			chatCfg.BaseURL = llmRunner.BaseURL()
 			chatCfg.APIKey = "gleann-embedded"
 			fmt.Printf("✅ Embedded chat llama-server is ready at %s\n", chatCfg.BaseURL)
+		} else if savedCfg.LLMProvider == "eif" {
+			chatCfg.Provider = gleann.LLMEIF
 		}
 	}
 	if chatCfg.Provider == gleann.LLMOllama && chatCfg.BaseURL == "" {

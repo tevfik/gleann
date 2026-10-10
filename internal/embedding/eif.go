@@ -122,7 +122,6 @@ func GetOrLoadEIF(model string) (*EIFComputer, error) {
 	return inst, nil
 }
 
-// Close unmaps and frees native EIF model memory.
 func (e *EIFComputer) Close() {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -180,4 +179,11 @@ func (c *Computer) computeEIF(ctx context.Context, texts []string) ([][]float32,
 		return nil, err
 	}
 	return engine.Compute(ctx, texts)
+}
+
+func (c *Computer) getEIFDim() int {
+	if engine, err := GetOrLoadEIF(c.model); err == nil && engine != nil {
+		return engine.Dim()
+	}
+	return 0
 }

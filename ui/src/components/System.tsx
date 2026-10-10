@@ -448,13 +448,13 @@ export function System() {
                       />
                     </div>
                     <div>
-                      <label className="text-xs text-gray-500 font-medium block mb-1">Embedding Model</label>
+                      <label className="text-xs text-gray-500 font-medium block mb-1">Embedding Model (General)</label>
                       <input 
                         type="text" 
                         list="embedding_models_list"
                         value={editConfig.embedding_model || ''} 
                         onChange={e => setEditConfig({...editConfig, embedding_model: e.target.value})}
-                        placeholder="e.g. nomic-embed-text"
+                        placeholder="e.g. nomic-embed-text or granite-30m"
                         className="w-full bg-black/50 border border-white/10 rounded px-3 py-1.5 text-sm text-gray-300 outline-none focus:border-blue-500/50 transition-colors"
                       />
                       {embeddingModels.length > 0 && (
@@ -462,6 +462,28 @@ export function System() {
                            {embeddingModels.map(m => <option key={m} value={m} />)}
                         </datalist>
                       )}
+                    </div>
+                    <div>
+                      <label className="text-xs text-blue-400 font-medium block mb-1">💻 Code Embedding Model</label>
+                      <input 
+                        type="text" 
+                        list="embedding_models_list"
+                        value={editConfig.code_embedding_model || ''} 
+                        onChange={e => setEditConfig({...editConfig, code_embedding_model: e.target.value})}
+                        placeholder="e.g. granite-30m-q8_0.gguf"
+                        className="w-full bg-black/50 border border-white/10 rounded px-3 py-1.5 text-sm text-gray-300 outline-none focus:border-blue-500/50 transition-colors"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-xs text-emerald-400 font-medium block mb-1">📄 Docs Embedding Model</label>
+                      <input 
+                        type="text" 
+                        list="embedding_models_list"
+                        value={editConfig.doc_embedding_model || ''} 
+                        onChange={e => setEditConfig({...editConfig, doc_embedding_model: e.target.value})}
+                        placeholder="e.g. bge-small-en-q8_0.gguf"
+                        className="w-full bg-black/50 border border-white/10 rounded px-3 py-1.5 text-sm text-gray-300 outline-none focus:border-blue-500/50 transition-colors"
+                      />
                     </div>
                   </div>
                   )}

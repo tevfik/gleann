@@ -27,6 +27,7 @@ const (
 	LLMOpenAI    LLMProvider = "openai"
 	LLMAnthropic LLMProvider = "anthropic"
 	LLMMock      LLMProvider = "mock"
+	LLMEIF       LLMProvider = "eif"
 )
 
 // ChatConfig holds configuration for LLM chat.
@@ -479,6 +480,8 @@ func (c *LeannChat) chatStream(ctx context.Context, messages []ChatMessage, call
 		return c.chatAnthropicStream(ctx, messages, callback)
 	case LLMMock:
 		return c.chatMockStream(ctx, messages, callback)
+	case LLMEIF:
+		return c.chatEIFStream(ctx, messages, callback)
 	default:
 		return fmt.Errorf("unsupported LLM provider for streaming: %s", c.config.Provider)
 	}
@@ -670,6 +673,8 @@ func (c *LeannChat) chat(ctx context.Context, messages []ChatMessage) (string, e
 		})
 	case LLMMock:
 		answer, doErr = c.chatMock(ctx, messages)
+	case LLMEIF:
+		answer, doErr = c.chatEIF(ctx, messages)
 	default:
 		return "", fmt.Errorf("unsupported LLM provider: %s", c.config.Provider)
 	}

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -64,6 +65,7 @@ Examples:
 	searchAll := hasFlag(args, "--all")
 
 	applySavedConfig(&config, args)
+	config.EmbedderResolver = defaultEmbedderResolver(config)
 
 	if err := initLlamaCPP(context.Background(), &config); err != nil {
 		fmt.Fprintf(os.Stderr, "error initializing llamacpp: %v\n", err)
@@ -118,8 +120,25 @@ Examples:
 		searchOpts = append(searchOpts, gleann.WithKind(kind))
 	}
 
-	// Multi-index search: comma-separated names or --all.
+	// Multi-index search: comma-separated names, --all, or auto-expanded dual index (<name>-code, <name>-docs).
 	names := strings.Split(name, ",")
+	if !searchAll && len(names) == 1 {
+		idxPath := filepath.Join(config.IndexDir, name)
+		if _, err := os.Stat(idxPath); os.IsNotExist(err) {
+			codeIdx := filepath.Join(config.IndexDir, name+"-code")
+			docsIdx := filepath.Join(config.IndexDir, name+"-docs")
+			var autoNames []string
+			if _, err := os.Stat(codeIdx); err == nil {
+				autoNames = append(autoNames, name+"-code")
+			}
+			if _, err := os.Stat(docsIdx); err == nil {
+				autoNames = append(autoNames, name+"-docs")
+			}
+			if len(autoNames) > 0 {
+				names = autoNames
+			}
+		}
+	}
 	if searchAll || len(names) > 1 {
 		var indexNames []string
 		if !searchAll {

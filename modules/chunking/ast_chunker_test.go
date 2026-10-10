@@ -481,3 +481,101 @@ func TestHelper(t any) {}
 	}
 }
 
+func TestASTChunker_SignaturesOnly_Go(t *testing.T) {
+	source := `package algo
+
+// QuickSort sorts an array of integers in-place.
+func QuickSort(arr []int) {
+	// 50 lines of complex partition logic
+	if len(arr) <= 1 {
+		return
+	}
+	pivot := arr[len(arr)/2]
+	left := 0
+	right := len(arr) - 1
+	for left <= right {
+		for arr[left] < pivot { left++ }
+		for arr[right] > pivot { right-- }
+		if left <= right {
+			arr[left], arr[right] = arr[right], arr[left]
+			left++
+			right--
+		}
+	}
+}
+`
+
+	// Standard chunker (includes full body)
+	cfgStd := DefaultASTChunkerConfig()
+	cfgStd.AddLineNumbers = false
+	stdChunker := NewASTChunker(cfgStd)
+	stdChunks := stdChunker.ChunkCode(source, "sort.go")
+
+	// SignaturesOnly chunker
+	cfgSig := DefaultASTChunkerConfig()
+	cfgSig.AddLineNumbers = false
+	cfgSig.SignaturesOnly = true
+	sigChunker := NewASTChunker(cfgSig)
+	sigChunks := sigChunker.ChunkCode(source, "sort.go")
+
+	var funcStd, funcSig *CodeChunk
+	for i := range stdChunks {
+		if stdChunks[i].Name == "QuickSort" {
+			funcStd = &stdChunks[i]
+		}
+	}
+	for i := range sigChunks {
+		if sigChunks[i].Name == "QuickSort" {
+			funcSig = &sigChunks[i]
+		}
+	}
+
+	if funcStd == nil || funcSig == nil {
+		t.Fatalf("QuickSort function chunk not found in test output")
+	}
+
+	// Full body should contain loops and partitions
+	if !strings.Contains(funcStd.Text, "pivot :=") {
+		t.Errorf("standard chunk should contain function body: %s", funcStd.Text)
+	}
+
+	// SignaturesOnly should contain docstring and signature, but NOT the inner body
+	if !strings.Contains(funcSig.Text, "func QuickSort(arr []int)") {
+		t.Errorf("signature chunk must contain signature: %s", funcSig.Text)
+	}
+	if strings.Contains(funcSig.Text, "pivot :=") {
+		t.Errorf("signature chunk must NOT contain implementation details: %s", funcSig.Text)
+	}
+	if len(funcSig.Text) >= len(funcStd.Text) {
+		t.Errorf("signature chunk length (%d) should be significantly shorter than full body (%d)", len(funcSig.Text), len(funcStd.Text))
+	}
+}
+
+func TestASTChunker_SignaturesOnly_Python(t *testing.T) {
+	source := `def calculate_fibonacci(n: int) -> int:
+    """Computes the n-th Fibonacci number recursively."""
+    if n <= 1:
+        return n
+    a, b = 0, 1
+    for _ in range(n):
+        a, b = b, a + b
+    return a
+`
+
+	sigChunker := NewASTChunker(ASTChunkerConfig{AddLineNumbers: false, SignaturesOnly: true})
+	sigChunks := sigChunker.ChunkCode(source, "math_utils.py")
+
+	if len(sigChunks) == 0 {
+		t.Fatalf("expected python signature chunk")
+	}
+
+	ch := sigChunks[0]
+	if !strings.Contains(ch.Text, "def calculate_fibonacci") {
+		t.Errorf("expected function signature in chunk: %s", ch.Text)
+	}
+	if strings.Contains(ch.Text, "for _ in range(n):") {
+		t.Errorf("expected implementation loop to be omitted: %s", ch.Text)
+	}
+}
+
+

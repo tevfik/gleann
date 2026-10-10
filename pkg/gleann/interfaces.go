@@ -79,6 +79,20 @@ type EmbeddingComputer interface {
 	ModelName() string
 }
 
+// EmbedderResolver dynamically resolves or instantiates an EmbeddingComputer
+// for a specified model path/name and dimension.
+type EmbedderResolver interface {
+	ResolveEmbedder(ctx context.Context, modelName string, dims int) (EmbeddingComputer, error)
+}
+
+// EmbedderResolverFunc allows using a plain function as an EmbedderResolver.
+type EmbedderResolverFunc func(ctx context.Context, modelName string, dims int) (EmbeddingComputer, error)
+
+// ResolveEmbedder implements EmbedderResolver.
+func (f EmbedderResolverFunc) ResolveEmbedder(ctx context.Context, modelName string, dims int) (EmbeddingComputer, error) {
+	return f(ctx, modelName, dims)
+}
+
 // EmbeddingServer manages an in-process embedding computation service.
 // In Python LEANN, this is done via ZMQ subprocess.
 // In gleann-go, this is done via goroutines and channels.

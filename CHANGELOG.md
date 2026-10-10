@@ -2,6 +2,28 @@
 
 All notable changes to this project will be documented in this file.
 
+## [v1.8.3] — 2026-10-10
+
+### Added
+- **Dual Embedding Model Architecture (Code + Docs Specialization)**:
+  - Added `--code-model` and `--doc-model` (alias: `--docs-model`) CLI flags and `code_embedding_model` / `doc_embedding_model` configuration fields.
+  - Automated dual-stage indexing: running `gleann index build <name> --docs <dir> --code-model <m1> --doc-model <m2>` automatically builds `<name>-code` and `<name>-docs` with their respective specialized models in a single command.
+  - Automatic Dual-Index Expansion: querying `gleann search <name>` or `gleann ask <name>` transparently routes queries across both `<name>-code` and `<name>-docs` via `MultiSearcher`.
+- **Per-Index Dynamic Embedder Resolution (`EmbedderResolver`)**:
+  - Implemented `EmbedderResolver` across `pkg/gleann`, `internal/embedding`, CLI, and REST server.
+  - In multi-index search, queries against each index are dynamically embedded using that index's native model (`meta.EmbeddingModel`), completely eliminating latent vector space mismatch and dimension mismatch panics across indices with different dimensions (e.g., 768-dim Jina Code + 384-dim BGE Small).
+- **Web UI & REST API Dual Model Settings**:
+  - Added dedicated Code Embedding Model and Docs Embedding Model fields to Web UI System Settings (`ui/src/components/System.tsx`).
+  - Updated `/api/config` GET/POST endpoints and server searcher cache to support multi-model indexes without false model mismatch errors.
+- **In-Process EIF-Runtime LLM & ALiBi Support**:
+  - Submodule updated to latest `ext/eif-runtime` with ALiBi double LayerNorm support, enabling Jina Embeddings v2 Base Code (~93 ms/emb on CPU).
+  - Added C99 in-process LLM generation and real-time token streaming callbacks (`pkg/gleann/chat_eif.go`).
+
+### Fixed
+- **CI/CD Toolchain Compatibility**:
+  - Added `GOTOOLCHAIN=auto` across `.github/workflows/ci.yml` and `.github/workflows/release.yml` to prevent Go toolchain version mismatch failures.
+  - Cleaned up mock structs in MCP token budget tests, passing 100% of `staticcheck`, `go vet`, and race-detector test suites.
+
 ## [v1.8.2] — 2026-10-07
 
 ### Added
@@ -68,8 +90,8 @@ All notable changes to this project will be documented in this file.
 ### Fixed
 - **Windows CI & Path Compatibility**: Resolved `models_handler_test` failure on Windows by honoring `USERPROFILE` path resolution.
 - **Race Condition Handling**: Disabled Windows `-race` flag in CI to prevent TSAN crashes with CGO.
-- **Graph CSV Import Crash**: Kuzu DB'de doc comment'lerdeki `"`, `,`, `\`, `\n` karakterleri nedeniyle STRING→DOUBLE cast hatası düzeltildi (`sanitizeCSVField()` eklendi).
-- **TUI Test Timeout**: 200+ TUI testi 90sn timeout'u aşması `TestMain` ve test modu ile çözüldü.
+- **Graph CSV Import Crash**: Resolved STRING→DOUBLE cast errors in Kuzu DB caused by special characters (`"`, `,`, `\`, `\n`) in doc comments (added `sanitizeCSVField()`).
+- **TUI Test Timeout**: Resolved 200+ TUI tests exceeding 90s timeout by introducing `TestMain` and dedicated test mode.
 
 ### Stats
 - **Coverage**: %59.6 total statements (26 packages, 0 fail)

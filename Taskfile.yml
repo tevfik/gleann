@@ -224,8 +224,8 @@ tasks:
   test:
     desc: Run standard tests
     cmds:
-      - mkdir -p build/test-home
-      - GLEANN_TEST_MODE=true HOME=$(pwd)/build/test-home go test -race -timeout 120s $(go list ./... | grep -v /tests/benchmarks | grep -v /build/)
+      - mkdir -p /tmp/gleann-test-home
+      - GLEANN_TEST_MODE=true GOPATH=$(go env GOPATH) HOME=/tmp/gleann-test-home go test -race -timeout 120s $(go list ./... | grep -v /tests/benchmarks | grep -v /build/)
 
   test-faiss:
     desc: Run FAISS backend tests

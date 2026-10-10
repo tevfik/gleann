@@ -12,10 +12,11 @@ import (
 // LeannBuilder builds and manages indexes.
 // This mirrors Python LEANN's LeannBuilder.
 type LeannBuilder struct {
-	config   Config
-	backend  BackendBuilder
-	embedder EmbeddingComputer
-	chunker  Chunker
+	config     Config
+	backend    BackendBuilder
+	embedder   EmbeddingComputer
+	chunker    Chunker
+	progressCb func(phase string, done, total int)
 }
 
 // NewBuilder creates a new LeannBuilder.
@@ -32,20 +33,26 @@ func NewBuilder(config Config, embedder EmbeddingComputer) (*LeannBuilder, error
 	}, nil
 }
 
+// SetProgressCallback registers a callback invoked as indexing phases make progress.
+func (b *LeannBuilder) SetProgressCallback(cb func(phase string, done, total int)) {
+	b.progressCb = cb
+}
+
 // SetChunker sets a custom chunker for text processing.
 func (b *LeannBuilder) SetChunker(chunker Chunker) {
 	b.chunker = chunker
 }
 
-// Build creates a new index from the given items.
-func (b *LeannBuilder) Build(ctx context.Context, name string, items []Item) error {
+// BuildPassages creates the index directory and stores passages into the passage database,
+// immediately writing metadata marking lexical search as ready (Phase 1: Instant Lexical Index).
+func (b *LeannBuilder) BuildPassages(name string, items []Item) ([]int64, error) {
 	if len(items) == 0 {
-		return fmt.Errorf("no items to index")
+		return nil, fmt.Errorf("no items to index")
 	}
 
 	indexDir := filepath.Join(b.config.IndexDir, name)
 	if err := os.MkdirAll(indexDir, 0o755); err != nil {
-		return fmt.Errorf("create index directory: %w", err)
+		return nil, fmt.Errorf("create index directory: %w", err)
 	}
 
 	basePath := filepath.Join(indexDir, name)
@@ -58,13 +65,62 @@ func (b *LeannBuilder) Build(ctx context.Context, name string, items []Item) err
 	ids, err := pm.Add(items)
 	_ = pm.Close()
 	if err != nil {
-		return fmt.Errorf("add passages: %w", err)
+		return nil, fmt.Errorf("add passages: %w", err)
 	}
+
+	meta := IndexMeta{
+		Name:           name,
+		Backend:        b.config.Backend,
+		EmbeddingModel: "",
+		Dimensions:     0,
+		NumPassages:    len(ids),
+		CreatedAt:      time.Now(),
+		UpdatedAt:      time.Now(),
+		Version:        "1.0.0",
+		LexicalOnly:    true,
+		VectorReady:    false,
+		SignaturesOnly: b.config.ChunkConfig.SignaturesOnly,
+	}
+	if b.embedder != nil {
+		meta.EmbeddingModel = b.embedder.ModelName()
+		meta.Dimensions = b.embedder.Dimensions()
+	}
+
+	metaPath := basePath + ".meta.json"
+	metaData, err := json.MarshalIndent(meta, "", "  ")
+	if err != nil {
+		return nil, fmt.Errorf("marshal metadata: %w", err)
+	}
+	if err := os.WriteFile(metaPath, metaData, 0o644); err != nil {
+		return nil, fmt.Errorf("write metadata: %w", err)
+	}
+
+	return ids, nil
+}
+
+// BuildVectors computes vector embeddings for items and builds the vector index backend,
+// updating metadata to mark vectors as ready (Phase 2: Semantic Vector Index).
+func (b *LeannBuilder) BuildVectors(ctx context.Context, name string, items []Item, ids []int64) error {
+	if b.embedder == nil {
+		return fmt.Errorf("no embedder configured for vector build")
+	}
+
+	indexDir := filepath.Join(b.config.IndexDir, name)
+	basePath := filepath.Join(indexDir, name)
 
 	// Extract texts for embedding computation.
 	texts := make([]string, len(items))
 	for i, item := range items {
 		texts[i] = item.Text
+	}
+
+	// Wire progress reporting from embedder if supported
+	if reporter, ok := b.embedder.(interface{ SetProgressCallback(func(int, int)) }); ok {
+		reporter.SetProgressCallback(func(done, total int) {
+			if b.progressCb != nil {
+				b.progressCb("vector_index", done, total)
+			}
+		})
 	}
 
 	// Compute embeddings.
@@ -73,9 +129,6 @@ func (b *LeannBuilder) Build(ctx context.Context, name string, items []Item) err
 		return fmt.Errorf("compute embeddings: %w", err)
 	}
 
-	// Validate embeddings before handing off to the backend. Empty or
-	// zero-dimensional rows would otherwise surface as cryptic divide-by-zero
-	// panics inside PQ / graph construction (Bug #12).
 	if len(embeddings) == 0 {
 		return fmt.Errorf("embedder returned 0 vectors for %d texts", len(texts))
 	}
@@ -101,28 +154,33 @@ func (b *LeannBuilder) Build(ctx context.Context, name string, items []Item) err
 		return fmt.Errorf("write index: %w", err)
 	}
 
-	// Write metadata.
-	meta := IndexMeta{
-		Name:           name,
-		Backend:        b.config.Backend,
-		EmbeddingModel: b.embedder.ModelName(),
-		Dimensions:     b.embedder.Dimensions(),
-		NumPassages:    len(ids),
-		CreatedAt:      time.Now(),
-		UpdatedAt:      time.Now(),
-		Version:        "1.0.0",
-	}
-
-	metaPath := basePath + ".meta.json"
-	metaData, err := json.MarshalIndent(meta, "", "  ")
-	if err != nil {
-		return fmt.Errorf("marshal metadata: %w", err)
-	}
-	if err := os.WriteFile(metaPath, metaData, 0o644); err != nil {
-		return fmt.Errorf("write metadata: %w", err)
-	}
+	// Update metadata with vector completion
+	_ = UpdateIndexMeta(b.config.IndexDir, name, func(m *IndexMeta) {
+		m.EmbeddingModel = b.embedder.ModelName()
+		m.Dimensions = expectedDim
+		m.VectorReady = true
+		m.LexicalOnly = false
+		m.SignaturesOnly = b.config.ChunkConfig.SignaturesOnly
+		m.UpdatedAt = time.Now()
+	})
 
 	return nil
+}
+
+// BuildLexicalOnly builds only Phase 1 instant lexical index without computing vector embeddings.
+func (b *LeannBuilder) BuildLexicalOnly(name string, items []Item) error {
+	_, err := b.BuildPassages(name, items)
+	return err
+}
+
+// Build creates a new index from the given items executing staged build:
+// Phase 1 (Instant Lexical) followed by Phase 2 (Vector Index).
+func (b *LeannBuilder) Build(ctx context.Context, name string, items []Item) error {
+	ids, err := b.BuildPassages(name, items)
+	if err != nil {
+		return err
+	}
+	return b.BuildVectors(ctx, name, items, ids)
 }
 
 // UpdateIndex performs an incremental index update: removes old passages for the

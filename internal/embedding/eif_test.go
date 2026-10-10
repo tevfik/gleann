@@ -51,9 +51,10 @@ func testEmbeddingWithModel(t *testing.T, modelName string) {
 		t.Fatalf("[%s] expected 3 embeddings, got %d", modelName, len(embeddings))
 	}
 
+	dim := len(embeddings[0])
 	for i, emb := range embeddings {
-		if len(emb) != 384 {
-			t.Errorf("[%s] text %d: expected dim 384, got %d", modelName, i, len(emb))
+		if len(emb) != dim {
+			t.Errorf("[%s] text %d: expected dim %d, got %d", modelName, i, dim, len(emb))
 		}
 	}
 
@@ -61,8 +62,8 @@ func testEmbeddingWithModel(t *testing.T, modelName string) {
 	sim13 := cosineSimilarity(embeddings[0], embeddings[2])
 	sim23 := cosineSimilarity(embeddings[1], embeddings[2])
 
-	t.Logf("[%s] Computed %d embeddings in %v (avg %.2f ms/emb)",
-		modelName, len(texts), elapsed, float64(elapsed.Milliseconds())/float64(len(texts)))
+	t.Logf("[%s] Computed %d embeddings (dim %d) in %v (avg %.2f ms/emb)",
+		modelName, len(texts), dim, elapsed, float64(elapsed.Milliseconds())/float64(len(texts)))
 	t.Logf("[%s] Sim(1, 2) [Sorting vs Ordering]: %.4f", modelName, sim12)
 	t.Logf("[%s] Sim(1, 3) [Sorting vs Pizza]:    %.4f", modelName, sim13)
 	t.Logf("[%s] Sim(2, 3) [Ordering vs Pizza]:   %.4f", modelName, sim23)
@@ -73,14 +74,25 @@ func testEmbeddingWithModel(t *testing.T, modelName string) {
 	}
 }
 
-func TestEIFComputerGGUF(t *testing.T) {
+func TestEIFComputerBGEM3(t *testing.T) {
+	testEmbeddingWithModel(t, "bge-m3")
+}
+
+func TestEIFComputerMiniLM_Q8(t *testing.T) {
 	testEmbeddingWithModel(t, "minilm.gguf")
 }
 
-func TestEIFComputerEIFM(t *testing.T) {
-	testEmbeddingWithModel(t, "minilm_bert.eifm")
+func TestEIFComputerBGESmall_Q8(t *testing.T) {
+	testEmbeddingWithModel(t, "bge-small-en-q8_0.gguf")
 }
 
-func TestEIFComputerMultilingualE5(t *testing.T) {
-	testEmbeddingWithModel(t, "multilingual-e5-small-q8_0.gguf")
+func TestEIFComputerSnowflakeXS_Q8(t *testing.T) {
+	testEmbeddingWithModel(t, "snowflake-xs-q8_0.gguf")
 }
+
+func TestEIFComputerGranite30M_Q8(t *testing.T) {
+	testEmbeddingWithModel(t, "granite-30m-q8_0.gguf")
+}
+
+
+

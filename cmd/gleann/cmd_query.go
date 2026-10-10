@@ -686,9 +686,27 @@ func createAskSearcher(ctx context.Context, name string, args []string, config g
 		return gleann.NullSearcher{}
 	}
 
+	config.EmbedderResolver = defaultEmbedderResolver(config)
 	embedder := newEmbedder(config)
 
 	indexNames := strings.Split(name, ",")
+	if len(indexNames) == 1 {
+		idxPath := filepath.Join(config.IndexDir, indexNames[0])
+		if _, err := os.Stat(idxPath); os.IsNotExist(err) {
+			codeIdx := filepath.Join(config.IndexDir, indexNames[0]+"-code")
+			docsIdx := filepath.Join(config.IndexDir, indexNames[0]+"-docs")
+			var autoNames []string
+			if _, err := os.Stat(codeIdx); err == nil {
+				autoNames = append(autoNames, indexNames[0]+"-code")
+			}
+			if _, err := os.Stat(docsIdx); err == nil {
+				autoNames = append(autoNames, indexNames[0]+"-docs")
+			}
+			if len(autoNames) > 0 {
+				indexNames = autoNames
+			}
+		}
+	}
 
 	if len(indexNames) == 1 {
 		s := gleann.NewSearcher(config, embedder)

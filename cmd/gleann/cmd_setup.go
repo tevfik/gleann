@@ -183,7 +183,7 @@ func runAutoSetup(args []string) {
 		defer tracker.Close()
 	}
 
-	items, pluginDocs, err := readDocuments(absDir, config.ChunkConfig.ChunkSize, config.ChunkConfig.ChunkOverlap, tracker, nil, IndexModeAll, false, false)
+	items, pluginDocs, err := readDocuments(absDir, config.ChunkConfig.ChunkSize, config.ChunkConfig.ChunkOverlap, config.ChunkConfig.SignaturesOnly, tracker, nil, IndexModeAll, false, false)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error reading documents: %v\n", err)
 		os.Exit(1)

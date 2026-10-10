@@ -62,18 +62,20 @@ type modelsFetchedMsg struct {
 // OnboardResult holds the onboarding output and persisted settings.
 // Saved to ~/.gleann/config.json.
 type OnboardResult struct {
-	EmbeddingProvider string `json:"embedding_provider"`
-	EmbeddingModel    string `json:"embedding_model"`
-	OllamaHost        string `json:"ollama_host,omitempty"`
-	OpenAIKey         string `json:"openai_api_key,omitempty"`
-	OpenAIBaseURL     string `json:"openai_base_url,omitempty"`
-	AnthropicKey      string `json:"anthropic_api_key,omitempty"`
-	LLMProvider       string `json:"llm_provider"`
-	LLMModel          string `json:"llm_model"`
-	RerankEnabled     bool   `json:"rerank_enabled"`
-	RerankModel       string `json:"rerank_model,omitempty"`
-	IndexDir          string `json:"index_dir"`
-	Completed         bool   `json:"completed"`
+	EmbeddingProvider  string `json:"embedding_provider"`
+	EmbeddingModel     string `json:"embedding_model"`
+	CodeEmbeddingModel string `json:"code_embedding_model,omitempty"`
+	DocEmbeddingModel  string `json:"doc_embedding_model,omitempty"`
+	OllamaHost         string `json:"ollama_host,omitempty"`
+	OpenAIKey          string `json:"openai_api_key,omitempty"`
+	OpenAIBaseURL      string `json:"openai_base_url,omitempty"`
+	AnthropicKey       string `json:"anthropic_api_key,omitempty"`
+	LLMProvider        string `json:"llm_provider"`
+	LLMModel           string `json:"llm_model"`
+	RerankEnabled      bool   `json:"rerank_enabled"`
+	RerankModel        string `json:"rerank_model,omitempty"`
+	IndexDir           string `json:"index_dir"`
+	Completed          bool   `json:"completed"`
 
 	// LlamaCPP Config
 	LlamaCPPConfig gleann.LlamaCPPConfig `json:"llamacpp_config,omitempty"`
@@ -298,7 +300,7 @@ func NewOnboardModel() OnboardModel {
 		quickAdvOptions:   []string{"⚡ Quick Setup (auto-detect, 30 seconds)", "🔧 Advanced Setup (full control, all options)"},
 		quickAdvOptionIdx: 0,
 		embProviders:      buildEmbProviders(),
-		llmProviders:      []string{"ollama", "openai", "anthropic", "llamacpp"},
+		llmProviders:      buildLLMProviders(),
 		embHostInput:      embHost,
 		embKeyInput:       embKey,
 		llmHostInput:      llmHost,
@@ -344,6 +346,14 @@ func buildEmbProviders() []string {
 	}
 	if gleann.IsNativeSupported() {
 		providers = append(providers, "native")
+	}
+	return providers
+}
+
+func buildLLMProviders() []string {
+	providers := []string{"ollama", "openai", "anthropic", "llamacpp"}
+	if gleann.IsEIFSupported() {
+		providers = append(providers, "eif")
 	}
 	return providers
 }
@@ -463,7 +473,7 @@ func (m OnboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.phase = phaseReranker
 				}
 			} else if msg.forLLM {
-				if m.llmProviders[m.llmProviderIdx] == "llamacpp" {
+				if m.llmProviders[m.llmProviderIdx] == "llamacpp" || m.llmProviders[m.llmProviderIdx] == "eif" {
 					m.fetchErr = "No local .gguf models found. Select one to download to ~/.gleann/models"
 					m.llmModels = []ModelInfo{
 						{Name: "(Download) Qwen2.5-Coder-1.5B", Tag: "qwen2.5-coder-1.5b-instruct-q4_k_m.gguf"},
@@ -783,7 +793,7 @@ func (m OnboardModel) handleMenuKeys(key string) (tea.Model, tea.Cmd) {
 		}
 		if target == phaseLLMHost {
 			prov := m.llmProviders[m.llmProviderIdx]
-			if prov == "llamacpp" {
+			if prov == "llamacpp" || prov == "eif" {
 				return m, nil
 			}
 			if prov == "openai" || prov == "anthropic" {
@@ -913,7 +923,10 @@ func (m OnboardModel) handleLLMProviderKeys(key string) (tea.Model, tea.Cmd) {
 			m.llmHostInput.Focus()
 			m.phase = phaseLLMHost
 			return m, textinput.Blink
-		} else if prov == "llamacpp" {
+		} else if prov == "llamacpp" || prov == "eif" {
+			if prov == "eif" {
+				m.llmHostInput.SetValue("")
+			}
 			m.phase = phaseLLMFetching
 			return m, m.fetchLLMModels()
 		}
@@ -1059,8 +1072,11 @@ func (m *OnboardModel) buildResult() {
 	}
 	llmModel := "nemotron-3-nano:4b"
 	if len(m.llmModels) > 0 && m.llmModelIdx < len(m.llmModels) {
-		if m.llmProviders[m.llmProviderIdx] == "llamacpp" {
+		if m.llmProviders[m.llmProviderIdx] == "llamacpp" || m.llmProviders[m.llmProviderIdx] == "eif" {
 			llmModel = m.llmModels[m.llmModelIdx].Tag
+			if llmModel == "" {
+				llmModel = m.llmModels[m.llmModelIdx].Name
+			}
 		} else {
 			llmModel = m.llmModels[m.llmModelIdx].Name
 		}
@@ -1119,7 +1135,7 @@ func (m *OnboardModel) buildResult() {
 		}
 	} else {
 		// Neither embedding nor LLM is Ollama (e.g. EIF + OpenAI)
-		if m.llmHostInput.Value() != "" && m.llmHostInput.Value() != gleann.DefaultOllamaHost {
+		if m.llmHostInput.Value() != "" && m.llmHostInput.Value() != gleann.DefaultOllamaHost && m.llmProviders[m.llmProviderIdx] != "eif" && m.llmProviders[m.llmProviderIdx] != "llamacpp" {
 			ollamaHost = m.llmHostInput.Value()
 		} else if m.embHostInput.Value() != "" && m.embHostInput.Value() != gleann.DefaultOllamaHost && m.embProviders[m.embProviderIdx] != "eif" && m.embProviders[m.embProviderIdx] != "llamacpp" {
 			ollamaHost = m.embHostInput.Value()
@@ -1168,8 +1184,10 @@ func (m *OnboardModel) buildResult() {
 		m.result.OllamaHost = ""
 	}
 
-	// Preserve chat settings from existing config.
+	// Preserve chat and dual-model settings from existing config.
 	if m.existingCfg != nil {
+		m.result.CodeEmbeddingModel = m.existingCfg.CodeEmbeddingModel
+		m.result.DocEmbeddingModel = m.existingCfg.DocEmbeddingModel
 		m.result.SystemPrompt = m.existingCfg.SystemPrompt
 		m.result.Temperature = m.existingCfg.Temperature
 		m.result.MaxTokens = m.existingCfg.MaxTokens
@@ -1293,19 +1311,23 @@ func (m OnboardModel) View() tea.View {
 			len(m.embAllModels) != len(m.embModels)))
 
 	case phaseLLMProvider:
+		descs := []string{
+			"Local models via Ollama (free, private)",
+			"OpenAI GPT models (cloud)",
+			"Anthropic Claude models (cloud)",
+			"Embedded llama.cpp server (local, isolated)",
+		}
+		if gleann.IsEIFSupported() {
+			descs = append(descs, "EIF high-performance in-process runtime (local CPU/GPU)")
+		}
 		b.WriteString(m.renderSelect("4", "LLM Provider",
 			"Which LLM for chat / ask?",
 			m.llmProviders, m.llmProviderIdx,
-			[]string{
-				"Local models via Ollama (free, private)",
-				"OpenAI GPT models (cloud)",
-				"Anthropic Claude models (cloud)",
-				"Embedded llama.cpp server (local, isolated)",
-			}))
+			descs))
 
 	case phaseLLMHost:
 		prov := m.llmProviders[m.llmProviderIdx]
-		if prov == "llamacpp" {
+		if prov == "llamacpp" || prov == "eif" {
 			b.WriteString(m.renderInput("5", "LLM Model Search Path",
 				"Optional: Provide an absolute folder to scan for .gguf files, or leave blank to search default dirs.",
 				&m.llmHostInput))
@@ -1476,7 +1498,7 @@ func (m OnboardModel) settingsMenuValues() []string {
 	}
 
 	llmHostOrKey := m.llmHostInput.Value()
-	if strings.HasPrefix(llmHostOrKey, "http://") && llmProv == "llamacpp" {
+	if strings.HasPrefix(llmHostOrKey, "http://") && (llmProv == "llamacpp" || llmProv == "eif") {
 		llmHostOrKey = ""
 	}
 	if llmProv == "openai" || llmProv == "anthropic" {
@@ -1485,6 +1507,10 @@ func (m OnboardModel) settingsMenuValues() []string {
 			llmHostOrKey = k[:4] + "..." + k[len(k)-4:]
 		} else if k != "" {
 			llmHostOrKey = "****"
+		}
+	} else if llmProv == "eif" {
+		if llmHostOrKey == "" {
+			llmHostOrKey = "(in-process CGO runtime)"
 		}
 	} else if llmProv == "llamacpp" && llmHostOrKey == "" {
 		llmHostOrKey = "(auto-scan default dirs)"

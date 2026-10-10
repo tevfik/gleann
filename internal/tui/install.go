@@ -545,7 +545,7 @@ _gleann() {
                     return
                     ;;
                 --llm-provider)
-                    COMPREPLY=($(compgen -W "ollama openai anthropic llamacpp" -- "$cur"))
+                    COMPREPLY=($(compgen -W "ollama openai anthropic llamacpp eif" -- "$cur"))
                     return
                     ;;
                 --continue)
@@ -566,7 +566,7 @@ _gleann() {
         chat)
             case "$prev" in
                 --llm-provider)
-                    COMPREPLY=($(compgen -W "ollama openai anthropic llamacpp" -- "$cur"))
+                    COMPREPLY=($(compgen -W "ollama openai anthropic llamacpp eif" -- "$cur"))
                     return
                     ;;
                 --role)

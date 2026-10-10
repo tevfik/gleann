@@ -82,6 +82,7 @@ func cmdServe(args []string) {
 		}
 	}
 
+	config.EmbedderResolver = defaultEmbedderResolver(config)
 	srv := server.NewServer(config, addr, version)
 
 	// Graceful shutdown.

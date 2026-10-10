@@ -1,9 +1,12 @@
 package mcp
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"math"
 	"os"
@@ -60,23 +63,31 @@ type Server struct {
 
 // syncTask tracks a background indexing or synchronization task for an index.
 type syncTask struct {
-	indexName string
-	mode      string
-	isNew     bool
-	startTime time.Time
-	done      chan struct{}
-	output    string
-	err       error
+	indexName  string
+	mode       string
+	isNew      bool
+	startTime  time.Time
+	done       chan struct{}
+	output     string
+	err        error
+	mu         sync.RWMutex
+	phase      string
+	pct        float64
+	itemsDone  int
+	totalItems int
+	rate       float64
+	etaSec     float64
 }
 
 // SyncOptions contains options for synchronizing or building an index via gleann_sync.
 type SyncOptions struct {
-	IndexName string
-	DocsDir   string
-	Files     []string
-	Mode      string // "code", "docs", "all"
-	NoPlugins bool
-	IsNew     bool
+	IndexName  string
+	DocsDir    string
+	Files      []string
+	Mode       string // "code", "docs", "all"
+	NoPlugins  bool
+	IsNew      bool
+	OnProgress func(phase string, pct float64, done, total int, rate, etaSec float64)
 }
 
 type syncRunnerFunc func(ctx context.Context, opts SyncOptions) (string, error)
@@ -808,7 +819,18 @@ func (s *Server) handleSearch(ctx context.Context, request mcp.CallToolRequest) 
 		searcher, err := s.getSearcher(indexName)
 		if err != nil {
 			if s.isSyncRunning(indexName) {
-				return mcp.NewToolResultError(fmt.Sprintf("Index %q is currently being built in the background. Please wait a moment for initial indexing to complete.", indexName)), nil
+				s.syncMu.Lock()
+				t := s.syncTasks[indexName]
+				s.syncMu.Unlock()
+				progressInfo := ""
+				if t != nil {
+					t.mu.RLock()
+					if t.totalItems > 0 {
+						progressInfo = fmt.Sprintf(" (%.1f%% complete, %d/%d items, ETA: %.0fs)", t.pct, t.itemsDone, t.totalItems, t.etaSec)
+					}
+					t.mu.RUnlock()
+				}
+				return mcp.NewToolResultError(fmt.Sprintf("Index %q is currently being built in the background%s. Please wait a moment for initial indexing to complete.", indexName, progressInfo)), nil
 			}
 			return mcp.NewToolResultError(fmt.Sprintf("Error loading index %q: %v", indexName, err)), nil
 		}
@@ -1844,14 +1866,35 @@ func (s *Server) handleSync(ctx context.Context, request mcp.CallToolRequest) (*
 			if !existing.isNew {
 				actionMsg = "Sync"
 			}
+
+			existing.mu.RLock()
+			phase := existing.phase
+			pct := existing.pct
+			itemsDone := existing.itemsDone
+			totalItems := existing.totalItems
+			rate := existing.rate
+			etaSec := existing.etaSec
+			existing.mu.RUnlock()
+
+			progressDetail := ""
+			if totalItems > 0 {
+				progressDetail = fmt.Sprintf(": currently %.1f%% (%d/%d items, phase: %s, ETA: %.0fs)", pct, itemsDone, totalItems, phase, etaSec)
+			}
+
 			res := map[string]any{
 				"status":                "in_progress",
 				"index":                 indexName,
 				"mode":                  existing.mode,
 				"action":                "in_progress",
-				"message":               fmt.Sprintf("%s for %q is actively running in the background (started %s ago). DO NOT sleep or block. The current index remains available for search. You must immediately inform the user that synchronization is actively progressing in the background and proceed with other tasks.", actionMsg, indexName, elapsed),
+				"phase":                 phase,
+				"pct":                   pct,
+				"items_done":            itemsDone,
+				"total_items":           totalItems,
+				"rate":                  rate,
+				"eta_seconds":           etaSec,
+				"message":               fmt.Sprintf("%s for %q is actively running in the background%s (started %s ago). DO NOT sleep or block. The current index remains available for search. You must immediately inform the user that synchronization is actively progressing with this status and proceed with other tasks.", actionMsg, indexName, progressDetail, elapsed),
 				"elapsed":               elapsed.String(),
-				"instruction_for_agent": "CRITICAL: Do NOT execute sleep commands or poll repeatedly in a loop. Inform the user immediately that background synchronization is active and continue.",
+				"instruction_for_agent": "CRITICAL: Do NOT execute sleep commands or poll repeatedly in a loop. Inform the user of current percentage and ETA, then continue.",
 			}
 			resBytes, _ := json.MarshalIndent(res, "", "  ")
 			return mcp.NewToolResultText(string(resBytes)), nil
@@ -1865,6 +1908,16 @@ func (s *Server) handleSync(ctx context.Context, request mcp.CallToolRequest) (*
 		isNew:     isNew,
 		startTime: time.Now(),
 		done:      make(chan struct{}),
+	}
+	opts.OnProgress = func(phase string, pct float64, done, total int, rate, etaSec float64) {
+		task.mu.Lock()
+		task.phase = phase
+		task.pct = pct
+		task.itemsDone = done
+		task.totalItems = total
+		task.rate = rate
+		task.etaSec = etaSec
+		task.mu.Unlock()
 	}
 	s.syncTasks[indexName] = task
 	s.syncMu.Unlock()
@@ -1930,18 +1983,66 @@ func (s *Server) handleSync(ctx context.Context, request mcp.CallToolRequest) (*
 			actionMsg = "Initial index build started in background"
 		}
 		elapsedStr := waitTimeout.String()
+
+		task.mu.RLock()
+		phase := task.phase
+		pct := task.pct
+		itemsDone := task.itemsDone
+		totalItems := task.totalItems
+		rate := task.rate
+		etaSec := task.etaSec
+		task.mu.RUnlock()
+
+		progressDetail := ""
+		if totalItems > 0 {
+			progressDetail = fmt.Sprintf(": currently %.1f%% (%d/%d items, phase: %s, ETA: %.0fs)", pct, itemsDone, totalItems, phase, etaSec)
+		}
+
 		res := map[string]any{
 			"status":                "in_progress",
 			"index":                 indexName,
 			"mode":                  mode,
 			"action":                actionMsg,
-			"message":               fmt.Sprintf("%s for %q. Because this is a large codebase, indexing is progressing asynchronously in the background. The current index remains available for search. DO NOT sleep or block.", actionMsg, indexName),
+			"phase":                 phase,
+			"pct":                   pct,
+			"items_done":            itemsDone,
+			"total_items":           totalItems,
+			"rate":                  rate,
+			"eta_seconds":           etaSec,
+			"message":               fmt.Sprintf("%s for %q%s. Because this is a large codebase, indexing is progressing asynchronously in the background. The current index remains available for search. DO NOT sleep or block.", actionMsg, indexName, progressDetail),
 			"elapsed":               elapsedStr,
-			"instruction_for_agent": "CRITICAL: Do NOT execute sleep commands or poll in a loop. Inform the user immediately that background synchronization has started and continue.",
+			"instruction_for_agent": "CRITICAL: Do NOT execute sleep commands or poll in a loop. Inform the user of current progress and continue.",
 		}
 		resBytes, _ := json.MarshalIndent(res, "", "  ")
 		return mcp.NewToolResultText(string(resBytes)), nil
 	}
+}
+
+func parseProgressLine(line string) (phase string, pct float64, done, total int, rate, etaSec float64, ok bool) {
+	idx := strings.Index(line, "gleann-progress ")
+	if idx < 0 {
+		return "", 0, 0, 0, 0, 0, false
+	}
+	parts := strings.Fields(line[idx+len("gleann-progress "):])
+	for _, part := range parts {
+		kv := strings.SplitN(part, "=", 2)
+		if len(kv) != 2 {
+			continue
+		}
+		switch kv[0] {
+		case "phase":
+			phase = kv[1]
+		case "pct":
+			fmt.Sscanf(kv[1], "%f", &pct)
+		case "items":
+			fmt.Sscanf(kv[1], "%d/%d", &done, &total)
+		case "rate":
+			fmt.Sscanf(kv[1], "%f", &rate)
+		case "eta_s":
+			fmt.Sscanf(kv[1], "%f", &etaSec)
+		}
+	}
+	return phase, pct, done, total, rate, etaSec, true
 }
 
 func (s *Server) defaultSyncRunner(ctx context.Context, opts SyncOptions) (string, error) {
@@ -1967,8 +2068,38 @@ func (s *Server) defaultSyncRunner(ctx context.Context, opts SyncOptions) (strin
 	}
 
 	cmd := exec.CommandContext(ctx, exe, cmdArgs...)
-	out, err := cmd.CombinedOutput()
-	return string(out), err
+	pr, pw := io.Pipe()
+	cmd.Stdout = pw
+	cmd.Stderr = pw
+
+	var outBuf bytes.Buffer
+	scanDone := make(chan struct{})
+
+	go func() {
+		defer close(scanDone)
+		scanner := bufio.NewScanner(pr)
+		for scanner.Scan() {
+			line := scanner.Text()
+			outBuf.WriteString(line + "\n")
+			if phase, pct, done, total, rate, etaSec, ok := parseProgressLine(line); ok && opts.OnProgress != nil {
+				opts.OnProgress(phase, pct, done, total, rate, etaSec)
+			}
+		}
+	}()
+
+	err = cmd.Start()
+	if err != nil {
+		pw.Close()
+		pr.Close()
+		return "", err
+	}
+
+	waitErr := cmd.Wait()
+	pw.Close()
+	<-scanDone
+	pr.Close()
+
+	return outBuf.String(), waitErr
 }
 
 // resolveIndexName tries to auto-detect an exposed index name if none is provided.

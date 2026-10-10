@@ -16,25 +16,33 @@ import (
 // LeannSearcher performs search on built indexes.
 // This mirrors Python LEANN's LeannSearcher.
 type LeannSearcher struct {
-	config    Config
-	backend   BackendSearcher
-	passages  *PassageManager
-	meta      IndexMeta
-	embedder  EmbeddingComputer
-	scorer    Scorer
-	reranker  Reranker
-	embServer EmbeddingServer
-	graphDB   GraphDB
+	config           Config
+	backend          BackendSearcher
+	passages         *PassageManager
+	meta             IndexMeta
+	embedder         EmbeddingComputer
+	scorer           Scorer
+	reranker         Reranker
+	embServer        EmbeddingServer
+	graphDB          GraphDB
+	embedderResolver EmbedderResolver
 
-	loaded bool
+	loaded          bool
+	vectorAvailable bool
+}
+
+// VectorAvailable reports whether a vector index is loaded and available for search.
+func (s *LeannSearcher) VectorAvailable() bool {
+	return s.vectorAvailable
 }
 
 // NewSearcher creates a new LeannSearcher.
 func NewSearcher(config Config, embedder EmbeddingComputer) *LeannSearcher {
 	return &LeannSearcher{
-		config:   config,
-		embedder: embedder,
-		scorer:   NewBM25Adapter(),
+		config:           config,
+		embedder:         embedder,
+		embedderResolver: config.EmbedderResolver,
+		scorer:           NewBM25Adapter(),
 	}
 }
 
@@ -51,6 +59,11 @@ func (s *LeannSearcher) SetReranker(reranker Reranker) {
 // SetEmbeddingServer sets the embedding server for recomputation during search.
 func (s *LeannSearcher) SetEmbeddingServer(server EmbeddingServer) {
 	s.embServer = server
+}
+
+// SetEmbedderResolver sets the dynamic embedder resolver for per-index models.
+func (s *LeannSearcher) SetEmbedderResolver(resolver EmbedderResolver) {
+	s.embedderResolver = resolver
 }
 
 // Load loads an index for searching.
@@ -76,17 +89,30 @@ func (s *LeannSearcher) Load(ctx context.Context, name string) error {
 			name, s.meta.Version, expectedVersion, name)
 	}
 
+	// Dynamically resolve dedicated embedder if index specifies an embedding model
+	if s.embedderResolver != nil && s.meta.EmbeddingModel != "" {
+		needsResolve := s.embedder == nil ||
+			s.embedder.ModelName() != s.meta.EmbeddingModel ||
+			(s.meta.Dimensions > 0 && s.embedder.Dimensions() > 0 && s.embedder.Dimensions() != s.meta.Dimensions)
+		if needsResolve {
+			if resolved, err := s.embedderResolver.ResolveEmbedder(ctx, s.meta.EmbeddingModel, s.meta.Dimensions); err == nil && resolved != nil {
+				s.embedder = resolved
+			}
+		}
+	}
+
 	// Warn if the current embedding model differs from what was used to build the index.
-	if s.config.EmbeddingModel != "" && s.meta.EmbeddingModel != "" &&
-		s.config.EmbeddingModel != s.meta.EmbeddingModel {
-		log.Printf("⚠  WARNING: Index %q was built with embedding model %q (%d dims) "+
-			"but current config uses %q — search results will be incorrect! "+
-			"To migrate to the new model, run: gleann index rebuild %s --docs <dir>",
-			name, s.meta.EmbeddingModel, s.meta.Dimensions, s.config.EmbeddingModel, name)
+	if s.embedder != nil && s.meta.EmbeddingModel != "" && s.embedder.ModelName() != "" {
+		if s.embedder.ModelName() != s.meta.EmbeddingModel && filepath.Base(s.embedder.ModelName()) != filepath.Base(s.meta.EmbeddingModel) {
+			log.Printf("⚠  WARNING: Index %q was built with embedding model %q (%d dims) "+
+				"but current config uses %q — search results will be incorrect! "+
+				"To migrate to the new model, run: gleann index rebuild %s --docs <dir>",
+				name, s.meta.EmbeddingModel, s.meta.Dimensions, s.embedder.ModelName(), name)
+		}
 	}
 
 	// Strictly validate embedding dimensions to prevent backend crashes or corruption.
-	if s.embedder != nil && s.meta.Dimensions > 0 && s.embedder.Dimensions() > 0 && s.embedder.Dimensions() != s.meta.Dimensions {
+	if !s.meta.LexicalOnly && s.embedder != nil && s.meta.Dimensions > 0 && s.embedder.Dimensions() > 0 && s.embedder.Dimensions() != s.meta.Dimensions {
 		return fmt.Errorf("embedding dimension mismatch: index %q expects %d dims (%s), but embedder provides %d dims (%s). Rebuild index: gleann index rebuild %s --docs <dir>",
 			name, s.meta.Dimensions, s.meta.EmbeddingModel, s.embedder.Dimensions(), s.embedder.ModelName(), name)
 	}
@@ -97,29 +123,34 @@ func (s *LeannSearcher) Load(ctx context.Context, name string) error {
 		return fmt.Errorf("load passages: %w", err)
 	}
 
-	// Get backend.
-	factory, err := GetBackend(s.meta.Backend)
-	if err != nil {
-		return fmt.Errorf("get backend: %w", err)
-	}
-	s.backend = factory.NewSearcher(s.config)
-
-	// Attempt Zero-Copy Memory Mapping first, fallback to standard RAM loading
+	// Check if vector index exists and is ready
 	indexPath := basePath + ".index"
-	if mmapSearcher, ok := s.backend.(MmapBackendSearcher); ok {
-		// Native zero-copy mmap
-		if err := mmapSearcher.LoadFromFile(ctx, indexPath); err != nil {
-			return fmt.Errorf("load backend mmap: %w", err)
-		}
-	} else {
-		// Standard RAM load
-		indexData, err := os.ReadFile(indexPath)
+	s.vectorAvailable = false
+	if _, err := os.Stat(indexPath); err == nil && !s.meta.LexicalOnly {
+		// Get backend.
+		factory, err := GetBackend(s.meta.Backend)
 		if err != nil {
-			return fmt.Errorf("read index: %w", err)
+			return fmt.Errorf("get backend: %w", err)
 		}
-		if err := s.backend.Load(ctx, indexData, s.meta); err != nil {
-			return fmt.Errorf("load backend: %w", err)
+		s.backend = factory.NewSearcher(s.config)
+
+		// Attempt Zero-Copy Memory Mapping first, fallback to standard RAM loading
+		if mmapSearcher, ok := s.backend.(MmapBackendSearcher); ok {
+			// Native zero-copy mmap
+			if err := mmapSearcher.LoadFromFile(ctx, indexPath); err != nil {
+				return fmt.Errorf("load backend mmap: %w", err)
+			}
+		} else {
+			// Standard RAM load
+			indexData, err := os.ReadFile(indexPath)
+			if err != nil {
+				return fmt.Errorf("read index: %w", err)
+			}
+			if err := s.backend.Load(ctx, indexData, s.meta); err != nil {
+				return fmt.Errorf("load backend: %w", err)
+			}
 		}
+		s.vectorAvailable = true
 	}
 
 	// Attempt to load Graph DB if it exists.
@@ -224,9 +255,38 @@ func (s *LeannSearcher) Search(ctx context.Context, query string, opts ...Search
 		}
 	}
 
+	// Fallback to pure lexical search if vector backend is not available or lexical-only search is requested
+	if !s.vectorAvailable || s.backend == nil || searchOpts.HybridAlpha == 0.0 {
+		results, err := s.SearchBM25(ctx, query, retrieveK)
+		if err != nil {
+			return nil, err
+		}
+		if len(searchOpts.MetadataFilters) > 0 {
+			engine := NewMetadataFilterEngine(searchOpts.MetadataFilters)
+			if searchOpts.FilterLogic != "" {
+				engine.Logic = searchOpts.FilterLogic
+			}
+			results = engine.FilterResults(results)
+		}
+		if activeReranker != nil && searchOpts.UseReranker && len(results) > 0 {
+			return activeReranker.Rerank(ctx, query, results, topK)
+		}
+		if len(results) > topK {
+			results = results[:topK]
+		}
+		return results, nil
+	}
+
 	// Compute query embedding.
+	if s.embedder == nil {
+		return s.SearchBM25(ctx, query, topK)
+	}
 	queryEmb, err := s.embedder.ComputeSingle(ctx, query)
 	if err != nil {
+		if s.scorer != nil {
+			log.Printf("⚠  Embedder error (%v); falling back to pure BM25 retrieval", err)
+			return s.SearchBM25(ctx, query, topK)
+		}
 		return nil, fmt.Errorf("compute query embedding: %w", err)
 	}
 
@@ -596,7 +656,6 @@ func (s *LeannSearcher) SetMeta(meta IndexMeta) {
 	s.meta = meta
 }
 
-
 // GraphDB returns the underlying Graph DB connection, or nil if none exists.
 func (s *LeannSearcher) GraphDB() GraphDB {
 	return s.graphDB
@@ -682,7 +741,6 @@ func WithKind(kind string) SearchOption {
 		c.Kind = kind
 	}
 }
-
 
 // ListIndexes returns all available indexes in the configured directory.
 func ListIndexes(indexDir string) ([]IndexMeta, error) {
@@ -907,5 +965,3 @@ func (s *LeannSearcher) SearchGraphRAG(ctx context.Context, query string, topK i
 	}
 	return baseResults, nil
 }
-
-

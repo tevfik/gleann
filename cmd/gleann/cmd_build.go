@@ -64,6 +64,11 @@ Arguments:
 Options:
   --docs <dir>            Source directory containing files to index (required)
   --graph                 Build AST-based code graph using tree-sitter & Kùzu
+  --signatures            Index only signatures & docstrings for code (70-80% faster embedding)
+  --instant               Build instant lexical BM25 index only (skips vector embeddings)
+  --lexical-only          Alias for --instant
+  --code-model <m>        Model for code indexing (triggers dual-index build if --doc-model is also set)
+  --doc-model <m>         Model for documentation indexing (alias: --docs-model)
   --mode <code|docs|all>  Index mode:
                             code - fast source code & AST graph only
                             docs - documents only (pdf, docx, etc.)
@@ -86,6 +91,7 @@ Options:
 Examples:
   gleann index build core --docs ./src --graph --mode code
   gleann index build docs --docs ./documentation --tag docs,work
+  gleann index build repo --docs ./src --code-model granite-30m --doc-model bge-small
   gleann index build repo --docs ./src --max-minutes 5 --approve fast`)
 }
 
@@ -116,6 +122,74 @@ func cmdBuild(args []string) {
 	mode, noPlugins := parseIndexMode(args)
 
 	dryRun := hasFlag(args, "--dry-run")
+
+	codeModel := getFlag(args, "--code-model")
+	if codeModel == "" {
+		codeModel = getFlag(args, "--code-embedding-model")
+	}
+	docModel := getFlag(args, "--doc-model")
+	if docModel == "" {
+		docModel = getFlag(args, "--docs-model")
+	}
+	if docModel == "" {
+		docModel = getFlag(args, "--doc-embedding-model")
+	}
+
+	// Dual-model mode: If both code and doc models are specified (and mode is 'all'),
+	// automatically build <name>-code and <name>-docs in two targeted passes.
+	if !dryRun && mode == IndexModeAll && codeModel != "" && docModel != "" {
+		fmt.Printf("⚡ Dual-model mode active:\n")
+		fmt.Printf("   💻 Code model: %s\n", codeModel)
+		fmt.Printf("   📄 Docs model: %s\n\n", docModel)
+
+		// Pass 1: Build code index (<name>-code)
+		fmt.Printf("📦 Step 1/2: Building code index %q...\n", name+"-code")
+		codeArgs := make([]string, 0, len(args)+4)
+		for i := 0; i < len(args); i++ {
+			if args[i] == name {
+				codeArgs = append(codeArgs, name+"-code")
+			} else if args[i] == "--model" || args[i] == "--mode" ||
+				strings.HasPrefix(args[i], "--code-model") ||
+				strings.HasPrefix(args[i], "--doc-model") ||
+				strings.HasPrefix(args[i], "--docs-model") {
+				i++ // skip flag and value
+			} else {
+				codeArgs = append(codeArgs, args[i])
+			}
+		}
+		codeArgs = append(codeArgs, "--mode", "code", "--model", codeModel)
+		cmdBuild(codeArgs)
+
+		// Pass 2: Build docs index (<name>-docs)
+		fmt.Printf("\n📦 Step 2/2: Building docs index %q...\n", name+"-docs")
+		docArgs := make([]string, 0, len(args)+4)
+		for i := 0; i < len(args); i++ {
+			if args[i] == name {
+				docArgs = append(docArgs, name+"-docs")
+			} else if args[i] == "--model" || args[i] == "--mode" ||
+				strings.HasPrefix(args[i], "--code-model") ||
+				strings.HasPrefix(args[i], "--doc-model") ||
+				strings.HasPrefix(args[i], "--docs-model") {
+				i++ // skip flag and value
+			} else {
+				docArgs = append(docArgs, args[i])
+			}
+		}
+		docArgs = append(docArgs, "--mode", "docs", "--model", docModel)
+		cmdBuild(docArgs)
+
+		fmt.Printf("\n🎉 Dual-index build complete for %q!\n", name)
+		fmt.Printf("   💻 Code index: %s-code\n", name)
+		fmt.Printf("   📄 Docs index: %s-docs\n", name)
+		fmt.Printf("   🔍 Search both concurrently: gleann search %s \"<query>\"\n", name)
+		return
+	}
+
+	if mode == IndexModeCode && codeModel != "" && getFlag(args, "--model") == "" {
+		args = append(args, "--model", codeModel)
+	} else if mode == IndexModeDocs && docModel != "" && getFlag(args, "--model") == "" {
+		args = append(args, "--model", docModel)
+	}
 	maxMinutesStr := getFlag(args, "--max-minutes")
 	var maxMinutes float64
 	if maxMinutesStr != "" {
@@ -208,6 +282,11 @@ func cmdBuild(args []string) {
 		exitFunc(1)
 		return
 	}
+	builder.SetProgressCallback(func(phase string, done, total int) {
+		approxBytes := int64(done) * est.TotalBytes / int64(max(total, 1))
+		force := (done == total)
+		pacer.Tick(phase, done, total, approxBytes, est.TotalBytes, force)
+	})
 
 	// Initialize vault tracker
 	tracker, err := vault.NewTracker(vault.DefaultDBPath())
@@ -222,7 +301,7 @@ func cmdBuild(args []string) {
 	// Read documents from directory.
 	pacer.Tick("read_documents", 0, est.FileCount, 0, est.TotalBytes, true)
 	fmt.Printf("📂 Reading documents from %s...\n", docsDir)
-	items, pluginDocs, err := readDocuments(docsDir, config.ChunkConfig.ChunkSize, config.ChunkConfig.ChunkOverlap, tracker, mmProcessor, mode, noPlugins, includeSubmodules)
+	items, pluginDocs, err := readDocuments(docsDir, config.ChunkConfig.ChunkSize, config.ChunkConfig.ChunkOverlap, config.ChunkConfig.SignaturesOnly, tracker, mmProcessor, mode, noPlugins, includeSubmodules)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error reading documents: %v\n", err)
 		exitFunc(1)
@@ -236,16 +315,41 @@ func cmdBuild(args []string) {
 	}
 
 	fmt.Printf("📝 Found %d text chunks\n", len(items))
-	fmt.Printf("🔧 Building index %q (backend: %s) with model %s...\n", name, config.Backend, config.EmbeddingModel)
+	if config.ChunkConfig.SignaturesOnly {
+		fmt.Printf("✂️  Signatures-only chunking enabled (body implementations omitted for fast embedding)\n")
+	}
 
-	pacer.Tick("vector_index", 0, len(items), est.TotalBytes, est.TotalBytes, true)
+	instantOnly := hasFlag(args, "--instant") || hasFlag(args, "--lexical-only")
 	start := time.Now()
 	ctx := context.Background()
-	if err := builder.Build(ctx, name, items); err != nil {
-		pacer.Done(false, 1, est.FileCount, est.TotalBytes)
-		fmt.Fprintf(os.Stderr, "error building index: %v\n", err)
-		exitFunc(1)
-		return
+
+	if instantOnly {
+		fmt.Printf("⚡ Building instant lexical index %q (skipping vector embeddings)...\n", name)
+		if err := builder.BuildLexicalOnly(name, items); err != nil {
+			pacer.Done(false, 1, est.FileCount, est.TotalBytes)
+			fmt.Fprintf(os.Stderr, "error building lexical index: %v\n", err)
+			exitFunc(1)
+			return
+		}
+		fmt.Printf("✅ Instant lexical index ready for %q (%d chunks) in %s\n", name, len(items), time.Since(start).Round(time.Millisecond))
+	} else {
+		fmt.Printf("⚡ Phase 1: Storing instant lexical passages for %q...\n", name)
+		ids, err := builder.BuildPassages(name, items)
+		if err != nil {
+			pacer.Done(false, 1, est.FileCount, est.TotalBytes)
+			fmt.Fprintf(os.Stderr, "error building passages: %v\n", err)
+			exitFunc(1)
+			return
+		}
+		fmt.Printf("   ✅ Passages ready (%d chunks) — lexical BM25 search immediately active.\n", len(ids))
+		fmt.Printf("🧠 Phase 2: Computing vector embeddings with model %s...\n", config.EmbeddingModel)
+		pacer.Tick("vector_index", 0, len(items), est.TotalBytes, est.TotalBytes, true)
+		if err := builder.BuildVectors(ctx, name, items, ids); err != nil {
+			pacer.Done(false, 1, est.FileCount, est.TotalBytes)
+			fmt.Fprintf(os.Stderr, "error building vector index: %v\n", err)
+			exitFunc(1)
+			return
+		}
 	}
 
 	tagsFlag := getFlag(args, "--tags")
@@ -366,7 +470,7 @@ Options:
 
 func buildIndex(name, docsDir string, config gleann.Config, embedder gleann.EmbeddingComputer, tracker *vault.Tracker, mode IndexMode, noPlugins bool, includeSubmodules bool) []*PluginDoc {
 	mmProcessor := initMultimodalProcessor(config.OllamaHost, config.MultimodalModel)
-	items, pluginDocs, err := readDocuments(docsDir, config.ChunkConfig.ChunkSize, config.ChunkConfig.ChunkOverlap, tracker, mmProcessor, mode, noPlugins, includeSubmodules)
+	items, pluginDocs, err := readDocuments(docsDir, config.ChunkConfig.ChunkSize, config.ChunkConfig.ChunkOverlap, config.ChunkConfig.SignaturesOnly, tracker, mmProcessor, mode, noPlugins, includeSubmodules)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error reading documents: %v\n", err)
 		return nil
@@ -416,7 +520,7 @@ func makeFileRecord(path string, info os.FileInfo, data []byte) *vault.FileRecor
 	}
 }
 
-func readDocuments(dir string, chunkSize, chunkOverlap int, tracker *vault.Tracker, mmProcessor *multimodal.Processor, mode IndexMode, noPlugins bool, includeSubmodules bool) ([]gleann.Item, []*PluginDoc, error) {
+func readDocuments(dir string, chunkSize, chunkOverlap int, signaturesOnly bool, tracker *vault.Tracker, mmProcessor *multimodal.Processor, mode IndexMode, noPlugins bool, includeSubmodules bool) ([]gleann.Item, []*PluginDoc, error) {
 	if abs, err := filepath.Abs(dir); err == nil {
 		dir = abs
 	}
@@ -473,6 +577,7 @@ func readDocuments(dir string, chunkSize, chunkOverlap int, tracker *vault.Track
 			astCfg := chunking.DefaultASTChunkerConfig()
 			astCfg.MaxChunkSize = chunkSize
 			astCfg.ChunkOverlap = chunkOverlap
+			astCfg.SignaturesOnly = signaturesOnly
 			codeSplitter := chunking.NewASTChunker(astCfg)
 			mdChunker := chunking.NewMarkdownChunker(chunkSize, chunkOverlap)
 
@@ -940,7 +1045,7 @@ func collectEligibleFiles(dir string, pluginManager *gleann.PluginManager, nativ
 // readDocumentsForFiles reads and chunks only the specified files.
 // This is used for incremental indexing in watch mode where only changed files
 // need processing — much faster than re-reading the entire directory.
-func readDocumentsForFiles(dir string, filePaths []string, chunkSize, chunkOverlap int, tracker *vault.Tracker, mmProcessor *multimodal.Processor, mode IndexMode, noPlugins bool, includeSubmodules bool) ([]gleann.Item, []*PluginDoc, []vault.FileRecord, error) {
+func readDocumentsForFiles(dir string, filePaths []string, chunkSize, chunkOverlap int, signaturesOnly bool, tracker *vault.Tracker, mmProcessor *multimodal.Processor, mode IndexMode, noPlugins bool, includeSubmodules bool) ([]gleann.Item, []*PluginDoc, []vault.FileRecord, error) {
 	if len(filePaths) == 0 {
 		return nil, nil, nil, nil
 	}
@@ -963,6 +1068,7 @@ func readDocumentsForFiles(dir string, filePaths []string, chunkSize, chunkOverl
 	astCfg := chunking.DefaultASTChunkerConfig()
 	astCfg.MaxChunkSize = chunkSize
 	astCfg.ChunkOverlap = chunkOverlap
+	astCfg.SignaturesOnly = signaturesOnly
 	codeSplitter := chunking.NewASTChunker(astCfg)
 	mdChunker := chunking.NewMarkdownChunker(chunkSize, chunkOverlap)
 
@@ -1257,7 +1363,7 @@ func incrementalBuildIndex(name, docsDir string, changedFiles []string, config g
 	// Read and chunk only the changed files.
 	mmProcessor := initMultimodalProcessor(config.OllamaHost, config.MultimodalModel)
 	items, pluginDocs, records, err := readDocumentsForFiles(docsDir, existingFiles,
-		config.ChunkConfig.ChunkSize, config.ChunkConfig.ChunkOverlap, tracker, mmProcessor, mode, noPlugins, includeSubmodules)
+		config.ChunkConfig.ChunkSize, config.ChunkConfig.ChunkOverlap, config.ChunkConfig.SignaturesOnly, tracker, mmProcessor, mode, noPlugins, includeSubmodules)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "incremental: error reading changed files: %v\n", err)
 		return nil, false
@@ -1595,7 +1701,8 @@ func bootstrapTrackerFromIndex(ctx context.Context, tracker *vault.Tracker, docs
 // updating both the vector index and the AST code graph.
 //
 // Usage:
-//   gleann index sync <name> [--docs <dir>] [--files <file1,file2>] [--graph]
+//
+//	gleann index sync <name> [--docs <dir>] [--files <file1,file2>] [--graph]
 func cmdSync(args []string) {
 	if len(args) < 1 || hasFlag(args, "--help") || hasFlag(args, "-h") {
 		fmt.Fprintln(os.Stderr, "usage: gleann index sync <name> [--docs <dir>] [--files <file1,file2>] [--graph] [--mode code|docs|all] [--no-plugins]")
@@ -1835,4 +1942,3 @@ func cmdSync(args []string) {
 
 	fmt.Printf("✅ Sync complete for %q in %s (%d files processed)\n", name, time.Since(start).Round(time.Millisecond), len(allChanged))
 }
-

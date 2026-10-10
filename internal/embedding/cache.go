@@ -248,3 +248,12 @@ func uint32FromFloat32(f float32) uint32 {
 func float32FromUint32(u uint32) float32 {
 	return math.Float32frombits(u)
 }
+
+// SetProgressCallback forwards the progress callback to the underlying embedder if supported.
+func (c *CachedComputer) SetProgressCallback(cb ProgressCallback) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if reporter, ok := c.inner.(interface{ SetProgressCallback(ProgressCallback) }); ok {
+		reporter.SetProgressCallback(cb)
+	}
+}

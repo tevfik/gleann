@@ -702,5 +702,82 @@ func TestHandleSearch_AutoResolveEmptyIndex(t *testing.T) {
 	}
 }
 
+func TestHandleSync_ProgressReporting(t *testing.T) {
+	// 1. Verify parseProgressLine
+	line := "gleann-progress phase=vector_index pct=62.5 items=625/1000 bytes=12500/20000 rate=25.0 eta_s=15.0"
+	phase, pct, done, total, rate, etaSec, ok := parseProgressLine(line)
+	if !ok {
+		t.Fatalf("expected parseProgressLine to succeed")
+	}
+	if phase != "vector_index" || pct != 62.5 || done != 625 || total != 1000 || rate != 25.0 || etaSec != 15.0 {
+		t.Errorf("unexpected parsed values: phase=%s, pct=%.1f, done=%d, total=%d, rate=%.1f, eta=%.1f",
+			phase, pct, done, total, rate, etaSec)
+	}
+
+	// 2. Verify handleSync returns live progress when sync is in progress
+	tmpDir := t.TempDir()
+	srv := NewServer(Config{IndexDir: tmpDir})
+	defer srv.Close()
+	srv.syncWaitTimeout = 50 * time.Millisecond
+
+	blockRunner := make(chan struct{})
+	srv.syncRunner = func(ctx context.Context, opts SyncOptions) (string, error) {
+		if opts.OnProgress != nil {
+			opts.OnProgress("vector_index", 45.0, 450, 1000, 18.5, 32.0)
+		}
+		<-blockRunner
+		return "done", nil
+	}
+
+	req := mcp.CallToolRequest{}
+	req.Params.Arguments = map[string]interface{}{
+		"index":    "progress_test_idx",
+		"docs_dir": tmpDir,
+	}
+
+	// First call starts background sync and times out (returns in_progress)
+	res1, err := srv.handleSync(context.Background(), req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	tc1 := res1.Content[0].(mcp.TextContent).Text
+	var m1 map[string]any
+	if err := json.Unmarshal([]byte(tc1), &m1); err != nil {
+		t.Fatalf("failed to unmarshal JSON: %v", err)
+	}
+	if m1["status"] != "in_progress" {
+		t.Fatalf("expected in_progress, got %v", m1["status"])
+	}
+	if m1["pct"] != 45.0 {
+		t.Errorf("expected pct 45.0, got %v", m1["pct"])
+	}
+	if m1["items_done"] != float64(450) {
+		t.Errorf("expected items_done 450, got %v", m1["items_done"])
+	}
+	if m1["total_items"] != float64(1000) {
+		t.Errorf("expected total_items 1000, got %v", m1["total_items"])
+	}
+
+	// Second concurrent call queries status immediately
+	res2, err := srv.handleSync(context.Background(), req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	tc2 := res2.Content[0].(mcp.TextContent).Text
+	var m2 map[string]any
+	if err := json.Unmarshal([]byte(tc2), &m2); err != nil {
+		t.Fatalf("failed to unmarshal JSON: %v", err)
+	}
+	if m2["status"] != "in_progress" {
+		t.Fatalf("expected in_progress, got %v", m2["status"])
+	}
+	if m2["pct"] != 45.0 || m2["phase"] != "vector_index" {
+		t.Errorf("expected pct=45.0, phase=vector_index, got pct=%v, phase=%v", m2["pct"], m2["phase"])
+	}
+
+	// Release runner
+	close(blockRunner)
+}
+
 
 

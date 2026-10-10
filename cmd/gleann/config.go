@@ -1,9 +1,11 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"strings"
+	"sync"
 
 	"github.com/mattn/go-isatty"
 	"github.com/tevfik/gleann/internal/embedding"
@@ -51,6 +53,16 @@ func getConfig(args []string) gleann.Config {
 				config.EmbeddingModel = args[i+1]
 				i++
 			}
+		case "--code-model", "--code-embedding-model":
+			if i+1 < len(args) {
+				config.CodeEmbeddingModel = args[i+1]
+				i++
+			}
+		case "--doc-model", "--docs-model", "--doc-embedding-model":
+			if i+1 < len(args) {
+				config.DocEmbeddingModel = args[i+1]
+				i++
+			}
 		case "--provider":
 			if i+1 < len(args) {
 				config.EmbeddingProvider = args[i+1]
@@ -87,6 +99,8 @@ func getConfig(args []string) gleann.Config {
 				config.ChunkConfig.ChunkOverlap = co
 				i++
 			}
+		case "--signatures", "--signatures-only":
+			config.ChunkConfig.SignaturesOnly = true
 		case "--batch-size":
 			if i+1 < len(args) {
 				fmt.Sscanf(args[i+1], "%d", &config.BatchSize)
@@ -263,6 +277,13 @@ func applySavedConfig(config *gleann.Config, args []string) {
 	if savedCfg.Backend != "" {
 		config.Backend = savedCfg.Backend
 	}
+	// Dual embedding models from saved config.
+	if config.CodeEmbeddingModel == "" && savedCfg.CodeEmbeddingModel != "" {
+		config.CodeEmbeddingModel = savedCfg.CodeEmbeddingModel
+	}
+	if config.DocEmbeddingModel == "" && savedCfg.DocEmbeddingModel != "" {
+		config.DocEmbeddingModel = savedCfg.DocEmbeddingModel
+	}
 	// Multimodal model — stored in OnboardResult via the shared JSON.
 	if savedCfg.MultimodalModel != "" {
 		config.MultimodalModel = savedCfg.MultimodalModel
@@ -303,5 +324,24 @@ func newEmbedder(cfg gleann.Config) *embedding.Computer {
 		APIKey:      apiKey,
 		BatchSize:   batchSize,
 		Concurrency: concurrency,
+	})
+}
+
+// defaultEmbedderResolver returns an EmbedderResolver that dynamically provides
+// specialized embedding computers per model (e.g. for multi-index code vs doc search).
+func defaultEmbedderResolver(cfg gleann.Config) gleann.EmbedderResolver {
+	var mu sync.Mutex
+	cache := make(map[string]gleann.EmbeddingComputer)
+	return gleann.EmbedderResolverFunc(func(ctx context.Context, modelName string, dims int) (gleann.EmbeddingComputer, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		if c, ok := cache[modelName]; ok {
+			return c, nil
+		}
+		subCfg := cfg
+		subCfg.EmbeddingModel = modelName
+		emb := newEmbedder(subCfg)
+		cache[modelName] = emb
+		return emb, nil
 	})
 }

@@ -10,7 +10,6 @@ import (
 	"time"
 )
 
-
 // Default host/address constants used across the codebase.
 const (
 	DefaultOllamaHost   = "http://localhost:11434"
@@ -84,6 +83,11 @@ type IndexMeta struct {
 	CreatedAt      time.Time `json:"created_at"`
 	UpdatedAt      time.Time `json:"updated_at"`
 	Version        string    `json:"version"`
+
+	// Staged / Two-phase indexing status
+	LexicalOnly    bool `json:"lexical_only,omitempty"`
+	VectorReady    bool `json:"vector_ready,omitempty"`
+	SignaturesOnly bool `json:"signatures_only,omitempty"`
 }
 
 // IsMCPExposed returns true if this index is allowed to be accessed by MCP agents.
@@ -116,7 +120,6 @@ func (m IndexMeta) HasAnyTag(tags []string) bool {
 	}
 	return false
 }
-
 
 // MarshalJSON implements custom JSON marshaling for IndexMeta.
 func (m IndexMeta) MarshalJSON() ([]byte, error) {
@@ -152,6 +155,15 @@ type Config struct {
 
 	// EmbeddingModel is the model to use for embedding computation.
 	EmbeddingModel string `json:"embedding_model"`
+
+	// CodeEmbeddingModel is the optional specialized model for source code indexing.
+	CodeEmbeddingModel string `json:"code_embedding_model,omitempty"`
+
+	// DocEmbeddingModel is the optional specialized model for documentation indexing.
+	DocEmbeddingModel string `json:"doc_embedding_model,omitempty"`
+
+	// EmbedderResolver dynamically provides an EmbeddingComputer per index model.
+	EmbedderResolver EmbedderResolver `json:"-"`
 
 	// EmbeddingProvider specifies the embedding provider ("ollama", "openai", "sentence-transformers", "native", "llamacpp", "eif").
 	EmbeddingProvider string `json:"embedding_provider"`
@@ -417,6 +429,9 @@ type ChunkConfig struct {
 
 	// SplitByParagraph enables paragraph-level splitting.
 	SplitByParagraph bool `json:"split_by_paragraph"`
+
+	// SignaturesOnly restricts code chunking to function/struct/class signatures and docstrings.
+	SignaturesOnly bool `json:"signatures_only,omitempty"`
 }
 
 // DefaultChunkConfig returns default chunking parameters.

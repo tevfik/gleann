@@ -10,18 +10,6 @@ import (
 	"github.com/tevfik/gleann/pkg/gleann"
 )
 
-// mockBudgetBackendSearcher returns deterministic results for testing token budgeting.
-type mockBudgetBackendSearcher struct {
-	results []gleann.SearchResult
-}
-
-func (m *mockBudgetBackendSearcher) Search(ctx context.Context, query string, topK int) ([]gleann.SearchResult, error) {
-	return m.results, nil
-}
-
-func (m *mockBudgetBackendSearcher) Close() error {
-	return nil
-}
 
 type testBudgetEmbedder struct {
 	dim int

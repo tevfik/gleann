@@ -451,6 +451,18 @@ func treeSitterChunkFromTree(source, filename string, lang Language, config ASTC
 			scopeCtx := parentScope
 
 			text := joinLines(lines, startLine-1, endLine)
+			if config.SignaturesOnly && (chunkType == "function" || chunkType == "method") {
+				sigEnd := startLine
+				for l := startLine; l <= endLine && l < startLine+5; l++ {
+					sigEnd = l
+					lineStr := lines[l-1]
+					if strings.Contains(lineStr, "{") || strings.HasSuffix(strings.TrimSpace(lineStr), ":") {
+						break
+					}
+				}
+				text = joinLines(lines, startLine-1, sigEnd)
+				endLine = sigEnd
+			}
 
 			// Extract outgoing `call_expression` nodes within this scope
 			calls := extractCallsForLang(lang, node, sourceBytes)

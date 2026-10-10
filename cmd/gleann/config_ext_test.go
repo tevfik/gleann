@@ -231,3 +231,21 @@ func TestGetConfigChunkSizeZero(t *testing.T) {
 		t.Logf("ChunkSize = %d (0 not applied, default used)", cfg.ChunkConfig.ChunkSize)
 	}
 }
+
+func TestGetConfigSignaturesOnly(t *testing.T) {
+	cfg1 := getConfig([]string{"--signatures"})
+	if !cfg1.ChunkConfig.SignaturesOnly {
+		t.Errorf("expected SignaturesOnly true with --signatures")
+	}
+
+	cfg2 := getConfig([]string{"--signatures-only"})
+	if !cfg2.ChunkConfig.SignaturesOnly {
+		t.Errorf("expected SignaturesOnly true with --signatures-only")
+	}
+
+	cfgDefault := getConfig([]string{})
+	if cfgDefault.ChunkConfig.SignaturesOnly {
+		t.Errorf("expected SignaturesOnly false by default")
+	}
+}
+
