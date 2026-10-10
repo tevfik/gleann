@@ -114,6 +114,7 @@ func TestE2E_ContentSnifferIndexingAndSearch(t *testing.T) {
 	if err := searcher.Load(ctx, indexName); err != nil {
 		t.Fatalf("failed to load index: %v", err)
 	}
+	defer searcher.Close()
 
 	// Search for CLUSTER_LEADER
 	results, err := searcher.Search(ctx, "CLUSTER_LEADER", gleann.WithTopK(5))

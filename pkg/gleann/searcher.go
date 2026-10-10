@@ -67,7 +67,7 @@ func (s *LeannSearcher) SetEmbedderResolver(resolver EmbedderResolver) {
 }
 
 // Load loads an index for searching.
-func (s *LeannSearcher) Load(ctx context.Context, name string) error {
+func (s *LeannSearcher) Load(ctx context.Context, name string) (retErr error) {
 	indexDir := filepath.Join(s.config.IndexDir, name)
 	basePath := filepath.Join(indexDir, name)
 
@@ -122,6 +122,12 @@ func (s *LeannSearcher) Load(ctx context.Context, name string) error {
 	if err := s.passages.Load(); err != nil {
 		return fmt.Errorf("load passages: %w", err)
 	}
+	defer func() {
+		if retErr != nil && s.passages != nil {
+			_ = s.passages.Close()
+			s.passages = nil
+		}
+	}()
 
 	// Check if vector index exists and is ready
 	indexPath := basePath + ".index"

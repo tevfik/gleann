@@ -95,6 +95,7 @@ func BinarySearch(arr []int, target int) int {
 	if err := searcher.Load(ctx, indexName); err != nil {
 		t.Fatalf("searcher.Load failed: %v", err)
 	}
+	defer searcher.Close()
 
 	if searcher.VectorAvailable() {
 		t.Errorf("expected VectorAvailable to be false")
@@ -187,6 +188,7 @@ func TestIntegration_BuildSignaturesOnly_ChunkReduction(t *testing.T) {
 	if err := pm.Load(); err != nil {
 		t.Fatalf("load pm: %v", err)
 	}
+	defer pm.Close()
 	foundFuncSig := false
 	for i := 0; i < pm.Count(); i++ {
 		p, err := pm.Get(int64(i))

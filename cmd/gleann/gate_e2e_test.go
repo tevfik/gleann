@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -29,7 +30,11 @@ func TestE2E_DecisionGateSubprocess(t *testing.T) {
 	}
 
 	// Build a temporary binary of cmd/gleann once for e2e tests
-	binPath := filepath.Join(tmpDir, "gleann_gate_test_bin")
+	binName := "gleann_gate_test_bin"
+	if runtime.GOOS == "windows" {
+		binName += ".exe"
+	}
+	binPath := filepath.Join(tmpDir, binName)
 	buildCmd := exec.Command("go", "build", "-o", binPath, ".")
 	buildCmd.Dir = "."
 	if out, err := buildCmd.CombinedOutput(); err != nil {

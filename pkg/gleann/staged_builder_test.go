@@ -102,6 +102,7 @@ func TestBuildLexicalOnly_SearchBM25Fallback(t *testing.T) {
 	if err := searcher.Load(ctx, indexName); err != nil {
 		t.Fatalf("searcher.Load failed on lexical-only index: %v", err)
 	}
+	defer searcher.Close()
 
 	if searcher.VectorAvailable() {
 		t.Errorf("expected searcher.VectorAvailable() to be false, got true")
@@ -169,6 +170,7 @@ func TestStagedBuild_TwoPhase_PassagesThenVectors(t *testing.T) {
 	if len(res1) == 0 || res1[0].Metadata["source"] != "cookie.txt" {
 		t.Fatalf("Phase 1: expected cookie.txt, got %v", res1)
 	}
+	_ = searcher.Close()
 
 	// Phase 2: Build Vectors
 	if err := builder.BuildVectors(ctx, indexName, items, ids); err != nil {
@@ -192,6 +194,7 @@ func TestStagedBuild_TwoPhase_PassagesThenVectors(t *testing.T) {
 	if err := searcher2.Load(ctx, indexName); err != nil {
 		t.Fatalf("Load Phase 2 failed: %v", err)
 	}
+	defer searcher2.Close()
 	if !searcher2.VectorAvailable() {
 		t.Errorf("Phase 2: expected VectorAvailable == true")
 	}
