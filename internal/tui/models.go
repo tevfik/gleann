@@ -171,9 +171,17 @@ func fetchOpenAIModels(host, apiKey string) ([]ModelInfo, error) {
 // filterEmbeddingModels returns models likely useful for embeddings.
 func filterEmbeddingModels(models []ModelInfo) []ModelInfo {
 	var result []ModelInfo
-	embedKeywords := []string{"embed", "bge", "nomic", "e5", "gte", "minilm", "instructor"}
+	embedKeywords := []string{
+		"embed", "bge", "nomic", "e5", "gte", "minilm", "instructor",
+		"jina", "snowflake", "arctic", "granite", "bert", "roberta", "code",
+	}
 	for _, m := range models {
 		lower := strings.ToLower(m.Name)
+		// Any .eifm file is an embedding model by definition
+		if strings.HasSuffix(lower, ".eifm") {
+			result = append(result, m)
+			continue
+		}
 		for _, kw := range embedKeywords {
 			if strings.Contains(lower, kw) {
 				result = append(result, m)
@@ -275,7 +283,8 @@ func fetchLlamaCPPModels(host string) ([]ModelInfo, error) {
 			if err != nil {
 				return nil
 			}
-			if !info.IsDir() && strings.HasSuffix(strings.ToLower(info.Name()), ".gguf") {
+			name := strings.ToLower(info.Name())
+			if !info.IsDir() && (strings.HasSuffix(name, ".gguf") || strings.HasSuffix(name, ".eifm")) {
 				models = append(models, ModelInfo{
 					Name: info.Name(),
 					Size: formatModelSize(info.Size()),
@@ -287,7 +296,7 @@ func fetchLlamaCPPModels(host string) ([]ModelInfo, error) {
 	}
 
 	if len(models) == 0 {
-		return nil, fmt.Errorf("no .gguf models found in %v", searchDirs)
+		return nil, fmt.Errorf("no .gguf or .eifm models found in %v", searchDirs)
 	}
 
 	sort.Slice(models, func(i, j int) bool {

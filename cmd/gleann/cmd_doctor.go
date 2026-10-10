@@ -149,7 +149,17 @@ func checkModels(cfg *tui.OnboardResult, host string, ok, warn, fail func(string
 	if cfg != nil && cfg.EmbeddingModel != "" {
 		embModel = cfg.EmbeddingModel
 	}
-	if available[embModel] || available[embModel+":latest"] {
+	if cfg != nil && (cfg.EmbeddingProvider == "eif" || cfg.EmbeddingProvider == "llamacpp" || strings.HasSuffix(embModel, ".gguf") || strings.HasSuffix(embModel, ".eifm") || filepath.IsAbs(embModel)) {
+		path := embModel
+		if !filepath.IsAbs(path) {
+			path = filepath.Join(tui.DefaultModelsDir(), path)
+		}
+		if _, err := os.Stat(path); err == nil {
+			ok(fmt.Sprintf("Embedding model '%s' available (local file)", filepath.Base(path)))
+		} else {
+			fail(fmt.Sprintf("Embedding model file not found at %s", path))
+		}
+	} else if available[embModel] || available[embModel+":latest"] {
 		ok(fmt.Sprintf("Embedding model '%s' available", embModel))
 	} else {
 		fail(fmt.Sprintf("Embedding model '%s' not found — run: ollama pull %s", embModel, embModel))
@@ -160,7 +170,17 @@ func checkModels(cfg *tui.OnboardResult, host string, ok, warn, fail func(string
 	if cfg != nil && cfg.LLMModel != "" {
 		llmModel = cfg.LLMModel
 	}
-	if available[llmModel] || available[llmModel+":latest"] {
+	if cfg != nil && (cfg.LLMProvider == "eif" || cfg.LLMProvider == "llamacpp" || strings.HasSuffix(llmModel, ".gguf") || strings.HasSuffix(llmModel, ".eifm") || filepath.IsAbs(llmModel)) {
+		path := llmModel
+		if !filepath.IsAbs(path) {
+			path = filepath.Join(tui.DefaultModelsDir(), path)
+		}
+		if _, err := os.Stat(path); err == nil {
+			ok(fmt.Sprintf("LLM model '%s' available (local file)", filepath.Base(path)))
+		} else {
+			fail(fmt.Sprintf("LLM model file not found at %s", path))
+		}
+	} else if available[llmModel] || available[llmModel+":latest"] {
 		ok(fmt.Sprintf("LLM model '%s' available", llmModel))
 	} else {
 		fail(fmt.Sprintf("LLM model '%s' not found — run: ollama pull %s", llmModel, llmModel))
@@ -168,10 +188,21 @@ func checkModels(cfg *tui.OnboardResult, host string, ok, warn, fail func(string
 
 	// Check reranker (optional).
 	if cfg != nil && cfg.RerankEnabled && cfg.RerankModel != "" {
-		if available[cfg.RerankModel] || available[cfg.RerankModel+":latest"] {
-			ok(fmt.Sprintf("Reranker model '%s' available", cfg.RerankModel))
+		rerankModel := cfg.RerankModel
+		if strings.HasSuffix(rerankModel, ".gguf") || filepath.IsAbs(rerankModel) {
+			path := rerankModel
+			if !filepath.IsAbs(path) {
+				path = filepath.Join(tui.DefaultModelsDir(), path)
+			}
+			if _, err := os.Stat(path); err == nil {
+				ok(fmt.Sprintf("Reranker model '%s' available (local file)", filepath.Base(path)))
+			} else {
+				warn(fmt.Sprintf("Reranker model file not found at %s", path))
+			}
+		} else if available[rerankModel] || available[rerankModel+":latest"] {
+			ok(fmt.Sprintf("Reranker model '%s' available", rerankModel))
 		} else {
-			warn(fmt.Sprintf("Reranker model '%s' not found — run: ollama pull %s", cfg.RerankModel, cfg.RerankModel))
+			warn(fmt.Sprintf("Reranker model '%s' not found — run: ollama pull %s", rerankModel, rerankModel))
 		}
 	}
 }

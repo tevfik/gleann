@@ -534,12 +534,22 @@ func (m OnboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		} else if msg.forLLM {
 			m.llmAllModels = msg.models
-			m.llmModels = filterLLMModels(msg.models)
+			if m.llmProviders[m.llmProviderIdx] == "eif" || m.llmProviders[m.llmProviderIdx] == "llamacpp" {
+				m.llmModels = msg.models
+				m.llmShowAll = true
+			} else {
+				m.llmModels = filterLLMModels(msg.models)
+			}
 			m.llmModelIdx = 0
 			m.phase = phaseLLMModel
 		} else {
 			m.embAllModels = msg.models
-			m.embModels = filterEmbeddingModels(msg.models)
+			if m.embProviders[m.embProviderIdx] == "eif" || m.embProviders[m.embProviderIdx] == "llamacpp" {
+				m.embModels = msg.models
+				m.embShowAll = true
+			} else {
+				m.embModels = filterEmbeddingModels(msg.models)
+			}
 			m.embModelIdx = 0
 			m.phase = phaseEmbModel
 		}
@@ -1014,6 +1024,9 @@ func (m OnboardModel) openAIBaseURL() string {
 func (m OnboardModel) fetchEmbModels() tea.Cmd {
 	prov := m.embProviders[m.embProviderIdx]
 	host := m.embHostInput.Value()
+	if (prov == "eif" || prov == "llamacpp") && strings.HasPrefix(host, "http://") {
+		host = ""
+	}
 	key := m.embKeyInput.Value()
 	return func() tea.Msg {
 		models, err := fetchModels(prov, host, key)
@@ -1033,6 +1046,9 @@ func (m OnboardModel) fetchLLMModels() tea.Cmd {
 	} else {
 		host = m.llmHostInput.Value()
 		key = m.llmKeyInput.Value()
+	}
+	if (prov == "eif" || prov == "llamacpp") && strings.HasPrefix(host, "http://") {
+		host = ""
 	}
 
 	return func() tea.Msg {
