@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -13,6 +14,12 @@ import (
 )
 
 func runCommandWithOutput(f func()) (string, string) {
+	origExit := exitFunc
+	defer func() { exitFunc = origExit }()
+	exitFunc = func(code int) {
+		panic(fmt.Sprintf("exit_%d", code))
+	}
+
 	oldStdout := os.Stdout
 	oldStderr := os.Stderr
 	rOut, wOut, _ := os.Pipe()
@@ -25,7 +32,14 @@ func runCommandWithOutput(f func()) (string, string) {
 		os.Stderr = oldStderr
 	}()
 
-	f()
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				// caught exit
+			}
+		}()
+		f()
+	}()
 
 	_ = wOut.Close()
 	_ = wErr.Close()
@@ -53,17 +67,20 @@ func TestE2E_Manifest_SyncFastPath(t *testing.T) {
 	// Set test environment config
 	t.Setenv("GLEANN_INDEX_DIR", indexDir)
 
-	// Step 1: Build the index using cmdBuild
+	// Step 1: Build the index using cmdBuild with --instant (offline/lexical)
 	outBuild, _ := runCommandWithOutput(func() {
 		cmdBuild([]string{
 			indexName,
 			"--docs", docsDir,
 			"--index-dir", indexDir,
 			"--mode", "code",
+			"--instant",
+			"--no-report",
+			"--no-agents",
 		})
 	})
 
-	if !strings.Contains(outBuild, "Vector Index") {
+	if !strings.Contains(outBuild, "Instant lexical index") && !strings.Contains(outBuild, "Vector Index") {
 		t.Fatalf("expected build success, got: %s", outBuild)
 	}
 
@@ -108,7 +125,7 @@ func TestE2E_Manifest_SyncFastPath(t *testing.T) {
 		})
 	})
 
-	if !strings.Contains(outSync2, "Sync complete") && !strings.Contains(outSync2, "Vector index updated") {
+	if !strings.Contains(outSync2, "Sync complete") && !strings.Contains(outSync2, "Vector index updated") && !strings.Contains(outSync2, "Lexical index updated") {
 		t.Errorf("expected sync complete after file modification, got: %s", outSync2)
 	}
 

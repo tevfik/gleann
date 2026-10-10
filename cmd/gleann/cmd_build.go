@@ -1900,31 +1900,56 @@ func cmdSync(args []string) {
 		}
 	}
 
-	if err := initLlamaCPP(context.Background(), &config); err != nil {
-		fmt.Fprintf(os.Stderr, "error initializing llamacpp: %v\n", err)
-		os.Exit(1)
-	}
-
-	embedder := newEmbedder(config)
-	cachedEmbedder := embedding.NewCachedComputer(embedder, embedding.CacheOptions{})
-
-	pDocs, ok := incrementalBuildIndex(name, absDocsDir, allChanged, config, cachedEmbedder, tracker, mode, noPlugins, includeSubmodules)
-	if !ok {
-		fmt.Println("⚠️  Incremental vector update not supported or failed, running full rebuild...")
-		pDocs = buildIndex(name, absDocsDir, config, cachedEmbedder, tracker, mode, noPlugins, includeSubmodules)
-		if buildGraph {
-			buildGraphIndex(name, absDocsDir, config.IndexDir, pDocs, nil, includeSubmodules)
+	if meta.LexicalOnly || hasFlag(args, "--instant") || hasFlag(args, "--lexical-only") {
+		builder, err := gleann.NewBuilder(config, nil)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error creating builder: %v\n", err)
+			exitFunc(1)
+			return
 		}
-	} else {
-		fmt.Printf("⚡ Vector index updated in %s\n", time.Since(start).Round(time.Millisecond))
-		if tracker != nil && len(deletedFiles) > 0 {
-			ctx := context.Background()
-			for _, f := range deletedFiles {
-				_ = tracker.RemovePath(ctx, f)
-			}
+		items, pDocs, err := readDocuments(absDocsDir, config.ChunkConfig.ChunkSize, config.ChunkConfig.ChunkOverlap, config.ChunkConfig.SignaturesOnly, tracker, nil, mode, noPlugins, includeSubmodules)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error reading documents: %v\n", err)
+			exitFunc(1)
+			return
 		}
+		if err := builder.BuildLexicalOnly(name, items); err != nil {
+			fmt.Fprintf(os.Stderr, "error updating lexical index: %v\n", err)
+			exitFunc(1)
+			return
+		}
+		fmt.Printf("⚡ Lexical index updated in %s\n", time.Since(start).Round(time.Millisecond))
 		if buildGraph {
 			buildGraphIndex(name, absDocsDir, config.IndexDir, pDocs, allChanged, includeSubmodules)
+		}
+	} else {
+		if err := initLlamaCPP(context.Background(), &config); err != nil {
+			fmt.Fprintf(os.Stderr, "error initializing llamacpp: %v\n", err)
+			exitFunc(1)
+			return
+		}
+
+		embedder := newEmbedder(config)
+		cachedEmbedder := embedding.NewCachedComputer(embedder, embedding.CacheOptions{})
+
+		pDocs, ok := incrementalBuildIndex(name, absDocsDir, allChanged, config, cachedEmbedder, tracker, mode, noPlugins, includeSubmodules)
+		if !ok {
+			fmt.Println("⚠️  Incremental vector update not supported or failed, running full rebuild...")
+			pDocs = buildIndex(name, absDocsDir, config, cachedEmbedder, tracker, mode, noPlugins, includeSubmodules)
+			if buildGraph {
+				buildGraphIndex(name, absDocsDir, config.IndexDir, pDocs, nil, includeSubmodules)
+			}
+		} else {
+			fmt.Printf("⚡ Vector index updated in %s\n", time.Since(start).Round(time.Millisecond))
+			if tracker != nil && len(deletedFiles) > 0 {
+				ctx := context.Background()
+				for _, f := range deletedFiles {
+					_ = tracker.RemovePath(ctx, f)
+				}
+			}
+			if buildGraph {
+				buildGraphIndex(name, absDocsDir, config.IndexDir, pDocs, allChanged, includeSubmodules)
+			}
 		}
 	}
 
