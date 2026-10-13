@@ -262,11 +262,12 @@ jobs:
           cd /tmp/faiss
 
           # macOS AppleClang doesn't bundle OpenMP. Tell CMake where libomp is.
-          EXTRA_CMAKE_ARGS=""
+          EXTRA_CMAKE_ARGS=()
           if [ "$RUNNER_OS" == "Linux" ]; then
-            EXTRA_CMAKE_ARGS="-DCMAKE_C_FLAGS=\"-fno-tree-vectorize -fmath-errno\" -DCMAKE_CXX_FLAGS=\"-fno-tree-vectorize -fmath-errno\""
+            EXTRA_CMAKE_ARGS+=("-DCMAKE_C_FLAGS=-fno-tree-vectorize -fmath-errno")
+            EXTRA_CMAKE_ARGS+=("-DCMAKE_CXX_FLAGS=-fno-tree-vectorize -fmath-errno")
           elif [ "$RUNNER_OS" == "macOS" ]; then
-            EXTRA_CMAKE_ARGS="-DOpenMP_ROOT=$(brew --prefix libomp)"
+            EXTRA_CMAKE_ARGS+=("-DOpenMP_ROOT=$(brew --prefix libomp)")
           fi
 
           cmake -B build \
@@ -277,7 +278,7 @@ jobs:
             -DBUILD_TESTING=OFF \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_INSTALL_PREFIX=/usr/local \
-            ${EXTRA_CMAKE_ARGS}
+            "${EXTRA_CMAKE_ARGS[@]}"
           
           NCORES=2
           if [ "$RUNNER_OS" == "Linux" ]; then
