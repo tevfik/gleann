@@ -278,8 +278,8 @@ func TestOnboardEmbModelUpDownEnter(t *testing.T) {
 
 	result, _ = om.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	om = result.(OnboardModel)
-	if om.phase != phaseLLMProvider {
-		t.Errorf("phase = %d, want %d", om.phase, phaseLLMProvider)
+	if om.phase != phaseCodeEmbModel {
+		t.Errorf("phase = %d, want %d", om.phase, phaseCodeEmbModel)
 	}
 }
 
@@ -670,3 +670,71 @@ type testError struct {
 }
 
 func (e *testError) Error() string { return e.msg }
+
+func TestOnboardCodeAndDocEmbModelFlow(t *testing.T) {
+	m := NewOnboardModel()
+	m.embModels = []ModelInfo{{Name: "bge-m3"}, {Name: "all-minilm"}}
+	m.embAllModels = m.embModels
+
+	// Enter on primary embedding model goes to code embedding model
+	m.phase = phaseEmbModel
+	res, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	om := res.(OnboardModel)
+	if om.phase != phaseCodeEmbModel {
+		t.Fatalf("expected phaseCodeEmbModel, got %v", om.phase)
+	}
+
+	// Navigate to item 2 (all-minilm) and press Enter -> goes to phaseDocEmbModel
+	res, _ = om.Update(tea.KeyPressMsg{Code: 'j'})
+	om = res.(OnboardModel)
+	res, _ = om.Update(tea.KeyPressMsg{Code: 'j'})
+	om = res.(OnboardModel)
+	res, _ = om.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	om = res.(OnboardModel)
+	if om.phase != phaseDocEmbModel {
+		t.Fatalf("expected phaseDocEmbModel, got %v", om.phase)
+	}
+	if om.codeEmbeddingModel != "all-minilm" {
+		t.Errorf("expected codeEmbeddingModel all-minilm, got %q", om.codeEmbeddingModel)
+	}
+
+	// Press Enter on item 0 (default) in doc model -> goes to phaseLLMProvider
+	res, _ = om.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	om = res.(OnboardModel)
+	if om.phase != phaseLLMProvider {
+		t.Fatalf("expected phaseLLMProvider, got %v", om.phase)
+	}
+	if om.docEmbeddingModel != "" {
+		t.Errorf("expected docEmbeddingModel empty (default), got %q", om.docEmbeddingModel)
+	}
+
+	om.buildResult()
+	if om.result.CodeEmbeddingModel != "all-minilm" {
+		t.Errorf("result code model mismatch: %q", om.result.CodeEmbeddingModel)
+	}
+	if om.result.DocEmbeddingModel != "" {
+		t.Errorf("result doc model mismatch: %q", om.result.DocEmbeddingModel)
+	}
+}
+
+func TestOnboardCodeAndDocEmbModelMenu(t *testing.T) {
+	cfg := &OnboardResult{EmbeddingProvider: "ollama", LLMProvider: "ollama", EmbeddingModel: "bge-m3"}
+	m := NewOnboardModelWithConfig(cfg)
+	m.embModels = []ModelInfo{{Name: "bge-m3"}, {Name: "code-bert"}}
+	m.embAllModels = m.embModels
+
+	m.phase = phaseCodeEmbModel
+	res, _ := m.Update(tea.KeyPressMsg{Code: 'j'})
+	om := res.(OnboardModel)
+	res, _ = om.Update(tea.KeyPressMsg{Code: 'j'})
+	om = res.(OnboardModel)
+	res, _ = om.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	om = res.(OnboardModel)
+	if om.phase != phaseMenu {
+		t.Fatalf("expected phaseMenu, got %v", om.phase)
+	}
+	if om.codeEmbeddingModel != "code-bert" {
+		t.Errorf("expected code-bert, got %q", om.codeEmbeddingModel)
+	}
+}
+

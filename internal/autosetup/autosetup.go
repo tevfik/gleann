@@ -323,14 +323,16 @@ func EnsureModels(host string, quiet bool, models ...string) ([]string, error) {
 
 // DetectedConfig holds a fully resolved configuration ready for user confirmation.
 type DetectedConfig struct {
-	OllamaHost     string `json:"ollama_host"`
-	OllamaRunning  bool   `json:"ollama_running"`
-	EmbeddingModel string `json:"embedding_model"`
-	LLMModel       string `json:"llm_model"`
-	RerankModel    string `json:"rerank_model"`
-	IndexDir       string `json:"index_dir"`
-	MCPEnabled     bool   `json:"mcp_enabled"`
-	ServerEnabled  bool   `json:"server_enabled"`
+	OllamaHost         string `json:"ollama_host"`
+	OllamaRunning      bool   `json:"ollama_running"`
+	EmbeddingModel     string `json:"embedding_model"`
+	CodeEmbeddingModel string `json:"code_embedding_model,omitempty"`
+	DocEmbeddingModel  string `json:"doc_embedding_model,omitempty"`
+	LLMModel           string `json:"llm_model"`
+	RerankModel        string `json:"rerank_model"`
+	IndexDir           string `json:"index_dir"`
+	MCPEnabled         bool   `json:"mcp_enabled"`
+	ServerEnabled      bool   `json:"server_enabled"`
 }
 
 // DetectAll performs comprehensive auto-detection and returns a
@@ -387,6 +389,12 @@ func FormatDetectedConfig(dc DetectedConfig) string {
 	}
 	sb.WriteString(fmt.Sprintf("  │  Ollama     : %-20s (%s)     │\n", dc.OllamaHost, status))
 	sb.WriteString(fmt.Sprintf("  │  Embedding  : %-37s │\n", dc.EmbeddingModel))
+	if dc.CodeEmbeddingModel != "" {
+		sb.WriteString(fmt.Sprintf("  │  Code Embed : %-37s │\n", dc.CodeEmbeddingModel))
+	}
+	if dc.DocEmbeddingModel != "" {
+		sb.WriteString(fmt.Sprintf("  │  Docs Embed : %-37s │\n", dc.DocEmbeddingModel))
+	}
 	sb.WriteString(fmt.Sprintf("  │  LLM        : %-37s │\n", dc.LLMModel))
 
 	rerank := "(none)"
@@ -435,6 +443,12 @@ func ApplyDetectedConfig(dc DetectedConfig) error {
 		"temperature":        0.7,
 		"max_tokens":         4096,
 		"top_k":              10,
+	}
+	if dc.CodeEmbeddingModel != "" {
+		cfg["code_embedding_model"] = dc.CodeEmbeddingModel
+	}
+	if dc.DocEmbeddingModel != "" {
+		cfg["doc_embedding_model"] = dc.DocEmbeddingModel
 	}
 	if dc.RerankModel != "" {
 		cfg["rerank_enabled"] = true

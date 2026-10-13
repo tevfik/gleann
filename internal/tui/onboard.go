@@ -26,6 +26,8 @@ const (
 	phaseEmbAPIKey                         // text input: API key (openai only)
 	phaseEmbFetching                       // spinner: fetching models
 	phaseEmbModel                          // select: pick from fetched list
+	phaseCodeEmbModel                      // select: code embedding model
+	phaseDocEmbModel                       // select: docs embedding model
 	phaseLLMProvider                       // select: ollama / openai / anthropic
 	phaseLLMHost                           // text input: host URL (if different)
 	phaseLLMAPIKey                         // text input: API key
@@ -46,7 +48,7 @@ const (
 )
 
 // totalVisibleSteps for the progress bar (skip fetching phases).
-const totalVisibleSteps = 15
+const totalVisibleSteps = 17
 
 // ── Messages ───────────────────────────────────────────────────
 
@@ -158,14 +160,18 @@ type OnboardModel struct {
 	indexDirInput textinput.Model
 
 	// Model lists (fetched dynamically).
-	embModels    []ModelInfo
-	embModelIdx  int
-	embAllModels []ModelInfo // unfiltered
-	embShowAll   bool
-	llmModels    []ModelInfo
-	llmModelIdx  int
-	llmAllModels []ModelInfo
-	llmShowAll   bool
+	embModels          []ModelInfo
+	embModelIdx        int
+	embAllModels       []ModelInfo // unfiltered
+	embShowAll         bool
+	codeEmbeddingModel string
+	docEmbeddingModel  string
+	codeEmbModelIdx    int
+	docEmbModelIdx     int
+	llmModels          []ModelInfo
+	llmModelIdx        int
+	llmAllModels       []ModelInfo
+	llmShowAll         bool
 
 	// Loading.
 	spinner  spinner.Model
@@ -224,6 +230,8 @@ func settingsMenuItems() []settingsItem {
 		{"Embedding Provider", phaseEmbProvider},
 		{"Embedding Host/Key", phaseEmbHost},
 		{"Embedding Model", phaseEmbModel},
+		{"Code Embedding Model", phaseCodeEmbModel},
+		{"Docs Embedding Model", phaseDocEmbModel},
 		{"LLM Provider", phaseLLMProvider},
 		{"LLM Host/Key", phaseLLMHost},
 		{"LLM Model", phaseLLMModel},
@@ -434,6 +442,8 @@ func NewOnboardModelWithConfig(cfg *OnboardResult) OnboardModel {
 	if cfg.ServerAddr != "" {
 		m.serverAddrInput.SetValue(cfg.ServerAddr)
 	}
+	m.codeEmbeddingModel = cfg.CodeEmbeddingModel
+	m.docEmbeddingModel = cfg.DocEmbeddingModel
 
 	return m
 }
@@ -551,7 +561,17 @@ func (m OnboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.embModels = filterEmbeddingModels(msg.models)
 			}
 			m.embModelIdx = 0
-			m.phase = phaseEmbModel
+			if m.returnPhase == phaseCodeEmbModel || m.returnPhase == phaseDocEmbModel {
+				m.phase = m.returnPhase
+				if m.phase == phaseCodeEmbModel {
+					m.syncCodeEmbModelIdx()
+				} else {
+					m.syncDocEmbModelIdx()
+				}
+				m.returnPhase = phaseMenu
+			} else {
+				m.phase = phaseEmbModel
+			}
 		}
 		return m, nil
 
@@ -685,6 +705,14 @@ func (m OnboardModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case phaseEmbModel:
 		return m.handleEmbModelKeys(key)
 
+	// ── Code embedding model select ──
+	case phaseCodeEmbModel:
+		return m.handleCodeEmbModelKeys(key)
+
+	// ── Docs embedding model select ──
+	case phaseDocEmbModel:
+		return m.handleDocEmbModelKeys(key)
+
 	// ── LLM model select ──
 	case phaseLLMModel:
 		return m.handleLLMModelKeys(key)
@@ -813,6 +841,20 @@ func (m OnboardModel) handleMenuKeys(key string) (tea.Model, tea.Cmd) {
 		if target == phaseEmbModel {
 			m.phase = phaseEmbFetching
 			return m, m.fetchEmbModels()
+		}
+		if target == phaseCodeEmbModel || target == phaseDocEmbModel {
+			if len(m.embModels) == 0 {
+				m.returnPhase = target
+				m.phase = phaseEmbFetching
+				return m, m.fetchEmbModels()
+			}
+			if target == phaseCodeEmbModel {
+				m.syncCodeEmbModelIdx()
+			} else {
+				m.syncDocEmbModelIdx()
+			}
+			m.phase = target
+			return m, nil
 		}
 		if target == phaseLLMModel {
 			m.phase = phaseLLMFetching
@@ -995,7 +1037,9 @@ func (m OnboardModel) prevPhase() int {
 		phaseEmbHost:        phaseEmbProvider,
 		phaseEmbAPIKey:      phaseEmbProvider,
 		phaseEmbModel:       phaseEmbHost,
-		phaseLLMProvider:    phaseEmbModel,
+		phaseCodeEmbModel:   phaseEmbModel,
+		phaseDocEmbModel:    phaseCodeEmbModel,
+		phaseLLMProvider:    phaseDocEmbModel,
 		phaseLLMHost:        phaseLLMProvider,
 		phaseLLMAPIKey:      phaseLLMProvider,
 		phaseLLMModel:       phaseLLMProvider,
@@ -1200,10 +1244,12 @@ func (m *OnboardModel) buildResult() {
 		m.result.OllamaHost = ""
 	}
 
-	// Preserve chat and dual-model settings from existing config.
+	// Set dual-model settings.
+	m.result.CodeEmbeddingModel = m.codeEmbeddingModel
+	m.result.DocEmbeddingModel = m.docEmbeddingModel
+
+	// Preserve chat and extra settings from existing config.
 	if m.existingCfg != nil {
-		m.result.CodeEmbeddingModel = m.existingCfg.CodeEmbeddingModel
-		m.result.DocEmbeddingModel = m.existingCfg.DocEmbeddingModel
 		m.result.SystemPrompt = m.existingCfg.SystemPrompt
 		m.result.Temperature = m.existingCfg.Temperature
 		m.result.MaxTokens = m.existingCfg.MaxTokens
@@ -1322,9 +1368,17 @@ func (m OnboardModel) View() tea.View {
 		b.WriteString(m.renderFetching("Embedding"))
 
 	case phaseEmbModel:
-		b.WriteString(m.renderModelSelect("3", "Embedding Model",
+		b.WriteString(m.renderModelSelect("3", "Primary Embedding Model",
 			m.embModels, m.embModelIdx, m.embShowAll,
 			len(m.embAllModels) != len(m.embModels)))
+
+	case phaseCodeEmbModel:
+		b.WriteString(m.renderModelSelect("3b", "Code Embedding Model (Optional)",
+			m.codeModelOptions(), m.codeEmbModelIdx, false, false))
+
+	case phaseDocEmbModel:
+		b.WriteString(m.renderModelSelect("3c", "Docs Embedding Model (Optional)",
+			m.docModelOptions(), m.docEmbModelIdx, false, false))
 
 	case phaseLLMProvider:
 		descs := []string{
@@ -1569,10 +1623,21 @@ func (m OnboardModel) settingsMenuValues() []string {
 		serverStatus = m.serverAddrInput.Value()
 	}
 
+	codeModel := m.codeEmbeddingModel
+	if codeModel == "" {
+		codeModel = "(use primary)"
+	}
+	docModel := m.docEmbeddingModel
+	if docModel == "" {
+		docModel = "(use primary)"
+	}
+
 	return []string{
 		embProv,      // Embedding Provider
 		embHostOrKey, // Embedding Host / API Key
 		embModel,     // Embedding Model
+		codeModel,    // Code Embedding Model
+		docModel,     // Docs Embedding Model
 		llmProv,      // LLM Provider
 		llmHostOrKey, // LLM Host / API Key
 		llmModel,     // LLM Model
@@ -1600,36 +1665,40 @@ func (m OnboardModel) visibleStep() int {
 		return 2
 	case phaseEmbModel:
 		return 3
-	case phaseLLMProvider:
+	case phaseCodeEmbModel:
 		return 4
-	case phaseLLMHost, phaseLLMAPIKey:
+	case phaseDocEmbModel:
 		return 5
-	case phaseLLMFetching:
-		return 5
-	case phaseLLMModel:
+	case phaseLLMProvider:
 		return 6
-	case phaseReranker:
+	case phaseLLMHost, phaseLLMAPIKey:
 		return 7
-	case phaseRerankFetching:
+	case phaseLLMFetching:
 		return 7
-	case phaseRerankModel:
+	case phaseLLMModel:
 		return 8
-	case phaseIndexDir:
+	case phaseReranker:
 		return 9
-	case phaseBackend:
+	case phaseRerankFetching:
+		return 9
+	case phaseRerankModel:
 		return 10
-	case phaseA2A:
+	case phaseIndexDir:
 		return 11
-	case phaseMCP:
+	case phaseBackend:
 		return 12
-	case phaseServer:
+	case phaseA2A:
 		return 13
+	case phaseMCP:
+		return 14
+	case phaseServer:
+		return 15
 	case phaseCustomHFInput:
 		return m.customHFStepNum()
 	case phaseSummary:
-		return 14
+		return 16
 	case phaseInstall:
-		return 15
+		return 17
 	}
 	return 1
 }
@@ -1796,6 +1865,12 @@ func (m OnboardModel) renderSummary() string {
 		{"Embedding Provider", m.embProviders[m.embProviderIdx]},
 		{"Embedding Model", embModel},
 	}
+	if m.codeEmbeddingModel != "" {
+		rows = append(rows, row{"Code Embedding", m.codeEmbeddingModel})
+	}
+	if m.docEmbeddingModel != "" {
+		rows = append(rows, row{"Docs Embedding", m.docEmbeddingModel})
+	}
 	if m.embProviders[m.embProviderIdx] == "ollama" {
 		rows = append(rows, row{"Ollama Host", m.embHostInput.Value()})
 	} else if m.embProviders[m.embProviderIdx] == "native" {
@@ -1951,6 +2026,153 @@ func (m OnboardModel) handleEmbModelKeys(key string) (tea.Model, tea.Cmd) {
 			m.phase = phaseCustomHFInput
 			m.customHFInput.Focus()
 			return m, textinput.Blink
+		}
+		if m.menuMode {
+			m.phase = phaseMenu
+		} else {
+			m.syncCodeEmbModelIdx()
+			m.phase = phaseCodeEmbModel
+		}
+	}
+	return m, nil
+}
+
+func (m OnboardModel) primaryEmbModel() string {
+	if len(m.embModels) > 0 && m.embModelIdx < len(m.embModels) {
+		if m.embProviders[m.embProviderIdx] == "llamacpp" || m.embProviders[m.embProviderIdx] == "eif" {
+			if m.embModels[m.embModelIdx].Tag != "" {
+				return m.embModels[m.embModelIdx].Tag
+			}
+		}
+		return m.embModels[m.embModelIdx].Name
+	}
+	if m.existingCfg != nil && m.existingCfg.EmbeddingModel != "" {
+		return m.existingCfg.EmbeddingModel
+	}
+	return "bge-m3"
+}
+
+func (m OnboardModel) codeModelOptions() []ModelInfo {
+	primary := m.primaryEmbModel()
+	opts := []ModelInfo{
+		{Name: fmt.Sprintf("✦ (Use Primary Default: %s)", primary), Tag: "", Size: "default"},
+	}
+	baseModels := m.embModels
+	if len(baseModels) == 0 {
+		baseModels = m.embAllModels
+	}
+	if len(baseModels) == 0 && m.existingCfg != nil && m.existingCfg.EmbeddingModel != "" {
+		baseModels = []ModelInfo{{Name: m.existingCfg.EmbeddingModel}}
+	}
+	for _, mdl := range baseModels {
+		if mdl.Tag == "custom" {
+			continue
+		}
+		opts = append(opts, mdl)
+	}
+	return opts
+}
+
+func (m OnboardModel) docModelOptions() []ModelInfo {
+	primary := m.primaryEmbModel()
+	opts := []ModelInfo{
+		{Name: fmt.Sprintf("✦ (Use Primary Default: %s)", primary), Tag: "", Size: "default"},
+	}
+	baseModels := m.embModels
+	if len(baseModels) == 0 {
+		baseModels = m.embAllModels
+	}
+	if len(baseModels) == 0 && m.existingCfg != nil && m.existingCfg.EmbeddingModel != "" {
+		baseModels = []ModelInfo{{Name: m.existingCfg.EmbeddingModel}}
+	}
+	for _, mdl := range baseModels {
+		if mdl.Tag == "custom" {
+			continue
+		}
+		opts = append(opts, mdl)
+	}
+	return opts
+}
+
+func (m *OnboardModel) syncCodeEmbModelIdx() {
+	opts := m.codeModelOptions()
+	m.codeEmbModelIdx = 0
+	if m.codeEmbeddingModel != "" {
+		for i, opt := range opts {
+			if opt.Name == m.codeEmbeddingModel || opt.Tag == m.codeEmbeddingModel {
+				m.codeEmbModelIdx = i
+				break
+			}
+		}
+	}
+}
+
+func (m *OnboardModel) syncDocEmbModelIdx() {
+	opts := m.docModelOptions()
+	m.docEmbModelIdx = 0
+	if m.docEmbeddingModel != "" {
+		for i, opt := range opts {
+			if opt.Name == m.docEmbeddingModel || opt.Tag == m.docEmbeddingModel {
+				m.docEmbModelIdx = i
+				break
+			}
+		}
+	}
+}
+
+func (m OnboardModel) handleCodeEmbModelKeys(key string) (tea.Model, tea.Cmd) {
+	opts := m.codeModelOptions()
+	switch key {
+	case "up", "k":
+		if m.codeEmbModelIdx > 0 {
+			m.codeEmbModelIdx--
+		}
+	case "down", "j":
+		if m.codeEmbModelIdx < len(opts)-1 {
+			m.codeEmbModelIdx++
+		}
+	case "enter":
+		if m.codeEmbModelIdx == 0 {
+			m.codeEmbeddingModel = ""
+		} else if m.codeEmbModelIdx < len(opts) {
+			opt := opts[m.codeEmbModelIdx]
+			if (m.embProviders[m.embProviderIdx] == "llamacpp" || m.embProviders[m.embProviderIdx] == "eif") && opt.Tag != "" {
+				m.codeEmbeddingModel = opt.Tag
+			} else {
+				m.codeEmbeddingModel = opt.Name
+			}
+		}
+		if m.menuMode {
+			m.phase = phaseMenu
+		} else {
+			m.syncDocEmbModelIdx()
+			m.phase = phaseDocEmbModel
+		}
+	}
+	return m, nil
+}
+
+func (m OnboardModel) handleDocEmbModelKeys(key string) (tea.Model, tea.Cmd) {
+	opts := m.docModelOptions()
+	switch key {
+	case "up", "k":
+		if m.docEmbModelIdx > 0 {
+			m.docEmbModelIdx--
+		}
+	case "down", "j":
+		if m.docEmbModelIdx < len(opts)-1 {
+			m.docEmbModelIdx++
+		}
+	case "enter":
+		if m.docEmbModelIdx == 0 {
+			m.docEmbeddingModel = ""
+		} else if m.docEmbModelIdx < len(opts) {
+			opt := opts[m.docEmbModelIdx]
+			if (m.embProviders[m.embProviderIdx] == "llamacpp" || m.embProviders[m.embProviderIdx] == "eif") && opt.Tag != "" {
+				m.docEmbeddingModel = opt.Tag
+			} else {
+				m.docEmbeddingModel = opt.Name
+			}
 		}
 		if m.menuMode {
 			m.phase = phaseMenu

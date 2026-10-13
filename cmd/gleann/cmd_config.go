@@ -205,6 +205,9 @@ func cmdConfigSet(args []string) {
 		fmt.Fprintln(os.Stderr, "examples:")
 		fmt.Fprintln(os.Stderr, "  gleann config set ollama_host http://localhost:11435")
 		fmt.Fprintln(os.Stderr, "  gleann config set embedding_provider eif")
+		fmt.Fprintln(os.Stderr, "  gleann config set embedding_model bge-m3-q8_0.gguf")
+		fmt.Fprintln(os.Stderr, "  gleann config set code_model jina-code-q8_0.gguf")
+		fmt.Fprintln(os.Stderr, "  gleann config set doc_model bge-small-en-q8_0.gguf")
 		fmt.Fprintln(os.Stderr, "  gleann config set llm_model qwen2.5:7b")
 		os.Exit(1)
 	}
@@ -226,6 +229,10 @@ func cmdConfigSet(args []string) {
 			cfg.EmbeddingProvider = val
 		case "embedding_model", "emb_model":
 			cfg.EmbeddingModel = val
+		case "code_embedding_model", "code_model", "code-model", "code-embedding-model":
+			cfg.CodeEmbeddingModel = val
+		case "doc_embedding_model", "doc_model", "doc-model", "docs_model", "docs-model", "doc-embedding-model", "docs-embedding-model":
+			cfg.DocEmbeddingModel = val
 		case "llm_provider":
 			cfg.LLMProvider = val
 		case "llm_model":

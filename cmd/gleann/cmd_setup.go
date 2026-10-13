@@ -36,7 +36,18 @@ func cmdSetup(args []string) {
 
 	if hasFlag(args, "--bootstrap") {
 		host := getFlag(args, "--host")
-		if _, err := tui.Bootstrap(host); err != nil {
+		codeModel := getFlag(args, "--code-model")
+		if codeModel == "" {
+			codeModel = getFlag(args, "--code-embedding-model")
+		}
+		docModel := getFlag(args, "--doc-model")
+		if docModel == "" {
+			docModel = getFlag(args, "--docs-model")
+		}
+		if docModel == "" {
+			docModel = getFlag(args, "--doc-embedding-model")
+		}
+		if _, err := tui.Bootstrap(host, codeModel, docModel); err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 			os.Exit(1)
 		}
@@ -85,6 +96,24 @@ func runAutoSetup(args []string) {
 	// ── Step 1: Detect configuration ───────────────────────────────────
 	ollamaHost := getFlag(args, "--host")
 	dc := autosetup.DetectAll(ollamaHost, true) // prefer smaller models
+
+	codeModel := getFlag(args, "--code-model")
+	if codeModel == "" {
+		codeModel = getFlag(args, "--code-embedding-model")
+	}
+	docModel := getFlag(args, "--doc-model")
+	if docModel == "" {
+		docModel = getFlag(args, "--docs-model")
+	}
+	if docModel == "" {
+		docModel = getFlag(args, "--doc-embedding-model")
+	}
+	if codeModel != "" {
+		dc.CodeEmbeddingModel = codeModel
+	}
+	if docModel != "" {
+		dc.DocEmbeddingModel = docModel
+	}
 
 	if !dc.OllamaRunning {
 		fmt.Println("⚠  Ollama is not running. Start it with: ollama serve")

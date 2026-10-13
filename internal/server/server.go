@@ -1539,6 +1539,8 @@ type indexPathRequest struct {
 	Tags        []string `json:"tags,omitempty"`
 	Description string   `json:"description,omitempty"`
 	MCPExposed  *bool    `json:"mcp_exposed,omitempty"`
+	CodeModel   string   `json:"code_model,omitempty"`
+	DocModel    string   `json:"doc_model,omitempty"`
 }
 
 // handleIndexPath triggers indexing of a local directory or file path on the server.
@@ -1568,6 +1570,12 @@ func (s *Server) handleIndexPath(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.MCPExposed != nil {
 		buildArgs = append(buildArgs, fmt.Sprintf("--mcp=%t", *req.MCPExposed))
+	}
+	if req.CodeModel != "" {
+		buildArgs = append(buildArgs, "--code-model", req.CodeModel)
+	}
+	if req.DocModel != "" {
+		buildArgs = append(buildArgs, "--doc-model", req.DocModel)
 	}
 
 	binPath := getBinaryPath()

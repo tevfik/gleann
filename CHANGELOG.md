@@ -20,6 +20,11 @@ All notable changes to this project will be documented in this file.
   - Full semantic separation parity: preserved 100% mathematical vector clustering and code search accuracy.
   - In-process EIF embedding and causal LLM validation: verified with 100% pass rate in Gleann integration and end-to-end test suites.
 
+### Added
+- **Multi-Model Embedding Selection (Code & Docs)**:
+  - Enabled dedicated code and documentation embedding model selection across TUI setup (`gleann setup` wizard and settings menu), CLI setup (`gleann config set code_model / doc_model`, `gleann setup --bootstrap`, `gleann setup --auto`), and Web UI (System settings and Directory indexing).
+  - Seamless fallback to the primary embedding model when dedicated models are not specified.
+
 ## [v1.8.3] — 2026-10-10
 
 ### Added

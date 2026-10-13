@@ -14,7 +14,8 @@ import (
 //
 //	gleann setup --bootstrap              # apply defaults, detect Ollama
 //	gleann setup --bootstrap --host URL   # use specific Ollama host
-func Bootstrap(ollamaHost string) (*OnboardResult, error) {
+//	gleann setup --bootstrap --code-model M1 --doc-model M2
+func Bootstrap(ollamaHost string, dualModels ...string) (*OnboardResult, error) {
 	if ollamaHost == "" {
 		ollamaHost = "http://localhost:11434"
 	}
@@ -35,6 +36,13 @@ func Bootstrap(ollamaHost string) (*OnboardResult, error) {
 		Temperature: 0.7,
 		MaxTokens:   4096,
 		TopK:        10,
+	}
+
+	if len(dualModels) > 0 && dualModels[0] != "" {
+		result.CodeEmbeddingModel = dualModels[0]
+	}
+	if len(dualModels) > 1 && dualModels[1] != "" {
+		result.DocEmbeddingModel = dualModels[1]
 	}
 
 	// Try to detect Ollama and pick models.
@@ -58,6 +66,12 @@ func Bootstrap(ollamaHost string) (*OnboardResult, error) {
 	fmt.Println()
 	fmt.Println("📋 Bootstrap Configuration:")
 	fmt.Printf("  Embedding: %s (%s)\n", result.EmbeddingModel, result.EmbeddingProvider)
+	if result.CodeEmbeddingModel != "" {
+		fmt.Printf("  Code Model: %s\n", result.CodeEmbeddingModel)
+	}
+	if result.DocEmbeddingModel != "" {
+		fmt.Printf("  Docs Model: %s\n", result.DocEmbeddingModel)
+	}
 	fmt.Printf("  LLM:       %s (%s)\n", result.LLMModel, result.LLMProvider)
 	fmt.Printf("  Host:      %s\n", result.OllamaHost)
 	fmt.Printf("  Indexes:   %s\n", result.IndexDir)
@@ -93,6 +107,12 @@ func CheckSetup() bool {
 	fmt.Println("✅ gleann is configured")
 	fmt.Printf("  Config:    ~/.gleann/config.json\n")
 	fmt.Printf("  Embedding: %s (%s)\n", cfg.EmbeddingModel, cfg.EmbeddingProvider)
+	if cfg.CodeEmbeddingModel != "" {
+		fmt.Printf("  Code Model: %s\n", cfg.CodeEmbeddingModel)
+	}
+	if cfg.DocEmbeddingModel != "" {
+		fmt.Printf("  Docs Model: %s\n", cfg.DocEmbeddingModel)
+	}
 	fmt.Printf("  LLM:       %s (%s)\n", cfg.LLMModel, cfg.LLMProvider)
 	fmt.Printf("  Host:      %s\n", cfg.OllamaHost)
 	fmt.Printf("  Indexes:   %s\n", cfg.IndexDir)

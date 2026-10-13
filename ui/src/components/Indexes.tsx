@@ -24,6 +24,9 @@ export function Indexes() {
   const [dirTags, setDirTags] = useState('');
   const [dirDesc, setDirDesc] = useState('');
   const [autoWatch, setAutoWatch] = useState(false);
+  const [dirCodeModel, setDirCodeModel] = useState('');
+  const [dirDocModel, setDirDocModel] = useState('');
+  const [localModels, setLocalModels] = useState<string[]>([]);
 
   // Inline Table Editors
   const [editingTagFor, setEditingTagFor] = useState<string | null>(null);
@@ -72,6 +75,10 @@ export function Indexes() {
 
   useEffect(() => {
     loadIndexes();
+    fetch('/api/models/local')
+      .then(res => res.json())
+      .then(data => setLocalModels(data.models || []))
+      .catch(console.error);
   }, []);
 
   const handleToggleWatch = async (idxName: string, enable: boolean, dir?: string) => {
@@ -247,7 +254,9 @@ export function Indexes() {
         body: JSON.stringify({ 
           path: indexPath.trim(),
           tags: parsedTags.length > 0 ? parsedTags : undefined,
-          description: dirDesc.trim() || undefined
+          description: dirDesc.trim() || undefined,
+          code_model: dirCodeModel.trim() || undefined,
+          doc_model: dirDocModel.trim() || undefined
         })
       });
       if (response.ok) {
@@ -262,6 +271,8 @@ export function Indexes() {
         setIndexPath('');
         setDirTags('');
         setDirDesc('');
+        setDirCodeModel('');
+        setDirDocModel('');
         loadIndexes();
       } else {
         alert('Failed to start indexing.');
@@ -448,6 +459,36 @@ export function Indexes() {
                     className="w-full px-3 py-1.5 bg-black/40 border border-white/10 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:border-blue-500 text-xs"
                   />
                 </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="text-xs text-blue-400 block mb-1">💻 Code Model (optional)</label>
+                  <input 
+                    type="text" 
+                    list="index_local_models"
+                    value={dirCodeModel} 
+                    onChange={e => setDirCodeModel(e.target.value)}
+                    placeholder="e.g. granite-30m or inherit default" 
+                    className="w-full px-3 py-1.5 bg-black/40 border border-white/10 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:border-blue-500 text-xs font-mono"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs text-emerald-400 block mb-1">📄 Docs Model (optional)</label>
+                  <input 
+                    type="text" 
+                    list="index_local_models"
+                    value={dirDocModel} 
+                    onChange={e => setDirDocModel(e.target.value)}
+                    placeholder="e.g. bge-small or inherit default" 
+                    className="w-full px-3 py-1.5 bg-black/40 border border-white/10 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:border-emerald-500 text-xs font-mono"
+                  />
+                </div>
+                {localModels.length > 0 && (
+                  <datalist id="index_local_models">
+                    {localModels.map(m => <option key={m} value={m} />)}
+                  </datalist>
+                )}
               </div>
 
               <div className="flex items-center justify-between pt-1">

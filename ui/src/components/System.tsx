@@ -416,52 +416,49 @@ export function System() {
                     </div>
                   )}
 
-                  {(editConfig.embedding_provider || 'native') !== 'llamacpp' && (
-                    <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mt-3">
-                    <div>
-                      <label className="text-xs text-gray-500 font-medium block mb-1">Endpoint URL</label>
-                      <input 
-                        type="text" 
-                        value={(editConfig.embedding_provider || 'native') === 'ollama' ? (editConfig.ollama_host || 'http://localhost:11434') : (editConfig.embedding_provider || 'native') === 'openai' ? (editConfig.openai_base_url || 'https://api.openai.com/v1') : ''} 
-                        onChange={e => {
-                          const prov = editConfig.embedding_provider || 'native';
-                          if (prov === 'ollama') setEditConfig({...editConfig, ollama_host: e.target.value})
-                          else if (prov === 'openai') setEditConfig({...editConfig, openai_base_url: e.target.value})
-                        }}
-                        disabled={(editConfig.embedding_provider || 'native') === 'native' || (editConfig.embedding_provider || 'native') === 'llamacpp'}
-                        placeholder={(editConfig.embedding_provider || 'native') === 'ollama' ? 'http://localhost:11434' : (editConfig.embedding_provider || 'native') === 'llamacpp' ? 'Managed automatically' : 'https://api.openai.com/v1'}
-                        className="w-full bg-black/50 border border-white/10 rounded px-3 py-1.5 text-sm text-gray-300 outline-none focus:border-blue-500/50 transition-colors disabled:opacity-50"
-                      />
+                  {/* Endpoint & Auth (when applicable) */}
+                  {((editConfig.embedding_provider || 'native') === 'ollama' || (editConfig.embedding_provider || 'native') === 'openai') && (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-3">
+                      <div>
+                        <label className="text-xs text-gray-500 font-medium block mb-1">Endpoint URL</label>
+                        <input 
+                          type="text" 
+                          value={(editConfig.embedding_provider || 'native') === 'ollama' ? (editConfig.ollama_host || 'http://localhost:11434') : (editConfig.openai_base_url || 'https://api.openai.com/v1')} 
+                          onChange={e => {
+                            const prov = editConfig.embedding_provider || 'native';
+                            if (prov === 'ollama') setEditConfig({...editConfig, ollama_host: e.target.value})
+                            else if (prov === 'openai') setEditConfig({...editConfig, openai_base_url: e.target.value})
+                          }}
+                          placeholder={(editConfig.embedding_provider || 'native') === 'ollama' ? 'http://localhost:11434' : 'https://api.openai.com/v1'}
+                          className="w-full bg-black/50 border border-white/10 rounded px-3 py-1.5 text-sm text-gray-300 outline-none focus:border-blue-500/50 transition-colors"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-xs text-gray-500 font-medium block mb-1">API Key</label>
+                        <input 
+                          type="password" 
+                          value={editConfig.openai_api_key || ''} 
+                          onChange={e => setEditConfig({...editConfig, openai_api_key: e.target.value})}
+                          disabled={(editConfig.embedding_provider || 'native') !== 'openai'}
+                          placeholder={(editConfig.embedding_provider || 'native') === 'openai' ? 'sk-...' : 'Not required'}
+                          className="w-full bg-black/50 border border-white/10 rounded px-3 py-1.5 text-sm text-gray-300 outline-none focus:border-blue-500/50 transition-colors disabled:opacity-50"
+                        />
+                      </div>
                     </div>
+                  )}
+
+                  {/* Embedding Model Selection (General, Code, Docs) */}
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-3">
                     <div>
-                      <label className="text-xs text-gray-500 font-medium block mb-1">API Key</label>
-                      <input 
-                        type="password" 
-                        value={(editConfig.embedding_provider || 'native') === 'openai' ? (editConfig.openai_api_key || '') : ''} 
-                        onChange={e => {
-                          const prov = editConfig.embedding_provider || 'native';
-                          if (prov === 'openai') setEditConfig({...editConfig, openai_api_key: e.target.value})
-                        }}
-                        disabled={(editConfig.embedding_provider || 'native') !== 'openai'}
-                        placeholder={(editConfig.embedding_provider || 'native') === 'openai' ? 'sk-...' : 'Not required'}
-                        className="w-full bg-black/50 border border-white/10 rounded px-3 py-1.5 text-sm text-gray-300 outline-none focus:border-blue-500/50 transition-colors disabled:opacity-50"
-                      />
-                    </div>
-                    <div>
-                      <label className="text-xs text-gray-500 font-medium block mb-1">Embedding Model (General)</label>
+                      <label className="text-xs text-gray-400 font-medium block mb-1">General Embedding Model</label>
                       <input 
                         type="text" 
                         list="embedding_models_list"
                         value={editConfig.embedding_model || ''} 
                         onChange={e => setEditConfig({...editConfig, embedding_model: e.target.value})}
-                        placeholder="e.g. nomic-embed-text or granite-30m"
+                        placeholder="e.g. bge-m3, nomic-embed-text"
                         className="w-full bg-black/50 border border-white/10 rounded px-3 py-1.5 text-sm text-gray-300 outline-none focus:border-blue-500/50 transition-colors"
                       />
-                      {embeddingModels.length > 0 && (
-                        <datalist id="embedding_models_list">
-                           {embeddingModels.map(m => <option key={m} value={m} />)}
-                        </datalist>
-                      )}
                     </div>
                     <div>
                       <label className="text-xs text-blue-400 font-medium block mb-1">💻 Code Embedding Model</label>
@@ -470,7 +467,7 @@ export function System() {
                         list="embedding_models_list"
                         value={editConfig.code_embedding_model || ''} 
                         onChange={e => setEditConfig({...editConfig, code_embedding_model: e.target.value})}
-                        placeholder="e.g. granite-30m-q8_0.gguf"
+                        placeholder="Optional — inherits General model"
                         className="w-full bg-black/50 border border-white/10 rounded px-3 py-1.5 text-sm text-gray-300 outline-none focus:border-blue-500/50 transition-colors"
                       />
                     </div>
@@ -481,11 +478,15 @@ export function System() {
                         list="embedding_models_list"
                         value={editConfig.doc_embedding_model || ''} 
                         onChange={e => setEditConfig({...editConfig, doc_embedding_model: e.target.value})}
-                        placeholder="e.g. bge-small-en-q8_0.gguf"
-                        className="w-full bg-black/50 border border-white/10 rounded px-3 py-1.5 text-sm text-gray-300 outline-none focus:border-blue-500/50 transition-colors"
+                        placeholder="Optional — inherits General model"
+                        className="w-full bg-black/50 border border-white/10 rounded px-3 py-1.5 text-sm text-gray-300 outline-none focus:border-emerald-500/50 transition-colors"
                       />
                     </div>
                   </div>
+                  {Array.from(new Set([...embeddingModels, ...localModels])).length > 0 && (
+                    <datalist id="embedding_models_list">
+                      {Array.from(new Set([...embeddingModels, ...localModels])).map(m => <option key={m} value={m} />)}
+                    </datalist>
                   )}
                 </div>
 
