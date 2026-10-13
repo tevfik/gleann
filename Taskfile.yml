@@ -126,7 +126,9 @@ tasks:
           for lib in /usr/lib/*-linux-gnu/libopenblas.so.0 \
                      /usr/lib/*-linux-gnu/libgomp.so.1 \
                      /usr/lib/*-linux-gnu/libgfortran.so.5 \
-                     /usr/lib/*-linux-gnu/libquadmath.so.0; do
+                     /usr/lib/*-linux-gnu/libquadmath.so.0 \
+                     /usr/lib/*-linux-gnu/libmvec.so.1 \
+                     /lib/*-linux-gnu/libmvec.so.1; do
             if [ -f "$lib" ]; then
               cp "$lib" {{.BUILD_DIR}}/stage/ 2>/dev/null || true
             fi
@@ -134,8 +136,8 @@ tasks:
         fi
       - |
         CGO_ENABLED=1 \
-        CGO_CFLAGS="-w -I{{.FAISS_INC_DIR}} $CGO_CFLAGS" \
-        CGO_CXXFLAGS="-w -I{{.FAISS_INC_DIR}} $CGO_CXXFLAGS" \
+        CGO_CFLAGS="-w -I{{.FAISS_INC_DIR}} -fno-tree-vectorize -fmath-errno $CGO_CFLAGS" \
+        CGO_CXXFLAGS="-w -I{{.FAISS_INC_DIR}} -fno-tree-vectorize -fmath-errno $CGO_CXXFLAGS" \
         CGO_LDFLAGS="{{.RPATH_FLAGS}} {{.ZNOW_FLAG}} -L{{.FAISS_LIB_DIR}} -lfaiss_c -lfaiss -L{{.BUILD_DIR}}/stage -lgleann_core_rs $CGO_LDFLAGS" \
         go build -tags "faiss treesitter native eif" -ldflags "{{.LDFLAGS}}" -o {{.BUILD_DIR}}/stage/gleann-full-bin {{.CMD}}
       - |

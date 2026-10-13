@@ -130,6 +130,96 @@ build-eif: build-eif-lib prepare-assets
 	fi
 	@echo "✅ Built $(BUILD_DIR)/gleann-eif (with EIF-Runtime in-process BERT)"
 
+# ── ARM64 Builds (Native / Cross-Compiler / Docker) ─────────────────────────
+.PHONY: build-arm64
+build-arm64: prepare-assets
+	@mkdir -p $(BUILD_DIR)
+	@echo "🔧 Building pure Go ARM64 binary..."
+	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/gleann-linux-arm64 $(CMD)
+	@echo "✅ Built $(BUILD_DIR)/gleann-linux-arm64 (Pure Go arm64)"
+
+.PHONY: build-eif-lib-arm64
+build-eif-lib-arm64:
+	@if [ ! -f ext/eif-runtime/CMakeLists.txt ]; then \
+		echo "📦 Initializing ext/eif-runtime submodule..."; \
+		git submodule update --init --recursive ext/eif-runtime; \
+	fi
+	@if [ -f ext/eif-runtime/CMakeLists.txt ] && command -v aarch64-linux-gnu-gcc >/dev/null 2>&1; then \
+		echo "🔧 Cross-compiling eif-runtime static library for ARM64..."; \
+		mkdir -p ext/eif-runtime/build-arm64 && \
+		cmake -B ext/eif-runtime/build-arm64 -S ext/eif-runtime \
+			-DCMAKE_SYSTEM_NAME=Linux \
+			-DCMAKE_SYSTEM_PROCESSOR=aarch64 \
+			-DCMAKE_C_COMPILER=aarch64-linux-gnu-gcc \
+			-DCMAKE_BUILD_TYPE=Release \
+			-DEIF_ENABLE_VULKAN=OFF \
+			-DCMAKE_C_FLAGS="-fno-tree-vectorize -fmath-errno" && \
+		cmake --build ext/eif-runtime/build-arm64 --target eif_runtime_static; \
+	else \
+		echo "⚠️ aarch64-linux-gnu-gcc not found. Run 'make docker-build-eif-arm64' for containerized ARM build."; \
+		exit 1; \
+	fi
+
+.PHONY: build-eif-arm64
+build-eif-arm64: build-eif-lib-arm64 prepare-assets
+	@mkdir -p $(BUILD_DIR) ext/eif-runtime/build
+	@cp ext/eif-runtime/build-arm64/libeif_runtime.a ext/eif-runtime/build/libeif_runtime.a
+	@echo "🔧 Building gleann-eif for ARM64..."
+	CC=aarch64-linux-gnu-gcc CXX=aarch64-linux-gnu-g++ \
+	GOOS=linux GOARCH=arm64 CGO_ENABLED=1 \
+	CGO_CFLAGS="-w -fno-tree-vectorize -fmath-errno" \
+	CGO_CXXFLAGS="-w -fno-tree-vectorize -fmath-errno" \
+	go build -tags "eif" -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/gleann-eif-linux-arm64 $(CMD)
+	@echo "✅ Built $(BUILD_DIR)/gleann-eif-linux-arm64 (Embedded EIF runtime arm64)"
+
+.PHONY: docker-build-arm64
+docker-build-arm64: prepare-assets
+	@mkdir -p $(BUILD_DIR)
+	@echo "🐳 Building pure Go ARM64 binary in Docker..."
+	docker run --rm \
+		-v gleann-go-cache:/go/pkg/mod \
+		-v gleann-build-cache:/root/.cache/go-build \
+		-v $$(pwd):/app -w /app golang:1.25 \
+		sh -c "GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -buildvcs=false -ldflags '$(LDFLAGS)' -o $(BUILD_DIR)/gleann-linux-arm64 $(CMD) && chown -R $$(id -u):$$(id -g) /app/$(BUILD_DIR)"
+	@echo "✅ Built $(BUILD_DIR)/gleann-linux-arm64 via Docker"
+
+.PHONY: docker-builder-arm64
+docker-builder-arm64:
+	@if command -v docker >/dev/null 2>&1; then \
+		if ! docker image inspect gleann-builder-arm64:latest >/dev/null 2>&1; then \
+			echo "📦 Creating gleann-builder-arm64:latest (Debian Bookworm + aarch64 cross-compiler)..."; \
+			printf 'FROM golang:1.25-bookworm\nRUN apt-get update && apt-get install -y --no-install-recommends cmake gcc-aarch64-linux-gnu g++-aarch64-linux-gnu libgomp1-arm64-cross patchelf && rm -rf /var/lib/apt/lists/*\n' | docker build -t gleann-builder-arm64:latest -; \
+		fi; \
+	fi
+
+.PHONY: docker-build-eif-arm64
+docker-build-eif-arm64: docker-builder-arm64 prepare-assets
+	@mkdir -p $(BUILD_DIR)
+	@echo "🐳 Building gleann-eif for ARM64 in Docker container..."
+	docker run --rm \
+		-v gleann-go-cache:/go/pkg/mod \
+		-v gleann-build-cache:/root/.cache/go-build \
+		-v $$(pwd):/app -w /app gleann-builder-arm64:latest \
+		sh -c "set -e && \
+			mkdir -p ext/eif-runtime/build-arm64 && \
+			cmake -B ext/eif-runtime/build-arm64 -S ext/eif-runtime \
+				-DCMAKE_SYSTEM_NAME=Linux \
+				-DCMAKE_SYSTEM_PROCESSOR=aarch64 \
+				-DCMAKE_C_COMPILER=aarch64-linux-gnu-gcc \
+				-DCMAKE_BUILD_TYPE=Release \
+				-DEIF_ENABLE_VULKAN=OFF \
+				-DCMAKE_C_FLAGS='-fno-tree-vectorize -fmath-errno' && \
+			cmake --build ext/eif-runtime/build-arm64 --target eif_runtime_static && \
+			mkdir -p ext/eif-runtime/build && \
+			cp ext/eif-runtime/build-arm64/libeif_runtime.a ext/eif-runtime/build/libeif_runtime.a && \
+			CC=aarch64-linux-gnu-gcc CXX=aarch64-linux-gnu-g++ \
+			GOOS=linux GOARCH=arm64 CGO_ENABLED=1 \
+			CGO_CFLAGS='-w -fno-tree-vectorize -fmath-errno' \
+			CGO_CXXFLAGS='-w -fno-tree-vectorize -fmath-errno' \
+			go build -buildvcs=false -tags 'eif' -ldflags '$(LDFLAGS)' -o $(BUILD_DIR)/gleann-eif-linux-arm64 $(CMD) && \
+			chown -R $$(id -u):$$(id -g) /app/$(BUILD_DIR) ext/eif-runtime/build"
+	@echo "✅ Built $(BUILD_DIR)/gleann-eif-linux-arm64 via Docker"
+
 .PHONY: build-rust-core
 build-rust-core:
 	@if [ -d ext/gleann-core-rs ] && command -v cargo >/dev/null 2>&1; then \
