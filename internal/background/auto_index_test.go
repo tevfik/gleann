@@ -41,17 +41,20 @@ func TestAutoIndexer_WatchAndFlush(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Wait for debounce + processing.
-	time.Sleep(500 * time.Millisecond)
-
-	// Check that a task was submitted.
-	tasks := manager.List("")
+	// Wait for debounce + processing with polling (handles FSEvents delay on macOS)
+	deadline := time.Now().Add(5 * time.Second)
 	found := false
-	for _, task := range tasks {
-		if task.Type == TaskTypeAutoIndex {
-			found = true
+	for time.Now().Before(deadline) {
+		for _, task := range manager.List("") {
+			if task.Type == TaskTypeAutoIndex {
+				found = true
+				break
+			}
+		}
+		if found {
 			break
 		}
+		time.Sleep(50 * time.Millisecond)
 	}
 	if !found {
 		t.Error("expected AutoIndex task to be submitted after file change")

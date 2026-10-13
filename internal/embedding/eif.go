@@ -9,6 +9,14 @@ package embedding
 #cgo windows LDFLAGS: ${SRCDIR}/../../ext/eif-runtime/build/libeif_runtime.a -lm
 #include "eif_bert.h"
 #include <stdlib.h>
+
+static inline int eif_host_has_avx2(void) {
+#if (defined(__x86_64__) || defined(_M_X64)) && defined(__GNUC__)
+    return __builtin_cpu_supports("avx2") && __builtin_cpu_supports("fma");
+#else
+    return 1;
+#endif
+}
 */
 import "C"
 import (
@@ -91,6 +99,10 @@ func resolveEIFModelPath(model string) (string, error) {
 func GetOrLoadEIF(model string) (*EIFComputer, error) {
 	eifCacheMu.Lock()
 	defer eifCacheMu.Unlock()
+
+	if C.eif_host_has_avx2() == 0 {
+		return nil, fmt.Errorf("in-process EIF engine requires AVX2+FMA instruction support on x86_64 hosts; current CPU does not support these instructions")
+	}
 
 	resolved, err := resolveEIFModelPath(model)
 	if err != nil {

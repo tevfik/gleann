@@ -156,8 +156,14 @@ func TestConcurrentSubmit(t *testing.T) {
 		})
 	}
 
-	// Wait for all to complete.
-	time.Sleep(500 * time.Millisecond)
+	// Wait for all to complete with polling (prevents flakiness under -race)
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if atomic.LoadInt64(&completed) == 20 && len(m.List(StatusCompleted)) == 20 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 
 	got := atomic.LoadInt64(&completed)
 	if got != 20 {

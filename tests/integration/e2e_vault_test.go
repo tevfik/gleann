@@ -85,10 +85,10 @@ func TestE2EVaultFileTracking(t *testing.T) {
 
 	time.Sleep(100 * time.Millisecond)
 
-	// 6. Verification with polling (due to async fsnotify)
+	// 6. Verification with polling (due to async fsnotify / macOS FSEvents)
 	var currentActualPath string
 
-	pollTimeout := time.After(2 * time.Second)
+	pollTimeout := time.After(10 * time.Second)
 	ticker := time.NewTicker(50 * time.Millisecond)
 	defer ticker.Stop()
 

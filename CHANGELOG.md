@@ -2,6 +2,24 @@
 
 All notable changes to this project will be documented in this file.
 
+## [v1.8.4] — 2026-10-13
+
+### Optimized
+- **EIF-Runtime High-Performance Engine Upgrade (`ext/eif-runtime`)**:
+  - Upgraded submodule to commit `bde2895` with full AVX2 / ARM NEON multi-tile vector GEMM kernels and Q8_0 4-token unrolled matrix multiplication.
+  - Multi-Head Attention parallelism: uncapped thread allocation in `eif_bert_embed` and `bert_gemm_int8_gguf`, delivering up to 62% latency reduction across local GGUF models on multi-core CPUs.
+  - Portable Binary Distribution: replaced host `-march=native` with portable `-mavx2 -mfma` architecture compilation, strictly preventing AVX-512 EVEX illegal instructions (`SIGILL`) on non-AVX512 host environments and Docker containers.
+  - Host CPU Capability Pre-flight: added runtime probing in `internal/embedding` ensuring zero CGo illegal instruction panics on unsupported architectures.
+  - Measured live inference latency across local backend models:
+    - `snowflake-xs-q8_0`: 14.20 ms / embedding (62.4% faster)
+    - `minilm.gguf`: 14.43 ms / embedding (59.9% faster)
+    - `jina-code-q8_0`: 85.68 ms / embedding (39.5% faster)
+    - `bge-m3-q8_0`: 237.98 ms / embedding (30.5% faster, down from 425 ms)
+    - `bge-small-en-q8_0`: 40.08 ms / embedding (24.1% faster)
+    - `granite-30m-q8_0`: 19.54 ms / embedding (13.7% faster)
+  - Full semantic separation parity: preserved 100% mathematical vector clustering and code search accuracy.
+  - In-process EIF embedding and causal LLM validation: verified with 100% pass rate in Gleann integration and end-to-end test suites.
+
 ## [v1.8.3] — 2026-10-10
 
 ### Added

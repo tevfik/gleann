@@ -103,11 +103,15 @@ func TestWatcherStartAndDetectChange(t *testing.T) {
 	testFile := filepath.Join(dir, "test.txt")
 	os.WriteFile(testFile, []byte("hello"), 0o644)
 
-	// Wait a bit for the watcher to process
-	time.Sleep(200 * time.Millisecond)
-
-	// File should be tracked now
-	hash, err := tracker.GetHashByPath(ctx, testFile)
+	// Wait for the watcher to process with polling (handles FSEvents delay on macOS)
+	var hash string
+	for attempt := 0; attempt < 50; attempt++ {
+		hash, err = tracker.GetHashByPath(ctx, testFile)
+		if err == nil && hash != "" {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
 	if err != nil {
 		t.Logf("file not tracked yet (may be timing): %v", err)
 	} else if hash == "" {
