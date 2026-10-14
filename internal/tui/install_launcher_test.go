@@ -121,3 +121,16 @@ func TestIsWritable_MissingDirsUnderWritableAncestor(t *testing.T) {
 		t.Error("a path below a regular file is not writable")
 	}
 }
+
+// unwritableMissingPath returns a path that does not exist and cannot be
+// created anywhere, as any user on any OS: it lies below a regular file. (A
+// literal "/nonexistent/..." is writable for root, and on a Windows runner
+// whose drive root accepts new entries.)
+func unwritableMissingPath(t *testing.T) string {
+	t.Helper()
+	file := filepath.Join(t.TempDir(), "plain-file")
+	if err := os.WriteFile(file, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return filepath.Join(file, "no", "such", "dir")
+}

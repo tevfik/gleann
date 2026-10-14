@@ -71,13 +71,13 @@ func TestIsWritableExistingDir(t *testing.T) {
 
 func TestIsWritableNonExistentDir(t *testing.T) {
 	// Non-existent dir with non-existent parent should not be writable.
-	if isWritable("/nonexistent/deeply/nested/path") {
+	if isWritable(unwritableMissingPath(t)) {
 		t.Fatal("non-existent parent should not be writable")
 	}
 }
 
 func TestIsWritableNonExistentParent(t *testing.T) {
-	if isWritable("/nonexistent/deeply/nested/path") {
+	if isWritable(unwritableMissingPath(t)) {
 		t.Fatal("non-existent parent should not be writable")
 	}
 }

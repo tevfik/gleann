@@ -378,7 +378,7 @@ func TestIsWritable(t *testing.T) {
 	}
 
 	// Non-existent dir should not be writable
-	if isWritable("/nonexistent/path/to/dir") {
+	if isWritable(unwritableMissingPath(t)) {
 		t.Error("nonexistent dir should not be writable")
 	}
 }

@@ -208,7 +208,7 @@ func TestIsWritableTempDir(t *testing.T) {
 
 func TestIsWritableNonexistent(t *testing.T) {
 	// Nonexistent directory with no parent — should return false
-	if isWritable("/nonexistent/deep/path/that/does/not/exist") {
+	if isWritable(unwritableMissingPath(t)) {
 		t.Error("should not be writable")
 	}
 }

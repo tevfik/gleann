@@ -118,7 +118,7 @@ func TestIsWritableNonExistent(t *testing.T) {
 }
 
 func TestIsWritableDeepNonExistent(t *testing.T) {
-	if isWritable("/nonexistent/deep/path") {
+	if isWritable(unwritableMissingPath(t)) {
 		t.Error("deep non-existent path should not be writable")
 	}
 }
