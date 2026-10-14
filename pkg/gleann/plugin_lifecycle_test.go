@@ -46,7 +46,9 @@ func waitClosed(t *testing.T, ch <-chan struct{}, what string) {
 
 func TestEnsurePluginRunning_UnhealthyIsKilledAndUnregistered(t *testing.T) {
 	requireUnixTools(t, "sleep")
-	t.Setenv("HOME", t.TempDir())
+	winHome := t.TempDir()
+	t.Setenv("HOME", winHome)
+	t.Setenv("USERPROFILE", winHome)
 	old := pluginStartTimeout
 	pluginStartTimeout = 1200 * time.Millisecond
 	defer func() { pluginStartTimeout = old }()
@@ -75,7 +77,9 @@ func TestEnsurePluginRunning_UnhealthyIsKilledAndUnregistered(t *testing.T) {
 
 func TestEnsurePluginRunning_EarlyExitIsReaped(t *testing.T) {
 	requireUnixTools(t, "true")
-	t.Setenv("HOME", t.TempDir())
+	winHome := t.TempDir()
+	t.Setenv("HOME", winHome)
+	t.Setenv("USERPROFILE", winHome)
 
 	m := &PluginManager{Registry: &PluginRegistry{}}
 	p := &Plugin{Name: "exits", URL: unusedURL(t), Command: []string{"true"}}
@@ -95,7 +99,9 @@ func TestEnsurePluginRunning_EarlyExitIsReaped(t *testing.T) {
 
 func TestPluginManagerClose_KillsAndReaps(t *testing.T) {
 	requireUnixTools(t, "sleep")
-	t.Setenv("HOME", t.TempDir())
+	winHome := t.TempDir()
+	t.Setenv("HOME", winHome)
+	t.Setenv("USERPROFILE", winHome)
 
 	// Health endpoint that fails (connection reset) for the first two
 	// probes, so EnsurePluginRunning spawns the command, then succeeds.

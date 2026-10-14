@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -35,6 +36,7 @@ func TestNameTraversalRejected(t *testing.T) {
 	}
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	pluginsDir := filepath.Join(home, ".gleann", "plugins")
 	if err := os.MkdirAll(pluginsDir, 0o755); err != nil {
 		t.Fatal(err)
@@ -126,7 +128,9 @@ func TestNameValidation_HeaderAndBody(t *testing.T) {
 // ── Model download validation ────────────────────────────────────────────
 
 func TestDownloadModelValidation(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	winHome := t.TempDir()
+	t.Setenv("HOME", winHome)
+	t.Setenv("USERPROFILE", winHome)
 	t.Setenv("GLEANN_MODEL_DOWNLOAD_ALLOW_PRIVATE", "")
 	s := &Server{}
 
@@ -229,6 +233,7 @@ func TestWebhookClient_NoRedirectsAndDialGuard(t *testing.T) {
 func TestConfigSecretsRoundTrip(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	cfgPath := filepath.Join(home, ".gleann", "config.json")
 	if err := os.MkdirAll(filepath.Dir(cfgPath), 0o755); err != nil {
 		t.Fatal(err)
@@ -301,7 +306,9 @@ func TestConfigSecretsRoundTrip(t *testing.T) {
 	if m["openai_api_key"] != "sk-live" || m["anthropic_api_key"] != "keep-me" || m["completed"] != true {
 		t.Fatalf("unexpected file contents: %v", m)
 	}
-	if fi, err := os.Stat(cfgPath); err != nil || fi.Mode().Perm() != 0o600 {
+	// Windows has no POSIX permission bits (Stat reports 0666), so the 0600
+	// check only means something elsewhere.
+	if fi, err := os.Stat(cfgPath); err != nil || (runtime.GOOS != "windows" && fi.Mode().Perm() != 0o600) {
 		t.Fatalf("config file mode = %v (err %v), want 0600", fi.Mode().Perm(), err)
 	}
 	if data, _ := os.ReadFile(cfgPath); strings.Contains(string(data), gleann.RedactedSecret) {
@@ -325,6 +332,7 @@ func TestConfigSecretsRoundTrip(t *testing.T) {
 func TestUpdateConfig_SaveErrorReturns500(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	// Make ~/.gleann a file so the config cannot be written.
 	if err := os.WriteFile(filepath.Join(home, ".gleann"), []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
@@ -423,7 +431,9 @@ func newFakeOllama(t *testing.T) *httptest.Server {
 // newIndexedServer builds a server with a real index named "idx".
 func newIndexedServer(t *testing.T) (*Server, http.Handler, gleann.Config) {
 	t.Helper()
-	t.Setenv("HOME", t.TempDir())
+	winHome := t.TempDir()
+	t.Setenv("HOME", winHome)
+	t.Setenv("USERPROFILE", winHome)
 	ollama := newFakeOllama(t)
 	cfg := gleann.DefaultConfig()
 	cfg.IndexDir = t.TempDir()
