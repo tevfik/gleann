@@ -275,33 +275,12 @@ func (m *PluginManager) PingPlugin(p *Plugin) (*PluginHealth, error) {
 	return &h, nil
 }
 
-// FindDocumentExtractor returns the first plugin capable of extracting the given extension.
+// FindDocumentExtractor returns the highest-priority plugin capable of extracting the given extension.
 func (m *PluginManager) FindDocumentExtractor(ext string) *Plugin {
-	if m.Registry == nil {
+	if deprecatedMediaExts[strings.ToLower(ext)] {
 		return nil
 	}
-	ext = strings.ToLower(ext)
-	for _, p := range m.Registry.Plugins {
-		hasCap := false
-		for _, cap := range p.Capabilities {
-			if cap == "document-extraction" {
-				hasCap = true
-				break
-			}
-		}
-		if !hasCap {
-			continue
-		}
-		for _, supportedExt := range p.Extensions {
-			if strings.ToLower(supportedExt) == ext {
-				if deprecatedMediaExts[ext] {
-					continue // Media extensions (.png, .jpg, etc.) are handled by multimodal pipeline, not document plugins
-				}
-				return &p
-			}
-		}
-	}
-	return nil
+	return m.FindByCapability(CapDocumentExtraction, ext)
 }
 
 // EnsurePluginRunning pings the plugin's /health and starts it via exec.Cmd if down.

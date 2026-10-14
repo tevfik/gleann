@@ -15,7 +15,7 @@ Plugins are standalone executables that expose a local HTTP API. Gleann manages 
 
 | Plugin | Formats | Backend | Description |
 |--------|---------|---------|-------------|
-| [gleann-plugin-docs](https://github.com/tevfik/gleann-plugin-docs) | PDF, DOCX, XLSX, PPTX, CSV | MarkItDown + Docling | Document extraction with table detection |
+| [gleann-plugin-docs](https://github.com/tevfik/gleann-plugin-docs) | PDF, DOCX, XLSX, PPTX, CSV, PNG, JPG | Go + C (`eif-runtime` Docling BitNet 1.58b VLM) | Standalone native document extraction with OCR & OTSL table parsing |
 | [gleann-plugin-marker](https://github.com/tevfik/gleann-plugin-marker) | PDF, DOCX, EPUB, HTML, images | marker-pdf + Surya OCR | High-accuracy extraction with deep learning OCR |
 | [gleann-plugin-sound](https://github.com/tevfik/gleann-plugin-sound) | MP3, WAV, MP4, etc. | whisper.cpp | Audio/video transcription |
 
@@ -212,7 +212,7 @@ GLEANN_LOG_LEVEL=debug gleann index build test --docs ./
 
 ### Reference Implementations
 
-- [gleann-plugin-docs](https://github.com/tevfik/gleann-plugin-docs) — PDF/DOCX (Python: MarkItDown + Docling)
+- [gleann-plugin-docs](https://github.com/tevfik/gleann-plugin-docs) — PDF/DOCX/Office (Go + C: in-process Docling BitNet VLM + OTSL table parser, fast pdftotext hybrid)
 - [gleann-plugin-marker](https://github.com/tevfik/gleann-plugin-marker) — High-accuracy PDF/DOCX/images (Python: marker-pdf + Surya OCR)
 - [gleann-plugin-sound](https://github.com/tevfik/gleann-plugin-sound) — Audio transcription (Go + whisper.cpp)
 
@@ -227,7 +227,7 @@ For a comprehensive comparison of all 4 extraction backends (go-native, markitdo
 | Backend | Layer | Avg Latency | Sections | Formats | Dependencies |
 |---------|:-----:|:-----------:|:--------:|:-------:|-------------|
 | **go-native** | -1 | **<1ms** | 5.7 | 6 | Zero (always available) |
-| **plugin-docs** | 1a | 114ms | 5.0 | 5 | Python markitdown + docling |
+| **plugin-docs** | 1a | <50ms (text) / ~1s (VLM) | 5.0 | 6+ | Standalone Go + C runtime (zero Python) |
 | **markitdown-cli** | 0 | 396ms | 0.0 | 2* | Python markitdown |
 | **plugin-marker** | 1b | 1026ms | 9.0 | 4 | Python marker-pdf + surya OCR |
 

@@ -2,6 +2,29 @@
 
 All notable changes to this project will be documented in this file.
 
+## [v1.8.5] — 2026-10-14
+
+### Added
+- **Table-Aware Markdown Chunker (`modules/chunking`)**:
+  - Implemented atomic markdown table detection and preservation during document chunking. Tables under the token limit remain intact in a single chunk with their headers.
+  - Large tables exceeding chunk size are partitioned with replicated header rows across every sub-chunk, ensuring continuous tabular context for embedding and RAG.
+  - Fixed slice bounds out-of-range regression (`[len:len-1]`) in heading parser.
+- **Plugin Priority & Capability Routing (`pkg/gleann/plugin.go`)**:
+  - Upgraded document extractor discovery to prioritize high-capability, native plugins (`Priority: 10`) over legacy fallbacks.
+  - Full seamless integration with standalone native `gleann-plugin-docs` daemon.
+
+### Changed
+- **Default LLM Model Standardization (`llama3.2:3b`)**:
+  - Centralized default chat model to `llama3.2:3b` across CLI defaults (`cmd/gleann/defaults.go`), core chat engine (`pkg/gleann/chat.go`), and system diagnostics (`gleann doctor`).
+  - `gleann doctor` checks now verify local LLM availability cleanly against configured providers.
+
+### Documentation & Maintenance
+- **Documentation Audit & Streamlining**:
+  - Consolidated scattered integration test plans into `docs/TEST_PLAN.md` and removed redundant ephemeral test reports.
+  - Synchronized plugin guides (`docs/plugins.md`, `docs/plugin-install-guide.md`) to reflect the standalone Go/C VLM architecture.
+- **Refreshed Terminal Screencast**:
+  - Updated VHS demo recording (`scripts/demo/gleann-demo.gif` & `scripts/demo/gleann-demo.mp4`) showcasing all-green system health, instant table indexing, and cross-session memory retrieval.
+
 ## [v1.8.4] — 2026-10-13
 
 ### Optimized

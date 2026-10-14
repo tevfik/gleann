@@ -965,8 +965,11 @@ func collectEligibleFiles(dir string, pluginManager *gleann.PluginManager, nativ
 
 		ext := strings.ToLower(filepath.Ext(path))
 
-		// Fast path: skip obvious binary extensions
-		if binaryExts[ext] {
+		// Skip binary extensions unless a plugin, native extractor, or multimodal can handle them
+		canHandle := (pluginManager != nil && pluginManager.FindDocumentExtractor(ext) != nil) ||
+			(nativeExtractor != nil && nativeExtractor.CanHandle(ext)) ||
+			(mmProcessor != nil && mmProcessor.CanProcess(path))
+		if binaryExts[ext] && !canHandle {
 			return nil
 		}
 
@@ -1013,11 +1016,11 @@ func collectEligibleFiles(dir string, pluginManager *gleann.PluginManager, nativ
 				}
 			}
 		case IndexModeDocs:
-			// Docs mode: office docs and documentation text. Pure code files are skipped.
-			if (!isStdOffice && !isStdDoc) || info.Size() > 10<<20 {
+			// Docs mode: office docs, PDFs, and documentation text. Pure code files are skipped.
+			if (!isStdOffice && !isStdDoc && !canHandle) || info.Size() > 100<<20 {
 				return nil
 			}
-			if !isStdOffice {
+			if !isStdOffice && !canHandle {
 				s := getSniff()
 				if s.IsBinary || s.IsMinified {
 					return nil
@@ -1025,8 +1028,8 @@ func collectEligibleFiles(dir string, pluginManager *gleann.PluginManager, nativ
 			}
 		case IndexModeAll, "":
 			hasMultimodal := mmProcessor != nil && mmProcessor.CanProcess(path)
-			if !isStdOffice && !hasMultimodal {
-				if info.Size() > 1<<20 {
+			if !isStdOffice && !hasMultimodal && !canHandle {
+				if info.Size() > 100<<20 {
 					return nil
 				}
 				s := getSniff()

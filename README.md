@@ -5,374 +5,180 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Go Reference](https://pkg.go.dev/badge/github.com/tevfik/gleann.svg)](https://pkg.go.dev/github.com/tevfik/gleann)
 
-**A lightweight, high-performance AI/RAG workspace and autonomous agent framework implemented in Go. Inspired by the Leann RAG backend architecture, designed for terminal environments.**
+**High-performance local AI workspace, codebase intelligence, and persistent cross-session memory for AI coding agents and terminal power users.**
 
-> 🤖 **Note:** This project, including its documentation, was developed with the assistance of AI.
+Single Go binary (~34MB). Zero Python virtual environments, zero Docker required. Everything runs locally on your machine.
+
+---
 
 ![Gleann terminal demo — index AI docs, semantic search, RAG Q&A, long-term memory, MCP setup](scripts/demo/gleann-demo.gif)
 
 ---
 
-## Why Gleann?
+## ⚡ Quick Start (60 Seconds)
 
-🔒 **Privacy first** — every embedding and inference call runs locally via Ollama or llama.cpp. Your data never leaves your machine.
-
-⚡ **Single binary** — no Python virtualenv, no Node.js runtime, no Docker required. One `go install` and you're done.
-
-🤖 **MCP-native** — one command (`gleann install`) wires the knowledge base into 17 AI editors and agents: Claude Code, Cursor, Windsurf, Cline, Kiro, Amazon Q, Zed, JetBrains, Neovim, Codex, Gemini CLI, OpenCode, Amp, Continue, Aider, OpenClaw, and GitHub Copilot CLI.
-
-🧠 **Code intelligence, not just text search** — AST-aware chunking, call-graph traversal, and blast-radius analysis give LLMs structural code context that plain vector search cannot provide.
-
-📦 **Portable** — indexes live in `~/.gleann/indexes/`. Copy the folder between machines and your entire knowledge base travels with you.
-
----
-
-## Project Context and Motivation
-
-Gleann was developed to automate engineering workflows and facilitate the analysis of codebases and technical documents within terminal environments.
-
-The architecture is inspired by the [Leann](https://github.com/yichuan-w/LEANN) project, which introduced a high-performance RAG backend architecture designed for efficient indexing and retrieval. We acknowledge the original Leann authors for their approach to selective recomputation and vector retrieval.
-
-While Leann provides a robust RAG engine, deploying it typically requires a Python/Node environment and a set of external dependencies. Gleann aims to provide a self-contained environment where the LLM, plugin system, and RAG storage operate as a consolidated, zero-dependency unit.
-
-Built as a Go-native implementation of core RAG concepts, Gleann features a compact architecture. It incorporates an agent layer based on ReAct (Reasoning and Acting) patterns and provides direct LLM integration.
-
-The system is optimized for fast initialization and low memory utilization, managing AI workloads via a single compiled binary.
-
-### Gleann vs LEANN — side by side
-
-| | [LEANN](https://github.com/yichuan-w/LEANN) | Gleann |
-|---|---|---|
-| **Language** | Python | Go |
-| **Deploy** | `pip install` + venv | Single static binary |
-| **Core innovation** | Graph-based selective recomputation (97% less storage) | Full-stack AI assistant — RAG + code graph + memory + MCP server in one binary |
-| **Vector backends** | HNSW, DiskANN | HNSW, DiskANN, FAISS |
-| **Code analysis** | AST-aware chunking | AST call-graph, callers/callees, impact analysis, community detection |
-| **Long-term memory** | — | Tiered BBolt blocks (short / medium / long), auto-injected into every prompt |
-| **Agent protocol** | MCP client (reads from servers) | MCP **server** (exposes tools) + Google A2A protocol |
-| **Privacy** | Local-first | Local-first |
-| **Platforms** | Linux, macOS, Windows (WSL) | Linux, macOS, Windows (native) |
-
-Both projects share the same foundational idea — graph-based ANN indices + selective recomputation — but optimise for different trade-offs: LEANN minimises storage overhead for massive personal-data corpora, while Gleann maximises developer ergonomics and AI-editor integration.
-
-## Key Features
-- **Context Field Theory (Φ Scoring)**: MCP search results are re-ranked using a multi-factor Φ score — recency (1hr half-life decay), frequency, graph proximity, and structural degree centrality.
-- **10 File Read Modes**: Smart file reading for LLM agents: `map`, `signatures`, `entropy`, `diff`, `task`, `reference`, `aggressive`, `lines:N`, `auto`, and `full`. Saves 60–90% of context-window tokens.
-- **Shell Output Compression**: 95+ tool-specific regex patterns (Git, Go, NPM, Docker, Cargo) collapse noisy terminal output before it enters the LLM context window.
-- **17 Agent & IDE Platforms**: `gleann install` auto-detects and configures OpenCode, Claude Code, Cursor, Codex, Gemini CLI, Windsurf, Cline/Roo, Amp, Kiro, Amazon Q, Continue, Zed, Neovim, JetBrains, OpenClaw, Aider, and GitHub Copilot CLI.
-- **Token Gain Tracking**: `gleann_gain` MCP tool reports cumulative token savings across a session, enabling budget-aware agent loops.
-- **Academic Vision, Full-Fledged Agent**: Built on the shoulders of Leann's RAG architecture to create an autonomous assistant where LLM, vector/graph DBs, and plugins unite in one Go app.
-- **Zero-Config Extractive Summarization**: High-density sentences are extracted algorithmically during build time, bypassing LLMs and enabling zero-latency "Smart Summaries".
-- **Flexible Intelligence (Local or Cloud)**: Run LLMs 100% locally via llama.cpp for total privacy, or connect to any OpenAI-compatible API for high-reasoning tasks.
-- **Advanced RAG (Faiss / HNSW & Graph DB)**: Indexes documents and code semantically (vector) and relationally (graph), not just via simple keyword matching.
-- **Smart Chunking (Tree-sitter)**: Intelligent AST-aware partitioning preserves the structural integrity of your code functions and classes.
-- **Hierarchical GraphRAG & Context Stitching**: KuzuDB structural graph (`Folder` → `Document` → `Heading` → `Chunk`) prepends physical location breadcrumbs (`Location: Folder > Doc > H1 > H2`) to retrieved chunks and empowers LLMs with `gleann_read_full_document` tool calling.
-- **Graph-Augmented Search**: Search results are enriched with callers/callees from the AST graph, giving LLMs structural code context alongside semantic matches.
-- **Impact Analysis**: Blast radius analysis via BFS traversal — find all direct and transitive callers of any symbol and the files they belong to.
-- **Multi-Index Chat**: Ask questions across multiple indexes simultaneously with `gleann ask docs,code "question"`. Results are merged by relevance score.
-- **Conversations**: Persistent conversation history with `--continue`, `--continue-last`, `--title`. Manage via `gleann chat --list / --show / --delete`.
-- **Roles & Format Control**: Named system prompt roles (`--role code`, `--role shell`) and output format control (`--format json`, `--format markdown`). Custom roles in config.
-- **Markdown Rendering**: Terminal markdown rendering via glamour. Disable with `--raw`.
-- **Word-wrap**: Terminal-aware word wrapping with `--word-wrap N` for streaming output.
-- **LLM Title Summarization**: Auto-generated conversation titles via LLM when no title is provided.
-- **Embedding Cache**: Two-tier cache (L1: otter in-memory ≤50k vectors; L2: disk keyed by SHA-256). L2 hits are promoted to L1; unchanged chunks skip recompute entirely during rebuilds.
-- **Pipe-Friendly**: Full stdin/pipe support (`cat file | gleann ask index "review"`), auto-raw mode when stdout is piped, `--quiet` for scripting.
-- **No-Cache / No-Limit**: `--no-cache` skips conversation save, `--no-limit` removes token cap for unlimited output.
-- **`.gleannignore`**: Gitignore-style patterns to exclude files during index builds.
-- **Config Management**: `gleann config show/path/edit/validate` for easy configuration.
-- **Model Context Protocol (MCP) Server**: A background service that bridges the gap between your local context and AI tools like Cursor or Claude Desktop.
-- **Long-term Memory (BBolt Blocks)**: Hierarchical short/medium/long-term memory that is automatically injected into every LLM query. Store facts with `/remember`, browse with `/memories`.
-- **OpenAI-Compatible Proxy**: Drop-in replacement for OpenAI API — use any OpenAI SDK with `model: "gleann/<index>"` for instant RAG.
-- **Batch Query (MCP)**: `gleann_batch_ask` runs up to 10 questions concurrently against an index in a single round-trip.
-- **Rate Limiting & Timeouts**: Per-IP token-bucket rate limiting (429) and per-endpoint context deadlines (504) protect the server in production.
-- **Retry Logic**: Automatic exponential-backoff retry for transient LLM/embedding failures (503, 502, 429, connection refused).
-- **Background Maintenance**: Scheduler auto-promotes memory blocks between tiers and prunes expired entries.
-- **A2A Protocol (Agent-to-Agent)**: Google's A2A protocol for agent discovery — other AI agents find and communicate with gleann via `/.well-known/agent-card.json`.
-- **Unified Memory API**: Single `POST /api/memory/ingest` + `POST /api/memory/recall` interface that orchestrates block memory, knowledge graph, and vector search in parallel.
-- **Multimodal Detection**: Automatically detects and uses multimodal Ollama models (Gemma4, Qwen3-VL, LLaVA) for processing images, audio, and video.
-- **Background Task Manager**: Monitor long-running operations (indexing, memory consolidation) with progress tracking via `GET /api/tasks`.
-- **Auto-Bootstrap**: `gleann serve` detects Ollama, selects models, and creates an initial config file without manual intervention.
-- **`gleann setup --auto` — Zero-Friction Onboarding Tool**: Detects environment, pulls required models, and builds initial indexes via an automated workflow.
-- **Cross-Platform Service Management**: `gleann service install/start/stop/status` manages a background server via systemd (Linux), launchd (macOS), or Task Scheduler (Windows).
-- **Auto Model Management**: Missing models are automatically retrieved with progress tracking.
-- **Tiered Model Strategy**: Defaults to lightweight models for fast initialization, with the ability to configure larger models for advanced use cases.
-- **Terminal User Interface (TUI)**: A keyboard-centric interface for interacting with indexed data and executing AI operations directly from the shell.
-
-## Index anything
-
-Gleann indexes any directory of files. The type of content determines which capabilities unlock:
-
-| Source | Command | What you get |
-|--------|---------|-------------|
-| **Markdown / TXT** | `gleann index build docs --docs ./docs` | Semantic search, RAG Q&A, summaries |
-| **Source code** | `gleann index build code --docs ./src --graph` | Semantic search **+** AST call graph, callers/callees, blast-radius |
-| **PDF / DOCX / XLSX** | `gleann index build docs --docs ./papers` | Requires [gleann-plugin-docs](https://github.com/tevfik/gleann-plugin-docs) (MarkItDown) |
-| **Audio / Video** | `gleann index build media --docs ./recordings` | Requires [gleann-plugin-sound](https://github.com/tevfik/gleann-plugin-sound) (whisper.cpp) |
-| **Multiple indexes** | `gleann ask docs,code "how does auth work?"` | Fan-out query, results merged by score |
-
-Exclude files with `.gleannignore` (same syntax as `.gitignore`).
-
-## Documentation
-
-Detailed guides:
-
-- **[Getting Started](docs/getting-started.md)** — Initial setup and configuration guide
-- **[Cookbook](docs/cookbook.md)** — Real-world usage recipes
-- [Architecture & Design](docs/architecture.md) — Internals, module structure, data flow
-- [Configuration](docs/configuration.md) — Config file, CLI flags, recommended models
-- [Environment Variables](docs/env-vars.md) — Complete env var reference
-- [REST API Reference](docs/api.md) — Endpoint docs, curl examples, OpenAPI/Swagger UI
-- [MCP Server](docs/mcp.md) — Setup for Cursor, Claude Desktop, and other AI editors
-- [Plugin System](docs/plugins.md) — External plugins for PDF, audio, and more
-- [Plugin Installation Guide](docs/plugin-install-guide.md) — Step-by-step plugin setup
-- [AST Graph Indexer](docs/graph.md) — KuzuDB-based code graph
-- [FAISS Backend](docs/faiss.md) — Optional FAISS vector backend
-- [Tree-sitter](docs/treesitter.md) — AST-aware code chunking
-- [Benchmarks](docs/benchmarks.md) — Performance measurements
-- [Troubleshooting](docs/troubleshooting.md) — Common issues and solutions
-- [Memory Engine](docs/memory_engine.md) — Generic Knowledge Graph for AI agents
-- [A2A Protocol](docs/a2a.md) — Agent-to-Agent discovery and communication
-- [Multimodal Processing](docs/multimodal.md) — Image, audio, and video processing
-- [Hierarchical GraphRAG](docs/hierarchical_graphrag.md) — Document-level structural intelligence
-
-## Installation
-
-### Go Install (Recommended)
-
-The easiest way to install Gleann is via `go install`:
+### 1. Install Gleann
 
 ```bash
+# Go install (Recommended)
 go install github.com/tevfik/gleann/cmd/gleann@latest
-```
 
-### One-Liner Install (Linux / macOS)
-
-```bash
+# Or One-Liner (Linux & macOS)
 curl -sSfL https://raw.githubusercontent.com/tevfik/gleann/main/scripts/install.sh | sh
 ```
 
-Options:
-```bash
-GLEANN_VERSION=v1.0.0 curl -sSfL .../install.sh | sh   # specific version
-GLEANN_FULL=1 curl -sSfL .../install.sh | sh            # full build (tree-sitter)
-GLEANN_INSTALL_DIR=/usr/local/bin curl -sSfL .../install.sh | sh  # custom location
-```
-
-### From Source
+### 2. Index Your Codebase or Documents
 
 ```bash
-git clone https://github.com/tevfik/gleann.git
-cd gleann
-
-# Build CLI (includes TUI, REST server, MCP server)
-go build -o gleann ./cmd/gleann/
-
-# Run setup wizard
-./gleann setup
-```
-
-Requires Go 1.24+.
-
-### Docker
-
-```bash
-# Pure-Go image (~10MB, no tree-sitter/FAISS)
-docker build -t gleann .
-docker run -p 8080:8080 -v gleann-data:/data/indexes gleann serve
-
-# Full image with tree-sitter AST support (CGo)
-docker build -f Dockerfile.full -t gleann-full .
-docker run -p 8080:8080 -v gleann-data:/data/indexes gleann-full serve
-
-# docker-compose (gleann + Ollama sidecar)
-docker-compose up -d
-
-# Or via Taskfile
-task docker          # Build pure-Go image
-task docker-full     # Build CGo + tree-sitter image
-task docker-run      # Run with docker-compose
-```
-
-### Install to PATH
-
-The setup wizard (`gleann setup` / `gleann tui` → Setup) installs the binary to `~/.local/bin` or `/usr/local/bin` with shell completions (bash, zsh, fish).
-
-You can also install via Taskfile:
-
-```bash
-# Install gleann-full (FAISS + tree-sitter) to ~/.local/bin/gleann (recommended)
-task install-user
-
-# Install plain gleann (no FAISS, just tree-sitter) to ~/.local/bin/gleann
-task install-user-lite
-
-# Install gleann to /usr/local/bin (system-wide, needs sudo)
-sudo task install
-```
-
-## Usage
-
-### Quick Start
-
-```bash
-# Zero-friction onboarding: detect Ollama → auto-configure → pull models → index
-gleann setup --auto
-
-# Or with specific options
-gleann setup --auto --docs ./my-project --name my-project --yes
-```
-
-`gleann setup --auto` detects your environment, shows the configuration for confirmation, pulls any missing models automatically, indexes your current directory, and prints next steps.
-
-### Background Service
-
-```bash
-# Start gleann server in background
-gleann service start
-
-# Auto-start on login (systemd/launchd/schtasks)
-gleann service install
-
-# Server status
-gleann service status
-
-# View logs
-gleann service logs
-
-# Stop server
-gleann service stop
-```
-
-### CLI
-
-```bash
-# Interactive setup wizard
-gleann setup
-
-# Quick auto-configuration (detects Ollama + models)
-gleann setup --bootstrap
-
-# Check system health
-gleann doctor
-
-# Build index from documents
-gleann index build my-docs --docs ./documents/
-
-# Build with AST code graph
+# Index a codebase with AST call-graph intelligence
 gleann index build my-code --docs ./src --graph
 
-# Search
-gleann search my-docs "what is HNSW?"
-
-# Search with reranking
-gleann search my-docs "what is HNSW?" --rerank
-
-# Search with graph context (callers/callees enrichment)
-gleann search my-code "handleSearch" --graph
-
-# Index management & governance
-gleann index list                          # List all indexes (shows status, tags, passages)
-gleann index list --tag work               # Filter indexes by tag
-gleann index list --mcp                    # List only MCP-exposed indexes
-gleann index tag my-code --add work        # Assign tags to index
-gleann index set my-code --mcp=true        # Control MCP visibility (true/false)
-gleann index set my-code --desc "Core API" # Set semantic description for AI agents
-gleann index info my-docs
-gleann index remove my-docs
-gleann index rebuild my-code --docs ./src --graph
-gleann index watch my-code --docs ./src --graph
-
-# Chat with an index (interactive TUI mode)
-gleann chat my-docs
-
-# Ask a question (single-shot)
-gleann ask my-docs "Explain the architecture"
-gleann ask my-docs "Explain the architecture" --interactive
-
-# Deep Research / Swarm Mode (Search Agent -> Coding Agent)
-gleann ask my-docs "Write a refactoring plan" --swarm
-
-# Multimodal queries
-gleann ask my-docs "What does this diagram mean?" --image diagram.png
-
-# Native Structured Output (JSON)
-gleann ask my-docs "Extract all dependencies" --format json
-
-# Multi-index ask (comma-separated)
-gleann ask docs,code "How does auth work?"
-
-# Pipe input
-cat main.go | gleann ask my-code "Review this code"
-
-# Continue a conversation
-gleann ask my-docs --continue-last "What about error handling?"
-
-# Use a role and output format
-gleann ask my-docs "List the API endpoints" --role summarize --format json
-
-# Unlimited output, skip conversation save
-gleann ask my-docs "Give me everything" --no-limit --no-cache
-
-# Word-wrap streaming output at 80 columns
-gleann ask my-docs "Explain architecture" --word-wrap 80
-
-# Raw output (no markdown rendering, for scripts)
-gleann ask my-docs "List endpoints" --raw
-
-# Manage conversations
-gleann chat --list
-gleann chat --show-last
-gleann chat --delete-older-than 30d
-
-# Configuration management
-gleann config show
-gleann config edit
-gleann config validate
-
-# Launch TUI
-gleann tui
-
-# Build index with DiskANN backend (Vamana graph + PQ compression)
-gleann index build my-code --docs ./src --backend diskann --pq-dim 32 --pq-centroids 256
-
-# Retrieval benchmarking (SWE-Bench / ContextBench evaluation)
-gleann bench --index my-code                      # Recall@1/5/10, MRR, latency, token savings
-gleann bench --index my-code --format json       # Output structured JSON report
-
-# Long-term memory & Bayesian compaction
-gleann memory remember "Backend uses DiskANN with PQ compression"
-gleann memory context                            # View compiled context injected to LLM
-gleann memory compact --min-validity 0.2         # Prune stale/unreliable memories (<0.2 score)
-
-# Zero-friction MCP installer for AI agents & editors
-gleann mcp install --target all                  # Auto-configure Claude, Cursor, Gemini, VS Code
-gleann mcp install --target claude-code          # Configure ~/.claude.json
-
-# Start MCP server (stdio, for AI editors)
-gleann mcp
-
-# Start REST API server
-gleann serve --addr :8080
-
-# Open interactive API docs (Swagger UI)
-open http://localhost:8080/api/docs
+# Index documents, PDFs, or Markdown notes
+gleann index build my-docs --docs ./documents
 ```
 
-### Generic Plugin Architecture
+### 3. Connect to Your AI Editors & Agents
 
-Gleann supports external **Plugins** for parsing complex files via local HTTP APIs. Registry: `~/.gleann/plugins.json`.
+```bash
+# Auto-configure all detected AI tools (Cursor, Claude Code, Windsurf, Zed, etc.)
+gleann install
+```
 
-* **[gleann-plugin-docs](https://github.com/tevfik/gleann-plugin-docs)**: PDF, Docx, Xlsx extraction via MarkItDown.
-* **[gleann-plugin-sound](https://github.com/tevfik/gleann-plugin-sound)**: Audio/Video transcription via whisper.cpp.
+Now ask questions, search semantically, or let your AI editor use Gleann over MCP:
 
-## Contributing
+```bash
+# Semantic search
+gleann search my-code "auth middleware rate limiting"
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup and guidelines.
+# RAG Q&A directly in your terminal
+gleann ask my-code "How are database migrations handled?"
+```
 
-## Security
+---
 
-See [SECURITY.md](SECURITY.md) for security policy and reporting vulnerabilities.
+## 🎯 What Do You Want to Do?
 
-## License
+Choose your workflow to see how Gleann accelerates your engineering:
 
-MIT
+### 🤖 1. Supercharge Your AI Agent / Editor (MCP & A2A)
+Connect Gleann directly to **Claude Code**, **Cursor**, **Windsurf**, **Cline**, **Zed**, **JetBrains**, or **Neovim**.
+- **1-Click Setup**: Run `gleann install` to automatically register the Model Context Protocol (MCP) server across 17+ AI platforms.
+- **Context Field Theory (Φ Scoring)**: Dynamic re-ranking prioritizes recency, frequency, and code proximity.
+- **Shell Output Compression**: 95+ regex patterns collapse verbose Git, Go, NPM, and Docker logs before they reach the LLM context window.
+- **Token Gain Tracking**: Monitor cumulative token savings across sessions with `gleann_gain`.
+- 👉 Read the [MCP Setup Guide](docs/mcp.md) & [Agent Integration](docs/a2a.md).
+
+---
+
+### 🧠 2. Deep Code Intelligence & Blast Radius
+Vector search alone misses function calls, callers, and dependencies. Gleann combines vector search with an AST code graph in KùzuDB.
+- **AST Chunking**: Tree-sitter partitions functions, structs, and interfaces cleanly at syntax boundaries.
+- **Call-Graph Traversal**: Discover callers and callees with `gleann graph callers <symbol>`.
+- **Blast Radius Analysis**: Trace upstream impact before making breaking changes with `gleann graph explain <symbol>`.
+- 👉 Read the [Code Graph Guide](docs/graph.md) & [Tree-sitter Details](docs/treesitter.md).
+
+---
+
+### 📄 3. Technical Documents, PDFs & Tables
+Extract complex multi-page documents, PDFs, and spreadsheets without losing table structure.
+- **Table-Aware Chunker**: Preserves Markdown tables atomically or splits rows while replicating headers across sub-chunks.
+- **Docling BitNet Vision (eif-runtime)**: In-process IBM Docling BitNet 1.58-bit VLM for scanned/raster PDFs and diagrams.
+- **Pure-Go Fast Path**: Digital PDFs and DOCX files extract in milliseconds without Python overhead.
+- 👉 Read the [Hierarchical GraphRAG Guide](docs/hierarchical_graphrag.md) & [Plugin Architecture](docs/plugins.md).
+
+---
+
+### 💾 4. Persistent Long-Term Memory (Across Sessions)
+Give your AI coding assistant institutional memory that survives terminal restarts.
+- **Tiered Memory**: Short (session state), Medium (sprints/TODOs), and Long (permanent architectural decisions).
+- **Auto-Injection**: Relevant memories are automatically injected into every prompt.
+- **CLI Commands**:
+  ```bash
+  gleann memory remember "Database migrations must always use snake_case" --tag convention
+  gleann memory search "architecture"
+  gleann memory context
+  ```
+- 👉 Read the [Memory Engine Guide](docs/memory_engine.md).
+
+---
+
+### 🖥️ 5. Terminal RAG & Interactive Chat
+Work directly from your shell without leaving the keyboard.
+- **Interactive Chat**: Multi-turn conversations with glamour markdown streaming (`gleann chat my-code`).
+- **Pipe Support**: Send compiler logs or diffs directly into Gleann (`git diff | gleann ask my-code "Review changes"`).
+- **Multi-Index Fan-Out**: Query documentation and source code simultaneously (`gleann ask docs,code "How does auth work?"`).
+- 👉 Read the [Cookbook](docs/cookbook.md).
+
+---
+
+## 🧩 Supported AI Tools & Platforms
+
+Running `gleann install` auto-detects and installs configuration for:
+
+| Platform | Integration Type | Supported Features |
+|---|---|---|
+| **Claude Code** | PreToolUse Hook + CLAUDE.md | MCP Tools + Auto Memory Injection |
+| **Cursor** | `.cursor/rules` + MCP Config | Semantic Code Search + Full Documents |
+| **Windsurf** | `.windsurf/rules` + MCP Config | Graph Traversal + Impact Analysis |
+| **Cline / Roo Code** | `.clinerules` + MCP Config | File Maps + AST Breadcrumbs |
+| **Zed** | `settings.json` MCP | Fast Codebase Retrieval |
+| **Neovim** | Avante / CodeCompanion MCP | In-editor RAG & Context |
+| **JetBrains** | `.junie/guidelines.md` + MCP | Multi-Index Knowledge Retrieval |
+| **Gemini CLI / Codex** | Agent Hooks + Config | Shell Compression + Token Gain |
+| **Aider / OpenClaw** | Skills + System Prompt | Long-Term Memory Recall |
+
+---
+
+## 🛠️ Essential Command Reference
+
+### Index Management
+```bash
+gleann index build my-code --docs ./src --graph   # Index source code with call graph
+gleann index build my-docs --docs ./docs          # Index technical documentation
+gleann index list                                 # List all indexes, status, and tags
+gleann index watch my-code --docs ./src --graph   # Auto-sync index on file changes
+```
+
+### Search & RAG
+```bash
+gleann search my-code "connection pool timeout"           # Fast semantic search
+gleann search my-code "connection pool timeout" --rerank  # Search with cross-encoder reranking
+gleann ask my-code "Explain how auth tokens are verified" # RAG Q&A with local/cloud LLM
+gleann ask docs,code "How to configure SSL?"              # Multi-index federated query
+```
+
+### Code Graph & Impact
+```bash
+gleann graph callers "HandleRequest" --index my-code      # Find all callers of a symbol
+gleann graph deps "HandleRequest" --index my-code         # Downstream dependencies
+gleann graph explain "HandleRequest" --index my-code      # Full blast radius context
+```
+
+### Memory & MCP
+```bash
+gleann memory remember "JWT secrets are rotated every 90 days"
+gleann memory search "rotation"
+gleann install                 # Auto-configure AI editors
+gleann mcp                     # Launch stdio MCP server
+```
+
+---
+
+## 📚 Documentation Deep Dives
+
+- **[Getting Started Guide](docs/getting-started.md)** — Step-by-step onboarding walkthrough
+- **[Cookbook & Recipes](docs/cookbook.md)** — Practical examples for real-world codebases
+- **[Architecture & Internals](docs/architecture.md)** — In-depth engine mechanics & data flow
+- **[Configuration & Models](docs/configuration.md)** — Model recommendations (Ollama, llama.cpp, Cloud)
+- **[Hierarchical GraphRAG](docs/hierarchical_graphrag.md)** — Multi-level document structure & KùzuDB
+- **[Plugin System](docs/plugins.md)** — Custom extractors for audio, video, and documents
+- **[REST API Reference](docs/api.md)** — OpenAPI endpoints & curl examples
+- **[Troubleshooting](docs/troubleshooting.md)** — FAQ and common resolutions
+
+---
+
+## 🤝 Contributing & License
+
+Contributions are welcome! Please check [CONTRIBUTING.md](CONTRIBUTING.md) for development setup.
+
+Licensed under the [MIT License](LICENSE).

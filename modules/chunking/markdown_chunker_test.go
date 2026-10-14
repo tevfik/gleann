@@ -512,3 +512,150 @@ func TestIsMarkdownFile(t *testing.T) {
 		}
 	}
 }
+
+func TestChunkDocument_AtomicTable(t *testing.T) {
+	chunker := NewMarkdownChunker(512, 64)
+
+	tableContent := `Here is an overview of the server endpoints:
+
+| Endpoint | Method | Description |
+|---|---|---|
+| /api/v1/search | POST | Hybrid vector and keyword search |
+| /api/v1/sync | POST | Sync files into the knowledge index |
+| /api/v1/health | GET | Healthcheck endpoint |
+
+All endpoints require bearer token authentication.`
+
+	doc := &StructuredDocument{
+		Document: DocumentMeta{Title: "API Documentation", Format: "md"},
+		Sections: []MarkdownSection{
+			{
+				ID:      "s0",
+				Heading: "Endpoints",
+				Level:   1,
+				Content: tableContent,
+			},
+		},
+	}
+
+	chunks := chunker.ChunkDocument(doc)
+	if len(chunks) < 2 {
+		t.Fatalf("expected at least 2 chunks (text and table), got %d", len(chunks))
+	}
+
+	var foundTable bool
+	for _, ch := range chunks {
+		if isTable, ok := ch.Metadata["is_table"].(bool); ok && isTable {
+			foundTable = true
+			if ch.Metadata["table_rows"] != 3 {
+				t.Errorf("expected table_rows=3, got %v", ch.Metadata["table_rows"])
+			}
+			// Verify full table structure is intact
+			if !strings.Contains(ch.RawText, "| Endpoint | Method | Description |") {
+				t.Errorf("table chunk missing header: %s", ch.RawText)
+			}
+			if !strings.Contains(ch.RawText, "/api/v1/search") || !strings.Contains(ch.RawText, "/api/v1/health") {
+				t.Errorf("table chunk missing rows: %s", ch.RawText)
+			}
+		}
+	}
+	if !foundTable {
+		t.Error("expected to find a table chunk with is_table=true")
+	}
+}
+
+func TestChunkDocument_LargeTableSplitting(t *testing.T) {
+	// Small chunk size forces table to split across rows
+	chunker := NewMarkdownChunker(25, 0)
+
+	tableContent := `| User | Role | Department |
+|---|---|---|
+| Alice | Admin | Infrastructure Operations |
+| Bob | Manager | Product Engineering |
+| Charlie | Developer | Frontend Experience |
+| David | Analyst | Data Science |`
+
+	doc := &StructuredDocument{
+		Document: DocumentMeta{Title: "Org Chart", Format: "md"},
+		Sections: []MarkdownSection{
+			{
+				ID:      "s0",
+				Heading: "Team",
+				Level:   1,
+				Content: tableContent,
+			},
+		},
+	}
+
+	chunks := chunker.ChunkDocument(doc)
+	if len(chunks) < 2 {
+		t.Fatalf("expected large table to be split into >= 2 chunks, got %d", len(chunks))
+	}
+
+	for i, ch := range chunks {
+		isTable, ok := ch.Metadata["is_table"].(bool)
+		if !ok || !isTable {
+			t.Errorf("chunk %d expected is_table=true", i)
+		}
+		// Critical check: EVERY sub-chunk must retain the header and separator row!
+		if !strings.Contains(ch.RawText, "| User | Role | Department |") {
+			t.Errorf("sub-chunk %d missing header row: %s", i, ch.RawText)
+		}
+		if !strings.Contains(ch.RawText, "|---|---|---|") {
+			t.Errorf("sub-chunk %d missing separator row: %s", i, ch.RawText)
+		}
+		if ch.Metadata["table_subchunk"] != i {
+			t.Errorf("chunk %d expected table_subchunk=%d, got %v", i, i, ch.Metadata["table_subchunk"])
+		}
+		if ch.Metadata["total_table_subchunks"] != len(chunks) {
+			t.Errorf("chunk %d expected total_table_subchunks=%d, got %v", i, len(chunks), ch.Metadata["total_table_subchunks"])
+		}
+	}
+}
+
+func TestChunkMarkdown_WithTable(t *testing.T) {
+	chunker := NewMarkdownChunker(512, 64)
+
+	rawMD := `Pre-table introduction text.
+
+| Config | Default | Description |
+|:---|:---:|:---|
+| host | 0.0.0.0 | Server bind address |
+| port | 8080 | HTTP server port |
+
+Post-table conclusion notes.`
+
+	chunks := chunker.ChunkMarkdown(rawMD, "config.md")
+	if len(chunks) < 2 {
+		t.Fatalf("expected at least 2 chunks, got %d", len(chunks))
+	}
+
+	var tableChunkFound bool
+	for _, ch := range chunks {
+		if isTable, ok := ch.Metadata["is_table"].(bool); ok && isTable {
+			tableChunkFound = true
+			if !strings.Contains(ch.RawText, "0.0.0.0") || !strings.Contains(ch.RawText, "8080") {
+				t.Errorf("table content missing: %s", ch.RawText)
+			}
+		}
+	}
+	if !tableChunkFound {
+		t.Error("expected table chunk in ChunkMarkdown output")
+	}
+}
+
+func TestParseMarkdownHeadings_SliceBoundsRegression(t *testing.T) {
+	// Consecutive headings with setext underline that previously caused slice bounds out of range panic
+	rawMD := `# Heading 1
+===
+# Heading 2
+---
+### Heading 3`
+
+	sections := ParseMarkdownHeadings(rawMD)
+	if len(sections) != 3 {
+		t.Fatalf("expected 3 sections, got %d", len(sections))
+	}
+}
+
+

@@ -33,7 +33,7 @@ gleann setup
 
 ### gleann-plugin-docs
 
-**Prerequisites:** Python 3.9+ (for MarkItDown PDF/DOCX extraction)
+**Prerequisites:** None (standalone Go binary with embedded VLM runtime)
 
 ```bash
 # Download the latest release

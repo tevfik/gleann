@@ -51,7 +51,7 @@ const DefaultChatTimeout = 10 * time.Minute
 
 // DefaultModelName is the default LLM model name used across Gleann.
 // Update this to change the out-of-the-box experience.
-const DefaultModelName = "qwen3.5:4b"
+const DefaultModelName = "llama3.2:3b"
 
 // DefaultOllamaContextWindow is the num_ctx used when --no-limit is in effect
 // (MaxTokens <= 0). The model's metadata may impose a smaller cap; Ollama

@@ -166,7 +166,7 @@ func checkModels(cfg *tui.OnboardResult, host string, ok, warn, fail func(string
 	}
 
 	// Check LLM model.
-	llmModel := "gemma3:4b"
+	llmModel := DefaultLLMModel
 	if cfg != nil && cfg.LLMModel != "" {
 		llmModel = cfg.LLMModel
 	}

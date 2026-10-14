@@ -104,11 +104,47 @@ gleann ask docs "What do we know about authentication?"
 → Memory block injected into prompt
 ```
 
-### INT-GL-003: Cache Invalidation
+### INT-GL-003: AST Graph ↔ Code Search
+
+```
+gleann index build code --docs ./src --graph
+gleann search code "handleRequest" --graph
+→ Callers/callees enriched results
+```
+
+### INT-GL-004: MCP Server ↔ A2A Protocol
+**Amaç:** Her iki protokol de aynı LLM/Embedding backend'i kullanmalı.
+
+```
+gleann mcp --addr :8079 &
+gleann serve --port 8080 &
+# Both use same Ollama endpoint (localhost:11434)
+```
+
+### INT-GL-005: Cache Invalidation
 
 ```
 gleann config set embedding.model bge-m3
 # Old cache invalid, rebuild required warning expected
+```
+
+---
+
+## 📊 End-to-End Scenarios
+
+### Scenario 1: Fresh Install Flow
+```
+gleann setup --auto
+→ Detects Ollama → Pulls models → Builds initial index
+→ All components working end-to-end
+```
+
+### Scenario 2: Long-Term Memory Retention
+```
+1. gleann memory remember "Project X uses JWT" --tier long
+2. Stop/start gleann serve
+3. gleann memory search "JWT"
+   → Memory preserved across restarts
 ```
 
 ---

@@ -91,10 +91,11 @@ func (mc *MarkdownChunker) ChunkDocument(doc *StructuredDocument) []MarkdownChun
 		path := mc.buildSectionPath(section.ID, sectionMap)
 		contextHeader := buildContextHeader(path)
 
-		// Split section content into sub-chunks using existing SentenceSplitter.
-		textChunks := mc.splitter.Chunk(section.Content)
+		// Split section content into sub-chunks using table-aware splitter.
+		textPieces := mc.chunkSectionContent(section.Content)
 
-		for i, text := range textChunks {
+		for i, piece := range textPieces {
+			text := piece.text
 			// Prepend context header to each chunk for richer embedding.
 			enrichedText := text
 			if contextHeader != "" {
@@ -109,13 +110,19 @@ func (mc *MarkdownChunker) ChunkDocument(doc *StructuredDocument) []MarkdownChun
 				"section_path":  strings.Join(path, " > "),
 				"heading_level": section.Level,
 				"chunk_index":   i,
-				"total_chunks":  len(textChunks),
+				"total_chunks":  len(textPieces),
 				"kind":          "docs",
 				"is_test":       false,
 				"is_vendor":     false,
 			}
 			if section.Summary != "" {
 				metadata["section_summary"] = section.Summary
+			}
+			if piece.isTable {
+				metadata["is_table"] = true
+				for k, v := range piece.tableMeta {
+					metadata[k] = v
+				}
 			}
 
 			chunks = append(chunks, MarkdownChunk{
@@ -139,22 +146,29 @@ func (mc *MarkdownChunker) ChunkDocument(doc *StructuredDocument) []MarkdownChun
 func (mc *MarkdownChunker) ChunkMarkdown(markdown string, source string) []MarkdownChunk {
 	sections := ParseMarkdownHeadings(markdown)
 	if len(sections) == 0 {
-		// No headings — fall back to plain SentenceSplitter behavior.
-		textChunks := mc.splitter.Chunk(markdown)
-		chunks := make([]MarkdownChunk, 0, len(textChunks))
-		for i, text := range textChunks {
+		// No headings — fall back to table-aware splitter.
+		textPieces := mc.chunkSectionContent(markdown)
+		chunks := make([]MarkdownChunk, 0, len(textPieces))
+		for i, piece := range textPieces {
+			meta := map[string]any{
+				"source":       source,
+				"chunk_index":  i,
+				"total_chunks": len(textPieces),
+				"kind":         "docs",
+				"ext":          filepath.Ext(source),
+				"is_test":      false,
+				"is_vendor":    false,
+			}
+			if piece.isTable {
+				meta["is_table"] = true
+				for k, v := range piece.tableMeta {
+					meta[k] = v
+				}
+			}
 			chunks = append(chunks, MarkdownChunk{
-				Text:    text,
-				RawText: text,
-				Metadata: map[string]any{
-					"source":       source,
-					"chunk_index":  i,
-					"total_chunks": len(textChunks),
-					"kind":         "docs",
-					"ext":          filepath.Ext(source),
-					"is_test":      false,
-					"is_vendor":    false,
-				},
+				Text:     piece.text,
+				RawText:  piece.text,
+				Metadata: meta,
 			})
 		}
 		return chunks
@@ -364,7 +378,13 @@ func ParseMarkdownHeadings(markdown string) []MarkdownSection {
 		if idx+1 < len(headings) {
 			contentEnd = headings[idx+1].lineIdx
 		}
-		content := strings.TrimSpace(strings.Join(lines[contentStart:contentEnd], "\n"))
+		if contentStart > contentEnd {
+			contentStart = contentEnd
+		}
+		var content string
+		if contentStart <= contentEnd && contentStart <= len(lines) {
+			content = strings.TrimSpace(strings.Join(lines[contentStart:contentEnd], "\n"))
+		}
 
 		// Find parent by walking the stack.
 		for len(parentStack) > 0 && parentStack[len(parentStack)-1].level >= h.level {
@@ -483,3 +503,163 @@ func itoa(n int) string {
 	}
 	return string(digits)
 }
+
+// ── Table-Aware Chunker Helpers ──────────────────────────────────────────
+
+type contentPiece struct {
+	text      string
+	isTable   bool
+	tableMeta map[string]any
+}
+
+type tableBlock struct {
+	header    string
+	separator string
+	rows      []string
+}
+
+func isTableSeparator(line string) bool {
+	trimmed := strings.TrimSpace(line)
+	if !strings.Contains(trimmed, "|") || !strings.Contains(trimmed, "-") {
+		return false
+	}
+	hasDash := false
+	for _, r := range trimmed {
+		if r == '-' {
+			hasDash = true
+		} else if r != '|' && r != ':' && r != ' ' && r != '\t' {
+			return false
+		}
+	}
+	return hasDash
+}
+
+// chunkSectionContent splits section content while respecting markdown tables.
+// Small tables are kept atomic (never cut in half).
+// Large tables that exceed ChunkSize are split across row boundaries,
+// with the header and separator rows repeated in every sub-chunk so column semantics are preserved.
+func (mc *MarkdownChunker) chunkSectionContent(content string) []contentPiece {
+	if strings.TrimSpace(content) == "" {
+		return nil
+	}
+
+	lines := strings.Split(content, "\n")
+	var pieces []contentPiece
+	var textLines []string
+
+	flushText := func() {
+		if len(textLines) == 0 {
+			return
+		}
+		txt := strings.TrimSpace(strings.Join(textLines, "\n"))
+		textLines = nil
+		if txt == "" {
+			return
+		}
+		chunks := mc.splitter.Chunk(txt)
+		for _, c := range chunks {
+			pieces = append(pieces, contentPiece{
+				text:    c,
+				isTable: false,
+			})
+		}
+	}
+
+	for i := 0; i < len(lines); {
+		line := lines[i]
+		trimmed := strings.TrimSpace(line)
+
+		// Check if line i is a table header and line i+1 is a separator
+		if i+1 < len(lines) && strings.Contains(trimmed, "|") && isTableSeparator(lines[i+1]) {
+			flushText()
+
+			tbl := tableBlock{
+				header:    line,
+				separator: lines[i+1],
+			}
+
+			j := i + 2
+			for j < len(lines) {
+				rowTrimmed := strings.TrimSpace(lines[j])
+				if rowTrimmed == "" || !strings.Contains(rowTrimmed, "|") {
+					break
+				}
+				tbl.rows = append(tbl.rows, lines[j])
+				j++
+			}
+
+			tableChunks := mc.chunkTable(tbl)
+			pieces = append(pieces, tableChunks...)
+			i = j
+			continue
+		}
+
+		textLines = append(textLines, line)
+		i++
+	}
+
+	flushText()
+	return pieces
+}
+
+func (mc *MarkdownChunker) chunkTable(tbl tableBlock) []contentPiece {
+	fullTableLines := append([]string{tbl.header, tbl.separator}, tbl.rows...)
+	fullTableText := strings.Join(fullTableLines, "\n")
+
+	// If table fits within ChunkSize, keep it atomic (never split)
+	if len(tbl.rows) == 0 || countWords(fullTableText) <= mc.ChunkSize {
+		return []contentPiece{
+			{
+				text:    fullTableText,
+				isTable: true,
+				tableMeta: map[string]any{
+					"table_rows": len(tbl.rows),
+				},
+			},
+		}
+	}
+
+	// Large table: split rows while repeating header and separator on each chunk
+	headerWords := countWords(tbl.header) + countWords(tbl.separator)
+	var subChunks []contentPiece
+	var currentRows []string
+	currentWords := headerWords
+
+	for _, row := range tbl.rows {
+		rowWords := countWords(row)
+		if len(currentRows) > 0 && currentWords+rowWords > mc.ChunkSize {
+			subTableLines := append([]string{tbl.header, tbl.separator}, currentRows...)
+			subChunks = append(subChunks, contentPiece{
+				text:    strings.Join(subTableLines, "\n"),
+				isTable: true,
+				tableMeta: map[string]any{
+					"table_rows":     len(currentRows),
+					"table_subchunk": len(subChunks),
+				},
+			})
+			currentRows = nil
+			currentWords = headerWords
+		}
+		currentRows = append(currentRows, row)
+		currentWords += rowWords
+	}
+
+	if len(currentRows) > 0 {
+		subTableLines := append([]string{tbl.header, tbl.separator}, currentRows...)
+		subChunks = append(subChunks, contentPiece{
+			text:    strings.Join(subTableLines, "\n"),
+			isTable: true,
+			tableMeta: map[string]any{
+				"table_rows":     len(currentRows),
+				"table_subchunk": len(subChunks),
+			},
+		})
+	}
+
+	for idx := range subChunks {
+		subChunks[idx].tableMeta["total_table_subchunks"] = len(subChunks)
+	}
+
+	return subChunks
+}
+
