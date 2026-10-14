@@ -16,6 +16,10 @@ All notable changes to this project will be documented in this file.
 - The API key is now selected per provider: an `openai_api_key` is no longer sent to Ollama endpoints (CLI ask/chat, MCP ask/batch_ask, TUI chat, server ask/search/proxy, embeddings, reranker).
 - `gleann config show` and `gleann config set` mask API keys (Ollama, OpenAI, Anthropic) instead of printing them in clear text.
 - `--api-key` value is no longer mistaken for the question/index name in `gleann ask`.
+- **Incremental index updates no longer corrupt the index.** Removing passages in place (a changed, deleted or renamed file in `gleann index sync`/watch, `UpdateIndex`, `Reconcile`, memory-entity delete) left permanent gaps in the passage IDs while the vector backends address a vector by position, so vectors ended up attached to the wrong passages: searches returned the wrong text or far fewer results than a fresh build. `UpdateIndex` now appends in place only when IDs are dense and the backend can take the add; otherwise it rebuilds the index from the remaining passages plus the new items (embeddings are computed before any file changes, so a failure leaves the index untouched). This also repairs indexes already left with gaps by older versions on their next update. Removing the last passage empties the index; a later add builds it afresh.
+- `gleann index sync` edited the vector file with the backend named by the caller's flag/default instead of the one the index was built with (any sync touching a file failed with `backend "" not registered`, or silently rewrote the index with another backend); it now uses the index's own backend.
+- A full rebuild no longer drops an index's tags, description, MCP exposure, auto-watch flag and creation time.
+- An HNSW index built with pruned embeddings is no longer edited in place (it cannot be); the update compacts instead.
 
 ## [v1.8.5] — 2026-10-14
 

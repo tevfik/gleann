@@ -90,6 +90,9 @@ func (b *Builder) AddVectors(ctx context.Context, indexData []byte, embeddings [
 
 	distFunc := GetDistanceFunc(string(b.config.HNSWConfig.DistanceMetric))
 	graph := csr.ToGraphWithDistance(distFunc)
+	if err := requireFullVectors(graph); err != nil {
+		return nil, err
+	}
 
 	// Add new vectors.
 	for i, emb := range embeddings {
@@ -127,6 +130,9 @@ func (b *Builder) RemoveVectors(ctx context.Context, indexData []byte, ids []int
 
 	distFunc := GetDistanceFunc(string(b.config.HNSWConfig.DistanceMetric))
 	graph := csr.ToGraphWithDistance(distFunc)
+	if err := requireFullVectors(graph); err != nil {
+		return nil, err
+	}
 
 	// Remove is expensive — rebuild the graph without those nodes.
 	removeSet := make(map[int64]bool, len(ids))
@@ -258,5 +264,18 @@ func (s *Searcher) Close() error {
 	defer s.mu.Unlock()
 	s.graph = nil
 	s.csr = nil
+	return nil
+}
+
+// requireFullVectors fails when the loaded graph has nodes without stored
+// vectors (pruned index). Such a graph cannot be edited: distances to pruned
+// neighbours are meaningless and rebuilding from it would silently drop nodes.
+// Callers fall back to a full rebuild.
+func requireFullVectors(g *Graph) error {
+	for id, n := range g.nodes {
+		if len(n.Vector) == 0 {
+			return fmt.Errorf("hnsw: index has pruned embeddings (node %d); incremental edit unsupported, rebuild required", id)
+		}
+	}
 	return nil
 }

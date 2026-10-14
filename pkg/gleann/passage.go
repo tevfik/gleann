@@ -3,6 +3,7 @@ package gleann
 import (
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -435,6 +436,78 @@ func (pm *PassageManager) RemoveBySource(sources []string) ([]int64, error) {
 	pm.mu.Unlock()
 
 	return removedIDs, nil
+}
+
+// HasSources reports whether any passage belongs to one of the given source
+// paths (metadata["source"]). It does not modify the store.
+func (pm *PassageManager) HasSources(sources []string) (bool, error) {
+	sourceSet := make(map[string]bool, len(sources))
+	for _, s := range sources {
+		sourceSet[s] = true
+	}
+	errStop := errors.New("stop")
+	found := false
+	err := pm.ForEachPassage(func(p Passage) error {
+		if src, ok := p.Metadata["source"].(string); ok && sourceSet[src] {
+			found = true
+			return errStop
+		}
+		return nil
+	})
+	if err != nil && !errors.Is(err, errStop) {
+		return false, err
+	}
+	return found, nil
+}
+
+// IsDense reports whether passage IDs are exactly 0..Count()-1, i.e. whether a
+// vector's position in a positional vector index equals its passage ID.
+func (pm *PassageManager) IsDense() (bool, error) {
+	n := 0
+	var max int64 = -1
+	err := pm.ForEachPassage(func(p Passage) error {
+		n++
+		if p.ID > max {
+			max = p.ID
+		}
+		return nil
+	})
+	if err != nil {
+		return false, err
+	}
+	return int64(n) == max+1, nil
+}
+
+// RollbackAdd undoes an Add that returned ids (contiguous, most recent): the
+// passages are deleted and the ID sequence is rewound so IDs stay dense.
+func (pm *PassageManager) RollbackAdd(ids []int64) error {
+	if pm.readOnly {
+		return fmt.Errorf("passage manager is read-only")
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+	if err := pm.ensureDB(); err != nil {
+		return err
+	}
+	err := pm.db.Update(func(tx *bbolt.Tx) error {
+		b := tx.Bucket(bucketPassages)
+		if b == nil {
+			return nil
+		}
+		for _, id := range ids {
+			var key [8]byte
+			binary.BigEndian.PutUint64(key[:], uint64(id))
+			if err := b.Delete(key[:]); err != nil {
+				return err
+			}
+		}
+		return b.SetSequence(uint64(ids[0]))
+	})
+	pm.mu.Lock()
+	pm.cached = nil
+	pm.mu.Unlock()
+	return err
 }
 
 // Delete removes all files associated with this passage manager.

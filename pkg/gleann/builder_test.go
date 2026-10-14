@@ -122,19 +122,25 @@ func TestUpdateIndex(t *testing.T) {
 		t.Errorf("expected 5 passages after update, got %d", pm2.Count())
 	}
 
-	// Verify old a.md passages are gone (IDs 0, 1).
-	_, err := pm2.Get(0)
-	if err == nil {
-		t.Error("expected old passage 0 to be removed")
+	// Removing passages compacts the index: IDs are renumbered densely, so a
+	// vector's position keeps matching its passage ID. Check by content.
+	texts := map[string]bool{}
+	for i := 0; i < pm2.Count(); i++ {
+		p, err := pm2.Get(int64(i))
+		if err != nil {
+			t.Fatalf("passage ids must be dense, missing %d: %v", i, err)
+		}
+		texts[p.Text] = true
 	}
-
-	// Verify b.md passage still exists (ID 2).
-	p, err := pm2.Get(2)
-	if err != nil {
-		t.Fatalf("get passage 2: %v", err)
+	for _, gone := range []string{"alpha from file-a", "beta from file-a"} {
+		if texts[gone] {
+			t.Errorf("old a.md passage %q survived the update", gone)
+		}
 	}
-	if p.Text != "gamma from file-b" {
-		t.Errorf("expected unchanged b.md passage, got %q", p.Text)
+	for _, kept := range []string{"gamma from file-b", "delta from file-c", "alpha-v2 from file-a", "beta-v2 from file-a", "gamma-v2 from file-a"} {
+		if !texts[kept] {
+			t.Errorf("passage %q missing after update", kept)
+		}
 	}
 }
 
