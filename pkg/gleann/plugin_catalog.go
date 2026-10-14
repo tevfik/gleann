@@ -36,11 +36,11 @@ var defaultCatalog = []PluginMeta{
 	{
 		Name:               "gleann-plugin-docs",
 		Icon:               "📄",
-		Description:        "Document extraction via markitdown/docling (fast, broad format coverage). Best default for mixed corpora.",
+		Description:        "High-performance native document extraction with Granite Docling BitNet 1.58b VLM, OTSL table parsing, and native DOCX.",
 		RepoURL:            "https://github.com/tevfik/gleann-plugin-docs",
-		Language:           "python (markitdown, docling)",
-		Extensions:         []string{".pdf", ".docx", ".xlsx", ".pptx", ".csv"},
-		RequiresMarkitdown: true,
+		Language:           "go (eif-runtime, docling-vlm)",
+		Extensions:         []string{".pdf", ".docx", ".doc", ".xlsx", ".xls", ".pptx", ".ppt", ".png", ".jpg", ".jpeg", ".csv", ".txt", ".md"},
+		RequiresMarkitdown: false,
 	},
 	{
 		Name:        "gleann-plugin-marker",

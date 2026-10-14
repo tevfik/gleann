@@ -196,34 +196,49 @@ func setupGoPluginWithProgress(pluginDir, name string, progress chan<- string) (
 		}
 	}
 
+	binaryInstalled := false
 	if err := downloadBinaryFromGitHub(owner, repo, binaryPath, progress); err == nil {
 		progress <- "✓ Binary downloaded successfully"
-		return fmt.Sprintf("Installed %s (Go binary from GitHub)", name), nil
+		binaryInstalled = true
 	} else {
 		progress <- fmt.Sprintf("⚠️  Download failed: %v", err)
 	}
 
-	progress <- "🔍 Checking for source files..."
-	buildTarget, hasGoFiles := findGoBuildTarget(pluginDir)
+	if !binaryInstalled {
+		progress <- "🔍 Checking for source files..."
+		buildTarget, hasGoFiles := findGoBuildTarget(pluginDir)
 
-	if !hasGoFiles {
-		return "", fmt.Errorf("no binary in releases and no source files to build from")
+		if !hasGoFiles {
+			return "", fmt.Errorf("no binary in releases and no source files to build from")
+		}
+
+		progress <- fmt.Sprintf("🔨 Building Go binary from source (%s)...", buildTarget)
+		buildArgs := []string{"build", "-o", binaryPath}
+		if name == "gleann-plugin-sound" {
+			buildArgs = append(buildArgs, "-tags", "onnx")
+		}
+		buildArgs = append(buildArgs, "./"+buildTarget)
+		cmd := exec.Command("go", buildArgs...)
+		cmd.Dir = pluginDir
+		if output, err := cmd.CombinedOutput(); err != nil {
+			return "", fmt.Errorf("go build: %s", string(output))
+		}
+		progress <- "✓ Binary built successfully"
 	}
 
-	progress <- fmt.Sprintf("🔨 Building Go binary from source (%s)...", buildTarget)
-	buildArgs := []string{"build", "-o", binaryPath}
-	if name == "gleann-plugin-sound" {
-		buildArgs = append(buildArgs, "-tags", "onnx")
+	// Register plugin with plugins.json if binary supports --install
+	registerCmd := exec.Command(binaryPath, "--install")
+	registerCmd.Dir = pluginDir
+	if _, err := registerCmd.CombinedOutput(); err == nil {
+		progress <- "✓ Plugin registered in plugins.json"
 	}
-	buildArgs = append(buildArgs, "./"+buildTarget)
-	cmd := exec.Command("go", buildArgs...)
-	cmd.Dir = pluginDir
-	if output, err := cmd.CombinedOutput(); err != nil {
-		return "", fmt.Errorf("go build: %s", string(output))
-	}
-	progress <- "✓ Binary built successfully"
 
-	return fmt.Sprintf("Built and installed %s (Go)", name), nil
+	// For docs plugin, ensure Granite Docling BitNet model is downloaded in one step
+	if strings.Contains(name, "docs") {
+		ensureDoclingModel(owner, repo, progress)
+	}
+
+	return fmt.Sprintf("Installed %s (Go binary)", name), nil
 }
 
 func UninstallPlugin(name string) (string, error) {
@@ -523,6 +538,17 @@ func downloadBinaryFromGitHub(owner, repo, destPath string, progress chan<- stri
 	}
 
 	if downloadURL == "" {
+		for _, asset := range release.Assets {
+			if strings.Contains(asset.Name, platformPattern) {
+				downloadURL = asset.BrowserDownloadURL
+				assetName = asset.Name
+				progress <- fmt.Sprintf("   Downloading %s...", asset.Name)
+				break
+			}
+		}
+	}
+
+	if downloadURL == "" {
 		return fmt.Errorf("no binary found for platform %s/%s", runtime.GOOS, runtime.GOARCH)
 	}
 
@@ -659,3 +685,84 @@ func extractBinaryFromZip(r io.Reader, destPath, binaryName string) error {
 	}
 	return fmt.Errorf("binary %s not found in zip archive", binaryName)
 }
+
+func ensureDoclingModel(owner, repo string, progress chan<- string) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return
+	}
+	modelDir := filepath.Join(home, ".gleann", "models", "granite-docling")
+	modelPath := filepath.Join(modelDir, "granite_docling_bitnet_dense.eifm")
+	if _, err := os.Stat(modelPath); err == nil {
+		progress <- "✓ Granite Docling BitNet model already present"
+		return
+	}
+	if matches, _ := filepath.Glob(filepath.Join(modelDir, "granite_docling_bitnet_dense*.eifm")); len(matches) > 0 {
+		progress <- fmt.Sprintf("✓ Granite Docling BitNet model present (%s)", filepath.Base(matches[0]))
+		return
+	}
+
+	progress <- "📦 Downloading Granite Docling BitNet model from release assets..."
+	os.MkdirAll(modelDir, 0o755)
+
+	apiURL := fmt.Sprintf("https://api.github.com/repos/%s/%s/releases/latest", owner, repo)
+	resp, err := http.Get(apiURL)
+	if err != nil {
+		progress <- fmt.Sprintf("⚠️  Could not fetch release info: %v", err)
+		return
+	}
+	defer resp.Body.Close()
+
+	var release struct {
+		Assets []struct {
+			Name               string `json:"name"`
+			BrowserDownloadURL string `json:"browser_download_url"`
+		} `json:"assets"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&release); err != nil {
+		return
+	}
+
+	for _, asset := range release.Assets {
+		if strings.HasPrefix(asset.Name, "granite_docling_bitnet_dense") && strings.HasSuffix(asset.Name, ".eifm") {
+			dest := filepath.Join(modelDir, asset.Name)
+			progress <- fmt.Sprintf("   Downloading %s (Docling VLM)...", asset.Name)
+			if err := downloadFile(asset.BrowserDownloadURL, dest); err == nil {
+				progress <- "   ✓ Docling VLM model downloaded"
+				if asset.Name != "granite_docling_bitnet_dense.eifm" {
+					os.Symlink(dest, filepath.Join(modelDir, "granite_docling_bitnet_dense.eifm"))
+				}
+			} else {
+				progress <- fmt.Sprintf("   ⚠️  Model download failed: %v", err)
+			}
+		} else if asset.Name == "tokenizer.bin" {
+			dest := filepath.Join(modelDir, "tokenizer.bin")
+			progress <- "   Downloading tokenizer.bin..."
+			if err := downloadFile(asset.BrowserDownloadURL, dest); err == nil {
+				progress <- "   ✓ Tokenizer downloaded"
+			}
+		}
+	}
+}
+
+func downloadFile(url, dest string) error {
+	resp, err := http.Get(url)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("HTTP status %d", resp.StatusCode)
+	}
+
+	out, err := os.Create(dest)
+	if err != nil {
+		return err
+	}
+	defer out.Close()
+
+	_, err = io.Copy(out, resp.Body)
+	return err
+}
+
