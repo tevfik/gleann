@@ -56,9 +56,13 @@ jobs:
           if [ -f test.log ]; then
             # Surface the failing tests as annotations so they show up on the
             # run page and in the checks API without downloading the log.
-            grep -E "^(--- FAIL|FAIL|panic:)" test.log | head -40 | while IFS= read -r line; do
+            grep -E "^(--- FAIL|FAIL|panic:)" test.log | head -9 | while IFS= read -r line; do
               echo "::error::${line}"
             done
+            # One more annotation with the output that led up to each failure.
+            # (GitHub shows at most 10 annotations per step, hence one block.)
+            ctx=$(grep -B8 -E "^\s*--- FAIL" test.log | head -160 | sed 's/%/%25/g' | awk '{printf "%s%%0A", $0}')
+            echo "::error title=Failure context::${ctx}"
             echo "::group::Last 200 lines of test.log"
             tail -n 200 test.log
             echo "::endgroup::"
