@@ -96,16 +96,19 @@ func InstallPlugin(info PluginMeta, progress chan<- string) (string, error) {
 	}
 
 	lang := info.Language
-	if strings.Contains(lang, "python") {
-		return setupPythonPluginWithProgress(pluginDir, info.Name, progress)
-	} else if strings.Contains(lang, "go") {
+	if strings.Contains(info.Name, "docs") || strings.Contains(lang, "go") {
 		return setupGoPluginWithProgress(pluginDir, info.Name, progress)
+	} else if strings.Contains(lang, "python") {
+		return setupPythonPluginWithProgress(pluginDir, info.Name, progress)
 	}
 
 	return fmt.Sprintf("Installed %s", info.Name), nil
 }
 
 func setupPythonPluginWithProgress(pluginDir, name string, progress chan<- string) (string, error) {
+	if name == "gleann-plugin-docs" || strings.Contains(name, "docs") {
+		return setupGoPluginWithProgress(pluginDir, name, progress)
+	}
 	venvDir := filepath.Join(pluginDir, ".venv")
 
 	if _, err := os.Stat(venvDir); os.IsNotExist(err) {
@@ -153,23 +156,6 @@ func setupPythonPluginWithProgress(pluginDir, name string, progress chan<- strin
 func setupGoPluginWithProgress(pluginDir, name string, progress chan<- string) (string, error) {
 	binaryPath := filepath.Join(pluginDir, name)
 
-	if _, err := os.Stat(binaryPath); err == nil {
-		progress <- "✓ Binary already installed"
-		return fmt.Sprintf("Installed %s (Go binary)", name), nil
-	}
-
-	if fi, err := os.Stat(pluginDir); err == nil && !fi.IsDir() {
-		progress <- "🔍 Detected pre-built binary in repository root..."
-		realPath, _ := filepath.EvalSymlinks(pluginDir)
-		repoRoot := filepath.Dir(realPath)
-		candidate := filepath.Join(repoRoot, name)
-		if _, err := os.Stat(candidate); err == nil {
-			progress <- "✓ Binary found in repository root"
-			return fmt.Sprintf("Installed %s (Go binary)", name), nil
-		}
-	}
-
-	progress <- "📥 Downloading binary from GitHub releases..."
 	repoPath := filepath.Join(filepath.Dir(pluginDir), "_repos")
 	repoName := ""
 	if entries, err := os.ReadDir(repoPath); err == nil && len(entries) > 0 {
@@ -195,6 +181,40 @@ func setupGoPluginWithProgress(pluginDir, name string, progress chan<- string) (
 			repo = "gleann-plugin-" + name
 		}
 	}
+
+	if _, err := os.Stat(binaryPath); err == nil {
+		progress <- "✓ Binary already installed"
+		registerCmd := exec.Command(binaryPath, "--install")
+		registerCmd.Dir = pluginDir
+		if _, err := registerCmd.CombinedOutput(); err == nil {
+			progress <- "✓ Plugin registered in plugins.json"
+		}
+		if strings.Contains(name, "docs") {
+			ensureDoclingModel(owner, repo, progress)
+		}
+		return fmt.Sprintf("Installed %s (Go binary)", name), nil
+	}
+
+	if fi, err := os.Stat(pluginDir); err == nil && !fi.IsDir() {
+		progress <- "🔍 Detected pre-built binary in repository root..."
+		realPath, _ := filepath.EvalSymlinks(pluginDir)
+		repoRoot := filepath.Dir(realPath)
+		candidate := filepath.Join(repoRoot, name)
+		if _, err := os.Stat(candidate); err == nil {
+			progress <- "✓ Binary found in repository root"
+			registerCmd := exec.Command(candidate, "--install")
+			registerCmd.Dir = repoRoot
+			if _, err := registerCmd.CombinedOutput(); err == nil {
+				progress <- "✓ Plugin registered in plugins.json"
+			}
+			if strings.Contains(name, "docs") {
+				ensureDoclingModel(owner, repo, progress)
+			}
+			return fmt.Sprintf("Installed %s (Go binary)", name), nil
+		}
+	}
+
+	progress <- "📥 Downloading binary from GitHub releases..."
 
 	binaryInstalled := false
 	if err := downloadBinaryFromGitHub(owner, repo, binaryPath, progress); err == nil {
@@ -254,7 +274,7 @@ func UninstallPlugin(name string) (string, error) {
 
 	reg, err := LoadPlugins()
 	if err == nil {
-		var filtered []Plugin
+		filtered := make([]Plugin, 0)
 		for _, p := range reg.Plugins {
 			if p.Name != name {
 				filtered = append(filtered, p)

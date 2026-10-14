@@ -12,6 +12,16 @@ All notable changes to this project will be documented in this file.
 - **Plugin Priority & Capability Routing (`pkg/gleann/plugin.go`)**:
   - Upgraded document extractor discovery to prioritize high-capability, native plugins (`Priority: 10`) over legacy fallbacks.
   - Full seamless integration with standalone native `gleann-plugin-docs` daemon.
+- **Optional API Keys for OpenAI-compatible & Ollama endpoints**:
+  - `Authorization: Bearer <key>` is sent only when a key is configured; empty keys are omitted so local/unauthenticated servers (Ollama, vLLM, LM Studio, LocalAI) work unchanged.
+  - New `--api-key`, `--base-url` flags and `gleann config set api_key|base_url|ollama_host` aliases.
+  - `gleann doctor` validates OpenAI-compatible and Anthropic providers without requiring `ollama pull`.
+- **Single-step docs plugin install**: `gleann-plugin-docs` binary and Granite Docling BitNet model are fetched from GitHub release assets.
+
+### Fixed
+- Plugin install no longer fails with `'NoneType' object is not iterable` when `plugins.json` contains `{"plugins": null}`; registry is always loaded/written with a non-nil list.
+- `gleann-plugin-docs` is installed via the native Go pipeline (catalog metadata corrected from Python).
+- eif-runtime diagnostics now go to stderr, keeping stdout clean for JSON/pipes.
 
 ### Changed
 - **Default LLM Model Standardization (`llama3.2:3b`)**:

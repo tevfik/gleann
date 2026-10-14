@@ -237,9 +237,9 @@ func cmdConfigSet(args []string) {
 			cfg.LLMProvider = val
 		case "llm_model":
 			cfg.LLMModel = val
-		case "openai_api_key", "openai_key":
+		case "openai_api_key", "openai_key", "api_key", "api-key", "openai-api-key":
 			cfg.OpenAIKey = val
-		case "openai_base_url":
+		case "openai_base_url", "openai-base-url", "base_url", "base-url":
 			cfg.OpenAIBaseURL = val
 		case "anthropic_api_key", "anthropic_key":
 			cfg.AnthropicKey = val

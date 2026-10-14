@@ -863,6 +863,15 @@ func buildChatConfig(args []string, config gleann.Config) gleann.ChatConfig {
 	if config.OpenAIBaseURL != "" && chatConfig.Provider == gleann.LLMOpenAI {
 		chatConfig.BaseURL = config.OpenAIBaseURL
 	}
+	if apiKey := getFlag(args, "--api-key"); apiKey != "" {
+		chatConfig.APIKey = apiKey
+	}
+	if baseURL := getFlag(args, "--base-url"); baseURL != "" {
+		chatConfig.BaseURL = baseURL
+	}
+	if openAIBaseURL := getFlag(args, "--openai-base-url"); openAIBaseURL != "" {
+		chatConfig.BaseURL = openAIBaseURL
+	}
 	if llmModel := getFlag(args, "--llm-model"); llmModel != "" {
 		chatConfig.Model = llmModel
 	}

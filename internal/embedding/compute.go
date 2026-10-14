@@ -479,6 +479,9 @@ func (c *Computer) computeOllama(ctx context.Context, texts []string) ([][]float
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Connection", "keep-alive")
+	if c.apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+c.apiKey)
+	}
 
 	resp, err := c.client.Do(req)
 	if err != nil {

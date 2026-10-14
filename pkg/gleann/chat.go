@@ -729,6 +729,9 @@ func (c *LeannChat) chatOllama(ctx context.Context, messages []ChatMessage) (str
 		return "", fmt.Errorf("create request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
+	if c.config.APIKey != "" {
+		req.Header.Set("Authorization", "Bearer "+c.config.APIKey)
+	}
 
 	resp, err := c.client.Do(req)
 	if err != nil {
@@ -1116,6 +1119,9 @@ func (c *LeannChat) chatOllamaStream(ctx context.Context, messages []ChatMessage
 		return fmt.Errorf("create request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
+	if c.config.APIKey != "" {
+		req.Header.Set("Authorization", "Bearer "+c.config.APIKey)
+	}
 
 	// Use the shared stream client (no timeout; context handles cancellation).
 	resp, err := c.getStreamClient().Do(req)

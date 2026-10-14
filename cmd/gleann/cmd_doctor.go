@@ -180,6 +180,18 @@ func checkModels(cfg *tui.OnboardResult, host string, ok, warn, fail func(string
 		} else {
 			fail(fmt.Sprintf("LLM model file not found at %s", path))
 		}
+	} else if cfg != nil && cfg.LLMProvider == "openai" {
+		endpoint := "https://api.openai.com"
+		if cfg.OpenAIBaseURL != "" {
+			endpoint = cfg.OpenAIBaseURL
+		}
+		if cfg.OpenAIKey != "" {
+			ok(fmt.Sprintf("LLM model '%s' via OpenAI-compatible endpoint (%s, API key configured)", llmModel, endpoint))
+		} else {
+			ok(fmt.Sprintf("LLM model '%s' via OpenAI-compatible endpoint (%s, no API key)", llmModel, endpoint))
+		}
+	} else if cfg != nil && cfg.LLMProvider == "anthropic" {
+		ok(fmt.Sprintf("LLM model '%s' via Anthropic API", llmModel))
 	} else if available[llmModel] || available[llmModel+":latest"] {
 		ok(fmt.Sprintf("LLM model '%s' available", llmModel))
 	} else {

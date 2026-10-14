@@ -88,6 +88,9 @@ func LoadPlugins() (*PluginRegistry, error) {
 	if err := json.Unmarshal(data, &registry); err != nil {
 		return nil, fmt.Errorf("parse plugins file: %w", err)
 	}
+	if registry.Plugins == nil {
+		registry.Plugins = make([]Plugin, 0)
+	}
 
 	return &registry, nil
 }
