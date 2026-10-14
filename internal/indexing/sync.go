@@ -81,6 +81,13 @@ func Sync(ctx context.Context, opts SyncOptions) (*SyncResult, error) {
 		return nil, fmt.Errorf("index %q not found in %s: %w", name, cfg.IndexDir, err)
 	}
 
+	// The vector index must be edited with the backend that wrote it; the
+	// flag/default backend may differ (and would misread the file).
+	if meta.Backend != "" && meta.Backend != cfg.Backend {
+		cfg.Backend = meta.Backend
+		opts.Config.Backend = meta.Backend
+	}
+
 	docsDir := opts.DocsDir
 	if docsDir == "" {
 		docsDir = meta.SourceDir

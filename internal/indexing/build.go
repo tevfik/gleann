@@ -410,12 +410,22 @@ func (e *pipelineEnv) rebuild(ctx context.Context, name, docsDir string) ([]*Plu
 		return nil, err
 	}
 
+	// A rebuild recreates meta.json; carry over user-managed fields.
+	prev, prevErr := gleann.GetIndexMeta(e.cfg.IndexDir, name)
+
 	start := time.Now()
 	if err := builder.Build(ctx, name, items); err != nil {
 		return nil, fmt.Errorf("building: %w", err)
 	}
 	_ = gleann.UpdateIndexMeta(e.cfg.IndexDir, name, func(meta *gleann.IndexMeta) {
 		meta.SourceDir = docsDir
+		if prevErr == nil && prev != nil {
+			if !prev.CreatedAt.IsZero() {
+				meta.CreatedAt = prev.CreatedAt
+			}
+			meta.Tags, meta.Description = prev.Tags, prev.Description
+			meta.MCPExposed, meta.AutoWatch = prev.MCPExposed, prev.AutoWatch
+		}
 	})
 	e.p.Printf("✅ Rebuilt %q: %d passages in %s\n", name, len(items), time.Since(start).Round(time.Millisecond))
 	return pluginDocs, nil
