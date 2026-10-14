@@ -54,6 +54,11 @@ jobs:
         if: failure()
         run: |
           if [ -f test.log ]; then
+            # Surface the failing tests as annotations so they show up on the
+            # run page and in the checks API without downloading the log.
+            grep -E "^(--- FAIL|FAIL|panic:)" test.log | head -40 | while IFS= read -r line; do
+              echo "::error::${line}"
+            done
             echo "::group::Last 200 lines of test.log"
             tail -n 200 test.log
             echo "::endgroup::"
