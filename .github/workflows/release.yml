@@ -25,7 +25,22 @@ jobs:
           go-version: "1.25"
 
       - name: Test
-        run: GOTOOLCHAIN=auto go test -race $(go list ./... | grep -v /tests/benchmarks)
+        run: |
+          set -o pipefail
+          GOTOOLCHAIN=auto go test -v -race -timeout 8m $(go list ./... | grep -v /tests/benchmarks) 2>&1 | tee test.log
+        shell: bash
+
+      - name: Show failed tests
+        if: failure()
+        run: |
+          if [ -f test.log ]; then
+            grep -E "^(--- FAIL|FAIL|panic:)" test.log | head -9 | while IFS= read -r line; do
+              echo "::error::${line}"
+            done
+            ctx=$(grep -B8 -E "^\s*--- FAIL|^panic:|timed out" test.log | head -160 | sed 's/%/%25/g' | awk '{printf "%s%%0A", $0}')
+            echo "::error title=Failure context::${ctx}"
+          fi
+        shell: bash
 
   # ── Pure Go builds (all platforms, no CGo) ──
   release-pure:
