@@ -1219,6 +1219,29 @@ func (s *Server) handleUpdateIndex(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// removeIndexTimeout bounds how long a delete waits for in-flight searches to
+// let go of the index files.
+const removeIndexTimeout = 5 * time.Second
+
+// removeIndexRetrying removes the index, retrying briefly while it fails.
+// invalidateSearcher only closes a searcher once the requests still using it
+// have released it, so for a moment after the cache drop the index files can
+// still be open. Linux unlinks open files without complaint; Windows refuses
+// ("being used by another process"). Each retry drops anything a concurrent
+// request re-loaded in the meantime. The first attempt succeeding is the
+// normal case and costs nothing extra.
+func (s *Server) removeIndexRetrying(name string) error {
+	deadline := time.Now().Add(removeIndexTimeout)
+	for {
+		err := gleann.RemoveIndex(s.cfg().IndexDir, name)
+		if err == nil || time.Now().After(deadline) {
+			return err
+		}
+		time.Sleep(25 * time.Millisecond)
+		s.invalidateSearcher(name)
+	}
+}
+
 func (s *Server) handleDeleteIndex(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	if err := gleann.ValidateName(name); err != nil {
@@ -1230,7 +1253,7 @@ func (s *Server) handleDeleteIndex(w http.ResponseWriter, r *http.Request) {
 	// still use it have released it.
 	s.invalidateSearcher(name)
 
-	err := gleann.RemoveIndex(s.cfg().IndexDir, name)
+	err := s.removeIndexRetrying(name)
 	// A request may have re-loaded the index while it was being removed;
 	// drop anything cached in the meantime.
 	s.invalidateSearcher(name)

@@ -446,6 +446,9 @@ func newIndexedServer(t *testing.T) (*Server, http.Handler, gleann.Config) {
 		BaseURL:  cfg.OllamaHost,
 	})
 	s := &Server{config: cfg, embedder: emb, searchers: make(map[string]*gleann.LeannSearcher)}
+	// Registered after the TempDirs above, so it runs before they are removed:
+	// Windows cannot delete index files a cached searcher still holds open.
+	t.Cleanup(s.invalidateAllSearchers)
 	h := s.buildMux()
 
 	texts := []string{}
