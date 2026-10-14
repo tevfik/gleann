@@ -175,7 +175,11 @@ func EnsureConfig(ollamaHost string, quiet bool) (bool, error) {
 		return false, err
 	}
 	data, _ := json.MarshalIndent(cfg, "", "  ")
-	if err := os.WriteFile(cfgPath, data, 0o644); err != nil {
+	// The config holds API keys: keep it private (also for pre-existing files).
+	if err := os.WriteFile(cfgPath, data, 0o600); err != nil {
+		return false, err
+	}
+	if err := os.Chmod(cfgPath, 0o600); err != nil {
 		return false, err
 	}
 

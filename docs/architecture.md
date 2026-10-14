@@ -86,6 +86,21 @@
 └──────────────────────────────────────────────────────────────────────┘
 ```
 
+### Package Layout
+
+| Package | Role |
+|---------|------|
+| `cmd/gleann` | CLI front-end: flag parsing, terminal rendering (pre-flight estimate, decision gate, progress pacer), exit codes. `index build/sync/watch` are thin wrappers over `internal/indexing`. |
+| `internal/indexing` | **The index build/sync pipeline**, shared in-process by the CLI, REST server and MCP server: file walking + mode filters (`CollectEligibleFiles`), plugin / native / multimodal extraction, chunking (`ReadDocuments`), embedding (`NewEmbedder`, scoped embedded llama.cpp), `Build` (incl. dual code/docs model builds), `Sync` (Merkle manifest fast path + vault tracker fallback), `RebuildIndex` / `UpdateIncremental` (watch mode), graph hooks (`BuildGraphIndex`, `GenerateGraphReport`). Never exits, never writes to `os.Stdout`/`os.Stderr` directly: messages go to caller-supplied writers, progress to a callback, failures are returned as errors; cancellation via `context`. Builds of the same index are serialised in-process and the default vault tracker handle is shared (refcounted). |
+| `internal/indexing/graph_treesitter.go` / `graph_stub.go` | Build-tag split: KuzuDB + tree-sitter graph indexing with `-tags treesitter`; a warning-only stub otherwise (`indexing.GraphSupported`). |
+| `internal/server` | REST API. `POST /api/indexes/{name}/index-path` and `/upload` call `indexing.Build` in-process with the server lifetime context (Stop cancels running builds) and invalidate the searcher cache on success. |
+| `internal/mcp` | MCP server. `gleann_sync` runs `indexing.Build` / `indexing.Sync` in-process in the background (bound to the server lifetime, cancelled by `Close`), feeding progress (pct/rate/ETA) straight into the task status. `mcp.Config.BuildConfig` carries the full CLI-equivalent config (backend, chunking, ...). |
+| `pkg/gleann` | Public core API: config/types, `LeannBuilder`, `LeannSearcher`, `LeannChat`, plugins, manifest. |
+| `pkg/backends` | Public backend registrations (HNSW, DiskANN, and `faiss-hybrid` with `cgo && faiss`). |
+| `pkg/backends/faiss` | FAISS CGo backend (`cgo && faiss`). Lives under `pkg/` so the public `pkg/backends` registration does not depend on an `internal/` package. |
+
+Self-exec is gone: neither server re-runs its own binary (`os.Executable` + `exec.Command ... index build`) to build or sync an index anymore.
+
 ### Three Intelligence Pillars
 
 gleann combines three capabilities into one coherent system.  Each pillar feeds
@@ -147,6 +162,7 @@ Instead of storing all embedding vectors, gleann stores only the HNSW graph stru
 - 15-34x faster builds, 3-28x faster search via AVX2 SIMD + OpenMP
 - Same `BackendFactory` interface — just change backend name
 - Enabled via `-tags faiss` build flag — excluded by default
+- Implementation in `pkg/backends/faiss`; `pkg/backends/faiss_hybrid.go` registers the `faiss-hybrid` backend
 
 ### Memory Engine: Generic AI Agent Memory
 
@@ -286,3 +302,60 @@ In alignment with the core mission of `gleann` as a lean, reliable agent memory 
 2. AST Code Graph & Call Graph navigation with exact FQN resolution (KùzuDB + Tree-sitter).
 3. Session-persistent, deduplicated, scoped Agent Memory (`pkg/memory`).
 
+---
+
+## Planned refactors
+
+### Split `pkg/gleann` (god package, ~11k non-test lines)
+
+`pkg/gleann` mixes the searcher/builder core, the LLM chat client
+(`chat.go`, ~1.5k lines, plus `chat_eif.go`, `react.go`), the plugin
+installer/runtime (`plugin.go`, `plugin_installer.go`, `plugin_download.go`,
+`markitdown.go`, `doc_extractor.go`) and configuration. The goal is to move
+the chat client to `internal/llm` and the plugin system to
+`internal/plugins` while keeping the public `pkg/gleann` API source
+compatible via type aliases and forwarding functions.
+
+**Why it was not done in the in-process-indexing refactor:** a direct move
+creates import cycles. The implementations depend on types that must stay
+in `pkg/gleann` (`LeannChat` uses `Searcher`, `SearchResult`,
+`SearchOption`, `Reranker`, `Config`; the plugin runtime uses `PluginResult`,
+`PluginNode`, `PluginEdge`, `Config`), so `internal/llm` would import
+`pkg/gleann` while `pkg/gleann` imports `internal/llm` for the aliases.
+Several white-box tests in `pkg/gleann` also exercise unexported chat
+helpers (`chatOllama`, `chatOpenAIStream`, ...) and would have to move.
+
+Step-by-step plan:
+
+1. **Extract leaf types.** Create `pkg/gleann/core` (public, no
+   dependencies on the rest of `pkg/gleann`) holding the shared value
+   types and interfaces: `Config` and its sub-configs, `SearchResult`,
+   `SearchOption`/`SearchOptions`, `Searcher`, `Reranker`,
+   `EmbeddingComputer`, `ChatMessage`, `PluginResult`/`PluginNode`/
+   `PluginEdge`, `PluginMeta`. In `pkg/gleann`, replace each definition with
+   an alias (`type Config = core.Config`, ...) — aliases keep method sets,
+   struct literals and type switches working for downstream users.
+   Coordinate with in-flight edits to `types.go` (do this in a quiet window).
+2. **Move the chat client.** Move `chat.go`, `chat_eif.go` (keep its build
+   tags), `react.go` and their tests to `internal/llm`, importing only
+   `pkg/gleann/core`. Expose `llm.Chat` with the current method set. In
+   `pkg/gleann` keep `type LeannChat = llm.Chat`, `type ChatConfig =
+   llm.Config`, `type StreamCallback = llm.StreamCallback`, `type
+   LLMProvider = llm.Provider` plus the provider constants, and forwarding
+   funcs `NewChat`, `DefaultChatConfig`, `LoadMediaFiles`. White-box tests
+   move with the code.
+3. **Move the plugin system.** Move `plugin.go`, `plugin_installer.go`,
+   `plugin_download.go` (and `markitdown.go` / `doc_extractor.go` if they
+   only serve plugins) to `internal/plugins`, importing `pkg/gleann/core`.
+   Keep aliases (`PluginManager`, `Plugin`, `PluginRegistry`, capability
+   constants) and forwarding funcs (`NewPluginManager`, `InstallPlugin`,
+   `UninstallPlugin`, ...) in `pkg/gleann`. The `os.Setenv` in
+   `ResolveMultimodalPluginEnv` should become an explicit return value
+   passed to `internal/multimodal` at the same time.
+4. **Verify API compatibility.** Run `apidiff` (golang.org/x/exp/cmd/apidiff)
+   between the old and new `pkg/gleann` export data; the only acceptable
+   diff is "type X is now an alias". Build every in-repo consumer
+   (`cmd/...`, `internal/...`, `tests/...`) under all CI tag sets.
+5. **Deprecate later, not now.** Only once downstream projects have had a
+   release to migrate should the forwarding funcs gain `// Deprecated:`
+   comments pointing at their new homes (if those homes become public).

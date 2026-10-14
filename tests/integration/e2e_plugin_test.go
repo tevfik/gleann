@@ -593,6 +593,8 @@ func TestE2E_DoclingPlugin_Health(t *testing.T) {
 		Backends struct {
 			Markitdown bool `json:"markitdown"`
 			Docling    bool `json:"docling"`
+			// The Go/C plugin reports its in-process EIF backend under this key.
+			DoclingEIF bool `json:"docling-eif"`
 		} `json:"backends"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&health); err != nil {
@@ -601,9 +603,9 @@ func TestE2E_DoclingPlugin_Health(t *testing.T) {
 	if health.Status != "ok" {
 		t.Errorf("expected status 'ok', got %q", health.Status)
 	}
-	t.Logf("Backends: markitdown=%v, docling=%v", health.Backends.Markitdown, health.Backends.Docling)
+	t.Logf("Backends: markitdown=%v, docling=%v, docling-eif=%v", health.Backends.Markitdown, health.Backends.Docling, health.Backends.DoclingEIF)
 
-	if !health.Backends.Docling {
+	if !health.Backends.Docling && !health.Backends.DoclingEIF {
 		t.Skip("Docling backend is not available — skipping test since docling is not installed in plugin venv")
 	}
 }

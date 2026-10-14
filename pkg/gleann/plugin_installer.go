@@ -5,10 +5,10 @@ import (
 	"archive/zip"
 	"bytes"
 	"compress/gzip"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
-	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -370,43 +370,38 @@ func parseGitHubURL(url string) (owner, repo string) {
 }
 
 func downloadSourceFromGitHub(owner, repo, destDir string, progress chan<- string) error {
-	apiURL := fmt.Sprintf("%s/repos/%s/%s/releases/latest", githubAPIBase, owner, repo)
-	resp, err := http.Get(apiURL)
-	if err != nil {
-		return fmt.Errorf("failed to fetch releases: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != 200 {
-		return fmt.Errorf("GitHub API returned status %d", resp.StatusCode)
-	}
-
+	ctx := context.Background()
 	var release struct {
 		TagName    string `json:"tag_name"`
 		TarballURL string `json:"tarball_url"`
 	}
-
-	if err := json.NewDecoder(resp.Body).Decode(&release); err != nil {
-		return fmt.Errorf("failed to parse release info: %w", err)
+	if err := fetchLatestRelease(ctx, owner, repo, &release); err != nil {
+		return fmt.Errorf("failed to fetch releases: %w", err)
 	}
 
 	progress <- fmt.Sprintf("   Downloading source for %s...", release.TagName)
 
-	resp, err = http.Get(release.TarballURL)
+	tarball, err := fetchToTemp(ctx, release.TarballURL)
 	if err != nil {
 		return fmt.Errorf("failed to download tarball: %w", err)
 	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != 200 {
-		return fmt.Errorf("tarball download returned status %d", resp.StatusCode)
-	}
+	defer os.Remove(tarball)
 
 	progress <- "   Extracting source code..."
-	if err := extractTarballToDir(resp.Body, destDir); err != nil {
+	if err := extractFileWith(tarball, func(r io.Reader) error { return extractTarballToDir(r, destDir) }); err != nil {
 		return fmt.Errorf("failed to extract tarball: %w", err)
 	}
 	return nil
+}
+
+// extractFileWith opens path and passes it to extract.
+func extractFileWith(path string, extract func(io.Reader) error) error {
+	f, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	return extract(f)
 }
 
 func extractTarballToDir(r io.Reader, destDir string) error {
@@ -500,17 +495,7 @@ func findGoBuildTarget(pluginDir string) (string, bool) {
 }
 
 func downloadBinaryFromGitHub(owner, repo, destPath string, progress chan<- string) error {
-	apiURL := fmt.Sprintf("%s/repos/%s/%s/releases/latest", githubAPIBase, owner, repo)
-	resp, err := http.Get(apiURL)
-	if err != nil {
-		return fmt.Errorf("failed to fetch releases: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != 200 {
-		return fmt.Errorf("GitHub API returned status %d", resp.StatusCode)
-	}
-
+	ctx := context.Background()
 	var release struct {
 		TagName string `json:"tag_name"`
 		Assets  []struct {
@@ -519,8 +504,8 @@ func downloadBinaryFromGitHub(owner, repo, destPath string, progress chan<- stri
 		} `json:"assets"`
 	}
 
-	if err := json.NewDecoder(resp.Body).Decode(&release); err != nil {
-		return fmt.Errorf("failed to parse release info: %w", err)
+	if err := fetchLatestRelease(ctx, owner, repo, &release); err != nil {
+		return fmt.Errorf("failed to fetch releases: %w", err)
 	}
 
 	if len(release.Assets) == 0 {
@@ -541,16 +526,6 @@ func downloadBinaryFromGitHub(owner, repo, destPath string, progress chan<- stri
 	assetName := release.Assets[idx].Name
 	progress <- fmt.Sprintf("   Downloading %s...", assetName)
 
-	resp, err = http.Get(downloadURL)
-	if err != nil {
-		return fmt.Errorf("failed to download archive: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != 200 {
-		return fmt.Errorf("download returned status %d", resp.StatusCode)
-	}
-
 	// Write to a temporary sibling and rename only on success: a truncated
 	// download must never be left at destPath, because a later install sees
 	// an existing binary and skips the download ("Binary already installed").
@@ -558,18 +533,28 @@ func downloadBinaryFromGitHub(owner, repo, destPath string, progress chan<- stri
 	_ = os.Remove(tmpPath)
 	defer os.Remove(tmpPath) // no-op after a successful rename
 
-	progress <- "   Extracting binary..."
-	if strings.HasSuffix(assetName, ".tar.gz") || strings.HasSuffix(assetName, ".tgz") {
-		if err := extractBinaryFromTarGz(resp.Body, tmpPath, repo); err != nil {
-			return fmt.Errorf("failed to extract tar.gz: %w", err)
-		}
-	} else if strings.HasSuffix(assetName, ".zip") {
-		if err := extractBinaryFromZip(resp.Body, tmpPath, repo); err != nil {
-			return fmt.Errorf("failed to extract zip: %w", err)
+	isArchive := strings.HasSuffix(assetName, ".tar.gz") || strings.HasSuffix(assetName, ".tgz") || strings.HasSuffix(assetName, ".zip")
+	if !isArchive {
+		// Raw binary asset: download straight to the temporary sibling.
+		if err := fetchToFile(ctx, downloadURL, tmpPath); err != nil {
+			return fmt.Errorf("failed to download binary: %w", err)
 		}
 	} else {
-		if err := writeFileFrom(tmpPath, resp.Body); err != nil {
-			return fmt.Errorf("failed to write binary: %w", err)
+		archive, err := fetchToTemp(ctx, downloadURL)
+		if err != nil {
+			return fmt.Errorf("failed to download archive: %w", err)
+		}
+		defer os.Remove(archive)
+
+		progress <- "   Extracting binary..."
+		if strings.HasSuffix(assetName, ".tar.gz") || strings.HasSuffix(assetName, ".tgz") {
+			if err := extractFileWith(archive, func(r io.Reader) error { return extractBinaryFromTarGz(r, tmpPath, repo) }); err != nil {
+				return fmt.Errorf("failed to extract tar.gz: %w", err)
+			}
+		} else {
+			if err := extractFileWith(archive, func(r io.Reader) error { return extractBinaryFromZip(r, tmpPath, repo) }); err != nil {
+				return fmt.Errorf("failed to extract zip: %w", err)
+			}
 		}
 	}
 
@@ -636,19 +621,6 @@ func selectReleaseAsset(names []string, goos, goarch string) (int, error) {
 		}
 	}
 	return -1, fmt.Errorf("no binary found for platform %s/%s", goos, goarch)
-}
-
-// writeFileFrom copies r into a newly created file at path.
-func writeFileFrom(path string, r io.Reader) error {
-	out, err := os.Create(path)
-	if err != nil {
-		return err
-	}
-	if _, err := io.Copy(out, r); err != nil {
-		_ = out.Close()
-		return err
-	}
-	return out.Close()
 }
 
 func extractBinaryFromTarGz(r io.Reader, destPath, binaryName string) error {
@@ -764,28 +736,15 @@ func ensureDoclingModel(owner, repo string, progress chan<- string) {
 	progress <- "📦 Downloading Granite Docling BitNet model from release assets..."
 	os.MkdirAll(modelDir, 0o755)
 
-	apiURL := fmt.Sprintf("%s/repos/%s/%s/releases/latest", githubAPIBase, owner, repo)
-	resp, err := http.Get(apiURL)
-	if err != nil {
-		progress <- fmt.Sprintf("⚠️  Could not fetch release info: %v", err)
-		return
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		// e.g. 403 when the unauthenticated API rate limit is exhausted;
-		// previously this decoded an error body and silently did nothing.
-		progress <- fmt.Sprintf("⚠️  Could not fetch release info: GitHub API returned status %d", resp.StatusCode)
-		return
-	}
-
+	ctx := context.Background()
 	var release struct {
 		Assets []struct {
 			Name               string `json:"name"`
 			BrowserDownloadURL string `json:"browser_download_url"`
 		} `json:"assets"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&release); err != nil {
-		progress <- fmt.Sprintf("⚠️  Could not parse release info: %v", err)
+	if err := fetchLatestRelease(ctx, owner, repo, &release); err != nil {
+		progress <- fmt.Sprintf("⚠️  Could not fetch release info: %v", err)
 		return
 	}
 
@@ -793,7 +752,7 @@ func ensureDoclingModel(owner, repo string, progress chan<- string) {
 		if strings.HasPrefix(asset.Name, "granite_docling_bitnet_dense") && strings.HasSuffix(asset.Name, ".eifm") {
 			dest := filepath.Join(modelDir, asset.Name)
 			progress <- fmt.Sprintf("   Downloading %s (Docling VLM)...", asset.Name)
-			if err := downloadFile(asset.BrowserDownloadURL, dest); err == nil {
+			if err := fetchToFile(ctx, asset.BrowserDownloadURL, dest); err == nil {
 				progress <- "   ✓ Docling VLM model downloaded"
 				if asset.Name != "granite_docling_bitnet_dense.eifm" {
 					os.Symlink(dest, filepath.Join(modelDir, "granite_docling_bitnet_dense.eifm"))
@@ -804,41 +763,9 @@ func ensureDoclingModel(owner, repo string, progress chan<- string) {
 		} else if asset.Name == "tokenizer.bin" {
 			dest := filepath.Join(modelDir, "tokenizer.bin")
 			progress <- "   Downloading tokenizer.bin..."
-			if err := downloadFile(asset.BrowserDownloadURL, dest); err == nil {
+			if err := fetchToFile(ctx, asset.BrowserDownloadURL, dest); err == nil {
 				progress <- "   ✓ Tokenizer downloaded"
 			}
 		}
 	}
-}
-
-func downloadFile(url, dest string) error {
-	resp, err := http.Get(url)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("HTTP status %d", resp.StatusCode)
-	}
-
-	// Download to a temporary file and rename on success so an interrupted
-	// transfer never leaves a truncated model that later passes the
-	// "model already present" check.
-	tmp := dest + ".part"
-	if err := writeFileFrom(tmp, resp.Body); err != nil {
-		_ = os.Remove(tmp)
-		return err
-	}
-	if resp.ContentLength > 0 {
-		if fi, err := os.Stat(tmp); err == nil && fi.Size() != resp.ContentLength {
-			_ = os.Remove(tmp)
-			return fmt.Errorf("incomplete download: got %d of %d bytes", fi.Size(), resp.ContentLength)
-		}
-	}
-	if err := os.Rename(tmp, dest); err != nil {
-		_ = os.Remove(tmp)
-		return err
-	}
-	return nil
 }

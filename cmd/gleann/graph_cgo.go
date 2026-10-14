@@ -13,9 +13,7 @@ import (
 	"time"
 
 	"github.com/tevfik/gleann/internal/graph/community"
-	"github.com/tevfik/gleann/internal/graph/indexer"
 	kgraph "github.com/tevfik/gleann/internal/graph/kuzu"
-	"github.com/tevfik/gleann/internal/graph/report"
 	"github.com/tevfik/gleann/internal/graph/viz"
 	"github.com/tevfik/gleann/pkg/gleann"
 	"github.com/tevfik/gleann/pkg/memory"
@@ -28,87 +26,6 @@ func init() {
 			return db, nil
 		}
 		return kgraph.Open(dir)
-	}
-}
-
-// buildGraphIndex builds the AST graph index for the given directory
-// and writes document graph nodes/edges for plugin-extracted documents.
-// Only available when built with -tags treesitter (requires CGo + KuzuDB).
-//
-// If changedFiles is non-empty, only those files are re-indexed (incremental mode).
-// If changedFiles is nil or empty, a full re-index of the directory is performed.
-func buildGraphIndex(name, docsDir, indexDir string, pluginDocs []*PluginDoc, changedFiles []string, includeSubmodules bool) {
-	// Resolve docsDir to absolute path to avoid cwd-dependent issues.
-	absDocsDir, err := filepath.Abs(docsDir)
-	if err != nil {
-		absDocsDir = docsDir
-	}
-	if realPath, err := filepath.EvalSymlinks(absDocsDir); err == nil {
-		absDocsDir = realPath
-	}
-
-	fmt.Printf("🕸️  Building API Graph Index from %s...\n", absDocsDir)
-	graphStart := time.Now()
-
-	dbPath := filepath.Join(indexDir, name+"_graph")
-	db, err := kgraph.Open(dbPath)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "warning: could not initialize kuzu graph db: %v\n", err)
-		return
-	}
-	defer db.Close()
-
-	// Detect Go module name from go.mod in the docs directory.
-	module := indexer.DetectGoModule(absDocsDir)
-
-	// 1. AST code indexing.
-	idx := indexer.New(db, module, absDocsDir).WithIncludeSubmodules(includeSubmodules)
-
-	// Attach a content-hash store so incremental updates skip files whose
-	// on-disk content matches the previously indexed version. The store
-	// lives next to the KuzuDB directory so a single "delete index" wipes
-	// both in one go.
-	hashStore, hashErr := indexer.NewFileHashStore(indexer.DefaultHashStorePath(indexDir, name))
-	if hashErr != nil {
-		fmt.Fprintf(os.Stderr, "warning: file hash store unavailable, falling back to always re-parse: %v\n", hashErr)
-	} else {
-		idx.WithHashStore(hashStore)
-		defer idx.CloseHashStore()
-	}
-	if len(changedFiles) > 0 {
-		// Incremental mode: only re-index changed files.
-		fmt.Printf("🔄 Incremental graph update: %d changed files\n", len(changedFiles))
-		if err := idx.IndexFiles(changedFiles); err != nil {
-			fmt.Fprintf(os.Stderr, "warning: incremental graph indexing failed: %v\n", err)
-		} else {
-			fmt.Printf("✅ Incremental Graph Index updated in %s\n", time.Since(graphStart).Round(time.Millisecond))
-		}
-	} else {
-		// Full re-index.
-		if err := idx.IndexDir(absDocsDir); err != nil {
-			fmt.Fprintf(os.Stderr, "warning: graph indexing failed: %v\n", err)
-		} else {
-			fmt.Printf("✅ Code Graph Index built in %s\n", time.Since(graphStart).Round(time.Millisecond))
-		}
-	}
-
-	// 2. Document graph indexing (plugin-extracted documents).
-	if len(pluginDocs) > 0 {
-		docStart := time.Now()
-		docIdx := indexer.NewDocIndexer(db, 512, 64)
-
-		// Batch all documents into a single DB transaction for performance.
-		inputs := make([]*indexer.DocGraphInput, len(pluginDocs))
-		for i, pd := range pluginDocs {
-			inputs[i] = &indexer.DocGraphInput{
-				Result:     pd.Result,
-				SourcePath: pd.SourcePath,
-			}
-		}
-		if err := docIdx.WriteGraphBatch(inputs); err != nil {
-			fmt.Fprintf(os.Stderr, "warning: doc graph batch indexing failed: %v\n", err)
-		}
-		fmt.Printf("📄 Document Graph: %d documents indexed in %s\n", len(pluginDocs), time.Since(docStart).Round(time.Millisecond))
 	}
 }
 
@@ -295,33 +212,6 @@ func cmdGraphViz(args []string, config gleann.Config) {
 	}
 
 	fmt.Printf("✅ Graph visualization saved to %s\n", output)
-}
-
-// generateGraphReportFile generates a Markdown graph report to outputPath.
-func generateGraphReportFile(indexName, indexDir, docsDir, outputPath string) error {
-	dbPath := filepath.Join(indexDir, indexName+"_graph")
-	db, err := kgraph.Open(dbPath)
-	if err != nil {
-		return fmt.Errorf("error opening graph db: %w", err)
-	}
-	defer db.Close()
-
-	result, err := community.FromKuzu(db, 5, 20)
-	if err != nil {
-		return fmt.Errorf("running community detection: %w", err)
-	}
-
-	f, err := os.Create(outputPath)
-	if err != nil {
-		return fmt.Errorf("creating file: %w", err)
-	}
-	defer f.Close()
-
-	opts := report.Options{
-		IndexName: indexName,
-		DocsDir:   docsDir,
-	}
-	return report.WriteMarkdown(f, result, opts)
 }
 
 // cmdGraphReport generates a Markdown graph report.

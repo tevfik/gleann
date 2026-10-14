@@ -61,7 +61,7 @@ func configPath() string {
 func SaveConfig(r OnboardResult) error {
 	path := configPath()
 	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
 
@@ -69,7 +69,17 @@ func SaveConfig(r OnboardResult) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, data, 0o644)
+	return writeSecretFile(path, data)
+}
+
+// writeSecretFile writes data to path with mode 0600. The config holds API
+// keys, so it must not be readable by other users; os.WriteFile only applies
+// the mode when it creates the file, so existing files are tightened too.
+func writeSecretFile(path string, data []byte) error {
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		return err
+	}
+	return os.Chmod(path, 0o600)
 }
 
 // UpdateConfig reads the existing config, applies the mutator function,

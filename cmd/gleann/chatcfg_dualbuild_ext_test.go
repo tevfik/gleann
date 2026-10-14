@@ -3,7 +3,6 @@ package main
 import (
 	"os"
 	"path/filepath"
-	"reflect"
 	"testing"
 
 	"github.com/tevfik/gleann/internal/tui"
@@ -21,57 +20,6 @@ func isolateHome(t *testing.T) string {
 		t.Setenv(k, "")
 	}
 	return home
-}
-
-func TestDualBuildArgs(t *testing.T) {
-	tests := []struct {
-		name   string
-		args   []string
-		suffix string
-		mode   string
-		model  string
-		want   []string
-	}{
-		{
-			name: "basic", suffix: "-code", mode: "code", model: "jina",
-			args: []string{"repo", "--docs", "./src", "--code-model", "jina", "--doc-model", "bge"},
-			want: []string{"repo-code", "--docs", "./src", "--mode", "code", "--model", "jina"},
-		},
-		{
-			// Regression: every arg equal to the index name was renamed, so the
-			// docs directory "docs" became "docs-docs".
-			name: "docs dir equal to index name", suffix: "-docs", mode: "docs", model: "bge",
-			args: []string{"docs", "--docs", "docs", "--code-model", "a", "--doc-model", "bge"},
-			want: []string{"docs-docs", "--docs", "docs", "--mode", "docs", "--model", "bge"},
-		},
-		{
-			name: "aliases and existing mode/model dropped", suffix: "-code", mode: "code", model: "c",
-			args: []string{"r", "--mode", "all", "--model", "old", "--code-embedding-model", "c", "--doc-embedding-model", "d", "--graph"},
-			want: []string{"r-code", "--graph", "--mode", "code", "--model", "c"},
-		},
-		{
-			// --flag=value must not swallow the following argument.
-			name: "equals form keeps next arg", suffix: "-code", mode: "code", model: "c",
-			args: []string{"r", "--doc-model=d", "--docs", "./x", "--docs-model", "d"},
-			want: []string{"r-code", "--docs", "./x", "--mode", "code", "--model", "c"},
-		},
-		{
-			name: "trailing flag without value", suffix: "-docs", mode: "docs", model: "d",
-			args: []string{"r", "--docs", "x", "--model"},
-			want: []string{"r-docs", "--docs", "x", "--mode", "docs", "--model", "d"},
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := dualBuildArgs(tt.args, tt.suffix, tt.mode, tt.model)
-			if !reflect.DeepEqual(got, tt.want) {
-				t.Fatalf("dualBuildArgs = %q\nwant %q", got, tt.want)
-			}
-			if getFlag(got, "--model") != tt.model || getFlag(got, "--mode") != tt.mode {
-				t.Fatalf("getFlag must see the appended model/mode, got %q", got)
-			}
-		})
-	}
 }
 
 func TestBuildChatConfig_ProviderEndpointsAndKeys(t *testing.T) {

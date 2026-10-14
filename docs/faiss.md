@@ -35,13 +35,13 @@ sudo cp ../c_api/impl/*.h /usr/local/include/faiss/c_api/impl/
 go build -tags faiss -o gleann ./cmd/gleann/
 
 # Run tests including FAISS
-go test -tags faiss ./internal/backend/faiss/ -v
+go test -tags faiss ./pkg/backends/faiss/ -v
 
 # Run FAISS vs Pure Go comparison
-go test -tags faiss -run TestFAISSvsPureGo -timeout 300s ./internal/backend/faiss/ -v
+go test -tags faiss -run TestFAISSvsPureGo -timeout 300s ./pkg/backends/faiss/ -v
 
 # Standard benchmarks
-go test -tags faiss -bench=BenchmarkFAISS -benchmem ./internal/backend/faiss/
+go test -tags faiss -bench=BenchmarkFAISS -benchmem ./pkg/backends/faiss/
 ```
 
 Without `-tags faiss`, the FAISS backend is excluded and gleann builds as pure Go with zero C dependencies.

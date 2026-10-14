@@ -232,7 +232,7 @@ tasks:
   test-faiss:
     desc: Run FAISS backend tests
     cmds:
-      - CGO_CFLAGS="$CGO_CFLAGS" CGO_CXXFLAGS="$CGO_CXXFLAGS" CGO_LDFLAGS="$CGO_LDFLAGS" go test -tags "cgo faiss" -count=1 -timeout 120s ./internal/backend/faiss/...
+      - CGO_CFLAGS="$CGO_CFLAGS" CGO_CXXFLAGS="$CGO_CXXFLAGS" CGO_LDFLAGS="$CGO_LDFLAGS" go test -tags "cgo faiss" -count=1 -timeout 120s ./pkg/backends/faiss/...
 
   test-treesitter:
     desc: Run treesitter backend tests

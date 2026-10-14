@@ -4,6 +4,7 @@ package server
 // This mirrors Python LEANN's FastAPI server with stdlib net/http.
 
 import (
+	"bytes"
 	"context"
 	"embed"
 	"encoding/json"
@@ -13,7 +14,6 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -22,6 +22,7 @@ import (
 
 	"github.com/tevfik/gleann/internal/background"
 	"github.com/tevfik/gleann/internal/embedding"
+	"github.com/tevfik/gleann/internal/indexing"
 	"github.com/tevfik/gleann/internal/multimodal"
 
 	"github.com/tevfik/gleann/internal/eventbus"
@@ -1788,48 +1789,30 @@ func (s *Server) handleIndexPath(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	buildArgs := []string{"index", "build", name, "--docs", req.Path}
-	if len(req.Tags) > 0 {
-		buildArgs = append(buildArgs, "--tags", strings.Join(req.Tags, ","))
-	}
-	if req.Description != "" {
-		buildArgs = append(buildArgs, "--desc", req.Description)
-	}
-	if req.MCPExposed != nil {
-		buildArgs = append(buildArgs, fmt.Sprintf("--mcp=%t", *req.MCPExposed))
-	}
-	if req.CodeModel != "" {
-		buildArgs = append(buildArgs, "--code-model", req.CodeModel)
-	}
-	if req.DocModel != "" {
-		buildArgs = append(buildArgs, "--doc-model", req.DocModel)
-	}
+	opts := s.buildOptions(name, req.Path)
+	opts.Tags = req.Tags
+	opts.Description = req.Description
+	opts.MCPExposed = req.MCPExposed
+	opts.CodeModel = req.CodeModel
+	opts.DocModel = req.DocModel
 
-	binPath := getBinaryPath()
-	// The build subprocess is bound to the server lifetime: Stop cancels
-	// (kills) it instead of leaving an orphan behind.
+	// The build runs in-process and is bound to the server lifetime: Stop
+	// cancels it instead of leaving it running behind.
 	ctx := s.lifetime()
 	if s.bgManager != nil {
 		s.bgManager.Submit(background.TaskTypeAutoIndex, func(progress func(pct float64, msg string)) error {
 			progress(0.1, fmt.Sprintf("Building index '%s' from '%s'", name, req.Path))
-			cmd := exec.CommandContext(ctx, binPath, buildArgs...)
-			out, err := cmd.CombinedOutput()
-			if err != nil {
-				return fmt.Errorf("indexing failed: %w: %s", err, strings.TrimSpace(string(out)))
+			if err := s.runBuild(ctx, opts); err != nil {
+				return fmt.Errorf("indexing failed: %w", err)
 			}
-			s.invalidateSearcher(name)
 			progress(1.0, fmt.Sprintf("Index '%s' built successfully from '%s'", name, req.Path))
 			return nil
 		})
 	} else {
 		s.goBackground(func() {
-			cmd := exec.CommandContext(ctx, binPath, buildArgs...)
-			out, err := cmd.CombinedOutput()
-			if err != nil {
-				log.Printf("Background index build failed for %s: %v: %s", req.Path, err, strings.TrimSpace(string(out)))
-				return
+			if err := s.runBuild(ctx, opts); err != nil {
+				log.Printf("Background index build failed for %s: %v", req.Path, err)
 			}
-			s.invalidateSearcher(name)
 		})
 	}
 
@@ -1840,12 +1823,44 @@ func (s *Server) handleIndexPath(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// getBinaryPath returns the resolved absolute path to current running executable.
-func getBinaryPath() string {
-	if exe, err := os.Executable(); err == nil && exe != "" {
-		return exe
+// buildOptions returns in-process build options for an index using the
+// server's current configuration.
+func (s *Server) buildOptions(name, docsDir string) indexing.BuildOptions {
+	return indexing.BuildOptions{
+		Options: indexing.Options{Config: s.cfg()},
+		Name:    name,
+		DocsDir: docsDir,
 	}
-	return os.Args[0]
+}
+
+// runBuild builds an index in-process and, on success, drops any cached
+// searcher(s) for it so the next query sees the new data. For dual-model
+// builds both "<name>-code" and "<name>-docs" are invalidated.
+func (s *Server) runBuild(ctx context.Context, opts indexing.BuildOptions) error {
+	var out bytes.Buffer
+	opts.Stdout = &out
+	opts.Stderr = &out
+	res, err := indexing.Build(ctx, opts)
+	if err != nil {
+		if tail := strings.TrimSpace(lastLines(out.String(), 20)); tail != "" {
+			return fmt.Errorf("%w: %s", err, tail)
+		}
+		return err
+	}
+	s.invalidateSearcher(opts.Name)
+	for _, part := range res.Parts {
+		s.invalidateSearcher(part.Name)
+	}
+	return nil
+}
+
+// lastLines returns at most n trailing lines of s.
+func lastLines(s string, n int) string {
+	lines := strings.Split(strings.TrimRight(s, "\n"), "\n")
+	if len(lines) > n {
+		lines = lines[len(lines)-n:]
+	}
+	return strings.Join(lines, "\n")
 }
 
 // handleUpload handles binary and text file uploads via multipart form data.
@@ -1895,14 +1910,12 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cmd := exec.CommandContext(s.lifetime(), getBinaryPath(), "index", "build", name, "--docs", tmpDir)
-	out, errCmd := cmd.CombinedOutput()
-	if errCmd != nil {
-		fmt.Fprintf(os.Stderr, "handleUpload index build failed: %v\nOutput: %s\n", errCmd, out)
-		writeError(w, http.StatusInternalServerError, "failed to index file: "+errCmd.Error()+": "+strings.TrimSpace(string(out)))
+	// Build in-process, bound to the server lifetime (Stop cancels it).
+	if errBuild := s.runBuild(s.lifetime(), s.buildOptions(name, tmpDir)); errBuild != nil {
+		log.Printf("handleUpload index build failed: %v", errBuild)
+		writeError(w, http.StatusInternalServerError, "failed to index file: "+errBuild.Error())
 		return
 	}
-	s.invalidateSearcher(name)
 
 	writeJSON(w, http.StatusOK, map[string]string{"status": "indexed", "file": fileName})
 }

@@ -1,16 +1,13 @@
 package mcp
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"log"
 	"math"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -20,6 +17,7 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 	"github.com/tevfik/gleann/internal/embedding"
+	"github.com/tevfik/gleann/internal/indexing"
 	"github.com/tevfik/gleann/pkg/gleann"
 )
 
@@ -37,6 +35,12 @@ type Config struct {
 	Version           string
 	CleanToolNames    bool
 	ToolsProfile      string // "core" (default), "full", or comma-separated list of tool names
+	// BuildConfig optionally supplies the full gleann configuration used
+	// when gleann_sync builds or syncs an index in-process (backend,
+	// chunking, multimodal model, ...). IndexDir is always taken from
+	// IndexDir above. When nil, a config derived from the fields above is
+	// used.
+	BuildConfig *gleann.Config
 }
 
 // maxCachedSearchers is the maximum number of searchers to keep in memory.
@@ -45,21 +49,27 @@ const maxCachedSearchers = 16
 
 // Server wraps the mark3labs MCP server.
 type Server struct {
-	mcpServer      *server.MCPServer
-	embedder       gleann.EmbeddingComputer
-	config         gleann.Config
-	cleanToolNames bool
-	toolsProfile   string
-	searcherMu     sync.Mutex
-	searchers      map[string]*gleann.LeannSearcher
-	searcherLRU    []string       // tracks access order: most recent at end
-	memPool        *mcpMemoryPool // Memory Engine: generic Entity/RELATES_TO graph
-	blockMem       *blockMemPool  // BBolt hierarchical memory blocks (pkg/memory)
-	gPool          *graphPool     // Community detection graph pool (treesitter only)
+	mcpServer       *server.MCPServer
+	embedder        gleann.EmbeddingComputer
+	config          gleann.Config
+	cleanToolNames  bool
+	toolsProfile    string
+	searcherMu      sync.Mutex
+	searchers       map[string]*gleann.LeannSearcher
+	searcherLRU     []string       // tracks access order: most recent at end
+	memPool         *mcpMemoryPool // Memory Engine: generic Entity/RELATES_TO graph
+	blockMem        *blockMemPool  // BBolt hierarchical memory blocks (pkg/memory)
+	gPool           *graphPool     // Community detection graph pool (treesitter only)
 	syncRunner      syncRunnerFunc
 	syncMu          sync.Mutex
 	syncTasks       map[string]*syncTask
 	syncWaitTimeout time.Duration
+	// buildConfig is the full configuration used for in-process builds
+	// (backend, chunking, multimodal, ...); nil falls back to config.
+	buildConfig *gleann.Config
+	lifeOnce    sync.Once
+	lifeCtx     context.Context
+	lifeCancel  context.CancelFunc
 }
 
 // syncTask tracks a background indexing or synchronization task for an index.
@@ -140,6 +150,7 @@ func NewServer(cfg Config) *Server {
 		memPool:        newMCPMemoryPool(cfg.IndexDir),
 		blockMem:       &blockMemPool{},
 		syncTasks:      make(map[string]*syncTask),
+		buildConfig:    cfg.BuildConfig,
 	}
 	if srv.toolsProfile == "" {
 		if envProfile := os.Getenv("GLEANN_TOOLS"); envProfile != "" {
@@ -285,8 +296,20 @@ func (s *Server) Run() {
 	}
 }
 
-// Close releases all resources held by the MCP server (KuzuDB handles, etc.).
+// lifetime returns a context cancelled by Close; background index builds
+// started by gleann_sync are bound to it.
+func (s *Server) lifetime() context.Context {
+	s.lifeOnce.Do(func() {
+		s.lifeCtx, s.lifeCancel = context.WithCancel(context.Background())
+	})
+	return s.lifeCtx
+}
+
+// Close releases all resources held by the MCP server (KuzuDB handles, etc.)
+// and cancels in-flight background index builds.
 func (s *Server) Close() {
+	s.lifetime()
+	s.lifeCancel()
 	if s.memPool != nil {
 		s.memPool.closeAll()
 	}
@@ -1766,7 +1789,7 @@ func (s *Server) handleSync(ctx context.Context, request mcp.CallToolRequest) (*
 		return mcp.NewToolResultError("missing parameter: index (and could not auto-resolve from workspace directory)"), nil
 	}
 	// The name becomes a path under the index dir and a positional argument
-	// of the self-exec'd build, so it must be a safe, non-flag name.
+	// of the build, so it must be a safe, non-flag name.
 	if err := gleann.ValidateName(indexName); err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
@@ -1939,8 +1962,11 @@ func (s *Server) handleSync(ctx context.Context, request mcp.CallToolRequest) (*
 
 	go func() {
 		defer close(task.done)
-		// Detach context so client timeout does not sever indexing
-		out, runErr := runner(context.Background(), opts)
+		// Detach from the request context so a client timeout does not sever
+		// indexing; the server lifetime context still cancels it on Close.
+		out, runErr := runner(s.lifetime(), opts)
+		// Drop handles a concurrent tool call may have re-opened mid-build.
+		s.evictIndex(indexName)
 		s.syncMu.Lock()
 		task.output = out
 		task.err = runErr
@@ -2033,6 +2059,9 @@ func (s *Server) handleSync(ctx context.Context, request mcp.CallToolRequest) (*
 	}
 }
 
+// parseProgressLine parses a machine-readable "gleann-progress k=v ..." line
+// as emitted by gleann.Pacer (plain surface), e.g. by `gleann index build`
+// running as a separate process.
 func parseProgressLine(line string) (phase string, pct float64, done, total int, rate, etaSec float64, ok bool) {
 	idx := strings.Index(line, "gleann-progress ")
 	if idx < 0 {
@@ -2060,61 +2089,79 @@ func parseProgressLine(line string) (phase string, pct float64, done, total int,
 	return phase, pct, done, total, rate, etaSec, true
 }
 
+// defaultSyncRunner builds (new index) or syncs (existing index) in-process
+// via internal/indexing. The returned output is the human-readable build
+// log plus the plain-surface progress lines, i.e. what the former
+// separate `gleann index build|sync` process printed.
 func (s *Server) defaultSyncRunner(ctx context.Context, opts SyncOptions) (string, error) {
-	exe, err := os.Executable()
-	if err != nil || exe == "" {
-		exe = "gleann"
-	}
+	out := &syncWriter{}
+	pacer := gleann.NewPacer(gleann.SurfacePlain, out)
 
-	var cmdArgs []string
-	if opts.IsNew {
-		cmdArgs = []string{"index", "build", opts.IndexName, "--docs", opts.DocsDir, "--graph", "--mode", opts.Mode}
-	} else {
-		cmdArgs = []string{"index", "sync", opts.IndexName, "--docs", opts.DocsDir, "--graph", "--mode", opts.Mode}
-		if len(opts.Files) > 0 {
-			cmdArgs = append(cmdArgs, "--files", strings.Join(opts.Files, ","))
-		}
-	}
-	if opts.NoPlugins {
-		cmdArgs = append(cmdArgs, "--no-plugins")
+	cfg := s.config
+	if s.buildConfig != nil {
+		cfg = *s.buildConfig
 	}
 	if s.config.IndexDir != "" {
-		cmdArgs = append(cmdArgs, "--index-dir", s.config.IndexDir)
+		cfg.IndexDir = s.config.IndexDir
 	}
 
-	cmd := exec.CommandContext(ctx, exe, cmdArgs...)
-	pr, pw := io.Pipe()
-	cmd.Stdout = pw
-	cmd.Stderr = pw
-
-	var outBuf bytes.Buffer
-	scanDone := make(chan struct{})
-
-	go func() {
-		defer close(scanDone)
-		scanner := bufio.NewScanner(pr)
-		for scanner.Scan() {
-			line := scanner.Text()
-			outBuf.WriteString(line + "\n")
-			if phase, pct, done, total, rate, etaSec, ok := parseProgressLine(line); ok && opts.OnProgress != nil {
-				opts.OnProgress(phase, pct, done, total, rate, etaSec)
+	common := indexing.Options{
+		Config:    cfg,
+		Mode:      indexing.ParseMode(opts.Mode),
+		NoPlugins: opts.NoPlugins,
+		Stdout:    out,
+		Stderr:    out,
+		Progress: func(p indexing.Progress) {
+			pacer.Tick(p.Phase, p.ItemsDone, p.TotalItems, p.BytesDone, p.TotalBytes, p.Force)
+			if opts.OnProgress != nil {
+				opts.OnProgress(p.Phase, p.Pct, p.ItemsDone, p.TotalItems, p.Rate, p.ETASec)
 			}
-		}
-	}()
-
-	err = cmd.Start()
-	if err != nil {
-		pw.Close()
-		pr.Close()
-		return "", err
+		},
 	}
 
-	waitErr := cmd.Wait()
-	pw.Close()
-	<-scanDone
-	pr.Close()
+	var err error
+	if opts.IsNew {
+		var res *indexing.BuildResult
+		res, err = indexing.Build(ctx, indexing.BuildOptions{
+			Options: common,
+			Name:    opts.IndexName,
+			DocsDir: opts.DocsDir,
+			Graph:   true,
+		})
+		if err == nil && res.Estimate != nil {
+			pacer.Done(true, 0, res.Estimate.FileCount, res.Estimate.TotalBytes)
+		}
+	} else {
+		_, err = indexing.Sync(ctx, indexing.SyncOptions{
+			Options: common,
+			Name:    opts.IndexName,
+			DocsDir: opts.DocsDir,
+			Files:   opts.Files,
+			Graph:   true,
+		})
+	}
+	if err != nil {
+		fmt.Fprintf(out, "error: %v\n", err)
+	}
+	return out.String(), err
+}
 
-	return outBuf.String(), waitErr
+// syncWriter is a goroutine-safe in-memory log sink for in-process builds.
+type syncWriter struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (w *syncWriter) Write(p []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.buf.Write(p)
+}
+
+func (w *syncWriter) String() string {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.buf.String()
 }
 
 // resolveIndexName tries to auto-detect an exposed index name if none is provided.
@@ -2149,7 +2196,6 @@ func (s *Server) resolveIndexName() string {
 	}
 	return ""
 }
-
 
 // sanitizeIndexName turns an auto-derived name (e.g. a directory name) into
 // one accepted by gleann.ValidateName by replacing disallowed characters

@@ -11,6 +11,7 @@ import (
 
 	"github.com/tevfik/gleann/internal/autosetup"
 	"github.com/tevfik/gleann/internal/embedding"
+	"github.com/tevfik/gleann/internal/indexing"
 	"github.com/tevfik/gleann/internal/tui"
 	"github.com/tevfik/gleann/internal/vault"
 	"github.com/tevfik/gleann/pkg/gleann"
@@ -215,7 +216,15 @@ func runAutoSetup(args []string) {
 		defer tracker.Close()
 	}
 
-	items, pluginDocs, err := readDocuments(absDir, config.ChunkConfig.ChunkSize, config.ChunkConfig.ChunkOverlap, config.ChunkConfig.SignaturesOnly, tracker, nil, IndexModeAll, false, false)
+	items, pluginDocs, err := indexing.ReadDocuments(context.Background(), absDir, indexing.ReadOptions{
+		ChunkSize:      config.ChunkConfig.ChunkSize,
+		ChunkOverlap:   config.ChunkConfig.ChunkOverlap,
+		SignaturesOnly: config.ChunkConfig.SignaturesOnly,
+		Tracker:        tracker,
+		Mode:           IndexModeAll,
+		Stdout:         os.Stdout,
+		Stderr:         os.Stderr,
+	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error reading documents: %v\n", err)
 		os.Exit(1)

@@ -9,6 +9,7 @@ import (
 
 	"github.com/mattn/go-isatty"
 	"github.com/tevfik/gleann/internal/embedding"
+	"github.com/tevfik/gleann/internal/indexing"
 	"github.com/tevfik/gleann/internal/tui"
 	"github.com/tevfik/gleann/pkg/gleann"
 )
@@ -314,40 +315,7 @@ func resolveOllamaAPIKey(cfg gleann.Config) string {
 // newEmbedder initializes an embedding.Computer from gleann.Config, properly
 // routing the base URL and API key based on the configured provider.
 func newEmbedder(cfg gleann.Config) *embedding.Computer {
-	baseURL := cfg.OllamaHost
-	apiKey := ""
-
-	switch cfg.EmbeddingProvider {
-	case "", "ollama":
-		apiKey = gleann.ResolveOllamaAPIKey(cfg.OllamaAPIKey)
-	case "openai":
-		if cfg.OpenAIBaseURL != "" {
-			baseURL = cfg.OpenAIBaseURL
-		}
-		apiKey = cfg.OpenAIAPIKey
-	case "llamacpp":
-		if cfg.OpenAIBaseURL != "" {
-			baseURL = cfg.OpenAIBaseURL
-		}
-		apiKey = cfg.OpenAIAPIKey
-	case "eif":
-		baseURL = ""
-		apiKey = ""
-	case "gemini":
-		apiKey = cfg.OpenAIAPIKey
-	}
-
-	batchSize := cfg.BatchSize
-	concurrency := cfg.Concurrency
-
-	return embedding.NewComputer(embedding.Options{
-		Provider:    embedding.Provider(cfg.EmbeddingProvider),
-		Model:       cfg.EmbeddingModel,
-		BaseURL:     baseURL,
-		APIKey:      apiKey,
-		BatchSize:   batchSize,
-		Concurrency: concurrency,
-	})
+	return indexing.NewEmbedder(cfg)
 }
 
 // defaultEmbedderResolver returns an EmbedderResolver that dynamically provides

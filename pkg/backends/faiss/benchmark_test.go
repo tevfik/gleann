@@ -14,7 +14,7 @@ import (
 )
 
 // TestFAISSvsPureGo compares FAISS CGo backend against pure Go HNSW.
-// Run with: go test -v -tags faiss -run TestFAISSvsPureGo -timeout 300s ./internal/backend/faiss/
+// Run with: go test -v -tags faiss -run TestFAISSvsPureGo -timeout 300s ./pkg/backends/faiss/
 func TestFAISSvsPureGo(t *testing.T) {
 	configs := []struct {
 		name string

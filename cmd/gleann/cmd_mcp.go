@@ -114,6 +114,12 @@ func runMCPServer(cleanNames bool, flagModel, flagProvider, toolsProfile string)
 		cfg.LLMModel = flagModel
 	}
 
+	// gleann_sync builds in-process with the same effective configuration
+	// `gleann index build` would use (saved backend, chunking, multimodal…).
+	buildCfg := getConfig(nil)
+	applySavedConfig(&buildCfg, nil)
+	cfg.BuildConfig = &buildCfg
+
 	server := mcp.NewServer(cfg)
 	defer server.Close()
 	server.Run()
