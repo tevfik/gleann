@@ -21,13 +21,9 @@ func InstallBinary(targetDir string) error {
 		return fmt.Errorf("create target dir: %w", err)
 	}
 
-	exe, err := os.Executable()
+	exe, needsLibs, err := installSource()
 	if err != nil {
-		return fmt.Errorf("resolve executable: %w", err)
-	}
-	exe, err = filepath.EvalSymlinks(exe)
-	if err != nil {
-		return fmt.Errorf("resolve symlinks: %w", err)
+		return err
 	}
 
 	dst := filepath.Join(targetDir, "gleann")
@@ -37,7 +33,9 @@ func InstallBinary(targetDir string) error {
 
 	// Don't copy onto itself, but STILL make sure shared libraries are copied!
 	if abs, _ := filepath.Abs(dst); abs == exe {
-		copySharedLibs(exe, targetDir)
+		if needsLibs {
+			copySharedLibs(exe, targetDir)
+		}
 		return nil
 	}
 
@@ -69,17 +67,44 @@ func InstallBinary(targetDir string) error {
 	}
 
 	// Also copy bundled shared libraries (e.g. libfaiss_c + ext for gleann-full) if they exist.
-	copySharedLibs(exe, targetDir)
+	if needsLibs {
+		copySharedLibs(exe, targetDir)
+	}
 
 	return nil
 }
 
-func copySharedLibs(exe, targetDir string) {
-	// RPATH $ORIGIN requires them to be in the exact same directory as the executable.
-	exeDir := filepath.Dir(exe)
+// installSource returns the file `gleann install` should put on the PATH and
+// whether the shared libraries next to it must be copied too.
+//
+// Under the gleann-full launcher the running executable is the extracted
+// gleann-full-bin inside ~/.gleann/runtime/<version>/, which only works while
+// its libraries (libgleann_core_rs, libkuzu, libopenblas, ...) sit beside it.
+// Installing that file alone leaves a binary that dies with "error while
+// loading shared libraries". The launcher embeds all of them, so when it
+// announces itself (GLEANN_LAUNCHER) it is the file to install and nothing
+// else needs copying.
+func installSource() (path string, needsLibs bool, err error) {
+	if l := os.Getenv("GLEANN_LAUNCHER"); l != "" {
+		if st, statErr := os.Stat(l); statErr == nil && !st.IsDir() {
+			return l, false, nil
+		}
+	}
+	exe, err := os.Executable()
+	if err != nil {
+		return "", false, fmt.Errorf("resolve executable: %w", err)
+	}
+	exe, err = filepath.EvalSymlinks(exe)
+	if err != nil {
+		return "", false, fmt.Errorf("resolve symlinks: %w", err)
+	}
+	return exe, true, nil
+}
 
-	// Collect known shared libraries and any other bundled .so/.dylib/.dll in exeDir
-	libsToCopy := append([]string{}, sharedLibNames()...)
+// bundledLibs lists the shared libraries to install next to exe: the known
+// FAISS names plus every .so/.dylib/.dll found in its directory.
+func bundledLibs(exeDir string) []string {
+	libs := append([]string{}, sharedLibNames()...)
 	if entries, err := os.ReadDir(exeDir); err == nil {
 		for _, e := range entries {
 			if e.IsDir() {
@@ -87,17 +112,27 @@ func copySharedLibs(exe, targetDir string) {
 			}
 			name := e.Name()
 			if strings.Contains(name, ".so") || strings.HasSuffix(name, ".dylib") || strings.HasSuffix(name, ".dll") {
-				libsToCopy = append(libsToCopy, name)
+				libs = append(libs, name)
 			}
 		}
 	}
-
-	seen := make(map[string]bool)
-	for _, lib := range libsToCopy {
-		if seen[lib] {
-			continue
+	seen := make(map[string]bool, len(libs))
+	out := libs[:0]
+	for _, l := range libs {
+		if !seen[l] {
+			seen[l] = true
+			out = append(out, l)
 		}
-		seen[lib] = true
+	}
+	return out
+}
+
+func copySharedLibs(exe, targetDir string) {
+	// RPATH $ORIGIN requires them to be in the exact same directory as the executable.
+	exeDir := filepath.Dir(exe)
+
+	libsToCopy := bundledLibs(exeDir)
+	for _, lib := range libsToCopy {
 		libSrc := filepath.Join(exeDir, lib)
 		if _, err := os.Stat(libSrc); err == nil {
 			libDst := filepath.Join(targetDir, lib)
@@ -233,12 +268,11 @@ func RunInstall(result *OnboardResult) {
 	fmt.Println()
 	if needsSudo && runtime.GOOS != "windows" {
 		fmt.Printf("📦 Installing gleann to %s (requires elevated privileges)...\n", result.InstallPath)
-		exe, err := os.Executable()
+		exe, needsLibs, err := installSource()
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "  ✗ Could not resolve executable: %v\n", err)
 			return
 		}
-		exe, _ = filepath.EvalSymlinks(exe)
 		dst := filepath.Join(targetDir, "gleann")
 		// su + do = privilege escalation (split to avoid audit grep on the combined word)
 		suDo := "su" + "do"
@@ -258,13 +292,15 @@ func RunInstall(result *OnboardResult) {
 		_ = chmodCmd.Run()
 
 		// Copy shared libraries if they exist (requires elevated privileges)
-		exeDir := filepath.Dir(exe)
-		for _, lib := range sharedLibNames() {
-			libSrc := filepath.Join(exeDir, lib)
-			if _, err := os.Stat(libSrc); err == nil {
-				libDst := filepath.Join(targetDir, lib)
-				copyLibCmd := exec.Command(suDo, "cp", libSrc, libDst)
-				_ = copyLibCmd.Run()
+		if needsLibs {
+			exeDir := filepath.Dir(exe)
+			for _, lib := range bundledLibs(exeDir) {
+				libSrc := filepath.Join(exeDir, lib)
+				if _, err := os.Stat(libSrc); err == nil {
+					libDst := filepath.Join(targetDir, lib)
+					copyLibCmd := exec.Command(suDo, "cp", libSrc, libDst)
+					_ = copyLibCmd.Run()
+				}
 			}
 		}
 	} else {

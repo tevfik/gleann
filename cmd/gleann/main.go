@@ -125,6 +125,8 @@ Service & Setup:
   doctor                       System health and dependencies check
   agents [dump]                Generate or dump AGENTS.md for AI coding agents
   service install|start|status Manage Gleann as a background system service
+  install [--user|--system]    Install the binary, or set up MCP/editor integrations (see: gleann install --help)
+  uninstall                    Remove editor/platform integration files
 
 Examples:
   # 1. Index source code with call graph

@@ -85,6 +85,16 @@ func main() {
 		newEnv = append(newEnv, e)
 	}
 	newEnv = append(newEnv, libPathKey+"="+newLibPath)
+	// Tell the real binary which self-contained launcher started it, so that
+	// `gleann install` installs the launcher (which embeds every shared
+	// library) instead of the extracted gleann-full-bin, which cannot run
+	// without the libraries sitting next to it.
+	if self, err := os.Executable(); err == nil {
+		if resolved, err := filepath.EvalSymlinks(self); err == nil {
+			self = resolved
+		}
+		newEnv = append(newEnv, "GLEANN_LAUNCHER="+self)
+	}
 
 	// On Unix, use syscall.Exec for zero overhead process replacement
 	if runtime.GOOS != "windows" {
