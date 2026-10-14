@@ -86,6 +86,9 @@ func (p *memoryPool) get(name string) (*kgraph.MemoryService, error) {
 		return h, nil
 	}
 
+	if err := gleann.ValidateName(name); err != nil {
+		return nil, err
+	}
 	dbPath := filepath.Join(p.dir, name+"_memory")
 	db, err := kgraph.Open(dbPath)
 	if err != nil {
@@ -121,8 +124,8 @@ func (p *memoryPool) closeAll() {
 // a single KuzuDB transaction.  The operation is idempotent.
 func (s *Server) handleMemoryInject(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
-	if name == "" {
-		writeError(w, http.StatusBadRequest, "index name required")
+	if err := gleann.ValidateName(name); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid index name: "+err.Error())
 		return
 	}
 
@@ -167,6 +170,10 @@ func (s *Server) handleMemoryDeleteNode(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusBadRequest, "index name and node id are required")
 		return
 	}
+	if err := gleann.ValidateName(name); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid index name: "+err.Error())
+		return
+	}
 
 	if err := s.checkIndexAccess(r, name); err != nil {
 		writeError(w, http.StatusForbidden, err.Error())
@@ -194,8 +201,8 @@ func (s *Server) handleMemoryDeleteNode(w http.ResponseWriter, r *http.Request) 
 // Removes a single RELATES_TO relationship identified by (from, to, relation_type).
 func (s *Server) handleMemoryDeleteEdge(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
-	if name == "" {
-		writeError(w, http.StatusBadRequest, "index name required")
+	if err := gleann.ValidateName(name); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid index name: "+err.Error())
 		return
 	}
 
@@ -236,8 +243,8 @@ func (s *Server) handleMemoryDeleteEdge(w http.ResponseWriter, r *http.Request) 
 // reachable nodes and the edges connecting them.
 func (s *Server) handleMemoryTraverse(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
-	if name == "" {
-		writeError(w, http.StatusBadRequest, "index name required")
+	if err := gleann.ValidateName(name); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid index name: "+err.Error())
 		return
 	}
 

@@ -39,6 +39,9 @@ func (p *graphPool) get(name string) (*kgraph.DB, error) {
 	if db, ok := p.dbs[name]; ok {
 		return db, nil
 	}
+	if err := gleann.ValidateName(name); err != nil {
+		return nil, err
+	}
 	dbPath := filepath.Join(p.dir, name+"_graph")
 	db, err := kgraph.Open(dbPath)
 	if err != nil {

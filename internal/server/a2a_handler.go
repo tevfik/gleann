@@ -20,7 +20,7 @@ func (s *Server) mountA2A(mux *http.ServeMux) {
 	// Check if A2A is disabled (env var overrides config).
 	if env := os.Getenv("GLEANN_A2A_ENABLED"); env == "false" {
 		return
-	} else if env == "" && s.config.A2AEnabled != nil && !*s.config.A2AEnabled {
+	} else if env == "" && s.cfg().A2AEnabled != nil && !*s.cfg().A2AEnabled {
 		return
 	}
 
@@ -63,7 +63,7 @@ func (s *Server) a2aSearchHandler(ctx a2a.SkillContext) (string, error) {
 		}
 		targetIndexes = []string{target}
 	} else {
-		indexes, err := gleann.ListIndexes(s.config.IndexDir)
+		indexes, err := gleann.ListIndexes(s.cfg().IndexDir)
 		if err != nil || len(indexes) == 0 {
 			return "", fmt.Errorf("no indexes available; build one with 'gleann index build'")
 		}
@@ -80,11 +80,12 @@ func (s *Server) a2aSearchHandler(ctx a2a.SkillContext) (string, error) {
 	// Search across targetIndexes.
 	var results []string
 	for _, idxName := range targetIndexes {
-		searcher, err := s.getSearcher(context.Background(), idxName)
+		searcher, release, err := s.acquireSearcher(context.Background(), idxName)
 		if err != nil {
 			continue
 		}
 		hits, err := searcher.Search(context.Background(), ctx.Query)
+		release()
 		if err != nil {
 			continue
 		}
@@ -122,7 +123,7 @@ func (s *Server) a2aAskHandler(ctx a2a.SkillContext) (string, error) {
 			return "", fmt.Errorf("index %q not available or access denied", targetIndex)
 		}
 	} else {
-		indexes, err := gleann.ListIndexes(s.config.IndexDir)
+		indexes, err := gleann.ListIndexes(s.cfg().IndexDir)
 		if err != nil || len(indexes) == 0 {
 			return "", fmt.Errorf("no indexes available for RAG")
 		}
@@ -137,10 +138,11 @@ func (s *Server) a2aAskHandler(ctx a2a.SkillContext) (string, error) {
 		}
 	}
 
-	searcher, err := s.getSearcher(context.Background(), targetIndex)
+	searcher, release, err := s.acquireSearcher(context.Background(), targetIndex)
 	if err != nil {
 		return "", fmt.Errorf("index %q not available: %v", targetIndex, err)
 	}
+	defer release()
 
 	// Build LLM config from server settings.
 	chatCfg := s.proxyLLMConfig()
@@ -251,7 +253,7 @@ func (s *Server) a2aCodeHandler(ctx a2a.SkillContext) (string, error) {
 			return "", fmt.Errorf("access denied or index %q not accessible", targetIndex)
 		}
 	} else {
-		indexes, err := gleann.ListIndexes(s.config.IndexDir)
+		indexes, err := gleann.ListIndexes(s.cfg().IndexDir)
 		if err != nil || len(indexes) == 0 {
 			return "", fmt.Errorf("no indexes available for code analysis")
 		}
@@ -349,11 +351,11 @@ func (s *Server) a2aMultimodalHandler(ctx a2a.SkillContext) (string, error) {
 		return "", fmt.Errorf("provide a file path in the query or attach files")
 	}
 
-	ollamaHost := s.config.OllamaHost
+	ollamaHost := s.cfg().OllamaHost
 	if ollamaHost == "" {
 		ollamaHost = "http://localhost:11434"
 	}
-	model := s.config.MultimodalModel
+	model := s.cfg().MultimodalModel
 	if model == "" {
 		model = "gemma4"
 	}
@@ -372,6 +374,9 @@ func (s *Server) a2aMultimodalHandler(ctx a2a.SkillContext) (string, error) {
 
 	// Use multimodal processor.
 	proc := multimodal.NewProcessor(ollamaHost, model)
+	if k := s.cfg().APIKeyForProvider("ollama"); k != "" {
+		proc.APIKey = k
+	}
 
 	if strings.ToLower(filepath.Ext(filePath)) == ".pdf" {
 		analysis, err := proc.AnalyzePDF(filePath, multimodal.DefaultPDFConfig())

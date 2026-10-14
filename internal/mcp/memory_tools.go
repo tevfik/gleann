@@ -60,6 +60,9 @@ func (p *mcpMemoryPool) get(name string) (*kgraph.MemoryService, error) {
 		return svc, nil // won the race
 	}
 
+	if err := gleann.ValidateName(name); err != nil {
+		return nil, err
+	}
 	dbPath := filepath.Join(p.dir, name+"_memory")
 	db, err := kgraph.Open(dbPath)
 	if err != nil {

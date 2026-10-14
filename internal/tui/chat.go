@@ -233,6 +233,8 @@ func NewChatModel(chat *gleann.LeannChat, indexName, modelName string) ChatModel
 			host = savedCfg.OpenAIBaseURL
 		} else if savedCfg.LLMProvider == "anthropic" {
 			key = savedCfg.AnthropicKey
+		} else if savedCfg.LLMProvider == "ollama" {
+			key = savedCfg.OllamaAPIKey
 		}
 		allModels, err = fetchModels(savedCfg.LLMProvider, host, key)
 	} else {
@@ -1562,6 +1564,8 @@ func fetchRerankModelList(savedCfg *OnboardResult) ([]string, int) {
 		key := savedCfg.OpenAIKey
 		if savedCfg.EmbeddingProvider == "openai" {
 			host = savedCfg.OpenAIBaseURL
+		} else if savedCfg.EmbeddingProvider == "ollama" {
+			key = savedCfg.OllamaAPIKey
 		}
 		allModels, err = fetchModels(savedCfg.EmbeddingProvider, host, key)
 	} else {

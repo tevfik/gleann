@@ -215,7 +215,9 @@ func runChatFlow() error {
 		if savedCfg.OllamaHost != "" && !strings.Contains(savedCfg.OllamaHost, "(auto-scan") {
 			chatCfg.BaseURL = savedCfg.OllamaHost
 		}
-		if savedCfg.OpenAIKey != "" {
+		if chatCfg.Provider == gleann.LLMOllama {
+			chatCfg.APIKey = gleann.ResolveOllamaAPIKey(savedCfg.OllamaAPIKey)
+		} else if savedCfg.OpenAIKey != "" {
 			chatCfg.APIKey = savedCfg.OpenAIKey
 		}
 		if savedCfg.RepeatPenalty > 0 {
@@ -270,7 +272,9 @@ func runChatFlow() error {
 	}
 
 	apiKey := ""
-	if cfg.EmbeddingProvider == "openai" {
+	if cfg.EmbeddingProvider == "" || cfg.EmbeddingProvider == "ollama" {
+		apiKey = cfg.APIKeyForProvider(cfg.EmbeddingProvider)
+	} else if cfg.EmbeddingProvider == "openai" {
 		apiKey = cfg.OpenAIAPIKey
 		if cfg.OpenAIBaseURL != "" && (embHost == "" || embHost == cfg.OllamaHost) {
 			embHost = cfg.OpenAIBaseURL
@@ -312,6 +316,9 @@ func loadConfig() gleann.Config {
 		}
 		if saved.OpenAIKey != "" {
 			cfg.OpenAIAPIKey = saved.OpenAIKey
+		}
+		if saved.OllamaAPIKey != "" {
+			cfg.OllamaAPIKey = saved.OllamaAPIKey
 		}
 		if saved.IndexDir != "" {
 			cfg.IndexDir = saved.IndexDir // already expanded by LoadSavedConfig

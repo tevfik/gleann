@@ -92,6 +92,9 @@ Examples:
 			Model:    rerankModel,
 			BaseURL:  config.OllamaHost,
 		}
+		if rerankerCfg.Provider == gleann.RerankerOllama {
+			rerankerCfg.APIKey = config.APIKeyForProvider("ollama")
+		}
 		searcher.SetReranker(gleann.NewReranker(rerankerCfg))
 		config.SearchConfig.UseReranker = true
 	}

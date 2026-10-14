@@ -15,12 +15,15 @@ import (
 
 // a2aCommunitiesHandler runs Louvain community detection on the code graph.
 func (s *Server) a2aCommunitiesHandler(ctx a2a.SkillContext) (string, error) {
-	indexName := resolveIndex(ctx.Metadata, s.config.IndexDir)
+	indexName := resolveIndex(ctx.Metadata, s.cfg().IndexDir)
 	if indexName == "" {
 		return "", fmt.Errorf("no indexes available")
 	}
+	if err := gleann.ValidateName(indexName); err != nil {
+		return "", err
+	}
 
-	dbPath := filepath.Join(s.config.IndexDir, indexName+"_graph")
+	dbPath := filepath.Join(s.cfg().IndexDir, indexName+"_graph")
 	db, err := kgraph.Open(dbPath)
 	if err != nil {
 		return "", fmt.Errorf("graph index %q not found: %v", indexName, err)
@@ -54,12 +57,15 @@ func (s *Server) a2aCommunitiesHandler(ctx a2a.SkillContext) (string, error) {
 
 // a2aRepoMapHandler generates a compact repository map.
 func (s *Server) a2aRepoMapHandler(ctx a2a.SkillContext) (string, error) {
-	indexName := resolveIndex(ctx.Metadata, s.config.IndexDir)
+	indexName := resolveIndex(ctx.Metadata, s.cfg().IndexDir)
 	if indexName == "" {
 		return "", fmt.Errorf("no indexes available")
 	}
+	if err := gleann.ValidateName(indexName); err != nil {
+		return "", err
+	}
 
-	dbPath := filepath.Join(s.config.IndexDir, indexName+"_graph")
+	dbPath := filepath.Join(s.cfg().IndexDir, indexName+"_graph")
 	db, err := kgraph.Open(dbPath)
 	if err != nil {
 		return "", fmt.Errorf("graph index %q not found: %v", indexName, err)
@@ -80,12 +86,15 @@ func (s *Server) a2aRepoMapHandler(ctx a2a.SkillContext) (string, error) {
 
 // a2aRiskHandler computes change risk scores.
 func (s *Server) a2aRiskHandler(ctx a2a.SkillContext) (string, error) {
-	indexName := resolveIndex(ctx.Metadata, s.config.IndexDir)
+	indexName := resolveIndex(ctx.Metadata, s.cfg().IndexDir)
 	if indexName == "" {
 		return "", fmt.Errorf("no indexes available")
 	}
+	if err := gleann.ValidateName(indexName); err != nil {
+		return "", err
+	}
 
-	dbPath := filepath.Join(s.config.IndexDir, indexName+"_graph")
+	dbPath := filepath.Join(s.cfg().IndexDir, indexName+"_graph")
 	db, err := kgraph.Open(dbPath)
 	if err != nil {
 		return "", fmt.Errorf("graph index %q not found: %v", indexName, err)

@@ -519,6 +519,9 @@ func cmdChat(args []string) {
 		if savedCfg.OllamaHost != "" {
 			cfg.OllamaHost = savedCfg.OllamaHost
 		}
+		if savedCfg.OllamaAPIKey != "" && cfg.OllamaAPIKey == "" {
+			cfg.OllamaAPIKey = savedCfg.OllamaAPIKey
+		}
 	}
 
 	// If no index given, launch index picker.
@@ -599,6 +602,12 @@ func cmdChat(args []string) {
 			chatCfg.RepeatPenalty = val
 		}
 	}
+	if chatCfg.Provider == gleann.LLMOllama {
+		chatCfg.APIKey = cfg.APIKeyForProvider(string(chatCfg.Provider))
+	}
+	if apiKey := getFlag(args, "--api-key"); apiKey != "" {
+		chatCfg.APIKey = apiKey
+	}
 
 	applyLlamaChatOverride(&chatCfg)
 	chat := gleann.NewChat(searcher, chatCfg)
@@ -674,6 +683,9 @@ func printCmdAskUsage() {
 	fmt.Fprintln(os.Stderr, "  --no-cache           Do not save conversation")
 	fmt.Fprintln(os.Stderr, "  --no-limit           Remove token limit (unlimited output)")
 	fmt.Fprintln(os.Stderr, "  --repeat-penalty N   Repetition penalty for LLM sampling (e.g. 1.1, 1.2)")
+	fmt.Fprintln(os.Stderr, "  --host URL           Ollama server address (default: saved config / OLLAMA_HOST)")
+	fmt.Fprintln(os.Stderr, "  --ollama-api-key KEY Optional Ollama API key (auth proxy / hosted Ollama; env: OLLAMA_API_KEY)")
+	fmt.Fprintln(os.Stderr, "  --api-key KEY        API key for the active LLM provider (overrides saved keys)")
 	os.Exit(1)
 }
 
@@ -725,6 +737,9 @@ func createAskSearcher(ctx context.Context, name string, args []string, config g
 				Model:    rerankModel,
 				BaseURL:  config.OllamaHost,
 			}
+			if rerankerCfg.Provider == gleann.RerankerOllama {
+				rerankerCfg.APIKey = config.APIKeyForProvider("ollama")
+			}
 			s.SetReranker(gleann.NewReranker(rerankerCfg))
 			config.SearchConfig.UseReranker = true
 		}
@@ -750,6 +765,7 @@ func extractPositionalArgs(args []string) ([]string, []string) {
 		"--word-wrap": true, "--llm-model": true, "--llm-provider": true,
 		"--rerank-model": true, "--top-k": true, "--metric": true,
 		"--model": true, "--provider": true, "--host": true,
+		"--api-key": true, "--ollama-api-key": true,
 		"--attach": true, "--image": true,
 		"--repeat-penalty": true, "--repetition-penalty": true,
 	}
@@ -848,23 +864,38 @@ func resolveIndexName(name string, args []string, config gleann.Config, quiet bo
 
 func buildChatConfig(args []string, config gleann.Config) gleann.ChatConfig {
 	chatConfig := gleann.DefaultChatConfig()
+	savedCfg := tui.LoadSavedConfig()
 	if config.LLMProvider != "" {
 		chatConfig.Provider = gleann.LLMProvider(config.LLMProvider)
+	}
+	// Resolve the final provider (CLI flag wins) before choosing endpoint and
+	// credentials: previously the Ollama host was applied unconditionally, so
+	// openai/anthropic without an explicit base URL were sent to Ollama, and
+	// `--llm-provider openai` ignored the configured OpenAI base URL.
+	if llmProvider := getFlag(args, "--llm-provider"); llmProvider != "" {
+		chatConfig.Provider = gleann.LLMProvider(llmProvider)
 	}
 	if config.LLMModel != "" {
 		chatConfig.Model = config.LLMModel
 	}
-	if config.OllamaHost != "" {
-		chatConfig.BaseURL = config.OllamaHost
-	}
-	if config.OpenAIAPIKey != "" {
-		chatConfig.APIKey = config.OpenAIAPIKey
-	}
-	if config.OpenAIBaseURL != "" && chatConfig.Provider == gleann.LLMOpenAI {
+	switch chatConfig.Provider {
+	case gleann.LLMOpenAI:
+		// Empty lets NewChat apply OPENAI_BASE_URL or api.openai.com.
 		chatConfig.BaseURL = config.OpenAIBaseURL
-	}
-	if apiKey := getFlag(args, "--api-key"); apiKey != "" {
-		chatConfig.APIKey = apiKey
+		chatConfig.APIKey = config.OpenAIAPIKey
+	case gleann.LLMAnthropic:
+		// Empty lets NewChat apply api.anthropic.com / ANTHROPIC_API_KEY.
+		chatConfig.BaseURL = ""
+		if savedCfg != nil {
+			chatConfig.APIKey = savedCfg.AnthropicKey
+		}
+	default:
+		if config.OllamaHost != "" {
+			chatConfig.BaseURL = config.OllamaHost
+		}
+		// Optional bearer token for authenticated Ollama-compatible proxies
+		// (--ollama-api-key / ollama_api_key / OLLAMA_API_KEY), never the OpenAI key.
+		chatConfig.APIKey = config.APIKeyForProvider("ollama")
 	}
 	if baseURL := getFlag(args, "--base-url"); baseURL != "" {
 		chatConfig.BaseURL = baseURL
@@ -875,8 +906,8 @@ func buildChatConfig(args []string, config gleann.Config) gleann.ChatConfig {
 	if llmModel := getFlag(args, "--llm-model"); llmModel != "" {
 		chatConfig.Model = llmModel
 	}
-	if llmProvider := getFlag(args, "--llm-provider"); llmProvider != "" {
-		chatConfig.Provider = gleann.LLMProvider(llmProvider)
+	if apiKey := getFlag(args, "--api-key"); apiKey != "" {
+		chatConfig.APIKey = apiKey
 	}
 	if repStr := getFlag(args, "--repeat-penalty"); repStr != "" {
 		if val, err := strconv.ParseFloat(repStr, 64); err == nil && val >= 0 {
@@ -892,7 +923,6 @@ func buildChatConfig(args []string, config gleann.Config) gleann.ChatConfig {
 		chatConfig.CompressContext = true
 	}
 
-	savedCfg := tui.LoadSavedConfig()
 	if roleName := getFlag(args, "--role"); roleName != "" {
 		var prompt string
 		if savedCfg != nil && savedCfg.Roles != nil {

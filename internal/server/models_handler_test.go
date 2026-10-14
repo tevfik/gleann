@@ -34,6 +34,8 @@ func TestHandleDownloadModel(t *testing.T) {
 	tmpHome := t.TempDir()
 	t.Setenv("HOME", tmpHome)
 	t.Setenv("USERPROFILE", tmpHome)
+	// The fake model server listens on loopback over plain http.
+	t.Setenv("GLEANN_MODEL_DOWNLOAD_ALLOW_PRIVATE", "1")
 
 	// 3. Make POST request to /api/models/download
 	reqBody, _ := json.Marshal(DownloadModelRequest{

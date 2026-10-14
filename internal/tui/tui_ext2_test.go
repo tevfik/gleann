@@ -481,7 +481,7 @@ func TestPickBestModelsWithEmbed(t *testing.T) {
 
 func TestOllamaReachableOffline(t *testing.T) {
 	// Should fail for non-existent host.
-	if ollamaReachable("http://127.0.0.1:19999") {
+	if ollamaReachable("http://127.0.0.1:19999", "") {
 		t.Error("should not be reachable")
 	}
 }

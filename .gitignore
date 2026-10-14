@@ -74,3 +74,6 @@ patch.py:text
 # Host-extracted FAISS build libraries
 deps/faiss_install/lib/libopenblas*
 deps/faiss_install/lib/libgfortran*
+
+# Local agent tool worktrees
+.kilo/

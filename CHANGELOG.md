@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### Added
+- **Optional Ollama API key (`ollama_api_key` / `OLLAMA_API_KEY`)** for Ollama behind an auth proxy or hosted Ollama endpoints:
+  - New config field `ollama_api_key`; when set (or `OLLAMA_API_KEY` is exported) every Ollama request carries `Authorization: Bearer <key>` — chat, streaming chat, embeddings, Ollama reranker, `/api/tags` model listing (TUI, Web UI proxy, `gleann doctor`, `gleann config validate`), multimodal (`/api/show`, `/api/chat`), auto-setup detection and `/api/pull`, conversation/memory summarizers.
+  - CLI: `gleann config set ollama_api_key <key>` (aliases `ollama-api-key`, `ollama_key`); `--ollama-api-key` flag for build/search/ask/chat/serve/multimodal and `gleann setup --bootstrap|--auto`.
+  - Setup wizard: optional masked "Ollama API Key" step after the Ollama URL (embedding and LLM; one shared value, Enter skips); shown masked in the summary and flagged as `(key)` in the settings menu.
+  - Web UI: the API Key field is enabled for the `ollama` provider (bound to `ollama_api_key`, placeholder "Optional") and model listing passes the provider-specific key. Requires a UI rebuild (`internal/server/dist`).
+  - `gleann doctor` reports "API key configured" / "no API key" for Ollama and hints when Ollama answers 401/403.
+
+### Fixed
+- The API key is now selected per provider: an `openai_api_key` is no longer sent to Ollama endpoints (CLI ask/chat, MCP ask/batch_ask, TUI chat, server ask/search/proxy, embeddings, reranker).
+- `gleann config show` and `gleann config set` mask API keys (Ollama, OpenAI, Anthropic) instead of printing them in clear text.
+- `--api-key` value is no longer mistaken for the question/index name in `gleann ask`.
+
 ## [v1.8.5] — 2026-10-14
 
 ### Added

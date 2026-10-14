@@ -49,6 +49,9 @@ func (b *LeannBuilder) BuildPassages(name string, items []Item) ([]int64, error)
 	if len(items) == 0 {
 		return nil, fmt.Errorf("no items to index")
 	}
+	if err := checkPathName(name); err != nil {
+		return nil, err
+	}
 
 	indexDir := filepath.Join(b.config.IndexDir, name)
 	if err := os.MkdirAll(indexDir, 0o755); err != nil {
@@ -103,6 +106,9 @@ func (b *LeannBuilder) BuildPassages(name string, items []Item) ([]int64, error)
 func (b *LeannBuilder) BuildVectors(ctx context.Context, name string, items []Item, ids []int64) error {
 	if b.embedder == nil {
 		return fmt.Errorf("no embedder configured for vector build")
+	}
+	if err := checkPathName(name); err != nil {
+		return err
 	}
 
 	indexDir := filepath.Join(b.config.IndexDir, name)
@@ -187,6 +193,9 @@ func (b *LeannBuilder) Build(ctx context.Context, name string, items []Item) err
 // given source paths and adds new items. This is much faster than a full rebuild
 // when only a few files have changed.
 func (b *LeannBuilder) UpdateIndex(ctx context.Context, name string, newItems []Item, removeSources []string) error {
+	if err := checkPathName(name); err != nil {
+		return err
+	}
 	indexDir := filepath.Join(b.config.IndexDir, name)
 	basePath := filepath.Join(indexDir, name)
 
@@ -292,6 +301,9 @@ func (b *LeannBuilder) BuildFromTexts(ctx context.Context, name string, texts []
 
 // AddToIndex adds new items to an existing index.
 func (b *LeannBuilder) AddToIndex(ctx context.Context, name string, items []Item) error {
+	if err := checkPathName(name); err != nil {
+		return err
+	}
 	indexDir := filepath.Join(b.config.IndexDir, name)
 	basePath := filepath.Join(indexDir, name)
 

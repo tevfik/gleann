@@ -29,6 +29,7 @@ type Config struct {
 	EmbeddingProvider string
 	EmbeddingModel    string
 	OllamaHost        string
+	OllamaAPIKey      string // optional Bearer key for Ollama (auth proxy / hosted)
 	OpenAIAPIKey      string
 	OpenAIBaseURL     string
 	LLMProvider       string
@@ -104,6 +105,7 @@ func NewServer(cfg Config) *Server {
 	glCfg.EmbeddingModel = cfg.EmbeddingModel
 	glCfg.EmbeddingProvider = cfg.EmbeddingProvider
 	glCfg.OllamaHost = cfg.OllamaHost
+	glCfg.OllamaAPIKey = cfg.OllamaAPIKey
 	glCfg.OpenAIAPIKey = cfg.OpenAIAPIKey
 	glCfg.OpenAIBaseURL = cfg.OpenAIBaseURL
 	glCfg.LLMProvider = cfg.LLMProvider
@@ -111,7 +113,9 @@ func NewServer(cfg Config) *Server {
 
 	baseURL := cfg.OllamaHost
 	apiKey := ""
-	if cfg.EmbeddingProvider == "openai" {
+	if cfg.EmbeddingProvider == "" || cfg.EmbeddingProvider == "ollama" {
+		apiKey = glCfg.APIKeyForProvider(cfg.EmbeddingProvider)
+	} else if cfg.EmbeddingProvider == "openai" {
 		if cfg.OpenAIBaseURL != "" {
 			baseURL = cfg.OpenAIBaseURL
 		}
@@ -336,6 +340,9 @@ func (s *Server) getSearcher(name string) (*gleann.LeannSearcher, error) {
 	if name == "" {
 		return nil, fmt.Errorf("index name required (use gleann_list to see available indexes)")
 	}
+	if err := gleann.ValidateName(name); err != nil {
+		return nil, err
+	}
 
 	// Verify index is exposed to MCP
 	meta, err := gleann.GetIndexMeta(s.config.IndexDir, name)
@@ -371,7 +378,9 @@ func (s *Server) getSearcher(name string) (*gleann.LeannSearcher, error) {
 			// Auto-adapt to the index's embedding model using the configured provider
 			baseURL := s.config.OllamaHost
 			apiKey := ""
-			if s.config.EmbeddingProvider == "openai" {
+			if s.config.EmbeddingProvider == "" || s.config.EmbeddingProvider == "ollama" {
+				apiKey = s.config.APIKeyForProvider(s.config.EmbeddingProvider)
+			} else if s.config.EmbeddingProvider == "openai" {
 				if s.config.OpenAIBaseURL != "" {
 					baseURL = s.config.OpenAIBaseURL
 				}
@@ -409,6 +418,9 @@ func (s *Server) getSearcher(name string) (*gleann.LeannSearcher, error) {
 			Provider: provider,
 			Model:    rerankModel,
 			BaseURL:  s.config.OllamaHost,
+		}
+		if rerankerCfg.Provider == gleann.RerankerOllama {
+			rerankerCfg.APIKey = s.config.APIKeyForProvider("ollama")
 		}
 		searcher.SetReranker(gleann.NewReranker(rerankerCfg))
 	}
@@ -1018,9 +1030,7 @@ func (s *Server) handleAsk(ctx context.Context, request mcp.CallToolRequest) (*m
 	if s.config.OllamaHost != "" {
 		chatConfig.BaseURL = s.config.OllamaHost
 	}
-	if s.config.OpenAIAPIKey != "" {
-		chatConfig.APIKey = s.config.OpenAIAPIKey
-	}
+	chatConfig.APIKey = s.config.APIKeyForProvider(string(chatConfig.Provider))
 	if s.config.OpenAIBaseURL != "" && chatConfig.Provider == gleann.LLMOpenAI {
 		chatConfig.BaseURL = s.config.OpenAIBaseURL
 	}
@@ -1749,11 +1759,16 @@ func (s *Server) handleSync(ctx context.Context, request mcp.CallToolRequest) (*
 		if envIdx := os.Getenv("GLEANN_INDEX"); envIdx != "" {
 			indexName = envIdx
 		} else if cwd != "" && cwd != "/" {
-			indexName = strings.ToLower(filepath.Base(cwd))
+			indexName = sanitizeIndexName(strings.ToLower(filepath.Base(cwd)))
 		}
 	}
 	if indexName == "" {
 		return mcp.NewToolResultError("missing parameter: index (and could not auto-resolve from workspace directory)"), nil
+	}
+	// The name becomes a path under the index dir and a positional argument
+	// of the self-exec'd build, so it must be a safe, non-flag name.
+	if err := gleann.ValidateName(indexName); err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
 	}
 
 	meta, metaErr := gleann.GetIndexMeta(s.config.IndexDir, indexName)
@@ -2135,3 +2150,30 @@ func (s *Server) resolveIndexName() string {
 	return ""
 }
 
+
+// sanitizeIndexName turns an auto-derived name (e.g. a directory name) into
+// one accepted by gleann.ValidateName by replacing disallowed characters
+// with '-' and trimming leading non-alphanumerics. Returns "" if nothing
+// usable remains.
+func sanitizeIndexName(name string) string {
+	if gleann.ValidateName(name) == nil {
+		return name
+	}
+	var b strings.Builder
+	for _, r := range name {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '.', r == '_', r == '-':
+			b.WriteRune(r)
+		default:
+			b.WriteByte('-')
+		}
+	}
+	out := strings.TrimLeft(b.String(), "-._")
+	if len(out) > gleann.MaxNameLength {
+		out = out[:gleann.MaxNameLength]
+	}
+	if gleann.ValidateName(out) != nil {
+		return ""
+	}
+	return out
+}

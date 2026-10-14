@@ -52,8 +52,18 @@ func cmdDoctor() {
 
 	ollamaUsed := cfg == nil || cfg.EmbeddingProvider == "ollama" || cfg.LLMProvider == "ollama"
 
+	ollamaKey := ""
+	if cfg != nil {
+		ollamaKey = cfg.OllamaAPIKey
+	}
+	ollamaKey = gleann.ResolveOllamaAPIKey(ollamaKey)
+	keyStatus := "no API key"
+	if ollamaKey != "" {
+		keyStatus = "API key configured"
+	}
+
 	client := &http.Client{Timeout: 5 * time.Second}
-	resp, err := client.Get(host + "/api/tags")
+	resp, err := gleann.OllamaGet(client, host+"/api/tags", ollamaKey)
 	if err != nil {
 		if ollamaUsed {
 			fail(fmt.Sprintf("Cannot reach Ollama at %s — is it running?", host))
@@ -64,9 +74,12 @@ func cmdDoctor() {
 	} else {
 		resp.Body.Close()
 		if resp.StatusCode == http.StatusOK {
-			ok(fmt.Sprintf("Ollama reachable at %s", host))
+			ok(fmt.Sprintf("Ollama reachable at %s (%s)", host, keyStatus))
 			checkModels(cfg, host, ok, warn, fail)
 		} else {
+			if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+				warn(fmt.Sprintf("Ollama at %s requires authentication (%s) — set: gleann config set ollama_api_key <key>  (or OLLAMA_API_KEY)", host, keyStatus))
+			}
 			if ollamaUsed {
 				fail(fmt.Sprintf("Ollama returned HTTP %d at %s", resp.StatusCode, host))
 			} else {
@@ -122,8 +135,12 @@ func configFilePath() string {
 
 // checkModels verifies that the configured embedding and LLM models are available.
 func checkModels(cfg *tui.OnboardResult, host string, ok, warn, fail func(string)) {
+	ollamaKey := ""
+	if cfg != nil {
+		ollamaKey = cfg.OllamaAPIKey
+	}
 	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Get(host + "/api/tags")
+	resp, err := gleann.OllamaGet(client, host+"/api/tags", gleann.ResolveOllamaAPIKey(ollamaKey))
 	if err != nil {
 		return
 	}

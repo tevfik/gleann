@@ -72,7 +72,7 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 	uptime := time.Since(m.startTime).Seconds()
 
 	s.mu.RLock()
-	cachedSearchers := len(s.searchers)
+	cachedSearchers := s.cachedSearcherCount()
 	s.mu.RUnlock()
 
 	w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")

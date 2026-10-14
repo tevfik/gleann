@@ -83,7 +83,7 @@ type oaiModelList struct {
 // Each index is exposed as "gleann/<name>". A special "gleann/" entry
 // represents pure-LLM mode (no RAG).
 func (s *Server) handleListModels(w http.ResponseWriter, r *http.Request) {
-	indexes, _ := gleann.ListIndexes(s.config.IndexDir)
+	indexes, _ := gleann.ListIndexes(s.cfg().IndexDir)
 
 	now := time.Now().Unix()
 	models := []oaiModel{
@@ -140,6 +140,15 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 
 	// Parse index names from model field.
 	indexNames := parseIndexFromModel(req.Model)
+	for _, n := range indexNames {
+		if strings.HasPrefix(n, "@") {
+			continue // tag reference, resolved against index metadata
+		}
+		if err := gleann.ValidateName(n); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid index name in model: "+err.Error())
+			return
+		}
+	}
 
 	// Per-request RAG option overrides from headers.
 	var searchOpts []gleann.SearchOption
@@ -147,8 +156,8 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
 			searchOpts = append(searchOpts, gleann.WithTopK(n))
 		}
-	} else if s.config.SearchConfig.TopK > 0 {
-		searchOpts = append(searchOpts, gleann.WithTopK(s.config.SearchConfig.TopK))
+	} else if s.cfg().SearchConfig.TopK > 0 {
+		searchOpts = append(searchOpts, gleann.WithTopK(s.cfg().SearchConfig.TopK))
 	}
 	if v := r.Header.Get("X-Gleann-Min-Score"); v != "" {
 		if f, err := strconv.ParseFloat(v, 32); err == nil {
@@ -337,7 +346,7 @@ func (s *Server) expandProxyIndexNames(rawNames []string) ([]string, error) {
 	for _, name := range rawNames {
 		if strings.HasPrefix(name, "@") {
 			tag := strings.TrimPrefix(name, "@")
-			allIndexes, err := gleann.ListIndexes(s.config.IndexDir)
+			allIndexes, err := gleann.ListIndexes(s.cfg().IndexDir)
 			if err != nil {
 				return nil, err
 			}
@@ -395,15 +404,16 @@ func (s *Server) buildProxyMessages(
 	var contextParts []string
 	if len(resolvedNames) == 1 {
 		// Enforce governance: if index exists and is private, refuse proxy access.
-		if meta, err := gleann.GetIndexMeta(s.config.IndexDir, resolvedNames[0]); err == nil && !meta.IsMCPExposed() {
+		if meta, err := gleann.GetIndexMeta(s.cfg().IndexDir, resolvedNames[0]); err == nil && !meta.IsMCPExposed() {
 			return nil, fmt.Errorf("index %q is private and not exposed via proxy", resolvedNames[0])
 		}
 
-		searcher, err := s.getSearcher(ctx, resolvedNames[0])
+		searcher, release, err := s.acquireSearcher(ctx, resolvedNames[0])
 		if err != nil {
 			return nil, fmt.Errorf("load index %q: %w", resolvedNames[0], err)
 		}
 		results, err := searcher.Search(ctx, query, searchOpts...)
+		release()
 		if err != nil {
 			return nil, fmt.Errorf("search: %w", err)
 		}
@@ -419,14 +429,15 @@ func (s *Server) buildProxyMessages(
 		all := make(map[string][]gleann.SearchResult)
 		for _, name := range resolvedNames {
 			// Skip private indexes in multi-index queries
-			if meta, err := gleann.GetIndexMeta(s.config.IndexDir, name); err == nil && !meta.IsMCPExposed() {
+			if meta, err := gleann.GetIndexMeta(s.cfg().IndexDir, name); err == nil && !meta.IsMCPExposed() {
 				continue
 			}
-			searcher, err := s.getSearcher(ctx, name)
+			searcher, release, err := s.acquireSearcher(ctx, name)
 			if err != nil {
 				continue // skip unavailable indexes
 			}
 			results, err := searcher.Search(ctx, query, searchOpts...)
+			release()
 			if err != nil {
 				continue
 			}
@@ -476,41 +487,77 @@ func (s *Server) proxyLLMConfig() gleann.ChatConfig {
 	cfg := gleann.DefaultChatConfig()
 
 	// Apply saved user config with provider precedence.
-	if s.config.LLMProvider != "" {
-		switch strings.ToLower(s.config.LLMProvider) {
+	if s.cfg().LLMProvider != "" {
+		switch strings.ToLower(s.cfg().LLMProvider) {
 		case "ollama":
 			cfg.Provider = gleann.LLMOllama
-			if s.config.OllamaHost != "" && !strings.Contains(s.config.OllamaHost, "(auto-scan") {
-				cfg.BaseURL = s.config.OllamaHost
+			if s.cfg().OllamaHost != "" && !strings.Contains(s.cfg().OllamaHost, "(auto-scan") {
+				cfg.BaseURL = s.cfg().OllamaHost
 			}
+			cfg.APIKey = s.cfg().APIKeyForProvider("ollama")
 		case "openai":
 			cfg.Provider = gleann.LLMOpenAI
-			if s.config.OpenAIBaseURL != "" {
-				cfg.BaseURL = s.config.OpenAIBaseURL
+			if s.cfg().OpenAIBaseURL != "" {
+				cfg.BaseURL = s.cfg().OpenAIBaseURL
 			}
-			if s.config.OpenAIAPIKey != "" {
-				cfg.APIKey = s.config.OpenAIAPIKey
+			if s.cfg().OpenAIAPIKey != "" {
+				cfg.APIKey = s.cfg().OpenAIAPIKey
 			}
 		}
 	} else {
-		if s.config.OllamaHost != "" && !strings.Contains(s.config.OllamaHost, "(auto-scan") {
-			cfg.BaseURL = s.config.OllamaHost
+		if s.cfg().OllamaHost != "" && !strings.Contains(s.cfg().OllamaHost, "(auto-scan") {
+			cfg.BaseURL = s.cfg().OllamaHost
 		}
-		if s.config.OpenAIAPIKey != "" {
-			cfg.APIKey = s.config.OpenAIAPIKey
+		if s.cfg().OpenAIAPIKey != "" {
+			cfg.APIKey = s.cfg().OpenAIAPIKey
 			cfg.Provider = gleann.LLMOpenAI
 		}
-		if s.config.OpenAIBaseURL != "" {
-			cfg.BaseURL = s.config.OpenAIBaseURL
+		if s.cfg().OpenAIBaseURL != "" {
+			cfg.BaseURL = s.cfg().OpenAIBaseURL
 			cfg.Provider = gleann.LLMOpenAI
+		}
+		if cfg.Provider == gleann.LLMOllama {
+			cfg.APIKey = s.cfg().APIKeyForProvider("ollama")
 		}
 	}
 
-	if s.config.LLMModel != "" {
-		cfg.Model = s.config.LLMModel
+	if s.cfg().LLMModel != "" {
+		cfg.Model = s.cfg().LLMModel
 	}
 
 	return cfg
+}
+
+// proxyRedactedKey is the placeholder GET /api/config uses for stored secrets.
+const proxyRedactedKey = "********"
+
+// proxyStoredKey returns the stored API key for provider, but only when the
+// requested host is the configured one (or empty), so a stored secret is
+// never forwarded to an arbitrary host passed in the query string.
+func (s *Server) proxyStoredKey(provider, host string) string {
+	norm := func(u string) string {
+		return strings.TrimSuffix(strings.TrimRight(strings.TrimSpace(u), "/"), "/v1")
+	}
+	cfg := s.cfg()
+	switch provider {
+	case "ollama":
+		stored := cfg.OllamaHost
+		if stored == "" {
+			stored = gleann.DefaultOllamaHost
+		}
+		if host == "" || norm(host) == norm(stored) {
+			return cfg.APIKeyForProvider("ollama")
+		}
+	case "openai":
+		stored := cfg.OpenAIBaseURL
+		if stored == "" {
+			stored = "https://api.openai.com"
+		}
+		if host == "" || norm(host) == norm(stored) {
+			return cfg.OpenAIAPIKey
+		}
+	}
+	return ""
 }
 
 // handleProxyModels handles GET /api/proxy/models?provider=X&host=Y&apikey=Z
@@ -519,12 +566,23 @@ func (s *Server) handleProxyModels(w http.ResponseWriter, r *http.Request) {
 	provider := r.URL.Query().Get("provider")
 	host := r.URL.Query().Get("host")
 	apiKey := r.URL.Query().Get("apikey")
+	// An empty or redacted ("********") key means "use the stored key" for
+	// this provider — the Web UI round-trips redacted secrets from /api/config.
+	if apiKey == "" || apiKey == proxyRedactedKey {
+		apiKey = s.proxyStoredKey(provider, host)
+	}
 
 	if provider == "ollama" {
 		if host == "" {
 			host = "http://localhost:11434"
 		}
-		resp, err := http.Get(strings.TrimSuffix(host, "/") + "/api/tags")
+		req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, strings.TrimSuffix(host, "/")+"/api/tags", nil)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid host: "+err.Error())
+			return
+		}
+		gleann.SetBearerAuth(req, apiKey)
+		resp, err := proxyHTTPClient.Do(req)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
@@ -553,13 +611,31 @@ func (s *Server) handleProxyModels(w http.ResponseWriter, r *http.Request) {
 
 	if provider == "openai" {
 		if host == "" {
-			host = "https://api.openai.com/v1"
+			host = defaultOpenAIBaseURL
 		}
-		req, _ := http.NewRequest("GET", strings.TrimSuffix(host, "/")+"/models", nil)
+		// The web UI only ever sees the redacted key; substitute the real
+		// one server-side, but only when talking to the configured endpoint
+		// so the stored key cannot be exfiltrated to an arbitrary host.
+		if apiKey == gleann.RedactedSecret {
+			apiKey = ""
+			cfg := s.cfg()
+			configured := cfg.OpenAIBaseURL
+			if configured == "" {
+				configured = defaultOpenAIBaseURL
+			}
+			if sameBaseURL(host, configured) {
+				apiKey = cfg.OpenAIAPIKey
+			}
+		}
+		req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, strings.TrimSuffix(host, "/")+"/models", nil)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid host: "+err.Error())
+			return
+		}
 		if apiKey != "" {
 			req.Header.Set("Authorization", "Bearer "+apiKey)
 		}
-		resp, err := http.DefaultClient.Do(req)
+		resp, err := proxyHTTPClient.Do(req)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
@@ -587,4 +663,29 @@ func (s *Server) handleProxyModels(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{"models": []string{}})
+}
+
+// defaultOpenAIBaseURL is used when no OpenAI-compatible host is given.
+const defaultOpenAIBaseURL = "https://api.openai.com/v1"
+
+// proxyHTTPClient is used for the model-list proxy; it must never hang a
+// handler indefinitely on an unresponsive provider.
+var proxyHTTPClient = &http.Client{Timeout: 15 * time.Second}
+
+// sameBaseURL reports whether two base URLs refer to the same endpoint,
+// ignoring trailing slashes and scheme/host case.
+func sameBaseURL(a, b string) bool {
+	norm := func(s string) string {
+		s = strings.TrimSpace(strings.TrimRight(s, "/"))
+		if i := strings.Index(s, "://"); i >= 0 {
+			rest := s[i+3:]
+			hostEnd := strings.IndexByte(rest, '/')
+			if hostEnd < 0 {
+				hostEnd = len(rest)
+			}
+			return strings.ToLower(s[:i+3]+rest[:hostEnd]) + rest[hostEnd:]
+		}
+		return s
+	}
+	return norm(a) == norm(b)
 }

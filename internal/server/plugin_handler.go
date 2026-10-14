@@ -46,8 +46,8 @@ func (s *Server) handleListPlugins(w http.ResponseWriter, r *http.Request) {
 // POST /api/plugins/{name}/install
 func (s *Server) handleInstallPlugin(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
-	if name == "" {
-		writeError(w, http.StatusBadRequest, "plugin name required")
+	if err := gleann.ValidateName(name); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid plugin name: "+err.Error())
 		return
 	}
 
@@ -101,8 +101,8 @@ func (s *Server) handleInstallPlugin(w http.ResponseWriter, r *http.Request) {
 // DELETE /api/plugins/{name}
 func (s *Server) handleUninstallPlugin(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
-	if name == "" {
-		writeError(w, http.StatusBadRequest, "plugin name required")
+	if err := gleann.ValidateName(name); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid plugin name: "+err.Error())
 		return
 	}
 

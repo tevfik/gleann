@@ -15,6 +15,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"time"
@@ -28,6 +29,7 @@ import (
 	"github.com/tevfik/gleann/pkg/gleann"
 	"github.com/tevfik/gleann/pkg/memory"
 	"github.com/tevfik/gleann/pkg/roles"
+	"golang.org/x/sync/singleflight"
 
 	// Register HNSW backend.
 	_ "github.com/tevfik/gleann/pkg/backends"
@@ -38,21 +40,90 @@ var webFS embed.FS
 
 // Server is the REST API server for gleann.
 type Server struct {
-	config      gleann.Config
-	embedder    *embedding.Computer
-	logBuffer   *LogBuffer
-	searchers   map[string]*gleann.LeannSearcher
-	mu          sync.RWMutex
-	addr        string
-	version     string
-	server      *http.Server
-	graphPool   *graphDBPool
-	memoryPool  *memoryPool         // Memory Engine: generic Entity/RELATES_TO graph
-	blockMem    *memory.Manager     // BBolt hierarchical memory blocks (pkg/memory)
-	bgManager   *background.Manager // Background task manager
+	// config and embedder are replaced by handleUpdateConfig while requests
+	// are in flight. Always read them through s.cfg() / s.getEmbedder(),
+	// which take cfgMu; only write them while holding cfgMu.
+	config   gleann.Config
+	embedder *embedding.Computer
+	cfgMu    sync.RWMutex
+
+	logBuffer *LogBuffer
+
+	// searchers caches loaded index searchers. mu guards searchers,
+	// searcherRefs and searcherGen. Use acquireSearcher/invalidateSearcher
+	// (searcher_cache.go) rather than touching the map directly.
+	searchers    map[string]*gleann.LeannSearcher
+	searcherRefs map[*gleann.LeannSearcher]*searcherRef
+	searcherGen  uint64
+	loadGroup    singleflight.Group
+	mu           sync.RWMutex
+
+	addr       string
+	version    string
+	server     *http.Server
+	graphPool  *graphDBPool
+	memoryPool *memoryPool         // Memory Engine: generic Entity/RELATES_TO graph
+	blockMem   *memory.Manager     // BBolt hierarchical memory blocks (pkg/memory)
+	bgManager  *background.Manager // Background task manager
+
 	autoIndexer *background.AutoIndexer
-	bus         *eventbus.Bus // In-process pub/sub for lifecycle events
-	stopCh      chan struct{} // closed on Stop() to signal background goroutines
+	aiMu        sync.Mutex // guards autoIndexer
+
+	bus    *eventbus.Bus // In-process pub/sub for lifecycle events
+	stopCh chan struct{} // closed on Stop() to signal background goroutines
+
+	// Server-lifetime context: cancelled by Stop so that background work
+	// (self-exec'd index builds, model downloads, searcher loads) does not
+	// outlive the server. bgWG tracks goroutines Stop must wait for.
+	lifeOnce   sync.Once
+	lifeCtx    context.Context
+	lifeCancel context.CancelFunc
+	bgWG       sync.WaitGroup
+}
+
+// cfg returns a snapshot of the current server configuration.
+func (s *Server) cfg() gleann.Config {
+	s.cfgMu.RLock()
+	defer s.cfgMu.RUnlock()
+	return s.config
+}
+
+// getEmbedder returns the current embedding computer (may be nil).
+func (s *Server) getEmbedder() *embedding.Computer {
+	s.cfgMu.RLock()
+	defer s.cfgMu.RUnlock()
+	return s.embedder
+}
+
+// cfgAndEmbedder returns a consistent snapshot of config and embedder.
+func (s *Server) cfgAndEmbedder() (gleann.Config, *embedding.Computer) {
+	s.cfgMu.RLock()
+	defer s.cfgMu.RUnlock()
+	return s.config, s.embedder
+}
+
+// lifetime returns the server-lifetime context (cancelled by Stop).
+func (s *Server) lifetime() context.Context {
+	s.lifeOnce.Do(func() {
+		s.lifeCtx, s.lifeCancel = context.WithCancel(context.Background())
+	})
+	return s.lifeCtx
+}
+
+// goBackground runs fn in a goroutine tracked by Stop.
+func (s *Server) goBackground(fn func()) {
+	s.bgWG.Add(1)
+	go func() {
+		defer s.bgWG.Done()
+		fn()
+	}()
+}
+
+// getAutoIndexer returns the auto-indexer (may be nil).
+func (s *Server) getAutoIndexer() *background.AutoIndexer {
+	s.aiMu.Lock()
+	defer s.aiMu.Unlock()
+	return s.autoIndexer
 }
 
 // publish is a nil-safe helper that emits an event on the bus.
@@ -85,7 +156,7 @@ func NewServer(config gleann.Config, addr, version string) *Server {
 		Provider: embedding.Provider(config.EmbeddingProvider),
 		Model:    config.EmbeddingModel,
 		BaseURL:  baseURL,
-		APIKey:   config.OpenAIAPIKey,
+		APIKey:   config.APIKeyForProvider(config.EmbeddingProvider),
 	})
 
 	if version == "" {
@@ -122,8 +193,8 @@ func NewServer(config gleann.Config, addr, version string) *Server {
 	return s
 }
 
-// Start starts the server.
-func (s *Server) Start() error {
+// buildMux registers all routes on a new ServeMux.
+func (s *Server) buildMux() *http.ServeMux {
 	mux := http.NewServeMux()
 
 	// Routes matching Python LEANN's FastAPI endpoints.
@@ -241,6 +312,13 @@ func (s *Server) Start() error {
 		w.Write(content)
 	})
 
+	return mux
+}
+
+// Start starts the server.
+func (s *Server) Start() error {
+	mux := s.buildMux()
+
 	s.server = &http.Server{
 		Addr:         s.addr,
 		Handler:      withMiddleware(mux),
@@ -264,14 +342,24 @@ func (s *Server) Start() error {
 }
 
 // Stop gracefully shuts down the server.
+//
+// Order matters: the HTTP server is shut down first so no new requests
+// arrive and in-flight handlers drain; then background workers and pools
+// are stopped, cached searchers closed, and finally the auto-indexer.
 func (s *Server) Stop(ctx context.Context) error {
-	// Signal background goroutines to stop.
+	var shutdownErr error
+	if s.server != nil {
+		shutdownErr = s.server.Shutdown(ctx)
+	}
+
+	// Signal background goroutines to stop and cancel lifetime-bound work
+	// (self-exec'd builds, downloads, searcher loads).
 	if s.stopCh != nil {
 		close(s.stopCh)
 	}
-	if s.autoIndexer != nil {
-		s.autoIndexer.Stop()
-	}
+	s.lifetime()
+	s.lifeCancel()
+
 	if s.bgManager != nil {
 		s.bgManager.Stop()
 	}
@@ -280,10 +368,28 @@ func (s *Server) Stop(ctx context.Context) error {
 	}
 	s.stopMemoryPool(ctx)
 	s.closeBlockMem()
+
+	// Wait (bounded by ctx) for tracked background goroutines.
+	waitDone := make(chan struct{})
+	go func() {
+		s.bgWG.Wait()
+		close(waitDone)
+	}()
+	select {
+	case <-waitDone:
+	case <-ctx.Done():
+		log.Printf("server stop: background tasks did not finish: %v", ctx.Err())
+	}
+
+	s.invalidateAllSearchers()
+
+	if ai := s.getAutoIndexer(); ai != nil {
+		ai.Stop()
+	}
 	if s.bus != nil {
 		_ = s.bus.Close()
 	}
-	return s.server.Shutdown(ctx)
+	return shutdownErr
 }
 
 // startAutoIndexer initializes the background auto-indexer.
@@ -291,7 +397,7 @@ func (s *Server) Stop(ctx context.Context) error {
 // determine which indexes to watch for file changes.
 func (s *Server) startAutoIndexer() {
 	ai, err := background.NewAutoIndexer(s.bgManager, background.AutoIndexConfig{
-		IndexDir: s.config.IndexDir,
+		IndexDir: s.cfg().IndexDir,
 	})
 	if err != nil {
 		log.Printf("auto-indexer: init failed: %v", err)
@@ -314,7 +420,7 @@ func (s *Server) startAutoIndexer() {
 	}
 
 	// Also watch indexes that have AutoWatch = true in their metadata
-	indexes, err := gleann.ListIndexes(s.config.IndexDir)
+	indexes, err := gleann.ListIndexes(s.cfg().IndexDir)
 	if err == nil {
 		for _, idx := range indexes {
 			if idx.AutoWatch && idx.SourceDir != "" {
@@ -329,11 +435,12 @@ func (s *Server) startAutoIndexer() {
 
 	if len(ai.WatchedIndexes()) > 0 {
 		ai.Start(context.Background())
-		s.autoIndexer = ai
-	} else {
-		// Keep the autoIndexer around so we can add watches dynamically later
-		s.autoIndexer = ai
 	}
+	// Keep the autoIndexer around (even with no watches) so we can add
+	// watches dynamically later.
+	s.aiMu.Lock()
+	s.autoIndexer = ai
+	s.aiMu.Unlock()
 }
 
 // --- Handlers ---
@@ -349,7 +456,7 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleListIndexes(w http.ResponseWriter, r *http.Request) {
-	indexes, err := gleann.ListIndexes(s.config.IndexDir)
+	indexes, err := gleann.ListIndexes(s.cfg().IndexDir)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -364,6 +471,12 @@ func (s *Server) handleListIndexes(w http.ResponseWriter, r *http.Request) {
 	}
 	if clientTarget == "" {
 		clientTarget = r.URL.Query().Get("index")
+	}
+	if clientTarget != "" {
+		if err := gleann.ValidateName(clientTarget); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid client target: "+err.Error())
+			return
+		}
 	}
 
 	tagFilter := r.URL.Query().Get("tag")
@@ -399,8 +512,8 @@ func (s *Server) handleListIndexes(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var embedderName string
-	if s.embedder != nil {
-		embedderName = s.embedder.ModelName()
+	if emb := s.getEmbedder(); emb != nil {
+		embedderName = emb.ModelName()
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"indexes":                 filtered,
@@ -411,8 +524,8 @@ func (s *Server) handleListIndexes(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleGetIndex(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
-	if name == "" {
-		writeError(w, http.StatusBadRequest, "index name required")
+	if err := gleann.ValidateName(name); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid index name: "+err.Error())
 		return
 	}
 
@@ -421,11 +534,12 @@ func (s *Server) handleGetIndex(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	searcher, err := s.getSearcher(r.Context(), name)
+	searcher, release, err := s.acquireSearcher(r.Context(), name)
 	if err != nil {
 		writeError(w, http.StatusNotFound, fmt.Sprintf("index %q not found: %v", name, err))
 		return
 	}
+	defer release()
 
 	writeJSON(w, http.StatusOK, searcher.Meta())
 }
@@ -438,8 +552,8 @@ type patchIndexRequest struct {
 
 func (s *Server) handlePatchIndex(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
-	if name == "" {
-		writeError(w, http.StatusBadRequest, "index name required")
+	if err := gleann.ValidateName(name); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid index name: "+err.Error())
 		return
 	}
 
@@ -449,7 +563,7 @@ func (s *Server) handlePatchIndex(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err := gleann.UpdateIndexMeta(s.config.IndexDir, name, func(meta *gleann.IndexMeta) {
+	err := gleann.UpdateIndexMeta(s.cfg().IndexDir, name, func(meta *gleann.IndexMeta) {
 		if req.Tags != nil {
 			meta.Tags = *req.Tags
 		}
@@ -465,21 +579,19 @@ func (s *Server) handlePatchIndex(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	meta, err := gleann.GetIndexMeta(s.config.IndexDir, name)
+	meta, err := gleann.GetIndexMeta(s.cfg().IndexDir, name)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
-	s.mu.Lock()
-	if searcher, ok := s.searchers[name]; ok && searcher != nil {
-		searcher.SetMeta(*meta)
-	}
-	s.mu.Unlock()
+	// Drop the cached searcher so the next request reloads it with the new
+	// metadata (mutating the shared searcher in place would race with
+	// concurrent readers).
+	s.invalidateSearcher(name)
 
 	writeJSON(w, http.StatusOK, meta)
 }
-
 
 type searchRequest struct {
 	Query               string                  `json:"query"`
@@ -505,8 +617,8 @@ type searchResponse struct {
 
 func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
-	if name == "" {
-		writeError(w, http.StatusBadRequest, "index name required")
+	if err := gleann.ValidateName(name); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid index name: "+err.Error())
 		return
 	}
 
@@ -526,11 +638,12 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	searcher, err := s.getSearcher(r.Context(), name)
+	searcher, release, err := s.acquireSearcher(r.Context(), name)
 	if err != nil {
 		writeError(w, http.StatusNotFound, fmt.Sprintf("index %q not found: %v", name, err))
 		return
 	}
+	defer release()
 
 	start := time.Now()
 
@@ -561,19 +674,19 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Set up per-request reranker if requested.
-	if req.Rerank || s.config.SearchConfig.UseReranker {
+	if cfg := s.cfg(); req.Rerank || cfg.SearchConfig.UseReranker {
 		rerankModel := req.RerankModel
 		if rerankModel == "" {
-			rerankModel = s.config.SearchConfig.RerankerConfig.Model
+			rerankModel = cfg.SearchConfig.RerankerConfig.Model
 		}
 		if rerankModel == "" {
 			rerankModel = "bge-reranker-v2-m3"
 		}
 		rerankerCfg := gleann.RerankerConfig{
-			Provider: gleann.RerankerProvider(s.config.EmbeddingProvider),
+			Provider: gleann.RerankerProvider(cfg.EmbeddingProvider),
 			Model:    rerankModel,
-			BaseURL:  s.config.OllamaHost,
-			APIKey:   s.config.OpenAIAPIKey,
+			BaseURL:  cfg.OllamaHost,
+			APIKey:   cfg.APIKeyForProvider(cfg.EmbeddingProvider),
 		}
 		opts = append(opts, gleann.WithCustomReranker(gleann.NewReranker(rerankerCfg)))
 	}
@@ -623,8 +736,8 @@ type askResponse struct {
 
 func (s *Server) handleAsk(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
-	if name == "" {
-		writeError(w, http.StatusBadRequest, "index name required")
+	if err := gleann.ValidateName(name); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid index name: "+err.Error())
 		return
 	}
 
@@ -649,22 +762,24 @@ func (s *Server) handleAsk(w http.ResponseWriter, r *http.Request) {
 		req.Stream = true
 	}
 
-	searcher, err := s.getSearcher(r.Context(), name)
+	searcher, release, err := s.acquireSearcher(r.Context(), name)
 	if err != nil {
 		writeError(w, http.StatusNotFound, fmt.Sprintf("index %q not found: %v", name, err))
 		return
 	}
+	defer release()
 
 	chatConfig := gleann.DefaultChatConfig()
 	// Apply server config defaults.
-	if s.config.LLMModel != "" {
-		chatConfig.Model = s.config.LLMModel
+	cfg := s.cfg()
+	if cfg.LLMModel != "" {
+		chatConfig.Model = cfg.LLMModel
 	}
-	if s.config.LLMProvider != "" {
-		chatConfig.Provider = gleann.LLMProvider(s.config.LLMProvider)
+	if cfg.LLMProvider != "" {
+		chatConfig.Provider = gleann.LLMProvider(cfg.LLMProvider)
 	}
-	if s.config.OllamaHost != "" {
-		chatConfig.BaseURL = s.config.OllamaHost
+	if cfg.OllamaHost != "" {
+		chatConfig.BaseURL = cfg.OllamaHost
 	}
 
 	if req.LLMModel != "" {
@@ -692,6 +807,9 @@ func (s *Server) handleAsk(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	if chatConfig.Provider == gleann.LLMOllama {
+		chatConfig.APIKey = s.cfg().APIKeyForProvider("ollama")
+	}
 	chat := gleann.NewChat(searcher, chatConfig)
 
 	// Restore conversation history if continuing.
@@ -722,7 +840,7 @@ func (s *Server) handleAsk(w http.ResponseWriter, r *http.Request) {
 		visionImages = []string{}
 	}
 	if req.VisionRAG {
-		meta, err := gleann.GetIndexMeta(s.config.IndexDir, name)
+		meta, err := gleann.GetIndexMeta(s.cfg().IndexDir, name)
 		if err == nil && meta.SourceDir != "" {
 			sources, _ := searcher.Search(r.Context(), req.Question, opts...)
 			renderedPages := make(map[string]bool)
@@ -817,7 +935,7 @@ func (s *Server) handleAskStream(w http.ResponseWriter, r *http.Request, chat *g
 	if req.VisionRAG {
 		sendStatus("Analysing documents for visual context...")
 
-		meta, err := gleann.GetIndexMeta(s.config.IndexDir, indexName)
+		meta, err := gleann.GetIndexMeta(s.cfg().IndexDir, indexName)
 		if err == nil && meta.SourceDir != "" {
 			sources, _ := chat.GetSearcher().Search(r.Context(), req.Question, opts...)
 			renderedPages := make(map[string]bool)
@@ -931,8 +1049,8 @@ type buildRequest struct {
 
 func (s *Server) handleBuild(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
-	if name == "" {
-		writeError(w, http.StatusBadRequest, "index name required")
+	if err := gleann.ValidateName(name); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid index name: "+err.Error())
 		return
 	}
 
@@ -956,14 +1074,15 @@ func (s *Server) handleBuild(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if meta, err := gleann.GetIndexMeta(s.config.IndexDir, name); err == nil {
-		if meta.EmbeddingModel != "" && meta.EmbeddingModel != s.embedder.ModelName() {
-			writeError(w, http.StatusBadRequest, fmt.Sprintf("model mismatch: index uses '%s', current is '%s'. please delete index first", meta.EmbeddingModel, s.embedder.ModelName()))
+	cfg, emb := s.cfgAndEmbedder()
+	if meta, err := gleann.GetIndexMeta(cfg.IndexDir, name); err == nil {
+		if meta.EmbeddingModel != "" && meta.EmbeddingModel != emb.ModelName() {
+			writeError(w, http.StatusBadRequest, fmt.Sprintf("model mismatch: index uses '%s', current is '%s'. please delete index first", meta.EmbeddingModel, emb.ModelName()))
 			return
 		}
 	}
 
-	builder, err := gleann.NewBuilder(s.config, s.embedder)
+	builder, err := gleann.NewBuilder(cfg, emb)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "create builder: "+err.Error())
 		return
@@ -993,7 +1112,7 @@ func (s *Server) handleBuild(w http.ResponseWriter, r *http.Request) {
 
 	// Update governance metadata if provided.
 	if len(req.Tags) > 0 || req.Description != "" || req.MCPExposed != nil {
-		_ = gleann.UpdateIndexMeta(s.config.IndexDir, name, func(meta *gleann.IndexMeta) {
+		_ = gleann.UpdateIndexMeta(s.cfg().IndexDir, name, func(meta *gleann.IndexMeta) {
 			if len(req.Tags) > 0 {
 				meta.Tags = req.Tags
 			}
@@ -1006,10 +1125,8 @@ func (s *Server) handleBuild(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	// Clear cached searcher.
-	s.mu.Lock()
-	delete(s.searchers, name)
-	s.mu.Unlock()
+	// Clear cached searcher (closed once in-flight requests release it).
+	s.invalidateSearcher(name)
 
 	// Notify webhooks.
 	notifyWebhooks("build_complete", map[string]any{
@@ -1034,8 +1151,8 @@ type updateIndexRequest struct {
 
 func (s *Server) handleUpdateIndex(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
-	if name == "" {
-		writeError(w, http.StatusBadRequest, "index name required")
+	if err := gleann.ValidateName(name); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid index name: "+err.Error())
 		return
 	}
 
@@ -1069,14 +1186,15 @@ func (s *Server) handleUpdateIndex(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if meta, err := gleann.GetIndexMeta(s.config.IndexDir, name); err == nil {
-		if meta.EmbeddingModel != "" && meta.EmbeddingModel != s.embedder.ModelName() {
-			writeError(w, http.StatusBadRequest, fmt.Sprintf("model mismatch: index uses '%s', current is '%s'. please delete index first", meta.EmbeddingModel, s.embedder.ModelName()))
+	cfg, emb := s.cfgAndEmbedder()
+	if meta, err := gleann.GetIndexMeta(cfg.IndexDir, name); err == nil {
+		if meta.EmbeddingModel != "" && meta.EmbeddingModel != emb.ModelName() {
+			writeError(w, http.StatusBadRequest, fmt.Sprintf("model mismatch: index uses '%s', current is '%s'. please delete index first", meta.EmbeddingModel, emb.ModelName()))
 			return
 		}
 	}
 
-	builder, err := gleann.NewBuilder(s.config, s.embedder)
+	builder, err := gleann.NewBuilder(cfg, emb)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "create builder: "+err.Error())
 		return
@@ -1088,13 +1206,9 @@ func (s *Server) handleUpdateIndex(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Invalidate searcher cache for this index
-	s.mu.Lock()
-	if searcher, ok := s.searchers[name]; ok {
-		searcher.Close()
-		delete(s.searchers, name)
-	}
-	s.mu.Unlock()
+	// Invalidate searcher cache for this index (closed once in-flight
+	// requests release it).
+	s.invalidateSearcher(name)
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"status":          "ok",
@@ -1107,20 +1221,20 @@ func (s *Server) handleUpdateIndex(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleDeleteIndex(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
-	if name == "" {
-		writeError(w, http.StatusBadRequest, "index name required")
+	if err := gleann.ValidateName(name); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid index name: "+err.Error())
 		return
 	}
 
-	// Close cached searcher.
-	s.mu.Lock()
-	if searcher, ok := s.searchers[name]; ok {
-		searcher.Close()
-		delete(s.searchers, name)
-	}
-	s.mu.Unlock()
+	// Drop the cached searcher; it is closed once in-flight requests that
+	// still use it have released it.
+	s.invalidateSearcher(name)
 
-	if err := gleann.RemoveIndex(s.config.IndexDir, name); err != nil {
+	err := gleann.RemoveIndex(s.cfg().IndexDir, name)
+	// A request may have re-loaded the index while it was being removed;
+	// drop anything cached in the meantime.
+	s.invalidateSearcher(name)
+	if err != nil {
 		writeError(w, http.StatusInternalServerError, "delete failed: "+err.Error())
 		return
 	}
@@ -1217,40 +1331,6 @@ func (s *Server) handleDeleteConversation(w http.ResponseWriter, r *http.Request
 
 // --- Helpers ---
 
-func (s *Server) getSearcher(ctx context.Context, name string) (*gleann.LeannSearcher, error) {
-	s.mu.RLock()
-	searcher, ok := s.searchers[name]
-	s.mu.RUnlock()
-
-	if ok {
-		return searcher, nil
-	}
-
-	// Create and cache searcher.
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	// Double-check.
-	if searcher, ok := s.searchers[name]; ok {
-		return searcher, nil
-	}
-
-	// Check model compatibility if dynamic resolution is not configured.
-	if meta, err := gleann.GetIndexMeta(s.config.IndexDir, name); err == nil {
-		if s.config.EmbedderResolver == nil && meta.EmbeddingModel != "" && s.embedder != nil && meta.EmbeddingModel != s.embedder.ModelName() {
-			return nil, fmt.Errorf("model mismatch: index uses '%s', current is '%s'. please delete and recreate index", meta.EmbeddingModel, s.embedder.ModelName())
-		}
-	}
-
-	searcher = gleann.NewSearcher(s.config, s.embedder)
-	if err := searcher.Load(ctx, name); err != nil {
-		return nil, err
-	}
-
-	s.searchers[name] = searcher
-	return searcher, nil
-}
-
 func writeJSON(w http.ResponseWriter, status int, data any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
@@ -1310,7 +1390,10 @@ func (s *Server) isIndexAccessibleMeta(meta *gleann.IndexMeta) bool {
 
 // isIndexAccessible checks if the named index exists and satisfies accessibility/governance rules.
 func (s *Server) isIndexAccessible(name string) bool {
-	meta, err := gleann.GetIndexMeta(s.config.IndexDir, name)
+	if gleann.ValidateName(name) != nil {
+		return false
+	}
+	meta, err := gleann.GetIndexMeta(s.cfg().IndexDir, name)
 	if err != nil {
 		// Fallback for mock or test indexes where directory exists or graphPool has it
 		if s.graphPool != nil {
@@ -1318,7 +1401,7 @@ func (s *Server) isIndexAccessible(name string) bool {
 				return true
 			}
 		}
-		indexPath := filepath.Join(s.config.IndexDir, name)
+		indexPath := filepath.Join(s.cfg().IndexDir, name)
 		if fi, serr := os.Stat(indexPath); serr == nil && fi.IsDir() {
 			return true
 		}
@@ -1329,7 +1412,7 @@ func (s *Server) isIndexAccessible(name string) bool {
 
 // firstAccessibleIndexName returns the first index that is public and satisfies GLEANN_TAGS.
 func (s *Server) firstAccessibleIndexName() string {
-	indexes, err := gleann.ListIndexes(s.config.IndexDir)
+	indexes, err := gleann.ListIndexes(s.cfg().IndexDir)
 	if err != nil {
 		return ""
 	}
@@ -1348,7 +1431,7 @@ func (s *Server) checkIndexAccess(r *http.Request, indexName string) error {
 	}
 	tagEnv := os.Getenv("GLEANN_TAGS")
 	if tagEnv != "" {
-		meta, err := gleann.GetIndexMeta(s.config.IndexDir, indexName)
+		meta, err := gleann.GetIndexMeta(s.cfg().IndexDir, indexName)
 		if err == nil {
 			var allowed []string
 			for _, t := range strings.Split(tagEnv, ",") {
@@ -1426,8 +1509,10 @@ func (b *LogBuffer) GetLogs() []string {
 	return res
 }
 
+// handleGetConfig returns the server configuration with secrets redacted
+// (see gleann.Config.Redacted).
 func (s *Server) handleGetConfig(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, s.config)
+	writeJSON(w, http.StatusOK, s.cfg().Redacted())
 }
 
 func (s *Server) handleUpdateConfig(w http.ResponseWriter, r *http.Request) {
@@ -1444,38 +1529,157 @@ func (s *Server) handleUpdateConfig(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	s.mu.Lock()
-	s.config = newConfig
+	// Serialise concurrent updates so the sentinel merge below always sees
+	// the config it is replacing.
+	configUpdateMu.Lock()
+	defer configUpdateMu.Unlock()
+
+	// The web UI round-trips redacted secrets: the sentinel means "keep the
+	// current value", an empty string means "clear".
+	prev := s.cfg()
+	newConfig.RestoreRedactedSecrets(prev)
+	// Non-serialisable fields cannot come from the client; keep them.
+	newConfig.EmbedderResolver = prev.EmbedderResolver
+
+	// Persist first so the in-memory config never diverges from what a
+	// restart would load.
+	if err := saveServerConfig(newConfig); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to save config: "+err.Error())
+		return
+	}
+
 	baseURL := newConfig.OllamaHost
 	if newConfig.EmbeddingProvider == "openai" && newConfig.OpenAIBaseURL != "" {
 		baseURL = newConfig.OpenAIBaseURL
 	}
-	s.embedder = embedding.NewComputer(embedding.Options{
+	embedder := embedding.NewComputer(embedding.Options{
 		Provider: embedding.Provider(newConfig.EmbeddingProvider),
 		Model:    newConfig.EmbeddingModel,
 		BaseURL:  baseURL,
-		APIKey:   newConfig.OpenAIAPIKey,
+		APIKey:   newConfig.APIKeyForProvider(newConfig.EmbeddingProvider),
 	})
-	s.mu.Unlock()
 
-	// Save to config file — merge with "completed" marker so auto-setup
-	// (EnsureConfig) won't overwrite user-saved settings on restart.
-	if home, err := os.UserHomeDir(); err == nil {
-		cfgPath := filepath.Join(home, ".gleann", "config.json")
-		// Read existing config as raw map to preserve unknown fields.
-		existing := make(map[string]any)
-		if data, err := os.ReadFile(cfgPath); err == nil {
-			_ = json.Unmarshal(data, &existing)
-		}
-		// Marshal the new config into a map and merge.
-		raw, _ := json.Marshal(newConfig)
-		_ = json.Unmarshal(raw, &existing)
-		existing["completed"] = true
-		b, _ := json.MarshalIndent(existing, "", "  ")
-		_ = os.WriteFile(cfgPath, b, 0644)
-	}
+	s.cfgMu.Lock()
+	s.config = newConfig
+	s.embedder = embedder
+	s.cfgMu.Unlock()
+
+	// Cached searchers hold the old config/embedder; drop them (each is
+	// closed once in-flight requests release it).
+	s.invalidateAllSearchers()
 
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+// configUpdateMu serialises handleUpdateConfig (read-merge-write of the
+// config file and the in-memory config).
+var configUpdateMu sync.Mutex
+
+// serverConfigPath returns ~/.gleann/config.json.
+func serverConfigPath() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("user home dir: %w", err)
+	}
+	return filepath.Join(home, ".gleann", "config.json"), nil
+}
+
+// saveServerConfig merges cfg into ~/.gleann/config.json, preserving keys
+// gleann.Config does not know about (e.g. roles, TUI-only settings) and
+// setting the "completed" marker so auto-setup (EnsureConfig) won't
+// overwrite user-saved settings on restart. The file contains API keys, so
+// it is written atomically with mode 0600.
+func saveServerConfig(cfg gleann.Config) error {
+	cfgPath, err := serverConfigPath()
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(cfgPath), 0o700); err != nil {
+		return fmt.Errorf("create config dir: %w", err)
+	}
+
+	// Read existing config as raw map to preserve unknown fields.
+	existing := make(map[string]any)
+	if data, err := os.ReadFile(cfgPath); err == nil {
+		if len(strings.TrimSpace(string(data))) > 0 {
+			if err := json.Unmarshal(data, &existing); err != nil {
+				return fmt.Errorf("existing %s is not valid JSON (fix or remove it): %w", cfgPath, err)
+			}
+		}
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("read %s: %w", cfgPath, err)
+	}
+
+	// Marshal the new config into a map and merge.
+	raw, err := json.Marshal(cfg)
+	if err != nil {
+		return fmt.Errorf("marshal config: %w", err)
+	}
+	incoming := make(map[string]any)
+	if err := json.Unmarshal(raw, &incoming); err != nil {
+		return fmt.Errorf("re-decode config: %w", err)
+	}
+	// Keys owned by gleann.Config that were omitted (omitempty, i.e. now
+	// empty) must be removed, otherwise clearing a value such as an API
+	// key would silently keep the old one on disk.
+	for _, k := range configJSONKeys() {
+		if _, ok := incoming[k]; !ok {
+			delete(existing, k)
+		}
+	}
+	for k, v := range incoming {
+		existing[k] = v
+	}
+	existing["completed"] = true
+
+	b, err := json.MarshalIndent(existing, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal config file: %w", err)
+	}
+	return writeFileAtomic(cfgPath, b, 0o600)
+}
+
+// writeFileAtomic writes data to a temp file in the target directory with
+// the given mode and renames it over path, so readers never observe a
+// partially written file and the final mode is perm even if path existed
+// with looser permissions.
+func writeFileAtomic(path string, data []byte, perm os.FileMode) error {
+	tmp, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".*.tmp")
+	if err != nil {
+		return fmt.Errorf("create temp file: %w", err)
+	}
+	tmpName := tmp.Name()
+	defer os.Remove(tmpName) // no-op after a successful rename
+	if err := tmp.Chmod(perm); err != nil {
+		tmp.Close()
+		return fmt.Errorf("chmod temp file: %w", err)
+	}
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		return fmt.Errorf("write temp file: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("close temp file: %w", err)
+	}
+	if err := os.Rename(tmpName, path); err != nil {
+		return fmt.Errorf("replace %s: %w", path, err)
+	}
+	return nil
+}
+
+// configJSONKeys returns the top-level JSON keys of gleann.Config.
+func configJSONKeys() []string {
+	t := reflect.TypeOf(gleann.Config{})
+	keys := make([]string, 0, t.NumField())
+	for i := 0; i < t.NumField(); i++ {
+		tag := t.Field(i).Tag.Get("json")
+		name, _, _ := strings.Cut(tag, ",")
+		if name == "" || name == "-" {
+			continue
+		}
+		keys = append(keys, name)
+	}
+	return keys
 }
 
 func (s *Server) handleGetLogs(w http.ResponseWriter, r *http.Request) {
@@ -1546,8 +1750,8 @@ type indexPathRequest struct {
 // handleIndexPath triggers indexing of a local directory or file path on the server.
 func (s *Server) handleIndexPath(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
-	if name == "" {
-		writeError(w, http.StatusBadRequest, "index name required")
+	if err := gleann.ValidateName(name); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid index name: "+err.Error())
 		return
 	}
 
@@ -1579,25 +1783,31 @@ func (s *Server) handleIndexPath(w http.ResponseWriter, r *http.Request) {
 	}
 
 	binPath := getBinaryPath()
+	// The build subprocess is bound to the server lifetime: Stop cancels
+	// (kills) it instead of leaving an orphan behind.
+	ctx := s.lifetime()
 	if s.bgManager != nil {
 		s.bgManager.Submit(background.TaskTypeAutoIndex, func(progress func(pct float64, msg string)) error {
 			progress(0.1, fmt.Sprintf("Building index '%s' from '%s'", name, req.Path))
-			cmd := exec.Command(binPath, buildArgs...)
+			cmd := exec.CommandContext(ctx, binPath, buildArgs...)
 			out, err := cmd.CombinedOutput()
 			if err != nil {
 				return fmt.Errorf("indexing failed: %w: %s", err, strings.TrimSpace(string(out)))
 			}
+			s.invalidateSearcher(name)
 			progress(1.0, fmt.Sprintf("Index '%s' built successfully from '%s'", name, req.Path))
 			return nil
 		})
 	} else {
-		go func() {
-			cmd := exec.Command(binPath, buildArgs...)
+		s.goBackground(func() {
+			cmd := exec.CommandContext(ctx, binPath, buildArgs...)
 			out, err := cmd.CombinedOutput()
 			if err != nil {
 				log.Printf("Background index build failed for %s: %v: %s", req.Path, err, strings.TrimSpace(string(out)))
+				return
 			}
-		}()
+			s.invalidateSearcher(name)
+		})
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -1618,8 +1828,8 @@ func getBinaryPath() string {
 // handleUpload handles binary and text file uploads via multipart form data.
 func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
-	if name == "" {
-		writeError(w, http.StatusBadRequest, "index name required")
+	if err := gleann.ValidateName(name); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid index name: "+err.Error())
 		return
 	}
 
@@ -1630,37 +1840,54 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 	}
 	defer file.Close()
 
+	// Never trust the client-supplied filename as a path.
+	fileName := filepath.Base(filepath.Clean("/" + strings.ReplaceAll(header.Filename, `\`, "/")))
+	if fileName == "" || fileName == "." || fileName == ".." || fileName == "/" {
+		writeError(w, http.StatusBadRequest, "invalid file name")
+		return
+	}
+
 	tmpDir, err := os.MkdirTemp("", "gleann_upload_*")
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to create temp dir")
 		return
 	}
+	// The build below runs synchronously, so the upload can always be
+	// cleaned up when the handler returns (success or failure).
+	defer os.RemoveAll(tmpDir)
 
-	destPath := filepath.Join(tmpDir, header.Filename)
+	destPath := filepath.Join(tmpDir, fileName)
 	dest, err := os.Create(destPath)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to save file")
 		return
 	}
-	io.Copy(dest, file)
-	dest.Close()
+	if _, err := io.Copy(dest, file); err != nil {
+		dest.Close()
+		writeError(w, http.StatusInternalServerError, "failed to save file: "+err.Error())
+		return
+	}
+	if err := dest.Close(); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to save file: "+err.Error())
+		return
+	}
 
-	cmd := exec.Command(getBinaryPath(), "index", "build", name, "--docs", tmpDir)
+	cmd := exec.CommandContext(s.lifetime(), getBinaryPath(), "index", "build", name, "--docs", tmpDir)
 	out, errCmd := cmd.CombinedOutput()
 	if errCmd != nil {
 		fmt.Fprintf(os.Stderr, "handleUpload index build failed: %v\nOutput: %s\n", errCmd, out)
 		writeError(w, http.StatusInternalServerError, "failed to index file: "+errCmd.Error()+": "+strings.TrimSpace(string(out)))
 		return
 	}
-	os.RemoveAll(tmpDir) // cleanup after success
+	s.invalidateSearcher(name)
 
-	writeJSON(w, http.StatusOK, map[string]string{"status": "indexed", "file": header.Filename})
+	writeJSON(w, http.StatusOK, map[string]string{"status": "indexed", "file": fileName})
 }
 
 func (s *Server) handleWatch(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
-	if name == "" {
-		writeError(w, http.StatusBadRequest, "index name required")
+	if err := gleann.ValidateName(name); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid index name: "+err.Error())
 		return
 	}
 
@@ -1673,7 +1900,7 @@ func (s *Server) handleWatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	indexes, err := gleann.ListIndexes(s.config.IndexDir)
+	indexes, err := gleann.ListIndexes(s.cfg().IndexDir)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to list indexes")
 		return
@@ -1700,32 +1927,37 @@ func (s *Server) handleWatch(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		if s.autoIndexer == nil {
-			ai, err := background.NewAutoIndexer(s.bgManager, background.AutoIndexConfig{
-				IndexDir: s.config.IndexDir,
+		s.aiMu.Lock()
+		ai := s.autoIndexer
+		if ai == nil {
+			var err error
+			ai, err = background.NewAutoIndexer(s.bgManager, background.AutoIndexConfig{
+				IndexDir: s.cfg().IndexDir,
 			})
 			if err != nil {
+				s.aiMu.Unlock()
 				writeError(w, http.StatusInternalServerError, "failed to start auto-indexer")
 				return
 			}
 			s.autoIndexer = ai
-			s.autoIndexer.Start(context.Background())
+			ai.Start(context.Background())
 		}
+		s.aiMu.Unlock()
 
-		if err := s.autoIndexer.Watch(name, dirToWatch); err != nil {
+		if err := ai.Watch(name, dirToWatch); err != nil {
 			writeError(w, http.StatusInternalServerError, "failed to watch dir: "+err.Error())
 			return
 		}
 
-		_ = gleann.UpdateIndexMeta(s.config.IndexDir, name, func(meta *gleann.IndexMeta) {
+		_ = gleann.UpdateIndexMeta(s.cfg().IndexDir, name, func(meta *gleann.IndexMeta) {
 			meta.AutoWatch = true
 			meta.SourceDir = dirToWatch
 		})
 	} else {
-		if s.autoIndexer != nil {
-			s.autoIndexer.Unwatch(name)
+		if ai := s.getAutoIndexer(); ai != nil {
+			ai.Unwatch(name)
 		}
-		_ = gleann.UpdateIndexMeta(s.config.IndexDir, name, func(meta *gleann.IndexMeta) {
+		_ = gleann.UpdateIndexMeta(s.cfg().IndexDir, name, func(meta *gleann.IndexMeta) {
 			meta.AutoWatch = false
 		})
 	}

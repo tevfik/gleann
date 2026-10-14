@@ -84,6 +84,8 @@ Options:
   --mcp                   Expose index to MCP tools (default: true)
   --no-plugins            Disable external document extraction plugins
   --multimodal-model <m>  Model for media files (images, audio, video)
+  --host <url>            Ollama server address (default: saved config / OLLAMA_HOST)
+  --ollama-api-key <key>  Optional Ollama API key (auth proxy / hosted Ollama; env: OLLAMA_API_KEY)
   --no-report             Skip automatic GRAPH_REPORT.md generation
   --no-agents             Skip automatic AGENTS.md generation
   -h, --help              Show this help message
@@ -93,6 +95,41 @@ Examples:
   gleann index build docs --docs ./documentation --tag docs,work
   gleann index build repo --docs ./src --code-model granite-30m --doc-model bge-small
   gleann index build repo --docs ./src --max-minutes 5 --approve fast`)
+}
+
+// dualBuildModelFlags are value-taking flags that select the model/mode and are
+// replaced when a dual-model build is split into code and docs passes.
+var dualBuildModelFlags = map[string]bool{
+	"--model": true, "--mode": true,
+	"--code-model": true, "--code-embedding-model": true,
+	"--doc-model": true, "--docs-model": true, "--doc-embedding-model": true,
+}
+
+// dualBuildArgs derives the argument list for one pass of a dual-model build:
+// the index name (always args[0]) gets suffix, model/mode selection flags are
+// dropped, and "--mode <mode> --model <model>" is appended.
+//
+// Only args[0] is renamed: an earlier version replaced every argument equal
+// to the index name, so `gleann index build docs --docs docs ...` built from a
+// non-existent "docs-code" directory.
+func dualBuildArgs(args []string, suffix, mode, model string) []string {
+	out := make([]string, 0, len(args)+4)
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		if i == 0 {
+			out = append(out, a+suffix)
+			continue
+		}
+		if dualBuildModelFlags[a] {
+			i++ // skip flag and its value
+			continue
+		}
+		if eq := strings.IndexByte(a, '='); eq > 0 && dualBuildModelFlags[a[:eq]] {
+			continue // --flag=value form carries its own value
+		}
+		out = append(out, a)
+	}
+	return append(out, "--mode", mode, "--model", model)
 }
 
 func cmdBuild(args []string) {
@@ -144,38 +181,12 @@ func cmdBuild(args []string) {
 
 		// Pass 1: Build code index (<name>-code)
 		fmt.Printf("📦 Step 1/2: Building code index %q...\n", name+"-code")
-		codeArgs := make([]string, 0, len(args)+4)
-		for i := 0; i < len(args); i++ {
-			if args[i] == name {
-				codeArgs = append(codeArgs, name+"-code")
-			} else if args[i] == "--model" || args[i] == "--mode" ||
-				strings.HasPrefix(args[i], "--code-model") ||
-				strings.HasPrefix(args[i], "--doc-model") ||
-				strings.HasPrefix(args[i], "--docs-model") {
-				i++ // skip flag and value
-			} else {
-				codeArgs = append(codeArgs, args[i])
-			}
-		}
-		codeArgs = append(codeArgs, "--mode", "code", "--model", codeModel)
+		codeArgs := dualBuildArgs(args, "-code", "code", codeModel)
 		cmdBuild(codeArgs)
 
 		// Pass 2: Build docs index (<name>-docs)
 		fmt.Printf("\n📦 Step 2/2: Building docs index %q...\n", name+"-docs")
-		docArgs := make([]string, 0, len(args)+4)
-		for i := 0; i < len(args); i++ {
-			if args[i] == name {
-				docArgs = append(docArgs, name+"-docs")
-			} else if args[i] == "--model" || args[i] == "--mode" ||
-				strings.HasPrefix(args[i], "--code-model") ||
-				strings.HasPrefix(args[i], "--doc-model") ||
-				strings.HasPrefix(args[i], "--docs-model") {
-				i++ // skip flag and value
-			} else {
-				docArgs = append(docArgs, args[i])
-			}
-		}
-		docArgs = append(docArgs, "--mode", "docs", "--model", docModel)
+		docArgs := dualBuildArgs(args, "-docs", "docs", docModel)
 		cmdBuild(docArgs)
 
 		fmt.Printf("\n🎉 Dual-index build complete for %q!\n", name)
@@ -263,7 +274,7 @@ func cmdBuild(args []string) {
 	if mmModel == "" {
 		mmModel = config.MultimodalModel
 	}
-	mmProcessor := initMultimodalProcessor(config.OllamaHost, mmModel)
+	mmProcessor := initMultimodalProcessor(config.OllamaHost, config.APIKeyForProvider("ollama"), mmModel)
 
 	if err := initLlamaCPP(context.Background(), &config); err != nil {
 		fmt.Fprintf(os.Stderr, "error initializing llamacpp: %v\n", err)
@@ -469,7 +480,7 @@ Options:
 }
 
 func buildIndex(name, docsDir string, config gleann.Config, embedder gleann.EmbeddingComputer, tracker *vault.Tracker, mode IndexMode, noPlugins bool, includeSubmodules bool) []*PluginDoc {
-	mmProcessor := initMultimodalProcessor(config.OllamaHost, config.MultimodalModel)
+	mmProcessor := initMultimodalProcessor(config.OllamaHost, config.APIKeyForProvider("ollama"), config.MultimodalModel)
 	items, pluginDocs, err := readDocuments(docsDir, config.ChunkConfig.ChunkSize, config.ChunkConfig.ChunkOverlap, config.ChunkConfig.SignaturesOnly, tracker, mmProcessor, mode, noPlugins, includeSubmodules)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error reading documents: %v\n", err)
@@ -1364,7 +1375,7 @@ func incrementalBuildIndex(name, docsDir string, changedFiles []string, config g
 	}
 
 	// Read and chunk only the changed files.
-	mmProcessor := initMultimodalProcessor(config.OllamaHost, config.MultimodalModel)
+	mmProcessor := initMultimodalProcessor(config.OllamaHost, config.APIKeyForProvider("ollama"), config.MultimodalModel)
 	items, pluginDocs, records, err := readDocumentsForFiles(docsDir, existingFiles,
 		config.ChunkConfig.ChunkSize, config.ChunkConfig.ChunkOverlap, config.ChunkConfig.SignaturesOnly, tracker, mmProcessor, mode, noPlugins, includeSubmodules)
 	if err != nil {
@@ -1558,7 +1569,7 @@ Options:
 // Auto-detect is disabled by default to avoid unintentional HTTP calls for
 // every media file in large projects (e.g., test wav files from SciPy).
 // Set model to "none" or "off" to explicitly disable even when auto-detect finds one.
-func initMultimodalProcessor(ollamaHost, flagModel string) *multimodal.Processor {
+func initMultimodalProcessor(ollamaHost, ollamaAPIKey, flagModel string) *multimodal.Processor {
 	model := flagModel
 	if model == "" {
 		model = os.Getenv("GLEANN_MULTIMODAL_MODEL")
@@ -1572,7 +1583,10 @@ func initMultimodalProcessor(ollamaHost, flagModel string) *multimodal.Processor
 		return nil
 	}
 	p := multimodal.NewProcessor(ollamaHost, model)
-	caps := multimodal.DetectCapabilities(ollamaHost, model)
+	if ollamaAPIKey != "" {
+		p.APIKey = ollamaAPIKey
+	}
+	caps := multimodal.DetectCapabilities(ollamaHost, model, p.APIKey)
 	features := []string{}
 	if caps.Vision {
 		features = append(features, "vision")
@@ -1808,7 +1822,7 @@ func cmdSync(args []string) {
 		if mmModel == "" {
 			mmModel = config.MultimodalModel
 		}
-		mmProcessor := initMultimodalProcessor(config.OllamaHost, mmModel)
+		mmProcessor := initMultimodalProcessor(config.OllamaHost, config.APIKeyForProvider("ollama"), mmModel)
 
 		eligibleEntries, walkErr := collectEligibleFiles(absDocsDir, pluginManager, nativeExtractor, mmProcessor, mode, includeSubmodules)
 		if walkErr != nil {

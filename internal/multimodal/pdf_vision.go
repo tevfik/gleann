@@ -15,6 +15,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/tevfik/gleann/pkg/gleann"
 )
 
 // PDFVisionConfig controls the PDF vision pipeline.
@@ -167,8 +169,8 @@ func (p *Processor) queryOllama(prompt, base64Image string) (string, error) {
 	jsonBody, _ := json.Marshal(reqBody)
 	client := &http.Client{Timeout: 120 * time.Second}
 
-	resp, err := client.Post(p.OllamaHost+"/api/chat", "application/json",
-		strings.NewReader(string(jsonBody)))
+	resp, err := gleann.OllamaPost(client, p.OllamaHost+"/api/chat", "application/json",
+		strings.NewReader(string(jsonBody)), p.APIKey)
 	if err != nil {
 		return "", fmt.Errorf("ollama request: %w", err)
 	}

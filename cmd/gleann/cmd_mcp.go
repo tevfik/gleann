@@ -84,6 +84,9 @@ func runMCPServer(cleanNames bool, flagModel, flagProvider, toolsProfile string)
 		if savedCfg.OpenAIKey != "" {
 			cfg.OpenAIAPIKey = savedCfg.OpenAIKey
 		}
+		if savedCfg.OllamaAPIKey != "" {
+			cfg.OllamaAPIKey = savedCfg.OllamaAPIKey
+		}
 		if savedCfg.OpenAIBaseURL != "" {
 			cfg.OpenAIBaseURL = savedCfg.OpenAIBaseURL
 		}

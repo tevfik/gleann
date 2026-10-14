@@ -11,8 +11,27 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync/atomic"
 	"time"
+
+	"github.com/tevfik/gleann/pkg/gleann"
 )
+
+// ollamaAPIKey holds an optional Ollama API key set via SetOllamaAPIKey.
+var ollamaAPIKey atomic.Value // string
+
+// SetOllamaAPIKey sets the API key sent as a Bearer token on all Ollama
+// requests made by this package (detect, list, pull). When unset or empty,
+// the OLLAMA_API_KEY environment variable is used.
+func SetOllamaAPIKey(key string) {
+	ollamaAPIKey.Store(key)
+}
+
+// apiKey returns the effective Ollama API key for requests.
+func apiKey() string {
+	k, _ := ollamaAPIKey.Load().(string)
+	return gleann.ResolveOllamaAPIKey(k)
+}
 
 // Result holds the auto-detected configuration.
 type Result struct {
@@ -46,7 +65,7 @@ func DetectOllama(host string) Result {
 	}
 
 	client := &http.Client{Timeout: 3 * time.Second}
-	resp, err := client.Get(host + "/api/tags")
+	resp, err := gleann.OllamaGet(client, host+"/api/tags", apiKey())
 	if err != nil {
 		return res
 	}
@@ -217,7 +236,7 @@ func PullModel(host, model string, progressFn func(status string, completed, tot
 	})
 
 	client := &http.Client{Timeout: 30 * time.Minute}
-	resp, err := client.Post(host+"/api/pull", "application/json", strings.NewReader(string(body)))
+	resp, err := gleann.OllamaPost(client, host+"/api/pull", "application/json", strings.NewReader(string(body)), apiKey())
 	if err != nil {
 		return fmt.Errorf("cannot reach Ollama at %s: %w", host, err)
 	}
@@ -266,7 +285,7 @@ func HasModel(host, model string) bool {
 	host = strings.TrimRight(host, "/")
 
 	client := &http.Client{Timeout: 5 * time.Second}
-	resp, err := client.Get(host + "/api/tags")
+	resp, err := gleann.OllamaGet(client, host+"/api/tags", apiKey())
 	if err != nil {
 		return false
 	}
@@ -324,6 +343,7 @@ func EnsureModels(host string, quiet bool, models ...string) ([]string, error) {
 // DetectedConfig holds a fully resolved configuration ready for user confirmation.
 type DetectedConfig struct {
 	OllamaHost         string `json:"ollama_host"`
+	OllamaAPIKey       string `json:"-"` // optional; persisted as ollama_api_key, never echoed
 	OllamaRunning      bool   `json:"ollama_running"`
 	EmbeddingModel     string `json:"embedding_model"`
 	CodeEmbeddingModel string `json:"code_embedding_model,omitempty"`
@@ -444,6 +464,9 @@ func ApplyDetectedConfig(dc DetectedConfig) error {
 		"max_tokens":         4096,
 		"top_k":              10,
 	}
+	if dc.OllamaAPIKey != "" {
+		cfg["ollama_api_key"] = dc.OllamaAPIKey
+	}
 	if dc.CodeEmbeddingModel != "" {
 		cfg["code_embedding_model"] = dc.CodeEmbeddingModel
 	}
@@ -459,5 +482,7 @@ func ApplyDetectedConfig(dc DetectedConfig) error {
 		return err
 	}
 	data, _ := json.MarshalIndent(cfg, "", "  ")
-	return os.WriteFile(home+"/.gleann/config.json", data, 0o644)
+	// The config file may later hold API keys (written by the server, TUI
+	// or CLI); keep it private to the user.
+	return os.WriteFile(home+"/.gleann/config.json", data, 0o600)
 }

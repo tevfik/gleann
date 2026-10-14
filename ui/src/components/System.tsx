@@ -96,10 +96,10 @@ export function System() {
     fetchModels(
       editConfig.embedding_provider, 
       editConfig.embedding_provider === 'ollama' ? editConfig.ollama_host : editConfig.openai_base_url,
-      editConfig.openai_api_key,
+      editConfig.embedding_provider === 'ollama' ? editConfig.ollama_api_key : editConfig.openai_api_key,
       setEmbeddingModels
     );
-  }, [editConfig?.embedding_provider, editConfig?.ollama_host, editConfig?.openai_base_url, editConfig?.openai_api_key]);
+  }, [editConfig?.embedding_provider, editConfig?.ollama_host, editConfig?.openai_base_url, editConfig?.openai_api_key, editConfig?.ollama_api_key]);
 
   useEffect(() => {
     if (!editConfig) return;
@@ -124,10 +124,10 @@ export function System() {
     fetchModels(
       editConfig.llm_provider, 
       editConfig.llm_provider === 'ollama' ? editConfig.ollama_host : editConfig.openai_base_url,
-      editConfig.openai_api_key,
+      editConfig.llm_provider === 'ollama' ? editConfig.ollama_api_key : editConfig.openai_api_key,
       setLlmModels
     );
-  }, [editConfig?.llm_provider, editConfig?.ollama_host, editConfig?.openai_base_url, editConfig?.openai_api_key]);
+  }, [editConfig?.llm_provider, editConfig?.ollama_host, editConfig?.openai_base_url, editConfig?.openai_api_key, editConfig?.ollama_api_key]);
 
   const handleInstallPlugin = async (name: string) => {
     try {
@@ -435,12 +435,16 @@ export function System() {
                       </div>
                       <div>
                         <label className="text-xs text-gray-500 font-medium block mb-1">API Key</label>
-                        <input 
-                          type="password" 
-                          value={editConfig.openai_api_key || ''} 
-                          onChange={e => setEditConfig({...editConfig, openai_api_key: e.target.value})}
-                          disabled={(editConfig.embedding_provider || 'native') !== 'openai'}
-                          placeholder={(editConfig.embedding_provider || 'native') === 'openai' ? 'sk-...' : 'Not required'}
+                        <input
+                          type="password"
+                          value={(editConfig.embedding_provider || 'native') === 'ollama' ? (editConfig.ollama_api_key || '') : (editConfig.openai_api_key || '')}
+                          onChange={e => {
+                            const prov = editConfig.embedding_provider || 'native';
+                            if (prov === 'ollama') setEditConfig({...editConfig, ollama_api_key: e.target.value})
+                            else if (prov === 'openai') setEditConfig({...editConfig, openai_api_key: e.target.value})
+                          }}
+                          disabled={(editConfig.embedding_provider || 'native') !== 'openai' && (editConfig.embedding_provider || 'native') !== 'ollama'}
+                          placeholder={(editConfig.embedding_provider || 'native') === 'openai' ? 'sk-...' : (editConfig.embedding_provider || 'native') === 'ollama' ? 'Optional' : 'Not required'}
                           className="w-full bg-black/50 border border-white/10 rounded px-3 py-1.5 text-sm text-gray-300 outline-none focus:border-blue-500/50 transition-colors disabled:opacity-50"
                         />
                       </div>
@@ -611,13 +615,14 @@ export function System() {
                       <label className="text-xs text-gray-500 font-medium block mb-1">API Key</label>
                       <input 
                         type="password" 
-                        value={(editConfig.llm_provider || 'ollama') === 'openai' ? (editConfig.openai_api_key || '') : ''} 
+                        value={(editConfig.llm_provider || 'ollama') === 'openai' ? (editConfig.openai_api_key || '') : (editConfig.llm_provider || 'ollama') === 'ollama' ? (editConfig.ollama_api_key || '') : ''}
                         onChange={e => {
                           const prov = editConfig.llm_provider || 'ollama';
                           if (prov === 'openai') setEditConfig({...editConfig, openai_api_key: e.target.value})
+                          else if (prov === 'ollama') setEditConfig({...editConfig, ollama_api_key: e.target.value})
                         }}
-                        disabled={(editConfig.llm_provider || 'ollama') !== 'openai' && (editConfig.llm_provider || 'ollama') !== 'anthropic'}
-                        placeholder={(editConfig.llm_provider || 'ollama') === 'ollama' ? 'Not required' : 'sk-...'}
+                        disabled={(editConfig.llm_provider || 'ollama') !== 'openai' && (editConfig.llm_provider || 'ollama') !== 'anthropic' && (editConfig.llm_provider || 'ollama') !== 'ollama'}
+                        placeholder={(editConfig.llm_provider || 'ollama') === 'ollama' ? 'Optional' : 'sk-...'}
                         className="w-full bg-black/50 border border-white/10 rounded px-3 py-1.5 text-sm text-gray-300 outline-none focus:border-blue-500/50 transition-colors disabled:opacity-50"
                       />
                     </div>

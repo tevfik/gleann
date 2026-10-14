@@ -68,6 +68,9 @@ func (s *LeannSearcher) SetEmbedderResolver(resolver EmbedderResolver) {
 
 // Load loads an index for searching.
 func (s *LeannSearcher) Load(ctx context.Context, name string) (retErr error) {
+	if err := checkPathName(name); err != nil {
+		return err
+	}
 	indexDir := filepath.Join(s.config.IndexDir, name)
 	basePath := filepath.Join(indexDir, name)
 
@@ -780,6 +783,9 @@ func ListIndexes(indexDir string) ([]IndexMeta, error) {
 
 // GetIndexMeta reads the metadata for a specific index.
 func GetIndexMeta(indexDir, name string) (*IndexMeta, error) {
+	if err := checkPathName(name); err != nil {
+		return nil, err
+	}
 	metaPath := filepath.Join(indexDir, name, name+".meta.json")
 	data, err := os.ReadFile(metaPath)
 	if err != nil {
@@ -794,6 +800,9 @@ func GetIndexMeta(indexDir, name string) (*IndexMeta, error) {
 
 // UpdateIndexMeta atomically updates the metadata file of an existing index.
 func UpdateIndexMeta(indexDir, name string, updateFn func(*IndexMeta)) error {
+	if err := checkPathName(name); err != nil {
+		return err
+	}
 	meta, err := GetIndexMeta(indexDir, name)
 	if err != nil {
 		return err
@@ -831,6 +840,11 @@ func ListIndexesByTag(indexDir, tag string) ([]IndexMeta, error) {
 
 // RemoveIndex removes an index and all its associated files (vector index, graph database, sync state).
 func RemoveIndex(indexDir, name string) error {
+	// Never let a crafted name (e.g. "..") escape indexDir: RemoveAll below
+	// would otherwise delete arbitrary directories.
+	if err := checkPathName(name); err != nil {
+		return err
+	}
 	// 1. Remove the main index directory (contains .index, .passages.jsonl, .meta.json, etc.)
 	indexPath := filepath.Join(indexDir, name)
 	if err := os.RemoveAll(indexPath); err != nil {

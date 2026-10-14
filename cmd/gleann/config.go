@@ -184,6 +184,11 @@ func getConfig(args []string) gleann.Config {
 				config.OllamaHost = host
 				i++
 			}
+		case "--ollama-api-key":
+			if i+1 < len(args) {
+				config.OllamaAPIKey = args[i+1]
+				i++
+			}
 		}
 	}
 
@@ -260,6 +265,9 @@ func applySavedConfig(config *gleann.Config, args []string) {
 	if savedCfg.OpenAIKey != "" && config.OpenAIAPIKey == "" {
 		config.OpenAIAPIKey = savedCfg.OpenAIKey
 	}
+	if savedCfg.OllamaAPIKey != "" && config.OllamaAPIKey == "" {
+		config.OllamaAPIKey = savedCfg.OllamaAPIKey
+	}
 	if savedCfg.OpenAIBaseURL != "" && config.OpenAIBaseURL == "" {
 		config.OpenAIBaseURL = savedCfg.OpenAIBaseURL
 	}
@@ -290,6 +298,19 @@ func applySavedConfig(config *gleann.Config, args []string) {
 	}
 }
 
+// resolveOllamaAPIKey returns the Ollama API key to use: the value in cfg
+// (from --ollama-api-key or applySavedConfig), then the saved config's
+// ollama_api_key, then the OLLAMA_API_KEY environment variable.
+func resolveOllamaAPIKey(cfg gleann.Config) string {
+	if cfg.OllamaAPIKey != "" {
+		return cfg.OllamaAPIKey
+	}
+	if saved := tui.LoadSavedConfig(); saved != nil && saved.OllamaAPIKey != "" {
+		return saved.OllamaAPIKey
+	}
+	return gleann.ResolveOllamaAPIKey("")
+}
+
 // newEmbedder initializes an embedding.Computer from gleann.Config, properly
 // routing the base URL and API key based on the configured provider.
 func newEmbedder(cfg gleann.Config) *embedding.Computer {
@@ -297,6 +318,8 @@ func newEmbedder(cfg gleann.Config) *embedding.Computer {
 	apiKey := ""
 
 	switch cfg.EmbeddingProvider {
+	case "", "ollama":
+		apiKey = gleann.ResolveOllamaAPIKey(cfg.OllamaAPIKey)
 	case "openai":
 		if cfg.OpenAIBaseURL != "" {
 			baseURL = cfg.OpenAIBaseURL

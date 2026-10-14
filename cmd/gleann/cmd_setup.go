@@ -47,7 +47,7 @@ func cmdSetup(args []string) {
 		if docModel == "" {
 			docModel = getFlag(args, "--doc-embedding-model")
 		}
-		if _, err := tui.Bootstrap(host, codeModel, docModel); err != nil {
+		if _, err := tui.BootstrapWithAPIKey(host, getFlag(args, "--ollama-api-key"), codeModel, docModel); err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 			os.Exit(1)
 		}
@@ -95,7 +95,10 @@ func runAutoSetup(args []string) {
 
 	// ── Step 1: Detect configuration ───────────────────────────────────
 	ollamaHost := getFlag(args, "--host")
+	ollamaKey := getFlag(args, "--ollama-api-key")
+	autosetup.SetOllamaAPIKey(ollamaKey)
 	dc := autosetup.DetectAll(ollamaHost, true) // prefer smaller models
+	dc.OllamaAPIKey = ollamaKey
 
 	codeModel := getFlag(args, "--code-model")
 	if codeModel == "" {

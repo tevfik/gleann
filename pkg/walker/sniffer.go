@@ -32,7 +32,60 @@ type SniffResult struct {
 	Shebang    string       `json:"shebang,omitempty"`
 }
 
-var shebangRegex = regexp.MustCompile(`^#!\s*(?:/usr/bin/env\s+|/bin/|/usr/bin/)?([a-zA-Z0-9_\-\.]+)(?:\s+(.*))?`)
+var shebangRegex = regexp.MustCompile(`^#!\s*(\S+)(?:\s+(.*))?`)
+
+// SniffReadLimit is how many leading bytes SniffFile inspects. It must exceed
+// minifiedLineThreshold so that a minified bundle's long first line can be
+// recognised from disk (binary detection still only samples the first 1 KiB).
+const SniffReadLimit = 4096
+
+// minifiedLineThreshold is the first-line length above which content is
+// treated as a minified bundle.
+const minifiedLineThreshold = 2000
+
+// shebangInterpreter extracts the interpreter command name from a shebang
+// line, handling arbitrary interpreter paths (/usr/local/bin/python3,
+// /opt/homebrew/bin/bash) and env indirection including flags
+// ("#!/usr/bin/env -S node --flag").
+func shebangInterpreter(line string) string {
+	m := shebangRegex.FindStringSubmatch(line)
+	if len(m) < 2 {
+		return ""
+	}
+	base := lastPathElem(m[1])
+	if base != "env" {
+		return base
+	}
+	for _, arg := range strings.Fields(m[2]) {
+		if strings.HasPrefix(arg, "-") || strings.Contains(arg, "=") {
+			continue // env flags (-S, -i) and VAR=value assignments
+		}
+		return lastPathElem(arg)
+	}
+	return ""
+}
+
+func lastPathElem(p string) string {
+	if i := strings.LastIndexAny(p, `/\`); i >= 0 {
+		return p[i+1:]
+	}
+	return p
+}
+
+// trimIncompleteRune drops a trailing, truncated UTF-8 sequence (at most
+// utf8.UTFMax-1 bytes) so that a sample cut at a fixed byte offset is not
+// reported as invalid UTF-8.
+func trimIncompleteRune(b []byte) []byte {
+	for i := len(b) - 1; i >= 0 && i > len(b)-utf8.UTFMax; i-- {
+		if utf8.RuneStart(b[i]) {
+			if !utf8.FullRune(b[i:]) {
+				return b[:i]
+			}
+			return b
+		}
+	}
+	return b
+}
 
 // IsBinaryData inspects byte slice for null bytes and excessive non-printable control characters.
 func IsBinaryData(data []byte) bool {
@@ -71,7 +124,10 @@ func IsBinaryData(data []byte) bool {
 			nonAscii++
 		}
 	}
-	if nonAscii > limit/2 && !utf8.Valid(sample) {
+	// The sample may end mid-rune (fixed 1 KiB cut, or a truncated file
+	// prefix from the caller); ignore that tail so non-Latin text such as
+	// Cyrillic or CJK is not misclassified as binary.
+	if nonAscii > limit/2 && !utf8.Valid(trimIncompleteRune(sample)) {
 		return true
 	}
 
@@ -80,6 +136,19 @@ func IsBinaryData(data []byte) bool {
 
 // SniffBytes determines content type, language, and classification from filename and initial bytes.
 func SniffBytes(filename string, data []byte) SniffResult {
+	res := sniffBytes(filename, data)
+	// The long-first-line heuristic targets bundled code. Prose and tabular
+	// data legitimately have very long first lines (soft-wrapped Markdown
+	// paragraphs, wide CSV headers), so only an explicit ".min." name marks
+	// those as minified.
+	if res.IsMinified && (res.Category == CategoryDoc || res.Category == CategoryData) &&
+		!strings.Contains(strings.ToLower(filepath.Base(filename)), ".min.") {
+		res.IsMinified = false
+	}
+	return res
+}
+
+func sniffBytes(filename string, data []byte) SniffResult {
 	base := filepath.Base(filename)
 	ext := strings.ToLower(filepath.Ext(base))
 
@@ -101,7 +170,7 @@ func SniffBytes(filename string, data []byte) SniffResult {
 		if idx := bytes.IndexByte(data, '\n'); idx != -1 {
 			firstLine = data[:idx]
 		}
-		if len(firstLine) > 2000 {
+		if len(firstLine) > minifiedLineThreshold {
 			isMin = true
 		}
 	}
@@ -146,9 +215,8 @@ func SniffBytes(filename string, data []byte) SniffResult {
 		}
 
 		firstLine = strings.TrimSpace(firstLine)
-		matches := shebangRegex.FindStringSubmatch(firstLine)
-		if len(matches) > 1 {
-			cmd := strings.ToLower(matches[1])
+		if interp := shebangInterpreter(firstLine); interp != "" {
+			cmd := strings.ToLower(interp)
 			res.Shebang = firstLine
 			switch {
 			case strings.HasPrefix(cmd, "python"):
@@ -242,7 +310,7 @@ func SniffBytes(filename string, data []byte) SniffResult {
 	return res
 }
 
-// SniffFile opens the file, reads up to 1024 bytes, and classifies the content.
+// SniffFile opens the file, reads up to SniffReadLimit bytes, and classifies the content.
 func SniffFile(filePath string) (SniffResult, error) {
 	f, err := os.Open(filePath)
 	if err != nil {
@@ -250,9 +318,11 @@ func SniffFile(filePath string) (SniffResult, error) {
 	}
 	defer f.Close()
 
-	buf := make([]byte, 1024)
-	n, err := f.Read(buf)
-	if err != nil && err != io.EOF {
+	// A 1 KiB read could never exceed the 2000-byte minified-line threshold,
+	// so read more; io.ReadFull also guards against short reads.
+	buf := make([]byte, SniffReadLimit)
+	n, err := io.ReadFull(f, buf)
+	if err != nil && err != io.EOF && err != io.ErrUnexpectedEOF {
 		return SniffResult{Category: CategoryUnknown}, err
 	}
 

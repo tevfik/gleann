@@ -152,6 +152,7 @@ func FindDefinitions(ctx context.Context, searcher *LeannSearcher, query string,
 	if len(results) == 0 && searcher != nil {
 		searchResults, err := searcher.Search(ctx, query, WithTopK(topK*2))
 		if err == nil {
+			seenDefs := make(map[string]bool)
 			for _, sr := range searchResults {
 				source, _ := sr.Metadata["source"].(string)
 				foundDef := scanPassageForSymbol(sr.Text, query, source)
@@ -159,6 +160,16 @@ func FindDefinitions(ctx context.Context, searcher *LeannSearcher, query string,
 					if opts.Kind != "" && !strings.EqualFold(foundDef.Kind, opts.Kind) {
 						continue
 					}
+					// scanPassageForSymbol reports a passage-relative line; shift
+					// it by the chunk's start line so it points into the file.
+					if start := metaInt(sr.Metadata["start_line"]); start > 1 {
+						foundDef.Line += int64(start - 1)
+					}
+					key := fmt.Sprintf("%s:%d", foundDef.File, foundDef.Line)
+					if seenDefs[key] {
+						continue // overlapping chunks yield the same definition
+					}
+					seenDefs[key] = true
 					results = append(results, *foundDef)
 				}
 			}
@@ -192,13 +203,13 @@ func scanPassageForSymbol(text, query, source string) *DefinitionResult {
 		isDef := false
 		kind := "symbol"
 
-		if strings.HasPrefix(lowerTrimmed, "func ") && strings.Contains(lowerTrimmed, lowerQuery) {
+		if strings.HasPrefix(lowerTrimmed, "func ") && containsIdent(lowerTrimmed, lowerQuery) {
 			isDef = true
 			kind = "function"
-			if strings.Contains(trimmed, ")") && strings.Index(trimmed, ")") < strings.Index(trimmed, query) {
+			if p := strings.Index(lowerTrimmed, ")"); p >= 0 && p < indexIdent(lowerTrimmed, lowerQuery) {
 				kind = "method"
 			}
-		} else if strings.HasPrefix(lowerTrimmed, "type ") && strings.Contains(lowerTrimmed, lowerQuery) {
+		} else if strings.HasPrefix(lowerTrimmed, "type ") && containsIdent(lowerTrimmed, lowerQuery) {
 			isDef = true
 			if strings.Contains(lowerTrimmed, "struct") {
 				kind = "struct"
@@ -207,10 +218,10 @@ func scanPassageForSymbol(text, query, source string) *DefinitionResult {
 			} else {
 				kind = "type"
 			}
-		} else if strings.HasPrefix(lowerTrimmed, "def ") && strings.Contains(lowerTrimmed, lowerQuery) {
+		} else if strings.HasPrefix(lowerTrimmed, "def ") && containsIdent(lowerTrimmed, lowerQuery) {
 			isDef = true
 			kind = "function"
-		} else if strings.HasPrefix(lowerTrimmed, "class ") && strings.Contains(lowerTrimmed, lowerQuery) {
+		} else if strings.HasPrefix(lowerTrimmed, "class ") && containsIdent(lowerTrimmed, lowerQuery) {
 			isDef = true
 			kind = "class"
 		}
@@ -231,6 +242,52 @@ func scanPassageForSymbol(text, query, source string) *DefinitionResult {
 		lineNum++
 	}
 	return nil
+}
+
+// isIdentByte reports whether b can be part of an identifier.
+func isIdentByte(b byte) bool {
+	return b == '_' || b >= '0' && b <= '9' || b >= 'a' && b <= 'z' || b >= 'A' && b <= 'Z' || b >= 0x80
+}
+
+// indexIdent returns the byte index of the first occurrence of ident in s that
+// is delimited by non-identifier characters, or -1. This prevents a query like
+// "Get" from matching "func GetUserByID".
+func indexIdent(s, ident string) int {
+	if ident == "" {
+		return -1
+	}
+	for off := 0; off <= len(s)-len(ident); {
+		i := strings.Index(s[off:], ident)
+		if i < 0 {
+			return -1
+		}
+		i += off
+		end := i + len(ident)
+		if (i == 0 || !isIdentByte(s[i-1])) && (end == len(s) || !isIdentByte(s[end])) {
+			return i
+		}
+		off = i + 1
+	}
+	return -1
+}
+
+func containsIdent(s, ident string) bool { return indexIdent(s, ident) >= 0 }
+
+// metaInt converts numeric metadata (int, int64, float64 after JSON) to int.
+func metaInt(v any) int {
+	switch n := v.(type) {
+	case int:
+		return n
+	case int32:
+		return int(n)
+	case int64:
+		return int(n)
+	case float64:
+		return int(n)
+	case float32:
+		return int(n)
+	}
+	return 0
 }
 
 // FormatDefinitions renders a concise, token-efficient view of symbol definitions.

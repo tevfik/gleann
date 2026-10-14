@@ -30,7 +30,33 @@ gleann config validate
 
 This command parses `~/.gleann/config.json`, displays active providers/models/directories, and runs checks to:
 - Verify that the configured `index_dir` exists and is writeable.
-- Verify connectivity to the Ollama service (if selected as provider) and print hints if unreachable.
+- Verify connectivity to the Ollama service (if selected as provider) and print hints if unreachable or if it rejects the request with HTTP 401/403 (missing `ollama_api_key`).
+
+## Ollama Behind an Auth Proxy / Hosted Ollama
+
+Plain local Ollama needs no key. If your Ollama endpoint requires authentication
+(reverse proxy with bearer auth, hosted/OpenAI-compatible Ollama), configure an
+optional key; gleann then sends `Authorization: Bearer <key>` on every Ollama request
+(chat, streaming chat, embeddings, reranker, `/api/tags` model listing, multimodal,
+model pulls, `gleann doctor`):
+
+```bash
+gleann config set ollama_host https://ollama.example.com
+gleann config set ollama_api_key <key>     # aliases: ollama-api-key, ollama_key
+export OLLAMA_API_KEY=<key>                # alternative: environment variable fallback
+gleann ask docs "question" --ollama-api-key <key>   # one-off override
+gleann setup --bootstrap --host https://ollama.example.com --ollama-api-key <key>
+```
+
+Precedence: `--ollama-api-key` flag → `ollama_api_key` in `~/.gleann/config.json` →
+`OLLAMA_API_KEY`. The key is chosen per provider: the embedding and LLM providers are
+resolved independently, `ollama` uses `ollama_api_key`, `openai` uses `openai_api_key`,
+so an OpenAI key is never sent to Ollama (and vice versa). `--api-key` still overrides the
+key for whichever LLM provider is active.
+
+The setup wizard (`gleann setup`) asks for this key in an optional, masked step right after
+the Ollama URL (press Enter to skip), and the Web UI exposes it in the API Key field when
+the provider is `ollama`. `gleann config show` masks all API keys.
 
 ## Config File
 
@@ -65,7 +91,8 @@ Location: `~/.gleann/config.json`
 | `embedding_provider` | `ollama` | Provider for embeddings: `ollama`, `openai`, `mock` (for testing) |
 | `embedding_model` | `bge-m3` | Embedding model name |
 | `ollama_host` | `http://localhost:11434` | Ollama server URL |
-| `openai_key` | — | OpenAI API key (if using openai provider) |
+| `ollama_api_key` | — | Optional API key for Ollama, sent as `Authorization: Bearer <key>` on every Ollama request (chat, embeddings, reranker, model listing, multimodal). Only needed when Ollama sits behind an auth proxy or is a hosted Ollama endpoint. Falls back to the `OLLAMA_API_KEY` environment variable. Never sent to OpenAI/Anthropic |
+| `openai_api_key` | — | OpenAI API key (if using openai provider). Never sent to Ollama |
 | `openai_base_url` | — | Custom OpenAI-compatible API base URL |
 | `index_dir` | `~/.gleann/indexes` | Root directory for all index data. Each named index `<name>` creates `<name>/` (RAG), `<name>_graph/` (code graph), and `<name>_memory/` (Memory Engine) sub-directories here |
 | `backend` | `diskann` | Vector search backend: `diskann`, `hnsw`, `faiss`, `faiss-hybrid` |
@@ -86,6 +113,7 @@ CLI flags override both defaults and config file values.
 --model <model>         # Embedding model (default: bge-m3)
 --provider <provider>   # Embedding provider: ollama, openai, mock
 --host <url>            # Ollama host URL
+--ollama-api-key <key>  # Optional Ollama API key (auth proxy / hosted Ollama; env: OLLAMA_API_KEY)
 --batch-size <n>        # Embedding batch size
 --concurrency <n>       # Max concurrent embedding batches
 ```

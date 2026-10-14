@@ -11,7 +11,7 @@ import (
 
 func cmdMultimodal(args []string) {
 	if len(args) < 1 {
-		fmt.Fprintln(os.Stderr, "usage: gleann multimodal analyze <file|dir> [--model <model>] [--host <url>]")
+		fmt.Fprintln(os.Stderr, "usage: gleann multimodal analyze <file|dir> [--model <model>] [--host <url>] [--ollama-api-key <key>]|usage: gleann multimodal analyze <file|dir> [--model <model>] [--host <url>] [--ollama-api-key <key>]")
 		os.Exit(1)
 	}
 
@@ -20,14 +20,14 @@ func cmdMultimodal(args []string) {
 	case "analyze":
 		cmdMultimodalAnalyze(args[1:])
 	default:
-		fmt.Fprintf(os.Stderr, "unknown multimodal sub-command: %s\nusage: gleann multimodal analyze <file|dir>\n", sub)
+		fmt.Fprintf(os.Stderr, "unknown multimodal sub-command: %s\nusage: gleann multimodal analyze <file|dir> [--model <model>] [--host <url>] [--ollama-api-key <key>]|dir>\n", sub)
 		os.Exit(1)
 	}
 }
 
 func cmdMultimodalAnalyze(args []string) {
 	if len(args) < 1 {
-		fmt.Fprintln(os.Stderr, "usage: gleann multimodal analyze <file|dir> [--model <model>] [--host <url>]")
+		fmt.Fprintln(os.Stderr, "usage: gleann multimodal analyze <file|dir> [--model <model>] [--host <url>] [--ollama-api-key <key>]|usage: gleann multimodal analyze <file|dir> [--model <model>] [--host <url>] [--ollama-api-key <key>]")
 		os.Exit(1)
 	}
 
@@ -46,8 +46,9 @@ func cmdMultimodalAnalyze(args []string) {
 	if model == "" {
 		model = config.MultimodalModel
 	}
+	ollamaKey := resolveOllamaAPIKey(config)
 	if model == "" {
-		model = multimodal.AutoDetectModel(host)
+		model = multimodal.AutoDetectModel(host, ollamaKey)
 	}
 	if model == "" {
 		fmt.Fprintln(os.Stderr, "error: no multimodal model found. Install one: ollama pull gemma4")
@@ -55,6 +56,9 @@ func cmdMultimodalAnalyze(args []string) {
 	}
 
 	proc := multimodal.NewProcessor(host, model)
+	if ollamaKey != "" {
+		proc.APIKey = ollamaKey
+	}
 
 	info, err := os.Stat(target)
 	if err != nil {

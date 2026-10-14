@@ -67,6 +67,24 @@ func HashFileContent(filePath string) (string, error) {
 	return hex.EncodeToString(sum[:]), nil
 }
 
+// manifestRelPath returns the slash-separated path of f relative to absSource.
+// Relative inputs are resolved against the working directory first, exactly
+// like sourceDir itself; otherwise filepath.Rel(abs, rel) fails and every file
+// collapsed to its basename (colliding "a/x.go" with "b/x.go").
+func manifestRelPath(absSource, f string) string {
+	absF := f
+	if !filepath.IsAbs(absF) {
+		if a, err := filepath.Abs(absF); err == nil {
+			absF = a
+		}
+	}
+	rel, err := filepath.Rel(absSource, absF)
+	if err != nil {
+		rel = filepath.Base(f)
+	}
+	return filepath.ToSlash(rel)
+}
+
 // BuildManifest constructs a Manifest for a set of file paths relative to sourceDir.
 func BuildManifest(indexName, sourceDir string, eligibleFiles []string) (*Manifest, error) {
 	absSource, err := filepath.Abs(sourceDir)
@@ -84,11 +102,7 @@ func BuildManifest(indexName, sourceDir string, eligibleFiles []string) (*Manife
 			continue
 		}
 
-		rel, err := filepath.Rel(absSource, f)
-		if err != nil {
-			rel = filepath.Base(f)
-		}
-		rel = filepath.ToSlash(rel)
+		rel := manifestRelPath(absSource, f)
 
 		hash, err := HashFileContent(f)
 		if err != nil {
@@ -180,11 +194,7 @@ func QuickDiffDirectory(existing *Manifest, sourceDir string, eligibleFiles []st
 			continue
 		}
 
-		rel, err := filepath.Rel(absSource, f)
-		if err != nil {
-			rel = filepath.Base(f)
-		}
-		rel = filepath.ToSlash(rel)
+		rel := manifestRelPath(absSource, f)
 
 		// Check if we can reuse the existing entry without re-reading
 		if existing != nil {

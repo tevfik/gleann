@@ -41,7 +41,7 @@ func TestIsSetupNeeded(t *testing.T) {
 
 func TestOllamaReachableUnreachable(t *testing.T) {
 	// Non-existent host should return false quickly.
-	if ollamaReachable("http://127.0.0.1:19999") {
+	if ollamaReachable("http://127.0.0.1:19999", "") {
 		t.Error("expected unreachable host to return false")
 	}
 }

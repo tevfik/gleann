@@ -31,6 +31,9 @@ type ReconcileResult struct {
 // It compares each passage's metadata["source"] against docsRoot to find
 // files that were deleted after indexing.
 func (b *LeannBuilder) Reconcile(ctx context.Context, name, docsRoot string) (*ReconcileResult, error) {
+	if err := checkPathName(name); err != nil {
+		return nil, err
+	}
 	indexDir := filepath.Join(b.config.IndexDir, name)
 	basePath := filepath.Join(indexDir, name)
 

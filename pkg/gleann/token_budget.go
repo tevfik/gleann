@@ -119,7 +119,12 @@ func FormatSearchResultsWithBudget(results []SearchResult, opts TokenBudgetOptio
 	droppedCount := 0
 
 	// Helper to generate summary line
+	showTokenizer := true
 	buildSummary := func(full, loc, drop, used int) string {
+		if !showTokenizer {
+			return fmt.Sprintf("\n---\n[Token Budget: %d/%d tokens used | %d full, %d locators, %d dropped]\n",
+				used, maxTokens, full, loc, drop)
+		}
 		return fmt.Sprintf("\n---\n[Token Budget: %d/%d tokens used | %d full, %d locators, %d dropped | Tokenizer: %s]\n",
 			used, maxTokens, full, loc, drop, tokenizer)
 	}
@@ -127,6 +132,13 @@ func FormatSearchResultsWithBudget(results []SearchResult, opts TokenBudgetOptio
 	// Conservative estimate of summary note token overhead
 	dummySummary := buildSummary(len(deduped), len(deduped), len(deduped), maxTokens)
 	summaryReserve := EstimateTokens(dummySummary) + 2
+	if summaryReserve > maxTokens {
+		// A long custom tokenizer name would make the footer alone exceed the
+		// budget; drop it so the invariant EstimateTokens(output) <= max holds.
+		showTokenizer = false
+		dummySummary = buildSummary(len(deduped), len(deduped), len(deduped), maxTokens)
+		summaryReserve = EstimateTokens(dummySummary) + 2
+	}
 
 	var currentItems []string
 	currentTokens := 0

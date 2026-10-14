@@ -217,6 +217,12 @@ func TestOnboardEmbHostEnter(t *testing.T) {
 	m.phase = phaseEmbHost
 	result, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	om := result.(OnboardModel)
+	// Ollama host is followed by the optional API key step.
+	if om.phase != phaseEmbOllamaKey {
+		t.Errorf("phase = %d, want %d (phaseEmbOllamaKey)", om.phase, phaseEmbOllamaKey)
+	}
+	result, _ = om.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	om = result.(OnboardModel)
 	if om.phase != phaseEmbFetching {
 		t.Errorf("phase = %d, want %d", om.phase, phaseEmbFetching)
 	}
@@ -237,6 +243,12 @@ func TestOnboardLLMHostEnter(t *testing.T) {
 	m.phase = phaseLLMHost
 	result, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	om := result.(OnboardModel)
+	// Ollama host is followed by the optional API key step.
+	if om.phase != phaseLLMOllamaKey {
+		t.Errorf("phase = %d, want %d (phaseLLMOllamaKey)", om.phase, phaseLLMOllamaKey)
+	}
+	result, _ = om.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	om = result.(OnboardModel)
 	if om.phase != phaseLLMFetching {
 		t.Errorf("phase = %d, want %d", om.phase, phaseLLMFetching)
 	}
@@ -621,12 +633,15 @@ func TestOnboardMenuEmbHostEnterReturnsToMenu(t *testing.T) {
 	m.phase = phaseEmbHost
 	result, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	om := result.(OnboardModel)
-	// In menu mode, entering host should return to menu.
-	// Actually in menu mode it goes to phaseEmbFetching.
-	if om.phase == phaseMenu || om.phase == phaseEmbFetching {
-		// Both acceptable.
-	} else {
-		t.Errorf("phase = %d, unexpected", om.phase)
+	// In menu mode, an Ollama host goes to the optional key step first,
+	// then back to the menu.
+	if om.phase != phaseEmbOllamaKey {
+		t.Fatalf("phase = %d, want phaseEmbOllamaKey", om.phase)
+	}
+	result, _ = om.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	om = result.(OnboardModel)
+	if om.phase != phaseMenu {
+		t.Errorf("phase = %d, want phaseMenu", om.phase)
 	}
 }
 

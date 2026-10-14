@@ -18,6 +18,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/tevfik/gleann/pkg/gleann"
 )
 
 // TokenCallback receives streamed tokens from the VLM. Errors returned by
@@ -92,7 +94,7 @@ func (p *Processor) ProcessFileStream(path string, onToken TokenCallback) Proces
 	}
 	jsonBody, _ := json.Marshal(reqBody)
 	client := &http.Client{Timeout: 5 * time.Minute}
-	resp, err := client.Post(p.OllamaHost+"/api/chat", "application/json", bytes.NewReader(jsonBody))
+	resp, err := gleann.OllamaPost(client, p.OllamaHost+"/api/chat", "application/json", bytes.NewReader(jsonBody), p.APIKey)
 	if err != nil {
 		result.Error = fmt.Errorf("ollama stream request: %w", err)
 		return result

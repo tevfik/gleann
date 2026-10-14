@@ -23,6 +23,7 @@ const (
 	phaseQuickOrAdv     wizardPhase = 0    // "Quick Setup" vs "Advanced Setup"
 	phaseEmbProvider    wizardPhase = iota // select: ollama / openai
 	phaseEmbHost                           // text input: host URL
+	phaseEmbOllamaKey                      // text input: optional Ollama API key
 	phaseEmbAPIKey                         // text input: API key (openai only)
 	phaseEmbFetching                       // spinner: fetching models
 	phaseEmbModel                          // select: pick from fetched list
@@ -30,6 +31,7 @@ const (
 	phaseDocEmbModel                       // select: docs embedding model
 	phaseLLMProvider                       // select: ollama / openai / anthropic
 	phaseLLMHost                           // text input: host URL (if different)
+	phaseLLMOllamaKey                      // text input: optional Ollama API key
 	phaseLLMAPIKey                         // text input: API key
 	phaseLLMFetching                       // spinner: fetching LLM models
 	phaseLLMModel                          // select: pick LLM model
@@ -69,6 +71,7 @@ type OnboardResult struct {
 	CodeEmbeddingModel string `json:"code_embedding_model,omitempty"`
 	DocEmbeddingModel  string `json:"doc_embedding_model,omitempty"`
 	OllamaHost         string `json:"ollama_host,omitempty"`
+	OllamaAPIKey       string `json:"ollama_api_key,omitempty"` // optional Bearer key (auth proxy / hosted Ollama)
 	OpenAIKey          string `json:"openai_api_key,omitempty"`
 	OpenAIBaseURL      string `json:"openai_base_url,omitempty"`
 	AnthropicKey       string `json:"anthropic_api_key,omitempty"`
@@ -158,6 +161,10 @@ type OnboardModel struct {
 	llmHostInput  textinput.Model
 	llmKeyInput   textinput.Model
 	indexDirInput textinput.Model
+
+	// Optional Ollama API key — a single value shared by the embedding and
+	// LLM Ollama steps since it maps to one OllamaAPIKey config field.
+	ollamaKeyInput textinput.Model
 
 	// Model lists (fetched dynamically).
 	embModels          []ModelInfo
@@ -278,6 +285,13 @@ func NewOnboardModel() OnboardModel {
 	llmKey.SetWidth(44)
 	llmKey.EchoMode = textinput.EchoPassword
 
+	// Optional Ollama API key (auth proxy / hosted Ollama).
+	ollamaKey := textinput.New()
+	ollamaKey.Placeholder = "optional — leave empty if not required"
+	ollamaKey.CharLimit = 256
+	ollamaKey.SetWidth(44)
+	ollamaKey.EchoMode = textinput.EchoPassword
+
 	// Index dir — use real OS path so the saved value is portable.
 	defaultIdx := DefaultIndexDir()
 	indexDir := textinput.New()
@@ -313,6 +327,7 @@ func NewOnboardModel() OnboardModel {
 		embKeyInput:       embKey,
 		llmHostInput:      llmHost,
 		llmKeyInput:       llmKey,
+		ollamaKeyInput:    ollamaKey,
 		indexDirInput:     indexDir,
 		rerankOptions:     []string{"Skip (no reranking)", "Enable reranker"},
 		rerankOptionIdx:   0,
@@ -416,6 +431,9 @@ func NewOnboardModelWithConfig(cfg *OnboardResult) OnboardModel {
 	}
 	if cfg.OpenAIKey != "" {
 		m.embKeyInput.SetValue(cfg.OpenAIKey)
+	}
+	if cfg.OllamaAPIKey != "" {
+		m.ollamaKeyInput.SetValue(cfg.OllamaAPIKey)
 	}
 	if cfg.IndexDir != "" {
 		m.indexDirInput.SetValue(cfg.IndexDir)
@@ -651,11 +669,30 @@ func (m OnboardModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 					m.llmHostInput.SetValue(val)
 				}
 			}
+			if m.embProviders[m.embProviderIdx] == "ollama" {
+				// Next: optional API key for Ollama behind an auth proxy.
+				m.phase = phaseEmbOllamaKey
+				m.focusActiveInput()
+				return m, textinput.Blink
+			}
 			if m.menuMode {
 				m.phase = phaseMenu
 				return m, nil
 			}
 			m.phase = phaseEmbFetching
+			return m, m.fetchEmbModels()
+		}
+	case phaseEmbOllamaKey:
+		if key == "enter" {
+			// Empty is fine — the key is optional.
+			m.ollamaKeyInput.SetValue(strings.TrimSpace(m.ollamaKeyInput.Value()))
+			if m.menuMode {
+				m.phase = phaseMenu
+				m.focusActiveInput()
+				return m, nil
+			}
+			m.phase = phaseEmbFetching
+			m.focusActiveInput()
 			return m, m.fetchEmbModels()
 		}
 	case phaseEmbAPIKey:
@@ -684,11 +721,30 @@ func (m OnboardModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 					m.embHostInput.SetValue(val)
 				}
 			}
+			if m.llmProviders[m.llmProviderIdx] == "ollama" {
+				// Next: optional API key (shared with the embedding Ollama step,
+				// so it is prefilled when already entered there).
+				m.phase = phaseLLMOllamaKey
+				m.focusActiveInput()
+				return m, textinput.Blink
+			}
 			if m.menuMode {
 				m.phase = phaseMenu
 				return m, nil
 			}
 			m.phase = phaseLLMFetching
+			return m, m.fetchLLMModels()
+		}
+	case phaseLLMOllamaKey:
+		if key == "enter" {
+			m.ollamaKeyInput.SetValue(strings.TrimSpace(m.ollamaKeyInput.Value()))
+			if m.menuMode {
+				m.phase = phaseMenu
+				m.focusActiveInput()
+				return m, nil
+			}
+			m.phase = phaseLLMFetching
+			m.focusActiveInput()
 			return m, m.fetchLLMModels()
 		}
 	case phaseLLMAPIKey:
@@ -889,8 +945,9 @@ func (m OnboardModel) handleQuickAdvKeys(key string) (tea.Model, tea.Cmd) {
 		if m.quickAdvOptionIdx == 0 {
 			m.buildResult()
 			host := m.embHostInput.Value()
-			if ollamaReachable(host) {
-				models, err := fetchModels("ollama", host, "")
+			ollamaKey := m.ollamaKeyInput.Value()
+			if ollamaReachable(host, ollamaKey) {
+				models, err := fetchModels("ollama", host, ollamaKey)
 				if err == nil && len(models) > 0 {
 					pickBestModels(&m.result, models)
 				}
@@ -1000,6 +1057,8 @@ func (m *OnboardModel) updateActiveInput(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.llmHostInput, cmd = m.llmHostInput.Update(msg)
 	case phaseLLMAPIKey:
 		m.llmKeyInput, cmd = m.llmKeyInput.Update(msg)
+	case phaseEmbOllamaKey, phaseLLMOllamaKey:
+		m.ollamaKeyInput, cmd = m.ollamaKeyInput.Update(msg)
 	case phaseServer:
 		m.serverAddrInput, cmd = m.serverAddrInput.Update(msg)
 	case phaseCustomHFInput:
@@ -1015,9 +1074,12 @@ func (m *OnboardModel) focusActiveInput() {
 	m.embKeyInput.Blur()
 	m.llmHostInput.Blur()
 	m.llmKeyInput.Blur()
+	m.ollamaKeyInput.Blur()
 	m.indexDirInput.Blur()
 
 	switch m.phase {
+	case phaseEmbOllamaKey, phaseLLMOllamaKey:
+		m.ollamaKeyInput.Focus()
 	case phaseEmbHost:
 		m.embHostInput.Focus()
 	case phaseEmbAPIKey:
@@ -1035,12 +1097,14 @@ func (m OnboardModel) prevPhase() int {
 	prev := map[wizardPhase]wizardPhase{
 		phaseEmbProvider:    phaseQuickOrAdv,
 		phaseEmbHost:        phaseEmbProvider,
+		phaseEmbOllamaKey:   phaseEmbHost,
 		phaseEmbAPIKey:      phaseEmbProvider,
 		phaseEmbModel:       phaseEmbHost,
 		phaseCodeEmbModel:   phaseEmbModel,
 		phaseDocEmbModel:    phaseCodeEmbModel,
 		phaseLLMProvider:    phaseDocEmbModel,
 		phaseLLMHost:        phaseLLMProvider,
+		phaseLLMOllamaKey:   phaseLLMHost,
 		phaseLLMAPIKey:      phaseLLMProvider,
 		phaseLLMModel:       phaseLLMProvider,
 		phaseReranker:       phaseLLMModel,
@@ -1071,11 +1135,20 @@ func (m OnboardModel) fetchEmbModels() tea.Cmd {
 	if (prov == "eif" || prov == "llamacpp") && strings.HasPrefix(host, "http://") {
 		host = ""
 	}
-	key := m.embKeyInput.Value()
+	key := m.providerKey(prov, m.embKeyInput.Value())
 	return func() tea.Msg {
 		models, err := fetchModels(prov, host, key)
 		return modelsFetchedMsg{models: models, err: err, forLLM: false}
 	}
+}
+
+// providerKey returns the API key to use for model listing against prov:
+// the shared Ollama key for "ollama", otherwise the given provider key.
+func (m OnboardModel) providerKey(prov, otherKey string) string {
+	if prov == "ollama" {
+		return m.ollamaKeyInput.Value()
+	}
+	return otherKey
 }
 
 func (m OnboardModel) fetchLLMModels() tea.Cmd {
@@ -1094,6 +1167,7 @@ func (m OnboardModel) fetchLLMModels() tea.Cmd {
 	if (prov == "eif" || prov == "llamacpp") && strings.HasPrefix(host, "http://") {
 		host = ""
 	}
+	key = m.providerKey(prov, key)
 
 	return func() tea.Msg {
 		models, err := fetchModels(prov, host, key)
@@ -1104,7 +1178,7 @@ func (m OnboardModel) fetchLLMModels() tea.Cmd {
 func (m OnboardModel) fetchRerankModels() tea.Cmd {
 	prov := m.embProviders[m.embProviderIdx]
 	host := m.embHostInput.Value()
-	key := m.embKeyInput.Value()
+	key := m.providerKey(prov, m.embKeyInput.Value())
 	return func() tea.Msg {
 		models, err := fetchModels(prov, host, key)
 		return modelsFetchedMsg{models: models, err: err, forReranker: true}
@@ -1218,6 +1292,7 @@ func (m *OnboardModel) buildResult() {
 		EmbeddingProvider:  m.embProviders[m.embProviderIdx],
 		EmbeddingModel:     embModel,
 		OllamaHost:         ollamaHost,
+		OllamaAPIKey:       strings.TrimSpace(m.ollamaKeyInput.Value()),
 		OpenAIKey:          m.embKeyInput.Value(),
 		OpenAIBaseURL:      m.openAIBaseURL(),
 		AnthropicKey:       m.llmKeyInput.Value(),
@@ -1359,6 +1434,11 @@ func (m OnboardModel) View() tea.View {
 				&m.embHostInput))
 		}
 
+	case phaseEmbOllamaKey:
+		b.WriteString(m.renderInput("2b", "Ollama API Key (optional)",
+			"Only needed if Ollama is behind an auth proxy or hosted — press enter to skip",
+			&m.ollamaKeyInput))
+
 	case phaseEmbAPIKey:
 		b.WriteString(m.renderInput("2", "OpenAI API Key",
 			"Enter your OpenAI API key — models will be fetched automatically",
@@ -1406,6 +1486,11 @@ func (m OnboardModel) View() tea.View {
 				"Enter the service address — models will be fetched automatically",
 				&m.llmHostInput))
 		}
+
+	case phaseLLMOllamaKey:
+		b.WriteString(m.renderInput("5b", "Ollama API Key (optional)",
+			"Only needed if Ollama is behind an auth proxy or hosted — press enter to skip",
+			&m.ollamaKeyInput))
 
 	case phaseLLMAPIKey:
 		prov := m.llmProviders[m.llmProviderIdx]
@@ -1555,6 +1640,8 @@ func (m OnboardModel) settingsMenuValues() []string {
 		} else if k != "" {
 			embHostOrKey = "****"
 		}
+	} else if embProv == "ollama" && m.ollamaKeyInput.Value() != "" {
+		embHostOrKey = "(key) " + embHostOrKey
 	} else if embProv == "eif" {
 		if embHostOrKey == "" {
 			embHostOrKey = "(in-process CGO runtime)"
@@ -1578,6 +1665,8 @@ func (m OnboardModel) settingsMenuValues() []string {
 		} else if k != "" {
 			llmHostOrKey = "****"
 		}
+	} else if llmProv == "ollama" && m.ollamaKeyInput.Value() != "" {
+		llmHostOrKey = "(key) " + llmHostOrKey
 	} else if llmProv == "eif" {
 		if llmHostOrKey == "" {
 			llmHostOrKey = "(in-process CGO runtime)"
@@ -1659,7 +1748,7 @@ func (m OnboardModel) visibleStep() int {
 	switch m.phase {
 	case phaseEmbProvider:
 		return 1
-	case phaseEmbHost, phaseEmbAPIKey:
+	case phaseEmbHost, phaseEmbOllamaKey, phaseEmbAPIKey:
 		return 2
 	case phaseEmbFetching:
 		return 2
@@ -1671,7 +1760,7 @@ func (m OnboardModel) visibleStep() int {
 		return 5
 	case phaseLLMProvider:
 		return 6
-	case phaseLLMHost, phaseLLMAPIKey:
+	case phaseLLMHost, phaseLLMOllamaKey, phaseLLMAPIKey:
 		return 7
 	case phaseLLMFetching:
 		return 7
@@ -1890,6 +1979,13 @@ func (m OnboardModel) renderSummary() string {
 		row{"LLM Provider", m.llmProviders[m.llmProviderIdx]},
 		row{"LLM Model", llmModel},
 	)
+	if m.embProviders[m.embProviderIdx] == "ollama" || m.llmProviders[m.llmProviderIdx] == "ollama" {
+		ollamaKey := "(none)"
+		if k := m.ollamaKeyInput.Value(); k != "" {
+			ollamaKey = gleann.MaskSecret(k)
+		}
+		rows = append(rows, row{"Ollama API Key", ollamaKey})
+	}
 	if m.rerankEnabled {
 		rerankModel := "(no model selected)"
 		if len(m.rerankModels) > 0 && m.rerankModelIdx < len(m.rerankModels) {

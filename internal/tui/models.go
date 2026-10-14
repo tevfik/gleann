@@ -22,10 +22,12 @@ type ModelInfo struct {
 }
 
 // fetchModels queries the provider API and returns available models.
+// apiKey is the provider-specific key: the Ollama API key for "ollama"
+// (optional), the OpenAI key for "openai".
 func fetchModels(provider, host, apiKey string) ([]ModelInfo, error) {
 	switch provider {
 	case "ollama":
-		return fetchOllamaModels(host)
+		return fetchOllamaModels(host, apiKey)
 	case "openai":
 		return fetchOpenAIModels(host, apiKey)
 	case "llamacpp":
@@ -56,13 +58,13 @@ type ollamaModelDetail struct {
 	QuantizationLevel string `json:"quantization_level"`
 }
 
-func fetchOllamaModels(host string) ([]ModelInfo, error) {
+func fetchOllamaModels(host, apiKey string) ([]ModelInfo, error) {
 	if host == "" {
 		host = gleann.DefaultOllamaHost
 	}
 
 	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Get(host + "/api/tags")
+	resp, err := gleann.OllamaGet(client, host+"/api/tags", gleann.ResolveOllamaAPIKey(apiKey))
 	if err != nil {
 		return nil, fmt.Errorf("connect to Ollama at %s: %w", host, err)
 	}

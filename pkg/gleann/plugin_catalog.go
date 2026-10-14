@@ -3,6 +3,7 @@ package gleann
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 )
@@ -93,7 +94,7 @@ func FetchPluginCatalog() []PluginMeta {
 			copy(result, cachedCatalog)
 			return result
 		}
-		return defaultCatalog
+		return copyCatalog(defaultCatalog)
 	}
 	defer resp.Body.Close()
 
@@ -103,17 +104,26 @@ func FetchPluginCatalog() []PluginMeta {
 			copy(result, cachedCatalog)
 			return result
 		}
-		return defaultCatalog
+		return copyCatalog(defaultCatalog)
 	}
 
-	var remoteCatalog []PluginMeta
-	if err := json.NewDecoder(resp.Body).Decode(&remoteCatalog); err != nil || len(remoteCatalog) == 0 {
+	var rawCatalog []*PluginMeta
+	err = json.NewDecoder(resp.Body).Decode(&rawCatalog)
+	// Drop null and nameless entries (e.g. `[null, {...}]` in a hand-edited
+	// registry); a catalog with no usable entries falls back like a bad fetch.
+	remoteCatalog := make([]PluginMeta, 0, len(rawCatalog))
+	for _, m := range rawCatalog {
+		if m != nil && strings.TrimSpace(m.Name) != "" {
+			remoteCatalog = append(remoteCatalog, *m)
+		}
+	}
+	if err != nil || len(remoteCatalog) == 0 {
 		if cachedCatalog != nil {
 			result := make([]PluginMeta, len(cachedCatalog))
 			copy(result, cachedCatalog)
 			return result
 		}
-		return defaultCatalog
+		return copyCatalog(defaultCatalog)
 	}
 
 	cachedCatalog = remoteCatalog
@@ -122,6 +132,14 @@ func FetchPluginCatalog() []PluginMeta {
 	result := make([]PluginMeta, len(cachedCatalog))
 	copy(result, cachedCatalog)
 	return result
+}
+
+// copyCatalog returns a copy of c so callers cannot mutate the shared
+// built-in default catalog (or the cache) through the returned slice.
+func copyCatalog(c []PluginMeta) []PluginMeta {
+	out := make([]PluginMeta, len(c))
+	copy(out, c)
+	return out
 }
 
 // InvalidatePluginCatalog clears the in-memory catalog cache (useful for tests or forced refresh).

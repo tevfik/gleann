@@ -105,6 +105,8 @@ func NewComputer(opts Options) *Computer {
 
 	if opts.APIKey == "" {
 		switch opts.Provider {
+		case ProviderOllama:
+			opts.APIKey = os.Getenv(gleann.OllamaAPIKeyEnv)
 		case ProviderOpenAI:
 			opts.APIKey = os.Getenv("OPENAI_API_KEY")
 		case ProviderGemini:
@@ -332,9 +334,12 @@ func (c *Computer) Compute(ctx context.Context, texts []string) ([][]float32, er
 	}
 
 	// Cache dimensions from first result.
-	if len(allEmbeddings) > 0 && c.dimensions == 0 {
+	// (Checked under the lock: Compute runs concurrently for parallel searches.)
+	if len(allEmbeddings) > 0 {
 		c.mu.Lock()
-		c.dimensions = len(allEmbeddings[0])
+		if c.dimensions == 0 {
+			c.dimensions = len(allEmbeddings[0])
+		}
 		c.mu.Unlock()
 	}
 

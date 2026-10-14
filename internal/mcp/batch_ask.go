@@ -153,9 +153,7 @@ func (s *Server) handleBatchAsk(ctx context.Context, req mcpsdk.CallToolRequest)
 			if s.config.OllamaHost != "" {
 				chatCfg.BaseURL = s.config.OllamaHost
 			}
-			if s.config.OpenAIAPIKey != "" {
-				chatCfg.APIKey = s.config.OpenAIAPIKey
-			}
+			chatCfg.APIKey = s.config.APIKeyForProvider(string(chatCfg.Provider))
 			if s.config.OpenAIBaseURL != "" && chatCfg.Provider == gleann.LLMOpenAI {
 				chatCfg.BaseURL = s.config.OpenAIBaseURL
 			}

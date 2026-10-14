@@ -178,6 +178,8 @@ func NewChat(searcher Searcher, config ChatConfig) *LeannChat {
 			config.APIKey = os.Getenv("OPENAI_API_KEY")
 		case LLMAnthropic:
 			config.APIKey = os.Getenv("ANTHROPIC_API_KEY")
+		case LLMOllama:
+			config.APIKey = os.Getenv(OllamaAPIKeyEnv)
 		}
 	}
 

@@ -177,6 +177,11 @@ type Config struct {
 	// OllamaHost is the Ollama server address.
 	OllamaHost string `json:"ollama_host,omitempty"`
 
+	// OllamaAPIKey is an optional API key sent as "Authorization: Bearer <key>"
+	// on Ollama requests (Ollama behind an auth proxy / hosted Ollama).
+	// Falls back to the OLLAMA_API_KEY environment variable when empty.
+	OllamaAPIKey string `json:"ollama_api_key,omitempty"`
+
 	// OpenAIBaseURL is the OpenAI API base URL.
 	OpenAIBaseURL string `json:"openai_base_url,omitempty"`
 

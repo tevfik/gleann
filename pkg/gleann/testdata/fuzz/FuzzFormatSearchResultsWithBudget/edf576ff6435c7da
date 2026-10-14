@@ -1,0 +1,8 @@
+go test fuzz v1
+int(25)
+int(508)
+int(0)
+string("0")
+string("0")
+bool(false)
+byte('k')

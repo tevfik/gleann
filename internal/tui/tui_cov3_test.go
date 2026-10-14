@@ -68,7 +68,7 @@ func TestFetchOllamaModels_NonOKStatus(t *testing.T) {
 		w.Write([]byte("service down"))
 	}))
 	defer srv.Close()
-	_, err := fetchOllamaModels(srv.URL)
+	_, err := fetchOllamaModels(srv.URL, "")
 	if err == nil {
 		t.Fatal("expected error for non-200 status")
 	}
@@ -79,7 +79,7 @@ func TestFetchOllamaModels_BadJSON(t *testing.T) {
 		w.Write([]byte("not json"))
 	}))
 	defer srv.Close()
-	_, err := fetchOllamaModels(srv.URL)
+	_, err := fetchOllamaModels(srv.URL, "")
 	if err == nil {
 		t.Fatal("expected error for bad JSON")
 	}
@@ -97,7 +97,7 @@ func TestFetchOllamaModels_MultipleModels(t *testing.T) {
 		})
 	}))
 	defer srv.Close()
-	models, err := fetchOllamaModels(srv.URL)
+	models, err := fetchOllamaModels(srv.URL, "")
 	if err != nil {
 		t.Fatal(err)
 	}

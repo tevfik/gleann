@@ -64,8 +64,24 @@ type PluginManager struct {
 	Registry   *PluginRegistry
 	activeCmds map[string]*exec.Cmd
 	logFiles   map[string]*os.File
-	mu         sync.Mutex
+	// exited holds, per spawned command, a channel closed once cmd.Wait
+	// returns. Every started process is reaped by a dedicated goroutine so
+	// plugins that exit on their own never linger as zombies.
+	exited map[*exec.Cmd]chan struct{}
+	mu     sync.Mutex
 }
+
+// pluginStartTimeout bounds how long EnsurePluginRunning waits for an
+// auto-started plugin to become healthy. Variable so tests can shorten it.
+var pluginStartTimeout = 10 * time.Second
+
+// pluginStopGrace is how long a plugin gets to exit after SIGINT before it
+// is killed, and how long we then wait for the kill to be reaped.
+var pluginStopGrace = 2 * time.Second
+
+// pluginStartedHook, when non-nil, is called after a plugin process has been
+// spawned with the channel that is closed once it is reaped. Test-only.
+var pluginStartedHook func(cmd *exec.Cmd, exited <-chan struct{})
 
 // LoadPlugins reads the plugin registry from ~/.gleann/plugins.json
 // (Kept for compatibility, but NewPluginManager is preferred for lifecycle management)
@@ -109,21 +125,92 @@ func NewPluginManager() (*PluginManager, error) {
 }
 
 // Close gracefully stops any plugins that were spawned by this manager.
+// Each process is sent SIGINT, given pluginStopGrace to exit, then killed;
+// Close waits (bounded) for the processes to be reaped.
 func (m *PluginManager) Close() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
+	type running struct {
+		proc *os.Process
+		done chan struct{}
+	}
+	var procs []running
 	for _, cmd := range m.activeCmds {
-		if cmd.Process != nil {
-			proc := cmd.Process // capture by value to avoid closure race
-			_ = proc.Signal(os.Interrupt)
-			time.AfterFunc(2*time.Second, func() { _ = proc.Kill() })
+		if cmd == nil || cmd.Process == nil {
+			continue
+		}
+		done := m.exited[cmd]
+		if done == nil {
+			// Not started by EnsurePluginRunning (no reaper goroutine);
+			// nothing to wait on, just make sure it is gone.
+			_ = cmd.Process.Kill()
+			continue
+		}
+		_ = cmd.Process.Signal(os.Interrupt)
+		procs = append(procs, running{cmd.Process, done})
+	}
+
+	deadline := time.After(pluginStopGrace)
+	for _, p := range procs {
+		select {
+		case <-p.done:
+		case <-deadline:
+			deadline = nil // expired: stop waiting for the rest gracefully
+		}
+		if deadline == nil {
+			break
 		}
 	}
+	killWait := time.After(pluginStopGrace)
+	for _, p := range procs {
+		select {
+		case <-p.done:
+			continue
+		default:
+		}
+		_ = p.proc.Kill()
+		select {
+		case <-p.done:
+		case <-killWait:
+		}
+	}
+
 	for _, f := range m.logFiles {
-		f.Close()
+		if f != nil {
+			f.Close()
+		}
 	}
 	m.activeCmds = make(map[string]*exec.Cmd)
 	m.logFiles = make(map[string]*os.File)
+	m.exited = make(map[*exec.Cmd]chan struct{})
+}
+
+// stopPluginLocked stops (if still running) and forgets the process tracked
+// for name, and closes its log file. Caller must hold m.mu.
+func (m *PluginManager) stopPluginLocked(name string) {
+	if cmd := m.activeCmds[name]; cmd != nil {
+		if cmd.Process != nil {
+			done := m.exited[cmd]
+			select {
+			case <-done: // already exited and reaped (nil done never matches)
+			default:
+				_ = cmd.Process.Kill()
+				if done != nil {
+					select {
+					case <-done:
+					case <-time.After(pluginStopGrace):
+					}
+				}
+			}
+		}
+		delete(m.exited, cmd)
+	}
+	delete(m.activeCmds, name)
+	if f := m.logFiles[name]; f != nil {
+		f.Close()
+	}
+	delete(m.logFiles, name)
 }
 
 // deprecatedMediaExts are extensions now handled by model-native multimodal processing.
@@ -315,6 +402,20 @@ func (m *PluginManager) EnsurePluginRunning(p *Plugin) error {
 		return fmt.Errorf("plugin %s is down and has no auto-start command defined", p.Name)
 	}
 
+	if m.activeCmds == nil {
+		m.activeCmds = make(map[string]*exec.Cmd)
+	}
+	if m.logFiles == nil {
+		m.logFiles = make(map[string]*os.File)
+	}
+	if m.exited == nil {
+		m.exited = make(map[*exec.Cmd]chan struct{})
+	}
+
+	// A previous instance (crashed, or never became healthy) may still be
+	// tracked: stop it and close its log file before starting a new one.
+	m.stopPluginLocked(p.Name)
+
 	cmd := exec.Command(p.Command[0], p.Command[1:]...)
 
 	home, _ := os.UserHomeDir()
@@ -324,19 +425,42 @@ func (m *PluginManager) EnsurePluginRunning(p *Plugin) error {
 	if err == nil {
 		cmd.Stdout = logFile
 		cmd.Stderr = logFile
-		m.logFiles[p.Name] = logFile
+	} else {
+		logFile = nil
 	}
 
 	if err := cmd.Start(); err != nil {
+		if logFile != nil {
+			logFile.Close()
+		}
 		return fmt.Errorf("failed to auto-start plugin %s: %w", p.Name, err)
 	}
 
-	m.activeCmds[p.Name] = cmd
+	// Reap the process whenever it exits so it never becomes a zombie.
+	done := make(chan struct{})
+	go func() {
+		_ = cmd.Wait()
+		close(done)
+	}()
 
-	// Poll until healthy
-	timeout := time.Now().Add(10 * time.Second)
+	m.activeCmds[p.Name] = cmd
+	m.exited[cmd] = done
+	if pluginStartedHook != nil {
+		pluginStartedHook(cmd, done)
+	}
+	if logFile != nil {
+		m.logFiles[p.Name] = logFile
+	}
+
+	// Poll until healthy (or the process exits early).
+	timeout := time.Now().Add(pluginStartTimeout)
 	for time.Now().Before(timeout) {
-		time.Sleep(500 * time.Millisecond)
+		select {
+		case <-done:
+			m.stopPluginLocked(p.Name)
+			return fmt.Errorf("plugin %s exited during startup. Check logs at %s", p.Name, filepath.Join(logDir, p.Name+".log"))
+		case <-time.After(500 * time.Millisecond):
+		}
 		resp, err := client.Get(healthURL)
 		if err == nil {
 			resp.Body.Close()
@@ -344,7 +468,9 @@ func (m *PluginManager) EnsurePluginRunning(p *Plugin) error {
 		}
 	}
 
-	return fmt.Errorf("plugin %s did not become healthy after 10s. Check logs at %s", p.Name, filepath.Join(logDir, p.Name+".log"))
+	// Never became healthy: kill it and stop tracking it.
+	m.stopPluginLocked(p.Name)
+	return fmt.Errorf("plugin %s did not become healthy after %s. Check logs at %s", p.Name, pluginStartTimeout, filepath.Join(logDir, p.Name+".log"))
 }
 
 // PluginNode represents a graph node returned by a structured plugin.

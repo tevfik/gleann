@@ -200,6 +200,9 @@ func (s *Summarizer) callOllama(ctx context.Context, client *http.Client, prompt
 		return "", err
 	}
 	req.Header.Set("Content-Type", "application/json")
+	if s.config.APIKey != "" {
+		req.Header.Set("Authorization", "Bearer "+s.config.APIKey)
+	}
 
 	resp, err := client.Do(req)
 	if err != nil {

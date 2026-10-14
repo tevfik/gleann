@@ -270,7 +270,7 @@ func TestFetchOllamaModels(t *testing.T) {
 	}))
 	defer server.Close()
 
-	models, err := fetchOllamaModels(server.URL)
+	models, err := fetchOllamaModels(server.URL, "")
 	if err != nil {
 		t.Fatalf("fetchOllamaModels: %v", err)
 	}
@@ -294,7 +294,7 @@ func TestFetchOllamaModelsError(t *testing.T) {
 	}))
 	defer server.Close()
 
-	_, err := fetchOllamaModels(server.URL)
+	_, err := fetchOllamaModels(server.URL, "")
 	if err == nil {
 		t.Error("expected error for 500 response")
 	}

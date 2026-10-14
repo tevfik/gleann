@@ -21,7 +21,7 @@ import (
 func (s *Server) mountPacks(mux *http.ServeMux) {
 	dir := os.Getenv("GLEANN_PACKS_DIR")
 	if dir == "" {
-		dir = filepath.Join(s.config.IndexDir, "packs")
+		dir = filepath.Join(s.cfg().IndexDir, "packs")
 	}
 	reg := packs.New(dir)
 	if err := reg.Reload(); err != nil {

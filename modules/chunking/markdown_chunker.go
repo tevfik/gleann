@@ -61,10 +61,14 @@ type MarkdownChunker struct {
 
 // NewMarkdownChunker creates a new markdown-aware chunker.
 func NewMarkdownChunker(chunkSize, chunkOverlap int) *MarkdownChunker {
+	splitter := NewSentenceSplitter(chunkSize, chunkOverlap)
+	// Use the splitter's normalised sizes so prose and tables share one budget
+	// (a zero/negative chunkSize would otherwise split tables one row per chunk
+	// while prose used the 512-word default).
 	return &MarkdownChunker{
-		ChunkSize:    chunkSize,
-		ChunkOverlap: chunkOverlap,
-		splitter:     NewSentenceSplitter(chunkSize, chunkOverlap),
+		ChunkSize:    splitter.ChunkSize,
+		ChunkOverlap: splitter.ChunkOverlap,
+		splitter:     splitter,
 	}
 }
 
@@ -565,9 +569,24 @@ func (mc *MarkdownChunker) chunkSectionContent(content string) []contentPiece {
 		}
 	}
 
+	inFence := false
 	for i := 0; i < len(lines); {
 		line := lines[i]
 		trimmed := strings.TrimSpace(line)
+
+		// Pipe tables inside fenced code blocks are code, not tables: keep the
+		// fence intact so it is not torn apart around a pseudo-table.
+		if strings.HasPrefix(trimmed, "```") || strings.HasPrefix(trimmed, "~~~") {
+			inFence = !inFence
+			textLines = append(textLines, line)
+			i++
+			continue
+		}
+		if inFence {
+			textLines = append(textLines, line)
+			i++
+			continue
+		}
 
 		// Check if line i is a table header and line i+1 is a separator
 		if i+1 < len(lines) && strings.Contains(trimmed, "|") && isTableSeparator(lines[i+1]) {

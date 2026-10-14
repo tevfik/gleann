@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"os"
 	"sync"
 	"time"
 )
@@ -167,15 +168,34 @@ func fireWebhookHTTP(url, secret string, body []byte) {
 		req.Header.Set("X-Gleann-Signature", "sha256="+sig)
 	}
 
-	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Do(req)
+	resp, err := webhookHTTPClient.Do(req)
 	if err != nil {
 		log.Printf("webhook: failed to deliver to %s: %v", url, err)
 		return
 	}
 	resp.Body.Close()
 
-	if resp.StatusCode >= 400 {
+	if resp.StatusCode >= 300 && resp.StatusCode < 400 {
+		log.Printf("webhook: %s returned redirect %d (redirects are not followed)", url, resp.StatusCode)
+	} else if resp.StatusCode >= 400 {
 		log.Printf("webhook: %s returned status %d", url, resp.StatusCode)
 	}
+}
+
+// webhookAllowPrivate reports whether webhooks may target private/loopback
+// addresses (GLEANN_WEBHOOK_ALLOW_PRIVATE=1). Read at fire time.
+func webhookAllowPrivate() bool {
+	return os.Getenv("GLEANN_WEBHOOK_ALLOW_PRIVATE") == "1"
+}
+
+// webhookHTTPClient delivers webhooks. Redirects are never followed (a
+// public endpoint could otherwise bounce the POST to an internal service),
+// and the resolved address is re-checked at dial time so a hostname that
+// passed validateWebhookURL cannot later be rebound to a private IP.
+var webhookHTTPClient = &http.Client{
+	Timeout:   10 * time.Second,
+	Transport: newGuardedTransport(webhookAllowPrivate, 10*time.Second),
+	CheckRedirect: func(*http.Request, []*http.Request) error {
+		return http.ErrUseLastResponse
+	},
 }

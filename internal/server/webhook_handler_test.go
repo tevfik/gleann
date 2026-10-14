@@ -143,6 +143,8 @@ func TestNotifyWebhooksNoTargets(t *testing.T) {
 
 func TestNotifyWebhooksMatchesEvent(t *testing.T) {
 	resetWebhooks()
+	// The receiver is an httptest server on loopback.
+	t.Setenv("GLEANN_WEBHOOK_ALLOW_PRIVATE", "1")
 
 	// Set up a webhook receiver.
 	received := make(chan []byte, 1)
@@ -180,6 +182,8 @@ func TestNotifyWebhooksMatchesEvent(t *testing.T) {
 
 func TestNotifyWebhooksWildcard(t *testing.T) {
 	resetWebhooks()
+	// The receiver is an httptest server on loopback.
+	t.Setenv("GLEANN_WEBHOOK_ALLOW_PRIVATE", "1")
 
 	received := make(chan []byte, 1)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -140,7 +140,7 @@ func (s *Server) handleMultiSearch(w http.ResponseWriter, r *http.Request) {
 		for _, name := range rawTargets {
 			if strings.HasPrefix(name, "@") {
 				tagName := strings.TrimPrefix(name, "@")
-				tagged, err := gleann.ListIndexesByTag(s.config.IndexDir, tagName)
+				tagged, err := gleann.ListIndexesByTag(s.cfg().IndexDir, tagName)
 				if err != nil {
 					writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to list indexes for tag %q: %v", tagName, err))
 					return
@@ -151,7 +151,11 @@ func (s *Server) handleMultiSearch(w http.ResponseWriter, r *http.Request) {
 					}
 				}
 			} else {
-				meta, err := gleann.GetIndexMeta(s.config.IndexDir, name)
+				if err := gleann.ValidateName(name); err != nil {
+					writeError(w, http.StatusBadRequest, "invalid index name: "+err.Error())
+					return
+				}
+				meta, err := gleann.GetIndexMeta(s.cfg().IndexDir, name)
 				if err != nil {
 					writeError(w, http.StatusNotFound, fmt.Sprintf("index %q not found: %v", name, err))
 					return
@@ -173,7 +177,7 @@ func (s *Server) handleMultiSearch(w http.ResponseWriter, r *http.Request) {
 		}
 	} else {
 		// When no target was requested, find all accessible indexes (public & matching tags)
-		indexes, err := gleann.ListIndexes(s.config.IndexDir)
+		indexes, err := gleann.ListIndexes(s.cfg().IndexDir)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
@@ -221,7 +225,7 @@ func (s *Server) handleMultiSearch(w http.ResponseWriter, r *http.Request) {
 
 	start := time.Now()
 
-	results, err := gleann.SearchMultiple(r.Context(), s.config, s.embedder, resolvedNames, req.Query, opts...)
+	results, err := gleann.SearchMultiple(r.Context(), s.cfg(), s.getEmbedder(), resolvedNames, req.Query, opts...)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, fmt.Sprintf("multi-search failed: %v", err))
 		return

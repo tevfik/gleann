@@ -10,6 +10,7 @@ Useful for Docker, CI/CD, and environments where editing config files is impract
 |----------|-----------|---------|-------------|
 | `GLEANN_INDEX_DIR` | `index_dir` | `~/.gleann/indexes` | Root directory for all index data |
 | `OLLAMA_HOST` | `ollama_host` | `http://localhost:11434` | Ollama server URL |
+| `OLLAMA_API_KEY` | `ollama_api_key` | — | Optional Ollama API key, sent as `Authorization: Bearer <key>` (Ollama behind an auth proxy / hosted Ollama). Used only when `ollama_api_key` is not set |
 
 ## Embedding Settings
 
@@ -26,7 +27,7 @@ Useful for Docker, CI/CD, and environments where editing config files is impract
 |----------|-----------|---------|-------------|
 | `LLM_PROVIDER` | `llm_provider` | `ollama` | LLM provider: `ollama`, `openai`, `anthropic` |
 | `LLM_MODEL` | `llm_model` | `nemotron-3-nano:4b` | LLM model for ask/chat |
-| `OPENAI_API_KEY` | `openai_key` | — | OpenAI API key |
+| `OPENAI_API_KEY` | `openai_api_key` | — | OpenAI API key |
 | `OPENAI_BASE_URL` | `openai_base_url` | — | OpenAI-compatible API base URL |
 
 ## Search Settings

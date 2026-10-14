@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"os"
 	"time"
+
+	"github.com/tevfik/gleann/pkg/gleann"
 )
 
 // Bootstrap creates a default configuration without launching the interactive TUI.
@@ -16,6 +18,14 @@ import (
 //	gleann setup --bootstrap --host URL   # use specific Ollama host
 //	gleann setup --bootstrap --code-model M1 --doc-model M2
 func Bootstrap(ollamaHost string, dualModels ...string) (*OnboardResult, error) {
+	return BootstrapWithAPIKey(ollamaHost, "", dualModels...)
+}
+
+// BootstrapWithAPIKey is like Bootstrap but also stores an optional Ollama
+// API key (sent as a Bearer token for Ollama behind an auth proxy).
+//
+//	gleann setup --bootstrap --host URL --ollama-api-key KEY
+func BootstrapWithAPIKey(ollamaHost, ollamaAPIKey string, dualModels ...string) (*OnboardResult, error) {
 	if ollamaHost == "" {
 		ollamaHost = "http://localhost:11434"
 	}
@@ -24,6 +34,7 @@ func Bootstrap(ollamaHost string, dualModels ...string) (*OnboardResult, error) 
 		EmbeddingProvider: "ollama",
 		EmbeddingModel:    "bge-m3",
 		OllamaHost:        ollamaHost,
+		OllamaAPIKey:      ollamaAPIKey,
 		LLMProvider:       "ollama",
 		LLMModel:          "gemma3:4b",
 		RerankEnabled:     false,
@@ -47,10 +58,10 @@ func Bootstrap(ollamaHost string, dualModels ...string) (*OnboardResult, error) 
 
 	// Try to detect Ollama and pick models.
 	fmt.Printf("🔍 Detecting Ollama at %s...\n", ollamaHost)
-	if ollamaReachable(ollamaHost) {
+	if ollamaReachable(ollamaHost, ollamaAPIKey) {
 		fmt.Println("  ✓ Ollama is running")
 
-		models, err := fetchModels("ollama", ollamaHost, "")
+		models, err := fetchModels("ollama", ollamaHost, ollamaAPIKey)
 		if err == nil && len(models) > 0 {
 			fmt.Printf("  ✓ Found %d models\n", len(models))
 			pickBestModels(result, models)
@@ -122,7 +133,7 @@ func CheckSetup() bool {
 	if host == "" {
 		host = "http://localhost:11434"
 	}
-	if ollamaReachable(host) {
+	if ollamaReachable(host, cfg.OllamaAPIKey) {
 		fmt.Printf("  Ollama:    ✅ reachable at %s\n", host)
 	} else {
 		fmt.Printf("  Ollama:    ⚠ not reachable at %s\n", host)
@@ -132,9 +143,9 @@ func CheckSetup() bool {
 }
 
 // ollamaReachable checks if Ollama is up at the given host.
-func ollamaReachable(host string) bool {
+func ollamaReachable(host, apiKey string) bool {
 	client := &http.Client{Timeout: 3 * time.Second}
-	resp, err := client.Get(host + "/api/tags")
+	resp, err := gleann.OllamaGet(client, host+"/api/tags", gleann.ResolveOllamaAPIKey(apiKey))
 	if err != nil {
 		return false
 	}

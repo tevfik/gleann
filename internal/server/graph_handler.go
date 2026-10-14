@@ -116,6 +116,9 @@ func (p *graphDBPool) get(name string) (graphDBHandle, error) {
 		return h, nil
 	}
 
+	if err := gleann.ValidateName(name); err != nil {
+		return nil, err
+	}
 	dbPath := filepath.Join(p.dir, name+"_graph")
 	h, err := openGraphDB(dbPath) // build-tagged function
 	if err != nil {
@@ -148,8 +151,8 @@ func (p *graphDBPool) closeAll() {
 // handleGraphQuery handles POST /api/graph/{name}/query.
 func (s *Server) handleGraphQuery(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
-	if name == "" {
-		writeError(w, http.StatusBadRequest, "index name required")
+	if err := gleann.ValidateName(name); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid index name: "+err.Error())
 		return
 	}
 
@@ -282,8 +285,8 @@ func (s *Server) handleGraphQuery(w http.ResponseWriter, r *http.Request) {
 // handleGraphStats handles GET /api/graph/{name}.
 func (s *Server) handleGraphStats(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
-	if name == "" {
-		writeError(w, http.StatusBadRequest, "index name required")
+	if err := gleann.ValidateName(name); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid index name: "+err.Error())
 		return
 	}
 
@@ -304,7 +307,7 @@ func (s *Server) handleGraphStats(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeJSON(w, http.StatusOK, GraphStatsResponse{
 			Name:      name,
-			DBPath:    filepath.Join(s.config.IndexDir, name+"_graph"),
+			DBPath:    filepath.Join(s.cfg().IndexDir, name+"_graph"),
 			Available: false,
 		})
 		return
@@ -317,7 +320,7 @@ func (s *Server) handleGraphStats(w http.ResponseWriter, r *http.Request) {
 
 	writeJSON(w, http.StatusOK, GraphStatsResponse{
 		Name:       name,
-		DBPath:     filepath.Join(s.config.IndexDir, name+"_graph"),
+		DBPath:     filepath.Join(s.cfg().IndexDir, name+"_graph"),
 		Available:  true,
 		FileCount:  fc,
 		SymCount:   sc,
@@ -330,8 +333,8 @@ func (s *Server) handleGraphStats(w http.ResponseWriter, r *http.Request) {
 // Triggers AST indexing for a directory into the KuzuDB graph.
 func (s *Server) handleGraphIndex(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
-	if name == "" {
-		writeError(w, http.StatusBadRequest, "index name required")
+	if err := gleann.ValidateName(name); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid index name: "+err.Error())
 		return
 	}
 
@@ -357,7 +360,7 @@ func (s *Server) handleGraphIndex(w http.ResponseWriter, r *http.Request) {
 	}
 
 	start := time.Now()
-	err := runGraphIndex(name, req.DocsDir, s.config.IndexDir, req.Module)
+	err := runGraphIndex(name, req.DocsDir, s.cfg().IndexDir, req.Module)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "indexing failed: "+err.Error())
 		return
@@ -374,8 +377,8 @@ func (s *Server) handleGraphIndex(w http.ResponseWriter, r *http.Request) {
 // handleDocumentTOC handles GET /api/graph/{name}/toc?path=...
 func (s *Server) handleDocumentTOC(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
-	if name == "" {
-		writeError(w, http.StatusBadRequest, "index name required")
+	if err := gleann.ValidateName(name); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid index name: "+err.Error())
 		return
 	}
 
@@ -426,8 +429,8 @@ func (s *Server) handleDocumentTOC(w http.ResponseWriter, r *http.Request) {
 // handleListDocuments handles GET /api/graph/{name}/documents.
 func (s *Server) handleListDocuments(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
-	if name == "" {
-		writeError(w, http.StatusBadRequest, "index name required")
+	if err := gleann.ValidateName(name); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid index name: "+err.Error())
 		return
 	}
 

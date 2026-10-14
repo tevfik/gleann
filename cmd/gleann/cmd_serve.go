@@ -20,6 +20,7 @@ func cmdServe(args []string) {
 	// Auto-bootstrap: if no config exists, detect Ollama and create one.
 	ollamaHost := getFlag(args, "--host")
 	quiet := hasFlag(args, "--quiet")
+	autosetup.SetOllamaAPIKey(getFlag(args, "--ollama-api-key"))
 	if _, err := autosetup.EnsureConfig(ollamaHost, quiet); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: auto-setup failed: %v\n", err)
 	}
@@ -37,6 +38,7 @@ func cmdServe(args []string) {
 			modelsToEnsure = append(modelsToEnsure, config.LLMModel)
 		}
 		if len(modelsToEnsure) > 0 {
+			autosetup.SetOllamaAPIKey(config.OllamaAPIKey)
 			autosetup.EnsureModels(config.OllamaHost, quiet, modelsToEnsure...)
 		}
 	}

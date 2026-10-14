@@ -477,10 +477,11 @@ func (s *Server) recallVector(ctx context.Context, req UnifiedRecallRequest) []R
 		return nil
 	}
 
-	searcher, err := s.getSearcher(ctx, indexName)
+	searcher, release, err := s.acquireSearcher(ctx, indexName)
 	if err != nil {
 		return nil
 	}
+	defer release()
 
 	results, err := searcher.Search(ctx, req.Query, gleann.WithTopK(req.TopK))
 	if err != nil {

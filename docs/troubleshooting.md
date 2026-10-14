@@ -30,6 +30,12 @@ gleann config edit
 export OLLAMA_HOST=http://your-server:11434
 ```
 
+**If the remote Ollama requires authentication (HTTP 401/403):**
+```bash
+gleann config set ollama_api_key <key>   # or: export OLLAMA_API_KEY=<key>
+gleann doctor                            # shows "API key configured" / "no API key"
+```
+
 ### "Model not found"
 
 **Symptoms:** `Error: model "bge-m3" not found`

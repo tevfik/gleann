@@ -15,7 +15,20 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/tevfik/gleann/pkg/gleann"
 )
+
+// optionalKey returns the first non-empty key from keys, falling back to the
+// OLLAMA_API_KEY environment variable.
+func optionalKey(keys []string) string {
+	for _, k := range keys {
+		if k != "" {
+			return k
+		}
+	}
+	return gleann.ResolveOllamaAPIKey("")
+}
 
 // ── Supported media types ─────────────────────────────────────
 
@@ -91,7 +104,8 @@ type ollamaShowResponse struct {
 }
 
 // DetectCapabilities queries Ollama for a model's multimodal support.
-func DetectCapabilities(ollamaHost, modelName string) ModelCapabilities {
+// An optional apiKey is sent as a Bearer token (falls back to OLLAMA_API_KEY).
+func DetectCapabilities(ollamaHost, modelName string, apiKey ...string) ModelCapabilities {
 	caps := ModelCapabilities{Name: modelName}
 	if ollamaHost == "" || modelName == "" {
 		applyModelHeuristics(&caps)
@@ -100,7 +114,7 @@ func DetectCapabilities(ollamaHost, modelName string) ModelCapabilities {
 
 	client := &http.Client{Timeout: 5 * time.Second}
 	body, _ := json.Marshal(map[string]string{"name": modelName})
-	resp, err := client.Post(ollamaHost+"/api/show", "application/json", bytes.NewReader(body))
+	resp, err := gleann.OllamaPost(client, ollamaHost+"/api/show", "application/json", bytes.NewReader(body), optionalKey(apiKey))
 	if err != nil {
 		applyModelHeuristics(&caps)
 		return caps
@@ -155,6 +169,7 @@ type Processor struct {
 	OllamaHost string
 	Model      string
 	Lang       string // "en" (default) or "tr" — Bug #10
+	APIKey     string // optional Ollama API key (Bearer); defaults to OLLAMA_API_KEY
 }
 
 // NewProcessor creates a multimodal processor.
@@ -171,7 +186,7 @@ func NewProcessor(ollamaHost, model string) *Processor {
 	if lang != "tr" {
 		lang = "en"
 	}
-	return &Processor{OllamaHost: ollamaHost, Model: model, Lang: lang}
+	return &Processor{OllamaHost: ollamaHost, Model: model, Lang: lang, APIKey: gleann.ResolveOllamaAPIKey("")}
 }
 
 // ProcessResult holds the output of multimodal processing.
@@ -292,7 +307,7 @@ func (p *Processor) ProcessFile(path string) ProcessResult {
 
 	jsonBody, _ := json.Marshal(reqBody)
 	client := &http.Client{Timeout: 120 * time.Second}
-	resp, err := client.Post(p.OllamaHost+"/api/chat", "application/json", bytes.NewReader(jsonBody))
+	resp, err := gleann.OllamaPost(client, p.OllamaHost+"/api/chat", "application/json", bytes.NewReader(jsonBody), p.APIKey)
 	if err != nil {
 		result.Error = fmt.Errorf("ollama request failed: %w", err)
 		return result
@@ -364,13 +379,14 @@ func (p *Processor) descriptionPrompt(mt MediaType, filename string) string {
 }
 
 // AutoDetectModel queries Ollama for available multimodal models and returns the best one.
-func AutoDetectModel(ollamaHost string) string {
+// An optional apiKey is sent as a Bearer token (falls back to OLLAMA_API_KEY).
+func AutoDetectModel(ollamaHost string, apiKey ...string) string {
 	if ollamaHost == "" {
 		ollamaHost = "http://localhost:11434"
 	}
 
 	client := &http.Client{Timeout: 3 * time.Second}
-	resp, err := client.Get(ollamaHost + "/api/tags")
+	resp, err := gleann.OllamaGet(client, ollamaHost+"/api/tags", optionalKey(apiKey))
 	if err != nil {
 		return ""
 	}

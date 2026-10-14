@@ -20,6 +20,10 @@ import (
 // defaultPluginOwner is the default GitHub/Gitea owner for gleann plugins.
 const defaultPluginOwner = "tevfik"
 
+// githubAPIBase is the GitHub REST API root used for release lookups.
+// It is a variable so tests can point it at an httptest server.
+var githubAPIBase = "https://api.github.com"
+
 func pluginOwner() string {
 	if v := os.Getenv("GLEANN_PLUGIN_OWNER"); v != "" {
 		return v
@@ -262,6 +266,11 @@ func setupGoPluginWithProgress(pluginDir, name string, progress chan<- string) (
 }
 
 func UninstallPlugin(name string) (string, error) {
+	// name is joined into ~/.gleann/plugins/<name> and removed recursively;
+	// reject anything that is not a single safe path component.
+	if err := ValidateName(name); err != nil {
+		return "", err
+	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", fmt.Errorf("user home dir: %w", err)
@@ -361,7 +370,7 @@ func parseGitHubURL(url string) (owner, repo string) {
 }
 
 func downloadSourceFromGitHub(owner, repo, destDir string, progress chan<- string) error {
-	apiURL := fmt.Sprintf("https://api.github.com/repos/%s/%s/releases/latest", owner, repo)
+	apiURL := fmt.Sprintf("%s/repos/%s/%s/releases/latest", githubAPIBase, owner, repo)
 	resp, err := http.Get(apiURL)
 	if err != nil {
 		return fmt.Errorf("failed to fetch releases: %w", err)
@@ -491,7 +500,7 @@ func findGoBuildTarget(pluginDir string) (string, bool) {
 }
 
 func downloadBinaryFromGitHub(owner, repo, destPath string, progress chan<- string) error {
-	apiURL := fmt.Sprintf("https://api.github.com/repos/%s/%s/releases/latest", owner, repo)
+	apiURL := fmt.Sprintf("%s/repos/%s/%s/releases/latest", githubAPIBase, owner, repo)
 	resp, err := http.Get(apiURL)
 	if err != nil {
 		return fmt.Errorf("failed to fetch releases: %w", err)
@@ -520,57 +529,17 @@ func downloadBinaryFromGitHub(owner, repo, destPath string, progress chan<- stri
 
 	progress <- fmt.Sprintf("   Found release %s", release.TagName)
 
-	var platformPattern string
-	switch runtime.GOOS {
-	case "linux":
-		if runtime.GOARCH == "arm64" {
-			platformPattern = "linux-arm64"
-		} else {
-			platformPattern = "linux-amd64"
-		}
-	case "darwin":
-		if runtime.GOARCH == "arm64" {
-			platformPattern = "darwin-arm64"
-		} else {
-			platformPattern = "darwin-amd64"
-		}
-	case "windows":
-		platformPattern = "windows-amd64"
-	default:
-		return fmt.Errorf("unsupported platform: %s/%s", runtime.GOOS, runtime.GOARCH)
+	names := make([]string, len(release.Assets))
+	for i, a := range release.Assets {
+		names[i] = a.Name
 	}
-
-	var downloadURL, assetName string
-	variants := []string{"-onnx-", "-v", "-stub-"}
-
-	for _, variant := range variants {
-		for _, asset := range release.Assets {
-			if strings.Contains(asset.Name, platformPattern) && strings.Contains(asset.Name, variant) {
-				downloadURL = asset.BrowserDownloadURL
-				assetName = asset.Name
-				progress <- fmt.Sprintf("   Downloading %s...", asset.Name)
-				break
-			}
-		}
-		if downloadURL != "" {
-			break
-		}
+	idx, err := selectReleaseAsset(names, runtime.GOOS, runtime.GOARCH)
+	if err != nil {
+		return err
 	}
-
-	if downloadURL == "" {
-		for _, asset := range release.Assets {
-			if strings.Contains(asset.Name, platformPattern) {
-				downloadURL = asset.BrowserDownloadURL
-				assetName = asset.Name
-				progress <- fmt.Sprintf("   Downloading %s...", asset.Name)
-				break
-			}
-		}
-	}
-
-	if downloadURL == "" {
-		return fmt.Errorf("no binary found for platform %s/%s", runtime.GOOS, runtime.GOARCH)
-	}
+	downloadURL := release.Assets[idx].BrowserDownloadURL
+	assetName := release.Assets[idx].Name
+	progress <- fmt.Sprintf("   Downloading %s...", assetName)
 
 	resp, err = http.Get(downloadURL)
 	if err != nil {
@@ -582,34 +551,104 @@ func downloadBinaryFromGitHub(owner, repo, destPath string, progress chan<- stri
 		return fmt.Errorf("download returned status %d", resp.StatusCode)
 	}
 
+	// Write to a temporary sibling and rename only on success: a truncated
+	// download must never be left at destPath, because a later install sees
+	// an existing binary and skips the download ("Binary already installed").
+	tmpPath := destPath + ".part"
+	_ = os.Remove(tmpPath)
+	defer os.Remove(tmpPath) // no-op after a successful rename
+
 	progress <- "   Extracting binary..."
-	if strings.HasSuffix(assetName, ".tar.gz") {
-		if err := extractBinaryFromTarGz(resp.Body, destPath, repo); err != nil {
+	if strings.HasSuffix(assetName, ".tar.gz") || strings.HasSuffix(assetName, ".tgz") {
+		if err := extractBinaryFromTarGz(resp.Body, tmpPath, repo); err != nil {
 			return fmt.Errorf("failed to extract tar.gz: %w", err)
 		}
 	} else if strings.HasSuffix(assetName, ".zip") {
-		if err := extractBinaryFromZip(resp.Body, destPath, repo); err != nil {
+		if err := extractBinaryFromZip(resp.Body, tmpPath, repo); err != nil {
 			return fmt.Errorf("failed to extract zip: %w", err)
 		}
 	} else {
-		out, err := os.Create(destPath)
-		if err != nil {
-			return fmt.Errorf("failed to create file: %w", err)
-		}
-		defer out.Close()
-
-		if _, err := io.Copy(out, resp.Body); err != nil {
+		if err := writeFileFrom(tmpPath, resp.Body); err != nil {
 			return fmt.Errorf("failed to write binary: %w", err)
 		}
 	}
 
 	if runtime.GOOS != "windows" {
-		if err := os.Chmod(destPath, 0o755); err != nil {
+		if err := os.Chmod(tmpPath, 0o755); err != nil {
 			return fmt.Errorf("failed to make executable: %w", err)
 		}
 	}
 
+	if err := os.Rename(tmpPath, destPath); err != nil {
+		return fmt.Errorf("failed to install binary: %w", err)
+	}
 	return nil
+}
+
+// releasePlatformPattern returns the "<os>-<arch>" fragment used in release
+// asset names, or "" when the platform has no published binaries.
+func releasePlatformPattern(goos, goarch string) string {
+	switch goos {
+	case "linux", "darwin":
+		switch goarch {
+		case "amd64", "arm64":
+			return goos + "-" + goarch
+		}
+	case "windows":
+		if goarch == "amd64" {
+			return "windows-amd64"
+		}
+	}
+	return ""
+}
+
+// isAuxiliaryAsset reports release assets that are never the plugin binary:
+// checksums, signatures, SBOMs and similar metadata files.
+func isAuxiliaryAsset(name string) bool {
+	lower := strings.ToLower(name)
+	for _, suf := range []string{".sha256", ".sha256sum", ".sha512", ".md5", ".sig", ".asc", ".pem", ".sbom", ".spdx", ".json", ".txt", ".intoto.jsonl"} {
+		if strings.HasSuffix(lower, suf) {
+			return true
+		}
+	}
+	return strings.Contains(lower, "checksum")
+}
+
+// selectReleaseAsset picks the plugin binary for goos/goarch from release
+// asset names, preferring the "-onnx-", then versioned ("-v"), then "-stub-"
+// variants, and finally any asset for the platform. Checksum/signature files
+// are skipped so that e.g. "plugin-linux-amd64.tar.gz.sha256" is never
+// downloaded as the binary. Unsupported architectures (e.g. linux/386) return
+// an error instead of silently selecting an amd64 build.
+func selectReleaseAsset(names []string, goos, goarch string) (int, error) {
+	pattern := releasePlatformPattern(goos, goarch)
+	if pattern == "" {
+		return -1, fmt.Errorf("unsupported platform: %s/%s", goos, goarch)
+	}
+	for _, variant := range []string{"-onnx-", "-v", "-stub-", ""} {
+		for i, name := range names {
+			if isAuxiliaryAsset(name) || !strings.Contains(name, pattern) {
+				continue
+			}
+			if variant == "" || strings.Contains(name, variant) {
+				return i, nil
+			}
+		}
+	}
+	return -1, fmt.Errorf("no binary found for platform %s/%s", goos, goarch)
+}
+
+// writeFileFrom copies r into a newly created file at path.
+func writeFileFrom(path string, r io.Reader) error {
+	out, err := os.Create(path)
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(out, r); err != nil {
+		_ = out.Close()
+		return err
+	}
+	return out.Close()
 }
 
 func extractBinaryFromTarGz(r io.Reader, destPath, binaryName string) error {
@@ -725,13 +764,19 @@ func ensureDoclingModel(owner, repo string, progress chan<- string) {
 	progress <- "📦 Downloading Granite Docling BitNet model from release assets..."
 	os.MkdirAll(modelDir, 0o755)
 
-	apiURL := fmt.Sprintf("https://api.github.com/repos/%s/%s/releases/latest", owner, repo)
+	apiURL := fmt.Sprintf("%s/repos/%s/%s/releases/latest", githubAPIBase, owner, repo)
 	resp, err := http.Get(apiURL)
 	if err != nil {
 		progress <- fmt.Sprintf("⚠️  Could not fetch release info: %v", err)
 		return
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		// e.g. 403 when the unauthenticated API rate limit is exhausted;
+		// previously this decoded an error body and silently did nothing.
+		progress <- fmt.Sprintf("⚠️  Could not fetch release info: GitHub API returned status %d", resp.StatusCode)
+		return
+	}
 
 	var release struct {
 		Assets []struct {
@@ -740,6 +785,7 @@ func ensureDoclingModel(owner, repo string, progress chan<- string) {
 		} `json:"assets"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&release); err != nil {
+		progress <- fmt.Sprintf("⚠️  Could not parse release info: %v", err)
 		return
 	}
 
@@ -776,13 +822,23 @@ func downloadFile(url, dest string) error {
 		return fmt.Errorf("HTTP status %d", resp.StatusCode)
 	}
 
-	out, err := os.Create(dest)
-	if err != nil {
+	// Download to a temporary file and rename on success so an interrupted
+	// transfer never leaves a truncated model that later passes the
+	// "model already present" check.
+	tmp := dest + ".part"
+	if err := writeFileFrom(tmp, resp.Body); err != nil {
+		_ = os.Remove(tmp)
 		return err
 	}
-	defer out.Close()
-
-	_, err = io.Copy(out, resp.Body)
-	return err
+	if resp.ContentLength > 0 {
+		if fi, err := os.Stat(tmp); err == nil && fi.Size() != resp.ContentLength {
+			_ = os.Remove(tmp)
+			return fmt.Errorf("incomplete download: got %d of %d bytes", fi.Size(), resp.ContentLength)
+		}
+	}
+	if err := os.Rename(tmp, dest); err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
+	return nil
 }
-

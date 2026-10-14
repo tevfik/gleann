@@ -2,6 +2,7 @@ package gleann
 
 import (
 	"fmt"
+	"io"
 	"io/fs"
 	"math"
 	"os"
@@ -91,7 +92,9 @@ func EstimateJob(dir string, workers int) (*JobEstimate, error) {
 		}
 		if d.IsDir() {
 			name := d.Name()
-			if strings.HasPrefix(name, ".") && name != "." {
+			// Never skip the walk root itself: `--docs ./.github` or a checkout
+			// under a dot-directory must still be estimated.
+			if p != dir && strings.HasPrefix(name, ".") && name != "." {
 				return filepath.SkipDir
 			}
 			return nil
@@ -126,10 +129,21 @@ func EstimateJob(dir string, workers int) (*JobEstimate, error) {
 	if len(sampleFiles) > 0 {
 		start := time.Now()
 		var bytesRead int64
+		// Read at most sampleCap bytes in total: the first sampled file may be
+		// arbitrarily large (e.g. a multi-GB dataset), and reading it whole
+		// just to measure throughput would stall the pre-flight estimate.
 		for _, sf := range sampleFiles {
-			if data, rErr := os.ReadFile(sf); rErr == nil {
-				bytesRead += int64(len(data))
+			remaining := sampleCap - bytesRead
+			if remaining <= 0 {
+				break
 			}
+			f, oErr := os.Open(sf)
+			if oErr != nil {
+				continue
+			}
+			n, _ := io.Copy(io.Discard, io.LimitReader(f, remaining))
+			_ = f.Close()
+			bytesRead += n
 		}
 		elapsed := time.Since(start).Seconds()
 		if elapsed > 0.001 && bytesRead > 0 {

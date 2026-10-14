@@ -98,6 +98,8 @@ func NewReranker(cfg RerankerConfig) *CrossEncoderReranker {
 	}
 	if cfg.APIKey == "" {
 		switch cfg.Provider {
+		case RerankerOllama:
+			cfg.APIKey = os.Getenv(OllamaAPIKeyEnv)
 		case RerankerJina:
 			cfg.APIKey = os.Getenv("JINA_API_KEY")
 		case RerankerCohere:
@@ -211,6 +213,7 @@ func (r *CrossEncoderReranker) ollamaEmbed(ctx context.Context, texts []string) 
 		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
+	SetBearerAuth(req, r.config.APIKey)
 
 	resp, err := r.client.Do(req)
 	if err != nil {

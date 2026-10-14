@@ -11,6 +11,7 @@ import (
 
 	"github.com/tevfik/gleann/internal/tui"
 	"github.com/tevfik/gleann/pkg/conversations"
+	"github.com/tevfik/gleann/pkg/gleann"
 	"github.com/tevfik/gleann/pkg/memory"
 )
 
@@ -537,7 +538,9 @@ func cmdMemorySummarize(args []string) {
 		if savedCfg.OllamaHost != "" {
 			sumCfg.BaseURL = savedCfg.OllamaHost
 		}
-		if savedCfg.OpenAIKey != "" {
+		if sumCfg.Provider == "ollama" {
+			sumCfg.APIKey = gleann.ResolveOllamaAPIKey(savedCfg.OllamaAPIKey)
+		} else if savedCfg.OpenAIKey != "" {
 			sumCfg.APIKey = savedCfg.OpenAIKey
 		}
 		if savedCfg.AnthropicKey != "" && savedCfg.LLMProvider == "anthropic" {
