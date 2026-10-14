@@ -21,7 +21,9 @@ import (
 // a temp index dir; builds run in-process via internal/indexing.
 func newBuildServer(t *testing.T) (*Server, http.Handler, gleann.Config) {
 	t.Helper()
-	t.Setenv("HOME", t.TempDir())
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	ollama := newFakeOllama(t)
 	cfg := gleann.DefaultConfig()
 	cfg.IndexDir = t.TempDir()
@@ -35,6 +37,9 @@ func newBuildServer(t *testing.T) (*Server, http.Handler, gleann.Config) {
 		BaseURL:  cfg.OllamaHost,
 	})
 	s := &Server{config: cfg, embedder: emb, searchers: make(map[string]*gleann.LeannSearcher)}
+	// Registered after the TempDirs above, so it runs before they are removed:
+	// Windows cannot delete index files a cached searcher still holds open.
+	t.Cleanup(s.invalidateAllSearchers)
 	return s, s.buildMux(), cfg
 }
 
