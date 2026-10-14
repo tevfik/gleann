@@ -352,27 +352,32 @@ func RunInstall(result *OnboardResult) {
 }
 
 func isWritable(dir string) bool {
-	info, err := os.Stat(dir)
+	// Missing directories are created on install (MkdirAll), so what matters is
+	// whether the nearest existing ancestor accepts a new entry. A fresh home
+	// without ~/.local must not make `install --user` fall back to sudo.
+	probe := dir
+	for {
+		info, err := os.Stat(probe)
+		if err == nil {
+			if !info.IsDir() {
+				return false
+			}
+			break
+		}
+		parent := filepath.Dir(probe)
+		if parent == probe {
+			return false
+		}
+		probe = parent
+	}
+	tmp := filepath.Join(probe, ".gleann_write_test")
+	f, err := os.Create(tmp)
 	if err != nil {
-		// Dir doesn't exist; check parent.
-		parent := filepath.Dir(dir)
-		info, err = os.Stat(parent)
-		if err != nil {
-			return false
-		}
+		return false
 	}
-	// Quick check: try creating a temp file.
-	if info.IsDir() {
-		tmp := filepath.Join(dir, ".gleann_write_test")
-		f, err := os.Create(tmp)
-		if err != nil {
-			return false
-		}
-		f.Close()
-		os.Remove(tmp)
-		return true
-	}
-	return false
+	f.Close()
+	os.Remove(tmp)
+	return true
 }
 
 // ── Uninstall ──────────────────────────────────────────────────

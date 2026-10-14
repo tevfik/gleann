@@ -104,3 +104,20 @@ func exeSuffix() string {
 	}
 	return ""
 }
+
+// A target whose parents do not exist yet (fresh home, no ~/.local) is
+// writable when the nearest existing ancestor is: install creates the rest, and
+// must not fall back to sudo.
+func TestIsWritable_MissingDirsUnderWritableAncestor(t *testing.T) {
+	root := t.TempDir()
+	if !isWritable(filepath.Join(root, ".local", "bin")) {
+		t.Error("missing nested dirs under a writable ancestor should count as writable")
+	}
+	file := filepath.Join(root, "f")
+	if err := os.WriteFile(file, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if isWritable(filepath.Join(file, "sub")) {
+		t.Error("a path below a regular file is not writable")
+	}
+}
