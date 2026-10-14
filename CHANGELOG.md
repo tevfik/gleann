@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [v1.8.6] — 2026-10-15
+
 ### Added
 - **Optional Ollama API key (`ollama_api_key` / `OLLAMA_API_KEY`)** for Ollama behind an auth proxy or hosted Ollama endpoints:
   - New config field `ollama_api_key`; when set (or `OLLAMA_API_KEY` is exported) every Ollama request carries `Authorization: Bearer <key>` — chat, streaming chat, embeddings, Ollama reranker, `/api/tags` model listing (TUI, Web UI proxy, `gleann doctor`, `gleann config validate`), multimodal (`/api/show`, `/api/chat`), auto-setup detection and `/api/pull`, conversation/memory summarizers.
@@ -16,6 +18,8 @@ All notable changes to this project will be documented in this file.
 - The API key is now selected per provider: an `openai_api_key` is no longer sent to Ollama endpoints (CLI ask/chat, MCP ask/batch_ask, TUI chat, server ask/search/proxy, embeddings, reranker).
 - `gleann config show` and `gleann config set` mask API keys (Ollama, OpenAI, Anthropic) instead of printing them in clear text.
 - `--api-key` value is no longer mistaken for the question/index name in `gleann ask`.
+- **`gleann install --user/--system` installed an unusable binary.** Run through the self-extracting `gleann-full` launcher, it copied the extracted `gleann-full-bin` (the `--system` path copied only `libfaiss*` next to it), which fails with `error while loading shared libraries: libgleann_core_rs.so`. The launcher now exports `GLEANN_LAUNCHER` and install copies that self-contained file instead; without it the previous behaviour stays and the sudo path copies every bundled library. `gleann help` now lists `install`/`uninstall`.
+- `DELETE /api/indexes/{name}` no longer fails on Windows while searches still hold the index open (it retries for up to 5 s, dropping any re-loaded searcher).
 - **Incremental index updates no longer corrupt the index.** Removing passages in place (a changed, deleted or renamed file in `gleann index sync`/watch, `UpdateIndex`, `Reconcile`, memory-entity delete) left permanent gaps in the passage IDs while the vector backends address a vector by position, so vectors ended up attached to the wrong passages: searches returned the wrong text or far fewer results than a fresh build. `UpdateIndex` now appends in place only when IDs are dense and the backend can take the add; otherwise it rebuilds the index from the remaining passages plus the new items (embeddings are computed before any file changes, so a failure leaves the index untouched). This also repairs indexes already left with gaps by older versions on their next update. Removing the last passage empties the index; a later add builds it afresh.
 - `gleann index sync` edited the vector file with the backend named by the caller's flag/default instead of the one the index was built with (any sync touching a file failed with `backend "" not registered`, or silently rewrote the index with another backend); it now uses the index's own backend.
 - A full rebuild no longer drops an index's tags, description, MCP exposure, auto-watch flag and creation time.
