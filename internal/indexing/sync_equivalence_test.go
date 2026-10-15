@@ -399,7 +399,9 @@ func TestSyncSelfRetrieval(t *testing.T) {
 			}
 			defer s.Close()
 			for _, p := range all {
-				res, err := s.Search(ctx, p.Text, gleann.WithTopK(3))
+				// Vector-only: the hybrid default also asks BM25, which finds a passage by
+				// its text whatever its vector is.
+				res, err := s.Search(ctx, p.Text, gleann.WithTopK(3), gleann.WithHybridAlpha(1.0))
 				if err != nil || len(res) == 0 {
 					t.Fatalf("search for passage %d: %v (%d results)", p.ID, err, len(res))
 				}

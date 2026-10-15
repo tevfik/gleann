@@ -17,14 +17,25 @@ import (
 // in the passage IDs, and its vectors are removed from the vector file, which
 // moves every later vector to a new position. Vector n then belongs to the n-th
 // remaining passage, not to the passage whose ID is n.
-func corruptLikeOlderVersions(t *testing.T, cfg gleann.Config, name, backend string, sources ...string) {
+//
+// The file removed is the one holding passage 0, so every remaining passage
+// moves; which file that is depends on the order the directory was walked.
+func corruptLikeOlderVersions(t *testing.T, cfg gleann.Config, name, backend string) {
 	t.Helper()
 	base := filepath.Join(cfg.IndexDir, name, name)
 	pm := gleann.NewPassageManager(base)
 	if err := pm.Load(); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pm.RemoveBySource(sources); err != nil {
+	first, err := pm.Get(0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	src, _ := first.Metadata["source"].(string)
+	if src == "" {
+		t.Fatal("passage 0 has no source")
+	}
+	if _, err := pm.RemoveBySource([]string{src}); err != nil {
 		t.Fatal(err)
 	}
 	remaining := pm.All()
@@ -48,8 +59,8 @@ func corruptLikeOlderVersions(t *testing.T, cfg gleann.Config, name, backend str
 	}
 }
 
-// selfRetrievalMisses returns the IDs of the passages that a search for their
-// own text does not return: not first when strict, not among the top three
+// selfRetrievalMisses returns the IDs of the passages that a vector search for
+// their own text does not return: not first when strict, not among the top three
 // otherwise (approximate backends may rank a near-tie ahead).
 func selfRetrievalMisses(t *testing.T, cfg gleann.Config, name string, strict bool) []int64 {
 	t.Helper()
@@ -70,7 +81,10 @@ func selfRetrievalMisses(t *testing.T, cfg gleann.Config, name string, strict bo
 	defer s.Close()
 	var misses []int64
 	for _, p := range all {
-		res, err := s.Search(context.Background(), p.Text, gleann.WithTopK(3))
+		// Vector-only (alpha 1): the default hybrid search also asks BM25, which
+		// works from the passage text and finds a passage whatever its vector is,
+		// hiding exactly the damage this checks for.
+		res, err := s.Search(context.Background(), p.Text, gleann.WithTopK(3), gleann.WithHybridAlpha(1.0))
 		if err != nil || len(res) == 0 {
 			misses = append(misses, p.ID)
 			continue
@@ -104,7 +118,7 @@ func TestRepairFixesAnIndexCorruptedByInPlaceRemoval(t *testing.T) {
 			if _, err := Build(ctx, BuildOptions{Options: opts, Name: "r", DocsDir: docs}); err != nil {
 				t.Fatal(err)
 			}
-			corruptLikeOlderVersions(t, cfg, "r", backend, "main.go")
+			corruptLikeOlderVersions(t, cfg, "r", backend)
 
 			// The corruption is real: before the repair, searching a passage's
 			// own text does not return it first. (Guards against a fixture
@@ -153,7 +167,7 @@ func TestRepairUsesTheIndexOwnBackend(t *testing.T) {
 	if _, err := Build(ctx, BuildOptions{Options: opts, Name: "b", DocsDir: docs}); err != nil {
 		t.Fatal(err)
 	}
-	corruptLikeOlderVersions(t, cfg, "b", "hnsw", "notes.txt")
+	corruptLikeOlderVersions(t, cfg, "b", "hnsw")
 
 	// The caller's default names another backend (or none).
 	callerOpts := opts
@@ -198,7 +212,7 @@ func TestRepairReportsWhatItCost(t *testing.T) {
 	if _, err := Build(ctx, BuildOptions{Options: opts, Name: "c", DocsDir: equivFixture(t)}); err != nil {
 		t.Fatal(err)
 	}
-	corruptLikeOlderVersions(t, cfg, "c", "hnsw", "main.go")
+	corruptLikeOlderVersions(t, cfg, "c", "hnsw")
 
 	res, err := Repair(ctx, RepairOptions{Options: opts, Name: "c"})
 	if err != nil || !res.Repaired {
@@ -294,7 +308,7 @@ func TestSearcherWarnsAboutADamagedIndex(t *testing.T) {
 	if w := warnings(); len(w) != 0 {
 		t.Fatalf("a healthy index warned: %v", w)
 	}
-	corruptLikeOlderVersions(t, cfg, "w", "hnsw", "main.go")
+	corruptLikeOlderVersions(t, cfg, "w", "hnsw")
 	w := warnings()
 	if len(w) != 1 || !strings.Contains(w[0], "not contiguous") || !strings.Contains(w[0], "gleann index repair w") {
 		t.Fatalf("a damaged index must warn and name the fix: %v", w)
