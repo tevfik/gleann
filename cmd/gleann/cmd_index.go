@@ -12,6 +12,7 @@ import (
 //	gleann index remove <name>
 //	gleann index rebuild <name> --docs <dir>
 //	gleann index info <name>
+//	gleann index repair <name>|--all [--check]
 //	gleann index watch <name> --docs <dir>
 func cmdIndex(args []string) {
 	if len(args) < 1 {
@@ -37,6 +38,8 @@ func cmdIndex(args []string) {
 		cmdWatch(subArgs)
 	case "sync":
 		cmdSync(subArgs)
+	case "repair":
+		cmdRepair(subArgs)
 	case "tag":
 		cmdTag(subArgs)
 	case "set":
@@ -58,6 +61,7 @@ Usage:
   gleann index build  <name> --docs <dir>   Build index from documents
   gleann index sync   <name> [--docs <dir>] Sync index incrementally with workspace changes
   gleann index remove <name>                Remove an index
+  gleann index repair <name>|--all [--check] [--force]  Check an index for damage and rebuild its vectors from stored passages
   gleann index rebuild <name> --docs <dir>  Remove & rebuild index from scratch
   gleann index info   <name>                Show index metadata
   gleann index watch  <name> --docs <dir>   Watch & auto-rebuild on changes

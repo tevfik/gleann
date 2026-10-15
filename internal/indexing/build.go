@@ -336,6 +336,9 @@ type pipelineEnv struct {
 	tracker  *vault.Tracker
 	opts     *Options
 	p        *printer
+
+	// lastUpdate is what the most recent vector update did and cost.
+	lastUpdate gleann.UpdateStats
 }
 
 // RebuildIndex re-reads docsDir and rebuilds the index in one shot (used by
@@ -463,13 +466,51 @@ func (e *pipelineEnv) incremental(ctx context.Context, name, docsDir string, cha
 		return nil, fmt.Errorf("incremental: creating builder: %w", err)
 	}
 
-	if err := builder.UpdateIndex(ctx, name, items, removeSources); err != nil {
-		// UpdateIndex may fail if backend doesn't support removal (e.g., FAISS).
+	st, err := builder.UpdateIndexWithStats(ctx, name, items, removeSources)
+	e.lastUpdate = st
+	if err != nil {
 		return nil, fmt.Errorf("incremental update failed: %w", err)
 	}
+	e.p.Printf("   ↳ vector index %s\n", describeUpdate(st))
 
 	if e.tracker != nil && len(records) > 0 {
 		_ = e.tracker.BatchUpsertRecords(ctx, records)
 	}
 	return pluginDocs, nil
+}
+
+// describeUpdate renders what an index update did and what it cost on one line,
+// so a slow sync says why: an in-place append embeds only the new texts, a
+// compaction re-embeds every remaining passage.
+func describeUpdate(st gleann.UpdateStats) string {
+	switch st.Mode {
+	case gleann.UpdateInPlace:
+		return fmt.Sprintf("updated in place: +%d passages, %d text(s) embedded in %s (total %s)",
+			st.Added, st.Embedded, fmtDur(st.EmbedTime), fmtDur(st.Elapsed))
+	case gleann.UpdateCompact:
+		return fmt.Sprintf("compacted: -%d +%d passages (now %d), %d text(s) re-embedded in %s (total %s)",
+			st.Removed, st.Added, st.Passages, st.Embedded, fmtDur(st.EmbedTime), fmtDur(st.Elapsed))
+	case gleann.UpdateEmptied:
+		return fmt.Sprintf("emptied: -%d passages, the vector index was removed (total %s)", st.Removed, fmtDur(st.Elapsed))
+	default:
+		return "unchanged"
+	}
+}
+
+// cacheCounters returns the embedding cache's lifetime hit and lookup counts,
+// or ok=false when the embedder is not the caching one.
+func cacheCounters(e gleann.EmbeddingComputer) (hits, total int, ok bool) {
+	if c, isCached := e.(*embedding.CachedComputer); isCached {
+		hits, total = c.Stats()
+		return hits, total, true
+	}
+	return 0, 0, false
+}
+
+// fmtDur rounds a duration for display without turning a fast step into "0s".
+func fmtDur(d time.Duration) string {
+	if d > 0 && d < time.Millisecond {
+		return "<1ms"
+	}
+	return d.Round(time.Millisecond).String()
 }

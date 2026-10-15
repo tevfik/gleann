@@ -782,6 +782,7 @@ func (s *Server) handleSearch(ctx context.Context, request mcp.CallToolRequest) 
 	}
 
 	var results []gleann.SearchResult
+	var warnings []string // index problems that make the results unreliable
 
 	// Support federated search across tag collections (e.g. index="@work" or "@all")
 	if strings.HasPrefix(indexName, "@") {
@@ -830,6 +831,7 @@ func (s *Server) handleSearch(ctx context.Context, request mcp.CallToolRequest) 
 			if err != nil {
 				continue
 			}
+			warnings = append(warnings, searcher.Warnings()...)
 			res, err := searcher.Search(ctx, query, searchOpts...)
 			if err != nil {
 				continue
@@ -870,6 +872,7 @@ func (s *Server) handleSearch(ctx context.Context, request mcp.CallToolRequest) 
 			return mcp.NewToolResultError(fmt.Sprintf("Error loading index %q: %v", indexName, err)), nil
 		}
 
+		warnings = searcher.Warnings()
 		res, err := searcher.Search(ctx, query, searchOpts...)
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("Error searching memory: %v", err)), nil
@@ -914,6 +917,12 @@ func (s *Server) handleSearch(ctx context.Context, request mcp.CallToolRequest) 
 		IncludeTip: true,
 	}
 	output, _ := gleann.FormatSearchResultsWithBudget(results, budgetOpts)
+
+	// An agent reading this cannot see the server's log: tell it here when the
+	// index is known to be damaged, so it does not trust the results blindly.
+	if len(warnings) > 0 {
+		output = "⚠ " + strings.Join(dedupStrings(warnings), "\n⚠ ") + "\n\n" + output
+	}
 
 	// Log to active session if one is running.
 	s.sessionLog("search", indexName, query, len(results))
@@ -2220,6 +2229,19 @@ func sanitizeIndexName(name string) string {
 	}
 	if gleann.ValidateName(out) != nil {
 		return ""
+	}
+	return out
+}
+
+// dedupStrings returns ss without repeats, in order.
+func dedupStrings(ss []string) []string {
+	seen := make(map[string]bool, len(ss))
+	out := ss[:0:0]
+	for _, v := range ss {
+		if !seen[v] {
+			seen[v] = true
+			out = append(out, v)
+		}
 	}
 	return out
 }

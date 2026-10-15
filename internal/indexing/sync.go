@@ -49,7 +49,11 @@ type SyncResult struct {
 	// FullRebuild is true when the incremental update was not possible
 	// and the index was rebuilt from scratch.
 	FullRebuild bool
-	Elapsed     time.Duration
+	// Update says what the vector update did and cost (mode, passages
+	// added/removed, texts embedded, timings). Nil when no vector update ran:
+	// up to date, lexical-only, or a full rebuild.
+	Update  *gleann.UpdateStats
+	Elapsed time.Duration
 }
 
 // Sync incrementally synchronises an existing index with its source
@@ -307,6 +311,8 @@ func Sync(ctx context.Context, opts SyncOptions) (*SyncResult, error) {
 				buildGraphIndex(graphOpts, p)
 			}
 		} else {
+			up := env.lastUpdate
+			res.Update = &up
 			p.Printf("⚡ Vector index updated in %s\n", time.Since(start).Round(time.Millisecond))
 			if tracker != nil && len(deletedFiles) > 0 {
 				for _, f := range deletedFiles {

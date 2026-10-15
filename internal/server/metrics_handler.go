@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"sync/atomic"
 	"time"
+
+	"github.com/tevfik/gleann/pkg/gleann"
 )
 
 // metrics collects server-level metrics in Prometheus exposition format.
@@ -22,6 +24,15 @@ type metrics struct {
 	askRequests         atomic.Int64
 	deleteRequests      atomic.Int64
 	webhooksFired       atomic.Int64
+
+	// Index updates (POST /api/indexes/{name}/update), by how they were applied.
+	updateNoop      atomic.Int64
+	updateInPlace   atomic.Int64
+	updateCompact   atomic.Int64
+	updateEmptied   atomic.Int64
+	updateErrors    atomic.Int64
+	updateLatencyNs atomic.Int64 // cumulative nanoseconds
+	updateEmbedded  atomic.Int64 // texts sent to the embedder
 
 	startTime time.Time
 }
@@ -48,6 +59,28 @@ func (m *metrics) RecordBuild(latency time.Duration, err bool) {
 	m.buildLatencyNs.Add(int64(latency))
 	if err {
 		m.buildErrors.Add(1)
+	}
+}
+
+// RecordUpdate records an index update: how it was applied (in place, compacted,
+// emptied, nothing to do), how long it took and how many texts it embedded.
+// Compactions are the ones to watch: each re-embeds every remaining passage.
+func (m *metrics) RecordUpdate(st gleann.UpdateStats, err bool) {
+	m.updateLatencyNs.Add(int64(st.Elapsed))
+	m.updateEmbedded.Add(int64(st.Embedded))
+	if err {
+		m.updateErrors.Add(1)
+		return
+	}
+	switch st.Mode {
+	case gleann.UpdateInPlace:
+		m.updateInPlace.Add(1)
+	case gleann.UpdateCompact:
+		m.updateCompact.Add(1)
+	case gleann.UpdateEmptied:
+		m.updateEmptied.Add(1)
+	default:
+		m.updateNoop.Add(1)
 	}
 }
 
@@ -124,6 +157,30 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, "# HELP gleann_build_latency_avg_ms Average build latency in milliseconds.\n")
 	fmt.Fprintf(w, "# TYPE gleann_build_latency_avg_ms gauge\n")
 	fmt.Fprintf(w, "gleann_build_latency_avg_ms %.2f\n\n", avgBuildMs)
+
+	fmt.Fprintf(w, "# HELP gleann_update_requests_total Index update requests, by how the update was applied.\n")
+	fmt.Fprintf(w, "# TYPE gleann_update_requests_total counter\n")
+	fmt.Fprintf(w, "gleann_update_requests_total{mode=\"in-place\"} %d\n", m.updateInPlace.Load())
+	fmt.Fprintf(w, "gleann_update_requests_total{mode=\"compact\"} %d\n", m.updateCompact.Load())
+	fmt.Fprintf(w, "gleann_update_requests_total{mode=\"emptied\"} %d\n", m.updateEmptied.Load())
+	fmt.Fprintf(w, "gleann_update_requests_total{mode=\"noop\"} %d\n\n", m.updateNoop.Load())
+
+	fmt.Fprintf(w, "# HELP gleann_update_errors_total Failed index update requests.\n")
+	fmt.Fprintf(w, "# TYPE gleann_update_errors_total counter\n")
+	fmt.Fprintf(w, "gleann_update_errors_total %d\n\n", m.updateErrors.Load())
+
+	updates := m.updateInPlace.Load() + m.updateCompact.Load() + m.updateEmptied.Load() + m.updateNoop.Load() + m.updateErrors.Load()
+	avgUpdateMs := float64(0)
+	if updates > 0 {
+		avgUpdateMs = float64(m.updateLatencyNs.Load()) / float64(updates) / 1e6
+	}
+	fmt.Fprintf(w, "# HELP gleann_update_latency_avg_ms Average index update latency in milliseconds.\n")
+	fmt.Fprintf(w, "# TYPE gleann_update_latency_avg_ms gauge\n")
+	fmt.Fprintf(w, "gleann_update_latency_avg_ms %.2f\n\n", avgUpdateMs)
+
+	fmt.Fprintf(w, "# HELP gleann_update_embedded_texts_total Texts sent to the embedder by index updates.\n")
+	fmt.Fprintf(w, "# TYPE gleann_update_embedded_texts_total counter\n")
+	fmt.Fprintf(w, "gleann_update_embedded_texts_total %d\n\n", m.updateEmbedded.Load())
 
 	fmt.Fprintf(w, "# HELP gleann_ask_requests_total Total ask (RAG) requests.\n")
 	fmt.Fprintf(w, "# TYPE gleann_ask_requests_total counter\n")

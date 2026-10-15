@@ -463,19 +463,33 @@ func (pm *PassageManager) HasSources(sources []string) (bool, error) {
 // IsDense reports whether passage IDs are exactly 0..Count()-1, i.e. whether a
 // vector's position in a positional vector index equals its passage ID.
 func (pm *PassageManager) IsDense() (bool, error) {
-	n := 0
-	var max int64 = -1
-	err := pm.ForEachPassage(func(p Passage) error {
-		n++
-		if p.ID > max {
-			max = p.ID
-		}
-		return nil
-	})
+	n, max, err := pm.idSpan()
 	if err != nil {
 		return false, err
 	}
 	return int64(n) == max+1, nil
+}
+
+// idSpan returns how many passages the store holds and the highest passage ID
+// (-1 when empty). It reads the bucket's key count and its last key; no passage
+// is decoded, so it is cheap enough to run every time an index is loaded.
+func (pm *PassageManager) idSpan() (count int, maxID int64, err error) {
+	if err := pm.ensureDB(); err != nil {
+		return 0, -1, err
+	}
+	maxID = -1
+	err = pm.db.View(func(tx *bbolt.Tx) error {
+		b := tx.Bucket(bucketPassages)
+		if b == nil {
+			return nil
+		}
+		count = b.Stats().KeyN
+		if k, _ := b.Cursor().Last(); len(k) == 8 {
+			maxID = int64(binary.BigEndian.Uint64(k))
+		}
+		return nil
+	})
+	return count, maxID, err
 }
 
 // RollbackAdd undoes an Add that returned ids (contiguous, most recent): the

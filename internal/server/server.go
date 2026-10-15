@@ -614,6 +614,10 @@ type searchResponse struct {
 	Results []gleann.SearchResult `json:"results"`
 	Count   int                   `json:"count"`
 	QueryMs int64                 `json:"query_ms"`
+	// Warnings lists problems with the index that make the results unreliable
+	// (for example passage IDs damaged by an older version); see
+	// `gleann index repair`.
+	Warnings []string `json:"warnings,omitempty"`
 }
 
 func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
@@ -709,9 +713,10 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 	})
 
 	writeJSON(w, http.StatusOK, searchResponse{
-		Results: results,
-		Count:   len(results),
-		QueryMs: time.Since(start).Milliseconds(),
+		Results:  results,
+		Count:    len(results),
+		QueryMs:  time.Since(start).Milliseconds(),
+		Warnings: searcher.Warnings(),
 	})
 }
 
@@ -1202,7 +1207,9 @@ func (s *Server) handleUpdateIndex(w http.ResponseWriter, r *http.Request) {
 	}
 
 	start := time.Now()
-	if err := builder.UpdateIndex(r.Context(), name, items, req.Sources); err != nil {
+	stats, err := builder.UpdateIndexWithStats(r.Context(), name, items, req.Sources)
+	serverMetrics.RecordUpdate(stats, err != nil)
+	if err != nil {
 		writeError(w, http.StatusInternalServerError, "update index failed: "+err.Error())
 		return
 	}
@@ -1217,6 +1224,12 @@ func (s *Server) handleUpdateIndex(w http.ResponseWriter, r *http.Request) {
 		"updated_sources": req.Sources,
 		"items_count":     len(items),
 		"duration_ms":     time.Since(start).Milliseconds(),
+		// How the update was applied and what it cost: "compact" means the index
+		// was rebuilt from its remaining passages (every one re-embedded).
+		"mode":           string(stats.Mode),
+		"passages":       stats.Passages,
+		"removed":        stats.Removed,
+		"embedded_texts": stats.Embedded,
 	})
 }
 

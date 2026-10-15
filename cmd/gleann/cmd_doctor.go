@@ -103,8 +103,9 @@ func cmdDoctor() {
 	} else {
 		ok(fmt.Sprintf("%d index(es) in %s", len(indexes), indexDir))
 		for _, idx := range indexes {
-			fmt.Printf("       • %s (%d passages)\n", idx.Name, idx.NumPassages)
+			fmt.Printf("       • %s\n", describeIndex(indexDir, idx))
 		}
+		checkIndexHealth(indexDir, indexes, warn)
 	}
 
 	// ── 4. Disk space ───────────────────────────────────────────────────
@@ -342,4 +343,64 @@ func formatBytes(b int64) string {
 		exp++
 	}
 	return fmt.Sprintf("%.1f %cB", float64(b)/float64(div), "KMGTPE"[exp])
+}
+
+// checkIndexHealth reports indexes whose passage store, metadata and vector
+// file disagree. Indexes edited in place by older versions are the usual cause:
+// the passage IDs have gaps, vectors end up attached to the wrong passages and
+// searches return the wrong text, with no error to show for it.
+func checkIndexHealth(indexDir string, indexes []gleann.IndexMeta, warn func(string)) {
+	for _, idx := range indexes {
+		h, err := gleann.CheckIndexHealth(indexDir, idx.Name)
+		if err != nil {
+			warn(fmt.Sprintf("Index %q: cannot check (%v)", idx.Name, err))
+			continue
+		}
+		if !h.NeedsRepair() {
+			continue
+		}
+		for _, p := range h.Problems {
+			warn(fmt.Sprintf("Index %q: %s", idx.Name, p))
+		}
+		if h.Repairable {
+			fmt.Printf("       → repair it with: gleann index repair %s\n", idx.Name)
+		} else {
+			fmt.Printf("       → rebuild it with: gleann index rebuild %s --docs <dir>\n", idx.Name)
+		}
+	}
+}
+
+// describeIndex is the one-line summary `gleann doctor` prints for an index:
+// passages, how it searches (backend, embedding model and dimensions, or
+// lexical-only) and what it takes on disk.
+func describeIndex(indexDir string, idx gleann.IndexMeta) string {
+	parts := []string{fmt.Sprintf("%d passages", idx.NumPassages)}
+	switch {
+	case idx.LexicalOnly || !idx.VectorReady:
+		parts = append(parts, "lexical-only (no vectors)")
+	default:
+		if idx.Backend != "" {
+			parts = append(parts, idx.Backend)
+		}
+		if idx.EmbeddingModel != "" {
+			parts = append(parts, idx.EmbeddingModel)
+		}
+		if idx.Dimensions > 0 {
+			parts = append(parts, fmt.Sprintf("%d dims", idx.Dimensions))
+		}
+	}
+	parts = append(parts, formatBytes(indexDiskSize(indexDir, idx.Name)))
+	return idx.Name + " — " + strings.Join(parts, ", ")
+}
+
+// indexDiskSize is the total size of the files in an index's directory.
+func indexDiskSize(indexDir, name string) int64 {
+	var total int64
+	_ = filepath.Walk(filepath.Join(indexDir, name), func(_ string, info os.FileInfo, err error) error {
+		if err == nil && !info.IsDir() {
+			total += info.Size()
+		}
+		return nil
+	})
+	return total
 }

@@ -205,6 +205,55 @@ func (b *LeannBuilder) Build(ctx context.Context, name string, items []Item) err
 // them densely. Embeddings are computed before any file is touched, so a failure
 // there leaves the index as it was.
 func (b *LeannBuilder) UpdateIndex(ctx context.Context, name string, newItems []Item, removeSources []string) error {
+	_, err := b.UpdateIndexWithStats(ctx, name, newItems, removeSources)
+	return err
+}
+
+// UpdateMode says how an index update was applied.
+type UpdateMode string
+
+const (
+	// UpdateNoop: there was nothing to remove or add.
+	UpdateNoop UpdateMode = "noop"
+	// UpdateInPlace: new passages were appended to the existing vector index.
+	UpdateInPlace UpdateMode = "in-place"
+	// UpdateCompact: the index was rebuilt from its remaining passages.
+	UpdateCompact UpdateMode = "compact"
+	// UpdateEmptied: the last passages were removed; the vector index is gone.
+	UpdateEmptied UpdateMode = "emptied"
+)
+
+// UpdateStats describes what an index update did and what it cost. The mode is
+// the number to watch: a compaction re-embeds every remaining passage (cheap
+// when the embedding cache holds them, expensive when it does not), an in-place
+// append embeds only the new ones.
+type UpdateStats struct {
+	Mode UpdateMode
+	// Added and Removed count passages: Removed is only known when the index
+	// was compacted or emptied.
+	Added   int
+	Removed int
+	// Passages is how many passages the index holds afterwards.
+	Passages int
+	// Embedded is how many texts were sent to the embedder, EmbedTime how long
+	// that took (cache hits included).
+	Embedded  int
+	EmbedTime time.Duration
+	// Elapsed is the whole update.
+	Elapsed time.Duration
+}
+
+// UpdateIndexWithStats is UpdateIndex that also reports what it did and what it
+// cost. The stats are filled in even when the update fails part-way.
+func (b *LeannBuilder) UpdateIndexWithStats(ctx context.Context, name string, newItems []Item, removeSources []string) (UpdateStats, error) {
+	start := time.Now()
+	st := UpdateStats{Mode: UpdateNoop}
+	err := b.updateIndex(ctx, name, newItems, removeSources, &st)
+	st.Elapsed = time.Since(start)
+	return st, err
+}
+
+func (b *LeannBuilder) updateIndex(ctx context.Context, name string, newItems []Item, removeSources []string, st *UpdateStats) error {
 	if err := checkPathName(name); err != nil {
 		return err
 	}
@@ -238,6 +287,7 @@ func (b *LeannBuilder) UpdateIndex(ctx context.Context, name string, newItems []
 	}
 	if !removes {
 		if len(newItems) == 0 {
+			st.Passages = pm.Count()
 			return nil // nothing to remove, nothing to add
 		}
 		dense, err := pm.IsDense()
@@ -245,26 +295,59 @@ func (b *LeannBuilder) UpdateIndex(ctx context.Context, name string, newItems []
 			return fmt.Errorf("scan passages: %w", err)
 		}
 		if dense {
-			done, err := b.appendInPlace(ctx, name, pm, indexPath, indexData, newItems)
+			done, err := b.appendInPlace(ctx, name, pm, indexPath, indexData, newItems, st)
 			if err != nil || done {
 				return err
 			}
 			// The backend cannot take the add in place; fall through.
 		}
 	}
-	return b.compact(ctx, name, pm, newItems, removeSources)
+	return b.compact(ctx, name, pm, newItems, removeSources, st)
+}
+
+// Compact rebuilds the index's vector index from its passage store, renumbering
+// the passages 0..n-1. It is what repairs an index whose passage IDs have gaps
+// or whose vector file is missing or out of step (see CheckIndexHealth); the
+// passages themselves are kept as they are. The stats say what it cost.
+func (b *LeannBuilder) Compact(ctx context.Context, name string) (UpdateStats, error) {
+	start := time.Now()
+	st := UpdateStats{Mode: UpdateCompact}
+	err := b.compactStored(ctx, name, &st)
+	st.Elapsed = time.Since(start)
+	return st, err
+}
+
+func (b *LeannBuilder) compactStored(ctx context.Context, name string, st *UpdateStats) error {
+	if err := checkPathName(name); err != nil {
+		return err
+	}
+	if b.embedder == nil {
+		return fmt.Errorf("no embedder configured for index repair")
+	}
+	basePath := filepath.Join(b.config.IndexDir, name, name)
+	pm := NewPassageManager(basePath)
+	if err := pm.Load(); err != nil {
+		return fmt.Errorf("load passages: %w", err)
+	}
+	defer pm.Close()
+	if pm.Count() == 0 {
+		return fmt.Errorf("index %q has no passages to rebuild from", name)
+	}
+	return b.compact(ctx, name, pm, nil, nil, st)
 }
 
 // appendInPlace adds newItems to the passage store and the vector index. It
 // reports done=false, with the passage store restored, when the change cannot
 // be applied in place and the caller should compact instead.
-func (b *LeannBuilder) appendInPlace(ctx context.Context, name string, pm *PassageManager, indexPath string, indexData []byte, newItems []Item) (done bool, err error) {
+func (b *LeannBuilder) appendInPlace(ctx context.Context, name string, pm *PassageManager, indexPath string, indexData []byte, newItems []Item, st *UpdateStats) (done bool, err error) {
 	texts := make([]string, len(newItems))
 	for i, item := range newItems {
 		texts[i] = item.Text
 	}
 	// Compute embeddings before touching the passage store.
+	embedStart := time.Now()
 	embeddings, err := b.embedder.Compute(ctx, texts)
+	st.Embedded, st.EmbedTime = len(texts), time.Since(embedStart)
 	if err != nil {
 		return false, fmt.Errorf("compute embeddings: %w", err)
 	}
@@ -295,13 +378,14 @@ func (b *LeannBuilder) appendInPlace(ctx context.Context, name string, pm *Passa
 		m.NumPassages = count
 		m.UpdatedAt = time.Now()
 	})
+	st.Mode, st.Added, st.Passages = UpdateInPlace, len(newItems), count
 	return true, nil
 }
 
 // compact rebuilds the index from the passages that remain after removing
 // removeSources, plus newItems. Passage IDs come out dense again, which also
 // repairs an index that earlier in-place removals left with gaps.
-func (b *LeannBuilder) compact(ctx context.Context, name string, pm *PassageManager, newItems []Item, removeSources []string) error {
+func (b *LeannBuilder) compact(ctx context.Context, name string, pm *PassageManager, newItems []Item, removeSources []string, st *UpdateStats) error {
 	basePath := filepath.Join(b.config.IndexDir, name, name)
 
 	drop := make(map[string]bool, len(removeSources))
@@ -309,15 +393,18 @@ func (b *LeannBuilder) compact(ctx context.Context, name string, pm *PassageMana
 		drop[s] = true
 	}
 	var items []Item
+	stored := 0
 	for _, p := range pm.All() {
+		stored++
 		if src, _ := p.Metadata["source"].(string); drop[src] {
 			continue
 		}
 		items = append(items, Item{Text: p.Text, Metadata: p.Metadata})
 	}
+	st.Removed = stored - len(items)
 	items = append(items, newItems...)
 	if len(items) == 0 {
-		return b.empty(name, pm)
+		return b.empty(name, pm, st)
 	}
 
 	// Everything that can fail on external input happens before a file changes.
@@ -325,7 +412,18 @@ func (b *LeannBuilder) compact(ctx context.Context, name string, pm *PassageMana
 	for i, it := range items {
 		texts[i] = it.Text
 	}
+	// Compacting re-embeds everything that remains, which can take as long as the
+	// original embedding pass: report progress like a build does.
+	if reporter, ok := b.embedder.(interface{ SetProgressCallback(func(int, int)) }); ok {
+		reporter.SetProgressCallback(func(done, total int) {
+			if b.progressCb != nil {
+				b.progressCb("vector_index", done, total)
+			}
+		})
+	}
+	embedStart := time.Now()
 	embeddings, err := b.embedder.Compute(ctx, texts)
+	st.Embedded, st.EmbedTime = len(texts), time.Since(embedStart)
 	if err != nil {
 		return fmt.Errorf("compute embeddings: %w", err)
 	}
@@ -365,6 +463,7 @@ func (b *LeannBuilder) compact(ctx context.Context, name string, pm *PassageMana
 	if err := writeFileAtomic(basePath+".index", indexData); err != nil {
 		return fmt.Errorf("write compacted index: %w", err)
 	}
+	st.Mode, st.Added, st.Passages = UpdateCompact, len(newItems), len(ids)
 	return UpdateIndexMeta(b.config.IndexDir, name, func(m *IndexMeta) {
 		m.NumPassages = len(ids)
 		m.Dimensions = dim
@@ -378,8 +477,9 @@ func (b *LeannBuilder) compact(ctx context.Context, name string, pm *PassageMana
 // vector backends cannot represent an empty index, so the passage store is
 // emptied and the vector file removed; the metadata says so, and a later add
 // builds the index afresh. The removed content is no longer searchable.
-func (b *LeannBuilder) empty(name string, pm *PassageManager) error {
+func (b *LeannBuilder) empty(name string, pm *PassageManager, st *UpdateStats) error {
 	basePath := filepath.Join(b.config.IndexDir, name, name)
+	st.Mode, st.Passages = UpdateEmptied, 0
 	_ = pm.Close()
 	if err := os.Remove(basePath + ".passages.db"); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return fmt.Errorf("empty passages: %w", err)

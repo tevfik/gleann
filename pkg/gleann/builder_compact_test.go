@@ -164,3 +164,114 @@ func TestUpdateIndex_EmptyingAndRefilling(t *testing.T) {
 		t.Errorf("meta after refill: %+v (%v)", meta, err)
 	}
 }
+
+func TestUpdateIndexWithStats_ReportsTheModeAndTheCost(t *testing.T) {
+	ctx := context.Background()
+	item := func(text, src string) Item { return Item{Text: text, Metadata: map[string]any{"source": src}} }
+
+	t.Run("noop", func(t *testing.T) {
+		builder, _, _ := buildFour(t)
+		st, err := builder.UpdateIndexWithStats(ctx, "idx", nil, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if st.Mode != UpdateNoop || st.Embedded != 0 || st.Passages != 4 {
+			t.Errorf("noop stats: %+v", st)
+		}
+	})
+	t.Run("append is in place and embeds only the new text", func(t *testing.T) {
+		builder, _, _ := buildFour(t)
+		st, err := builder.UpdateIndexWithStats(ctx, "idx", []Item{item("epsilon", "d.md")}, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if st.Mode != UpdateInPlace || st.Added != 1 || st.Removed != 0 || st.Embedded != 1 || st.Passages != 5 {
+			t.Errorf("in-place stats: %+v", st)
+		}
+		if st.Elapsed <= 0 {
+			t.Errorf("elapsed not recorded: %+v", st)
+		}
+	})
+	t.Run("replacing a file compacts and re-embeds everything", func(t *testing.T) {
+		builder, _, _ := buildFour(t)
+		st, err := builder.UpdateIndexWithStats(ctx, "idx", []Item{item("alpha v2", "a.md")}, []string{"a.md"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		// 4 passages, 2 of them from a.md: 2 removed, 2 kept + 1 new = 3 embedded.
+		if st.Mode != UpdateCompact || st.Removed != 2 || st.Added != 1 || st.Embedded != 3 || st.Passages != 3 {
+			t.Errorf("compact stats: %+v", st)
+		}
+	})
+	t.Run("removing everything empties the index", func(t *testing.T) {
+		builder, _, _ := buildFour(t)
+		st, err := builder.UpdateIndexWithStats(ctx, "idx", nil, []string{"a.md", "b.md", "c.md"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if st.Mode != UpdateEmptied || st.Removed != 4 || st.Passages != 0 {
+			t.Errorf("emptied stats: %+v", st)
+		}
+	})
+	t.Run("a failing embedder still reports what was attempted", func(t *testing.T) {
+		builder, _, _ := buildFour(t)
+		builder.embedder = &failingEmbedder{testEmbedder: testEmbedder{dim: 8}, fail: true}
+		st, err := builder.UpdateIndexWithStats(ctx, "idx", []Item{item("x", "z.md")}, nil)
+		if err == nil {
+			t.Fatal("expected an error")
+		}
+		if st.Embedded != 1 {
+			t.Errorf("attempted embeddings not recorded: %+v", st)
+		}
+	})
+}
+
+func TestCompact_ReportsStats(t *testing.T) {
+	builder, _, _ := buildFour(t)
+	st, err := builder.Compact(context.Background(), "idx")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Mode != UpdateCompact || st.Embedded != 4 || st.Passages != 4 || st.Removed != 0 {
+		t.Errorf("Compact stats: %+v", st)
+	}
+}
+
+// reportingEmbedder reports progress the way the real embedders do: through
+// SetProgressCallback, as it finishes batches.
+type reportingEmbedder struct {
+	testEmbedder
+	cb func(done, total int)
+}
+
+func (e *reportingEmbedder) SetProgressCallback(cb func(done, total int)) { e.cb = cb }
+
+func (e *reportingEmbedder) Compute(ctx context.Context, texts []string) ([][]float32, error) {
+	out, err := e.testEmbedder.Compute(ctx, texts)
+	if e.cb != nil {
+		half := len(texts) / 2
+		e.cb(half, len(texts))
+		e.cb(len(texts), len(texts))
+	}
+	return out, err
+}
+
+// Compacting re-embeds every remaining passage, so it reports progress like a
+// build does.
+func TestCompact_ReportsProgress(t *testing.T) {
+	builder, _, _ := buildFour(t)
+	builder.embedder = &reportingEmbedder{testEmbedder: testEmbedder{dim: 8}}
+	type tick struct {
+		phase       string
+		done, total int
+	}
+	var ticks []tick
+	builder.SetProgressCallback(func(phase string, done, total int) { ticks = append(ticks, tick{phase, done, total}) })
+
+	if _, err := builder.Compact(context.Background(), "idx"); err != nil {
+		t.Fatal(err)
+	}
+	if len(ticks) != 2 || ticks[0] != (tick{"vector_index", 2, 4}) || ticks[1] != (tick{"vector_index", 4, 4}) {
+		t.Errorf("progress ticks = %+v", ticks)
+	}
+}

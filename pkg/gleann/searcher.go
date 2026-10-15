@@ -19,6 +19,7 @@ type LeannSearcher struct {
 	config           Config
 	backend          BackendSearcher
 	passages         *PassageManager
+	warnings         []string
 	meta             IndexMeta
 	embedder         EmbeddingComputer
 	scorer           Scorer
@@ -131,6 +132,9 @@ func (s *LeannSearcher) Load(ctx context.Context, name string) (retErr error) {
 			s.passages = nil
 		}
 	}()
+
+	s.warnings = nil
+	s.checkHealth(name)
 
 	// Check if vector index exists and is ready
 	indexPath := basePath + ".index"
@@ -984,4 +988,31 @@ func (s *LeannSearcher) SearchGraphRAG(ctx context.Context, query string, topK i
 		baseResults = baseResults[:topK]
 	}
 	return baseResults, nil
+}
+
+// Warnings returns what Load found wrong with the index that searching will
+// not fix: results from it may be wrong or incomplete. They are also logged.
+func (s *LeannSearcher) Warnings() []string {
+	return append([]string(nil), s.warnings...)
+}
+
+// checkHealth records a warning for an index whose passage IDs have gaps.
+// Older versions left such indexes behind after updating a changed or deleted
+// file in place: vectors are addressed by position, so after a gap they point
+// at the wrong passages and a search returns the wrong text or too few hits,
+// without any error. The check reads only the passage store's key count and last
+// key, so it costs nothing per load.
+func (s *LeannSearcher) checkHealth(name string) {
+	if s.meta.LexicalOnly || !s.meta.VectorReady {
+		return // no vectors, nothing is addressed by position
+	}
+	count, maxID, err := s.passages.idSpan()
+	if err != nil || count == 0 || int64(count) == maxID+1 {
+		return
+	}
+	msg := fmt.Sprintf("index %q is damaged: its passage IDs are not contiguous (%d passages, highest ID %d), "+
+		"so vectors may be attached to the wrong passages and results may be wrong or incomplete. "+
+		"Repair it with: gleann index repair %s", name, count, maxID, name)
+	s.warnings = append(s.warnings, msg)
+	log.Printf("⚠  WARNING: %s", msg)
 }

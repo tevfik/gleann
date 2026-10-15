@@ -419,3 +419,31 @@ func TestSyncSelfRetrieval(t *testing.T) {
 		})
 	}
 }
+
+// Sync says how it applied the change: a modified file compacts, a new file is
+// appended in place, nothing to do reports nothing.
+func TestSyncReportsHowTheVectorIndexWasUpdated(t *testing.T) {
+	ctx := context.Background()
+	opts, _ := equivEnv(t, "hnsw", false)
+	docs := equivFixture(t)
+	if _, err := Build(ctx, BuildOptions{Options: opts, Name: "s", DocsDir: docs}); err != nil {
+		t.Fatal(err)
+	}
+
+	writeFile(t, filepath.Join(docs, "extra.md"), "# Extra\n\nA brand new document about caching.\n")
+	res, err := Sync(ctx, SyncOptions{Options: opts, Name: "s"})
+	if err != nil || res.Update == nil || res.Update.Mode != gleann.UpdateInPlace || res.Update.Added == 0 || res.Update.Removed != 0 {
+		t.Fatalf("adding a file should append in place: %+v (%v)", res.Update, err)
+	}
+
+	writeFile(t, filepath.Join(docs, "main.go"), "package main\n\n// Mul multiplies values.\nfunc Mul(a, b int) int { return a * b }\n")
+	res, err = Sync(ctx, SyncOptions{Options: opts, Name: "s"})
+	if err != nil || res.Update == nil || res.Update.Mode != gleann.UpdateCompact || res.Update.Removed == 0 || res.Update.Embedded != res.Update.Passages {
+		t.Fatalf("changing a file should compact and re-embed every passage: %+v (%v)", res.Update, err)
+	}
+
+	res, err = Sync(ctx, SyncOptions{Options: opts, Name: "s"})
+	if err != nil || !res.UpToDate || res.Update != nil {
+		t.Fatalf("nothing changed: %+v (%v)", res, err)
+	}
+}
