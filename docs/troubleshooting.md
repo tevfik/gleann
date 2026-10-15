@@ -125,6 +125,49 @@ gleann index rebuild my-code --docs ./src --prune
    gleann index rebuild my-docs --docs ./docs --chunk-size 256 --chunk-overlap 25
    ```
 
+### "Search returns the wrong text, or far fewer results than it should"
+
+Indexes that were updated in place by gleann **before v1.8.6** (`gleann index
+sync`, the watcher, `POST /api/indexes/{name}/update`, deleting a memory entity)
+may be damaged. Removing a changed, deleted or renamed file's passages left
+permanent gaps in the passage IDs, while the vector index addresses a vector by
+its position. Vectors ended up attached to the wrong passages, so a search could
+return the wrong text or far fewer hits than a freshly built index, without any
+error. Newer versions never edit vectors in place that way (they rebuild the
+index from the remaining passages), but an index that is already damaged stays
+that way until it is repaired.
+
+Since v1.8.6 a search against such an index tells you: gleann logs a warning
+that names the index and the fix, the search API returns it in a `warnings`
+field, and the MCP search tool prints it above the results.
+
+1. **Check** every index (nothing is changed):
+   ```bash
+   gleann doctor                      # lists damaged indexes under "Indexes"
+   gleann index repair --all --check  # exits with status 1 if any needs repair
+   ```
+2. **Repair** them. The vector index is rebuilt from the passages the index
+   already stores, so the source files are not needed:
+   ```bash
+   gleann index repair my-docs        # one index
+   gleann index repair --all          # every index
+   ```
+   Embeddings come from the embedding cache where the texts are unchanged, so a
+   repair is usually fast (it reports the cache hit rate). With a cold cache every
+   passage is embedded again, which takes as long as the original embedding pass.
+3. If the **passage store itself is missing or unreadable**, the index cannot be
+   repaired from itself: rebuild it from its sources with
+   `gleann index rebuild <name> --docs <dir>`.
+
+Limits of the check: it finds gaps in the passage IDs, a stale passage count and
+a missing vector file. A damaged vector file whose passage IDs happen to be
+contiguous cannot be told apart from a healthy one. If you suspect one, rebuild
+it regardless of what the check says:
+
+```bash
+gleann index repair my-docs --force
+```
+
 ### "AST graph queries return no results"
 
 - Ensure the index was built with `--graph`:

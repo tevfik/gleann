@@ -38,6 +38,7 @@ When the server is running, interactive Swagger UI documentation is available at
 | GET | `/api/indexes/{name}` | Get index metadata |
 | PATCH | `/api/indexes/{name}` | Update index governance (`tags`, `description`, `mcp_exposed`) |
 | POST | `/api/indexes/{name}/build` | Build index from texts/items |
+| POST | `/api/indexes/{name}/update` | Remove the passages of some sources and/or add items |
 | DELETE | `/api/indexes/{name}` | Delete an index |
 
 
@@ -278,6 +279,12 @@ curl -X POST http://localhost:8080/api/indexes/my-code/search \
   }'
 ```
 
+The response carries `results`, `count` and `query_ms`. When the index is known
+to be damaged (passage IDs with gaps, left by versions before v1.8.6), it also
+carries `warnings`, a list of messages that name the problem and the fix
+(`gleann index repair <name>`); results from such an index may be wrong or
+incomplete. The field is absent for a healthy index.
+
 ### Ask (RAG)
 
 ```bash
@@ -485,6 +492,35 @@ curl -X POST http://localhost:8080/api/indexes/test-index/build \
   }'
 ```
 
+### Update Index
+
+Remove the passages that came from some sources and/or add new items:
+
+```bash
+curl -X POST http://localhost:8080/api/indexes/test-index/update \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "sources": ["notes.md"],
+    "items": [{"text": "Revised notes", "metadata": {"source": "notes.md"}}]
+  }'
+```
+
+The response says how the update was applied and what it cost:
+
+```json
+{"status": "ok", "index": "test-index", "updated_sources": ["notes.md"], "items_count": 1,
+ "duration_ms": 41, "mode": "compact", "passages": 3, "removed": 1, "embedded_texts": 3}
+```
+
+`mode` is `in-place` when new passages were appended to the existing vector
+index (only the new texts are embedded), `compact` when passages were removed
+and the index was rebuilt from the remaining ones (every remaining passage is
+embedded again; the embedding cache makes this cheap when the texts are
+unchanged), `emptied` when the last passage was removed (the vector index is
+deleted and the next add starts it afresh) and `noop` when there was nothing to
+do. Removing passages never edits the vector index in place: vectors are
+addressed by position, so doing so would attach them to the wrong passages.
+
 ### Multi-Index Search
 
 Search across multiple indexes simultaneously. Results are merged by score:
@@ -631,12 +667,19 @@ gleann_search_latency_avg_ms 23.50
 # TYPE gleann_multi_search_requests_total counter
 gleann_multi_search_requests_total 5
 
+# HELP gleann_update_requests_total Index update requests, by how the update was applied.
+# TYPE gleann_update_requests_total counter
+gleann_update_requests_total{mode="in-place"} 12
+gleann_update_requests_total{mode="compact"} 3
+gleann_update_requests_total{mode="emptied"} 0
+gleann_update_requests_total{mode="noop"} 1
+
 # HELP gleann_cached_searchers Number of cached searcher instances.
 # TYPE gleann_cached_searchers gauge
 gleann_cached_searchers 3
 ```
 
-**Available metrics**: `gleann_up`, `gleann_uptime_seconds`, `gleann_search_requests_total`, `gleann_search_errors_total`, `gleann_search_latency_avg_ms`, `gleann_multi_search_requests_total`, `gleann_build_requests_total`, `gleann_build_errors_total`, `gleann_build_latency_avg_ms`, `gleann_ask_requests_total`, `gleann_delete_requests_total`, `gleann_webhooks_fired_total`, `gleann_cached_searchers`.
+**Available metrics**: `gleann_up`, `gleann_uptime_seconds`, `gleann_search_requests_total`, `gleann_search_errors_total`, `gleann_search_latency_avg_ms`, `gleann_multi_search_requests_total`, `gleann_build_requests_total`, `gleann_build_errors_total`, `gleann_build_latency_avg_ms`, `gleann_ask_requests_total`, `gleann_update_requests_total{mode}`, `gleann_update_errors_total`, `gleann_update_latency_avg_ms`, `gleann_update_embedded_texts_total`, `gleann_delete_requests_total`, `gleann_webhooks_fired_total`, `gleann_cached_searchers`.
 
 **Grafana / Prometheus integration**: Point your Prometheus scraper at `http://<host>:8080/metrics`.
 

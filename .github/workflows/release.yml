@@ -390,8 +390,24 @@ jobs:
           path: dist
           merge-multiple: true
 
+      - uses: actions/checkout@v4
+
+      # Hand-written notes live in docs/releases/<tag>.md. Without such a file
+      # the notes are generated from the commits.
+      - name: Pick release notes
+        id: notes
+        run: |
+          f="docs/releases/${GITHUB_REF_NAME}.md"
+          if [ -f "$f" ]; then
+            echo "path=$f" >> "$GITHUB_OUTPUT"
+            echo "generate=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "generate=true" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Upload release assets
         uses: softprops/action-gh-release@v2
         with:
           files: dist/*
-          generate_release_notes: true
+          body_path: ${{ steps.notes.outputs.path }}
+          generate_release_notes: ${{ steps.notes.outputs.generate == 'true' }}
