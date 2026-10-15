@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -271,6 +272,9 @@ func (s *Server) a2aCodeHandler(ctx a2a.SkillContext) (string, error) {
 
 	db, err := s.graphPool.get(indexName)
 	if err != nil {
+		if errors.Is(err, errGraphUnsupported) {
+			return "", err
+		}
 		return "", fmt.Errorf("graph index %q not found: %v", indexName, err)
 	}
 

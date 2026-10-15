@@ -20,6 +20,11 @@ type Platform struct {
 	Install func(dir, home string) error
 	// Uninstall removes integration files from dir.
 	Uninstall func(dir, home string) error
+	// InstallUser / UninstallUser are optional. Platforms with a user-level
+	// instructions file (~/.claude/CLAUDE.md, ~/.gemini/GEMINI.md) use them
+	// by default; --project or an explicit --dir selects Install/Uninstall.
+	InstallUser   func(home string) error
+	UninstallUser func(home string) error
 }
 
 var platforms = []Platform{
@@ -68,8 +73,10 @@ var platforms = []Platform{
 			_, err = os.Stat(filepath.Join(dir, "CLAUDE.md"))
 			return err == nil
 		},
-		Install:   installClaude,
-		Uninstall: uninstallClaude,
+		Install:       installClaude,
+		Uninstall:     uninstallClaude,
+		InstallUser:   installClaudeUser,
+		UninstallUser: uninstallClaudeUser,
 	},
 	{
 		Name:        "cursor",
@@ -102,8 +109,10 @@ var platforms = []Platform{
 			_, err = os.Stat(filepath.Join(home, ".gemini"))
 			return err == nil
 		},
-		Install:   installGemini,
-		Uninstall: uninstallGemini,
+		Install:       installGemini,
+		Uninstall:     uninstallGemini,
+		InstallUser:   installGeminiUser,
+		UninstallUser: uninstallGeminiUser,
 	},
 	{
 		Name:        "claw",
@@ -312,6 +321,14 @@ func cmdInstall(args []string) {
 	}
 
 	platformName := getFlag(args, "--platform")
+	if platformName == "" {
+		// `gleann install claude` is shorthand for `--platform claude`.
+		platformName = positionalPlatform(args)
+	}
+
+	// User-level platforms (claude, gemini) install globally unless the
+	// caller asks for a project (--project) or names a directory (--dir).
+	projectScope := hasFlag(args, "--project") || hasFlag(args, "--dir")
 
 	// Auto-detect if no platform specified.
 	var targets []*Platform
@@ -340,20 +357,51 @@ func cmdInstall(args []string) {
 	for _, p := range targets {
 		if uninstalling {
 			fmt.Printf("🗑️  Uninstalling gleann from %s...\n", p.Name)
-			if err := p.Uninstall(dir, home); err != nil {
+			var err error
+			if p.UninstallUser != nil && !projectScope {
+				err = p.UninstallUser(home)
+			} else {
+				err = p.Uninstall(dir, home)
+			}
+			if err != nil {
 				fmt.Fprintf(os.Stderr, "  error: %v\n", err)
 			} else {
 				fmt.Printf("  ✓ Done\n")
 			}
 		} else {
 			fmt.Printf("🔧 Installing gleann for %s...\n", p.Name)
-			if err := p.Install(dir, home); err != nil {
+			var err error
+			if p.InstallUser != nil && !projectScope {
+				err = p.InstallUser(home)
+			} else {
+				err = p.Install(dir, home)
+			}
+			if err != nil {
 				fmt.Fprintf(os.Stderr, "  error: %v\n", err)
 			} else {
 				fmt.Printf("  ✓ Done\n")
 			}
 		}
 	}
+}
+
+// positionalPlatform returns the first bare argument that names a platform,
+// skipping flag values such as `--dir <path>`.
+func positionalPlatform(args []string) string {
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		if a == "--dir" || a == "--platform" {
+			i++
+			continue
+		}
+		if strings.HasPrefix(a, "-") {
+			continue
+		}
+		if platformByName(a) != nil {
+			return a
+		}
+	}
+	return ""
 }
 
 func printInstallUsage() {
@@ -368,6 +416,7 @@ Binary Installation:
 AI Platform Integration:
   gleann install                   Auto-detect & install all present platforms
   gleann install --platform <name> Install for a specific platform
+  gleann install <name>            Same as --platform <name>
   gleann install uninstall         Remove platform integration files
   gleann install --list            List supported platforms and auto-detection status
 
@@ -376,6 +425,8 @@ Flags:
   --system            Install binary to /usr/local/bin (system-wide)
   --platform <name>   Target a specific AI platform (default: auto-detect)
   --dir <path>        Target directory for platform integration (default: cwd)
+  --project           Write claude/gemini files into the project (cwd or --dir)
+                      instead of ~/.claude and ~/.gemini
   --list              List supported platforms
 
 Supported platforms:
@@ -757,9 +808,21 @@ searching source files.  Key commands:
 
 const claudeHookScript = `if [ -f "GRAPH_REPORT.md" ]; then echo "[gleann] GRAPH_REPORT.md found — read it before searching source files." >&2; fi; gleann memory list 2>/dev/null | head -20 >&2`
 
+// installClaude writes the project-level CLAUDE.md into dir.
 func installClaude(dir, home string) error {
+	return installClaudeAt(filepath.Join(dir, "CLAUDE.md"), home)
+}
+
+// installClaudeUser writes the user-level ~/.claude/CLAUDE.md.
+func installClaudeUser(home string) error {
+	if err := os.MkdirAll(filepath.Join(home, ".claude"), 0o700); err != nil {
+		return fmt.Errorf("creating ~/.claude: %w", err)
+	}
+	return installClaudeAt(filepath.Join(home, ".claude", "CLAUDE.md"), home)
+}
+
+func installClaudeAt(claudePath, home string) error {
 	// 1. CLAUDE.md
-	claudePath := filepath.Join(dir, "CLAUDE.md")
 	if err := appendOrCreateFile(claudePath, claudeMDSection, "gleann: Code Intelligence"); err != nil {
 		return fmt.Errorf("writing CLAUDE.md: %w", err)
 	}
@@ -832,7 +895,14 @@ func patchClaudeSettings(path string) error {
 }
 
 func uninstallClaude(dir, home string) error {
-	claudePath := filepath.Join(dir, "CLAUDE.md")
+	return uninstallClaudeAt(filepath.Join(dir, "CLAUDE.md"), home)
+}
+
+func uninstallClaudeUser(home string) error {
+	return uninstallClaudeAt(filepath.Join(home, ".claude", "CLAUDE.md"), home)
+}
+
+func uninstallClaudeAt(claudePath, home string) error {
 	if err := removeSection(claudePath, "<!-- gleann:", "<!-- /gleann -->"); err != nil {
 		return err
 	}
@@ -993,16 +1063,28 @@ Read GRAPH_REPORT.md before using file-search tools. Key commands:
 
 const geminiHook = `if [ -f GRAPH_REPORT.md ]; then echo '[gleann] GRAPH_REPORT.md found — review it before searching.' >&2; fi`
 
+// installGemini writes the project-level GEMINI.md and .gemini/ into dir.
 func installGemini(dir, home string) error {
+	return installGeminiAt(filepath.Join(dir, "GEMINI.md"), filepath.Join(dir, ".gemini"))
+}
+
+// installGeminiUser writes the user-level ~/.gemini/GEMINI.md and settings.
+func installGeminiUser(home string) error {
+	geminiDir := filepath.Join(home, ".gemini")
+	return installGeminiAt(filepath.Join(geminiDir, "GEMINI.md"), geminiDir)
+}
+
+func installGeminiAt(geminiMDPath, geminiDir string) error {
+	if err := os.MkdirAll(geminiDir, 0o755); err != nil {
+		return fmt.Errorf("creating .gemini: %w", err)
+	}
 	// GEMINI.md
-	geminiMDPath := filepath.Join(dir, "GEMINI.md")
 	if err := appendOrCreateFile(geminiMDPath, geminiMDSection, "<!-- gleann -->"); err != nil {
 		return fmt.Errorf("writing GEMINI.md: %w", err)
 	}
 	fmt.Printf("  • %s\n", geminiMDPath)
 
 	// .gemini/settings.json
-	geminiDir := filepath.Join(dir, ".gemini")
 	if err := os.MkdirAll(geminiDir, 0o755); err != nil {
 		return fmt.Errorf("creating .gemini: %w", err)
 	}
@@ -1048,8 +1130,17 @@ func patchGeminiSettings(path string) error {
 }
 
 func uninstallGemini(dir, home string) error {
-	_ = removeSection(filepath.Join(dir, "GEMINI.md"), "<!-- gleann -->", "<!-- /gleann -->")
-	settingsPath := filepath.Join(dir, ".gemini", "settings.json")
+	return uninstallGeminiAt(filepath.Join(dir, "GEMINI.md"), filepath.Join(dir, ".gemini"))
+}
+
+func uninstallGeminiUser(home string) error {
+	geminiDir := filepath.Join(home, ".gemini")
+	return uninstallGeminiAt(filepath.Join(geminiDir, "GEMINI.md"), geminiDir)
+}
+
+func uninstallGeminiAt(geminiMDPath, geminiDir string) error {
+	_ = removeSection(geminiMDPath, "<!-- gleann -->", "<!-- /gleann -->")
+	settingsPath := filepath.Join(geminiDir, "settings.json")
 	if data, err := os.ReadFile(settingsPath); err == nil {
 		var settings map[string]interface{}
 		if json.Unmarshal(data, &settings) == nil {

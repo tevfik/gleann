@@ -5,6 +5,7 @@ package server
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"path/filepath"
@@ -128,6 +129,21 @@ func (p *graphDBPool) get(name string) (graphDBHandle, error) {
 	return h, nil
 }
 
+// errGraphUnsupported is returned by the build-tagged openGraphDB when this
+// binary was compiled without graph support (no `treesitter` tag).
+var errGraphUnsupported = errors.New("graph database requires CGo (build with -tags treesitter); " +
+	"this binary has no graph support — use the gleann-full build (e.g. gleann-full-linux-arm64)")
+
+// writeGraphOpenError reports a failed graph open: a binary without graph
+// support is a 503, anything else is a missing or unreadable graph index.
+func writeGraphOpenError(w http.ResponseWriter, name string, err error) {
+	if errors.Is(err, errGraphUnsupported) {
+		writeError(w, http.StatusServiceUnavailable, err.Error())
+		return
+	}
+	writeError(w, http.StatusNotFound, fmt.Sprintf("graph index %q not found: %v", name, err))
+}
+
 func (p *graphDBPool) close(name string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -174,7 +190,7 @@ func (s *Server) handleGraphQuery(w http.ResponseWriter, r *http.Request) {
 
 	db, err := s.graphPool.get(name)
 	if err != nil {
-		writeError(w, http.StatusNotFound, fmt.Sprintf("graph index %q not found: %v", name, err))
+		writeGraphOpenError(w, name, err)
 		return
 	}
 
@@ -399,7 +415,7 @@ func (s *Server) handleDocumentTOC(w http.ResponseWriter, r *http.Request) {
 
 	db, err := s.graphPool.get(name)
 	if err != nil {
-		writeError(w, http.StatusNotFound, fmt.Sprintf("graph index %q not found: %v", name, err))
+		writeGraphOpenError(w, name, err)
 		return
 	}
 
@@ -446,7 +462,7 @@ func (s *Server) handleListDocuments(w http.ResponseWriter, r *http.Request) {
 
 	db, err := s.graphPool.get(name)
 	if err != nil {
-		writeError(w, http.StatusNotFound, fmt.Sprintf("graph index %q not found: %v", name, err))
+		writeGraphOpenError(w, name, err)
 		return
 	}
 

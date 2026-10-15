@@ -35,6 +35,11 @@ All notable changes to this project will be documented in this file.
 - `gleann index sync` edited the vector file with the backend named by the caller's flag/default instead of the one the index was built with (any sync touching a file failed with `backend "" not registered`, or silently rewrote the index with another backend); it now uses the index's own backend.
 - A full rebuild no longer drops an index's tags, description, MCP exposure, auto-watch flag and creation time.
 - An HNSW index built with pruned embeddings is no longer edited in place (it cannot be); the update compacts instead.
+- **`gleann install claude` installed every detected platform.** A bare platform name was ignored, so auto-detection ran and also configured gemini, copilot, etc. `gleann install <name>` now means `--platform <name>`.
+- **`gleann install` for `claude` and `gemini` wrote into the current directory.** They now write the user-level `~/.claude/CLAUDE.md` and `~/.gemini/GEMINI.md` (plus the hook settings next to them); `--project` or `--dir` keeps the old project-level behaviour. `uninstall` follows the same rule.
+- **Graph endpoints reported a missing index on builds without graph support.** On a binary built without `-tags treesitter` (pure-Go and EIF-only builds, including ARM64), graph requests answered `404 graph index "x" not found: graph database requires CGo ...`. They now answer `503` with a message that says the binary has no graph support and points to the full build.
+- **Web UI could not show or keep the EIF provider.** The embedding and LLM provider selects had no `eif` option, so an `eif` config rendered as "Ollama" and picking a model from that list switched the active model to an Ollama one. The selects now offer `EIF (Embedded GGUF)` with the local GGUF picker, and show any provider they do not know instead of silently displaying the first option. Requires a UI rebuild (`internal/server/dist`).
+- **False "Mismatch / rebuild" warnings in the Web UI.** The index list compared an index's model only against the general embedding model and by exact string. It now accepts the code and docs models (`current_embedding_models` in `GET /api/indexes`) and compares file names, as the searcher does.
 
 ## [v1.8.5] — 2026-10-14
 

@@ -512,15 +512,32 @@ func (s *Server) handleListIndexes(w http.ResponseWriter, r *http.Request) {
 		filtered = append(filtered, idx)
 	}
 
+	cfg, emb := s.cfgAndEmbedder()
 	var embedderName string
-	if emb := s.getEmbedder(); emb != nil {
+	if emb != nil {
 		embedderName = emb.ModelName()
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"indexes":                 filtered,
-		"count":                   len(filtered),
-		"current_embedding_model": embedderName,
+		"indexes":                  filtered,
+		"count":                    len(filtered),
+		"current_embedding_model":  embedderName,
+		"current_embedding_models": activeEmbeddingModels(embedderName, cfg),
 	})
+}
+
+// activeEmbeddingModels lists every embedding model the server can search with:
+// the general embedder plus the dedicated code/doc models, which are resolved
+// per index. Clients use it to decide whether an index needs a rebuild.
+func activeEmbeddingModels(general string, cfg gleann.Config) []string {
+	var models []string
+	seen := make(map[string]bool)
+	for _, m := range []string{general, cfg.CodeEmbeddingModel, cfg.DocEmbeddingModel} {
+		if m != "" && !seen[m] {
+			seen[m] = true
+			models = append(models, m)
+		}
+	}
+	return models
 }
 
 func (s *Server) handleGetIndex(w http.ResponseWriter, r *http.Request) {

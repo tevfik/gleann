@@ -5,7 +5,7 @@ package server
 import "fmt"
 
 func openGraphDB(dbPath string) (graphDBHandle, error) {
-	return nil, fmt.Errorf("graph database requires CGo (build with -tags treesitter)")
+	return nil, errGraphUnsupported
 }
 
 func runGraphIndex(name, docsDir, indexDir, module string) error {

@@ -179,6 +179,14 @@ gleann index repair my-docs --force
   task full   # CGo build with tree-sitter support
   ```
 
+### "graph database requires CGo (build with -tags treesitter)"
+
+This binary has no graph support. The pure-Go builds (`gleann-linux-arm64`, ...) and the
+EIF-only build (`task build-eif`, `make build-eif-arm64`) are compiled without the
+`treesitter` tag and do not include KuzuDB. The REST API answers `503` for graph
+endpoints in that case. Use the full build, which includes graph, FAISS and EIF
+(`gleann-full-linux-arm64` on ARM64), or build with `task full`.
+
 ## Plugin Issues
 
 ### "PDF files not indexed"

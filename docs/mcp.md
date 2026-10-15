@@ -27,7 +27,8 @@ The `gleann install` command auto-detects your AI coding platform and writes all
 # Auto-detect and install for all platforms found in the current directory
 gleann install
 
-# Install for a specific platform
+# Install for a specific platform (the name can also be given positionally:
+# `gleann install claude` is the same as `gleann install --platform claude`)
 gleann install --platform opencode
 gleann install --platform claude
 gleann install --platform cursor
@@ -54,15 +55,24 @@ gleann install uninstall
 gleann install uninstall --platform cursor
 ```
 
+### User-level vs project-level files
+
+`claude` and `gemini` install **user-level** by default, so the instructions apply
+to every project and nothing is written into the directory you ran the command in:
+`~/.claude/CLAUDE.md` + `~/.claude/settings.json`, and `~/.gemini/GEMINI.md` +
+`~/.gemini/settings.json`. Pass `--project` (or an explicit `--dir <path>`) to write
+`CLAUDE.md` / `GEMINI.md` / `.gemini/` into the current project instead. `uninstall`
+follows the same rule. All other platforms are project-level, as listed below.
+
 ### What gets written per platform
 
 | Platform | Files written | Integration type |
 |----------|--------------|-----------------|
 | **opencode** | `AGENTS.md` · `.opencode/plugins/gleann.js` · `.opencode/mcp.json` · `opencode.json` | `tool.execute.before` plugin hook |
-| **claude** | `CLAUDE.md` · `~/.claude/settings.json` | `PreToolUse` hook (Glob/Grep/Read) |
+| **claude** | `~/.claude/CLAUDE.md` (or `CLAUDE.md` with `--project`) · `~/.claude/settings.json` | `PreToolUse` hook (Glob/Grep/Read) |
 | **cursor** | `.cursor/rules/gleann.mdc` · `.cursor/mcp.json` | `alwaysApply: true` rules file |
 | **codex** | `AGENTS.md` · `.codex/hooks.json` | `PreToolUse` on Bash |
-| **gemini** | `GEMINI.md` · `.gemini/settings.json` | `BeforeTool` hook |
+| **gemini** | `~/.gemini/GEMINI.md` + `settings.json` (or `GEMINI.md` · `.gemini/settings.json` with `--project`) | `BeforeTool` hook |
 | **claw** | `AGENTS.md` · `~/.openclaw/skills/gleann/SKILL.md` | Always-on skill |
 | **aider** | `AGENTS.md` | Always-on AGENTS.md |
 | **copilot** | `~/.copilot/skills/gleann/SKILL.md` | CLI skill |

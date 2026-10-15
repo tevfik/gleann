@@ -558,3 +558,59 @@ func TestPrintInstallUsageExt3(t *testing.T) {
 func TestPrintMemoryUsageExt3(t *testing.T) {
 	printMemoryUsage()
 }
+
+func TestInstallClaudeUserWritesGlobalFile(t *testing.T) {
+	home := t.TempDir()
+	cwd := t.TempDir()
+	if err := installClaudeUser(home); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(home, ".claude", "CLAUDE.md"))
+	if err != nil || !strings.Contains(string(data), "gleann") {
+		t.Fatalf("~/.claude/CLAUDE.md should contain gleann, err=%v", err)
+	}
+	if _, err := os.Stat(filepath.Join(cwd, "CLAUDE.md")); err == nil {
+		t.Fatal("user-level install must not write into the working directory")
+	}
+	if err := uninstallClaudeUser(home); err != nil {
+		t.Fatal(err)
+	}
+	data, _ = os.ReadFile(filepath.Join(home, ".claude", "CLAUDE.md"))
+	if strings.Contains(string(data), "gleann: Code Intelligence") {
+		t.Fatal("section should be removed")
+	}
+}
+
+func TestInstallGeminiUserWritesGlobalFiles(t *testing.T) {
+	home := t.TempDir()
+	if err := installGeminiUser(home); err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range []string{"GEMINI.md", "settings.json"} {
+		if _, err := os.Stat(filepath.Join(home, ".gemini", f)); err != nil {
+			t.Fatalf("~/.gemini/%s should exist: %v", f, err)
+		}
+	}
+	if err := uninstallGeminiUser(home); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestPositionalPlatform(t *testing.T) {
+	cases := []struct {
+		args []string
+		want string
+	}{
+		{[]string{"claude"}, "claude"},
+		{[]string{"uninstall", "gemini"}, "gemini"},
+		{[]string{"--dir", "claude", "cursor"}, "cursor"},
+		{[]string{"--project", "claude"}, "claude"},
+		{[]string{"uninstall"}, ""},
+		{nil, ""},
+	}
+	for _, c := range cases {
+		if got := positionalPlatform(c.args); got != c.want {
+			t.Errorf("positionalPlatform(%v) = %q, want %q", c.args, got, c.want)
+		}
+	}
+}

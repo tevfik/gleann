@@ -8,6 +8,7 @@ import type { IndexInfo } from '../types';
 export function Indexes() {
   const [indexes, setIndexes] = useState<IndexInfo[]>([]);
   const [currentModel, setCurrentModel] = useState<string>('');
+  const [activeModels, setActiveModels] = useState<string[]>([]);
   const [tagFilter, setTagFilter] = useState<string>('all');
 
   // Form: Create New Index
@@ -59,6 +60,15 @@ export function Indexes() {
     }
   };
 
+  // An index only needs a rebuild when none of the active models (general,
+  // code, docs) match it. Paths are compared by file name, like the searcher.
+  const baseName = (m: string) => m.split(/[\\/]/).pop() || m;
+  const needsRebuild = (idxModel?: string) => {
+    if (!idxModel || (!currentModel && activeModels.length === 0)) return false;
+    const candidates = activeModels.length > 0 ? activeModels : [currentModel];
+    return !candidates.some(m => baseName(m) === baseName(idxModel));
+  };
+
   const loadIndexes = () => {
     fetch('/api/indexes')
       .then(res => res.json())
@@ -66,6 +76,7 @@ export function Indexes() {
         const idxs: IndexInfo[] = data.indexes || [];
         setIndexes(idxs);
         setCurrentModel(data.current_embedding_model || '');
+        setActiveModels(data.current_embedding_models || []);
         if (idxs.length > 0 && !targetIndex) {
           setTargetIndex(idxs[0].name);
         }
@@ -583,7 +594,7 @@ export function Indexes() {
               </tr>
             ) : (
               filteredIndexes.map((idx: IndexInfo) => {
-                const mismatched = idx.embedding_model && currentModel && idx.embedding_model !== currentModel;
+                const mismatched = needsRebuild(idx.embedding_model);
                 const isExposed = idx.mcp_exposed !== false;
                 const isEditingTags = editingTagFor === idx.name;
                 const isEditingDesc = editingDescFor === idx.name;

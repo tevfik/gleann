@@ -1,6 +1,14 @@
 import { useState, useEffect } from 'react';
 import { Settings, Terminal, Activity, Sparkles, Database, AlertCircle } from 'lucide-react';
 
+// Providers that load a local GGUF file (embedded llama.cpp / EIF runtime).
+const isLocalGGUF = (provider?: string) => provider === 'llamacpp' || provider === 'eif';
+
+// A <select> silently shows its first option when its value matches none, so a
+// provider the list does not know about must still be rendered as an option.
+const providerOptions = (known: string[], current?: string) =>
+  current && !known.includes(current) ? [current] : [];
+
 export function System() {
   const [tasks, setTasks] = useState<any[]>([]);
   const [stats, setStats] = useState<any>(null);
@@ -334,12 +342,16 @@ export function System() {
                         <option value="openai">OpenAI</option>
                         <option value="native">Native (Go)</option>
                         <option value="llamacpp">Llama.cpp (Local GGUF)</option>
+                        <option value="eif">EIF (Embedded GGUF)</option>
+                        {providerOptions(['ollama', 'openai', 'native', 'llamacpp', 'eif'], editConfig.embedding_provider).map(p => (
+                          <option key={p} value={p}>{p}</option>
+                        ))}
                       </select>
                     </div>
                   </div>
 
-                  {/* llamacpp model picker for embedding */}
-                  {editConfig.embedding_provider === 'llamacpp' && (
+                  {/* local GGUF model picker for embedding */}
+                  {isLocalGGUF(editConfig.embedding_provider) && (
                     <div className="mt-3 bg-amber-500/10 border border-amber-500/30 rounded-xl p-4 space-y-3">
                       <div className="flex items-center gap-2">
                         <span className="text-amber-400">⚡</span>
@@ -509,12 +521,16 @@ export function System() {
                         <option value="openai">OpenAI</option>
                         <option value="anthropic">Anthropic</option>
                         <option value="llamacpp">Llama.cpp (Local GGUF)</option>
+                        <option value="eif">EIF (Embedded GGUF)</option>
+                        {providerOptions(['ollama', 'openai', 'anthropic', 'llamacpp', 'eif'], editConfig.llm_provider).map(p => (
+                          <option key={p} value={p}>{p}</option>
+                        ))}
                       </select>
                     </div>
                   </div>
 
-                  {/* llamacpp model picker for LLM */}
-                  {editConfig.llm_provider === 'llamacpp' && (
+                  {/* local GGUF model picker for LLM */}
+                  {isLocalGGUF(editConfig.llm_provider) && (
                     <div className="mt-3 bg-violet-500/10 border border-violet-500/30 rounded-xl p-4 space-y-3">
                       <div className="flex items-center gap-2">
                         <span className="text-violet-400">🧠</span>
@@ -594,7 +610,7 @@ export function System() {
 
 
 
-                  {(editConfig.llm_provider || 'ollama') !== 'llamacpp' && (
+                  {!isLocalGGUF(editConfig.llm_provider || 'ollama') && (
                     <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mt-3">
                     <div>
                       <label className="text-xs text-gray-500 font-medium block mb-1">Endpoint URL</label>
@@ -606,7 +622,7 @@ export function System() {
                           if (prov === 'ollama') setEditConfig({...editConfig, ollama_host: e.target.value})
                           else if (prov === 'openai') setEditConfig({...editConfig, openai_base_url: e.target.value})
                         }}
-                        disabled={(editConfig.llm_provider || 'ollama') === 'anthropic' || (editConfig.llm_provider || 'ollama') === 'llamacpp'}
+                        disabled={(editConfig.llm_provider || 'ollama') === 'anthropic' || isLocalGGUF(editConfig.llm_provider || 'ollama')}
                         placeholder={(editConfig.llm_provider || 'ollama') === 'ollama' ? 'http://localhost:11434' : (editConfig.llm_provider || 'ollama') === 'llamacpp' ? 'Managed automatically' : 'https://api.openai.com/v1'}
                         className="w-full bg-black/50 border border-white/10 rounded px-3 py-1.5 text-sm text-gray-300 outline-none focus:border-blue-500/50 transition-colors disabled:opacity-50"
                       />
