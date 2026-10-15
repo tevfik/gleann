@@ -35,7 +35,12 @@ const (
 )
 
 // ProgressCallback is called when a batch of embeddings completes with completed items and total items.
-type ProgressCallback func(completed, total int)
+//
+// It is an alias, not a defined type, on purpose: callers (the index builder)
+// look for `SetProgressCallback(func(int, int))` through an interface, and a
+// method taking a defined func type does not satisfy that. With a defined type
+// no embedding progress was ever reported during a build.
+type ProgressCallback = func(completed, total int)
 
 // Computer computes embeddings using a specified provider.
 type Computer struct {
