@@ -73,44 +73,6 @@ func (b *Builder) AddVectors(ctx context.Context, indexData []byte, embeddings [
 	return buf.Bytes(), nil
 }
 
-func (b *Builder) RemoveVectors(ctx context.Context, indexData []byte, ids []int64) ([]byte, error) {
-	existing, err := ReadDiskIndex(bytes.NewReader(indexData))
-	if err != nil {
-		return nil, fmt.Errorf("load index: %w", err)
-	}
-
-	// Filter out removed IDs and rebuild.
-	removeSet := make(map[int64]bool, len(ids))
-	for _, id := range ids {
-		removeSet[id] = true
-	}
-
-	var kept [][]float32
-	for i := int64(0); i < existing.NumNodes; i++ {
-		if !removeSet[i] {
-			kept = append(kept, existing.Embeddings[i])
-		}
-	}
-
-	if len(kept) == 0 {
-		return nil, fmt.Errorf("all vectors removed")
-	}
-
-	cfg := b.config.DiskANNConfig
-	cfg.Defaults(existing.Dims)
-
-	idx, err := BuildDiskIndex(kept, cfg)
-	if err != nil {
-		return nil, err
-	}
-
-	var buf bytes.Buffer
-	if _, err := idx.WriteTo(&buf); err != nil {
-		return nil, fmt.Errorf("serialize: %w", err)
-	}
-	return buf.Bytes(), nil
-}
-
 // Searcher loads and queries a DiskANN index.
 type Searcher struct {
 	config Config

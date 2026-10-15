@@ -15,9 +15,6 @@ type BackendBuilder interface {
 
 	// AddVectors adds new vectors to an existing index.
 	AddVectors(ctx context.Context, indexData []byte, embeddings [][]float32, startID int64) ([]byte, error)
-
-	// RemoveVectors removes vectors by their IDs from the index.
-	RemoveVectors(ctx context.Context, indexData []byte, ids []int64) ([]byte, error)
 }
 
 // BackendSearcher is the interface that backend searchers must implement.

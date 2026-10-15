@@ -19,10 +19,10 @@ func randVecs(n, d int, seed int64) [][]float32 {
 	return out
 }
 
-// Editing a pruned graph used to silently drop every node without a stored
-// vector (RemoveVectors) or insert against meaningless distances (AddVectors).
-// It must now fail so the caller falls back to a full rebuild.
-func TestPrunedIndexRejectsIncrementalEdits(t *testing.T) {
+// Adding to a pruned graph used to insert against meaningless distances (a
+// pruned graph keeps no vectors for most nodes). It must fail so the caller
+// compacts instead.
+func TestPrunedIndexRejectsIncrementalAdd(t *testing.T) {
 	config := DefaultConfig()
 	config.HNSWConfig.M = 4
 	config.HNSWConfig.PruneEmbeddings = true
@@ -35,9 +35,6 @@ func TestPrunedIndexRejectsIncrementalEdits(t *testing.T) {
 	}
 	if _, err := b.AddVectors(ctx, data, randVecs(2, 16, 2), 20); err == nil {
 		t.Error("AddVectors on pruned index must fail")
-	}
-	if _, err := b.RemoveVectors(ctx, data, []int64{3}); err == nil {
-		t.Error("RemoveVectors on pruned index must fail")
 	}
 }
 

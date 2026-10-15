@@ -227,38 +227,3 @@ func TestBuilderAddVectors(t *testing.T) {
 		t.Error("expected non-empty updated index")
 	}
 }
-
-func TestBuilderRemoveVectors(t *testing.T) {
-	config := DefaultConfig()
-	config.HNSWConfig.M = 4
-	config.HNSWConfig.EfConstruction = 50
-	config.HNSWConfig.PruneEmbeddings = false
-
-	builder := &Builder{config: config}
-	dims := 8
-	rng := rand.New(rand.NewSource(42))
-
-	embeddings := make([][]float32, 10)
-	for i := range embeddings {
-		v := make([]float32, dims)
-		for j := range v {
-			v[j] = rng.Float32()
-		}
-		embeddings[i] = v
-	}
-
-	ctx := context.Background()
-	data, err := builder.Build(ctx, embeddings)
-	if err != nil {
-		t.Fatalf("build: %v", err)
-	}
-
-	// Remove some vectors.
-	newData, err := builder.RemoveVectors(ctx, data, []int64{2, 5, 7})
-	if err != nil {
-		t.Fatalf("remove vectors: %v", err)
-	}
-	if len(newData) == 0 {
-		t.Error("expected non-empty result")
-	}
-}

@@ -121,57 +121,6 @@ func (b *Builder) AddVectors(ctx context.Context, indexData []byte, embeddings [
 	return buf.Bytes(), nil
 }
 
-func (b *Builder) RemoveVectors(ctx context.Context, indexData []byte, ids []int64) ([]byte, error) {
-	// Load, rebuild without the removed IDs.
-	csr, err := ReadCSR(bytes.NewReader(indexData))
-	if err != nil {
-		return nil, fmt.Errorf("load index: %w", err)
-	}
-
-	distFunc := GetDistanceFunc(string(b.config.HNSWConfig.DistanceMetric))
-	graph := csr.ToGraphWithDistance(distFunc)
-	if err := requireFullVectors(graph); err != nil {
-		return nil, err
-	}
-
-	// Remove is expensive — rebuild the graph without those nodes.
-	removeSet := make(map[int64]bool, len(ids))
-	for _, id := range ids {
-		removeSet[id] = true
-	}
-
-	// Collect remaining nodes.
-	remainingNodes := make(map[int64]*Node)
-	for id, node := range graph.nodes {
-		if !removeSet[id] {
-			remainingNodes[id] = node
-		}
-	}
-
-	// Rebuild graph with remaining nodes.
-	newGraph := NewGraphWithOptions(graph.m, graph.efConstruction, graph.dimensions, distFunc, graph.useHeuristic)
-	for id, node := range remainingNodes {
-		if len(node.Vector) > 0 {
-			newGraph.Insert(id, node.Vector)
-		}
-	}
-
-	newCSR := ConvertToCSR(newGraph)
-	hc := b.config.HNSWConfig
-	if hc.PruneEmbeddings {
-		PruneEmbeddings(newGraph, newCSR, hc.PruneKeepFraction)
-	} else {
-		PruneEmbeddings(newGraph, newCSR, 1.0)
-	}
-
-	var buf bytes.Buffer
-	if _, err := newCSR.WriteTo(&buf); err != nil {
-		return nil, fmt.Errorf("serialize index: %w", err)
-	}
-
-	return buf.Bytes(), nil
-}
-
 // Searcher searches an HNSW index.
 type Searcher struct {
 	config Config

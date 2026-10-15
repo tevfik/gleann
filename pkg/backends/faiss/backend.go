@@ -178,12 +178,6 @@ func (b *Builder) AddVectors(ctx context.Context, indexData []byte, embeddings [
 	return serializeIndex(index)
 }
 
-func (b *Builder) RemoveVectors(ctx context.Context, indexData []byte, ids []int64) ([]byte, error) {
-	// FAISS HNSW does not support direct removal. Rebuild without removed IDs.
-	// For now, return error — this is a known FAISS limitation.
-	return nil, fmt.Errorf("FAISS HNSW does not support vector removal; rebuild required")
-}
-
 // ──────────────────── Searcher ────────────────────
 
 // Searcher searches FAISS HNSW indexes via CGo.

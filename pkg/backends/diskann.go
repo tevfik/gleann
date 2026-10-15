@@ -57,10 +57,6 @@ func (b *diskannBuilderAdapter) AddVectors(ctx context.Context, indexData []byte
 	return b.inner.AddVectors(ctx, indexData, embeddings, startID)
 }
 
-func (b *diskannBuilderAdapter) RemoveVectors(ctx context.Context, indexData []byte, ids []int64) ([]byte, error) {
-	return b.inner.RemoveVectors(ctx, indexData, ids)
-}
-
 // ── Searcher adapter ──
 
 type diskannSearcherAdapter struct {

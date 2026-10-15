@@ -80,7 +80,3 @@ func (b *HybridBuilder) AddVectors(ctx context.Context, indexData []byte, embedd
 	// recoverable. A full rebuild is required (and fast, thanks to FAISS).
 	return nil, fmt.Errorf("faiss-hybrid: AddVectors requires full rebuild (FAISS build is 16-45x faster than Go, so rebuilding is practical)")
 }
-
-func (b *HybridBuilder) RemoveVectors(ctx context.Context, indexData []byte, ids []int64) ([]byte, error) {
-	return nil, fmt.Errorf("faiss-hybrid: RemoveVectors requires full rebuild")
-}

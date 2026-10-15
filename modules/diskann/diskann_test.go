@@ -503,36 +503,6 @@ func TestBackendAddVectors(t *testing.T) {
 	}
 }
 
-func TestBackendRemoveVectors(t *testing.T) {
-	config := DefaultConfig()
-	config.DiskANNConfig.R = 16
-	config.DiskANNConfig.L = 30
-
-	builder := &Builder{config: config}
-
-	rng := rand.New(rand.NewSource(42))
-	vecs := randomVectors(rng, 100, 16)
-
-	ctx := context.Background()
-	data, err := builder.Build(ctx, vecs)
-	if err != nil {
-		t.Fatalf("build: %v", err)
-	}
-
-	data2, err := builder.RemoveVectors(ctx, data, []int64{0, 1, 2})
-	if err != nil {
-		t.Fatalf("remove: %v", err)
-	}
-
-	idx, err := ReadDiskIndex(bytes.NewReader(data2))
-	if err != nil {
-		t.Fatalf("read: %v", err)
-	}
-	if idx.NumNodes != 97 {
-		t.Errorf("expected 97 nodes, got %d", idx.NumNodes)
-	}
-}
-
 func TestFactoryName(t *testing.T) {
 	f := &Factory{}
 	if f.Name() != "diskann" {

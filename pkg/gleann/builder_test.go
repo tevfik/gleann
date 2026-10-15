@@ -51,10 +51,6 @@ func (a *hnswAdapter) AddVectors(ctx context.Context, indexData []byte, embeddin
 	return a.inner.AddVectors(ctx, indexData, embeddings, startID)
 }
 
-func (a *hnswAdapter) RemoveVectors(ctx context.Context, indexData []byte, ids []int64) ([]byte, error) {
-	return a.inner.RemoveVectors(ctx, indexData, ids)
-}
-
 func newTestBuilder(t *testing.T, dir string, dim int) (*LeannBuilder, *testEmbedder) {
 	t.Helper()
 	embedder := &testEmbedder{dim: dim}

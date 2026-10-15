@@ -158,7 +158,7 @@ func TestDiskANNSearchWithRecompute(t *testing.T) {
 	}
 }
 
-func TestDiskANNAddRemoveVectors(t *testing.T) {
+func TestDiskANNAddVectors(t *testing.T) {
 	factory, err := gleann.GetBackend("diskann")
 	if err != nil {
 		t.Fatalf("get backend: %v", err)
@@ -189,15 +189,6 @@ func TestDiskANNAddRemoveVectors(t *testing.T) {
 	}
 	if len(data2) <= len(data) {
 		t.Errorf("expected larger index after adding: %d <= %d", len(data2), len(data))
-	}
-
-	// Remove vectors.
-	data3, err := builder.RemoveVectors(ctx, data, []int64{0, 1, 2})
-	if err != nil {
-		t.Fatalf("remove: %v", err)
-	}
-	if len(data3) >= len(data) {
-		t.Errorf("expected smaller index after removing: %d >= %d", len(data3), len(data))
 	}
 }
 

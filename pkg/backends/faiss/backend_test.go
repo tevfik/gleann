@@ -135,16 +135,6 @@ func TestBuilderAddVectors(t *testing.T) {
 	}
 }
 
-func TestBuilderRemoveVectorsErrors(t *testing.T) {
-	config := defaultConfig()
-	builder := &Builder{config: config}
-
-	_, err := builder.RemoveVectors(context.Background(), nil, []int64{1, 2})
-	if err == nil {
-		t.Error("expected error: FAISS HNSW doesn't support removal")
-	}
-}
-
 // ──────────────────── Searcher ────────────────────
 
 func TestSearcherLoadAndSearch(t *testing.T) {

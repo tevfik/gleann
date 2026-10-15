@@ -135,7 +135,6 @@ type EmbeddingRecomputer func(ctx context.Context, ids []int64) ([][]float32, er
 type BackendBuilder interface {
 	Build(ctx context.Context, embeddings [][]float32) ([]byte, error)
 	AddVectors(ctx context.Context, indexData []byte, embeddings [][]float32, startID int64) ([]byte, error)
-	RemoveVectors(ctx context.Context, indexData []byte, ids []int64) ([]byte, error)
 }
 
 // BackendSearcher loads and queries an index.
