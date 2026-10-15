@@ -405,6 +405,22 @@ jobs:
             echo "generate=true" >> "$GITHUB_OUTPUT"
           fi
 
+      # Re-pushing a tag (a release rebuilt on a newer commit) must replace the
+      # published binaries: the upload action leaves assets that already exist
+      # under the same name untouched, so a rebuilt release would keep serving the
+      # old files under new notes.
+      - name: Remove stale assets of an existing release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' |
+              while IFS= read -r asset; do
+                echo "removing stale asset: $asset"
+                gh release delete-asset "$GITHUB_REF_NAME" "$asset" --repo "$GITHUB_REPOSITORY" --yes
+              done
+          fi
+
       - name: Upload release assets
         uses: softprops/action-gh-release@v2
         with:
