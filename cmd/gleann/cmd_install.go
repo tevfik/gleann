@@ -640,6 +640,11 @@ export const GleannPlugin = async ({ project, client, $, directory, worktree }) 
     },
   };
 };
+
+export default {
+  id: "gleann",
+  setup: GleannPlugin,
+};
 `
 
 func installOpenCode(dir, home string) error {
