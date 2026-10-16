@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 )
 
@@ -213,11 +214,9 @@ func (m *PluginManager) stopPluginLocked(name string) {
 	delete(m.logFiles, name)
 }
 
-// deprecatedMediaExts are extensions now handled by model-native multimodal processing.
-// Plugins targeting these are deprecated in favor of --multimodal-model.
+// deprecatedMediaExts lists media extensions (audio) not handled by document extraction plugins.
+// Plugins targeting audio are deprecated in favor of CapAudioTranscription or --multimodal-model.
 var deprecatedMediaExts = map[string]bool{
-	".png": true, ".jpg": true, ".jpeg": true, ".gif": true, ".webp": true,
-	".bmp": true, ".tiff": true, ".svg": true,
 	".mp3": true, ".wav": true, ".flac": true, ".ogg": true,
 	".m4a": true, ".aac": true, ".wma": true, ".opus": true,
 }
@@ -302,6 +301,13 @@ func (m *PluginManager) ResolveMultimodalPluginEnv() (audioURL, visionURL string
 		if p := m.FindByCapability(CapVisionExtraction, ""); p != nil && p.URL != "" {
 			visionURL = p.URL
 			_ = os.Setenv("GLEANN_VISION_PLUGIN_URL", visionURL)
+		}
+	}
+	if os.Getenv("GLEANN_DOCLING_VLM") == "" {
+		home, _ := os.UserHomeDir()
+		doclingModel := filepath.Join(home, ".gleann", "models", "granite-docling", "granite_docling_bitnet_dense.eifm")
+		if _, err := os.Stat(doclingModel); err == nil {
+			_ = os.Setenv("GLEANN_DOCLING_VLM", "1")
 		}
 	}
 	return audioURL, visionURL
@@ -392,10 +398,20 @@ func (m *PluginManager) EnsurePluginRunning(p *Plugin) error {
 	defer m.mu.Unlock()
 
 	// Double check under lock
+	client = &http.Client{Timeout: 2 * time.Second}
 	resp, err = client.Get(healthURL)
 	if err == nil {
 		resp.Body.Close()
 		return nil
+	}
+
+	// If the plugin process was started by us and is still running, do not kill it
+	// just because it's temporarily busy processing an extraction under heavy CPU load.
+	if existing := m.activeCmds[p.Name]; existing != nil && existing.Process != nil {
+		if err := existing.Process.Signal(syscall.Signal(0)); err == nil {
+			// Process is alive and running
+			return nil
+		}
 	}
 
 	if len(p.Command) == 0 {

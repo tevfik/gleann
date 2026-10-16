@@ -181,7 +181,7 @@ func readDocuments(ctx context.Context, dir string, ro ReadOptions, p *printer) 
 
 				// If a plugin handles this extension, use structured extraction.
 				pluginSucceeded := false
-				if pluginManager != nil && !(ext == ".pdf" && mmProcessor != nil) {
+				if pluginManager != nil && !((ext == ".pdf" || multimodal.IsMultimodal(fe.Path)) && mmProcessor != nil) {
 					if plugin := pluginManager.FindDocumentExtractor(ext); plugin != nil {
 						pResult, perr := pluginManager.ProcessStructured(plugin, fe.Path)
 						if perr != nil {

@@ -491,13 +491,19 @@ func TestFindDocumentExtractor_NilSafetyAndMedia(t *testing.T) {
 	m := &PluginManager{Registry: &PluginRegistry{Plugins: []Plugin{
 		{Name: "docs", Capabilities: []string{CapDocumentExtraction}, Extensions: []string{".pdf", ".png", ".JPG"}},
 	}}}
-	for _, ext := range []string{".png", ".PNG", ".jpg", ".mp3"} {
+	for _, ext := range []string{".mp3", ".wav"} {
 		if p := m.FindDocumentExtractor(ext); p != nil {
-			t.Errorf("media ext %s must be left to the multimodal pipeline", ext)
+			t.Errorf("audio media ext %s must not match document extraction", ext)
 		}
 	}
 	if p := m.FindDocumentExtractor(".PDF"); p == nil || p.Name != "docs" {
 		t.Fatal("expected docs plugin for .PDF")
+	}
+	if p := m.FindDocumentExtractor(".png"); p == nil || p.Name != "docs" {
+		t.Fatal("expected docs plugin for .png")
+	}
+	if p := m.FindDocumentExtractor(".jpg"); p == nil || p.Name != "docs" {
+		t.Fatal("expected docs plugin for .jpg")
 	}
 }
 

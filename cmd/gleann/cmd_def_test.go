@@ -89,8 +89,9 @@ func TestE2E_CmdDef(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Override config dir for test
+	// Override config dir and HOME for test isolation
 	t.Setenv("GLEANN_INDEX_DIR", tmpDir)
+	t.Setenv("HOME", tmpDir)
 
 	// 1. Test CLI with --json output
 	outputJSON := captureOutput(func() {

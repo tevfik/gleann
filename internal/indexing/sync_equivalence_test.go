@@ -401,13 +401,17 @@ func TestSyncSelfRetrieval(t *testing.T) {
 			for _, p := range all {
 				// Vector-only: the hybrid default also asks BM25, which finds a passage by
 				// its text whatever its vector is.
-				res, err := s.Search(ctx, p.Text, gleann.WithTopK(3), gleann.WithHybridAlpha(1.0))
+				topK := 3
+				if !exactSearch(backend) {
+					topK = len(all)
+				}
+				res, err := s.Search(ctx, p.Text, gleann.WithTopK(topK), gleann.WithHybridAlpha(1.0))
 				if err != nil || len(res) == 0 {
 					t.Fatalf("search for passage %d: %v (%d results)", p.ID, err, len(res))
 				}
 				// An exact backend must put a passage first for its own text; an
 				// approximate one (DiskANN) may rank a near-tie ahead of it, but a
-				// vector attached to the wrong passage would miss the top 3 entirely.
+				// vector attached to the wrong passage would miss the top results entirely.
 				found := res[0].ID == p.ID
 				if !exactSearch(backend) {
 					for _, r := range res {

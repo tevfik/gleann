@@ -115,7 +115,7 @@ build-eif-lib:
 		echo "🔧 Building eif-runtime static library..."; \
 		mkdir -p ext/eif-runtime/build && \
 		cmake -B ext/eif-runtime/build -S ext/eif-runtime -DCMAKE_BUILD_TYPE=Release && \
-		cmake --build ext/eif-runtime/build --target eif_runtime_static; \
+		cmake --build ext/eif-runtime/build --target bitllm_static; \
 	elif ! command -v cmake >/dev/null 2>&1; then \
 		echo "⚠️ Warning: cmake not found. Please install cmake to build eif-runtime."; \
 	fi
@@ -154,7 +154,7 @@ build-eif-lib-arm64:
 			-DCMAKE_BUILD_TYPE=Release \
 			-DEIF_ENABLE_VULKAN=OFF \
 			-DCMAKE_C_FLAGS="-fno-tree-vectorize -fmath-errno" && \
-		cmake --build ext/eif-runtime/build-arm64 --target eif_runtime_static; \
+		cmake --build ext/eif-runtime/build-arm64 --target bitllm_static; \
 	else \
 		echo "⚠️ aarch64-linux-gnu-gcc not found. Run 'make docker-build-eif-arm64' for containerized ARM build."; \
 		exit 1; \
@@ -209,7 +209,7 @@ docker-build-eif-arm64: docker-builder-arm64 prepare-assets
 				-DCMAKE_BUILD_TYPE=Release \
 				-DEIF_ENABLE_VULKAN=OFF \
 				-DCMAKE_C_FLAGS='-fno-tree-vectorize -fmath-errno' && \
-			cmake --build ext/eif-runtime/build-arm64 --target eif_runtime_static && \
+			cmake --build ext/eif-runtime/build-arm64 --target bitllm_static && \
 			mkdir -p ext/eif-runtime/build && \
 			cp ext/eif-runtime/build-arm64/libeif_runtime.a ext/eif-runtime/build/libeif_runtime.a && \
 			CC=aarch64-linux-gnu-gcc CXX=aarch64-linux-gnu-g++ \
