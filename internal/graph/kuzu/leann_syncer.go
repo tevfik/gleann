@@ -79,6 +79,11 @@ func (s *LeannSyncer) AddContent(ctx context.Context, nodeID, content string, at
 	defer s.mu.Unlock()
 
 	if err := s.builder.AddToIndex(ctx, s.name, []gleann.Item{item}); err != nil {
+		if strings.Contains(err.Error(), "no such file or directory") || strings.Contains(err.Error(), "read existing index") {
+			if buildErr := s.builder.Build(ctx, s.name, []gleann.Item{item}); buildErr == nil {
+				return nil
+			}
+		}
 		return fmt.Errorf("leann syncer: add content for node %q: %w", nodeID, err)
 	}
 	return nil
