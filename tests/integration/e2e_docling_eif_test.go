@@ -81,6 +81,8 @@ func TestE2E_DoclingPlugin_FixtureFormats(t *testing.T) {
 		{"benchmark_data.xlsx", []string{"Model", "Dimensions"}},
 		{"research_slides.pptx", []string{"Knowledge Graph"}},
 		{"benchmarks.csv", []string{"benchmark_name", "recall"}},
+		{"api_reference.html", []string{"REST API Reference"}},
+		{"distributed_systems.epub", []string{"Distributed Computing"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.file, func(t *testing.T) {
