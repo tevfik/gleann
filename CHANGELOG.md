@@ -4,7 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [v1.8.7] — 2026-10-19
+
 ### Added
+- **Chat settings in the agenttui interface** (`/settings`, Ctrl+S): model, temperature (slider), repeat penalty, max tokens, top-k, reranker and model, role and system prompt, with visible limits and hints. `/history` resumes a saved conversation; `/clear` and sources-first answers; the header, sidebar and welcome screen are gleann-specific.
 - **`gleann chat` runs on the agenttui interface by default** (cancellable streaming, collapsible reasoning, source cards, slash-command popup, `@file` and `@symbol` completion). `--classic` (or `GLEANN_CHAT_UI=classic`) selects the old interface; `--modular` is still accepted and does nothing.
 - **Index and tag picker in chat.** `/index` opens a panel with one switch per index and per tag (`gleann index tag`); ticking a tag selects every index that carries it. Also `/index a,b`, `/index #tag`, `/index add|remove <name>`, `/index info`. The selection really changes what is retrieved (a new searcher is swapped in and the reranker is restored); before, `/index` only changed the label.
 - **Retrieval sidebar** lists every index with passage count, graph marker and tags, which ones are searched, and how many passages of the last answer came from each.
@@ -13,6 +16,7 @@ All notable changes to this project will be documented in this file.
 - `gleann.ChatContextWindow` asks the provider for the model's context window (Ollama `num_ctx` sent / Modelfile / loaded model, OpenAI-compatible `/models` fields). `GLEANN_CONTEXT_TOKENS` overrides it.
 
 ### Changed
+- The `ext/eif-runtime` submodule is replaced by `ext/bitllm.c` (updated to `cef6d8a`); the embedded web UI is rebuilt (provider select fix). Requires `git submodule update --init --recursive`.
 - The chat no longer guesses the context window from the model name; when the provider does not report one the gauge shows used tokens only.
 
 ## [v1.8.6] — 2026-10-15
