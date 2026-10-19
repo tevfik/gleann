@@ -536,7 +536,7 @@ Options:
 //	gleann index sync <name> [--docs <dir>] [--files <file1,file2>] [--graph]
 func cmdSync(args []string) {
 	if len(args) < 1 || hasFlag(args, "--help") || hasFlag(args, "-h") {
-		fmt.Fprintln(os.Stderr, "usage: gleann index sync <name> [--docs <dir>] [--files <file1,file2>] [--graph] [--mode code|docs|all] [--no-plugins]")
+		fmt.Fprintln(os.Stderr, "usage: gleann index sync <name> [--docs <dir>] [--files <file1,file2>] [--graph] [--mode code|docs|all] [--no-plugins] [--progress plain|json|none]")
 		if hasFlag(args, "--help") || hasFlag(args, "-h") {
 			return
 		}
@@ -552,6 +552,7 @@ func cmdSync(args []string) {
 	}
 
 	mode, noPlugins := parseIndexMode(args)
+	args = withModeModel(args, mode)
 
 	config := getConfig(args)
 	applySavedConfig(&config, args)
@@ -565,8 +566,11 @@ func cmdSync(args []string) {
 		files = strings.Split(filesFlag, ",")
 	}
 
+	stdOpts := stdOptions(config, mode, noPlugins, hasFlag(args, "--include-submodules"))
+	stdOpts.ModelExplicit = modelExplicit(args)
+	stdOpts.Progress = embedProgress(getFlag(args, "--progress"), name)
 	opts := indexing.SyncOptions{
-		Options:     stdOptions(config, mode, noPlugins, hasFlag(args, "--include-submodules")),
+		Options:     stdOpts,
 		Name:        name,
 		DocsDir:     getFlag(args, "--docs"),
 		Files:       files,

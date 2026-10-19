@@ -1867,6 +1867,13 @@ func (s *Server) buildOptions(name, docsDir string) indexing.BuildOptions {
 // searcher(s) for it so the next query sees the new data. For dual-model
 // builds both "<name>-code" and "<name>-docs" are invalidated.
 func (s *Server) runBuild(ctx context.Context, opts indexing.BuildOptions) error {
+	// The graph database admits one writer; release the pooled handles so the
+	// build can write the graph (they reopen on the next query).
+	if s.graphPool != nil {
+		for _, n := range []string{opts.Name, opts.Name + "-code", opts.Name + "-docs"} {
+			s.graphPool.close(n)
+		}
+	}
 	var out bytes.Buffer
 	opts.Stdout = &out
 	opts.Stderr = &out

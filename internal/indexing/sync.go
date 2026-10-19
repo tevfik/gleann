@@ -92,6 +92,11 @@ func Sync(ctx context.Context, opts SyncOptions) (*SyncResult, error) {
 		opts.Config.Backend = meta.Backend
 	}
 
+	if err := reconcileModel(meta, &opts.Options, p); err != nil {
+		return nil, err
+	}
+	cfg.EmbeddingModel = opts.Config.EmbeddingModel
+
 	docsDir := opts.DocsDir
 	if docsDir == "" {
 		docsDir = meta.SourceDir
@@ -265,6 +270,7 @@ func Sync(ctx context.Context, opts SyncOptions) (*SyncResult, error) {
 		IncludeSubmodules: opts.IncludeSubmodules,
 	}
 
+	var graphErr error // set when the vector index was updated but the graph was not
 	if meta.LexicalOnly || opts.InstantOnly {
 		builder, err := gleann.NewBuilder(cfg, nil)
 		if err != nil {
@@ -281,7 +287,7 @@ func Sync(ctx context.Context, opts SyncOptions) (*SyncResult, error) {
 		p.Printf("⚡ Lexical index updated in %s\n", time.Since(start).Round(time.Millisecond))
 		if buildGraph {
 			graphOpts.PluginDocs = pDocs
-			buildGraphIndex(graphOpts, p)
+			graphErr = buildGraphIndex(graphOpts, p)
 		}
 	} else {
 		envOpts := opts.Options
@@ -298,6 +304,9 @@ func Sync(ctx context.Context, opts SyncOptions) (*SyncResult, error) {
 			if ctx.Err() != nil {
 				return nil, ctx.Err()
 			}
+			if errors.Is(incErr, gleann.ErrDimensionMismatch) {
+				return nil, incErr // a full rebuild would silently switch models
+			}
 			p.Warnf("%v, falling back to full rebuild\n", incErr)
 			p.Printf("⚠️  Incremental vector update not supported or failed, running full rebuild...\n")
 			res.FullRebuild = true
@@ -308,7 +317,7 @@ func Sync(ctx context.Context, opts SyncOptions) (*SyncResult, error) {
 			if buildGraph {
 				graphOpts.ChangedFiles = nil
 				graphOpts.PluginDocs = pDocs
-				buildGraphIndex(graphOpts, p)
+				graphErr = buildGraphIndex(graphOpts, p)
 			}
 		} else {
 			up := env.lastUpdate
@@ -321,7 +330,7 @@ func Sync(ctx context.Context, opts SyncOptions) (*SyncResult, error) {
 			}
 			if buildGraph {
 				graphOpts.PluginDocs = pDocs
-				buildGraphIndex(graphOpts, p)
+				graphErr = buildGraphIndex(graphOpts, p)
 			}
 		}
 	}
@@ -329,6 +338,12 @@ func Sync(ctx context.Context, opts SyncOptions) (*SyncResult, error) {
 	_ = gleann.UpdateIndexMeta(cfg.IndexDir, name, func(m *gleann.IndexMeta) {
 		m.SourceDir = absDocsDir
 	})
+
+	// Without a saved manifest the next sync sees these files as changed again
+	// and retries, instead of calling the index up to date over a stale graph.
+	if graphErr != nil {
+		return finish(), fmt.Errorf("%w: %v", ErrGraphUpdate, graphErr)
+	}
 
 	if newManifest != nil {
 		_ = gleann.SaveManifest(mPath, newManifest)

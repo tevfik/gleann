@@ -5,6 +5,7 @@ package kuzu
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 
 	"github.com/tevfik/gleann/pkg/gleann"

@@ -1024,3 +1024,87 @@ func TestIncrementalRemovesDeletedFile(t *testing.T) {
 func writeTestFile(path, content string) error {
 	return os.WriteFile(path, []byte(content), 0o644)
 }
+
+// ── IndexFiles keeps the cross-file graph intact ────────────────
+
+func incrementalFixture(t *testing.T) (*kgraph.DB, *indexer.Indexer, string) {
+	t.Helper()
+	root := t.TempDir()
+	must := func(rel, src string) {
+		p := filepath.Join(root, rel)
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := writeTestFile(p, src); err != nil {
+			t.Fatal(err)
+		}
+	}
+	must("go.mod", "module testmod\n\ngo 1.21\n")
+	must("lib/lib.go", "package lib\n\ntype Client struct{}\n\nfunc New() *Client { return &Client{} }\n\nfunc Target() {}\n")
+	must("app/app.go", "package app\n\nimport \"testmod/lib\"\n\nfunc Run() { lib.Target() }\n")
+	db, err := kgraph.Open("")
+	if err != nil {
+		t.Fatalf("open kuzu: %v", err)
+	}
+	t.Cleanup(func() { db.Close() })
+	idx := indexer.New(db, "testmod", root)
+	if err := idx.IndexDir(root); err != nil {
+		t.Fatalf("IndexDir: %v", err)
+	}
+	return db, idx, root
+}
+
+func callerNames(t *testing.T, db *kgraph.DB, fqn string) map[string]bool {
+	t.Helper()
+	syms, err := db.Callers(fqn)
+	if err != nil {
+		t.Fatalf("Callers(%s): %v", fqn, err)
+	}
+	out := map[string]bool{}
+	for _, s := range syms {
+		out[s.Name] = true
+	}
+	return out
+}
+
+// A new file that uses symbols declared elsewhere (a returned type, a called
+// function) used to fail with "duplicated primary key" and leave the graph
+// stale, or drop its call edges.
+func TestIndexFilesNewFileReferencingExistingSymbols(t *testing.T) {
+	db, idx, root := incrementalFixture(t)
+	extra := filepath.Join(root, "app", "extra.go")
+	if err := writeTestFile(extra, "package app\n\nimport \"testmod/lib\"\n\nfunc Extra() *lib.Client { lib.Target(); return lib.New() }\n"); err != nil {
+		t.Fatal(err)
+	}
+	if err := idx.IndexFiles([]string{extra}); err != nil {
+		t.Fatalf("IndexFiles: %v", err)
+	}
+	got := callerNames(t, db, "testmod/lib.Target")
+	if !got["Run"] || !got["Extra"] {
+		t.Errorf("callers of Target = %v, want Run and Extra", got)
+	}
+}
+
+// Re-indexing a file deletes its symbols together with the edges other files
+// point at them; those edges must come back.
+func TestIndexFilesKeepsCallersFromOtherFiles(t *testing.T) {
+	db, idx, root := incrementalFixture(t)
+	lib := filepath.Join(root, "lib", "lib.go")
+	if err := writeTestFile(lib, "package lib\n\ntype Client struct{}\n\nfunc New() *Client { return &Client{} }\n\nfunc Target() {}\n\nfunc Added() {}\n"); err != nil {
+		t.Fatal(err)
+	}
+	if err := idx.IndexFiles([]string{lib}); err != nil {
+		t.Fatalf("IndexFiles: %v", err)
+	}
+	if got := callerNames(t, db, "testmod/lib.Target"); !got["Run"] {
+		t.Errorf("callers of Target = %v, want Run (edge from the unchanged app.go)", got)
+	}
+	syms, _ := db.SymbolsInFile("lib/lib.go")
+	found := false
+	for _, s := range syms {
+		found = found || s.Name == "Added"
+	}
+	if !found {
+		t.Errorf("new symbol Added missing from lib/lib.go: %v", syms)
+	}
+}

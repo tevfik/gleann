@@ -317,6 +317,24 @@ func (b *LeannBuilder) Compact(ctx context.Context, name string) (UpdateStats, e
 	return st, err
 }
 
+// ErrDimensionMismatch is returned when an embedder produces vectors of another
+// size than the index holds, i.e. the index was built with a different
+// embedding model. Mixing them would corrupt the index (or crash the backend),
+// so the index has to be rebuilt to change models.
+var ErrDimensionMismatch = errors.New("embedding dimension mismatch")
+
+// checkDimensions fails when got differs from the vector size recorded for the
+// index. An index without a recorded size is not checked.
+func (b *LeannBuilder) checkDimensions(name string, got int) error {
+	meta, err := GetIndexMeta(b.config.IndexDir, name)
+	if err != nil || meta.Dimensions == 0 || meta.Dimensions == got {
+		return nil
+	}
+	return fmt.Errorf("%w: index %q holds %d-dimensional vectors (model %q) but the embedder %q produces %d; "+
+		"changing the embedding model needs a rebuild: gleann index rebuild %s --docs <dir> --model %s",
+		ErrDimensionMismatch, name, meta.Dimensions, meta.EmbeddingModel, b.embedder.ModelName(), got, name, b.embedder.ModelName())
+}
+
 func (b *LeannBuilder) compactStored(ctx context.Context, name string, st *UpdateStats) error {
 	if err := checkPathName(name); err != nil {
 		return err
@@ -353,6 +371,13 @@ func (b *LeannBuilder) appendInPlace(ctx context.Context, name string, pm *Passa
 	}
 	if len(embeddings) != len(newItems) {
 		return false, fmt.Errorf("embedder returned %d vectors for %d texts", len(embeddings), len(newItems))
+	}
+	if len(embeddings) > 0 {
+		// Checked before the passage store is touched, so a mismatch leaves
+		// the index exactly as it was.
+		if err := b.checkDimensions(name, len(embeddings[0])); err != nil {
+			return false, err
+		}
 	}
 
 	before := int64(pm.Count())
@@ -433,6 +458,9 @@ func (b *LeannBuilder) compact(ctx context.Context, name string, pm *PassageMana
 	dim := len(embeddings[0])
 	if dim == 0 {
 		return fmt.Errorf("embedder returned zero-dimensional vectors (model=%q)", b.embedder.ModelName())
+	}
+	if err := b.checkDimensions(name, dim); err != nil {
+		return err
 	}
 	for i, v := range embeddings {
 		if len(v) != dim {

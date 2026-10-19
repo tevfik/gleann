@@ -81,12 +81,12 @@ func captureStderr(t *testing.T, fn func()) string {
 }
 
 func TestRepairProgress(t *testing.T) {
-	if repairProgress("none", "x") != nil {
+	if embedProgress("none", "x") != nil {
 		t.Error("--progress none must disable the callback")
 	}
 
 	out := captureStderr(t, func() {
-		f := repairProgress("plain", "docs")
+		f := embedProgress("plain", "docs")
 		f(indexing.Progress{Phase: "vector_index", ItemsDone: 1, TotalItems: 4}) // first update is shown
 		f(indexing.Progress{Phase: "vector_index", ItemsDone: 2, TotalItems: 4}) // rate-limited
 		f(indexing.Progress{Phase: "vector_index", ItemsDone: 4, TotalItems: 4}) // the final one always is
@@ -98,7 +98,7 @@ func TestRepairProgress(t *testing.T) {
 	}
 
 	out = captureStderr(t, func() {
-		repairProgress("json", "docs")(indexing.Progress{Phase: "vector_index", ItemsDone: 4, TotalItems: 4})
+		embedProgress("json", "docs")(indexing.Progress{Phase: "vector_index", ItemsDone: 4, TotalItems: 4})
 	})
 	if !strings.Contains(out, `"index":"docs"`) || !strings.Contains(out, `"pct":100.0`) {
 		t.Errorf("json progress: %q", out)

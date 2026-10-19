@@ -8,8 +8,9 @@ import "fmt"
 // indexing support (-tags treesitter).
 const GraphSupported = false
 
-func buildGraphIndex(_ GraphOptions, p *printer) {
+func buildGraphIndex(_ GraphOptions, p *printer) error {
 	p.Warnf("⚠️  Graph indexing requires CGo (build with -tags treesitter).\n")
+	return nil
 }
 
 // GenerateGraphReport writes GRAPH_REPORT.md-style Markdown for an index.

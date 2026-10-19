@@ -1,6 +1,9 @@
 package indexing
 
-import "io"
+import (
+	"errors"
+	"io"
+)
 
 // GraphOptions configures BuildGraphIndex.
 type GraphOptions struct {
@@ -18,10 +21,20 @@ type GraphOptions struct {
 
 // BuildGraphIndex builds (or incrementally updates) the AST code graph and
 // document graph for an index. Failures are reported as warnings on
-// Stderr and never abort the surrounding build, matching the CLI.
+// Stderr and do not abort the caller; Build and Sync, which own the index's
+// up-to-date state, treat them as errors instead.
 //
 // Only functional when built with -tags treesitter (CGo + KuzuDB); other
 // builds print a one-line warning. See GraphSupported.
 func BuildGraphIndex(opts GraphOptions) {
-	buildGraphIndex(opts, newPrinter(opts.Stdout, opts.Stderr))
+	p := newPrinter(opts.Stdout, opts.Stderr)
+	if err := buildGraphIndex(opts, p); err != nil {
+		p.Warnf("warning: %v\n", err)
+	}
 }
+
+// ErrGraphUpdate is returned by Build and Sync when the vector index was
+// written but the code graph could not be. The index is not recorded as up to
+// date, so the next sync retries instead of reporting "already up to date"
+// over a stale graph.
+var ErrGraphUpdate = errors.New("graph update failed")

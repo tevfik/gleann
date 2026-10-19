@@ -12,6 +12,7 @@
 package kuzu
 
 import (
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -53,6 +54,25 @@ func ExecOn(conn *kuzu.Connection, cypher string) error {
 }
 
 // Open opens (or creates) a KuzuDB database at the given directory path.
+// ErrOpenFailed marks a graph database that could not be opened and was left
+// untouched: another process (such as `gleann serve`) may hold it, or it may be
+// unreadable. Callers can tell the user to retry or rebuild.
+var ErrOpenFailed = errors.New("graph database could not be opened")
+
+// looksCorrupt reports whether err names damage to the database files.
+func looksCorrupt(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	for _, w := range []string{"corrupt", "checksum", "truncated", "malformed", "bad magic", "invalid magic"} {
+		if strings.Contains(msg, w) {
+			return true
+		}
+	}
+	return false
+}
+
 func isLockError(err error) bool {
 	if err == nil {
 		return false
@@ -91,8 +111,12 @@ func Open(dir string) (*DB, error) {
 
 	// Do not quarantine or delete data if the failure is due to a lock,
 	// permission issue, or another process currently holding the database.
-	if isLockError(err) {
-		return nil, openErr
+	// Kuzu reports a database held by another process as a bare "failed to
+	// open database with status 1", which says nothing about corruption, so
+	// only a message that names corruption justifies moving the data aside
+	// (GLEANN_KUZU_AUTOREPAIR=force restores the old "any failure" behaviour).
+	if isLockError(err) || (!looksCorrupt(err) && os.Getenv("GLEANN_KUZU_AUTOREPAIR") != "force") {
+		return nil, fmt.Errorf("%w: %v", ErrOpenFailed, openErr)
 	}
 
 	// Best-effort auto-repair: only attempt when the directory actually

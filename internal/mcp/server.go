@@ -2103,6 +2103,9 @@ func parseProgressLine(line string) (phase string, pct float64, done, total int,
 // log plus the plain-surface progress lines, i.e. what the former
 // separate `gleann index build|sync` process printed.
 func (s *Server) defaultSyncRunner(ctx context.Context, opts SyncOptions) (string, error) {
+	// The graph database admits one writer process; release the pooled
+	// handle so the update below can open it.
+	s.evictGraph(opts.IndexName)
 	out := &syncWriter{}
 	pacer := gleann.NewPacer(gleann.SurfacePlain, out)
 

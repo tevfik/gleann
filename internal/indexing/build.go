@@ -285,13 +285,15 @@ func buildOne(ctx context.Context, opts BuildOptions) (*BuildResult, error) {
 	}
 
 	if opts.Graph {
-		buildGraphIndex(GraphOptions{
+		if err := buildGraphIndex(GraphOptions{
 			Name:              name,
 			DocsDir:           docsDir,
 			IndexDir:          cfg.IndexDir,
 			PluginDocs:        pluginDocs,
 			IncludeSubmodules: opts.IncludeSubmodules,
-		}, p)
+		}, p); err != nil {
+			return res, fmt.Errorf("%w: %v", ErrGraphUpdate, err)
+		}
 		if opts.GraphReport {
 			graphReportPath := filepath.Join(docsDir, "GRAPH_REPORT.md")
 			if err := GenerateGraphReport(name, cfg.IndexDir, docsDir, graphReportPath); err == nil {
@@ -339,6 +341,16 @@ type pipelineEnv struct {
 
 	// lastUpdate is what the most recent vector update did and cost.
 	lastUpdate gleann.UpdateStats
+}
+
+// progressCallback forwards a builder's embedding progress to Options.Progress.
+// Without it a rebuild or compaction that misses the embedding cache is as
+// slow as the original pass and prints nothing after "Starting embedding".
+func (e *pipelineEnv) progressCallback() func(phase string, done, total int) {
+	prog := newProgressEmitter(e.opts.Progress)
+	return func(phase string, done, total int) {
+		prog.emit(phase, done, total, 0, 0, done == total)
+	}
 }
 
 // RebuildIndex re-reads docsDir and rebuilds the index in one shot (used by
@@ -412,6 +424,7 @@ func (e *pipelineEnv) rebuild(ctx context.Context, name, docsDir string) ([]*Plu
 	if err != nil {
 		return nil, err
 	}
+	builder.SetProgressCallback(e.progressCallback())
 
 	// A rebuild recreates meta.json; carry over user-managed fields.
 	prev, prevErr := gleann.GetIndexMeta(e.cfg.IndexDir, name)
@@ -465,6 +478,7 @@ func (e *pipelineEnv) incremental(ctx context.Context, name, docsDir string, cha
 	if err != nil {
 		return nil, fmt.Errorf("incremental: creating builder: %w", err)
 	}
+	builder.SetProgressCallback(e.progressCallback())
 
 	st, err := builder.UpdateIndexWithStats(ctx, name, items, removeSources)
 	e.lastUpdate = st

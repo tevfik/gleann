@@ -103,8 +103,12 @@ func Repair(ctx context.Context, opts RepairOptions) (*RepairResult, error) {
 		return res, nil
 	}
 
-	// The vector file must be rebuilt with the backend the index was built with.
+	// ...and with the embedding model it was built with.
 	o := opts.Options
+	if err := reconcileModel(meta, &o, o.printer()); err != nil {
+		return res, err
+	}
+	// The vector file must be rebuilt with the backend the index was built with.
 	if meta.Backend != "" {
 		o.Config.Backend = meta.Backend
 	}

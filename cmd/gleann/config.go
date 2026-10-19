@@ -336,3 +336,36 @@ func defaultEmbedderResolver(cfg gleann.Config) gleann.EmbedderResolver {
 		return emb, nil
 	})
 }
+
+// withModeModel maps the mode's model flag onto --model, as `index build` does:
+// --code-model for a code index, --doc-model for a docs index.
+func withModeModel(args []string, mode IndexMode) []string {
+	if getFlag(args, "--model") != "" {
+		return args
+	}
+	pick := func(names ...string) string {
+		for _, n := range names {
+			if v := getFlag(args, n); v != "" {
+				return v
+			}
+		}
+		return ""
+	}
+	switch mode {
+	case IndexModeCode:
+		if m := pick("--code-model", "--code-embedding-model"); m != "" {
+			return append(args[:len(args):len(args)], "--model", m)
+		}
+	case IndexModeDocs:
+		if m := pick("--doc-model", "--docs-model"); m != "" {
+			return append(args[:len(args):len(args)], "--model", m)
+		}
+	}
+	return args
+}
+
+// modelExplicit reports whether the command line names the embedding model
+// (after withModeModel), as opposed to inheriting the saved or built-in default.
+func modelExplicit(args []string) bool {
+	return getFlag(args, "--model") != ""
+}

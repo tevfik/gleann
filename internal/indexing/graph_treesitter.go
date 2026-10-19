@@ -3,6 +3,7 @@
 package indexing
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -23,7 +24,7 @@ const GraphSupported = true
 //
 // If ChangedFiles is non-empty, only those files are re-indexed
 // (incremental mode); otherwise the whole directory is re-indexed.
-func buildGraphIndex(opts GraphOptions, p *printer) {
+func buildGraphIndex(opts GraphOptions, p *printer) error {
 	// Resolve docsDir to absolute path to avoid cwd-dependent issues.
 	absDocsDir, err := filepath.Abs(opts.DocsDir)
 	if err != nil {
@@ -39,8 +40,11 @@ func buildGraphIndex(opts GraphOptions, p *printer) {
 	dbPath := filepath.Join(opts.IndexDir, opts.Name+"_graph")
 	db, err := kgraph.Open(dbPath)
 	if err != nil {
-		p.Warnf("warning: could not initialize kuzu graph db: %v\n", err)
-		return
+		if errors.Is(err, kgraph.ErrOpenFailed) {
+			return fmt.Errorf("graph database %s could not be opened — another process (is `gleann serve` running?) may be holding it; "+
+				"stop it and retry, or let the server do the update: %w", dbPath, err)
+		}
+		return fmt.Errorf("could not initialize kuzu graph db: %w", err)
 	}
 	defer db.Close()
 
@@ -64,16 +68,14 @@ func buildGraphIndex(opts GraphOptions, p *printer) {
 	if len(opts.ChangedFiles) > 0 {
 		p.Printf("🔄 Incremental graph update: %d changed files\n", len(opts.ChangedFiles))
 		if err := idx.IndexFiles(opts.ChangedFiles); err != nil {
-			p.Warnf("warning: incremental graph indexing failed: %v\n", err)
-		} else {
-			p.Printf("✅ Incremental Graph Index updated in %s\n", time.Since(graphStart).Round(time.Millisecond))
+			return fmt.Errorf("incremental graph indexing failed: %w", err)
 		}
+		p.Printf("✅ Incremental Graph Index updated in %s\n", time.Since(graphStart).Round(time.Millisecond))
 	} else {
 		if err := idx.IndexDir(absDocsDir); err != nil {
-			p.Warnf("warning: graph indexing failed: %v\n", err)
-		} else {
-			p.Printf("✅ Code Graph Index built in %s\n", time.Since(graphStart).Round(time.Millisecond))
+			return fmt.Errorf("graph indexing failed: %w", err)
 		}
+		p.Printf("✅ Code Graph Index built in %s\n", time.Since(graphStart).Round(time.Millisecond))
 	}
 
 	// 2. Document graph indexing (plugin-extracted documents).
@@ -90,10 +92,11 @@ func buildGraphIndex(opts GraphOptions, p *printer) {
 			}
 		}
 		if err := docIdx.WriteGraphBatch(inputs); err != nil {
-			p.Warnf("warning: doc graph batch indexing failed: %v\n", err)
+			return fmt.Errorf("doc graph batch indexing failed: %w", err)
 		}
 		p.Printf("📄 Document Graph: %d documents indexed in %s\n", len(opts.PluginDocs), time.Since(docStart).Round(time.Millisecond))
 	}
+	return nil
 }
 
 // GenerateGraphReport writes a Markdown graph report (GRAPH_REPORT.md

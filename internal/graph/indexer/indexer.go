@@ -682,6 +682,18 @@ func (idx *Indexer) IndexFiles(files []string) error {
 		return nil
 	}
 
+	// Removing a file's symbols also removes the edges other files point at
+	// them. Those files are not re-parsed, so remember the edges and put them
+	// back after the new symbols are in.
+	reindexed := make([]string, len(toReindex))
+	for i, p := range toReindex {
+		reindexed[i] = p.relPath
+	}
+	incoming, err := idx.db.IncomingEdges(reindexed)
+	if err != nil {
+		return fmt.Errorf("capture edges into changed files: %w", err)
+	}
+
 	// Delta step: remove old symbols for changed files before re-indexing.
 	for _, p := range toReindex {
 		if err := idx.db.RemoveFileSymbols(p.relPath); err != nil {
@@ -819,6 +831,56 @@ func (idx *Indexer) IndexFiles(files []string) error {
 	}
 	if err := kuzu.ExecTxOn(idx.db.Conn(), deleteQueries); err != nil {
 		return fmt.Errorf("delete old file data: %w", err)
+	}
+
+	// Callee/type stubs are emitted for symbols declared in files that were not
+	// re-parsed. Those already exist, and copying them again violates the
+	// primary key, so insert only symbols that are really new.
+	fqns := make([]string, len(allSymbols))
+	for i, sym := range allSymbols {
+		fqns[i] = sym.FQN
+	}
+	existing, err := idx.db.ExistingSymbolFQNs(fqns)
+	if err != nil {
+		return fmt.Errorf("look up existing symbols: %w", err)
+	}
+	newSymbols := make([]kuzu.SymbolNode, 0, len(allSymbols))
+	for _, sym := range allSymbols {
+		if !existing[sym.FQN] {
+			newSymbols = append(newSymbols, sym)
+		}
+	}
+	allSymbols = newSymbols
+
+	// Restore edges from untouched files into the re-indexed ones, for the
+	// symbols that still exist.
+	restored := 0
+	for _, c := range incoming.Calls {
+		key := c.CallerFQN + "->" + c.CalleeFQN
+		if !seenCalls[key] && seenSymbols[c.CalleeFQN] {
+			seenCalls[key] = true
+			allCalls = append(allCalls, c)
+			restored++
+		}
+	}
+	for _, i := range incoming.Implements {
+		key := i.ImplFQN + "->" + i.IfaceFQN
+		if !seenImpls[key] && seenSymbols[i.IfaceFQN] {
+			seenImpls[key] = true
+			allImpls = append(allImpls, i)
+			restored++
+		}
+	}
+	for _, r := range incoming.References {
+		key := r.RefererFQN + "->" + r.RefereeFQN
+		if !seenRefs[key] && seenSymbols[r.RefereeFQN] {
+			seenRefs[key] = true
+			allRefs = append(allRefs, r)
+			restored++
+		}
+	}
+	if restored > 0 {
+		log.Printf("[INFO] Incremental graph: restored %d edge(s) from unchanged files", restored)
 	}
 
 	// 2. COPY new data.

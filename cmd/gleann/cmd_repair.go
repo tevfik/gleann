@@ -55,6 +55,9 @@ func cmdRepair(args []string) {
 		return
 	}
 
+	mode, noPlugins := parseIndexMode(args)
+	args = withModeModel(args, mode)
+
 	config := getConfig(args)
 	applySavedConfig(&config, args)
 
@@ -77,16 +80,17 @@ func cmdRepair(args []string) {
 		names = []string{args[0]}
 	}
 
-	mode, noPlugins := parseIndexMode(args)
 	failed, needRepair, repaired, embedded := 0, 0, 0, 0
 	var spent time.Duration
 	for _, name := range names {
+		stdOpts := stdOptions(config, mode, noPlugins, false)
+		stdOpts.ModelExplicit = modelExplicit(args)
 		res, err := indexing.Repair(context.Background(), indexing.RepairOptions{
-			Options:   stdOptions(config, mode, noPlugins, false),
+			Options:   stdOpts,
 			Name:      name,
 			CheckOnly: checkOnly,
 			Force:     force,
-			Progress:  repairProgress(getFlag(args, "--progress"), name),
+			Progress:  embedProgress(getFlag(args, "--progress"), name),
 		})
 		switch {
 		case errors.Is(err, indexing.ErrNotRepairable):
@@ -123,11 +127,11 @@ func cmdRepair(args []string) {
 	}
 }
 
-// repairProgress renders re-embedding progress on stderr: at most one update
+// embedProgress renders re-embedding progress on stderr: at most one update
 // every progressInterval, plus the final one. A repair with a warm embedding
 // cache finishes before the first update; a cold cache makes it as slow as the
 // original embedding pass, and then a silent terminal looks like a hang.
-func repairProgress(surface, name string) indexing.ProgressFunc {
+func embedProgress(surface, name string) indexing.ProgressFunc {
 	if surface == string(gleann.SurfaceNone) {
 		return nil
 	}

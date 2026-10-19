@@ -46,6 +46,12 @@ type Options struct {
 	NoPlugins bool
 	// IncludeSubmodules walks into Git submodule directories.
 	IncludeSubmodules bool
+	// ModelExplicit reports that the caller chose Config.EmbeddingModel on
+	// purpose (a --model flag), as opposed to inheriting a saved default.
+	// Sync and Repair always use the model an index was built with: an
+	// inherited default that differs is replaced by it, an explicit choice
+	// that differs is an error (see ModelMismatchError).
+	ModelExplicit bool
 	// MultimodalModel overrides Config.MultimodalModel for media files.
 	MultimodalModel string
 
