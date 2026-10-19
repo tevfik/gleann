@@ -149,6 +149,23 @@ type LeannChat struct {
 
 	// thinkingHandler, when set, receives streamed reasoning tokens (Ollama).
 	thinkingHandler StreamCallback
+
+	// resultsHandler, when set, receives the retrieved passages as soon as the
+	// search finishes, before generation starts.
+	resultsHandler func([]SearchResult)
+}
+
+// SetResultsHandler registers a callback invoked with the retrieved passages
+// right after retrieval and before the answer is generated, so a UI can show
+// sources first. Pass nil to stop receiving them.
+func (c *LeannChat) SetResultsHandler(h func([]SearchResult)) {
+	c.resultsHandler = h
+}
+
+func (c *LeannChat) notifyResults(results []SearchResult) {
+	if c.resultsHandler != nil {
+		c.resultsHandler(results)
+	}
 }
 
 // SetThinkingHandler registers a callback for reasoning tokens emitted by
@@ -283,6 +300,7 @@ func (c *LeannChat) AskStream(ctx context.Context, question string, callback Str
 	if err != nil {
 		return nil, fmt.Errorf("search: %w", err)
 	}
+	c.notifyResults(results)
 
 	// Step 2: Build context from results.
 	var contextParts []string
@@ -442,6 +460,7 @@ func (c *LeannChat) AskStreamWithMedia(ctx context.Context, question string, med
 	if searchErr != nil {
 		return nil, fmt.Errorf("search: %w", searchErr)
 	}
+	c.notifyResults(results)
 
 	var contextParts []string
 	for i, r := range results {
@@ -1512,6 +1531,7 @@ func (c *LeannChat) AskStreamWithImages(ctx context.Context, question string, im
 	if searchErr != nil {
 		return nil, fmt.Errorf("search: %w", searchErr)
 	}
+	c.notifyResults(results)
 
 	var contextParts []string
 	for i, r := range results {

@@ -36,3 +36,27 @@ func TestOllamaStream_ThinkingTokensGoToHandlerOnly(t *testing.T) {
 		t.Errorf("answer=%q err=%v", answer.String(), err)
 	}
 }
+
+func TestResultsHandler_FiresBeforeGeneration(t *testing.T) {
+	want := []SearchResult{{Text: "x", Score: 1}}
+	c := NewChat(stubSearcher{want}, ChatConfig{Provider: LLMMock, Model: "m"})
+	var order []string
+	c.SetResultsHandler(func(r []SearchResult) { order = append(order, fmt.Sprintf("results:%d", len(r))) })
+	if _, err := c.AskStream(context.Background(), "q", func(string) {
+		if len(order) == 0 || order[len(order)-1] != "token" {
+			order = append(order, "token")
+		}
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(order, ",") != "results:1,token" {
+		t.Errorf("order = %v", order)
+	}
+}
+
+type stubSearcher struct{ r []SearchResult }
+
+func (s stubSearcher) Search(ctx context.Context, q string, opts ...SearchOption) ([]SearchResult, error) {
+	return s.r, nil
+}
+func (s stubSearcher) Close() error { return nil }

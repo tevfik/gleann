@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -83,8 +84,9 @@ func mustGetwd() string {
 	return wd
 }
 
-// stream answers one prompt: retrieval + generation, reporting reasoning as
-// Thinking events and the retrieved passages as a "sources" tool card.
+// stream answers one prompt: retrieval + generation. The retrieved passages are
+// reported first as a "sources" tool card, then reasoning as Thinking events and
+// the answer as Text events.
 func (ac *agentChat) stream(ctx context.Context, prompt string, emit func(agenttui.Event)) (int, error) {
 	ac.mu.Lock()
 	cm := ac.cm
@@ -108,6 +110,16 @@ func (ac *agentChat) stream(ctx context.Context, prompt string, emit func(agentt
 	})
 	defer chat.SetThinkingHandler(nil)
 
+	chat.SetResultsHandler(func(results []gleann.SearchResult) {
+		if len(results) == 0 {
+			return
+		}
+		emit(agenttui.Event{Kind: agenttui.EventToolStart, ToolID: "sources", ToolName: "sources",
+			ToolArgs: fmt.Sprintf("%d passages", len(results))})
+		emit(agenttui.Event{Kind: agenttui.EventToolEnd, ToolID: "sources", ToolOutput: formatSources(results), ToolOK: true})
+	})
+	defer chat.SetResultsHandler(nil)
+
 	var answered int
 	cb := func(tok string) {
 		answered += len(tok)
@@ -115,12 +127,11 @@ func (ac *agentChat) stream(ctx context.Context, prompt string, emit func(agentt
 	}
 	opts := []gleann.SearchOption{gleann.WithTopK(topK), gleann.WithReranker(rerank)}
 
-	var results []gleann.SearchResult
 	var err error
 	if len(images) > 0 {
-		results, err = chat.AskStreamWithImages(ctx, question, images, cb, opts...)
+		_, err = chat.AskStreamWithImages(ctx, question, images, cb, opts...)
 	} else {
-		results, err = chat.AskStream(ctx, question, cb, opts...)
+		_, err = chat.AskStream(ctx, question, cb, opts...)
 	}
 
 	ac.mu.Lock()
@@ -129,15 +140,7 @@ func (ac *agentChat) stream(ctx context.Context, prompt string, emit func(agentt
 	ac.mu.Unlock()
 	ac.app.SetContextTokens(total, cm.contextLimit)
 
-	if err != nil {
-		return total, err
-	}
-	if len(results) > 0 {
-		emit(agenttui.Event{Kind: agenttui.EventToolStart, ToolID: "sources", ToolName: "sources",
-			ToolArgs: fmt.Sprintf("%d passages", len(results))})
-		emit(agenttui.Event{Kind: agenttui.EventToolEnd, ToolID: "sources", ToolOutput: formatSources(results), ToolOK: true})
-	}
-	return total, nil
+	return total, err
 }
 
 // formatSources lists retrieved passages with their source and score.
@@ -194,21 +197,23 @@ func (ac *agentChat) commands() []agenttui.SlashCommand {
 			},
 		},
 		{
-			Name: "history", Description: "List saved conversations",
+			Name: "history", Description: "Pick a saved conversation to resume", Usage: "",
 			Handler: func(ctx context.Context, args []string, a *agenttui.App) (string, bool, error) {
-				items, err := conversations.DefaultStore().List()
-				if err != nil || len(items) == 0 {
-					return "No saved conversations found.", true, nil
-				}
-				var sb strings.Builder
-				sb.WriteString("### Saved conversations\n\n")
-				for i, c := range items {
-					if i >= 20 {
-						break
-					}
-					fmt.Fprintf(&sb, "- `%s` %s\n", c.ID, c.Title)
-				}
-				return sb.String(), true, nil
+				return ac.resumeConversation(ctx, a)
+			},
+		},
+		{
+			Name: "clear", Description: "Clear the screen and the conversation history",
+			Handler: func(ctx context.Context, args []string, a *agenttui.App) (string, bool, error) {
+				ac.withState(func(cm *ChatModel) string { cm.chat.ClearHistory(); return "" })
+				a.ClearMessages()
+				return "Conversation cleared.", true, nil
+			},
+		},
+		{
+			Name: "settings", Description: "Edit model, sampling, reranker, role and system prompt",
+			Handler: func(ctx context.Context, args []string, a *agenttui.App) (string, bool, error) {
+				return ac.editSettings(ctx, a)
 			},
 		},
 		local("remember", "Store a memory", "<text>", func(cm *ChatModel, arg string) string {
@@ -275,4 +280,178 @@ func (ac *agentChat) commands() []agenttui.SlashCommand {
 		}),
 	}
 	return cmds
+}
+
+// resumeConversation lets the user pick a saved conversation and loads it into
+// both the LLM history and the transcript.
+func (ac *agentChat) resumeConversation(ctx context.Context, a *agenttui.App) (string, bool, error) {
+	store := conversations.DefaultStore()
+	items, err := store.List()
+	if err != nil || len(items) == 0 {
+		return "No saved conversations found.", true, nil
+	}
+	labels := make([]string, len(items))
+	for i, c := range items {
+		labels[i] = fmt.Sprintf("%s · %s · %d msgs", truncStr(c.Title, 50), c.UpdatedAt.Format("2006-01-02 15:04"), len(c.Messages))
+	}
+	picked, err := a.Ask(ctx, agenttui.Question{Text: "Resume which conversation?", Options: labels})
+	if errors.Is(err, agenttui.ErrAskCancelled) {
+		return "Cancelled.", true, nil
+	}
+	if err != nil {
+		return "", true, err
+	}
+	idx := -1
+	for i, l := range labels {
+		if l == picked {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 {
+		return "", true, fmt.Errorf("selection %q not found", picked)
+	}
+	full, err := store.Load(items[idx].ID)
+	if err != nil {
+		return "", true, fmt.Errorf("load conversation: %w", err)
+	}
+
+	ac.withState(func(cm *ChatModel) string {
+		cm.chat.ClearHistory()
+		for _, m := range full.Messages {
+			if m.Role == "system" && m.Content != "" {
+				cm.systemPrompt = m.Content
+				cm.chat.SetSystemPrompt(m.Content)
+				continue
+			}
+			cm.chat.AppendHistory(gleann.ChatMessage{Role: m.Role, Content: m.Content})
+		}
+		cm.tokensSent, cm.tokensReceived = 0, 0
+		return ""
+	})
+	a.ClearMessages()
+	for _, m := range full.Messages {
+		role := agenttui.RoleUser
+		switch m.Role {
+		case "assistant":
+			role = agenttui.RoleAssistant
+		case "system":
+			continue
+		}
+		a.AddMessage(agenttui.Message{Role: role, Content: m.Content})
+	}
+	return fmt.Sprintf("Loaded conversation: %s (%d messages)", full.Title, len(full.Messages)), true, nil
+}
+
+// editSettings shows the settings form and applies the result through the
+// classic panel's applySettings so persistence and side effects stay identical.
+func (ac *agentChat) editSettings(ctx context.Context, a *agenttui.App) (string, bool, error) {
+	ac.mu.Lock()
+	cm := ac.cm
+	floatOpts := func(vals []float64, f string) []string {
+		out := make([]string, len(vals))
+		for i, v := range vals {
+			out[i] = fmt.Sprintf(f, v)
+		}
+		return out
+	}
+	intOpts := func(vals []int) []string {
+		out := make([]string, len(vals))
+		for i, v := range vals {
+			out[i] = strconv.Itoa(v)
+		}
+		return out
+	}
+	// closest keeps the current value selectable even when it is not a preset.
+	withCurrent := func(opts []string, cur string) []string {
+		for _, o := range opts {
+			if o == cur {
+				return opts
+			}
+		}
+		return append([]string{cur}, opts...)
+	}
+	model := cm.llmModels[cm.llmModelIdx]
+	temp := fmt.Sprintf("%.1f", cm.temperature)
+	rep := fmt.Sprintf("%.2f", cm.repeatPenalty)
+	maxTok := strconv.Itoa(cm.maxTokens)
+	topK := strconv.Itoa(cm.topK)
+	rerank := "off"
+	if cm.rerankEnabled {
+		rerank = "on"
+	}
+	role := "(none)"
+	if cm.roleIdx >= 0 && cm.roleIdx < len(cm.roleNames) {
+		role = cm.roleNames[cm.roleIdx]
+	}
+	fields := []agenttui.Field{
+		{Label: "Model", Kind: agenttui.FieldChoice, Value: model, Options: withCurrent(cm.llmModels, model)},
+		{Label: "Temperature", Kind: agenttui.FieldChoice, Value: temp, Options: withCurrent(floatOpts(temperaturePresets, "%.1f"), temp)},
+		{Label: "Repeat penalty", Kind: agenttui.FieldChoice, Value: rep, Options: withCurrent(floatOpts(repeatPenaltyPresets, "%.2f"), rep)},
+		{Label: "Max tokens", Kind: agenttui.FieldChoice, Value: maxTok, Options: withCurrent(intOpts(maxTokensPresets), maxTok)},
+		{Label: "Top-K", Kind: agenttui.FieldChoice, Value: topK, Options: withCurrent(intOpts(topKPresets), topK)},
+		{Label: "Reranker", Kind: agenttui.FieldBool, Value: rerank},
+	}
+	rerankIdx := -1
+	if len(cm.rerankModels) > 0 {
+		rerankIdx = len(fields)
+		fields = append(fields, agenttui.Field{Label: "Rerank model", Kind: agenttui.FieldChoice,
+			Value: cm.rerankModels[cm.rerankModelIdx], Options: cm.rerankModels})
+	}
+	roleIdx := len(fields)
+	fields = append(fields, agenttui.Field{Label: "Role", Kind: agenttui.FieldChoice, Value: role, Options: cm.roleNames})
+	promptIdx := len(fields)
+	fields = append(fields, agenttui.Field{Label: "System prompt", Kind: agenttui.FieldText, Value: cm.systemPrompt})
+	ac.mu.Unlock()
+
+	vals, err := a.Form(ctx, agenttui.Form{Title: "Chat settings", Fields: fields})
+	if errors.Is(err, agenttui.ErrAskCancelled) {
+		return "Settings unchanged.", true, nil
+	}
+	if err != nil {
+		return "", true, err
+	}
+
+	return ac.withState(func(cm *ChatModel) string {
+		cm.llmModelIdx = indexOf(cm.llmModels, vals[0], cm.llmModelIdx)
+		if v, e := strconv.ParseFloat(vals[1], 64); e == nil {
+			cm.temperature = v
+		}
+		if v, e := strconv.ParseFloat(vals[2], 64); e == nil {
+			cm.repeatPenalty = v
+		}
+		if v, e := strconv.Atoi(vals[3]); e == nil {
+			cm.maxTokens = v
+		}
+		if v, e := strconv.Atoi(vals[4]); e == nil {
+			cm.topK = v
+		}
+		cm.rerankEnabled = vals[5] == "on"
+		if rerankIdx >= 0 {
+			cm.rerankModelIdx = indexOf(cm.rerankModels, vals[rerankIdx], cm.rerankModelIdx)
+		}
+		newRole := indexOf(cm.roleNames, vals[roleIdx], cm.roleIdx)
+		promptChanged := vals[promptIdx] != cm.systemPrompt
+		cm.systemPrompt = vals[promptIdx]
+		if newRole != cm.roleIdx || !promptChanged {
+			cm.roleIdx = newRole // a changed role resolves to its prompt in applySettings
+		} else {
+			cm.roleIdx = 0 // an edited prompt wins over the previously selected role
+		}
+		before := len(cm.messages)
+		cm.applySettings()
+		if len(cm.messages) > before {
+			return cm.messages[len(cm.messages)-1].content
+		}
+		return "Settings updated."
+	}), true, nil
+}
+
+func indexOf(list []string, v string, fallback int) int {
+	for i, s := range list {
+		if s == v {
+			return i
+		}
+	}
+	return fallback
 }

@@ -36,6 +36,9 @@ func TestAgentChat_StreamEmitsTextAndSources(t *testing.T) {
 	if tok <= 0 {
 		t.Errorf("expected token estimate > 0, got %d", tok)
 	}
+	if len(events) == 0 || events[0].Kind != agenttui.EventToolStart {
+		t.Fatalf("sources card must come before the answer, first event: %+v", events)
+	}
 	var text string
 	var start, end *agenttui.Event
 	for i := range events {
@@ -102,5 +105,11 @@ func TestFormatSources_FallsBackToTextSnippet(t *testing.T) {
 	got := formatSources([]gleann.SearchResult{{Text: "line one\nline   two", Score: 0.25}})
 	if got != "1. line one line two (0.25)" {
 		t.Errorf("got %q", got)
+	}
+}
+
+func TestIndexOf(t *testing.T) {
+	if indexOf([]string{"a", "b"}, "b", 0) != 1 || indexOf([]string{"a"}, "z", 7) != 7 {
+		t.Error("indexOf lookup/fallback wrong")
 	}
 }
