@@ -502,6 +502,11 @@ func cmdChat(args []string) {
 		indexName = args[0]
 	}
 
+	// Set before the no-index picker flow too, which also ends in RunChat.
+	if hasFlag(args, "--modular") {
+		tui.UseAgentUI = true
+	}
+
 	cfg := getConfig(args)
 	if cfg.IndexDir == "" {
 		cfg.IndexDir = tui.DefaultIndexDir()
@@ -620,9 +625,6 @@ func cmdChat(args []string) {
 		}
 	}
 
-	if hasFlag(args, "--modular") {
-		tui.UseAgentUI = true
-	}
 	if err := tui.RunChat(chat, displayName, chatCfg.Model); err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
