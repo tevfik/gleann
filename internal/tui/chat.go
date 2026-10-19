@@ -2064,6 +2064,41 @@ func (m *ChatModel) handleBudgetCommand() string {
 		len(m.pendingImages), len(m.attachedFiles), savings)
 }
 
+// attachedFilesContext renders attached files/dirs (≤512KB each) as prompt context.
+func attachedFilesContext(attachedFiles []string) string {
+	if len(attachedFiles) == 0 {
+		return ""
+	}
+	var extraCtx strings.Builder
+	extraCtx.WriteString("\n\n--- Attached Files Context ---\n")
+	for _, f := range attachedFiles {
+		info, err := os.Stat(f)
+		if err != nil {
+			continue
+		}
+		if info.IsDir() {
+			_ = filepath.Walk(f, func(path string, fi os.FileInfo, _ error) error {
+				if fi == nil || fi.IsDir() || fi.Size() > 512*1024 {
+					return nil
+				}
+				data, err := os.ReadFile(path)
+				if err != nil {
+					return nil
+				}
+				rel, _ := filepath.Rel(f, path)
+				extraCtx.WriteString(fmt.Sprintf("\n=== %s ===\n%s\n", rel, string(data)))
+				return nil
+			})
+		} else if info.Size() <= 512*1024 {
+			data, err := os.ReadFile(f)
+			if err == nil {
+				extraCtx.WriteString(fmt.Sprintf("\n=== %s ===\n%s\n", filepath.Base(f), string(data)))
+			}
+		}
+	}
+	return extraCtx.String()
+}
+
 // askLLMStreamWithMedia performs streaming RAG, optionally with attached media.
 func (m ChatModel) askLLMStreamWithMedia(question string, images []string) tea.Cmd {
 	chat := m.chat
@@ -2082,36 +2117,7 @@ func (m ChatModel) askLLMStreamWithMedia(question string, images []string) tea.C
 		}
 
 		// Build context from attached files.
-		if len(attachedFiles) > 0 {
-			var extraCtx strings.Builder
-			extraCtx.WriteString("\n\n--- Attached Files Context ---\n")
-			for _, f := range attachedFiles {
-				info, err := os.Stat(f)
-				if err != nil {
-					continue
-				}
-				if info.IsDir() {
-					_ = filepath.Walk(f, func(path string, fi os.FileInfo, _ error) error {
-						if fi == nil || fi.IsDir() || fi.Size() > 512*1024 {
-							return nil
-						}
-						data, err := os.ReadFile(path)
-						if err != nil {
-							return nil
-						}
-						rel, _ := filepath.Rel(f, path)
-						extraCtx.WriteString(fmt.Sprintf("\n=== %s ===\n%s\n", rel, string(data)))
-						return nil
-					})
-				} else if info.Size() <= 512*1024 {
-					data, err := os.ReadFile(f)
-					if err == nil {
-						extraCtx.WriteString(fmt.Sprintf("\n=== %s ===\n%s\n", filepath.Base(f), string(data)))
-					}
-				}
-			}
-			question = question + extraCtx.String()
-		}
+		question += attachedFilesContext(attachedFiles)
 
 		tokenChan := make(chan string, 100)
 

@@ -32,17 +32,17 @@ const (
 
 // ChatConfig holds configuration for LLM chat.
 type ChatConfig struct {
-	Provider     LLMProvider   `json:"provider"`
-	Model        string        `json:"model"`
-	BaseURL      string        `json:"base_url,omitempty"`
-	APIKey       string        `json:"api_key,omitempty"`
+	Provider        LLMProvider   `json:"provider"`
+	Model           string        `json:"model"`
+	BaseURL         string        `json:"base_url,omitempty"`
+	APIKey          string        `json:"api_key,omitempty"`
 	Temperature     float64       `json:"temperature,omitempty"`
 	RepeatPenalty   float64       `json:"repeat_penalty,omitempty"`
 	MaxTokens       int           `json:"max_tokens,omitempty"`
 	SystemPrompt    string        `json:"system_prompt,omitempty"`
-	Timeout         time.Duration `json:"timeout,omitempty"` // HTTP client timeout; 0 uses DefaultChatTimeout
-	Think           *bool         `json:"think,omitempty"`   // Ollama: nil=model default, false=disable thinking
-	Format          any           `json:"format,omitempty"`  // Native structured output (JSON schema/format)
+	Timeout         time.Duration `json:"timeout,omitempty"`          // HTTP client timeout; 0 uses DefaultChatTimeout
+	Think           *bool         `json:"think,omitempty"`            // Ollama: nil=model default, false=disable thinking
+	Format          any           `json:"format,omitempty"`           // Native structured output (JSON schema/format)
 	CompressContext bool          `json:"compress_context,omitempty"` // Smart AST-guided context compression
 }
 
@@ -125,6 +125,10 @@ type ChatMessage struct {
 	Role    string   `json:"role"` // "system", "user", "assistant"
 	Content string   `json:"content"`
 	Images  []string `json:"images,omitempty"` // base64-encoded media (images/audio) — native Ollama format
+
+	// Thinking carries reasoning tokens streamed by Ollama thinking models.
+	// It is only read from responses and never sent back or stored in history.
+	Thinking string `json:"thinking,omitempty"`
 }
 
 // LeannChat provides RAG-based Q&A over indexed data.
@@ -142,6 +146,16 @@ type LeannChat struct {
 	// When the sliding window drops old messages, they're summarized here
 	// so the LLM retains context from earlier in the conversation.
 	sessionSummary string
+
+	// thinkingHandler, when set, receives streamed reasoning tokens (Ollama).
+	thinkingHandler StreamCallback
+}
+
+// SetThinkingHandler registers a callback for reasoning tokens emitted by
+// thinking models during streaming. They are never added to the answer text or
+// to the conversation history. Pass nil to stop receiving them.
+func (c *LeannChat) SetThinkingHandler(h StreamCallback) {
+	c.thinkingHandler = h
 }
 
 func (c *LeannChat) getStreamClient() *http.Client {
@@ -1174,6 +1188,9 @@ func (c *LeannChat) chatOllamaStream(ctx context.Context, messages []ChatMessage
 			continue // Skip malformed lines.
 		}
 
+		if chunk.Message.Thinking != "" && c.thinkingHandler != nil {
+			c.thinkingHandler(chunk.Message.Thinking)
+		}
 		if chunk.Message.Content != "" {
 			callback(chunk.Message.Content)
 		}

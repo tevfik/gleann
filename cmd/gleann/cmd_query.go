@@ -620,6 +620,9 @@ func cmdChat(args []string) {
 		}
 	}
 
+	if hasFlag(args, "--modular") {
+		tui.UseAgentUI = true
+	}
 	if err := tui.RunChat(chat, displayName, chatCfg.Model); err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
@@ -683,6 +686,7 @@ func printCmdAskUsage() {
 	fmt.Fprintln(os.Stderr, "  --no-cache           Do not save conversation")
 	fmt.Fprintln(os.Stderr, "  --no-limit           Remove token limit (unlimited output)")
 	fmt.Fprintln(os.Stderr, "  --repeat-penalty N   Repetition penalty for LLM sampling (e.g. 1.1, 1.2)")
+	fmt.Fprintln(os.Stderr, "  --modular            Use the agenttui chat interface (cancel, thinking, sources)")
 	fmt.Fprintln(os.Stderr, "  --host URL           Ollama server address (default: saved config / OLLAMA_HOST)")
 	fmt.Fprintln(os.Stderr, "  --ollama-api-key KEY Optional Ollama API key (auth proxy / hosted Ollama; env: OLLAMA_API_KEY)")
 	fmt.Fprintln(os.Stderr, "  --api-key KEY        API key for the active LLM provider (overrides saved keys)")

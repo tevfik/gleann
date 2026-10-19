@@ -83,8 +83,14 @@ func RunPlugins() error {
 	return runPlugins()
 }
 
+// UseAgentUI switches RunChat to the agenttui-based interface (--modular).
+var UseAgentUI bool
+
 // RunChat runs the chat TUI standalone for a given index.
 func RunChat(chat *gleann.LeannChat, indexName, modelName string) error {
+	if UseAgentUI || os.Getenv("GLEANN_CHAT_UI") == "agenttui" {
+		return RunAgentChat(chat, indexName, modelName)
+	}
 	m := NewChatModel(chat, indexName, modelName)
 	p := tea.NewProgram(m)
 	_, err := p.Run()
