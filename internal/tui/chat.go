@@ -367,7 +367,7 @@ func NewChatModel(chat *gleann.LeannChat, indexName, modelName string) ChatModel
 		height:            24,
 		memoryMgr:         memMgr,
 		mouseEnabled:      true,
-		contextLimit:      estimateContextLimit(modelName),
+		contextLimit:      lookupContextLimit(chat.Config()),
 	}
 	// Initialize layout with defaults so View renders immediately.
 	m = m.relayout()
@@ -932,21 +932,12 @@ func (m *ChatModel) applySettings() {
 		m.modelName = m.llmModels[m.llmModelIdx]
 	}
 
-	// Apply reranker toggle.
+	m.applyReranker()
+
 	selectedRerankModel := ""
 	if len(m.rerankModels) > 0 && m.rerankModelIdx < len(m.rerankModels) {
 		selectedRerankModel = m.rerankModels[m.rerankModelIdx]
 	}
-	if m.rerankEnabled && selectedRerankModel != "" {
-		reranker := gleann.NewReranker(gleann.RerankerConfig{
-			Provider: gleann.RerankerOllama,
-			Model:    selectedRerankModel,
-		})
-		m.chat.SetReranker(reranker)
-	} else {
-		m.chat.SetReranker(nil)
-	}
-
 	// Apply role.
 	selectedRole := "(none)"
 	if len(m.roleNames) > 0 && m.roleIdx > 0 && m.roleIdx < len(m.roleNames) {
@@ -1889,6 +1880,23 @@ func (m *ChatModel) handleDetachCommand(path string) string {
 }
 
 // handleIndexCommand handles /index subcommands.
+// applyReranker installs (or removes) the reranker on the chat's searcher(s)
+// according to the current settings.
+func (m *ChatModel) applyReranker() {
+	selectedRerankModel := ""
+	if len(m.rerankModels) > 0 && m.rerankModelIdx < len(m.rerankModels) {
+		selectedRerankModel = m.rerankModels[m.rerankModelIdx]
+	}
+	if m.rerankEnabled && selectedRerankModel != "" {
+		m.chat.SetReranker(gleann.NewReranker(gleann.RerankerConfig{
+			Provider: gleann.RerankerOllama,
+			Model:    selectedRerankModel,
+		}))
+	} else {
+		m.chat.SetReranker(nil)
+	}
+}
+
 func (m *ChatModel) handleIndexCommand(args string) string {
 	// Handle "add" and "remove" subcommands for multi-index.
 	if strings.HasPrefix(args, "add ") {
@@ -2399,33 +2407,10 @@ func truncStr(s string, maxLen int) string {
 	return s[:maxLen-3] + "..."
 }
 
-// estimateContextLimit returns a rough context window size in tokens based on model name.
-func estimateContextLimit(model string) int {
-	m := strings.ToLower(model)
-	switch {
-	case strings.Contains(m, "gpt-4o"), strings.Contains(m, "gpt-4-turbo"):
-		return 128000
-	case strings.Contains(m, "gpt-4"):
-		return 8192
-	case strings.Contains(m, "gpt-3.5"):
-		return 16384
-	case strings.Contains(m, "claude"):
-		return 200000
-	case strings.Contains(m, "gemma"):
-		return 8192
-	case strings.Contains(m, "llama3"):
-		return 8192
-	case strings.Contains(m, "mistral"), strings.Contains(m, "mixtral"):
-		return 32768
-	case strings.Contains(m, "qwen"):
-		return 32768
-	case strings.Contains(m, "deepseek"):
-		return 128000
-	case strings.Contains(m, "command-r"):
-		return 128000
-	default:
-		return 0 // unknown
-	}
+// lookupContextLimit asks the provider for the model's context window (0 = unknown).
+func lookupContextLimit(cfg gleann.ChatConfig) int {
+	n, _ := gleann.ChatContextWindow(context.Background(), cfg)
+	return n
 }
 
 func (m ChatModel) handleSlashCommand(input string) (tea.Model, tea.Cmd, bool) {

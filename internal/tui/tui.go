@@ -83,12 +83,13 @@ func RunPlugins() error {
 	return runPlugins()
 }
 
-// UseAgentUI switches RunChat to the agenttui-based interface (--modular).
-var UseAgentUI bool
+// UseClassicUI switches RunChat back to the original chat interface
+// (--classic, or GLEANN_CHAT_UI=classic). The agenttui interface is the default.
+var UseClassicUI bool
 
 // RunChat runs the chat TUI standalone for a given index.
 func RunChat(chat *gleann.LeannChat, indexName, modelName string) error {
-	if UseAgentUI || os.Getenv("GLEANN_CHAT_UI") == "agenttui" {
+	if !UseClassicUI && os.Getenv("GLEANN_CHAT_UI") != "classic" {
 		return RunAgentChat(chat, indexName, modelName)
 	}
 	m := NewChatModel(chat, indexName, modelName)
@@ -293,6 +294,7 @@ func runChatFlow() error {
 		BaseURL:  embHost,
 		APIKey:   apiKey,
 	})
+	SearcherLoader = NewSearcherLoader(cfg, embedder)
 	searcher := gleann.NewSearcher(cfg, embedder)
 	ctx := context.Background()
 	if err := searcher.Load(ctx, indexName); err != nil {

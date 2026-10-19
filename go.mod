@@ -9,6 +9,7 @@ require (
 	github.com/ThreeDotsLabs/watermill v1.5.1
 	github.com/cavaliergopher/grab/v3 v3.0.1
 	github.com/charmbracelet/glamour v1.0.0
+	github.com/charmbracelet/x/ansi v0.11.7
 	github.com/failsafe-go/failsafe-go v0.9.6
 	github.com/fsnotify/fsnotify v1.9.0
 	github.com/google/uuid v1.6.0
@@ -20,7 +21,7 @@ require (
 	github.com/philippgille/chromem-go v0.7.0
 	github.com/qmuntal/stateless v1.8.0
 	github.com/smacker/go-tree-sitter v0.0.0-20240827094217-dd81d9e9be82
-	github.com/tevfik/agenttui v0.0.0-20261019113046-cd25dd9f251e
+	github.com/tevfik/agenttui v0.3.2
 	github.com/tevfik/gleann/modules/bm25 v0.0.0-20260303190343-2b5861edadac
 	github.com/tevfik/gleann/modules/chunking v0.0.0-20260303190343-2b5861edadac
 	github.com/tevfik/gleann/modules/diskann v0.0.0-00010101000000-000000000000
@@ -43,7 +44,6 @@ require (
 	github.com/charmbracelet/colorprofile v0.4.3 // indirect
 	github.com/charmbracelet/lipgloss v1.1.1-0.20250404203927-76690c660834 // indirect
 	github.com/charmbracelet/ultraviolet v0.0.0-20260416155717-489999b90468 // indirect
-	github.com/charmbracelet/x/ansi v0.11.7 // indirect
 	github.com/charmbracelet/x/cellbuf v0.0.15 // indirect
 	github.com/charmbracelet/x/exp/slice v0.0.0-20250327172914-2fdc97757edf // indirect
 	github.com/charmbracelet/x/term v0.2.2 // indirect

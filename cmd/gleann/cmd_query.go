@@ -503,8 +503,9 @@ func cmdChat(args []string) {
 	}
 
 	// Set before the no-index picker flow too, which also ends in RunChat.
-	if hasFlag(args, "--modular") {
-		tui.UseAgentUI = true
+	// The agenttui interface is the default; --modular is accepted for old scripts.
+	if hasFlag(args, "--classic") {
+		tui.UseClassicUI = true
 	}
 
 	cfg := getConfig(args)
@@ -545,6 +546,7 @@ func cmdChat(args []string) {
 	}
 
 	embedder := newEmbedder(cfg)
+	tui.SearcherLoader = tui.NewSearcherLoader(cfg, embedder)
 
 	ctx := context.Background()
 
@@ -688,7 +690,7 @@ func printCmdAskUsage() {
 	fmt.Fprintln(os.Stderr, "  --no-cache           Do not save conversation")
 	fmt.Fprintln(os.Stderr, "  --no-limit           Remove token limit (unlimited output)")
 	fmt.Fprintln(os.Stderr, "  --repeat-penalty N   Repetition penalty for LLM sampling (e.g. 1.1, 1.2)")
-	fmt.Fprintln(os.Stderr, "  --modular            Use the agenttui chat interface (cancel, thinking, sources)")
+	fmt.Fprintln(os.Stderr, "  --classic            Use the original chat interface (default: agenttui — cancel, thinking, sources, index picker)")
 	fmt.Fprintln(os.Stderr, "  --host URL           Ollama server address (default: saved config / OLLAMA_HOST)")
 	fmt.Fprintln(os.Stderr, "  --ollama-api-key KEY Optional Ollama API key (auth proxy / hosted Ollama; env: OLLAMA_API_KEY)")
 	fmt.Fprintln(os.Stderr, "  --api-key KEY        API key for the active LLM provider (overrides saved keys)")

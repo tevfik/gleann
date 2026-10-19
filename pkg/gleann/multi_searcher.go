@@ -139,3 +139,8 @@ func (ms *MultiSearcher) Names() []string {
 
 // Verify at compile time that MultiSearcher satisfies Searcher.
 var _ Searcher = (*MultiSearcher)(nil)
+
+// Searcher returns the loaded searcher for an index name, or nil.
+func (ms *MultiSearcher) Searcher(name string) *LeannSearcher {
+	return ms.searchers[name]
+}

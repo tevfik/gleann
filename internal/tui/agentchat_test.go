@@ -23,7 +23,7 @@ func (f fakeSearcher) Close() error { return nil }
 func newTestAgentChat(results []gleann.SearchResult) *agentChat {
 	chat := gleann.NewChat(fakeSearcher{results}, gleann.ChatConfig{Provider: gleann.LLMMock, Model: "mock"})
 	cm := NewChatModel(chat, "idx", "mock")
-	return &agentChat{cm: &cm, app: agenttui.New(agenttui.Config{})}
+	return &agentChat{cm: &cm, app: agenttui.New(agenttui.Config{}), retr: &retrievalState{}}
 }
 
 func TestAgentChat_StreamEmitsTextAndSources(t *testing.T) {
@@ -39,29 +39,21 @@ func TestAgentChat_StreamEmitsTextAndSources(t *testing.T) {
 	if tok <= 0 {
 		t.Errorf("expected token estimate > 0, got %d", tok)
 	}
-	if len(events) == 0 || events[0].Kind != agenttui.EventToolStart {
-		t.Fatalf("sources card must come before the answer, first event: %+v", events)
+	if len(events) == 0 || events[0].Kind != agenttui.EventSources {
+		t.Fatalf("sources must come before the answer, first event: %+v", events)
 	}
 	var text string
-	var start, end *agenttui.Event
-	for i := range events {
-		switch events[i].Kind {
-		case agenttui.EventText:
-			text += events[i].Text
-		case agenttui.EventToolStart:
-			start = &events[i]
-		case agenttui.EventToolEnd:
-			end = &events[i]
+	for _, e := range events {
+		if e.Kind == agenttui.EventText {
+			text += e.Text
 		}
 	}
 	if !strings.Contains(text, "alpha doc") {
 		t.Errorf("answer should echo retrieved context, got %q", text)
 	}
-	if start == nil || end == nil || start.ToolName != "sources" || start.ToolArgs != "2 passages" {
-		t.Fatalf("missing sources card: %+v %+v", start, end)
-	}
-	if !strings.Contains(end.ToolOutput, "docs/a.md (0.90)") || !strings.Contains(end.ToolOutput, "beta passage") {
-		t.Errorf("unexpected sources output: %q", end.ToolOutput)
+	src := events[0].Sources
+	if len(src) != 2 || src[0].Title != "docs/a.md" || src[1].Title != "beta passage with no source" {
+		t.Errorf("unexpected sources: %+v", src)
 	}
 }
 
@@ -104,10 +96,13 @@ func TestAgentChat_Commands(t *testing.T) {
 	}
 }
 
-func TestFormatSources_FallsBackToTextSnippet(t *testing.T) {
-	got := formatSources([]gleann.SearchResult{{Text: "line one\nline   two", Score: 0.25}})
-	if got != "1. line one line two (0.25)" {
-		t.Errorf("got %q", got)
+func TestToSources_FallsBackToTextSnippet(t *testing.T) {
+	got := toSources([]gleann.SearchResult{
+		{Text: "line one\nline   two", Score: 0.25},
+		{Text: "x", Score: 0.5, Metadata: map[string]any{"path": "docs/a.md"}},
+	})
+	if got[0].Title != "line one line two" || got[0].Score != 0.25 || got[1].Title != "docs/a.md" {
+		t.Errorf("got %+v", got)
 	}
 }
 
@@ -194,5 +189,15 @@ func TestAgentChat_HeaderShowsDetailsWhenSidebarHidden(t *testing.T) {
 		if !strings.Contains(first, want) {
 			t.Errorf("header missing %q: %s", want, first)
 		}
+	}
+}
+
+func TestAgentChat_MentionsDisabledWithoutGraph(t *testing.T) {
+	ac := newTestAgentChat(nil)
+	if got := ac.mentionComplete("Handler"); got != nil {
+		t.Errorf("expected no suggestions without a graph, got %v", got)
+	}
+	if _, ok := ac.mentionResolve("Handler"); ok {
+		t.Error("resolve must fail without a graph")
 	}
 }

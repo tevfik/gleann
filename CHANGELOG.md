@@ -4,6 +4,17 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+- **`gleann chat` runs on the agenttui interface by default** (cancellable streaming, collapsible reasoning, source cards, slash-command popup, `@file` and `@symbol` completion). `--classic` (or `GLEANN_CHAT_UI=classic`) selects the old interface; `--modular` is still accepted and does nothing.
+- **Index and tag picker in chat.** `/index` opens a panel with one switch per index and per tag (`gleann index tag`); ticking a tag selects every index that carries it. Also `/index a,b`, `/index #tag`, `/index add|remove <name>`, `/index info`. The selection really changes what is retrieved (a new searcher is swapped in and the reranker is restored); before, `/index` only changed the label.
+- **Retrieval sidebar** lists every index with passage count, graph marker and tags, which ones are searched, and how many passages of the last answer came from each.
+- `@symbol` completion works over a multi-index search (first index with a code graph); sources of a multi-index answer show which index they came from.
+- `/forget` asks for confirmation before deleting memories.
+- `gleann.ChatContextWindow` asks the provider for the model's context window (Ollama `num_ctx` sent / Modelfile / loaded model, OpenAI-compatible `/models` fields). `GLEANN_CONTEXT_TOKENS` overrides it.
+
+### Changed
+- The chat no longer guesses the context window from the model name; when the provider does not report one the gauge shows used tokens only.
+
 ## [v1.8.6] — 2026-10-15
 
 ### Added

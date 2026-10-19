@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/tevfik/agenttui"
 
@@ -24,6 +25,8 @@ type agentChat struct {
 	mu  sync.Mutex
 	cm  *ChatModel
 	app *agenttui.App
+
+	retr *retrievalState // sidebar retrieval panel data
 
 	// Last rendered header/info values, served while mu is held elsewhere.
 	lastHeader string
@@ -54,7 +57,7 @@ func RunAgentChat(chat *gleann.LeannChat, indexName, modelName string) error {
 // newAgentChat builds the app and restores the transcript, without running it.
 func newAgentChat(chat *gleann.LeannChat, indexName, modelName string) *agentChat {
 	cm := NewChatModel(chat, indexName, modelName)
-	ac := &agentChat{cm: &cm}
+	ac := &agentChat{cm: &cm, retr: &retrievalState{}}
 
 	ac.app = agenttui.New(agenttui.Config{
 		Title:          "gleann",
@@ -73,6 +76,8 @@ func newAgentChat(chat *gleann.LeannChat, indexName, modelName string) *agentCha
 		HeaderInfo:     ac.headerInfo,
 		HeaderInfoWide: ac.headerInfoWide,
 		InfoRows:       ac.infoRows,
+		Sidebar:        retrievalPanel{st: ac.retr},
+		SidebarFirst:   true,
 		FooterHint:     "Enter send · / commands · Ctrl+S settings · Ctrl+T thinking · Ctrl+Y copy · Ctrl+C quit",
 		OnKey: func(key string, a *agenttui.App) bool {
 			if key == "ctrl+s" {
@@ -81,10 +86,13 @@ func newAgentChat(chat *gleann.LeannChat, indexName, modelName string) *agentCha
 			}
 			return false
 		},
-		StreamEvents: ac.stream,
-		Commands:     ac.commands(),
+		StreamEvents:    ac.stream,
+		Commands:        ac.commands(),
+		MentionComplete: ac.mentionComplete,
+		MentionResolve:  ac.mentionResolve,
 	})
 	ac.app.SetContextTokens(0, cm.contextLimit)
+	ac.refreshRetrieval()
 
 	for _, m := range chat.History() {
 		role := agenttui.RoleUser
@@ -115,8 +123,16 @@ var gleannQuickActions = []agenttui.QuickAction{
 	{Cmd: "/image", Desc: "Queue an image for your next message"},
 	{Cmd: "/screenshot", Desc: "Grab clipboard image / screen region for your next message"},
 	{Cmd: "/remember", Desc: "Store a memory the assistant keeps across sessions"},
-	{Cmd: "/index", Desc: "Show index info or switch index"},
+	{Cmd: "/index", Desc: "Pick which indexes and #tags to search"},
 	{Cmd: "/help", Desc: "All commands"},
+}
+
+// indexLabel names the searched indexes, e.g. "docs" or "docs+code".
+func indexLabel(cm *ChatModel) string {
+	if len(cm.activeIndexes) == 0 {
+		return cm.indexName
+	}
+	return cm.indexName + "+" + strings.Join(cm.activeIndexes, "+")
 }
 
 // headerInfo is the compact status shown in the header, e.g. "docs · t=0.7 · k=10".
@@ -127,7 +143,7 @@ func (ac *agentChat) headerInfo() string {
 	}
 	defer ac.mu.Unlock()
 	cm := ac.cm
-	parts := []string{cm.indexName, fmt.Sprintf("t=%.1f", cm.temperature)}
+	parts := []string{indexLabel(cm), fmt.Sprintf("t=%.1f", cm.temperature)}
 	if cm.indexName != "(no index)" {
 		parts = append(parts, fmt.Sprintf("k=%d", cm.topK))
 		if cm.rerankEnabled {
@@ -158,7 +174,7 @@ func (ac *agentChat) headerInfoWide() string {
 	}
 	parts := []string{mode}
 	if cm.indexName != "(no index)" {
-		parts = append(parts, cm.indexName)
+		parts = append(parts, indexLabel(cm))
 	}
 	maxTok := strconv.Itoa(cm.maxTokens)
 	if cm.maxTokens == 0 {
@@ -193,7 +209,7 @@ func (ac *agentChat) infoRows() [][2]string {
 	defer ac.mu.Unlock()
 	cm := ac.cm
 
-	mode := "RAG · " + cm.indexName
+	mode := "RAG · " + indexLabel(cm)
 	if cm.indexName == "(no index)" {
 		mode = "LLM only (no retrieval)"
 	}
@@ -223,7 +239,7 @@ func (ac *agentChat) infoRows() [][2]string {
 		{"role", role},
 	}
 	if cm.embeddingModel != "" {
-		rows = append(rows, [2]string{"embedding", cm.embeddingModel})
+		rows = append(rows, [2]string{"embedding", filepath.Base(cm.embeddingModel)})
 	}
 	if q := len(cm.pendingImages); q > 0 || len(cm.attachedFiles) > 0 {
 		rows = append(rows, [2]string{"queued", fmt.Sprintf("%d media · %d files", q, len(cm.attachedFiles))})
@@ -267,9 +283,8 @@ func (ac *agentChat) stream(ctx context.Context, prompt string, emit func(agentt
 		if len(results) == 0 {
 			return
 		}
-		emit(agenttui.Event{Kind: agenttui.EventToolStart, ToolID: "sources", ToolName: "sources",
-			ToolArgs: fmt.Sprintf("%d passages", len(results))})
-		emit(agenttui.Event{Kind: agenttui.EventToolEnd, ToolID: "sources", ToolOutput: formatSources(results), ToolOK: true})
+		ac.retr.setLast(results)
+		emit(agenttui.Event{Kind: agenttui.EventSources, Sources: toSources(results)})
 	})
 	defer chat.SetResultsHandler(nil)
 
@@ -292,27 +307,47 @@ func (ac *agentChat) stream(ctx context.Context, prompt string, emit func(agentt
 	total := cm.tokensSent + cm.tokensReceived
 	ac.mu.Unlock()
 	ac.app.SetContextTokens(total, cm.contextLimit)
+	if cm.contextLimit == 0 {
+		// The model is loaded now, so the server can report the window it actually uses.
+		go ac.refreshContextLimit()
+	}
 
 	return total, err
 }
 
-// formatSources lists retrieved passages with their source and score.
-func formatSources(results []gleann.SearchResult) string {
-	var sb strings.Builder
-	for i, r := range results {
-		src := ""
-		for _, k := range []string{"source", "path", "file", "title"} {
-			if v, ok := r.Metadata[k].(string); ok && v != "" {
-				src = v
-				break
-			}
+// refreshContextLimit re-reads the model's real context window from the provider.
+func (ac *agentChat) refreshContextLimit() {
+	ac.mu.Lock()
+	cfg := ac.cm.chat.Config()
+	ac.mu.Unlock()
+	n := lookupContextLimit(cfg)
+	ac.mu.Lock()
+	ac.cm.contextLimit = n
+	total := ac.cm.tokensSent + ac.cm.tokensReceived
+	ac.mu.Unlock()
+	ac.app.SetContextTokens(total, n)
+}
+
+// sourceLabel picks the most descriptive metadata field of a passage.
+func sourceLabel(r gleann.SearchResult) string {
+	for _, k := range []string{"source", "path", "file", "title"} {
+		if v, ok := r.Metadata[k].(string); ok && v != "" {
+			return v
 		}
-		if src == "" {
-			src = truncStr(strings.Join(strings.Fields(r.Text), " "), 60)
-		}
-		fmt.Fprintf(&sb, "%d. %s (%.2f)\n", i+1, src, r.Score)
 	}
-	return strings.TrimRight(sb.String(), "\n")
+	return truncStr(strings.Join(strings.Fields(r.Text), " "), 60)
+}
+
+// toSources converts retrieved passages into agenttui citations.
+func toSources(results []gleann.SearchResult) []agenttui.Source {
+	out := make([]agenttui.Source, len(results))
+	for i, r := range results {
+		out[i] = agenttui.Source{Title: sourceLabel(r), Score: float64(r.Score)}
+		if n, ok := r.Metadata["_index"].(string); ok {
+			out[i].Location = n // set by MultiSearcher: which index the passage came from
+		}
+	}
+	return out
 }
 
 // withState runs fn on the shared chat state under the lock and returns its text.
@@ -382,19 +417,33 @@ func (ac *agentChat) commands() []agenttui.SlashCommand {
 			}
 			return fmt.Sprintf("✅ Remembered [%s]: %s", b.ID[:8], arg)
 		}),
-		local("forget", "Forget memories matching a query or ID", "<query|id>", func(cm *ChatModel, arg string) string {
-			if cm.memoryMgr == nil {
-				return "⚠ Memory system unavailable"
-			}
-			if arg == "" {
-				return "Usage: /forget <query or ID>"
-			}
-			n, err := cm.memoryMgr.Forget(arg)
-			if err != nil {
-				return "⚠ " + err.Error()
-			}
-			return fmt.Sprintf("🗑 Forgot %d memory block(s) matching %q", n, arg)
-		}),
+		{
+			Name: "forget", Description: "Forget memories matching a query or ID (asks first)", Usage: "<query|id>",
+			Handler: func(ctx context.Context, args []string, a *agenttui.App) (string, bool, error) {
+				arg := strings.TrimSpace(strings.Join(args, " "))
+				if msg := ac.withState(func(cm *ChatModel) string {
+					switch {
+					case cm.memoryMgr == nil:
+						return "⚠ Memory system unavailable"
+					case arg == "":
+						return "Usage: /forget <query or ID>"
+					}
+					return ""
+				}); msg != "" {
+					return msg, true, nil
+				}
+				if !confirm(ctx, a, fmt.Sprintf("Permanently forget every memory matching %q?", arg)) {
+					return "Nothing forgotten.", true, nil
+				}
+				return ac.withState(func(cm *ChatModel) string {
+					n, err := cm.memoryMgr.Forget(arg)
+					if err != nil {
+						return "⚠ " + err.Error()
+					}
+					return fmt.Sprintf("🗑 Forgot %d memory block(s) matching %q", n, arg)
+				}), true, nil
+			},
+		},
 		local("memories", "List stored memories", "", func(cm *ChatModel, _ string) string {
 			if cm.memoryMgr == nil {
 				return "⚠ Memory system unavailable"
@@ -415,7 +464,10 @@ func (ac *agentChat) commands() []agenttui.SlashCommand {
 		local("audio", "Queue audio (mp3/wav/flac/ogg/m4a/opus) for your next message — needs an audio-capable model", "<path>", func(cm *ChatModel, arg string) string { return cm.handleAudioCommand(arg) }),
 		local("attach", "Add a file or directory to the session context", "<path>", func(cm *ChatModel, arg string) string { return cm.handleAttachCommand(arg) }),
 		local("detach", "Remove an attached file", "<path>", func(cm *ChatModel, arg string) string { return cm.handleDetachCommand(arg) }),
-		local("index", "Show index info or switch index", "[name|info|add|remove]", func(cm *ChatModel, arg string) string { return cm.handleIndexCommand(arg) }),
+		{
+			Name: "index", Description: "Pick the indexes (and #tags) the chat retrieves from", Usage: "[name|#tag|a,b|add|remove|info]",
+			Handler: ac.indexCommand,
+		},
 		local("budget", "Show token usage", "", func(cm *ChatModel, _ string) string { return cm.handleBudgetCommand() }),
 		local("video", "Analyze a video", "<path>", func(cm *ChatModel, arg string) string { return cm.handleVideoCommand(arg) }),
 		local("pdf", "Extract and index a PDF", "<path>", func(cm *ChatModel, arg string) string { return cm.handlePDFCommand(arg) }),
@@ -567,6 +619,7 @@ func (ac *agentChat) editSettings(ctx context.Context, a *agenttui.App) (string,
 		return "", true, err
 	}
 
+	defer ac.refreshContextLimit() // model or max tokens may have changed the window
 	return ac.withState(func(cm *ChatModel) string {
 		cm.llmModelIdx = indexOf(cm.llmModels, vals[0], cm.llmModelIdx)
 		if v, e := strconv.ParseFloat(vals[1], 64); e == nil {
@@ -649,4 +702,68 @@ func withCurrent(opts []string, cur string) []string {
 		}
 	}
 	return append([]string{cur}, opts...)
+}
+
+// mentionTimeout bounds graph lookups made on the UI goroutine.
+const mentionTimeout = 300 * time.Millisecond
+
+// graphSearcher returns a searcher with a code graph (for a multi-index
+// search, the first index that has one); symbol mentions are only offered then
+// (the vector fallback is too slow per keystroke).
+func (ac *agentChat) graphSearcher() *gleann.LeannSearcher {
+	ac.mu.Lock()
+	defer ac.mu.Unlock()
+	switch s := ac.cm.chat.GetSearcher().(type) {
+	case *gleann.LeannSearcher:
+		if s != nil && s.GraphDB() != nil {
+			return s
+		}
+	case *gleann.MultiSearcher:
+		for _, n := range s.Names() {
+			if ls := s.Searcher(n); ls != nil && ls.GraphDB() != nil {
+				return ls
+			}
+		}
+	}
+	return nil
+}
+
+// mentionComplete suggests code symbols for the @-popup.
+func (ac *agentChat) mentionComplete(query string) []string {
+	ls := ac.graphSearcher()
+	if ls == nil || len(query) < 2 {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), mentionTimeout)
+	defer cancel()
+	defs, err := gleann.FindDefinitions(ctx, ls, query, gleann.DefinitionOptions{TopK: 5})
+	if err != nil {
+		return nil
+	}
+	out := make([]string, 0, len(defs))
+	for _, d := range defs {
+		name := d.FQN
+		if name == "" {
+			name = d.Name
+		}
+		if name != "" && !strings.ContainsAny(name, " \t\n") {
+			out = append(out, name)
+		}
+	}
+	return out
+}
+
+// mentionResolve attaches the definition of an @symbol to the prompt.
+func (ac *agentChat) mentionResolve(name string) (string, bool) {
+	ls := ac.graphSearcher()
+	if ls == nil {
+		return "", false
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), mentionTimeout*3)
+	defer cancel()
+	defs, err := gleann.FindDefinitions(ctx, ls, name, gleann.DefinitionOptions{TopK: 1})
+	if err != nil || len(defs) == 0 {
+		return "", false
+	}
+	return gleann.FormatDefinitions(defs), true
 }

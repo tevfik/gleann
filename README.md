@@ -104,7 +104,7 @@ Give your AI coding assistant institutional memory that survives terminal restar
 
 ### 🖥️ 5. Terminal RAG & Interactive Chat
 Work directly from your shell without leaving the keyboard.
-- **Interactive Chat**: Multi-turn conversations with glamour markdown streaming (`gleann chat my-code`).
+- **Interactive Chat**: Multi-turn conversations with streaming, cancellation, collapsible reasoning and source cards (`gleann chat my-code`). `/index` picks which indexes and tags to search, `@symbol` attaches a definition from the code graph. `--classic` selects the old interface.
 - **Pipe Support**: Send compiler logs or diffs directly into Gleann (`git diff | gleann ask my-code "Review changes"`).
 - **Multi-Index Fan-Out**: Query documentation and source code simultaneously (`gleann ask docs,code "How does auth work?"`).
 - 👉 Read the [Cookbook](docs/cookbook.md).

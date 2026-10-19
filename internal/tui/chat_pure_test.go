@@ -39,62 +39,6 @@ func TestTruncStr_ZeroMaxLen(t *testing.T) {
 	}
 }
 
-// ── estimateContextLimit ──────────────────────────────────────
-
-func TestEstimateContextLimit_GPT4o(t *testing.T) {
-	if got := estimateContextLimit("gpt-4o-mini"); got != 128000 {
-		t.Errorf("expected 128000, got %d", got)
-	}
-}
-
-func TestEstimateContextLimit_GPT4Turbo(t *testing.T) {
-	if got := estimateContextLimit("gpt-4-turbo"); got != 128000 {
-		t.Errorf("expected 128000, got %d", got)
-	}
-}
-
-func TestEstimateContextLimit_GPT4(t *testing.T) {
-	if got := estimateContextLimit("gpt-4"); got != 8192 {
-		t.Errorf("expected 8192, got %d", got)
-	}
-}
-
-func TestEstimateContextLimit_GPT35(t *testing.T) {
-	if got := estimateContextLimit("gpt-3.5-turbo"); got != 16384 {
-		t.Errorf("expected 16384, got %d", got)
-	}
-}
-
-func TestEstimateContextLimit_Claude(t *testing.T) {
-	if got := estimateContextLimit("claude-3-opus"); got != 200000 {
-		t.Errorf("expected 200000, got %d", got)
-	}
-}
-
-func TestEstimateContextLimit_Llama3(t *testing.T) {
-	if got := estimateContextLimit("llama3:8b"); got != 8192 {
-		t.Errorf("expected 8192, got %d", got)
-	}
-}
-
-func TestEstimateContextLimit_Mistral(t *testing.T) {
-	if got := estimateContextLimit("mistral:7b"); got != 32768 {
-		t.Errorf("expected 32768, got %d", got)
-	}
-}
-
-func TestEstimateContextLimit_Deepseek(t *testing.T) {
-	if got := estimateContextLimit("deepseek-coder"); got != 128000 {
-		t.Errorf("expected 128000, got %d", got)
-	}
-}
-
-func TestEstimateContextLimit_Unknown(t *testing.T) {
-	if got := estimateContextLimit("some-random-model"); got != 0 {
-		t.Errorf("expected 0 for unknown, got %d", got)
-	}
-}
-
 // ── findClosestFloat ──────────────────────────────────────────
 
 func TestFindClosestFloat_Exact(t *testing.T) {
