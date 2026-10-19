@@ -362,4 +362,3 @@ func fetchEIFModels(host string) ([]ModelInfo, error) {
 
 	return models, nil
 }
-

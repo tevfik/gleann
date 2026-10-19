@@ -165,7 +165,6 @@ func TestTokenize_CamelCase(t *testing.T) {
 	}
 }
 
-
 func TestStopWords(t *testing.T) {
 	if !isStopWord("the") {
 		t.Error("'the' should be a stop word")

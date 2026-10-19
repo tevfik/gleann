@@ -92,7 +92,8 @@ func getAgentsMDContent(indexName string) string {
 // cmdAgents generates or dumps AGENTS.md for AI coding agents.
 //
 // Usage:
-//   gleann agents [dump] [--dir <dir>] [--index <name>] [--stdout] [--force]
+//
+//	gleann agents [dump] [--dir <dir>] [--index <name>] [--stdout] [--force]
 func cmdAgents(args []string) {
 	if hasFlag(args, "--help") || hasFlag(args, "-h") {
 		printAgentsUsage()

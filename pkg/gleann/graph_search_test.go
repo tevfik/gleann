@@ -384,4 +384,3 @@ func TestEnrichWithGraphContext_HierarchicalDocumentBreadcrumb(t *testing.T) {
 
 // Verify unused import guard
 var _ = context.Background
-

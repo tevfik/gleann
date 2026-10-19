@@ -752,4 +752,3 @@ func TestOnboardCodeAndDocEmbModelMenu(t *testing.T) {
 		t.Errorf("expected code-bert, got %q", om.codeEmbeddingModel)
 	}
 }
-

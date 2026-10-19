@@ -681,4 +681,3 @@ func (mc *MarkdownChunker) chunkTable(tbl tableBlock) []contentPiece {
 
 	return subChunks
 }
-

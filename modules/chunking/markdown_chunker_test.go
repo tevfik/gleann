@@ -657,5 +657,3 @@ func TestParseMarkdownHeadings_SliceBoundsRegression(t *testing.T) {
 		t.Fatalf("expected 3 sections, got %d", len(sections))
 	}
 }
-
-

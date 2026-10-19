@@ -185,4 +185,3 @@ func TestCmdUninstall_Help(t *testing.T) {
 	// Should not panic or exit.
 	cmdUninstall([]string{"--help"})
 }
-

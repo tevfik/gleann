@@ -125,7 +125,6 @@ func resolveMetadataField(field string, metadata map[string]any) (any, bool) {
 func evaluateFilter(f MetadataFilter, metadata map[string]any) bool {
 	value, exists := resolveMetadataField(f.Field, metadata)
 
-
 	// Handle exists operator.
 	if f.Operator == OpExists {
 		want, _ := f.Value.(bool)

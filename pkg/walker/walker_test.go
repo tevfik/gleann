@@ -99,13 +99,13 @@ func TestWalker_NestedIgnoreAndSubmodules(t *testing.T) {
 
 	// Should be excluded:
 	excludedFiles := []string{
-		"test.log",                                // root .gitignore
-		"app.secret",                              // .git/info/exclude
-		"node_modules/dep.js",                     // default ignored dir
-		"vendor/dep/dep.go",                       // default ignored vendor dir
-		"third_party/nuttx/os.c",                  // submodule
-		"ignored_dir/foo.txt",                     // root .gitignore
-		"pkg/nested/file.nested_ignored",          // nested .gitignore
+		"test.log",                       // root .gitignore
+		"app.secret",                     // .git/info/exclude
+		"node_modules/dep.js",            // default ignored dir
+		"vendor/dep/dep.go",              // default ignored vendor dir
+		"third_party/nuttx/os.c",         // submodule
+		"ignored_dir/foo.txt",            // root .gitignore
+		"pkg/nested/file.nested_ignored", // nested .gitignore
 	}
 	for _, excl := range excludedFiles {
 		if fileSet[excl] {

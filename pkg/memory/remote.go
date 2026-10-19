@@ -267,12 +267,12 @@ func (r *RemoteClient) Add(tier Tier, label, content string, tags []string) (*Bl
 // AddBlock writes a full memory block to the server.
 func (r *RemoteClient) AddBlock(b *Block) (*Block, error) {
 	body := map[string]any{
-		"content":    b.Content,
-		"tier":       string(b.Tier),
-		"label":      b.Label,
-		"tags":       b.Tags,
-		"source":     b.Source,
-		"metadata":   b.Metadata,
+		"content":      b.Content,
+		"tier":         string(b.Tier),
+		"label":        b.Label,
+		"tags":         b.Tags,
+		"source":       b.Source,
+		"metadata":     b.Metadata,
 		"char_limit":   b.CharLimit,
 		"scope":        b.Scope,
 		"repo":         b.Repo,

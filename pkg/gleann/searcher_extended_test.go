@@ -155,7 +155,6 @@ func TestSearcher_DimensionMismatchError(t *testing.T) {
 	}
 }
 
-
 func TestListIndexes(t *testing.T) {
 	tmpDir := t.TempDir()
 

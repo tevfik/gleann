@@ -505,7 +505,6 @@ func (s *Server) recallVector(ctx context.Context, req UnifiedRecallRequest) []R
 	return hits
 }
 
-
 func parseTier(tier string) memory.Tier {
 	switch strings.ToLower(tier) {
 	case "medium":

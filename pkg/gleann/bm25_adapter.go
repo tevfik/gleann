@@ -60,4 +60,3 @@ func (a *BM25Adapter) IndexedCount() int {
 func (a *BM25Adapter) TopK(query string, k int) ([]int64, []float32) {
 	return a.scorer.TopK(query, k)
 }
-

@@ -310,4 +310,3 @@ var stopWords = map[string]bool{
 func isStopWord(word string) bool {
 	return stopWords[word]
 }
-

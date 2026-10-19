@@ -1144,6 +1144,3 @@ func TestMCP_ToolProfiles(t *testing.T) {
 		t.Errorf("custom profile should NOT enable gleann_read")
 	}
 }
-
-
-

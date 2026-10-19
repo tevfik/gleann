@@ -37,16 +37,16 @@ type StrategyResult struct {
 
 // SummaryResult holds aggregated macro-averaged metrics across all tasks.
 type SummaryResult struct {
-	Strategy      string  `json:"strategy"`
-	AvgRecall1    float64 `json:"avg_recall_1"`
-	AvgRecall5    float64 `json:"avg_recall_5"`
-	AvgRecall10   float64 `json:"avg_recall_10"`
-	AvgMRR        float64 `json:"avg_mrr"`
-	AvgCoverage   float64 `json:"avg_coverage"`
-	AvgTokens     int     `json:"avg_tokens"`
-	AvgLatencyMs  float64 `json:"avg_latency_ms"`
-	TokenSavings  float64 `json:"token_savings_pct"`
-	RecallGainX   float64 `json:"recall_gain_vs_bm25"`
+	Strategy     string  `json:"strategy"`
+	AvgRecall1   float64 `json:"avg_recall_1"`
+	AvgRecall5   float64 `json:"avg_recall_5"`
+	AvgRecall10  float64 `json:"avg_recall_10"`
+	AvgMRR       float64 `json:"avg_mrr"`
+	AvgCoverage  float64 `json:"avg_coverage"`
+	AvgTokens    int     `json:"avg_tokens"`
+	AvgLatencyMs float64 `json:"avg_latency_ms"`
+	TokenSavings float64 `json:"token_savings_pct"`
+	RecallGainX  float64 `json:"recall_gain_vs_bm25"`
 }
 
 // SearcherFunc abstracts the retrieval call for a strategy.

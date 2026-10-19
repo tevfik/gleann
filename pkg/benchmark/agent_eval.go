@@ -54,14 +54,14 @@ type AgentRunMetrics struct {
 
 // AgentTaskComparison holds baseline vs gleann metrics for a single task.
 type AgentTaskComparison struct {
-	TaskID                string          `json:"task_id"`
-	TaskType              AgentTaskType   `json:"task_type"`
-	Title                 string          `json:"title"`
-	Baseline              AgentRunMetrics `json:"baseline"`
-	Gleann                AgentRunMetrics `json:"gleann"`
-	TokenReductionPct     float64         `json:"token_reduction_pct"`
-	ToolCallReductionPct  float64         `json:"tool_call_reduction_pct"`
-	RecallGainX           float64         `json:"recall_gain_x"`
+	TaskID               string          `json:"task_id"`
+	TaskType             AgentTaskType   `json:"task_type"`
+	Title                string          `json:"title"`
+	Baseline             AgentRunMetrics `json:"baseline"`
+	Gleann               AgentRunMetrics `json:"gleann"`
+	TokenReductionPct    float64         `json:"token_reduction_pct"`
+	ToolCallReductionPct float64         `json:"tool_call_reduction_pct"`
+	RecallGainX          float64         `json:"recall_gain_x"`
 }
 
 // AgentEvalSummary aggregates results across all agent tasks.

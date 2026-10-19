@@ -248,4 +248,3 @@ func TestGetConfigSignaturesOnly(t *testing.T) {
 		t.Errorf("expected SignaturesOnly false by default")
 	}
 }
-

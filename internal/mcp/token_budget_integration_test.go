@@ -10,7 +10,6 @@ import (
 	"github.com/tevfik/gleann/pkg/gleann"
 )
 
-
 type testBudgetEmbedder struct {
 	dim int
 }
@@ -272,4 +271,3 @@ func TestIntegration_HandleSearchMulti_TokenBudget(t *testing.T) {
 		t.Errorf("expected summary note in multi-search output, got:\n%s", budText)
 	}
 }
-

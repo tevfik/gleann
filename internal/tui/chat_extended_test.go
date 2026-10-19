@@ -1071,5 +1071,3 @@ func TestChatModelScreenshotCommand(t *testing.T) {
 		t.Errorf("expected usage message, got %q", lastMsg)
 	}
 }
-
-

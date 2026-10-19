@@ -577,5 +577,3 @@ func TestASTChunker_SignaturesOnly_Python(t *testing.T) {
 		t.Errorf("expected implementation loop to be omitted: %s", ch.Text)
 	}
 }
-
-

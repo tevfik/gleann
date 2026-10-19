@@ -95,10 +95,10 @@ func (m *mockGraphDBForDef) SymbolSearch(pattern string) ([]Callee, error) {
 	return matched, nil
 }
 
-func (m *mockGraphDBForDef) Callees(callerFQN string) ([]Callee, error)            { return nil, nil }
-func (m *mockGraphDBForDef) Callers(calleeFQN string) ([]Callee, error)            { return nil, nil }
-func (m *mockGraphDBForDef) SymbolsInFile(filePath string) ([]Callee, error)       { return nil, nil }
-func (m *mockGraphDBForDef) DocumentSymbols(docPath string) ([]SymbolInfo, error)  { return nil, nil }
+func (m *mockGraphDBForDef) Callees(callerFQN string) ([]Callee, error)           { return nil, nil }
+func (m *mockGraphDBForDef) Callers(calleeFQN string) ([]Callee, error)           { return nil, nil }
+func (m *mockGraphDBForDef) SymbolsInFile(filePath string) ([]Callee, error)      { return nil, nil }
+func (m *mockGraphDBForDef) DocumentSymbols(docPath string) ([]SymbolInfo, error) { return nil, nil }
 func (m *mockGraphDBForDef) DocumentContext(vpath string) (*DocumentContextData, error) {
 	return nil, nil
 }

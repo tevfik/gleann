@@ -150,4 +150,3 @@ Examples:
 
 Run 'gleann <command> --help' for detailed subcommand flags and options.`)
 }
-

@@ -631,6 +631,3 @@ func TestProductionVsTestCallers_Separation(t *testing.T) {
 		t.Errorf("Impact.TestCallers expected [%s], got %+v", symTestCaller.FQN, impact.TestCallers)
 	}
 }
-
-
-

@@ -401,4 +401,3 @@ func (t *Tracker) DetectChangedFiles(ctx context.Context, dir string, currentFil
 func (t *Tracker) Close() error {
 	return t.db.Close()
 }
-

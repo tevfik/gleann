@@ -93,6 +93,3 @@ func TestEIFComputerSnowflakeXS_Q8(t *testing.T) {
 func TestEIFComputerGranite30M_Q8(t *testing.T) {
 	testEmbeddingWithModel(t, "granite-30m-q8_0.gguf")
 }
-
-
-

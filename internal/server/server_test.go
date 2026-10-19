@@ -13,7 +13,6 @@ import (
 	"github.com/tevfik/gleann/pkg/gleann"
 )
 
-
 func TestHandleHealth(t *testing.T) {
 	s := &Server{
 		config:    gleann.DefaultConfig(),
@@ -494,4 +493,3 @@ func TestHandleSearch_TagGovernance(t *testing.T) {
 		t.Errorf("expected 403 Forbidden under GLEANN_TAGS isolation, got %d", w.Code)
 	}
 }
-

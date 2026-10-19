@@ -477,4 +477,3 @@ func (s *Server) handleListDocuments(w http.ResponseWriter, r *http.Request) {
 		"count":     len(docs),
 	})
 }
-

@@ -385,7 +385,6 @@ func (s *Server) buildRepoMapTool() mcpsdk.Tool {
 	}
 }
 
-
 func (s *Server) handleRepoMap(ctx context.Context, request mcpsdk.CallToolRequest) (*mcpsdk.CallToolResult, error) {
 	args, ok := request.Params.Arguments.(map[string]interface{})
 	if !ok {

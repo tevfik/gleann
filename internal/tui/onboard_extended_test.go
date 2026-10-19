@@ -549,4 +549,3 @@ func TestMenuModeEIFDisplay(t *testing.T) {
 		t.Errorf("menu value for EIF host = %q, want (in-process CGO runtime)", vals[1])
 	}
 }
-

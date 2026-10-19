@@ -633,4 +633,3 @@ func (s *Server) checkStaleBlocks(mgr *memory.Manager, scope string) {
 		_, _ = mgr.MarkSuspect(modifiedFiles, nil)
 	}
 }
-

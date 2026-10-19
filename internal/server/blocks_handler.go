@@ -27,12 +27,12 @@ import (
 
 // blockAddRequest is the body for POST /api/blocks.
 type blockAddRequest struct {
-	Content   string            `json:"content"`
-	Tier      string            `json:"tier,omitempty"`   // "short" | "medium" | "long" (default: "long")
-	Label     string            `json:"label,omitempty"`  // semantic label
-	Source    string            `json:"source,omitempty"` // origin tag
-	Tags      []string          `json:"tags,omitempty"`
-	Metadata  map[string]string `json:"metadata,omitempty"`
+	Content     string            `json:"content"`
+	Tier        string            `json:"tier,omitempty"`   // "short" | "medium" | "long" (default: "long")
+	Label       string            `json:"label,omitempty"`  // semantic label
+	Source      string            `json:"source,omitempty"` // origin tag
+	Tags        []string          `json:"tags,omitempty"`
+	Metadata    map[string]string `json:"metadata,omitempty"`
 	ExpiresIn   string            `json:"expires_in,omitempty"`   // e.g. "24h", "7d"
 	CharLimit   int               `json:"char_limit,omitempty"`   // max characters (0 = use default)
 	Scope       string            `json:"scope,omitempty"`        // isolation scope (e.g. conversation ID)
@@ -209,11 +209,11 @@ func (s *Server) handleAddBlock(w http.ResponseWriter, r *http.Request) {
 	}
 
 	block := &memory.Block{
-		Tier:      tier,
-		Label:     label,
-		Content:   req.Content,
-		Source:    source,
-		Tags:      req.Tags,
+		Tier:        tier,
+		Label:       label,
+		Content:     req.Content,
+		Source:      source,
+		Tags:        req.Tags,
 		Metadata:    req.Metadata,
 		CharLimit:   req.CharLimit,
 		Scope:       req.Scope,

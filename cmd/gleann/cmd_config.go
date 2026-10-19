@@ -300,4 +300,3 @@ func applyConfigSet(cfg *tui.OnboardResult, key, val string) (string, error) {
 	cfg.Completed = true
 	return display, nil
 }
-

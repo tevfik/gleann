@@ -212,4 +212,3 @@ func TestTracker_LockDoesNotDeleteDB(t *testing.T) {
 		t.Fatalf("db file size changed unexpectedly: before=%d, after=%d", infoBefore.Size(), infoAfter.Size())
 	}
 }
-

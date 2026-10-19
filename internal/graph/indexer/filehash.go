@@ -55,8 +55,11 @@ type FileHashStore struct {
 // store, alongside the KuzuDB graph.
 //
 // If indexDir/<name>_graph is a directory, it lives inside it:
+//
 //	indexDir/<name>_graph/file_hashes.db
+//
 // Otherwise (when <name>_graph is a single file in KuzuDB):
+//
 //	indexDir/<name>_graph_file_hashes.db
 func DefaultHashStorePath(indexDir, name string) string {
 	graphPath := filepath.Join(indexDir, name+"_graph")

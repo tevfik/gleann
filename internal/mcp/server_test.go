@@ -778,6 +778,3 @@ func TestHandleSync_ProgressReporting(t *testing.T) {
 	// Release runner
 	close(blockRunner)
 }
-
-
-
