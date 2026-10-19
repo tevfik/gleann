@@ -162,3 +162,19 @@ func TestAgentChat_InfoDoesNotBlockWhileStateLocked(t *testing.T) {
 	}
 	ac.mu.Unlock()
 }
+
+func TestSliderOptions_KeepsOrderAndCurrent(t *testing.T) {
+	presets := []string{"256", "512", "1024", "2048"}
+	if got := strings.Join(sliderOptions(presets, "1024"), ","); got != "256,512,1024,2048" {
+		t.Errorf("preset value must not change the list: %s", got)
+	}
+	if got := strings.Join(sliderOptions(presets, "1500"), ","); got != "256,512,1024,1500,2048" {
+		t.Errorf("custom value must be inserted in order: %s", got)
+	}
+	if got := strings.Join(sliderOptions(presets, "0"), ","); got != "0,256,512,1024,2048" {
+		t.Errorf("0 (unlimited) must come first: %s", got)
+	}
+	if got := strings.Join(sliderOptions(presets, "9999"), ","); got != "256,512,1024,2048,9999" {
+		t.Errorf("larger value must come last: %s", got)
+	}
+}

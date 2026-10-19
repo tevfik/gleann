@@ -473,15 +473,6 @@ func (ac *agentChat) editSettings(ctx context.Context, a *agenttui.App) (string,
 		}
 		return out
 	}
-	// closest keeps the current value selectable even when it is not a preset.
-	withCurrent := func(opts []string, cur string) []string {
-		for _, o := range opts {
-			if o == cur {
-				return opts
-			}
-		}
-		return append([]string{cur}, opts...)
-	}
 	model := cm.llmModels[cm.llmModelIdx]
 	temp := fmt.Sprintf("%.1f", cm.temperature)
 	rep := fmt.Sprintf("%.2f", cm.repeatPenalty)
@@ -496,26 +487,37 @@ func (ac *agentChat) editSettings(ctx context.Context, a *agenttui.App) (string,
 		role = cm.roleNames[cm.roleIdx]
 	}
 	fields := []agenttui.Field{
-		{Label: "Model", Kind: agenttui.FieldChoice, Value: model, Options: withCurrent(cm.llmModels, model)},
-		{Label: "Temperature", Kind: agenttui.FieldChoice, Value: temp, Options: withCurrent(floatOpts(temperaturePresets, "%.1f"), temp)},
-		{Label: "Repeat penalty", Kind: agenttui.FieldChoice, Value: rep, Options: withCurrent(floatOpts(repeatPenaltyPresets, "%.2f"), rep)},
-		{Label: "Max tokens", Kind: agenttui.FieldChoice, Value: maxTok, Options: withCurrent(intOpts(maxTokensPresets), maxTok)},
-		{Label: "Top-K", Kind: agenttui.FieldChoice, Value: topK, Options: withCurrent(intOpts(topKPresets), topK)},
-		{Label: "Reranker", Kind: agenttui.FieldBool, Value: rerank},
+		{Label: "Model", Kind: agenttui.FieldChoice, Value: model, Options: withCurrent(cm.llmModels, model),
+			Hint: fmt.Sprintf("LLM that writes the answers (%d available)", len(cm.llmModels))},
+		{Label: "Temperature", Kind: agenttui.FieldSlider, Value: temp, Options: sliderOptions(floatOpts(temperaturePresets, "%.1f"), temp),
+			Hint: "0 = focused and repeatable, higher = more creative"},
+		{Label: "Repeat penalty", Kind: agenttui.FieldSlider, Value: rep, Options: sliderOptions(floatOpts(repeatPenaltyPresets, "%.2f"), rep),
+			Hint: "1.0 = off, higher discourages repeating itself"},
+		{Label: "Max tokens", Kind: agenttui.FieldSlider, Value: maxTok, Options: sliderOptions(intOpts(maxTokensPresets), maxTok),
+			Hint: "upper limit on the length of one answer (0 = unlimited)"},
+		{Label: "Top-K", Kind: agenttui.FieldSlider, Value: topK, Options: sliderOptions(intOpts(topKPresets), topK),
+			Hint: "passages retrieved from the index for each question"},
+		{Label: "Reranker", Kind: agenttui.FieldBool, Value: rerank,
+			Hint: "re-score retrieved passages with a reranker model (slower, more precise)"},
 	}
 	rerankIdx := -1
 	if len(cm.rerankModels) > 0 {
 		rerankIdx = len(fields)
 		fields = append(fields, agenttui.Field{Label: "Rerank model", Kind: agenttui.FieldChoice,
-			Value: cm.rerankModels[cm.rerankModelIdx], Options: cm.rerankModels})
+			Value: cm.rerankModels[cm.rerankModelIdx], Options: cm.rerankModels, Hint: "model used when the reranker is on"})
 	}
 	roleIdx := len(fields)
-	fields = append(fields, agenttui.Field{Label: "Role", Kind: agenttui.FieldChoice, Value: role, Options: cm.roleNames})
+	fields = append(fields, agenttui.Field{Label: "Role", Kind: agenttui.FieldChoice, Value: role, Options: cm.roleNames, Hint: "persona preset; replaces the system prompt"})
 	promptIdx := len(fields)
-	fields = append(fields, agenttui.Field{Label: "System prompt", Kind: agenttui.FieldText, Value: cm.systemPrompt})
+	fields = append(fields, agenttui.Field{Label: "System prompt", Kind: agenttui.FieldText, Value: cm.systemPrompt, Hint: "Enter to edit"})
+	emb := cm.embeddingModel
+	if emb == "" {
+		emb = "(default)"
+	}
+	note := fmt.Sprintf("Index: %s · Embedding: %s (changing it requires an index rebuild)", cm.indexName, emb)
 	ac.mu.Unlock()
 
-	vals, err := a.Form(ctx, agenttui.Form{Title: "Chat settings", Fields: fields})
+	vals, err := a.Form(ctx, agenttui.Form{Title: "Chat settings", Fields: fields, Note: note})
 	if errors.Is(err, agenttui.ErrAskCancelled) {
 		return "Settings unchanged.", true, nil
 	}
@@ -566,4 +568,43 @@ func indexOf(list []string, v string, fallback int) int {
 		}
 	}
 	return fallback
+}
+
+// sliderOptions returns the ordered presets with the current value inserted at
+// its numeric position when it is not itself a preset, so the slider keeps a
+// sensible order and the current value stays selectable.
+func sliderOptions(presets []string, cur string) []string {
+	for _, p := range presets {
+		if p == cur {
+			return presets
+		}
+	}
+	v, err := strconv.ParseFloat(cur, 64)
+	if err != nil {
+		return presets
+	}
+	out := make([]string, 0, len(presets)+1)
+	inserted := false
+	for _, p := range presets {
+		pv, perr := strconv.ParseFloat(p, 64)
+		if !inserted && perr == nil && pv > v {
+			out = append(out, cur)
+			inserted = true
+		}
+		out = append(out, p)
+	}
+	if !inserted {
+		out = append(out, cur)
+	}
+	return out
+}
+
+// withCurrent keeps the current value selectable in an unordered choice list.
+func withCurrent(opts []string, cur string) []string {
+	for _, o := range opts {
+		if o == cur {
+			return opts
+		}
+	}
+	return append([]string{cur}, opts...)
 }
