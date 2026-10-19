@@ -1,9 +1,12 @@
 package tui
 
 import (
+	tea "charm.land/bubbletea/v2"
 	"context"
+	"github.com/charmbracelet/x/ansi"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/tevfik/agenttui"
 
@@ -112,4 +115,50 @@ func TestIndexOf(t *testing.T) {
 	if indexOf([]string{"a", "b"}, "b", 0) != 1 || indexOf([]string{"a"}, "z", 7) != 7 {
 		t.Error("indexOf lookup/fallback wrong")
 	}
+}
+
+func TestAgentChat_InfoMatchesSettingsAndIsGleannSpecific(t *testing.T) {
+	chat := gleann.NewChat(fakeSearcher{}, gleann.ChatConfig{Provider: gleann.LLMMock, Model: "qwen3:8b", Temperature: 0.7})
+	ac := newAgentChat(chat, "docs", "qwen3:8b")
+	ac.app.Update(tea.WindowSizeMsg{Width: 140, Height: 36})
+	ac.cm.temperature, ac.cm.topK, ac.cm.rerankEnabled = 0.3, 15, true
+	ac.cm.pendingImages = []string{"x"}
+
+	view := ansi.Strip(ac.app.View().Content)
+	for _, want := range []string{
+		"gleann", "docs · t=0.3 · k=15 · rerank · 📷×1", // header
+		"RAG · docs", "qwen3:8b", "temperature", "0.3", "top-k", "15", "repeat penalty", "max tokens", "reranker", "role", // info panel
+		"Ctrl+S settings",                    // footer
+		"/settings", "/screenshot", "/image", // welcome quick actions
+	} {
+		if !strings.Contains(view, want) {
+			t.Errorf("view is missing %q\n%s", want, view)
+		}
+	}
+	for _, bad := range []string{"[BUILD]", "DEVRAN", "Devran", "/plan", "/review", "Ctrl+B"} {
+		if strings.Contains(view, bad) {
+			t.Errorf("view contains foreign text %q", bad)
+		}
+	}
+
+	ac.cm.indexName = "(no index)"
+	rows := ac.infoRows()
+	if rows[0] != [2]string{"mode", "LLM only (no retrieval)"} {
+		t.Errorf("mode row = %v", rows[0])
+	}
+}
+
+func TestAgentChat_InfoDoesNotBlockWhileStateLocked(t *testing.T) {
+	ac := newTestAgentChat(nil)
+	_ = ac.infoRows()
+	_ = ac.headerInfo()
+	ac.mu.Lock()
+	done := make(chan struct{})
+	go func() { _ = ac.infoRows(); _ = ac.headerInfo(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("infoRows/headerInfo blocked on the state lock")
+	}
+	ac.mu.Unlock()
 }

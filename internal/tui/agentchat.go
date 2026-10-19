@@ -24,45 +24,16 @@ type agentChat struct {
 	mu  sync.Mutex
 	cm  *ChatModel
 	app *agenttui.App
+
+	// Last rendered header/info values, served while mu is held elsewhere.
+	lastHeader string
+	lastRows   [][2]string
 }
 
 // RunAgentChat runs the chat on the agenttui engine (streaming with
 // cancellation, collapsible reasoning, source cards, slash-command popup).
 func RunAgentChat(chat *gleann.LeannChat, indexName, modelName string) error {
-	cm := NewChatModel(chat, indexName, modelName)
-	ac := &agentChat{cm: &cm}
-
-	ac.app = agenttui.New(agenttui.Config{
-		Title:        "gleann",
-		Subtitle:     "RAG chat · " + indexName,
-		ModelName:    modelName,
-		WorkDir:      mustGetwd(),
-		Placeholder:  "Ask a question about your index… (/ for commands)",
-		Theme:        agenttui.ThemeByName(os.Getenv("GLEANN_THEME")),
-		IgnoreDirs:   []string{".gleann"},
-		ShowHeader:   true,
-		ShowFooter:   true,
-		EnableMouse:  true,
-		StreamEvents: ac.stream,
-		Commands:     ac.commands(),
-	})
-	ac.app.SetContextTokens(0, cm.contextLimit)
-
-	for _, m := range chat.History() {
-		role := agenttui.RoleUser
-		if m.Role == "assistant" {
-			role = agenttui.RoleAssistant
-		} else if m.Role == "system" {
-			role = agenttui.RoleSystem
-		}
-		ac.app.AddMessage(agenttui.Message{Role: role, Content: m.Content})
-	}
-	ac.app.AddMessage(agenttui.Message{
-		Role:    agenttui.RoleSystem,
-		Content: fmt.Sprintf("Connected to index %q — model: %s. Type / for commands.", indexName, modelName),
-	})
-	go ac.app.ScanRepoFiles(mustGetwd())
-
+	ac := newAgentChat(chat, indexName, modelName)
 	err := ac.app.Run(context.Background())
 
 	// Same wrap-up as the classic chat: end memory session, save the transcript.
@@ -77,6 +48,146 @@ func RunAgentChat(chat *gleann.LeannChat, indexName, modelName string) error {
 		fmt.Printf("\nChat session saved to %s\n", saved)
 	}
 	return err
+}
+
+// newAgentChat builds the app and restores the transcript, without running it.
+func newAgentChat(chat *gleann.LeannChat, indexName, modelName string) *agentChat {
+	cm := NewChatModel(chat, indexName, modelName)
+	ac := &agentChat{cm: &cm}
+
+	ac.app = agenttui.New(agenttui.Config{
+		Title:        "gleann",
+		Subtitle:     "RAG chat · " + indexName,
+		ModelName:    modelName,
+		WorkDir:      mustGetwd(),
+		Placeholder:  "Ask a question about your index… (/ for commands)",
+		Theme:        agenttui.ThemeByName(os.Getenv("GLEANN_THEME")),
+		IgnoreDirs:   []string{".gleann"},
+		ShowHeader:   true,
+		ShowFooter:   true,
+		EnableMouse:  true,
+		HideMode:     true,
+		Banner:       gleannBanner,
+		QuickActions: gleannQuickActions,
+		HeaderInfo:   ac.headerInfo,
+		InfoRows:     ac.infoRows,
+		FooterHint:   "Enter send · / commands · Ctrl+S settings · Ctrl+T thinking · Ctrl+Y copy · Ctrl+C quit",
+		OnKey: func(key string, a *agenttui.App) bool {
+			if key == "ctrl+s" {
+				a.Submit("/settings")
+				return true
+			}
+			return false
+		},
+		StreamEvents: ac.stream,
+		Commands:     ac.commands(),
+	})
+	ac.app.SetContextTokens(0, cm.contextLimit)
+
+	for _, m := range chat.History() {
+		role := agenttui.RoleUser
+		if m.Role == "assistant" {
+			role = agenttui.RoleAssistant
+		} else if m.Role == "system" {
+			role = agenttui.RoleSystem
+		}
+		ac.app.AddMessage(agenttui.Message{Role: role, Content: m.Content})
+	}
+	go ac.app.ScanRepoFiles(mustGetwd())
+	return ac
+}
+
+var gleannBanner = []string{
+	"   ██████╗ ██╗     ███████╗ █████╗ ███╗   ██╗███╗   ██╗",
+	"  ██╔════╝ ██║     ██╔════╝██╔══██╗████╗  ██║████╗  ██║",
+	"  ██║  ███╗██║     █████╗  ███████║██╔██╗ ██║██╔██╗ ██║",
+	"  ██║   ██║██║     ██╔══╝  ██╔══██║██║╚██╗██║██║╚██╗██║",
+	"  ╚██████╔╝███████╗███████╗██║  ██║██║ ╚████║██║ ╚████║",
+	"   ╚═════╝ ╚══════╝╚══════╝╚═╝  ╚═╝╚═╝  ╚═══╝╚═╝  ╚═══╝",
+}
+
+var gleannQuickActions = []agenttui.QuickAction{
+	{Cmd: "/settings", Desc: "Model, temperature, top-k, reranker, role, system prompt (Ctrl+S)"},
+	{Cmd: "/history", Desc: "Resume a saved conversation"},
+	{Cmd: "/attach", Desc: "Add a file or directory to the session context"},
+	{Cmd: "/image", Desc: "Queue an image for your next message"},
+	{Cmd: "/screenshot", Desc: "Grab clipboard image / screen region for your next message"},
+	{Cmd: "/remember", Desc: "Store a memory the assistant keeps across sessions"},
+	{Cmd: "/index", Desc: "Show index info or switch index"},
+	{Cmd: "/help", Desc: "All commands"},
+}
+
+// headerInfo is the compact status shown in the header, e.g. "docs · t=0.7 · k=10".
+func (ac *agentChat) headerInfo() string {
+	// View must never wait on a slow command that holds the state lock.
+	if !ac.mu.TryLock() {
+		return ac.lastHeader
+	}
+	defer ac.mu.Unlock()
+	cm := ac.cm
+	parts := []string{cm.indexName, fmt.Sprintf("t=%.1f", cm.temperature)}
+	if cm.indexName != "(no index)" {
+		parts = append(parts, fmt.Sprintf("k=%d", cm.topK))
+		if cm.rerankEnabled {
+			parts = append(parts, "rerank")
+		}
+	}
+	if n := len(cm.pendingImages); n > 0 {
+		parts = append(parts, fmt.Sprintf("📷×%d", n))
+	}
+	if n := len(cm.attachedFiles); n > 0 {
+		parts = append(parts, fmt.Sprintf("📎×%d", n))
+	}
+	ac.lastHeader = strings.Join(parts, " · ")
+	return ac.lastHeader
+}
+
+// infoRows is the sidebar's info block: the same values the Ctrl+S settings
+// menu edits, plus the index/mode and what is queued for the next message.
+func (ac *agentChat) infoRows() [][2]string {
+	if !ac.mu.TryLock() {
+		return ac.lastRows
+	}
+	defer ac.mu.Unlock()
+	cm := ac.cm
+
+	mode := "RAG · " + cm.indexName
+	if cm.indexName == "(no index)" {
+		mode = "LLM only (no retrieval)"
+	}
+	rerank := "off"
+	if cm.rerankEnabled {
+		rerank = "on"
+		if len(cm.rerankModels) > 0 && cm.rerankModelIdx < len(cm.rerankModels) {
+			rerank = cm.rerankModels[cm.rerankModelIdx]
+		}
+	}
+	role := "(none)"
+	if cm.roleIdx > 0 && cm.roleIdx < len(cm.roleNames) {
+		role = cm.roleNames[cm.roleIdx]
+	}
+	maxTok := strconv.Itoa(cm.maxTokens)
+	if cm.maxTokens == 0 {
+		maxTok = "unlimited"
+	}
+	rows := [][2]string{
+		{"mode", mode},
+		{"model", cm.modelName},
+		{"temperature", fmt.Sprintf("%.1f", cm.temperature)},
+		{"repeat penalty", fmt.Sprintf("%.2f", cm.repeatPenalty)},
+		{"max tokens", maxTok},
+		{"top-k", strconv.Itoa(cm.topK)},
+		{"reranker", rerank},
+		{"role", role},
+	}
+	if cm.embeddingModel != "" {
+		rows = append(rows, [2]string{"embedding", cm.embeddingModel})
+	}
+	if q := len(cm.pendingImages); q > 0 || len(cm.attachedFiles) > 0 {
+		rows = append(rows, [2]string{"queued", fmt.Sprintf("%d media · %d files", q, len(cm.attachedFiles))})
+	}
+	ac.lastRows = rows
+	return rows
 }
 
 func mustGetwd() string {
@@ -257,9 +368,9 @@ func (ac *agentChat) commands() []agenttui.SlashCommand {
 			}
 			return sb.String()
 		}),
-		local("image", "Queue an image for the next message", "<path>", func(cm *ChatModel, arg string) string { return cm.handleImageCommand(arg) }),
-		local("screenshot", "Capture screen/clipboard for the next message", "[arg]", func(cm *ChatModel, arg string) string { return cm.handleScreenshotCommand(arg) }),
-		local("audio", "Queue an audio file", "<path>", func(cm *ChatModel, arg string) string { return cm.handleAudioCommand(arg) }),
+		local("image", "Queue an image (png/jpg/gif/webp) for your next message, then ask about it", "<path>", func(cm *ChatModel, arg string) string { return cm.handleImageCommand(arg) }),
+		local("screenshot", "Queue the clipboard image, or select a screen region (no arg); with a path it acts like /image", "[path]", func(cm *ChatModel, arg string) string { return cm.handleScreenshotCommand(arg) }),
+		local("audio", "Queue audio (mp3/wav/flac/ogg/m4a/opus) for your next message — needs an audio-capable model", "<path>", func(cm *ChatModel, arg string) string { return cm.handleAudioCommand(arg) }),
 		local("attach", "Add a file or directory to the session context", "<path>", func(cm *ChatModel, arg string) string { return cm.handleAttachCommand(arg) }),
 		local("detach", "Remove an attached file", "<path>", func(cm *ChatModel, arg string) string { return cm.handleDetachCommand(arg) }),
 		local("index", "Show index info or switch index", "[name|info|add|remove]", func(cm *ChatModel, arg string) string { return cm.handleIndexCommand(arg) }),
@@ -440,6 +551,7 @@ func (ac *agentChat) editSettings(ctx context.Context, a *agenttui.App) (string,
 		}
 		before := len(cm.messages)
 		cm.applySettings()
+		a.SetModelName(cm.modelName)
 		if len(cm.messages) > before {
 			return cm.messages[len(cm.messages)-1].content
 		}
