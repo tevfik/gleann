@@ -178,3 +178,21 @@ func TestSliderOptions_KeepsOrderAndCurrent(t *testing.T) {
 		t.Errorf("larger value must come last: %s", got)
 	}
 }
+
+func TestAgentChat_HeaderShowsDetailsWhenSidebarHidden(t *testing.T) {
+	chat := gleann.NewChat(fakeSearcher{}, gleann.ChatConfig{Provider: gleann.LLMMock, Model: "qwen3:8b", Temperature: 0.7})
+	ac := newAgentChat(chat, "docs", "qwen3:8b")
+	ac.app.Update(tea.WindowSizeMsg{Width: 150, Height: 36})
+	ac.cm.repeatPenalty, ac.cm.maxTokens, ac.cm.topK = 1.2, 4096, 15
+
+	if v := ansi.Strip(ac.app.View().Content); strings.Contains(v, "rep=1.20") {
+		t.Error("with the sidebar visible the header stays compact")
+	}
+	ac.app.ToggleSidebar()
+	first := strings.Split(ansi.Strip(ac.app.View().Content), "\n")[0]
+	for _, want := range []string{"RAG · docs", "rep=1.20", "max=4096", "k=15", "qwen3:8b"} {
+		if !strings.Contains(first, want) {
+			t.Errorf("header missing %q: %s", want, first)
+		}
+	}
+}

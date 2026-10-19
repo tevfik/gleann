@@ -27,6 +27,7 @@ type agentChat struct {
 
 	// Last rendered header/info values, served while mu is held elsewhere.
 	lastHeader string
+	lastWide   string
 	lastRows   [][2]string
 }
 
@@ -56,22 +57,23 @@ func newAgentChat(chat *gleann.LeannChat, indexName, modelName string) *agentCha
 	ac := &agentChat{cm: &cm}
 
 	ac.app = agenttui.New(agenttui.Config{
-		Title:        "gleann",
-		Subtitle:     "RAG chat · " + indexName,
-		ModelName:    modelName,
-		WorkDir:      mustGetwd(),
-		Placeholder:  "Ask a question about your index… (/ for commands)",
-		Theme:        agenttui.ThemeByName(os.Getenv("GLEANN_THEME")),
-		IgnoreDirs:   []string{".gleann"},
-		ShowHeader:   true,
-		ShowFooter:   true,
-		EnableMouse:  true,
-		HideMode:     true,
-		Banner:       gleannBanner,
-		QuickActions: gleannQuickActions,
-		HeaderInfo:   ac.headerInfo,
-		InfoRows:     ac.infoRows,
-		FooterHint:   "Enter send · / commands · Ctrl+S settings · Ctrl+T thinking · Ctrl+Y copy · Ctrl+C quit",
+		Title:          "gleann",
+		Subtitle:       "RAG chat · " + indexName,
+		ModelName:      modelName,
+		WorkDir:        mustGetwd(),
+		Placeholder:    "Ask a question about your index… (/ for commands)",
+		Theme:          agenttui.ThemeByName(os.Getenv("GLEANN_THEME")),
+		IgnoreDirs:     []string{".gleann"},
+		ShowHeader:     true,
+		ShowFooter:     true,
+		EnableMouse:    true,
+		HideMode:       true,
+		Banner:         gleannBanner,
+		QuickActions:   gleannQuickActions,
+		HeaderInfo:     ac.headerInfo,
+		HeaderInfoWide: ac.headerInfoWide,
+		InfoRows:       ac.infoRows,
+		FooterHint:     "Enter send · / commands · Ctrl+S settings · Ctrl+T thinking · Ctrl+Y copy · Ctrl+C quit",
 		OnKey: func(key string, a *agenttui.App) bool {
 			if key == "ctrl+s" {
 				a.Submit("/settings")
@@ -140,6 +142,46 @@ func (ac *agentChat) headerInfo() string {
 	}
 	ac.lastHeader = strings.Join(parts, " · ")
 	return ac.lastHeader
+}
+
+// headerInfoWide carries the sidebar's details in the header when the sidebar
+// is hidden (Ctrl+B) or the terminal is too narrow for it.
+func (ac *agentChat) headerInfoWide() string {
+	if !ac.mu.TryLock() {
+		return ac.lastWide
+	}
+	defer ac.mu.Unlock()
+	cm := ac.cm
+	mode := "RAG"
+	if cm.indexName == "(no index)" {
+		mode = "LLM only"
+	}
+	parts := []string{mode}
+	if cm.indexName != "(no index)" {
+		parts = append(parts, cm.indexName)
+	}
+	maxTok := strconv.Itoa(cm.maxTokens)
+	if cm.maxTokens == 0 {
+		maxTok = "∞"
+	}
+	parts = append(parts, fmt.Sprintf("t=%.1f", cm.temperature), fmt.Sprintf("rep=%.2f", cm.repeatPenalty), "max="+maxTok)
+	if cm.indexName != "(no index)" {
+		parts = append(parts, fmt.Sprintf("k=%d", cm.topK))
+		if cm.rerankEnabled {
+			parts = append(parts, "rerank")
+		}
+	}
+	if cm.roleIdx > 0 && cm.roleIdx < len(cm.roleNames) {
+		parts = append(parts, "role:"+cm.roleNames[cm.roleIdx])
+	}
+	if n := len(cm.pendingImages); n > 0 {
+		parts = append(parts, fmt.Sprintf("📷×%d", n))
+	}
+	if n := len(cm.attachedFiles); n > 0 {
+		parts = append(parts, fmt.Sprintf("📎×%d", n))
+	}
+	ac.lastWide = strings.Join(parts, " · ")
+	return ac.lastWide
 }
 
 // infoRows is the sidebar's info block: the same values the Ctrl+S settings
