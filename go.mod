@@ -20,7 +20,7 @@ require (
 	github.com/philippgille/chromem-go v0.7.0
 	github.com/qmuntal/stateless v1.8.0
 	github.com/smacker/go-tree-sitter v0.0.0-20240827094217-dd81d9e9be82
-	github.com/tevfik/agenttui v0.0.0-20261019103636-8881ee01f278
+	github.com/tevfik/agenttui v0.0.0-20261019113046-cd25dd9f251e
 	github.com/tevfik/gleann/modules/bm25 v0.0.0-20260303190343-2b5861edadac
 	github.com/tevfik/gleann/modules/chunking v0.0.0-20260303190343-2b5861edadac
 	github.com/tevfik/gleann/modules/diskann v0.0.0-00010101000000-000000000000
