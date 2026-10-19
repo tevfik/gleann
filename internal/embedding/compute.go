@@ -78,7 +78,7 @@ func NewComputer(opts Options) *Computer {
 		} else if opts.Provider == ProviderLlamaCPP {
 			opts.BatchSize = 32 // Optimal for local CPU llama-server without memory or token limit contention
 		} else if opts.Provider == ProviderEIF {
-			opts.BatchSize = 64 // In-process eif-runtime CPU batch
+			opts.BatchSize = 64 // In-process bitllm.c CPU batch
 		} else {
 			opts.BatchSize = 100 // External APIs handle larger batches
 		}

@@ -107,17 +107,17 @@ build-cgo: prepare-assets
 
 .PHONY: build-eif-lib
 build-eif-lib:
-	@if [ ! -f ext/eif-runtime/CMakeLists.txt ]; then \
-		echo "📦 Initializing ext/eif-runtime submodule..."; \
-		git submodule update --init --recursive ext/eif-runtime; \
+	@if [ ! -f ext/bitllm.c/CMakeLists.txt ]; then \
+		echo "📦 Initializing ext/bitllm.c submodule..."; \
+		git submodule update --init --recursive ext/bitllm.c; \
 	fi
-	@if [ -f ext/eif-runtime/CMakeLists.txt ] && command -v cmake >/dev/null 2>&1; then \
-		echo "🔧 Building eif-runtime static library..."; \
-		mkdir -p ext/eif-runtime/build && \
-		cmake -B ext/eif-runtime/build -S ext/eif-runtime -DCMAKE_BUILD_TYPE=Release && \
-		cmake --build ext/eif-runtime/build --target bitllm_static; \
+	@if [ -f ext/bitllm.c/CMakeLists.txt ] && command -v cmake >/dev/null 2>&1; then \
+		echo "🔧 Building bitllm.c static library..."; \
+		mkdir -p ext/bitllm.c/build && \
+		cmake -B ext/bitllm.c/build -S ext/bitllm.c -DCMAKE_BUILD_TYPE=Release && \
+		cmake --build ext/bitllm.c/build --target bitllm_static; \
 	elif ! command -v cmake >/dev/null 2>&1; then \
-		echo "⚠️ Warning: cmake not found. Please install cmake to build eif-runtime."; \
+		echo "⚠️ Warning: cmake not found. Please install cmake to build bitllm.c."; \
 	fi
 
 .PHONY: build-eif
@@ -140,21 +140,21 @@ build-arm64: prepare-assets
 
 .PHONY: build-eif-lib-arm64
 build-eif-lib-arm64:
-	@if [ ! -f ext/eif-runtime/CMakeLists.txt ]; then \
-		echo "📦 Initializing ext/eif-runtime submodule..."; \
-		git submodule update --init --recursive ext/eif-runtime; \
+	@if [ ! -f ext/bitllm.c/CMakeLists.txt ]; then \
+		echo "📦 Initializing ext/bitllm.c submodule..."; \
+		git submodule update --init --recursive ext/bitllm.c; \
 	fi
-	@if [ -f ext/eif-runtime/CMakeLists.txt ] && command -v aarch64-linux-gnu-gcc >/dev/null 2>&1; then \
-		echo "🔧 Cross-compiling eif-runtime static library for ARM64..."; \
-		mkdir -p ext/eif-runtime/build-arm64 && \
-		cmake -B ext/eif-runtime/build-arm64 -S ext/eif-runtime \
+	@if [ -f ext/bitllm.c/CMakeLists.txt ] && command -v aarch64-linux-gnu-gcc >/dev/null 2>&1; then \
+		echo "🔧 Cross-compiling bitllm.c static library for ARM64..."; \
+		mkdir -p ext/bitllm.c/build-arm64 && \
+		cmake -B ext/bitllm.c/build-arm64 -S ext/bitllm.c \
 			-DCMAKE_SYSTEM_NAME=Linux \
 			-DCMAKE_SYSTEM_PROCESSOR=aarch64 \
 			-DCMAKE_C_COMPILER=aarch64-linux-gnu-gcc \
 			-DCMAKE_BUILD_TYPE=Release \
 			-DEIF_ENABLE_VULKAN=OFF \
 			-DCMAKE_C_FLAGS="-fno-tree-vectorize -fmath-errno" && \
-		cmake --build ext/eif-runtime/build-arm64 --target bitllm_static; \
+		cmake --build ext/bitllm.c/build-arm64 --target bitllm_static; \
 	else \
 		echo "⚠️ aarch64-linux-gnu-gcc not found. Run 'make docker-build-eif-arm64' for containerized ARM build."; \
 		exit 1; \
@@ -162,8 +162,8 @@ build-eif-lib-arm64:
 
 .PHONY: build-eif-arm64
 build-eif-arm64: build-eif-lib-arm64 prepare-assets
-	@mkdir -p $(BUILD_DIR) ext/eif-runtime/build
-	@cp ext/eif-runtime/build-arm64/libeif_runtime.a ext/eif-runtime/build/libeif_runtime.a
+	@mkdir -p $(BUILD_DIR) ext/bitllm.c/build
+	@cp ext/bitllm.c/build-arm64/libbitllm.a ext/bitllm.c/build/libbitllm.a
 	@echo "🔧 Building gleann-eif for ARM64..."
 	CC=aarch64-linux-gnu-gcc CXX=aarch64-linux-gnu-g++ \
 	GOOS=linux GOARCH=arm64 CGO_ENABLED=1 \
@@ -201,23 +201,23 @@ docker-build-eif-arm64: docker-builder-arm64 prepare-assets
 		-v gleann-build-cache:/root/.cache/go-build \
 		-v $$(pwd):/app -w /app gleann-builder-arm64:latest \
 		sh -c "set -e && \
-			mkdir -p ext/eif-runtime/build-arm64 && \
-			cmake -B ext/eif-runtime/build-arm64 -S ext/eif-runtime \
+			mkdir -p ext/bitllm.c/build-arm64 && \
+			cmake -B ext/bitllm.c/build-arm64 -S ext/bitllm.c \
 				-DCMAKE_SYSTEM_NAME=Linux \
 				-DCMAKE_SYSTEM_PROCESSOR=aarch64 \
 				-DCMAKE_C_COMPILER=aarch64-linux-gnu-gcc \
 				-DCMAKE_BUILD_TYPE=Release \
 				-DEIF_ENABLE_VULKAN=OFF \
 				-DCMAKE_C_FLAGS='-fno-tree-vectorize -fmath-errno' && \
-			cmake --build ext/eif-runtime/build-arm64 --target bitllm_static && \
-			mkdir -p ext/eif-runtime/build && \
-			cp ext/eif-runtime/build-arm64/libeif_runtime.a ext/eif-runtime/build/libeif_runtime.a && \
+			cmake --build ext/bitllm.c/build-arm64 --target bitllm_static && \
+			mkdir -p ext/bitllm.c/build && \
+			cp ext/bitllm.c/build-arm64/libbitllm.a ext/bitllm.c/build/libbitllm.a && \
 			CC=aarch64-linux-gnu-gcc CXX=aarch64-linux-gnu-g++ \
 			GOOS=linux GOARCH=arm64 CGO_ENABLED=1 \
 			CGO_CFLAGS='-w -fno-tree-vectorize -fmath-errno' \
 			CGO_CXXFLAGS='-w -fno-tree-vectorize -fmath-errno' \
 			go build -buildvcs=false -tags 'eif' -ldflags '$(LDFLAGS)' -o $(BUILD_DIR)/gleann-eif-linux-arm64 $(CMD) && \
-			chown -R $$(id -u):$$(id -g) /app/$(BUILD_DIR) ext/eif-runtime/build"
+			chown -R $$(id -u):$$(id -g) /app/$(BUILD_DIR) ext/bitllm.c/build"
 	@echo "✅ Built $(BUILD_DIR)/gleann-eif-linux-arm64 via Docker"
 
 .PHONY: build-rust-core

@@ -15,7 +15,7 @@ Plugins are standalone executables that expose a local HTTP API. Gleann manages 
 
 | Plugin | Formats | Backend | Description |
 |--------|---------|---------|-------------|
-| [gleann-plugin-docs](https://github.com/tevfik/gleann-plugin-docs) | PDF, DOCX, XLSX, PPTX, CSV, PNG, JPG | Go + C (`eif-runtime` Docling BitNet 1.58b VLM) | Standalone native document extraction with OCR & OTSL table parsing |
+| [gleann-plugin-docs](https://github.com/tevfik/gleann-plugin-docs) | PDF, DOCX, XLSX, PPTX, CSV, PNG, JPG | Go + C (`bitllm.c` Docling BitNet 1.58b VLM) | Standalone native document extraction with OCR & OTSL table parsing |
 | [gleann-plugin-marker](https://github.com/tevfik/gleann-plugin-marker) | PDF, DOCX, EPUB, HTML, images | marker-pdf + Surya OCR | High-accuracy extraction with deep learning OCR |
 | [gleann-plugin-sound](https://github.com/tevfik/gleann-plugin-sound) | MP3, WAV, MP4, etc. | whisper.cpp | Audio/video transcription |
 

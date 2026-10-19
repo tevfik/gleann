@@ -3,10 +3,10 @@
 package gleann
 
 /*
-#cgo CFLAGS: -I${SRCDIR}/../../ext/eif-runtime/include -O3
-#cgo linux LDFLAGS: ${SRCDIR}/../../ext/eif-runtime/build/libeif_runtime.a -Wl,-Bstatic -lgomp -Wl,-Bdynamic -lpthread -lm
-#cgo darwin LDFLAGS: ${SRCDIR}/../../ext/eif-runtime/build/libeif_runtime.a -lm
-#cgo windows LDFLAGS: ${SRCDIR}/../../ext/eif-runtime/build/libeif_runtime.a -lm
+#cgo CFLAGS: -I${SRCDIR}/../../ext/bitllm.c/include -O3
+#cgo linux LDFLAGS: ${SRCDIR}/../../ext/bitllm.c/build/libbitllm.a -Wl,-Bstatic -lgomp -Wl,-Bdynamic -lpthread -lm
+#cgo darwin LDFLAGS: ${SRCDIR}/../../ext/bitllm.c/build/libbitllm.a -lm
+#cgo windows LDFLAGS: ${SRCDIR}/../../ext/bitllm.c/build/libbitllm.a -lm
 #include "eif_llm.h"
 #include <stdlib.h>
 #include <stdint.h>

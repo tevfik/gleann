@@ -3,10 +3,10 @@
 package embedding
 
 /*
-#cgo CFLAGS: -I${SRCDIR}/../../ext/eif-runtime/include -O3
-#cgo linux LDFLAGS: ${SRCDIR}/../../ext/eif-runtime/build/libeif_runtime.a -Wl,-Bstatic -lgomp -Wl,-Bdynamic -lpthread -lm
-#cgo darwin LDFLAGS: ${SRCDIR}/../../ext/eif-runtime/build/libeif_runtime.a -lm
-#cgo windows LDFLAGS: ${SRCDIR}/../../ext/eif-runtime/build/libeif_runtime.a -lm
+#cgo CFLAGS: -I${SRCDIR}/../../ext/bitllm.c/include -O3
+#cgo linux LDFLAGS: ${SRCDIR}/../../ext/bitllm.c/build/libbitllm.a -Wl,-Bstatic -lgomp -Wl,-Bdynamic -lpthread -lm
+#cgo darwin LDFLAGS: ${SRCDIR}/../../ext/bitllm.c/build/libbitllm.a -lm
+#cgo windows LDFLAGS: ${SRCDIR}/../../ext/bitllm.c/build/libbitllm.a -lm
 #include "eif_bert.h"
 #include <stdlib.h>
 
@@ -29,7 +29,7 @@ import (
 	"unsafe"
 )
 
-// EIFComputer executes in-process high-performance CPU embeddings using eif-runtime.
+// EIFComputer executes in-process high-performance CPU embeddings using bitllm.c.
 type EIFComputer struct {
 	modelPath string
 	bert      C.eif_bert_t

@@ -39,7 +39,7 @@ var defaultCatalog = []PluginMeta{
 		Icon:               "📄",
 		Description:        "High-performance native document extraction with Granite Docling BitNet 1.58b VLM, OTSL table parsing, and native DOCX.",
 		RepoURL:            "https://github.com/tevfik/gleann-plugin-docs",
-		Language:           "go (eif-runtime, docling-vlm)",
+		Language:           "go (bitllm.c, docling-vlm)",
 		Extensions:         []string{".pdf", ".docx", ".doc", ".xlsx", ".xls", ".pptx", ".ppt", ".png", ".jpg", ".jpeg", ".csv", ".txt", ".md"},
 		RequiresMarkitdown: false,
 	},

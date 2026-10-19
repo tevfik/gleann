@@ -8,7 +8,7 @@ import (
 )
 
 func (c *Computer) computeEIF(ctx context.Context, texts []string) ([][]float32, error) {
-	return nil, fmt.Errorf("eif-runtime embeddings are not enabled in this build. Compile with -tags eif")
+	return nil, fmt.Errorf("bitllm.c embeddings are not enabled in this build. Compile with -tags eif")
 }
 
 func (c *Computer) getEIFDim() int {

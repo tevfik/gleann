@@ -4,7 +4,7 @@
     "icon": "📄",
     "description": "High-performance native document extraction with Granite Docling BitNet 1.58b VLM, OTSL table parsing, and native DOCX.",
     "repo_url": "https://github.com/tevfik/gleann-plugin-docs",
-    "language": "go (eif-runtime, docling-vlm)",
+    "language": "go (bitllm.c, docling-vlm)",
     "extensions": [".pdf", ".docx", ".doc", ".xlsx", ".xls", ".pptx", ".ppt", ".png", ".jpg", ".jpeg", ".csv", ".txt", ".md"],
     "requires_markitdown": false,
     "version": "1.0.0"

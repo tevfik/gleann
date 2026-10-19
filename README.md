@@ -82,7 +82,7 @@ Vector search alone misses function calls, callers, and dependencies. Gleann com
 ### 📄 3. Technical Documents, PDFs & Tables
 Extract complex multi-page documents, PDFs, and spreadsheets without losing table structure.
 - **Table-Aware Chunker**: Preserves Markdown tables atomically or splits rows while replicating headers across sub-chunks.
-- **Docling BitNet Vision (eif-runtime)**: In-process IBM Docling BitNet 1.58-bit VLM for scanned/raster PDFs and diagrams.
+- **Docling BitNet Vision (bitllm.c)**: In-process IBM Docling BitNet 1.58-bit VLM for scanned/raster PDFs and diagrams.
 - **Pure-Go Fast Path**: Digital PDFs and DOCX files extract in milliseconds without Python overhead.
 - 👉 Read the [Hierarchical GraphRAG Guide](docs/hierarchical_graphrag.md) & [Plugin Architecture](docs/plugins.md).
 
