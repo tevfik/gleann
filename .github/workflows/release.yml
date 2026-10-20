@@ -423,6 +423,13 @@ jobs:
               done
           fi
 
+      # `gleann update` and `gleann plugin update` verify downloads against this.
+      - name: Write SHA256SUMS
+        run: |
+          cd dist
+          rm -f SHA256SUMS
+          sha256sum * > SHA256SUMS
+
       - name: Upload release assets
         uses: softprops/action-gh-release@v2
         with:

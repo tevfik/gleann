@@ -42,7 +42,7 @@ func TestE2E_DecisionGateSubprocess(t *testing.T) {
 	}
 
 	t.Run("Subprocess_DecisionGate_Exit4", func(t *testing.T) {
-		cmd := exec.Command(binPath, "index", "build", "e2e-gate-test", "--docs", docDir, "--max-minutes", "0.00001")
+		cmd := exec.Command(binPath, "index", "build", "e2e-gate-test", "--docs", docDir, "--max-minutes", "0.000000001")
 		var stdout, stderr bytes.Buffer
 		cmd.Stdout = &stdout
 		cmd.Stderr = &stderr

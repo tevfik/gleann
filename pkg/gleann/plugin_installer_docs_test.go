@@ -3,6 +3,7 @@ package gleann
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -17,6 +18,9 @@ func drainMsgs(ch chan string) []string {
 }
 
 func TestPrepareDocsOCRRunsModelsDownload(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell script plugin")
+	}
 	dir := t.TempDir()
 	log := filepath.Join(dir, "args")
 	bin := filepath.Join(dir, "gleann-plugin-docs")
@@ -35,6 +39,9 @@ func TestPrepareDocsOCRRunsModelsDownload(t *testing.T) {
 }
 
 func TestPrepareDocsOCRFailureIsNotFatal(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell script plugin")
+	}
 	dir := t.TempDir()
 	bin := filepath.Join(dir, "gleann-plugin-docs")
 	os.WriteFile(bin, []byte("#!/bin/sh\nexit 2\n"), 0o755) // an older plugin: unknown subcommand

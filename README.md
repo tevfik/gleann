@@ -27,6 +27,14 @@ go install github.com/tevfik/gleann/cmd/gleann@latest
 curl -sSfL https://raw.githubusercontent.com/tevfik/gleann/main/scripts/install.sh | sh
 ```
 
+Later, update gleann and its plugins from the latest GitHub release:
+
+```bash
+gleann update --check   # is a newer release available?
+gleann update           # replace this binary (checksum-verified when the release has SHA256SUMS)
+gleann plugin update    # update installed plugins (e.g. docs) the same way
+```
+
 ### 2. Index Your Codebase or Documents
 
 ```bash

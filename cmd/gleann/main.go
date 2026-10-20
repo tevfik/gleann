@@ -73,6 +73,8 @@ func main() {
 		cmdCompletion(args)
 	case "version":
 		fmt.Printf("gleann %s\n", version)
+	case "update", "upgrade", "self-update":
+		cmdUpdate(args)
 	case "help", "--help", "-h":
 		printUsage()
 	default:
@@ -123,6 +125,7 @@ Long-term Memory Engine:
 Service & Setup:
   setup [--auto]               Interactive setup wizard (or zero-config auto)
   doctor                       System health and dependencies check
+  update    [--check]          Update gleann to the latest GitHub release (plugins: gleann plugin update)
   agents [dump]                Generate or dump AGENTS.md for AI coding agents
   service install|start|status Manage Gleann as a background system service
   install [--user|--system]    Install the binary, or set up MCP/editor integrations (see: gleann install --help)

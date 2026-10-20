@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -34,5 +35,33 @@ func TestDescribeIndex(t *testing.T) {
 	// An index whose directory is missing reports 0 B rather than failing.
 	if got := describeIndex(dir, gleann.IndexMeta{Name: "ghost", VectorReady: true}); !strings.HasSuffix(got, "0 B") {
 		t.Errorf("missing directory: %q", got)
+	}
+}
+
+func TestCheckDocsRuntimeReportsMissingRuntime(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell script plugin")
+	}
+	dir := t.TempDir()
+	script := func(body string) string {
+		p := filepath.Join(dir, "gleann-plugin-docs")
+		if err := os.WriteFile(p, []byte("#!/bin/sh\n"+body), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	var oks, warns []string
+	ok := func(s string) { oks = append(oks, s) }
+	warn := func(s string) { warns = append(warns, s) }
+
+	checkDocsRuntime(script("echo 'ok   x'\nexit 0\n"), ok, warn)
+	if len(oks) != 1 || len(warns) != 0 {
+		t.Fatalf("healthy plugin: ok=%v warn=%v", oks, warns)
+	}
+
+	oks, warns = nil, nil
+	checkDocsRuntime(script("echo 'FAIL onnxruntime: not found'\nexit 1\n"), ok, warn)
+	if len(oks) != 0 || len(warns) != 2 || !strings.Contains(warns[0], "onnxruntime") || !strings.Contains(warns[1], "models download") {
+		t.Fatalf("broken plugin: ok=%v warn=%v", oks, warns)
 	}
 }

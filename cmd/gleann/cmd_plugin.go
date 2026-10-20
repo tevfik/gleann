@@ -67,7 +67,8 @@ Usage:
   gleann plugin list                Show registered plugins + live status
   gleann plugin install <name>      Install & register plugin via CLI
   gleann plugin info <name>         Fetch live /info from a plugin
-  gleann plugin update [name]       git pull + rebuild a plugin (all if omitted)
+  gleann plugin update [name]       update installed plugins from their latest release
+                                    (--check only reports, --force reinstalls)
 
 Plugins are auto-discovered from ~/.gleann/plugins.json. Audio and document
 plugins are auto-wired into the pipeline by capability.`)
@@ -155,7 +156,23 @@ func pluginInfo(name string) {
 // pluginUpdate runs `git pull --tags --rebase` in each repo-installed
 // plugin's source directory. Binary-only installs (no _repos/ dir) are
 // skipped with a notice.
-func pluginUpdate(names []string) {
+func pluginUpdate(args []string) {
+	check, force := false, false
+	var names []string
+	for _, a := range args {
+		switch a {
+		case "--check":
+			check = true
+		case "--force":
+			force = true
+		default:
+			names = append(names, a)
+		}
+	}
+	handled := updateReleasePlugins(names, check, force)
+	if check {
+		return
+	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -164,8 +181,11 @@ func pluginUpdate(names []string) {
 	reposDir := filepath.Join(home, ".gleann", "plugins", "_repos")
 	entries, err := os.ReadDir(reposDir)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "no plugin repos found under %s\n", reposDir)
-		os.Exit(1)
+		if len(handled) == 0 {
+			fmt.Fprintf(os.Stderr, "no plugin repos found under %s\n", reposDir)
+			os.Exit(1)
+		}
+		return
 	}
 
 	wanted := map[string]bool{}
@@ -184,6 +204,9 @@ func pluginUpdate(names []string) {
 			if !wanted["gleann-plugin-"+alt] && !wanted["gleann-"+alt] {
 				continue
 			}
+		}
+		if handled[e.Name()] {
+			continue // already updated from its release binary
 		}
 		repoPath := filepath.Join(reposDir, e.Name())
 		if _, err := os.Stat(filepath.Join(repoPath, ".git")); err != nil {

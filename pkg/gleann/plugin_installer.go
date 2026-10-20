@@ -23,7 +23,13 @@ const defaultPluginOwner = "tevfik"
 
 // githubAPIBase is the GitHub REST API root used for release lookups.
 // It is a variable so tests can point it at an httptest server.
-var githubAPIBase = "https://api.github.com"
+// GLEANN_GITHUB_API redirects it (GitHub Enterprise, a mirror, or a test server).
+var githubAPIBase = func() string {
+	if v := os.Getenv("GLEANN_GITHUB_API"); v != "" {
+		return strings.TrimRight(v, "/")
+	}
+	return "https://api.github.com"
+}()
 
 func pluginOwner() string {
 	if v := os.Getenv("GLEANN_PLUGIN_OWNER"); v != "" {

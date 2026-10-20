@@ -1,10 +1,12 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -322,6 +324,9 @@ func checkPlugins(ok, warn func(string)) {
 				warn(fmt.Sprintf("Plugin '%s' binary not found at %s", p.Name, expanded))
 			} else {
 				ok(fmt.Sprintf("Plugin '%s' binary exists (%s)", p.Name, expanded))
+				if filepath.Base(expanded) == "gleann-plugin-docs" {
+					checkDocsRuntime(expanded, ok, warn)
+				}
 			}
 		} else if p.URL != "" {
 			ok(fmt.Sprintf("Plugin '%s' configured via URL (%s)", p.Name, p.URL))
@@ -329,6 +334,25 @@ func checkPlugins(ok, warn func(string)) {
 			ok(fmt.Sprintf("Plugin '%s' registered", p.Name))
 		}
 	}
+}
+
+// checkDocsRuntime asks the docs plugin whether its ONNX Runtime library and
+// OCR models are in place. Without them scanned pages are silently skipped, so
+// the plugin looks healthy while producing no text for them.
+func checkDocsRuntime(binary string, ok, warn func(string)) {
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, binary, "models", "verify").CombinedOutput()
+	if err == nil {
+		ok("Plugin 'docs' OCR runtime and models are installed")
+		return
+	}
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		if strings.HasPrefix(line, "FAIL") {
+			warn(fmt.Sprintf("Plugin 'docs': %s", line))
+		}
+	}
+	warn("Scanned pages will be skipped. Fix: gleann-plugin-docs models download")
 }
 
 // formatBytes formats a byte count in human-readable form.

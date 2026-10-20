@@ -142,6 +142,48 @@ func (g *VamanaGraph) Build(embeddings [][]float32) {
 		g.rng.Shuffle(n, func(i, j int) { order[i], order[j] = order[j], order[i] })
 		runPass(g.alpha)
 	}
+
+	g.ensureConnected()
+}
+
+// ensureConnected links every node a search from the medoid cannot reach to
+// its nearest reachable node. Workers insert concurrently and pruning drops
+// reverse edges, so a node can lose its only in-edge; searches would then never
+// return it. The extra edges may take a node a little over R.
+func (g *VamanaGraph) ensureConnected() {
+	n := len(g.nodes)
+	seen := make([]bool, n)
+	var reached []int64
+	visit := func(from int64) {
+		seen[from] = true
+		queue := []int64{from}
+		reached = append(reached, from)
+		for len(queue) > 0 {
+			id := queue[0]
+			queue = queue[1:]
+			for _, nb := range g.neighbors[id] {
+				if !seen[nb] {
+					seen[nb] = true
+					reached = append(reached, nb)
+					queue = append(queue, nb)
+				}
+			}
+		}
+	}
+	visit(g.medoid)
+	for id := int64(0); id < int64(n); id++ {
+		if seen[id] {
+			continue
+		}
+		best, bestDist := reached[0], g.distFunc(g.nodes[id], g.nodes[reached[0]])
+		for _, r := range reached[1:] {
+			if d := g.distFunc(g.nodes[id], g.nodes[r]); d < bestDist {
+				best, bestDist = r, d
+			}
+		}
+		g.neighbors[best] = append(g.neighbors[best], id)
+		visit(id) // what id points at is now reachable too
+	}
 }
 
 // insertNode performs greedy search from medoid, then robust-prunes neighbors.
