@@ -8,6 +8,7 @@ import (
 	"context"
 	"embed"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -1210,11 +1211,17 @@ func (s *Server) handleUpdateIndex(w http.ResponseWriter, r *http.Request) {
 	}
 
 	cfg, emb := s.cfgAndEmbedder()
-	if meta, err := gleann.GetIndexMeta(cfg.IndexDir, name); err == nil {
+	meta, metaErr := gleann.GetIndexMeta(cfg.IndexDir, name)
+	if metaErr == nil {
 		if meta.EmbeddingModel != "" && meta.EmbeddingModel != emb.ModelName() {
 			writeError(w, http.StatusBadRequest, fmt.Sprintf("model mismatch: index uses '%s', current is '%s'. please delete index first", meta.EmbeddingModel, emb.ModelName()))
 			return
 		}
+	} else if errors.Is(metaErr, fs.ErrNotExist) {
+		// Updating an index that was never built is a client error, not a
+		// server fault: say so instead of a 500 from deep inside the builder.
+		writeError(w, http.StatusNotFound, fmt.Sprintf("index %q not found; build it before updating", name))
+		return
 	}
 
 	builder, err := gleann.NewBuilder(cfg, emb)

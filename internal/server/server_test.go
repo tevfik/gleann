@@ -224,6 +224,24 @@ func TestHandleUpdateIndexBadRequest(t *testing.T) {
 	}
 }
 
+func TestHandleUpdateIndexMissingIndexIs404(t *testing.T) {
+	cfg := gleann.DefaultConfig()
+	cfg.IndexDir = t.TempDir()
+	s := &Server{config: cfg, searchers: make(map[string]*gleann.LeannSearcher)}
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /api/indexes/{name}/update", s.handleUpdateIndex)
+
+	body, _ := json.Marshal(updateIndexRequest{Items: []gleann.Item{{Text: "x"}}, Sources: []string{"a.go"}})
+	req := httptest.NewRequest(http.MethodPost, "/api/indexes/never-built/update", bytes.NewReader(body))
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Errorf("expected 404 for an index that was never built, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
 func TestWriteJSON(t *testing.T) {
 	w := httptest.NewRecorder()
 	writeJSON(w, http.StatusOK, map[string]string{"key": "value"})
