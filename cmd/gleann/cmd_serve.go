@@ -17,6 +17,20 @@ import (
 )
 
 func cmdServe(args []string) {
+	if hasFlag(args, "--help") || hasFlag(args, "-h") {
+		fmt.Println(`Usage: gleann serve [options]
+
+Start the Gleann REST API server, Swagger UI, OpenAI-compatible proxy, and A2A service.
+
+Options:
+  --addr <host:port>    Listen address (default: :8080)
+  --port, -p <port>     Port number (shorthand for --addr :<port>)
+  --host <url>          Ollama host URL
+  --quiet               Suppress model bootstrap output
+  --ollama-api-key <k>  API key for Ollama / proxy authentication`)
+		return
+	}
+
 	// Auto-bootstrap: if no config exists, detect Ollama and create one.
 	ollamaHost := getFlag(args, "--host")
 	quiet := hasFlag(args, "--quiet")
@@ -45,7 +59,21 @@ func cmdServe(args []string) {
 
 	addr := getFlag(args, "--addr")
 	if addr == "" {
-		addr = gleann.DefaultServerAddr
+		portFlag := getFlag(args, "--port")
+		if portFlag == "" {
+			portFlag = getFlag(args, "-p")
+		}
+		if portFlag != "" {
+			if !strings.HasPrefix(portFlag, ":") {
+				addr = ":" + portFlag
+			} else {
+				addr = portFlag
+			}
+		} else {
+			addr = gleann.DefaultServerAddr
+		}
+	} else if !strings.Contains(addr, ":") {
+		addr = ":" + addr
 	}
 
 	// Validate port number.
