@@ -42,6 +42,8 @@ var defaultCatalog = []PluginMeta{
 		Language:           "go (bitllm.c, docling-vlm)",
 		Extensions:         []string{".pdf", ".docx", ".doc", ".xlsx", ".xls", ".pptx", ".ppt", ".png", ".jpg", ".jpeg", ".csv", ".txt", ".md"},
 		RequiresMarkitdown: false,
+		HasSettings:        true,
+		SettingsCmd:        []string{"gleann-plugin-docs", "tui"},
 	},
 	{
 		Name:        "gleann-plugin-marker",

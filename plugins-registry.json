@@ -7,6 +7,8 @@
     "language": "go (bitllm.c, docling-vlm)",
     "extensions": [".pdf", ".docx", ".doc", ".xlsx", ".xls", ".pptx", ".ppt", ".png", ".jpg", ".jpeg", ".csv", ".txt", ".md"],
     "requires_markitdown": false,
+    "has_settings": true,
+    "settings_cmd": ["gleann-plugin-docs", "tui"],
     "version": "1.0.0"
   },
   {

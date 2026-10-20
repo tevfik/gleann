@@ -1,8 +1,11 @@
 package gleann
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"strings"
 	"testing"
 )
 
@@ -48,5 +51,37 @@ func TestFetchPluginCatalog(t *testing.T) {
 	afterInvalidate := FetchPluginCatalog()
 	if len(afterInvalidate) == 0 || afterInvalidate[0].Name != "gleann-plugin-docs" {
 		t.Fatalf("expected fallback after invalidate, got %v", afterInvalidate)
+	}
+}
+
+// Plugins that ship a setup TUI must advertise it, both in the built-in
+// fallback and in plugins-registry.json (the remote catalog wins when online).
+func TestCatalogSettingsCmdMatchesRegistry(t *testing.T) {
+	data, err := os.ReadFile("../../plugins-registry.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var registry []PluginMeta
+	if err := json.Unmarshal(data, &registry); err != nil {
+		t.Fatal(err)
+	}
+	byName := map[string]PluginMeta{}
+	for _, p := range registry {
+		byName[p.Name] = p
+	}
+	for _, name := range []string{"gleann-plugin-docs", "gleann-plugin-sound"} {
+		var def PluginMeta
+		for _, p := range defaultCatalog {
+			if p.Name == name {
+				def = p
+			}
+		}
+		reg := byName[name]
+		if !def.HasSettings || len(def.SettingsCmd) != 2 || def.SettingsCmd[0] != name || def.SettingsCmd[1] != "tui" {
+			t.Errorf("%s: default catalog settings = %v %v", name, def.HasSettings, def.SettingsCmd)
+		}
+		if reg.HasSettings != def.HasSettings || strings.Join(reg.SettingsCmd, " ") != strings.Join(def.SettingsCmd, " ") {
+			t.Errorf("%s: registry (%v %v) differs from default catalog (%v %v)", name, reg.HasSettings, reg.SettingsCmd, def.HasSettings, def.SettingsCmd)
+		}
 	}
 }
