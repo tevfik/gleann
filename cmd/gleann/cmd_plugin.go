@@ -244,19 +244,21 @@ func pluginInstall(names []string) {
 	reposDir := filepath.Join(home, ".gleann", "plugins", "_repos")
 	os.MkdirAll(reposDir, 0755)
 
-	knownRepos := map[string]string{
-		"gleann-plugin-marker": "https://github.com/tevfik/gleann-plugin-marker",
-		"gleann-plugin-docs":   "https://github.com/tevfik/gleann-plugin-marker",
-		"gleann-plugin-sound":  "https://github.com/tevfik/gleann-plugin-sound",
-		"marker":               "https://github.com/tevfik/gleann-plugin-marker",
-		"docs":                 "https://github.com/tevfik/gleann-plugin-marker",
-		"sound":                "https://github.com/tevfik/gleann-plugin-sound",
-	}
+	knownRepos := knownPluginRepos
 
+	catalog := gleann.FetchPluginCatalog()
 	for _, name := range names {
 		fullName := name
 		if !strings.HasPrefix(fullName, "gleann-plugin-") {
 			fullName = "gleann-plugin-" + name
+		}
+		// Catalog plugins install exactly like the TUI's Plugins panel does: release
+		// binary or source build, registration, and the plugin's own model setup.
+		// (Cloning the repo and running its main.py is only right for a Python plugin,
+		// and gleann-plugin-docs still ships a legacy main.py next to its Go code.)
+		if meta, ok := catalogPluginFor(name, catalog); ok {
+			installCatalogPlugin(meta)
+			continue
 		}
 		repoURL, ok := knownRepos[name]
 		if !ok {
@@ -308,4 +310,47 @@ func pluginInstall(names []string) {
 			}
 		}
 	}
+}
+
+// knownPluginRepos maps plugin names and their short aliases to the repository
+// `gleann plugin install` clones.
+var knownPluginRepos = map[string]string{
+	"gleann-plugin-marker": "https://github.com/tevfik/gleann-plugin-marker",
+	"gleann-plugin-docs":   "https://github.com/tevfik/gleann-plugin-docs",
+	"gleann-plugin-sound":  "https://github.com/tevfik/gleann-plugin-sound",
+	"marker":               "https://github.com/tevfik/gleann-plugin-marker",
+	"docs":                 "https://github.com/tevfik/gleann-plugin-docs",
+	"sound":                "https://github.com/tevfik/gleann-plugin-sound",
+}
+
+// catalogPluginFor resolves a plugin name or short alias ("docs", "gleann-docs",
+// "gleann-plugin-docs") to its catalog entry.
+func catalogPluginFor(name string, catalog []gleann.PluginMeta) (gleann.PluginMeta, bool) {
+	short := strings.TrimPrefix(strings.TrimPrefix(name, "gleann-plugin-"), "gleann-")
+	for _, m := range catalog {
+		if m.Name == name || m.Name == "gleann-plugin-"+short {
+			return m, true
+		}
+	}
+	return gleann.PluginMeta{}, false
+}
+
+// installCatalogPlugin runs gleann.InstallPlugin and prints its progress.
+func installCatalogPlugin(meta gleann.PluginMeta) {
+	progress := make(chan string, 16)
+	done := make(chan struct{})
+	go func() {
+		for line := range progress {
+			fmt.Println("[install]", line)
+		}
+		close(done)
+	}()
+	out, err := gleann.InstallPlugin(meta, progress)
+	close(progress)
+	<-done
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "failed to install %s: %v\n", meta.Name, err)
+		return
+	}
+	fmt.Printf("✓ %s\n", out)
 }

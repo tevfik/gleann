@@ -15,6 +15,7 @@ import (
 	"regexp"
 	"runtime"
 	"strings"
+	"time"
 )
 
 // defaultPluginOwner is the default GitHub/Gitea owner for gleann plugins.
@@ -194,6 +195,7 @@ func setupGoPluginWithProgress(pluginDir, name string, progress chan<- string) (
 			progress <- "✓ Plugin registered in plugins.json"
 		}
 		if strings.Contains(name, "docs") {
+			prepareDocsOCR(binaryPath, progress)
 			ensureDoclingModel(owner, repo, progress)
 		}
 		return fmt.Sprintf("Installed %s (Go binary)", name), nil
@@ -212,6 +214,7 @@ func setupGoPluginWithProgress(pluginDir, name string, progress chan<- string) (
 				progress <- "✓ Plugin registered in plugins.json"
 			}
 			if strings.Contains(name, "docs") {
+				prepareDocsOCR(candidate, progress)
 				ensureDoclingModel(owner, repo, progress)
 			}
 			return fmt.Sprintf("Installed %s (Go binary)", name), nil
@@ -259,10 +262,28 @@ func setupGoPluginWithProgress(pluginDir, name string, progress chan<- string) (
 
 	// For docs plugin, ensure Granite Docling BitNet model is downloaded in one step
 	if strings.Contains(name, "docs") {
+		prepareDocsOCR(binaryPath, progress)
 		ensureDoclingModel(owner, repo, progress)
 	}
 
 	return fmt.Sprintf("Installed %s (Go binary)", name), nil
+}
+
+// prepareDocsOCR asks the docs plugin to fetch what scanned pages need: the
+// ONNX Runtime library and the layout + PP-OCR models (`models download`,
+// checksummed, permissive licences). Without them a scanned PDF yields nothing.
+// Plugin builds that predate the subcommand just print usage; that is ignored.
+func prepareDocsOCR(binary string, progress chan<- string) {
+	progress <- "📦 Fetching OCR runtime and models for scanned pages..."
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, binary, "models", "download").CombinedOutput()
+	if err != nil {
+		progress <- fmt.Sprintf("⚠️  OCR setup skipped: %v (run `%s models download` later)", err, filepath.Base(binary))
+		_ = out
+		return
+	}
+	progress <- "✓ OCR runtime and models ready"
 }
 
 func UninstallPlugin(name string) (string, error) {
@@ -745,6 +766,17 @@ func ensureDoclingModel(owner, repo string, progress chan<- string) {
 	}
 	if err := fetchLatestRelease(ctx, owner, repo, &release); err != nil {
 		progress <- fmt.Sprintf("⚠️  Could not fetch release info: %v", err)
+		return
+	}
+
+	foundModel := false
+	for _, asset := range release.Assets {
+		if strings.HasPrefix(asset.Name, "granite_docling_bitnet_dense") && strings.HasSuffix(asset.Name, ".eifm") {
+			foundModel = true
+		}
+	}
+	if !foundModel {
+		progress <- "ℹ️  This release has no Docling VLM model; scanned pages are read by the ONNX OCR instead (optional: `gleann-plugin-docs models download --vlm`)"
 		return
 	}
 

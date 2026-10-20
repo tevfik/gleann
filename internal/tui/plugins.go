@@ -429,7 +429,7 @@ func (m PluginModel) startConfigure() (tea.Model, tea.Cmd) {
 		if err != nil {
 			return pluginActionMsg{plugin: info.Name, action: "configure", err: err}
 		}
-		return pluginActionMsg{plugin: info.Name, action: "configure", output: "Configuration saved."}
+		return pluginActionMsg{plugin: info.Name, action: "configure", output: info.Name + " setup closed."}
 	})
 }
 
