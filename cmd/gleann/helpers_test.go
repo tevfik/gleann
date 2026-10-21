@@ -267,11 +267,11 @@ func TestApplySavedConfig_EnvIndexDirBeatsSavedConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("GLEANN_INDEX_DIR", "/env/dir")
-	if got := savedIndexDir(); got != "/env/dir" {
+	if got := savedIndexDir(); got != filepath.FromSlash("/env/dir") {
 		t.Fatalf("IndexDir = %q, GLEANN_INDEX_DIR must win over saved config", got)
 	}
 	t.Setenv("GLEANN_INDEX_DIR", "")
-	if got := savedIndexDir(); got != "/saved/dir" {
+	if got := savedIndexDir(); got != filepath.FromSlash("/saved/dir") {
 		t.Fatalf("IndexDir = %q, saved config should apply without env", got)
 	}
 }
