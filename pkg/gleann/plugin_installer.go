@@ -627,22 +627,30 @@ func isAuxiliaryAsset(name string) bool {
 }
 
 // selectReleaseAsset picks the plugin binary for goos/goarch from release
-// asset names, preferring the "-onnx-", then versioned ("-v"), then "-stub-"
-// variants, and finally any asset for the platform. Checksum/signature files
-// are skipped so that e.g. "plugin-linux-amd64.tar.gz.sha256" is never
-// downloaded as the binary. Unsupported architectures (e.g. linux/386) return
-// an error instead of silently selecting an amd64 build.
+// asset names. Preference: the full "-whisper-onnx-" build, then "-onnx-", then
+// the plain build (any asset that is not a "-stub-" one), then "-stub-", and
+// finally any asset for the platform. A stub build runs but recognises nothing,
+// so it is only a last resort. Checksum/signature files are skipped so that e.g.
+// "plugin-linux-amd64.tar.gz.sha256" is never downloaded as the binary.
+// Unsupported architectures (e.g. linux/386) return an error instead of
+// silently selecting an amd64 build.
 func selectReleaseAsset(names []string, goos, goarch string) (int, error) {
 	pattern := releasePlatformPattern(goos, goarch)
 	if pattern == "" {
 		return -1, fmt.Errorf("unsupported platform: %s/%s", goos, goarch)
 	}
-	for _, variant := range []string{"-onnx-", "-v", "-stub-", ""} {
+	for _, accept := range []func(string) bool{
+		func(n string) bool { return strings.Contains(n, "-whisper-onnx-") },
+		func(n string) bool { return strings.Contains(n, "-onnx-") },
+		func(n string) bool { return !strings.Contains(n, "-stub-") },
+		func(n string) bool { return strings.Contains(n, "-stub-") },
+		func(string) bool { return true },
+	} {
 		for i, name := range names {
 			if isAuxiliaryAsset(name) || !strings.Contains(name, pattern) {
 				continue
 			}
-			if variant == "" || strings.Contains(name, variant) {
+			if accept(name) {
 				return i, nil
 			}
 		}
