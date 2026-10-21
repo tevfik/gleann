@@ -87,6 +87,23 @@ func openPluginManager(noPlugins bool, mode Mode) (*gleann.PluginManager, func()
 	return pm, func() { pm.Close() }
 }
 
+// ensureAudioPlugin starts the registered audio transcription plugin on demand
+// before an audio file is transcribed. The manager stops it again when the
+// read finishes. It is a no-op for other media, when the plugin is already
+// healthy, or when GLEANN_AUDIO_PLUGIN_URL points somewhere else.
+func ensureAudioPlugin(pm *gleann.PluginManager, path string, p *printer) {
+	if pm == nil || multimodal.DetectMediaType(path) != multimodal.MediaTypeAudio {
+		return
+	}
+	plugin := pm.FindByCapability(gleann.CapAudioTranscription, "")
+	if plugin == nil || strings.TrimRight(plugin.URL, "/") != strings.TrimRight(os.Getenv("GLEANN_AUDIO_PLUGIN_URL"), "/") {
+		return
+	}
+	if err := pm.EnsurePluginRunning(plugin); err != nil {
+		p.Warnf("Warning: audio plugin %s is not running: %v\n", plugin.Name, err)
+	}
+}
+
 func workerCount() int {
 	n := runtime.NumCPU()
 	if n > 16 {
@@ -303,6 +320,7 @@ func readDocuments(ctx context.Context, dir string, ro ReadOptions, p *printer) 
 
 				// Try multimodal processing for media files (images, audio, video).
 				if mmProcessor != nil && mmProcessor.CanProcess(fe.Path) {
+					ensureAudioPlugin(pluginManager, fe.Path, p)
 					mr := mmProcessor.ProcessFile(fe.Path)
 					if mr.Error != nil {
 						p.Warnf("Warning: multimodal processing failed for %s: %v\n", filepath.Base(fe.Path), mr.Error)
@@ -671,6 +689,7 @@ func readDocumentsForFiles(ctx context.Context, dir string, filePaths []string, 
 
 		// Multimodal processing (images, audio, video).
 		if mmProcessor != nil && mmProcessor.CanProcess(filePath) {
+			ensureAudioPlugin(pluginManager, filePath, p)
 			mr := mmProcessor.ProcessFile(filePath)
 			if mr.Error == nil {
 				if desc := strings.TrimSpace(mr.Description); desc != "" {

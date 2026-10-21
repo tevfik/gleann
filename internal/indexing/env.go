@@ -113,7 +113,23 @@ func NewMultimodalProcessor(ollamaHost, ollamaAPIKey, model string, out func(for
 		return nil
 	}
 	if model == "" {
-		return nil
+		// No model, but a registered audio transcription plugin can still
+		// index audio files on its own.
+		// The plugin registry may not have been consulted yet (readers do it
+		// later), so resolve the URL here when the env var is unset.
+		if os.Getenv("GLEANN_AUDIO_PLUGIN_URL") == "" {
+			if pm, _ := gleann.NewPluginManager(); pm != nil {
+				pm.ResolveMultimodalPluginEnv()
+			}
+		}
+		url := os.Getenv("GLEANN_AUDIO_PLUGIN_URL")
+		if url == "" || strings.EqualFold(url, "off") || strings.EqualFold(url, "none") {
+			return nil
+		}
+		if out != nil {
+			out("🎨 Audio indexing via transcription plugin (%s)\n", url)
+		}
+		return multimodal.NewPluginProcessor()
 	}
 	p := multimodal.NewProcessor(ollamaHost, model)
 	if ollamaAPIKey != "" {

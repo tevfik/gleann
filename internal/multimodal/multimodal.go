@@ -170,6 +170,22 @@ type Processor struct {
 	Model      string
 	Lang       string // "en" (default) or "tr" — Bug #10
 	APIKey     string // optional Ollama API key (Bearer); defaults to OLLAMA_API_KEY
+
+	// PluginOnly marks a processor created without a model: it handles only
+	// audio, and only through the transcription plugin named by
+	// GLEANN_AUDIO_PLUGIN_URL.
+	PluginOnly bool
+}
+
+// NewPluginProcessor returns an audio-only processor that needs no model.
+func NewPluginProcessor() *Processor {
+	return &Processor{Lang: "en", PluginOnly: true}
+}
+
+// audioPluginOnly reports whether this processor may transcribe path via the
+// audio plugin without any model.
+func (p *Processor) audioPluginOnly(path string) bool {
+	return p.PluginOnly && DetectMediaType(path) == MediaTypeAudio && os.Getenv("GLEANN_AUDIO_PLUGIN_URL") != ""
 }
 
 // NewProcessor creates a multimodal processor.
@@ -204,7 +220,7 @@ func (p *Processor) ProcessFile(path string) ProcessResult {
 		MediaType: DetectMediaType(path),
 	}
 
-	if p.Model == "" {
+	if p.Model == "" && !p.audioPluginOnly(path) {
 		result.Error = fmt.Errorf("no multimodal model configured; set GLEANN_MULTIMODAL_MODEL or pass --multimodal-model")
 		return result
 	}
@@ -213,7 +229,11 @@ func (p *Processor) ProcessFile(path string) ProcessResult {
 	// + model + prompt-version + lang) and short-circuit on hit. Videos and
 	// GIFs are intentionally fingerprinted on the source path so that the
 	// derived frames re-use the same cache slot across runs.
-	fp, _ := fileFingerprint(path, p.Model, p.Lang)
+	fpModel := p.Model
+	if p.Model == "" {
+		fpModel = "audio-plugin:" + os.Getenv("GLEANN_AUDIO_PLUGIN_URL")
+	}
+	fp, _ := fileFingerprint(path, fpModel, p.Lang)
 	if cd, ok := loadCached(fp); ok {
 		result.Description = cd.Description
 		return result
@@ -337,7 +357,10 @@ func (p *Processor) ProcessFile(path string) ProcessResult {
 
 // CanProcess returns true if the processor is configured and the file is multimodal.
 func (p *Processor) CanProcess(path string) bool {
-	return p.Model != "" && IsMultimodal(path)
+	if p.Model == "" {
+		return p.audioPluginOnly(path)
+	}
+	return IsMultimodal(path)
 }
 
 // descriptionPrompt is a back-compat wrapper used by older tests and any

@@ -1,6 +1,8 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/tevfik/gleann/modules/chunking"
@@ -252,4 +254,30 @@ func TestIsCodeExtension(t *testing.T) {
 			t.Errorf("isCodeExtension(%q) = true, want false", ext)
 		}
 	}
+}
+
+func TestApplySavedConfig_EnvIndexDirBeatsSavedConfig(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	if err := os.MkdirAll(filepath.Join(home, ".gleann"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, ".gleann", "config.json"), []byte(`{"index_dir":"/saved/dir","completed":true}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GLEANN_INDEX_DIR", "/env/dir")
+	if got := savedIndexDir(); got != "/env/dir" {
+		t.Fatalf("IndexDir = %q, GLEANN_INDEX_DIR must win over saved config", got)
+	}
+	t.Setenv("GLEANN_INDEX_DIR", "")
+	if got := savedIndexDir(); got != "/saved/dir" {
+		t.Fatalf("IndexDir = %q, saved config should apply without env", got)
+	}
+}
+
+func savedIndexDir() string {
+	cfg := getConfig(nil)
+	applySavedConfig(&cfg, nil)
+	return cfg.IndexDir
 }

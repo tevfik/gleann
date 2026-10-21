@@ -9,7 +9,18 @@ package gleann
 #cgo windows LDFLAGS: ${SRCDIR}/../../ext/bitllm.c/build/libbitllm.a -lm
 #include "eif_llm.h"
 #include <stdlib.h>
+#include <string.h>
 #include <stdint.h>
+#include <omp.h>
+
+static int c_eif_count_tokens(eif_llm_t *llm, const char *text) {
+    int cap = (int)strlen(text) + 16;
+    int32_t *buf = (int32_t *)malloc((size_t)cap * sizeof(int32_t));
+    if (!buf) return -1;
+    int n = eif_bpe_tokenizer_encode(&llm->tokenizer, text, 0, 0, buf, cap);
+    free(buf);
+    return n;
+}
 
 extern void goEIFChatTokenCallback(char *piece, int token_id, uintptr_t handle_val);
 
@@ -28,6 +39,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"runtime/cgo"
 	"strings"
 	"sync"
@@ -109,6 +121,10 @@ func getOrLoadEIFLLM(modelPath string) (*eifLLMInstance, error) {
 		return inst, nil
 	}
 
+	if err := CheckEIFLLMModel(modelPath); err != nil {
+		return nil, err
+	}
+
 	inst := &eifLLMInstance{path: modelPath}
 	cPath := C.CString(modelPath)
 	defer C.free(unsafe.Pointer(cPath))
@@ -120,6 +136,76 @@ func getOrLoadEIFLLM(modelPath string) (*eifLLMInstance, error) {
 
 	eifLLMInstances[modelPath] = inst
 	return inst, nil
+}
+
+// eifThreadsOnce limits OpenMP to a sane worker count once. bitllm-run does the same
+// (8 threads, or the fast cores); left unset, libgomp spawns one thread per logical CPU,
+// which on hybrid P+E CPUs oversubscribes the decode GEMVs and makes generation crawl.
+var eifThreadsOnce sync.Once
+
+func limitEIFThreads() {
+	eifThreadsOnce.Do(func() {
+		if os.Getenv("OMP_NUM_THREADS") != "" {
+			return
+		}
+		n := runtime.NumCPU()
+		if n > 8 {
+			n = 8
+		}
+		C.omp_set_num_threads(C.int(n))
+	})
+}
+
+// eifRepeatPenalty returns the repetition penalty for the EIF runtime. The generic
+// chat default (1.1) penalises tokens copied from the retrieved context, which garbles
+// RAG answers (numbers, identifiers); bitllm-run defaults to 1.0, so do the same unless
+// the user asked for a penalty explicitly.
+func eifRepeatPenalty(configured float64) float32 {
+	if os.Getenv("GLEANN_REPEAT_PENALTY") == "" && os.Getenv("GLEANN_REPETITION_PENALTY") == "" {
+		return 1.0
+	}
+	if configured <= 0 {
+		return 1.0
+	}
+	return float32(configured)
+}
+
+// eifPromptTokenBudget is the largest prompt bitllm.c accepts: eif_llm_generate tokenizes
+// into a fixed 2048-token buffer and silently drops the rest, which cuts off the question and
+// the assistant turn marker, so the model just continues the retrieved context.
+const eifPromptTokenBudget = 2048 - 16
+
+func shrinkRunes(s string, keepRatio float64) string {
+	r := []rune(s)
+	return string(r[:int(float64(len(r))*keepRatio)])
+}
+
+// fitEIFMessages trims messages until the formatted prompt fits the token budget: oldest
+// history turns go first, then the retrieved context ("Context: ... Question: ...") is cut
+// from its end so the system prompt and the question always survive.
+func fitEIFMessages(inst *eifLLMInstance, messages []ChatMessage) []ChatMessage {
+	count := func(ms []ChatMessage) int {
+		cp := C.CString(formatEIFPrompt(ms))
+		defer C.free(unsafe.Pointer(cp))
+		return int(C.c_eif_count_tokens(&inst.llm, cp))
+	}
+	msgs := append([]ChatMessage(nil), messages...)
+	for count(msgs) > eifPromptTokenBudget && len(msgs) > 2 {
+		msgs = append(msgs[:1], msgs[2:]...)
+	}
+	const sep = "\n\nQuestion:"
+	for count(msgs) > eifPromptTokenBudget {
+		last := &msgs[len(msgs)-1]
+		head, tail := last.Content, ""
+		if i := strings.LastIndex(last.Content, sep); i > 0 {
+			head, tail = last.Content[:i], last.Content[i:]
+		}
+		if len([]rune(head)) < 200 {
+			break
+		}
+		last.Content = shrinkRunes(head, 0.85) + "\n[...truncated...]" + tail
+	}
+	return msgs
 }
 
 func formatEIFPrompt(messages []ChatMessage) string {
@@ -152,9 +238,10 @@ func (c *LeannChat) chatEIFStream(ctx context.Context, messages []ChatMessage, c
 	inst.mu.Lock()
 	defer inst.mu.Unlock()
 
+	limitEIFThreads()
 	C.eif_llm_reset(&inst.llm)
 
-	prompt := formatEIFPrompt(messages)
+	prompt := formatEIFPrompt(fitEIFMessages(inst, messages))
 	cPrompt := C.CString(prompt)
 	defer C.free(unsafe.Pointer(cPrompt))
 
@@ -172,11 +259,7 @@ func (c *LeannChat) chatEIFStream(ctx context.Context, messages []ChatMessage, c
 	cfg.temperature = C.float(temp)
 	cfg.top_p = 0.9
 
-	rep := float32(c.config.RepeatPenalty)
-	if rep <= 0 {
-		rep = 1.15
-	}
-	cfg.repetition_penalty = C.float(rep)
+	cfg.repetition_penalty = C.float(eifRepeatPenalty(c.config.RepeatPenalty))
 	cfg.eos_token_id = -1
 	cfg.kv_type = 0
 	cfg.use_gpu = false

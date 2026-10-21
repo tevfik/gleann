@@ -272,7 +272,7 @@ func applySavedConfig(config *gleann.Config, args []string) {
 	if savedCfg.OpenAIBaseURL != "" && config.OpenAIBaseURL == "" {
 		config.OpenAIBaseURL = savedCfg.OpenAIBaseURL
 	}
-	if getFlag(args, "--index-dir") == "" && savedCfg.IndexDir != "" {
+	if getFlag(args, "--index-dir") == "" && os.Getenv("GLEANN_INDEX_DIR") == "" && savedCfg.IndexDir != "" {
 		config.IndexDir = savedCfg.IndexDir
 	}
 	// LLM settings from saved config.

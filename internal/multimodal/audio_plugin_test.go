@@ -100,3 +100,38 @@ func TestAudioRouting_NoPluginNonAudioModel(t *testing.T) {
 // formDataContentType is a tiny helper to read multipart content type in
 // case the multipart import is otherwise unused. Keeps go vet happy.
 var _ = multipart.NewWriter
+
+// A processor built without any model must still transcribe audio through the
+// plugin, and must ignore every other media type.
+func TestPluginOnlyProcessor_AudioOnly(t *testing.T) {
+	srv := stubSoundPlugin(t)
+	defer srv.Close()
+	t.Setenv("GLEANN_AUDIO_PLUGIN_URL", srv.URL)
+	t.Setenv("GLEANN_MULTIMODAL_CACHE_DIR", t.TempDir())
+
+	dir := t.TempDir()
+	wav := filepath.Join(dir, "talk.wav")
+	png := filepath.Join(dir, "pic.png")
+	for _, f := range []string{wav, png} {
+		if err := os.WriteFile(f, []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	p := NewPluginProcessor()
+	if !p.CanProcess(wav) {
+		t.Fatal("plugin-only processor should handle audio")
+	}
+	if p.CanProcess(png) {
+		t.Fatal("plugin-only processor must not claim images")
+	}
+	r := p.ProcessFile(wav)
+	if r.Error != nil || !strings.Contains(r.Description, "talk.wav") {
+		t.Fatalf("transcription failed: %v %q", r.Error, r.Description)
+	}
+
+	t.Setenv("GLEANN_AUDIO_PLUGIN_URL", "")
+	if p.CanProcess(wav) {
+		t.Fatal("without a plugin URL nothing is processable")
+	}
+}

@@ -44,6 +44,7 @@ func pluginAPI(t *testing.T, plugins map[string]string) *httptest.Server {
 	t.Helper()
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home) // os.UserHomeDir on Windows
 	var entries []string
 	for name, url := range plugins {
 		entries = append(entries, fmt.Sprintf(`{"name":%q,"url":%q}`, name, url))
