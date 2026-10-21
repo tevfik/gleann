@@ -68,6 +68,9 @@ type Server struct {
 	blockMem   *memory.Manager     // BBolt hierarchical memory blocks (pkg/memory)
 	bgManager  *background.Manager // Background task manager
 
+	pluginMu  sync.Mutex            // guards pluginMgr
+	pluginMgr *gleann.PluginManager // started lazily for plugin settings proxying
+
 	autoIndexer *background.AutoIndexer
 	aiMu        sync.Mutex // guards autoIndexer
 
@@ -280,6 +283,8 @@ func (s *Server) buildMux() *http.ServeMux {
 	mux.HandleFunc("GET /api/plugins", s.handleListPlugins)
 	mux.HandleFunc("POST /api/plugins/{name}/install", s.handleInstallPlugin)
 	mux.HandleFunc("DELETE /api/plugins/{name}", s.handleUninstallPlugin)
+	mux.HandleFunc("GET /api/plugins/{name}/settings", s.handlePluginSettings)
+	mux.HandleFunc("PUT /api/plugins/{name}/settings", s.handlePluginSettings)
 
 	// Models
 	mux.HandleFunc("POST /api/models/download", s.handleDownloadModel)
@@ -365,6 +370,7 @@ func (s *Server) Stop(ctx context.Context) error {
 	if s.bgManager != nil {
 		s.bgManager.Stop()
 	}
+	s.closePluginManager()
 	if s.graphPool != nil {
 		s.graphPool.closeAll()
 	}

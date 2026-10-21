@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Settings, Terminal, Activity, Sparkles, Database, AlertCircle } from 'lucide-react';
+import { PluginSettings } from './PluginSettings';
 
 // Providers that load a local GGUF file (embedded llama.cpp / EIF runtime).
 const isLocalGGUF = (provider?: string) => provider === 'llamacpp' || provider === 'eif';
@@ -14,6 +15,7 @@ export function System() {
   const [stats, setStats] = useState<any>(null);
   const [logs, setLogs] = useState<string[]>([]);
   const [plugins, setPlugins] = useState<any[]>([]);
+  const [configuring, setConfiguring] = useState<any>(null);
   const [serverVersion, setServerVersion] = useState<string>('Unknown');
   const [embeddingModels, setEmbeddingModels] = useState<string[]>([]);
   const [llmModels, setLlmModels] = useState<string[]>([]);
@@ -173,13 +175,8 @@ export function System() {
     }
   };
 
-  const handleConfigurePlugin = (p: any) => {
-    if (p.settings_cmd && p.settings_cmd.length > 0) {
-      alert(`This plugin requires terminal configuration.\nPlease run the following command in your terminal:\n\n${p.settings_cmd.join(' ')}`);
-    } else {
-      alert('This plugin does not have a web configuration interface.');
-    }
-  };
+  // The plugin describes its own settings form; PluginSettings renders it.
+  const handleConfigurePlugin = (p: any) => setConfiguring(p);
 
   const handleSaveConfig = async () => {
     setSavingConfig(true);
@@ -226,6 +223,7 @@ export function System() {
 
   return (
     <div className="flex-1 max-w-6xl mx-auto w-full px-4 pt-6 pb-24 z-10 relative">
+      {configuring && <PluginSettings plugin={configuring} onClose={() => setConfiguring(null)} />}
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-2xl font-bold text-white flex items-center gap-2">
           <Settings className="w-6 h-6 text-gray-400" /> System Management

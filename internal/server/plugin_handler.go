@@ -2,7 +2,10 @@ package server
 
 import (
 	"fmt"
+	"io"
 	"net/http"
+	"strings"
+	"time"
 
 	"github.com/tevfik/gleann/internal/background"
 	"github.com/tevfik/gleann/pkg/gleann"
@@ -113,4 +116,98 @@ func (s *Server) handleUninstallPlugin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "result": result})
+}
+
+// pluginManager returns the manager used to reach (and, when needed, start)
+// registered plugins for settings requests.
+func (s *Server) pluginManager() (*gleann.PluginManager, error) {
+	s.pluginMu.Lock()
+	defer s.pluginMu.Unlock()
+	if s.pluginMgr == nil {
+		m, err := gleann.NewPluginManager()
+		if err != nil {
+			return nil, err
+		}
+		s.pluginMgr = m
+	}
+	return s.pluginMgr, nil
+}
+
+// closePluginManager stops plugins this server had to start.
+func (s *Server) closePluginManager() {
+	s.pluginMu.Lock()
+	m := s.pluginMgr
+	s.pluginMgr = nil
+	s.pluginMu.Unlock()
+	if m != nil {
+		m.Close()
+	}
+}
+
+// handlePluginSettings proxies a plugin's own settings form so the web UI can
+// render and save it without knowing anything about the plugin:
+//
+//	GET /api/plugins/{name}/settings  -> the plugin's GET /settings (fields + values)
+//	PUT /api/plugins/{name}/settings  -> the plugin's PUT /settings ({"values":{...}})
+//
+// The plugin is started first when it is registered but not running. Only the
+// /settings path of the registered plugin URL is ever contacted.
+func (s *Server) handlePluginSettings(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	if err := gleann.ValidateName(name); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid plugin name: "+err.Error())
+		return
+	}
+	reg, err := gleann.LoadPlugins()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	var plugin *gleann.Plugin
+	for i := range reg.Plugins {
+		if reg.Plugins[i].Name == name {
+			plugin = &reg.Plugins[i]
+			break
+		}
+	}
+	if plugin == nil || plugin.URL == "" {
+		writeError(w, http.StatusNotFound, "plugin is not installed")
+		return
+	}
+
+	mgr, err := s.pluginManager()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if err := mgr.EnsurePluginRunning(plugin); err != nil {
+		writeError(w, http.StatusBadGateway, "plugin is not running and could not be started: "+err.Error())
+		return
+	}
+
+	var body io.Reader
+	if r.Method == http.MethodPut {
+		body = http.MaxBytesReader(w, r.Body, 1<<20)
+	}
+	req, err := http.NewRequestWithContext(r.Context(), r.Method, strings.TrimRight(plugin.URL, "/")+"/settings", body)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	resp, err := (&http.Client{Timeout: 15 * time.Second}).Do(req)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "plugin request failed: "+err.Error())
+		return
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound {
+		writeError(w, http.StatusNotImplemented, "this plugin has no web-editable settings")
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(resp.StatusCode)
+	_, _ = io.Copy(w, io.LimitReader(resp.Body, 4<<20))
 }

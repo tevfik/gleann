@@ -146,6 +146,34 @@ Extracts content from a file.
 }
 ```
 
+### `GET /settings` and `PUT /settings` (optional)
+
+A plugin that wants to be configurable from the Web UI (**System → Plugins → Configure**)
+describes its own settings form; gleann renders it without knowing anything about the
+plugin. Advertise it in `/info` with `"settings": {"path": "/settings", "schema_version": 1}`.
+
+```
+GET /settings
+→ {"schema_version":1,"title":"…","restart_note":"…","fields":[
+    {"key":"language","label":"Language","type":"select","group":"Recognition",
+     "help":"…","options":[{"value":"tr","label":"Türkçe"}],"value":"tr","default":""}]}
+
+PUT /settings   Content-Type: application/json
+{"values":{"language":"en"}}
+→ 200 {"saved":["language"],"restart_required":true}
+→ 422 {"error":"invalid settings; nothing was saved","errors":{"hotkey":"use keys joined by +"}}
+```
+
+Field `type` is `select` (value must be one of `options`), `text`, `path`
+(free text; `options` are suggestions) or `number` (`min`/`max`). The Web UI sends only
+the fields the user changed, and a request that fails validation must change nothing.
+`PUT` must insist on `Content-Type: application/json` and, off loopback, an access token.
+
+gleann exposes this as `GET|PUT /api/plugins/{name}/settings` and starts the plugin first
+if it is registered but not running. A plugin without `/settings` answers `501`, and the
+Web UI shows its terminal command (`settings_cmd`) instead. `gleann-plugin-sound` is the
+reference implementation (`internal/httpserver/settings.go`).
+
 ## Creating a Plugin
 
 A plugin can be written in any language. It must:
