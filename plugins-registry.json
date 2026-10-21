@@ -23,10 +23,10 @@
   {
     "name": "gleann-plugin-sound",
     "icon": "🔊",
-    "description": "Speech-to-text via whisper.cpp / ONNX. Auto-discovered by the multimodal pipeline.",
+    "description": "Local speech-to-text: transcribes audio/video during index builds, plus live dictation, a live WebSocket and speaker names. Settings are editable from the Web UI.",
     "repo_url": "https://github.com/tevfik/gleann-plugin-sound",
     "language": "go (whisper.cpp / onnxruntime)",
-    "extensions": [".wav", ".mp3", ".flac", ".ogg", ".m4a", ".webm", ".mp4", ".mkv"],
+    "extensions": [".wav", ".mp3", ".flac", ".ogg", ".opus", ".m4a", ".aac", ".wma", ".webm", ".mp4", ".mkv", ".avi"],
     "has_settings": true,
     "settings_cmd": ["gleann-plugin-sound", "tui"],
     "version": "1.0.0"

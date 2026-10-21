@@ -56,10 +56,10 @@ var defaultCatalog = []PluginMeta{
 	{
 		Name:        "gleann-plugin-sound",
 		Icon:        "🎙️",
-		Description: "Audio and video transcription via local Whisper models. Extracts spoken audio into indexed text passages.",
+		Description: "Local speech-to-text: transcribes audio/video during index builds, plus live dictation, a live WebSocket and speaker names. Settings are editable from the Web UI.",
 		RepoURL:     "https://github.com/tevfik/gleann-plugin-sound",
 		Language:    "go (whisper.cpp / onnxruntime)",
-		Extensions:  []string{".wav", ".mp3", ".flac", ".ogg", ".m4a", ".webm", ".mp4", ".mkv"},
+		Extensions:  []string{".wav", ".mp3", ".flac", ".ogg", ".opus", ".m4a", ".aac", ".wma", ".webm", ".mp4", ".mkv", ".avi"},
 		HasSettings: true,
 		SettingsCmd: []string{"gleann-plugin-sound", "tui"},
 	},
