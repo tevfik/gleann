@@ -69,7 +69,10 @@ type PluginManager struct {
 	// returns. Every started process is reaped by a dedicated goroutine so
 	// plugins that exit on their own never linger as zombies.
 	exited map[*exec.Cmd]chan struct{}
-	mu     sync.Mutex
+	// declared remembers each plugin's /health timeout: a plugin busy with a
+	// long conversion may be too slow to answer the next health probe.
+	declared map[string]int
+	mu       sync.Mutex
 }
 
 // pluginStartTimeout bounds how long EnsurePluginRunning waits for an
@@ -344,6 +347,8 @@ type PluginHealth struct {
 	Ready         bool   `json:"ready"`
 	SchemaVersion int    `json:"schema_version"`
 	Version       string `json:"version"`
+	// Timeout is the longest request the plugin says it may need, in seconds.
+	Timeout int `json:"timeout,omitempty"`
 }
 
 // PingPlugin issues a GET /health with a short timeout and returns the
@@ -369,6 +374,29 @@ func (m *PluginManager) PingPlugin(p *Plugin) (*PluginHealth, error) {
 		h.Status = "ok"
 	}
 	return &h, nil
+}
+
+// requestTimeout returns the HTTP timeout in seconds for one /convert call. The
+// registry value is written at install time and goes stale: a plugin that
+// gained OCR still carries the old 120 s, which kills every multi-page scan. The
+// plugin's own /health timeout wins when it is larger.
+func (m *PluginManager) requestTimeout(p *Plugin) int {
+	timeout := DefaultPluginTimeout
+	if p.Timeout > 0 {
+		timeout = p.Timeout
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if h, err := m.PingPlugin(p); err == nil {
+		if m.declared == nil {
+			m.declared = map[string]int{}
+		}
+		m.declared[p.Name] = h.Timeout
+	}
+	if d := m.declared[p.Name]; d > timeout {
+		timeout = d
+	}
+	return timeout
 }
 
 // FindDocumentExtractor returns the highest-priority plugin capable of extracting the given extension.
@@ -609,11 +637,7 @@ func (m *PluginManager) processRaw(plugin *Plugin, filePath string) (map[string]
 	}
 	req.Header.Set("Content-Type", writer.FormDataContentType())
 
-	timeout := DefaultPluginTimeout
-	if plugin.Timeout > 0 {
-		timeout = plugin.Timeout
-	}
-	client := &http.Client{Timeout: time.Duration(timeout) * time.Second}
+	client := &http.Client{Timeout: time.Duration(m.requestTimeout(plugin)) * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("plugin request failed: %w", err)
