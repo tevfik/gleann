@@ -198,7 +198,7 @@ func readDocuments(ctx context.Context, dir string, ro ReadOptions, p *printer) 
 
 				// If a plugin handles this extension, use structured extraction.
 				pluginSucceeded := false
-				if pluginManager != nil && !((ext == ".pdf" || multimodal.IsMultimodal(fe.Path)) && mmProcessor != nil) {
+				if pluginManager != nil && !(((ext == ".pdf" && visionPDFEnabled(mmProcessor)) || multimodal.IsMultimodal(fe.Path)) && mmProcessor != nil) {
 					if plugin := pluginManager.FindDocumentExtractor(ext); plugin != nil {
 						pResult, perr := pluginManager.ProcessStructured(plugin, fe.Path)
 						if perr != nil {
@@ -609,7 +609,7 @@ func readDocumentsForFiles(ctx context.Context, dir string, filePaths []string, 
 		}
 
 		// Plugin extraction.
-		if pluginManager != nil && !(ext == ".pdf" && mmProcessor != nil) {
+		if pluginManager != nil && !(ext == ".pdf" && visionPDFEnabled(mmProcessor)) {
 			if plugin := pluginManager.FindDocumentExtractor(ext); plugin != nil {
 				pResult, perr := pluginManager.ProcessStructured(plugin, filePath)
 				if perr == nil {
@@ -766,4 +766,11 @@ func readDocumentsForFiles(ctx context.Context, dir string, filePaths []string, 
 	}
 
 	return allItems, pluginDocs, records, nil
+}
+
+// visionPDFEnabled reports whether PDFs go through the vision model. A
+// processor without a model cannot analyse PDFs, so it must not keep a working
+// document plugin from reading them.
+func visionPDFEnabled(p *multimodal.Processor) bool {
+	return p != nil && p.Model != ""
 }
