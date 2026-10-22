@@ -543,6 +543,9 @@ func (s *LeannSearcher) Search(ctx context.Context, query string, opts ...Search
 		if err != nil {
 			// Log but don't fail — fall back to original ranking.
 			fmt.Fprintf(os.Stderr, "reranker warning: %v (using original ranking)\n", err)
+			if len(results) > topK {
+				results = results[:topK]
+			}
 		} else {
 			results = reranked
 		}

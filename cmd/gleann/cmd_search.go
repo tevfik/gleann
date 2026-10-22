@@ -28,6 +28,7 @@ Options:
   --all                   Search across all existing indexes
   --top-k <N>             Number of top results to return (default: 5)
   --rerank                Rerank results with cross-encoder
+  --rerank-url <url>      Rerank through a /v1/rerank server (e.g. llama-server --reranking)
   --json                  Output results as JSON
   -h, --help              Show this help message
 
@@ -83,18 +84,7 @@ Examples:
 
 	// Set up reranker if --rerank is specified.
 	if hasFlag(args, "--rerank") {
-		rerankModel := getFlag(args, "--rerank-model")
-		if rerankModel == "" {
-			rerankModel = "bge-reranker-v2-m3"
-		}
-		rerankerCfg := gleann.RerankerConfig{
-			Provider: gleann.RerankerProvider(config.EmbeddingProvider),
-			Model:    rerankModel,
-			BaseURL:  config.OllamaHost,
-		}
-		if rerankerCfg.Provider == gleann.RerankerOllama {
-			rerankerCfg.APIKey = config.APIKeyForProvider("ollama")
-		}
+		rerankerCfg := rerankerConfigFromFlags(config, args)
 		searcher.SetReranker(gleann.NewReranker(rerankerCfg))
 		config.SearchConfig.UseReranker = true
 	}
@@ -223,4 +213,27 @@ Examples:
 			fmt.Println()
 		}
 	}
+}
+
+// rerankerConfigFromFlags builds the reranker config for --rerank. With
+// --rerank-url the reranker is any server speaking /v1/rerank (llama-server
+// --reranking, Jina-compatible); otherwise the embedding provider is reused,
+// which only works for providers that implement reranking.
+func rerankerConfigFromFlags(config gleann.Config, args []string) gleann.RerankerConfig {
+	model := getFlag(args, "--rerank-model")
+	if model == "" {
+		model = "bge-reranker-v2-m3"
+	}
+	if url := getFlag(args, "--rerank-url"); url != "" {
+		return gleann.RerankerConfig{Provider: gleann.RerankerJina, Model: model, BaseURL: url}
+	}
+	cfg := gleann.RerankerConfig{
+		Provider: gleann.RerankerProvider(config.EmbeddingProvider),
+		Model:    model,
+		BaseURL:  config.OllamaHost,
+	}
+	if cfg.Provider == gleann.RerankerOllama {
+		cfg.APIKey = config.APIKeyForProvider("ollama")
+	}
+	return cfg
 }

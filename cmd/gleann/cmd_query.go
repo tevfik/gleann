@@ -736,18 +736,7 @@ func createAskSearcher(ctx context.Context, name string, args []string, config g
 		}
 
 		if hasFlag(args, "--rerank") {
-			rerankModel := getFlag(args, "--rerank-model")
-			if rerankModel == "" {
-				rerankModel = "bge-reranker-v2-m3"
-			}
-			rerankerCfg := gleann.RerankerConfig{
-				Provider: gleann.RerankerProvider(config.EmbeddingProvider),
-				Model:    rerankModel,
-				BaseURL:  config.OllamaHost,
-			}
-			if rerankerCfg.Provider == gleann.RerankerOllama {
-				rerankerCfg.APIKey = config.APIKeyForProvider("ollama")
-			}
+			rerankerCfg := rerankerConfigFromFlags(config, args)
 			s.SetReranker(gleann.NewReranker(rerankerCfg))
 			config.SearchConfig.UseReranker = true
 		}

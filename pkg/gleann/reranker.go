@@ -239,14 +239,10 @@ func (r *CrossEncoderReranker) ollamaEmbed(ctx context.Context, texts []string) 
 // ── Jina Reranker API ──────────────────────────────────────────
 
 type jinaRerankRequest struct {
-	Model     string         `json:"model"`
-	Query     string         `json:"query"`
-	TopN      int            `json:"top_n,omitempty"`
-	Documents []jinaDocument `json:"documents"`
-}
-
-type jinaDocument struct {
-	Text string `json:"text"`
+	Model     string   `json:"model"`
+	Query     string   `json:"query"`
+	TopN      int      `json:"top_n,omitempty"`
+	Documents []string `json:"documents"` // plain strings: accepted by Jina and by llama-server
 }
 
 type jinaRerankResponse struct {
@@ -259,9 +255,9 @@ type jinaResult struct {
 }
 
 func (r *CrossEncoderReranker) rerankJina(ctx context.Context, query string, results []SearchResult, topN int) ([]SearchResult, error) {
-	docs := make([]jinaDocument, len(results))
+	docs := make([]string, len(results))
 	for i, res := range results {
-		docs[i] = jinaDocument{Text: res.Text}
+		docs[i] = res.Text
 	}
 
 	reqBody := jinaRerankRequest{
@@ -278,7 +274,10 @@ func (r *CrossEncoderReranker) rerankJina(ctx context.Context, query string, res
 		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+r.config.APIKey)
+	// Self-hosted servers (llama-server --reranking) need no key.
+	if r.config.APIKey != "" {
+		req.Header.Set("Authorization", "Bearer "+r.config.APIKey)
+	}
 
 	resp, err := r.client.Do(req)
 	if err != nil {
@@ -312,6 +311,10 @@ func (r *CrossEncoderReranker) rerankJina(ctx context.Context, query string, res
 		return reranked[i].Score > reranked[j].Score
 	})
 
+	// Not every server honours top_n (llama-server returns every document).
+	if topN > 0 && len(reranked) > topN {
+		reranked = reranked[:topN]
+	}
 	return reranked, nil
 }
 
