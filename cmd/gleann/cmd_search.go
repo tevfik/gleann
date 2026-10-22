@@ -29,6 +29,7 @@ Options:
   --top-k <N>             Number of top results to return (default: 5)
   --rerank                Rerank results with cross-encoder
   --rerank-url <url>      Rerank through a /v1/rerank server (e.g. llama-server --reranking)
+  --rerank-pool <N>       Candidates sent to the reranker (default: max(4*top-k, 50))
   --json                  Output results as JSON
   -h, --help              Show this help message
 
@@ -104,6 +105,11 @@ Examples:
 	} else if alphaStr := getFlag(args, "--hybrid-alpha"); alphaStr != "" {
 		if alpha, err := strconv.ParseFloat(alphaStr, 32); err == nil {
 			searchOpts = append(searchOpts, gleann.WithHybridAlpha(float32(alpha)))
+		}
+	}
+	if v := getFlag(args, "--rerank-pool"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			searchOpts = append(searchOpts, gleann.WithRerankPool(n))
 		}
 	}
 	if hasFlag(args, "--one-per-file") {

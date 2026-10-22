@@ -258,6 +258,9 @@ func (s *LeannSearcher) Search(ctx context.Context, query string, opts ...Search
 		if retrieveK < 50 {
 			retrieveK = 50
 		}
+		if searchOpts.RerankPool > 0 {
+			retrieveK = max(searchOpts.RerankPool, topK)
+		}
 	}
 	if searchOpts.OnePerFile && retrieveK < topK*4 {
 		retrieveK = topK * 4
@@ -751,6 +754,14 @@ func WithMetadataFilters(filters []MetadataFilter, logic ...string) SearchOption
 		if len(logic) > 0 {
 			c.FilterLogic = logic[0]
 		}
+	}
+}
+
+// WithRerankPool sets how many stage-1 candidates the reranker scores (default
+// max(4*top-k, 50)); a smaller pool is faster on a CPU-only reranker.
+func WithRerankPool(n int) SearchOption {
+	return func(c *SearchConfig) {
+		c.RerankPool = n
 	}
 }
 

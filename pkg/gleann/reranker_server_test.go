@@ -48,3 +48,11 @@ func TestRerankJinaCompatibleServer(t *testing.T) {
 		t.Fatalf("unexpected order: %+v", got)
 	}
 }
+
+func TestWithRerankPool(t *testing.T) {
+	var c SearchConfig
+	WithRerankPool(20)(&c)
+	if c.RerankPool != 20 {
+		t.Fatalf("RerankPool = %d, want 20", c.RerankPool)
+	}
+}

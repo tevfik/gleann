@@ -393,6 +393,10 @@ type SearchConfig struct {
 	// OnePerFile keeps only the best-scoring chunk of each file, so several
 	// chunks of one file do not use up top-k slots other files could fill.
 	OnePerFile bool `json:"one_per_file,omitempty"`
+
+	// RerankPool is the number of stage-1 candidates sent to the reranker.
+	// Zero means max(4*top-k, 50).
+	RerankPool int `json:"rerank_pool,omitempty"`
 }
 
 // DefaultConfig returns a Config with sensible defaults.

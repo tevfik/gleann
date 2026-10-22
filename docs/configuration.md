@@ -126,10 +126,44 @@ CLI flags override both defaults and config file values.
 --json                  # Output as JSON
 --rerank                # Enable two-stage reranking
 --rerank-model <model>  # Reranker model
+--rerank-pool <n>       # Candidates sent to the reranker (default: max(4*top-k, 50))
+--rerank-url <url>      # Rerank through a llama-server --reranking endpoint (/v1/rerank), e.g. http://127.0.0.1:8791
 --hybrid                # Hybrid search (vector + BM25)
 --graph                 # Enrich results with AST and/or hierarchical document context
 --ef-search <n>         # HNSW ef_search parameter
 ```
+
+### Reranking with a local cross-encoder
+
+`--rerank` re-scores the top candidates with a cross-encoder. With the `eif`
+embedding provider, point it at a `llama-server` started in reranking mode:
+
+```bash
+# bge-reranker-v2-m3 (GGUF). Add -ngl 99 for a GPU build; use -ngl 0 on CPU.
+llama-server -m bge-reranker-v2-m3-f16.gguf --reranking --port 8791 \
+  -np 1 -c 8192 -b 8192 -ub 8192 --host 127.0.0.1
+
+gleann search my-docs "query" --top-k 10 --rerank --rerank-url http://127.0.0.1:8791
+```
+
+With `--rerank` gleann fetches `max(top-k * 4, 50)` candidates (change with
+`--rerank-pool <n>`) and sends their full text to the reranker, then returns
+the best `top-k`.
+
+Measured on a 25-PDF document corpus (109 questions, digital and scanned PDFs,
+hybrid retrieval; answer found at rank N):
+
+| | R@1 | R@5 | R@10 | rerank time / query |
+|---|---|---|---|---|
+| hybrid, no rerank | 45.9 | 65.1 | 73.4 | – |
+| + bge-reranker-v2-m3 F16, RTX 4090 Laptop, 50 candidates | 65.1 | 86.2 | 89.0 | ~1.1 s |
+
+On CPU (16 threads, idle machine) 20 candidates take about 5 s with F16 and
+4.8 s with a Q8_0 quantisation (same quality; Q8_0 did not help on GPU). Cost
+is roughly linear in the number of candidates (~0.25 s each), so on CPU use
+`--rerank-pool 20` (about 5 s) or leave reranking off when latency matters.
+Questions and gold answers were generated with an LLM, so treat the absolute
+numbers as indicative.
 
 ### Build Options
 
