@@ -9,6 +9,14 @@ package embedding
 #cgo windows LDFLAGS: ${SRCDIR}/../../ext/bitllm.c/build/libbitllm.a -lm
 #include "eif_bert.h"
 #include <stdlib.h>
+#include <omp.h>
+
+// omp_set_num_threads only affects the calling thread, so it has to happen in
+// the same cgo call that runs the embedding.
+static inline int eif_embed_with_threads(eif_bert_t *bert, const char *text, float *out, int threads) {
+    omp_set_num_threads(threads);
+    return eif_bert_embed(bert, text, out);
+}
 
 static inline int eif_host_has_avx2(void) {
 #if (defined(__x86_64__) || defined(_M_X64)) && defined(__GNUC__)
@@ -163,6 +171,7 @@ func (e *EIFComputer) Compute(ctx context.Context, texts []string) ([][]float32,
 
 	dim := e.dim
 	results := make([][]float32, len(texts))
+	threads := C.int(embedThreads())
 
 	for i, txt := range texts {
 		select {
@@ -173,7 +182,7 @@ func (e *EIFComputer) Compute(ctx context.Context, texts []string) ([][]float32,
 
 		cText := C.CString(txt)
 		vec := make([]float32, dim)
-		rc := C.eif_bert_embed(&e.bert, cText, (*C.float)(unsafe.Pointer(&vec[0])))
+		rc := C.eif_embed_with_threads(&e.bert, cText, (*C.float)(unsafe.Pointer(&vec[0])), threads)
 		C.free(unsafe.Pointer(cText))
 
 		if rc != 0 {
