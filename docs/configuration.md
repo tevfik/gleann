@@ -165,6 +165,11 @@ is roughly linear in the number of candidates (~0.25 s each), so on CPU use
 Questions and gold answers were generated with an LLM, so treat the absolute
 numbers as indicative.
 
+On code (gleann's own Go source, 100 generated tasks per kind, file-level rank,
+granite-30m embeddings) reranking is not a clear win: natural-language
+descriptions R@1 68 -> 70, doc-comment queries 92 -> 100, but identifier-style
+queries drop from 92 to 65, so prefer it for documents and for prose queries.
+
 ### Build Options
 
 ```bash
