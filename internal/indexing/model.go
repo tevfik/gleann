@@ -2,8 +2,6 @@ package indexing
 
 import (
 	"fmt"
-	"path/filepath"
-	"strings"
 
 	"github.com/tevfik/gleann/pkg/gleann"
 )
@@ -24,16 +22,7 @@ func (e *ModelMismatchError) Error() string {
 		e.Index, e.IndexModel, e.SelectedModel, e.Index, e.SelectedModel, e.IndexModel)
 }
 
-// sameModel compares embedding model names loosely: an index records the name
-// it was built with, while the selected model may be given as a path or with a
-// .gguf suffix.
-func sameModel(a, b string) bool {
-	norm := func(s string) string {
-		s = strings.ToLower(filepath.Base(strings.TrimSpace(s)))
-		return strings.TrimSuffix(s, ".gguf")
-	}
-	return norm(a) == norm(b)
-}
+func sameModel(a, b string) bool { return gleann.SameEmbeddingModel(a, b) }
 
 // reconcileModel makes an update use the embedding model recorded in meta.
 // An inherited default that differs is replaced (with a note); an explicit

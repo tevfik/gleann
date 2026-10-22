@@ -389,6 +389,10 @@ type SearchConfig struct {
 
 	// Kind filters results by "code" or "docs". Empty or "all" includes both.
 	Kind string `json:"kind,omitempty"`
+
+	// OnePerFile keeps only the best-scoring chunk of each file, so several
+	// chunks of one file do not use up top-k slots other files could fill.
+	OnePerFile bool `json:"one_per_file,omitempty"`
 }
 
 // DefaultConfig returns a Config with sensible defaults.

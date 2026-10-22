@@ -116,6 +116,9 @@ Examples:
 			searchOpts = append(searchOpts, gleann.WithHybridAlpha(float32(alpha)))
 		}
 	}
+	if hasFlag(args, "--one-per-file") {
+		searchOpts = append(searchOpts, gleann.WithOnePerFile(true))
+	}
 	if hasFlag(args, "--include-tests") {
 		searchOpts = append(searchOpts, gleann.WithIncludeTests(true))
 	}

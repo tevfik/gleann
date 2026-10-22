@@ -107,7 +107,7 @@ func (s *LeannSearcher) Load(ctx context.Context, name string) (retErr error) {
 
 	// Warn if the current embedding model differs from what was used to build the index.
 	if s.embedder != nil && s.meta.EmbeddingModel != "" && s.embedder.ModelName() != "" {
-		if s.embedder.ModelName() != s.meta.EmbeddingModel && filepath.Base(s.embedder.ModelName()) != filepath.Base(s.meta.EmbeddingModel) {
+		if !SameEmbeddingModel(s.embedder.ModelName(), s.meta.EmbeddingModel) {
 			log.Printf("⚠  WARNING: Index %q was built with embedding model %q (%d dims) "+
 				"but current config uses %q — search results will be incorrect! "+
 				"To migrate to the new model, run: gleann index rebuild %s --docs <dir>",
@@ -259,6 +259,9 @@ func (s *LeannSearcher) Search(ctx context.Context, query string, opts ...Search
 			retrieveK = 50
 		}
 	}
+	if searchOpts.OnePerFile && retrieveK < topK*4 {
+		retrieveK = topK * 4
+	}
 	if len(searchOpts.MetadataFilters) > 0 {
 		if retrieveK < topK*4 {
 			retrieveK = topK * 4
@@ -280,6 +283,9 @@ func (s *LeannSearcher) Search(ctx context.Context, query string, opts ...Search
 				engine.Logic = searchOpts.FilterLogic
 			}
 			results = engine.FilterResults(results)
+		}
+		if searchOpts.OnePerFile {
+			results = onePerFile(results)
 		}
 		if activeReranker != nil && searchOpts.UseReranker && len(results) > 0 {
 			return activeReranker.Rerank(ctx, query, results, topK)
@@ -520,6 +526,10 @@ func (s *LeannSearcher) Search(ctx context.Context, query string, opts ...Search
 		results = engine.FilterResults(results)
 	}
 
+	if searchOpts.OnePerFile {
+		results = onePerFile(results)
+	}
+
 	// Truncate to topK if not reranking (reranker handles topK internally).
 	if !(s.reranker != nil && searchOpts.UseReranker) {
 		if len(results) > topK {
@@ -739,6 +749,34 @@ func WithMetadataFilters(filters []MetadataFilter, logic ...string) SearchOption
 			c.FilterLogic = logic[0]
 		}
 	}
+}
+
+// WithOnePerFile keeps only the best chunk of each file in the results.
+func WithOnePerFile(enabled bool) SearchOption {
+	return func(c *SearchConfig) {
+		c.OnePerFile = enabled
+	}
+}
+
+// onePerFile keeps the first (best-ranked) result of every file, preserving
+// order. Results without file metadata are kept as they are.
+func onePerFile(results []SearchResult) []SearchResult {
+	seen := make(map[string]bool, len(results))
+	out := results[:0:0]
+	for _, r := range results {
+		f, _ := r.Metadata["file"].(string)
+		if f == "" {
+			f, _ = r.Metadata["source"].(string)
+		}
+		if f != "" {
+			if seen[f] {
+				continue
+			}
+			seen[f] = true
+		}
+		out = append(out, r)
+	}
+	return out
 }
 
 // WithIncludeTests enables or disables test inclusion without score demotion.
@@ -1015,4 +1053,15 @@ func (s *LeannSearcher) checkHealth(name string) {
 		"Repair it with: gleann index repair %s", name, count, maxID, name)
 	s.warnings = append(s.warnings, msg)
 	log.Printf("⚠  WARNING: %s", msg)
+}
+
+// SameEmbeddingModel compares embedding model names loosely: an index records
+// the name it was built with, while the configured model may be given as a
+// path or with a .gguf suffix.
+func SameEmbeddingModel(a, b string) bool {
+	norm := func(s string) string {
+		s = strings.ToLower(filepath.Base(strings.TrimSpace(s)))
+		return strings.TrimSuffix(s, ".gguf")
+	}
+	return norm(a) == norm(b)
 }
