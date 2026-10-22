@@ -40,6 +40,12 @@ func cmdBenchmark(args []string) {
 		}
 	}
 
+	// Mode G: generate a golden task set from a Go source tree.
+	if genDir := getFlag(args, "--gen-tasks"); genDir != "" {
+		runGenTasks(genDir, getFlag(args, "--kind"), getFlag(args, "--count"), outputFile)
+		return
+	}
+
 	// Mode 0: Agent-level task evaluation suite (T25)
 	if suite == "agent" || hasFlag(args, "--agent") {
 		runAgentBenchmark(asJSON, outputFile)
@@ -164,6 +170,33 @@ func runContextBenchmark(config gleann.Config, indexName, tasksFile string, topK
 		return paths, tokens, nil
 	})
 
+	// Strategy 4b: Hybrid at the default alpha (what `gleann search` uses)
+	// and a BM25-leaning alpha, to make the fusion weight measurable.
+	hybridWith := func(opts ...gleann.SearchOption) func(context.Context, string, int) ([]string, int, error) {
+		return func(ctx context.Context, query string, k int) ([]string, int, error) {
+			all := append([]gleann.SearchOption{gleann.WithTopK(k)}, opts...)
+			results, err := searcher.Search(ctx, query, all...)
+			if err != nil {
+				return nil, 0, err
+			}
+			paths, tokens := extractResults(results)
+			return paths, tokens, nil
+		}
+	}
+	runner.RegisterStrategy("Hybrid (α=0.7)", hybridWith(gleann.WithHybridAlpha(0.7)))
+	runner.RegisterStrategy("Hybrid (α=0.3)", hybridWith(gleann.WithHybridAlpha(0.3)))
+
+	// Strategy 4c: keep only the best chunk per file, so several chunks of one
+	// file do not use up top-k slots that other files could fill.
+	runner.RegisterStrategy("Hybrid (1 chunk/file)", func(ctx context.Context, query string, k int) ([]string, int, error) {
+		results, err := searcher.Search(ctx, query, gleann.WithTopK(k), gleann.WithOnePerFile(true))
+		if err != nil {
+			return nil, 0, err
+		}
+		paths, tokens := extractResults(results)
+		return paths, tokens, nil
+	})
+
 	// Strategy 5: GraphRAG (if graph exists)
 	if searcher.GraphDB() != nil {
 		runner.RegisterStrategy("GraphRAG", func(ctx context.Context, query string, k int) ([]string, int, error) {
@@ -200,6 +233,30 @@ func runContextBenchmark(config gleann.Config, indexName, tasksFile string, topK
 			fmt.Printf("📄 Report saved to %s\n", outputFile)
 		}
 	}
+}
+
+// runGenTasks writes generated retrieval tasks as JSON (stdout, or --output).
+func runGenTasks(dir, kind, count, outputFile string) {
+	n, _ := strconv.Atoi(count)
+	tasks, err := benchmark.GenerateGoTasks(dir, benchmark.GenOptions{Count: n, Kind: kind})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(1)
+	}
+	if len(tasks) == 0 {
+		fmt.Fprintln(os.Stderr, "error: no tasks could be generated (needs exported, documented Go declarations)")
+		os.Exit(1)
+	}
+	data, _ := json.MarshalIndent(tasks, "", "  ")
+	if outputFile == "" {
+		fmt.Println(string(data))
+		return
+	}
+	if err := os.WriteFile(outputFile, append(data, '\n'), 0o644); err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Printf("wrote %d tasks to %s\n", len(tasks), outputFile)
 }
 
 func getMetaStr(m map[string]any, key string) string {
@@ -452,7 +509,10 @@ Usage:
   # 2. SWE-Bench / ContextBench Retrieval Quality Evaluation:
   gleann bench --index <name> [--tasks <file.json>] [--top-k <n>] [--output <report.md>] [--json]
 
-  # 3. Token Reduction Analysis:
+  # 3. Generate a golden task set from a Go source tree:
+  gleann bench --gen-tasks <dir> [--kind doc|symbol] [--count <n>] [--output <tasks.json>]
+
+  # 4. Token Reduction Analysis:
   gleann benchmark --index <name> --docs <dir> [--top-k <n>]
 
 Options:
@@ -460,6 +520,9 @@ Options:
   --suite <name>      Evaluation suite: agent, contextbench
   --index <name>      Index name (required for retrieval benchmarks)
   --tasks <file>      SWE-Bench/ContextBench task file (optional, auto-generates if omitted)
+  --gen-tasks <dir>   Generate tasks from exported, documented Go declarations
+  --kind <k>          doc (doc-sentence query, default) or symbol (identifier query)
+  --count <n>         Number of generated tasks (default: 100)
   --docs <dir>        Source directory for token reduction analysis
   --top-k <n>         Number of retrieved passages (default: 10)
   --output <file>     Write markdown report to file

@@ -1,0 +1,980 @@
+[
+  {
+    "id": "nl-001",
+    "description": "how do we stop a user-supplied webhook URL from pointing at internal network addresses",
+    "query": "how do we stop a user-supplied webhook URL from pointing at internal network addresses",
+    "gold_files": [
+      "internal/server/webhook_validate.go"
+    ]
+  },
+  {
+    "id": "nl-002",
+    "description": "limit how many requests a single client address can make per second",
+    "query": "limit how many requests a single client address can make per second",
+    "gold_files": [
+      "internal/server/ratelimit.go"
+    ]
+  },
+  {
+    "id": "nl-003",
+    "description": "reject oversized request payloads before reading them",
+    "query": "reject oversized request payloads before reading them",
+    "gold_files": [
+      "internal/server/bodylimit.go"
+    ]
+  },
+  {
+    "id": "nl-004",
+    "description": "abort slow HTTP requests after a deadline",
+    "query": "abort slow HTTP requests after a deadline",
+    "gold_files": [
+      "internal/server/timeout.go"
+    ]
+  },
+  {
+    "id": "nl-005",
+    "description": "expose counters in the format scraped by monitoring systems",
+    "query": "expose counters in the format scraped by monitoring systems",
+    "gold_files": [
+      "internal/server/metrics_handler.go"
+    ]
+  },
+  {
+    "id": "nl-006",
+    "description": "keep opened indexes shared between requests and close them when nobody uses them",
+    "query": "keep opened indexes shared between requests and close them when nobody uses them",
+    "gold_files": [
+      "internal/server/searcher_cache.go"
+    ]
+  },
+  {
+    "id": "nl-007",
+    "description": "periodic housekeeping job that runs without user interaction on the server",
+    "query": "periodic housekeeping job that runs without user interaction on the server",
+    "gold_files": [
+      "internal/server/scheduler.go"
+    ]
+  },
+  {
+    "id": "nl-008",
+    "description": "machine-readable description of the HTTP API endpoints",
+    "query": "machine-readable description of the HTTP API endpoints",
+    "gold_files": [
+      "internal/server/openapi.go"
+    ]
+  },
+  {
+    "id": "nl-009",
+    "description": "group related functions of the code graph into clusters",
+    "query": "group related functions of the code graph into clusters",
+    "gold_files": [
+      "internal/server/a2a_graph_cgo.go"
+    ]
+  },
+  {
+    "id": "nl-010",
+    "description": "scoring how trustworthy a stored memory is based on evidence over time",
+    "query": "scoring how trustworthy a stored memory is based on evidence over time",
+    "gold_files": [
+      "pkg/memory/validity.go"
+    ]
+  },
+  {
+    "id": "nl-011",
+    "description": "condense old memory entries automatically using a language model",
+    "query": "condense old memory entries automatically using a language model",
+    "gold_files": [
+      "pkg/memory/summarizer.go"
+    ]
+  },
+  {
+    "id": "nl-012",
+    "description": "do memory consolidation while the user is idle",
+    "query": "do memory consolidation while the user is idle",
+    "gold_files": [
+      "pkg/memory/sleeptime.go"
+    ]
+  },
+  {
+    "id": "nl-013",
+    "description": "fall back to the HTTP service when the local memory database is locked by another process",
+    "query": "fall back to the HTTP service when the local memory database is locked by another process",
+    "gold_files": [
+      "pkg/memory/remote.go"
+    ]
+  },
+  {
+    "id": "nl-014",
+    "description": "retry a failing network call with growing delays",
+    "query": "retry a failing network call with growing delays",
+    "gold_files": [
+      "pkg/retry/retry.go"
+    ]
+  },
+  {
+    "id": "nl-015",
+    "description": "circuit breaker and backoff tuning for outbound calls",
+    "query": "circuit breaker and backoff tuning for outbound calls",
+    "gold_files": [
+      "pkg/retry/resilience.go"
+    ]
+  },
+  {
+    "id": "nl-016",
+    "description": "skip dependency and build output folders while walking a project",
+    "query": "skip dependency and build output folders while walking a project",
+    "gold_files": [
+      "pkg/walker/matcher.go"
+    ]
+  },
+  {
+    "id": "nl-017",
+    "description": "decide whether a file is code, prose or binary by looking at its content",
+    "query": "decide whether a file is code, prose or binary by looking at its content",
+    "gold_files": [
+      "pkg/walker/sniffer.go"
+    ]
+  },
+  {
+    "id": "nl-018",
+    "description": "find nested repositories listed in the git configuration so they can be excluded",
+    "query": "find nested repositories listed in the git configuration so they can be excluded",
+    "gold_files": [
+      "pkg/walker/submodules.go"
+    ]
+  },
+  {
+    "id": "nl-019",
+    "description": "remember which text was already converted to vectors so it is not computed twice",
+    "query": "remember which text was already converted to vectors so it is not computed twice",
+    "gold_files": [
+      "internal/embedding/cache.go"
+    ]
+  },
+  {
+    "id": "nl-020",
+    "description": "detect that the vector model changed and old vectors are no longer valid",
+    "query": "detect that the vector model changed and old vectors are no longer valid",
+    "gold_files": [
+      "internal/embedding/model_invalidation.go"
+    ]
+  },
+  {
+    "id": "nl-021",
+    "description": "run the embedding model inside the process on the CPU",
+    "query": "run the embedding model inside the process on the CPU",
+    "gold_files": [
+      "internal/embedding/eif.go"
+    ]
+  },
+  {
+    "id": "nl-022",
+    "description": "refuse to update an index that was built with a different embedding model",
+    "query": "refuse to update an index that was built with a different embedding model",
+    "gold_files": [
+      "internal/indexing/model.go"
+    ]
+  },
+  {
+    "id": "nl-023",
+    "description": "repair an index whose stored text is missing or out of sync",
+    "query": "repair an index whose stored text is missing or out of sync",
+    "gold_files": [
+      "internal/indexing/repair.go"
+    ]
+  },
+  {
+    "id": "nl-024",
+    "description": "choose between indexing only source code, only documents, or everything",
+    "query": "choose between indexing only source code, only documents, or everything",
+    "gold_files": [
+      "internal/indexing/mode.go"
+    ]
+  },
+  {
+    "id": "nl-025",
+    "description": "track which files changed on disk since the last scan",
+    "query": "track which files changed on disk since the last scan",
+    "gold_files": [
+      "internal/vault/tracker.go"
+    ]
+  },
+  {
+    "id": "nl-026",
+    "description": "react to file system events and refresh the index shortly after",
+    "query": "react to file system events and refresh the index shortly after",
+    "gold_files": [
+      "internal/vault/watcher.go"
+    ]
+  },
+  {
+    "id": "nl-027",
+    "description": "rank candidate passages again with a second, more accurate model",
+    "query": "rank candidate passages again with a second, more accurate model",
+    "gold_files": [
+      "pkg/gleann/reranker.go"
+    ]
+  },
+  {
+    "id": "nl-028",
+    "description": "restrict results by metadata fields such as path or tag",
+    "query": "restrict results by metadata fields such as path or tag",
+    "gold_files": [
+      "pkg/gleann/filter.go"
+    ]
+  },
+  {
+    "id": "nl-029",
+    "description": "search several indexes at once and merge the answers",
+    "query": "search several indexes at once and merge the answers",
+    "gold_files": [
+      "pkg/gleann/multi_searcher.go"
+    ]
+  },
+  {
+    "id": "nl-030",
+    "description": "limit how much text a search response may contain",
+    "query": "limit how much text a search response may contain",
+    "gold_files": [
+      "pkg/gleann/token_budget.go"
+    ]
+  },
+  {
+    "id": "nl-031",
+    "description": "shorten noisy command line output before it is shown to the model",
+    "query": "shorten noisy command line output before it is shown to the model",
+    "gold_files": [
+      "pkg/gleann/shellcompress.go"
+    ]
+  },
+  {
+    "id": "nl-032",
+    "description": "agent that reasons step by step and calls tools to answer a question",
+    "query": "agent that reasons step by step and calls tools to answer a question",
+    "gold_files": [
+      "pkg/gleann/react.go"
+    ]
+  },
+  {
+    "id": "nl-033",
+    "description": "how many tokens the selected chat model can accept",
+    "query": "how many tokens the selected chat model can accept",
+    "gold_files": [
+      "pkg/gleann/model_context.go"
+    ]
+  },
+  {
+    "id": "nl-034",
+    "description": "hide API keys and passwords when configuration is displayed",
+    "query": "hide API keys and passwords when configuration is displayed",
+    "gold_files": [
+      "pkg/gleann/config_secrets.go"
+    ]
+  },
+  {
+    "id": "nl-035",
+    "description": "pick the default nearest-neighbour engine depending on how the binary was compiled",
+    "query": "pick the default nearest-neighbour engine depending on how the binary was compiled",
+    "gold_files": [
+      "pkg/gleann/backend_default_hnsw.go"
+    ]
+  },
+  {
+    "id": "nl-036",
+    "description": "zero-dependency summary of a document taken from its most important sentences",
+    "query": "zero-dependency summary of a document taken from its most important sentences",
+    "gold_files": [
+      "pkg/gleann/summarizer.go"
+    ]
+  },
+  {
+    "id": "nl-037",
+    "description": "download and install an extension from a release page",
+    "query": "download and install an extension from a release page",
+    "gold_files": [
+      "pkg/gleann/plugin_installer.go"
+    ]
+  },
+  {
+    "id": "nl-038",
+    "description": "replace the running executable with a newer published version",
+    "query": "replace the running executable with a newer published version",
+    "gold_files": [
+      "pkg/gleann/selfupdate.go"
+    ]
+  },
+  {
+    "id": "nl-039",
+    "description": "record each indexed file together with a fingerprint of its contents",
+    "query": "record each indexed file together with a fingerprint of its contents",
+    "gold_files": [
+      "pkg/gleann/manifest.go"
+    ]
+  },
+  {
+    "id": "nl-040",
+    "description": "check that stored passages match what the vector index expects",
+    "query": "check that stored passages match what the vector index expects",
+    "gold_files": [
+      "pkg/gleann/index_health.go"
+    ]
+  },
+  {
+    "id": "nl-041",
+    "description": "find where a function is declared and show its signature and comments",
+    "query": "find where a function is declared and show its signature and comments",
+    "gold_files": [
+      "pkg/gleann/def.go"
+    ]
+  },
+  {
+    "id": "nl-042",
+    "description": "prevent a name from being too long or containing unsafe characters",
+    "query": "prevent a name from being too long or containing unsafe characters",
+    "gold_files": [
+      "pkg/gleann/names.go"
+    ]
+  },
+  {
+    "id": "nl-043",
+    "description": "authenticate to a hosted language model service with a bearer secret",
+    "query": "authenticate to a hosted language model service with a bearer secret",
+    "gold_files": [
+      "pkg/gleann/ollama_auth.go"
+    ]
+  },
+  {
+    "id": "nl-044",
+    "description": "split a long-running job into states such as pending, running and finished",
+    "query": "split a long-running job into states such as pending, running and finished",
+    "gold_files": [
+      "internal/background/task_fsm.go"
+    ]
+  },
+  {
+    "id": "nl-045",
+    "description": "rebuild the index in the background when files change",
+    "query": "rebuild the index in the background when files change",
+    "gold_files": [
+      "internal/background/auto_index.go"
+    ]
+  },
+  {
+    "id": "nl-046",
+    "description": "tool that lets an assistant ask many questions in one call",
+    "query": "tool that lets an assistant ask many questions in one call",
+    "gold_files": [
+      "internal/mcp/batch_ask.go"
+    ]
+  },
+  {
+    "id": "nl-047",
+    "description": "hide vendored directories and generated output from assistant search results",
+    "query": "hide vendored directories and generated output from assistant search results",
+    "gold_files": [
+      "internal/mcp/noise.go"
+    ]
+  },
+  {
+    "id": "nl-048",
+    "description": "show a short list first and fetch full content only on request",
+    "query": "show a short list first and fetch full content only on request",
+    "gold_files": [
+      "internal/mcp/search_progressive.go"
+    ]
+  },
+  {
+    "id": "nl-049",
+    "description": "store conversations on disk and list them later",
+    "query": "store conversations on disk and list them later",
+    "gold_files": [
+      "pkg/conversations/store.go"
+    ]
+  },
+  {
+    "id": "nl-050",
+    "description": "generate a short heading for a chat from its first messages",
+    "query": "generate a short heading for a chat from its first messages",
+    "gold_files": [
+      "pkg/conversations/summarizer.go"
+    ]
+  },
+  {
+    "id": "nl-051",
+    "description": "estimate roughly how many tokens a piece of text costs",
+    "query": "estimate roughly how many tokens a piece of text costs",
+    "gold_files": [
+      "pkg/gleann/tokengain.go"
+    ]
+  },
+  {
+    "id": "nl-052",
+    "description": "stop DNS rebinding when calling a customer-provided callback address",
+    "query": "stop DNS rebinding when calling a customer-provided callback address",
+    "gold_files": [
+      "internal/server/safe_http.go"
+    ]
+  },
+  {
+    "id": "nl-053",
+    "description": "estimate how long indexing will take before starting, using worst-case scheduling bounds",
+    "query": "estimate how long indexing will take before starting, using worst-case scheduling bounds",
+    "gold_files": [
+      "pkg/gleann/estimate.go"
+    ]
+  },
+  {
+    "id": "nl-054",
+    "description": "remove vectors whose source files were deleted from disk",
+    "query": "remove vectors whose source files were deleted from disk",
+    "gold_files": [
+      "pkg/gleann/reconcile.go"
+    ]
+  },
+  {
+    "id": "nl-055",
+    "description": "avoid flooding an AI agent transcript with too many progress lines",
+    "query": "avoid flooding an AI agent transcript with too many progress lines",
+    "gold_files": [
+      "pkg/gleann/progress_pacer.go"
+    ]
+  },
+  {
+    "id": "nl-056",
+    "description": "rank context items by combining several relevance signals into one score",
+    "query": "rank context items by combining several relevance signals into one score",
+    "gold_files": [
+      "pkg/gleann/context_field.go"
+    ]
+  },
+  {
+    "id": "nl-057",
+    "description": "read a file as a signature outline or a line range instead of the whole text",
+    "query": "read a file as a signature outline or a line range instead of the whole text",
+    "gold_files": [
+      "pkg/gleann/readmodes.go"
+    ]
+  },
+  {
+    "id": "nl-058",
+    "description": "expose indexes through an OpenAI style chat completions endpoint",
+    "query": "expose indexes through an OpenAI style chat completions endpoint",
+    "gold_files": [
+      "internal/server/proxy_handler.go"
+    ]
+  },
+  {
+    "id": "nl-059",
+    "description": "react when the client changes the set of allowed workspace folders",
+    "query": "react when the client changes the set of allowed workspace folders",
+    "gold_files": [
+      "internal/mcp/roots.go"
+    ]
+  },
+  {
+    "id": "nl-060",
+    "description": "run a shell command for the agent and compress its output",
+    "query": "run a shell command for the agent and compress its output",
+    "gold_files": [
+      "internal/mcp/shell_tools.go"
+    ]
+  },
+  {
+    "id": "nl-061",
+    "description": "skip source files whose content hash has not changed since the last index",
+    "query": "skip source files whose content hash has not changed since the last index",
+    "gold_files": [
+      "internal/graph/indexer/filehash.go"
+    ]
+  },
+  {
+    "id": "nl-062",
+    "description": "score how risky it is to change a symbol from its centrality and coupling",
+    "query": "score how risky it is to change a symbol from its centrality and coupling",
+    "gold_files": [
+      "internal/graph/community/risk.go"
+    ]
+  },
+  {
+    "id": "nl-063",
+    "description": "rank graph nodes by importance with a random-walk algorithm",
+    "query": "rank graph nodes by importance with a random-walk algorithm",
+    "gold_files": [
+      "internal/graph/community/pagerank.go"
+    ]
+  },
+  {
+    "id": "nl-064",
+    "description": "produce a compact tree summary of the codebase to paste into an LLM prompt",
+    "query": "produce a compact tree summary of the codebase to paste into an LLM prompt",
+    "gold_files": [
+      "internal/graph/community/repomap.go"
+    ]
+  },
+  {
+    "id": "nl-065",
+    "description": "track long-running background jobs and let users see their status",
+    "query": "track long-running background jobs and let users see their status",
+    "gold_files": [
+      "internal/background/manager.go"
+    ]
+  },
+  {
+    "id": "nl-066",
+    "description": "publish lifecycle notifications so plugins can react to indexing activity",
+    "query": "publish lifecycle notifications so plugins can react to indexing activity",
+    "gold_files": [
+      "internal/eventbus/eventbus.go"
+    ]
+  },
+  {
+    "id": "nl-067",
+    "description": "avoid asking the vision model again about an image that did not change",
+    "query": "avoid asking the vision model again about an image that did not change",
+    "gold_files": [
+      "internal/multimodal/cache.go"
+    ]
+  },
+  {
+    "id": "nl-068",
+    "description": "search several indexes at once and merge the hits by score",
+    "query": "search several indexes at once and merge the hits by score",
+    "gold_files": [
+      "pkg/gleann/multi_search.go",
+      "internal/mcp/multi_search.go",
+      "internal/server/multi_search_handler.go"
+    ]
+  },
+  {
+    "id": "nl-069",
+    "description": "detect added, edited and deleted files and update an existing index in place",
+    "query": "detect added, edited and deleted files and update an existing index in place",
+    "gold_files": [
+      "internal/indexing/sync.go"
+    ]
+  },
+  {
+    "id": "nl-070",
+    "description": "walk a directory and pick the files worth indexing while honoring ignore rules",
+    "query": "walk a directory and pick the files worth indexing while honoring ignore rules",
+    "gold_files": [
+      "internal/indexing/collect.go"
+    ]
+  },
+  {
+    "id": "nl-071",
+    "description": "load curated reference bundles described by a manifest file from a directory",
+    "query": "load curated reference bundles described by a manifest file from a directory",
+    "gold_files": [
+      "internal/packs/registry.go"
+    ]
+  },
+  {
+    "id": "nl-072",
+    "description": "enforce the allowed lifecycle transitions of an agent-to-agent task",
+    "query": "enforce the allowed lifecycle transitions of an agent-to-agent task",
+    "gold_files": [
+      "internal/a2a/task_fsm.go"
+    ]
+  },
+  {
+    "id": "nl-073",
+    "description": "refuse model files whose neural architecture the in-process runtime cannot run",
+    "query": "refuse model files whose neural architecture the in-process runtime cannot run",
+    "gold_files": [
+      "pkg/gleann/gguf_arch.go"
+    ]
+  },
+  {
+    "id": "nl-074",
+    "description": "detect a local model server and create a working configuration on first start",
+    "query": "detect a local model server and create a working configuration on first start",
+    "gold_files": [
+      "internal/autosetup/autosetup.go"
+    ]
+  },
+  {
+    "id": "nl-075",
+    "description": "restore call edges coming from unchanged files after their targets were re-indexed",
+    "query": "restore call edges coming from unchanged files after their targets were re-indexed",
+    "gold_files": [
+      "internal/graph/kuzu/incremental.go"
+    ]
+  },
+  {
+    "id": "nl-076",
+    "description": "list and clean up finished background jobs over HTTP",
+    "query": "list and clean up finished background jobs over HTTP",
+    "gold_files": [
+      "internal/server/tasks_handler.go"
+    ]
+  },
+  {
+    "id": "nl-077",
+    "description": "log every search made during a named work session into memory",
+    "query": "log every search made during a named work session into memory",
+    "gold_files": [
+      "internal/mcp/session_tools.go"
+    ]
+  },
+  {
+    "id": "nl-078",
+    "description": "check whether an installed plugin has a newer release and upgrade it",
+    "query": "check whether an installed plugin has a newer release and upgrade it",
+    "gold_files": [
+      "pkg/gleann/plugin_update.go"
+    ]
+  },
+  {
+    "id": "nl-079",
+    "description": "install the program as a system daemon on Linux, macOS or Windows",
+    "query": "install the program as a system daemon on Linux, macOS or Windows",
+    "gold_files": [
+      "internal/service/service.go"
+    ]
+  },
+  {
+    "id": "nl-080",
+    "description": "weight interfaces and decorators higher than ordinary helper functions depending on language",
+    "query": "weight interfaces and decorators higher than ordinary helper functions depending on language",
+    "gold_files": [
+      "internal/graph/indexer/heuristics.go"
+    ]
+  },
+  {
+    "id": "nl-081",
+    "description": "orchestrate chunking, embedding and storing to build a new index from documents",
+    "query": "orchestrate chunking, embedding and storing to build a new index from documents",
+    "gold_files": [
+      "pkg/gleann/builder.go"
+    ]
+  },
+  {
+    "id": "nl-082",
+    "description": "combine keyword scoring with dense similarity in one adapter",
+    "query": "combine keyword scoring with dense similarity in one adapter",
+    "gold_files": [
+      "pkg/gleann/bm25_adapter.go"
+    ]
+  },
+  {
+    "id": "nl-083",
+    "description": "store passage text and metadata in a local database with lookup by id",
+    "query": "store passage text and metadata in a local database with lookup by id",
+    "gold_files": [
+      "pkg/gleann/passage.go"
+    ]
+  },
+  {
+    "id": "nl-084",
+    "description": "extract text from office documents without external tools",
+    "query": "extract text from office documents without external tools",
+    "gold_files": [
+      "pkg/gleann/doc_native.go"
+    ]
+  },
+  {
+    "id": "nl-085",
+    "description": "convert documents to markdown by calling an external converter program",
+    "query": "convert documents to markdown by calling an external converter program",
+    "gold_files": [
+      "pkg/gleann/markitdown.go"
+    ]
+  },
+  {
+    "id": "nl-086",
+    "description": "find and load external plugin binaries and look them up by capability",
+    "query": "find and load external plugin binaries and look them up by capability",
+    "gold_files": [
+      "pkg/gleann/plugin.go"
+    ]
+  },
+  {
+    "id": "nl-087",
+    "description": "download the list of available plugins from the remote catalog",
+    "query": "download the list of available plugins from the remote catalog",
+    "gold_files": [
+      "pkg/gleann/plugin_catalog.go"
+    ]
+  },
+  {
+    "id": "nl-088",
+    "description": "describe video frames with a vision model",
+    "query": "describe video frames with a vision model",
+    "gold_files": [
+      "internal/multimodal/video.go"
+    ]
+  },
+  {
+    "id": "nl-089",
+    "description": "analyze scanned PDF pages as images and pull tables out of them",
+    "query": "analyze scanned PDF pages as images and pull tables out of them",
+    "gold_files": [
+      "internal/multimodal/pdf_vision.go"
+    ]
+  },
+  {
+    "id": "nl-090",
+    "description": "identify whether a file is an image, audio or video from its extension",
+    "query": "identify whether a file is an image, audio or video from its extension",
+    "gold_files": [
+      "internal/multimodal/multimodal.go"
+    ]
+  },
+  {
+    "id": "nl-091",
+    "description": "group code symbols into communities with a modularity algorithm",
+    "query": "group code symbols into communities with a modularity algorithm",
+    "gold_files": [
+      "internal/graph/community/louvain.go"
+    ]
+  },
+  {
+    "id": "nl-092",
+    "description": "render the code graph as an interactive web page",
+    "query": "render the code graph as an interactive web page",
+    "gold_files": [
+      "internal/graph/viz/html.go"
+    ]
+  },
+  {
+    "id": "nl-093",
+    "description": "write a markdown report about code clusters",
+    "query": "write a markdown report about code clusters",
+    "gold_files": [
+      "internal/graph/report/markdown.go"
+    ]
+  },
+  {
+    "id": "nl-094",
+    "description": "find who calls a function and what a function calls from the graph database",
+    "query": "find who calls a function and what a function calls from the graph database",
+    "gold_files": [
+      "internal/graph/kuzu/query.go",
+      "internal/server/graph_cgo.go"
+    ]
+  },
+  {
+    "id": "nl-095",
+    "description": "persist symbols and call relationships into the embedded graph store",
+    "query": "persist symbols and call relationships into the embedded graph store",
+    "gold_files": [
+      "internal/graph/kuzu/writer.go"
+    ]
+  },
+  {
+    "id": "nl-096",
+    "description": "keep entities and relations for the memory engine in the graph store",
+    "query": "keep entities and relations for the memory engine in the graph store",
+    "gold_files": [
+      "internal/graph/kuzu/memory_service.go"
+    ]
+  },
+  {
+    "id": "nl-097",
+    "description": "serve REST endpoints for memory blocks",
+    "query": "serve REST endpoints for memory blocks",
+    "gold_files": [
+      "internal/server/blocks_handler.go"
+    ]
+  },
+  {
+    "id": "nl-098",
+    "description": "let clients register callback addresses that get notified about events",
+    "query": "let clients register callback addresses that get notified about events",
+    "gold_files": [
+      "internal/server/webhook_handler.go"
+    ]
+  },
+  {
+    "id": "nl-099",
+    "description": "reject unsafe file names when a model is downloaded through the web interface",
+    "query": "reject unsafe file names when a model is downloaded through the web interface",
+    "gold_files": [
+      "internal/server/models_handler.go"
+    ]
+  },
+  {
+    "id": "nl-100",
+    "description": "install a plugin through the web interface as a background job",
+    "query": "install a plugin through the web interface as a background job",
+    "gold_files": [
+      "internal/server/plugin_handler.go"
+    ]
+  },
+  {
+    "id": "nl-101",
+    "description": "describe the REST API in machine-readable form",
+    "query": "describe the REST API in machine-readable form",
+    "gold_files": [
+      "internal/server/openapi_paths.go",
+      "internal/server/openapi_schemas.go",
+      "internal/server/openapi.go"
+    ]
+  },
+  {
+    "id": "nl-102",
+    "description": "run a local llama.cpp server process for embeddings",
+    "query": "run a local llama.cpp server process for embeddings",
+    "gold_files": [
+      "internal/backend/llamacpp/runner.go"
+    ]
+  },
+  {
+    "id": "nl-103",
+    "description": "download a model file from the internet with progress",
+    "query": "download a model file from the internet with progress",
+    "gold_files": [
+      "internal/backend/llamacpp/downloader.go"
+    ]
+  },
+  {
+    "id": "nl-104",
+    "description": "avoid re-embedding chunks that stayed the same when a file is edited",
+    "query": "avoid re-embedding chunks that stayed the same when a file is edited",
+    "gold_files": [
+      "internal/embedding/chunk_memo.go"
+    ]
+  },
+  {
+    "id": "nl-105",
+    "description": "compute embeddings by calling an HTTP provider such as Ollama or an OpenAI compatible server",
+    "query": "compute embeddings by calling an HTTP provider such as Ollama or an OpenAI compatible server",
+    "gold_files": [
+      "internal/embedding/compute.go"
+    ]
+  },
+  {
+    "id": "nl-106",
+    "description": "build an approximate nearest neighbour index with a hierarchical navigable small world graph",
+    "query": "build an approximate nearest neighbour index with a hierarchical navigable small world graph",
+    "gold_files": [
+      "pkg/backends/hnsw.go",
+      "pkg/gleann/backend_default_hnsw.go"
+    ]
+  },
+  {
+    "id": "nl-107",
+    "description": "disk based graph vector index with compressed vectors",
+    "query": "disk based graph vector index with compressed vectors",
+    "gold_files": [
+      "pkg/backends/diskann.go"
+    ]
+  },
+  {
+    "id": "nl-108",
+    "description": "combine a vector index with keyword lookups on one backend",
+    "query": "combine a vector index with keyword lookups on one backend",
+    "gold_files": [
+      "pkg/backends/faiss/hybrid.go"
+    ]
+  },
+  {
+    "id": "nl-109",
+    "description": "measure retrieval quality against a set of golden queries",
+    "query": "measure retrieval quality against a set of golden queries",
+    "gold_files": [
+      "pkg/benchmark/benchmark.go"
+    ]
+  },
+  {
+    "id": "nl-110",
+    "description": "run a scripted set of agent tasks and write a report",
+    "query": "run a scripted set of agent tasks and write a report",
+    "gold_files": [
+      "pkg/benchmark/agent_eval.go"
+    ]
+  },
+  {
+    "id": "nl-111",
+    "description": "parse source code into an abstract syntax tree for many languages",
+    "query": "parse source code into an abstract syntax tree for many languages",
+    "gold_files": [
+      "pkg/analysis/parser.go"
+    ]
+  },
+  {
+    "id": "nl-112",
+    "description": "chat with retrieved passages as context and stream the answer",
+    "query": "chat with retrieved passages as context and stream the answer",
+    "gold_files": [
+      "pkg/gleann/chat.go"
+    ]
+  },
+  {
+    "id": "nl-113",
+    "description": "turn the first-run setup into a guided terminal wizard",
+    "query": "turn the first-run setup into a guided terminal wizard",
+    "gold_files": [
+      "internal/tui/onboard.go"
+    ]
+  },
+  {
+    "id": "nl-114",
+    "description": "copy the binary into the user path and install shell completions",
+    "query": "copy the binary into the user path and install shell completions",
+    "gold_files": [
+      "internal/tui/install.go"
+    ]
+  },
+  {
+    "id": "nl-115",
+    "description": "an interactive terminal screen to pick and delete indexes",
+    "query": "an interactive terminal screen to pick and delete indexes",
+    "gold_files": [
+      "internal/tui/indexlist.go",
+      "internal/tui/indexmanage.go"
+    ]
+  },
+  {
+    "id": "nl-116",
+    "description": "merge our server entry into an editor's tool configuration file",
+    "query": "merge our server entry into an editor's tool configuration file",
+    "gold_files": [
+      "cmd/gleann/cmd_mcp.go"
+    ]
+  },
+  {
+    "id": "nl-117",
+    "description": "diagnose the installation and report what is misconfigured",
+    "query": "diagnose the installation and report what is misconfigured",
+    "gold_files": [
+      "cmd/gleann/cmd_doctor.go"
+    ]
+  },
+  {
+    "id": "nl-118",
+    "description": "command that removes the program and its data",
+    "query": "command that removes the program and its data",
+    "gold_files": [
+      "cmd/gleann/cmd_uninstall.go"
+    ]
+  },
+  {
+    "id": "nl-119",
+    "description": "self-update command that downloads the newest release",
+    "query": "self-update command that downloads the newest release",
+    "gold_files": [
+      "cmd/gleann/cmd_update.go",
+      "pkg/gleann/selfupdate.go"
+    ]
+  },
+  {
+    "id": "nl-120",
+    "description": "repair a damaged index from the command line",
+    "query": "repair a damaged index from the command line",
+    "gold_files": [
+      "cmd/gleann/cmd_repair.go",
+      "internal/indexing/repair.go"
+    ]
+  },
+  {
+    "id": "nl-121",
+    "description": "show how many tokens were saved so far",
+    "query": "show how many tokens were saved so far",
+    "gold_files": [
+      "cmd/gleann/cmd_tokens.go",
+      "pkg/gleann/tokengain.go"
+    ]
+  }
+]

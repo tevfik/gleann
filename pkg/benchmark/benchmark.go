@@ -153,6 +153,10 @@ func (r *Runner) Run(ctx context.Context, topK int) (map[string]SummaryResult, e
 }
 
 // evaluateTask calculates recall, coverage, and reciprocal rank for a single task.
+//
+// Retrieval returns chunks, so several results can come from the same file.
+// Ranks are file-level: only the first occurrence of a file counts, and recall@k
+// is the share of distinct gold files found within the first k distinct files.
 func evaluateTask(task Task, foundPaths []string, tokens int, latency time.Duration) StrategyResult {
 	goldSet := make(map[string]bool)
 	for _, g := range task.GoldFiles {
@@ -160,34 +164,30 @@ func evaluateTask(task Task, foundPaths []string, tokens int, latency time.Durat
 	}
 
 	var (
-		hitsR1, hitsR5, hitsR10 int
-		firstRank               = 0
-		coveredGold             = make(map[string]bool)
+		firstRank   = 0
+		coveredAt   = make(map[string]int) // gold file -> rank (1-based) of its first hit
+		seen        = make(map[string]bool)
+		distinctIdx = 0
 	)
 
-	for i, p := range foundPaths {
+	for _, p := range foundPaths {
 		norm := normalizePath(p)
-		matched := false
-		for g := range goldSet {
-			if strings.HasSuffix(norm, g) || strings.HasSuffix(g, norm) || strings.Contains(norm, g) {
-				matched = true
-				coveredGold[g] = true
-				break
-			}
+		if norm == "" || seen[norm] {
+			continue
 		}
+		seen[norm] = true
+		distinctIdx++
 
-		if matched {
-			if firstRank == 0 {
-				firstRank = i + 1
+		for g := range goldSet {
+			if _, done := coveredAt[g]; done {
+				continue
 			}
-			if i < 1 {
-				hitsR1++
-			}
-			if i < 5 {
-				hitsR5++
-			}
-			if i < 10 {
-				hitsR10++
+			if strings.HasSuffix(norm, g) || strings.HasSuffix(g, norm) {
+				coveredAt[g] = distinctIdx
+				if firstRank == 0 {
+					firstRank = distinctIdx
+				}
+				break
 			}
 		}
 	}
@@ -202,17 +202,22 @@ func evaluateTask(task Task, foundPaths []string, tokens int, latency time.Durat
 		totalGold = 1
 	}
 
-	r1 := math.Min(1.0, float64(hitsR1)/float64(totalGold))
-	r5 := math.Min(1.0, float64(hitsR5)/float64(totalGold))
-	r10 := math.Min(1.0, float64(hitsR10)/float64(totalGold))
-	cov := float64(len(coveredGold)) / float64(totalGold)
+	within := func(k int) float64 {
+		n := 0
+		for _, rank := range coveredAt {
+			if rank <= k {
+				n++
+			}
+		}
+		return float64(n) / float64(totalGold)
+	}
 
 	return StrategyResult{
-		Recall1:  r1,
-		Recall5:  r5,
-		Recall10: r10,
+		Recall1:  within(1),
+		Recall5:  within(5),
+		Recall10: within(10),
 		MRR:      mrr,
-		Coverage: cov,
+		Coverage: float64(len(coveredAt)) / float64(totalGold),
 		Tokens:   tokens,
 		Latency:  latency,
 	}
