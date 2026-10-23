@@ -43,6 +43,7 @@ const (
 	phaseA2A                               // toggle: enable A2A protocol?
 	phaseMCP                               // toggle: enable MCP server?
 	phaseServer                            // toggle: enable REST API server?
+	phaseServerAddr                        // text input: listen address/port for REST API server
 	phaseCustomHFInput                     // text input: custom HF repo for gguf
 	phaseSummary                           // summary & confirm
 	phaseInstall                           // select: system install option
@@ -837,10 +838,17 @@ func (m OnboardModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	// ── REST API server toggle ──
 	case phaseServer:
 		return m.handleServerKeys(key)
+	case phaseServerAddr:
+		return m.handleServerAddrKeys(key)
 
 	// ── Summary ──
 	case phaseSummary:
 		if key == "enter" {
+			if m.menuMode {
+				m.buildResult()
+				m.done = true
+				return m, tea.Quit
+			}
 			m.phase = phaseInstall
 			return m, nil
 		}
@@ -1059,7 +1067,7 @@ func (m *OnboardModel) updateActiveInput(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.llmKeyInput, cmd = m.llmKeyInput.Update(msg)
 	case phaseEmbOllamaKey, phaseLLMOllamaKey:
 		m.ollamaKeyInput, cmd = m.ollamaKeyInput.Update(msg)
-	case phaseServer:
+	case phaseServer, phaseServerAddr:
 		m.serverAddrInput, cmd = m.serverAddrInput.Update(msg)
 	case phaseCustomHFInput:
 		m.customHFInput, cmd = m.customHFInput.Update(msg)
@@ -1076,6 +1084,7 @@ func (m *OnboardModel) focusActiveInput() {
 	m.llmKeyInput.Blur()
 	m.ollamaKeyInput.Blur()
 	m.indexDirInput.Blur()
+	m.serverAddrInput.Blur()
 
 	switch m.phase {
 	case phaseEmbOllamaKey, phaseLLMOllamaKey:
@@ -1090,6 +1099,8 @@ func (m *OnboardModel) focusActiveInput() {
 		m.llmKeyInput.Focus()
 	case phaseIndexDir:
 		m.indexDirInput.Focus()
+	case phaseServerAddr:
+		m.serverAddrInput.Focus()
 	}
 }
 
@@ -1114,6 +1125,7 @@ func (m OnboardModel) prevPhase() int {
 		phaseBackend:        phaseIndexDir,
 		phaseMCP:            phaseBackend,
 		phaseServer:         phaseMCP,
+		phaseServerAddr:     phaseServer,
 		phaseSummary:        phaseServer,
 		phaseInstall:        phaseSummary,
 	}
@@ -1236,6 +1248,9 @@ func (m *OnboardModel) buildResult() {
 	ollamaHost := ""
 	embIsOllama := m.embProviders[m.embProviderIdx] == "ollama"
 	llmIsOllama := m.llmProviders[m.llmProviderIdx] == "ollama"
+	embIsOpenAI := m.embProviders[m.embProviderIdx] == "openai"
+	llmIsOpenAI := m.llmProviders[m.llmProviderIdx] == "openai"
+	llmIsAnthropic := m.llmProviders[m.llmProviderIdx] == "anthropic"
 
 	if embIsOllama && llmIsOllama {
 		if m.llmHostInput.Value() != "" && m.llmHostInput.Value() != gleann.DefaultOllamaHost {
@@ -1315,8 +1330,22 @@ func (m *OnboardModel) buildResult() {
 	}
 
 	// Clean up fields if neither embedding nor LLM uses Ollama
-	if !embIsOllama && !llmIsOllama && m.result.OllamaHost == gleann.DefaultOllamaHost {
+	if !embIsOllama && !llmIsOllama {
 		m.result.OllamaHost = ""
+		m.result.OllamaAPIKey = ""
+	} else if m.result.OllamaHost == gleann.DefaultOllamaHost && !embIsOllama && !llmIsOllama {
+		m.result.OllamaHost = ""
+	}
+
+	// Clean up fields if neither embedding nor LLM uses OpenAI
+	if !embIsOpenAI && !llmIsOpenAI {
+		m.result.OpenAIKey = ""
+		m.result.OpenAIBaseURL = ""
+	}
+
+	// Clean up fields if LLM does not use Anthropic
+	if !llmIsAnthropic {
+		m.result.AnthropicKey = ""
 	}
 
 	// Set dual-model settings.
@@ -1533,6 +1562,8 @@ func (m OnboardModel) View() tea.View {
 		b.WriteString(m.renderSelect("12", "MCP Integration", "Enable Model Context Protocol server?", m.mcpOptions, m.mcpOptionIdx, nil))
 	case phaseServer:
 		b.WriteString(m.renderServerPhase())
+	case phaseServerAddr:
+		b.WriteString(m.renderInput("13", "REST API Server Address", "Listen address or port (e.g. :8080, :9090, 127.0.0.1:8080)", &m.serverAddrInput))
 	case phaseCustomHFInput:
 		b.WriteString(m.renderInput(fmt.Sprintf("%d", m.customHFStepNum()), "Custom HF Model", "Enter HuggingFace ID (e.g. Qwen/Qwen2.5-Coder-1.5B-Instruct-GGUF)", &m.customHFInput))
 	case phaseSummary:
@@ -1780,7 +1811,7 @@ func (m OnboardModel) visibleStep() int {
 		return 13
 	case phaseMCP:
 		return 14
-	case phaseServer:
+	case phaseServer, phaseServerAddr:
 		return 15
 	case phaseCustomHFInput:
 		return m.customHFStepNum()
@@ -2439,6 +2470,32 @@ func (m OnboardModel) handleServerKeys(key string) (tea.Model, tea.Cmd) {
 		}
 	case "enter":
 		m.serverEnabled = m.serverOptionIdx == 1
+		if m.serverEnabled {
+			m.phase = phaseServerAddr
+			m.focusActiveInput()
+			return m, textinput.Blink
+		}
+		if m.menuMode {
+			m.phase = phaseMenu
+			return m, nil
+		}
+		m.phase = phaseSummary
+		return m, nil
+	}
+	return m, nil
+}
+
+func (m OnboardModel) handleServerAddrKeys(key string) (tea.Model, tea.Cmd) {
+	switch key {
+	case "enter":
+		addr := strings.TrimSpace(m.serverAddrInput.Value())
+		if addr == "" {
+			addr = gleann.DefaultServerAddr
+		} else if !strings.Contains(addr, ":") {
+			addr = ":" + addr
+		}
+		m.serverAddrInput.SetValue(addr)
+		m.serverEnabled = true
 		if m.menuMode {
 			m.phase = phaseMenu
 			return m, nil
@@ -2461,6 +2518,10 @@ func (m OnboardModel) handleInstallKeys(key string) (tea.Model, tea.Cmd) {
 		}
 	case "enter":
 		if m.menuMode {
+			if m.installOptionIdx == 0 {
+				m.phase = phaseMenu
+				return m, nil
+			}
 			m.buildResult()
 			m.done = true
 			return m, tea.Quit

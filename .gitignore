@@ -53,6 +53,7 @@ GEMINI.md
 # AI tool config directories (local only)
 .gemini/
 .opencode/
+.codex/
 opencode.json
 
 # E2E generated outputs (run artifacts, not fixtures)

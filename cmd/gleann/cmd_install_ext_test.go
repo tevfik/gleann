@@ -158,15 +158,19 @@ func TestPatchOpenCodeJSONNew(t *testing.T) {
 	if !ok {
 		t.Fatal("expected mcp section")
 	}
-	if _, ok := mcp["gleann"]; !ok {
-		t.Fatal("expected gleann in mcp")
+	servers, ok := mcp["servers"].(map[string]interface{})
+	if !ok {
+		t.Fatal("expected servers in mcp")
+	}
+	if _, ok := servers["gleann"]; !ok {
+		t.Fatal("expected gleann in mcp.servers")
 	}
 }
 
 func TestPatchOpenCodeJSONExisting(t *testing.T) {
 	tmp := t.TempDir()
 	path := filepath.Join(tmp, "opencode.json")
-	os.WriteFile(path, []byte(`{"$schema":"test","mcp":{"other":{}}}`), 0o644)
+	os.WriteFile(path, []byte(`{"$schema":"test","mcp":{"servers":{"other":{}}}}`), 0o644)
 	if err := patchOpenCodeJSON(path); err != nil {
 		t.Fatal(err)
 	}
@@ -174,11 +178,15 @@ func TestPatchOpenCodeJSONExisting(t *testing.T) {
 	var config map[string]interface{}
 	json.Unmarshal(data, &config)
 	mcp := config["mcp"].(map[string]interface{})
-	if _, ok := mcp["other"]; !ok {
-		t.Fatal("should preserve existing mcp entries")
+	servers, ok := mcp["servers"].(map[string]interface{})
+	if !ok {
+		t.Fatal("expected servers section")
 	}
-	if _, ok := mcp["gleann"]; !ok {
-		t.Fatal("should add gleann entry")
+	if _, ok := servers["other"]; !ok {
+		t.Fatal("should preserve existing mcp servers entries")
+	}
+	if _, ok := servers["gleann"]; !ok {
+		t.Fatal("expected gleann in mcp.servers")
 	}
 }
 
@@ -604,6 +612,7 @@ func TestPositionalPlatform(t *testing.T) {
 		{[]string{"claude"}, "claude"},
 		{[]string{"uninstall", "gemini"}, "gemini"},
 		{[]string{"--dir", "claude", "cursor"}, "cursor"},
+		{[]string{"--index", "myindex", "opencode"}, "opencode"},
 		{[]string{"--project", "claude"}, "claude"},
 		{[]string{"uninstall"}, ""},
 		{nil, ""},
@@ -611,6 +620,283 @@ func TestPositionalPlatform(t *testing.T) {
 	for _, c := range cases {
 		if got := positionalPlatform(c.args); got != c.want {
 			t.Errorf("positionalPlatform(%v) = %q, want %q", c.args, got, c.want)
+		}
+	}
+}
+
+func TestSymlinkGuard_AppendOrCreateFile(t *testing.T) {
+	tmp := t.TempDir()
+	targetPath := filepath.Join(tmp, "canonical.md")
+	os.WriteFile(targetPath, []byte("# Canonical fleet document\n"), 0o644)
+
+	symlinkPath := filepath.Join(tmp, "symlink.md")
+	if err := os.Symlink(targetPath, symlinkPath); err != nil {
+		t.Skipf("symlinks not supported: %v", err)
+	}
+
+	followSymlinkFlag = false
+	defer func() { followSymlinkFlag = false }()
+
+	// 1. Without --follow-symlink, symlink target must remain untouched
+	err := appendOrCreateFile(symlinkPath, "## gleann: Code Intelligence\n", "gleann: Code Intelligence")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	targetData, _ := os.ReadFile(targetPath)
+	if strings.Contains(string(targetData), "gleann: Code Intelligence") {
+		t.Fatal("target file must NOT be modified when path is a symlink and followSymlinkFlag is false")
+	}
+
+	// 2. With --follow-symlink, symlink target should be updated
+	followSymlinkFlag = true
+	err = appendOrCreateFile(symlinkPath, "## gleann: Code Intelligence\n", "gleann: Code Intelligence")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	targetData, _ = os.ReadFile(targetPath)
+	if !strings.Contains(string(targetData), "gleann: Code Intelligence") {
+		t.Fatal("target file SHOULD be modified when followSymlinkFlag is true")
+	}
+}
+
+func TestSymlinkGuard_PatchOpenCodeJSON(t *testing.T) {
+	tmp := t.TempDir()
+	targetPath := filepath.Join(tmp, "canonical_opencode.json")
+	os.WriteFile(targetPath, []byte(`{"$schema":"https://opencode.ai/config.json"}`), 0o644)
+
+	symlinkPath := filepath.Join(tmp, "symlink_opencode.json")
+	if err := os.Symlink(targetPath, symlinkPath); err != nil {
+		t.Skipf("symlinks not supported: %v", err)
+	}
+
+	followSymlinkFlag = false
+	defer func() { followSymlinkFlag = false }()
+
+	err := patchOpenCodeJSON(symlinkPath)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	data, _ := os.ReadFile(targetPath)
+	if strings.Contains(string(data), "mcp") {
+		t.Fatal("canonical config must not be modified through symlink without follow flag")
+	}
+}
+
+func TestResolveTargetDirectory(t *testing.T) {
+	tmp := t.TempDir()
+
+	// 1. Explicit directory takes highest priority
+	resolved, err := resolveTargetDirectory(tmp, "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resolved != tmp {
+		t.Errorf("resolveTargetDirectory(%q) = %q, want %q", tmp, resolved, tmp)
+	}
+
+	// 2. Fallback to git root or cwd
+	resolvedDefault, err := resolveTargetDirectory("", "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resolvedDefault == "" {
+		t.Fatal("expected non-empty resolved directory")
+	}
+}
+
+func TestResolveIndexNameForDir(t *testing.T) {
+	// Explicit index flag returns directly
+	if got := resolveIndexNameForDir("/some/dir", "my-idx"); got != "my-idx" {
+		t.Errorf("resolveIndexNameForDir with explicit index = %q, want my-idx", got)
+	}
+
+	// Empty when no index matches an unrelated directory
+	unrelated := t.TempDir()
+	if got := resolveIndexNameForDir(unrelated, ""); got != "" {
+		t.Errorf("resolveIndexNameForDir on empty temp dir = %q, want empty", got)
+	}
+}
+
+func TestResolveIndexNameForDir_RelativeSourceDirDoesNotMatch(t *testing.T) {
+	tempIdxDir := t.TempDir()
+	idxSubDir := filepath.Join(tempIdxDir, "devran")
+	if err := os.MkdirAll(idxSubDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	meta := map[string]any{
+		"name":       "devran",
+		"source_dir": ".",
+	}
+	data, _ := json.Marshal(meta)
+	_ = os.WriteFile(filepath.Join(idxSubDir, "devran.meta.json"), data, 0o644)
+
+	t.Setenv("GLEANN_INDEX_DIR", tempIdxDir)
+
+	unrelated := t.TempDir()
+	if got := resolveIndexNameForDir(unrelated, ""); got != "" {
+		t.Errorf("expected relative source_dir '.' to NOT match unrelated temp dir %s, got %q", unrelated, got)
+	}
+}
+
+func TestResolveIndexNameForDir_SymlinkMatchesCanonicalPath(t *testing.T) {
+	tempIdxDir := t.TempDir()
+	realRepoDir := t.TempDir()
+
+	idxSubDir := filepath.Join(tempIdxDir, "myrepo")
+	if err := os.MkdirAll(idxSubDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	meta := map[string]any{
+		"name":       "myrepo",
+		"source_dir": realRepoDir,
+	}
+	data, _ := json.Marshal(meta)
+	_ = os.WriteFile(filepath.Join(idxSubDir, "myrepo.meta.json"), data, 0o644)
+
+	t.Setenv("GLEANN_INDEX_DIR", tempIdxDir)
+
+	// Create a symlink to realRepoDir
+	symlinkDir := filepath.Join(t.TempDir(), "repo_link")
+	if err := os.Symlink(realRepoDir, symlinkDir); err != nil {
+		t.Skip("symlinks not supported on this platform")
+	}
+
+	if got := resolveIndexNameForDir(symlinkDir, ""); got != "myrepo" {
+		t.Errorf("expected symlink %s to resolve to myrepo, got %q", symlinkDir, got)
+	}
+}
+
+func TestDynamicIndexInjection(t *testing.T) {
+	dir := t.TempDir()
+	home := t.TempDir()
+
+	activeInstallIndex = "quantum_engine"
+	defer func() { activeInstallIndex = "" }()
+
+	// OpenCode AGENTS.md
+	if err := installOpenCode(dir, home); err != nil {
+		t.Fatal(err)
+	}
+	agentsData, _ := os.ReadFile(filepath.Join(dir, "AGENTS.md"))
+	if !strings.Contains(string(agentsData), "quantum_engine") {
+		t.Errorf("AGENTS.md should contain index name quantum_engine, got:\n%s", string(agentsData))
+	}
+
+	// Claude CLAUDE.md
+	if err := installClaude(dir, home); err != nil {
+		t.Fatal(err)
+	}
+	claudeData, _ := os.ReadFile(filepath.Join(dir, "CLAUDE.md"))
+	if !strings.Contains(string(claudeData), "quantum_engine") {
+		t.Errorf("CLAUDE.md should contain index name quantum_engine, got:\n%s", string(claudeData))
+	}
+
+	// Cursor .cursor/rules/gleann.mdc
+	if err := installCursor(dir, home); err != nil {
+		t.Fatal(err)
+	}
+	cursorData, _ := os.ReadFile(filepath.Join(dir, ".cursor", "rules", "gleann.mdc"))
+	if !strings.Contains(string(cursorData), "quantum_engine") {
+		t.Errorf("Cursor rule should contain index name quantum_engine, got:\n%s", string(cursorData))
+	}
+
+	// Gemini GEMINI.md
+	if err := installGemini(dir, home); err != nil {
+		t.Fatal(err)
+	}
+	geminiData, _ := os.ReadFile(filepath.Join(dir, "GEMINI.md"))
+	if !strings.Contains(string(geminiData), "quantum_engine") {
+		t.Errorf("GEMINI.md should contain index name quantum_engine, got:\n%s", string(geminiData))
+	}
+
+	// Claw SKILL.md
+	if err := installClaw(dir, home); err != nil {
+		t.Fatal(err)
+	}
+	skillData, _ := os.ReadFile(filepath.Join(home, ".openclaw", "skills", "gleann", "SKILL.md"))
+	if !strings.Contains(string(skillData), "quantum_engine") {
+		t.Errorf("SKILL.md should contain index name quantum_engine, got:\n%s", string(skillData))
+	}
+}
+
+func TestPatchOpenCodeJSON_OpenCodeV2Schema(t *testing.T) {
+	tmp := t.TempDir()
+	configPath := filepath.Join(tmp, "opencode.json")
+
+	// 1. Fresh install creates mcp.servers.gleann
+	if err := patchOpenCodeJSON(configPath); err != nil {
+		t.Fatalf("patchOpenCodeJSON failed: %v", err)
+	}
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cfg map[string]interface{}
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		t.Fatal(err)
+	}
+	mcpSec, ok := cfg["mcp"].(map[string]interface{})
+	if !ok {
+		t.Fatal("expected mcp section in config")
+	}
+	if _, hasLegacy := mcpSec["gleann"]; hasLegacy {
+		t.Error("fresh install should NOT produce legacy flat mcp.gleann key")
+	}
+	servers, ok := mcpSec["servers"].(map[string]interface{})
+	if !ok {
+		t.Fatal("expected mcp.servers section in config")
+	}
+	gleannEntry, ok := servers["gleann"].(map[string]interface{})
+	if !ok {
+		t.Fatal("expected mcp.servers.gleann")
+	}
+	if gleannEntry["type"] != "local" {
+		t.Errorf("expected type=local, got %v", gleannEntry["type"])
+	}
+
+	// 2. Legacy config with flat mcp.gleann is migrated and flat key is removed
+	legacyConfigPath := filepath.Join(tmp, "legacy_opencode.json")
+	legacyRaw := `{
+		"$schema": "https://opencode.ai/config.json",
+		"mcp": {
+			"gleann": {
+				"type": "local",
+				"command": ["/usr/bin/gleann", "mcp"],
+				"enabled": true
+			}
+		}
+	}`
+	if err := os.WriteFile(legacyConfigPath, []byte(legacyRaw), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := patchOpenCodeJSON(legacyConfigPath); err != nil {
+		t.Fatalf("patchOpenCodeJSON on legacy failed: %v", err)
+	}
+	legData, _ := os.ReadFile(legacyConfigPath)
+	var legCfg map[string]interface{}
+	_ = json.Unmarshal(legData, &legCfg)
+	legMcp := legCfg["mcp"].(map[string]interface{})
+	if _, hasFlat := legMcp["gleann"]; hasFlat {
+		t.Error("legacy flat mcp.gleann was not cleaned up")
+	}
+	legServers := legMcp["servers"].(map[string]interface{})
+	if legServers["gleann"] == nil {
+		t.Error("gleann was not migrated to mcp.servers.gleann")
+	}
+
+	// 3. Uninstall cleans up mcp.servers.gleann
+	if err := uninstallOpenCode(tmp, tmp); err != nil {
+		t.Fatalf("uninstallOpenCode failed: %v", err)
+	}
+	dataAfter, _ := os.ReadFile(configPath)
+	var cfgAfter map[string]interface{}
+	_ = json.Unmarshal(dataAfter, &cfgAfter)
+	if cfgAfter["mcp"] != nil {
+		if mcpAfter, ok := cfgAfter["mcp"].(map[string]interface{}); ok {
+			if mcpAfter["servers"] != nil {
+				t.Error("servers section should be removed when empty")
+			}
 		}
 	}
 }

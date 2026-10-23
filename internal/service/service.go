@@ -41,6 +41,28 @@ func logFile() string {
 	return filepath.Join(gleannDir(), "server.log")
 }
 
+// DefaultAddr returns the configured REST server address from ~/.gleann/config.json
+// or ":8080" as fallback.
+func DefaultAddr() string {
+	home, err := os.UserHomeDir()
+	if err == nil {
+		cfgPath := filepath.Join(home, ".gleann", "config.json")
+		if data, err := os.ReadFile(cfgPath); err == nil {
+			var raw struct {
+				ServerAddr string `json:"server_addr"`
+			}
+			if err := json.Unmarshal(data, &raw); err == nil && raw.ServerAddr != "" {
+				addr := strings.TrimSpace(raw.ServerAddr)
+				if !strings.Contains(addr, ":") {
+					addr = ":" + addr
+				}
+				return addr
+			}
+		}
+	}
+	return ":8080"
+}
+
 // Install creates the platform-appropriate service configuration.
 func Install(gleannBin, addr string) error {
 	if gleannBin == "" {
@@ -51,7 +73,9 @@ func Install(gleannBin, addr string) error {
 		}
 	}
 	if addr == "" {
-		addr = ":8080"
+		addr = DefaultAddr()
+	} else if !strings.Contains(addr, ":") {
+		addr = ":" + addr
 	}
 
 	switch runtime.GOOS {
@@ -90,7 +114,9 @@ func Start(gleannBin, addr string) error {
 		}
 	}
 	if addr == "" {
-		addr = ":8080"
+		addr = DefaultAddr()
+	} else if !strings.Contains(addr, ":") {
+		addr = ":" + addr
 	}
 
 	// Check if already running.

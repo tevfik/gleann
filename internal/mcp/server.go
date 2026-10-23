@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"log"
 	"math"
 	"os"
@@ -292,6 +294,10 @@ func (s *Server) Run() {
 	log.Println("gleann MCP server starting with SDK (stdio)...")
 	// Start stdio transport
 	if err := server.ServeStdio(s.mcpServer); err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(err, io.EOF) {
+			log.Println("gleann MCP server stopped cleanly")
+			return
+		}
 		log.Fatalf("Server error: %v", err)
 	}
 }
@@ -2117,9 +2123,11 @@ func (s *Server) defaultSyncRunner(ctx context.Context, opts SyncOptions) (strin
 		cfg.IndexDir = s.config.IndexDir
 	}
 
+	mode := indexing.ParseMode(opts.Mode)
+
 	common := indexing.Options{
 		Config:    cfg,
-		Mode:      indexing.ParseMode(opts.Mode),
+		Mode:      mode,
 		NoPlugins: opts.NoPlugins,
 		Stdout:    out,
 		Stderr:    out,
@@ -2134,12 +2142,25 @@ func (s *Server) defaultSyncRunner(ctx context.Context, opts SyncOptions) (strin
 	var err error
 	if opts.IsNew {
 		var res *indexing.BuildResult
-		res, err = indexing.Build(ctx, indexing.BuildOptions{
+		buildOpts := indexing.BuildOptions{
 			Options: common,
 			Name:    opts.IndexName,
 			DocsDir: opts.DocsDir,
 			Graph:   true,
-		})
+		}
+		// New builds honour the specialised per-mode models from config
+		// (code_embedding_model / doc_embedding_model). The model chosen here
+		// is written into the index meta, so later syncs must keep it
+		// (indexing.Sync rejects a different model). Mode "all" is left
+		// untouched: setting both models makes Build a dual build that writes
+		// "<name>-code" and "<name>-docs" instead of the index the caller asked for.
+		switch mode {
+		case indexing.ModeCode:
+			buildOpts.CodeModel = cfg.CodeEmbeddingModel
+		case indexing.ModeDocs:
+			buildOpts.DocModel = cfg.DocEmbeddingModel
+		}
+		res, err = indexing.Build(ctx, buildOpts)
 		if err == nil && res.Estimate != nil {
 			pacer.Done(true, 0, res.Estimate.FileCount, res.Estimate.TotalBytes)
 		}

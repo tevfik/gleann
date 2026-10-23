@@ -101,3 +101,68 @@ func TestDefaultSyncRunnerInProcess(t *testing.T) {
 		t.Error("expected lifetime context to be cancelled by Close")
 	}
 }
+
+// TestDefaultSyncRunnerHonoursCodeModel verifies that a new build uses
+// code_embedding_model for mode "code". Before this, gleann_sync embedded
+// every code index with the general embedding_model and only honoured the
+// specialised model through the CLI --code-model flag.
+func TestDefaultSyncRunnerHonoursCodeModel(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	indexDir := t.TempDir()
+	t.Setenv("GLEANN_MEMORY_DIR", t.TempDir())
+	ollama := newFakeOllamaMCP(t)
+
+	buildCfg := gleann.DefaultConfig()
+	buildCfg.IndexDir = indexDir
+	buildCfg.EmbeddingProvider = "ollama"
+	buildCfg.OllamaHost = ollama.URL
+	buildCfg.EmbeddingModel = "general-model"
+	buildCfg.CodeEmbeddingModel = "code-model"
+	buildCfg.DocEmbeddingModel = "docs-model"
+
+	srv := NewServer(Config{
+		IndexDir:          indexDir,
+		EmbeddingProvider: "ollama",
+		EmbeddingModel:    "general-model",
+		OllamaHost:        ollama.URL,
+		Version:           "test",
+		BuildConfig:       &buildCfg,
+	})
+	defer srv.Close()
+
+	docs := t.TempDir()
+	if err := os.WriteFile(filepath.Join(docs, "main.go"), []byte("package main\n\nfunc main() {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := srv.defaultSyncRunner(context.Background(), SyncOptions{
+		IndexName: "codeidx", DocsDir: docs, Mode: "code", NoPlugins: true, IsNew: true,
+	}); err != nil {
+		t.Fatalf("code build: %v", err)
+	}
+	meta, err := gleann.GetIndexMeta(indexDir, "codeidx")
+	if err != nil {
+		t.Fatalf("index not created: %v", err)
+	}
+	if meta.EmbeddingModel != "code-model" {
+		t.Errorf("code build recorded %q, want code-model", meta.EmbeddingModel)
+	}
+
+	// Mode "docs" must use the documentation model, not the code model.
+	docsDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(docsDir, "note.md"), []byte("# note\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := srv.defaultSyncRunner(context.Background(), SyncOptions{
+		IndexName: "docidx", DocsDir: docsDir, Mode: "docs", NoPlugins: true, IsNew: true,
+	}); err != nil {
+		t.Fatalf("docs build: %v", err)
+	}
+	meta, err = gleann.GetIndexMeta(indexDir, "docidx")
+	if err != nil {
+		t.Fatalf("docs index not created: %v", err)
+	}
+	if meta.EmbeddingModel != "docs-model" {
+		t.Errorf("docs build recorded %q, want docs-model", meta.EmbeddingModel)
+	}
+}

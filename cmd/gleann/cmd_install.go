@@ -4,10 +4,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 
 	"github.com/tevfik/gleann/internal/tui"
+	"github.com/tevfik/gleann/pkg/gleann"
 )
 
 // Platform represents a supported AI coding platform.
@@ -36,8 +38,12 @@ var platforms = []Platform{
 		},
 		Install: func(dir, home string) error {
 			agentsPath := filepath.Join(dir, "AGENTS.md")
-			content := getAgentsMDContent(filepath.Base(dir))
-			return appendOrCreateFile(agentsPath, content, "gleann: Code Intelligence")
+			content := getAgentsMDContent(getActiveInstallIndex(dir))
+			if err := appendOrCreateFile(agentsPath, content, "gleann: Code Intelligence"); err != nil {
+				return err
+			}
+			fmt.Printf("  • %s\n", agentsPath)
+			return nil
 		},
 		Uninstall: func(dir, home string) error {
 			return removeSection(filepath.Join(dir, "AGENTS.md"), "## gleann: Code Intelligence", "\n---")
@@ -282,21 +288,26 @@ func cmdInstall(args []string) {
 		return
 	}
 
-	dir := getFlag(args, "--dir")
-	if dir == "" {
-		var err error
-		dir, err = os.Getwd()
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "error: cannot determine working directory: %v\n", err)
-			os.Exit(1)
-		}
-	}
+	dirFlag := getFlag(args, "--dir")
+	indexFlag := getFlag(args, "--index")
+	followSymlinkFlag = hasFlag(args, "--follow-symlink")
 
 	home, err := os.UserHomeDir()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: cannot determine home directory: %v\n", err)
 		os.Exit(1)
 	}
+
+	targetDir, err := resolveTargetDirectory(dirFlag, indexFlag)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: cannot determine target directory: %v\n", err)
+		os.Exit(1)
+	}
+	dir := targetDir
+
+	resolvedIndex := resolveIndexNameForDir(dir, indexFlag)
+	activeInstallIndex = resolvedIndex
+	defer func() { activeInstallIndex = "" }()
 
 	// gleann install --list
 	if hasFlag(args, "--list") {
@@ -354,6 +365,19 @@ func cmdInstall(args []string) {
 		}
 	}
 
+	if !uninstalling {
+		if resolvedIndex != "" {
+			fmt.Printf("Target directory: %s (index: %q)\n", dir, resolvedIndex)
+		} else {
+			fmt.Printf("Target directory: %s\n", dir)
+			if dirFlag == "" && indexFlag == "" {
+				fmt.Printf("ℹ️  No index found matching %s (using <name> placeholder). You can build an index with: gleann build <name> --docs %s\n", dir, dir)
+			}
+		}
+	} else {
+		fmt.Printf("Target directory: %s\n", dir)
+	}
+
 	for _, p := range targets {
 		if uninstalling {
 			fmt.Printf("🗑️  Uninstalling gleann from %s...\n", p.Name)
@@ -390,7 +414,7 @@ func cmdInstall(args []string) {
 func positionalPlatform(args []string) string {
 	for i := 0; i < len(args); i++ {
 		a := args[i]
-		if a == "--dir" || a == "--platform" {
+		if a == "--dir" || a == "--platform" || a == "--index" {
 			i++
 			continue
 		}
@@ -424,9 +448,11 @@ Flags:
   --user              Install binary to ~/.local/bin (user-only)
   --system            Install binary to /usr/local/bin (system-wide)
   --platform <name>   Target a specific AI platform (default: auto-detect)
-  --dir <path>        Target directory for platform integration (default: cwd)
+  --index <name>      Target a specific gleann index name
+  --dir <path>        Target directory for platform integration (default: git root or cwd)
   --project           Write claude/gemini files into the project (cwd or --dir)
                       instead of ~/.claude and ~/.gemini
+  --follow-symlink    Allow modifying files that are symlinks
   --list              List supported platforms
 
 Supported platforms:
@@ -434,6 +460,177 @@ Supported platforms:
 	for _, p := range platforms {
 		fmt.Printf("  %-12s  %s\n", p.Name, p.Description)
 	}
+}
+
+var (
+	followSymlinkFlag  bool
+	activeInstallIndex string
+)
+
+func isSymlink(path string) (bool, string, error) {
+	fi, err := os.Lstat(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, "", nil
+		}
+		return false, "", err
+	}
+	if fi.Mode()&os.ModeSymlink != 0 {
+		target, err := os.Readlink(path)
+		return true, target, err
+	}
+	return false, "", nil
+}
+
+func getGitToplevel() (string, error) {
+	cmd := exec.Command("git", "rev-parse", "--show-toplevel")
+	out, err := cmd.Output()
+	if err != nil {
+		return "", err
+	}
+	top := strings.TrimSpace(string(out))
+	if top == "" {
+		return "", fmt.Errorf("empty git toplevel")
+	}
+	return top, nil
+}
+
+func resolveTargetDirectory(explicitDir, explicitIndex string) (string, error) {
+	if explicitDir != "" {
+		return filepath.Abs(explicitDir)
+	}
+
+	if explicitIndex != "" {
+		cfg := getConfig(nil)
+		applySavedConfig(&cfg, nil)
+		if meta, err := gleann.GetIndexMeta(cfg.IndexDir, explicitIndex); err == nil && meta.SourceDir != "" {
+			if _, statErr := os.Stat(meta.SourceDir); statErr == nil {
+				return filepath.Abs(meta.SourceDir)
+			}
+		}
+	}
+
+	if gitTop, err := getGitToplevel(); err == nil && gitTop != "" {
+		return filepath.Abs(gitTop)
+	}
+
+	cwd, err := os.Getwd()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Abs(cwd)
+}
+
+func resolveIndexNameForDir(dir, explicitIndex string) string {
+	if explicitIndex != "" {
+		return explicitIndex
+	}
+	if envIdx := os.Getenv("GLEANN_INDEX"); envIdx != "" {
+		return envIdx
+	}
+
+	cfg := getConfig(nil)
+	applySavedConfig(&cfg, nil)
+	indexes, err := gleann.ListIndexes(cfg.IndexDir)
+	if err != nil || len(indexes) == 0 {
+		return ""
+	}
+
+	absDir, err := filepath.Abs(dir)
+	if err != nil {
+		absDir = dir
+	}
+	absDir = filepath.Clean(absDir)
+	if realDir, err := filepath.EvalSymlinks(absDir); err == nil {
+		absDir = filepath.Clean(realDir)
+	}
+
+	// 1. Exact SourceDir match (require absolute SourceDir to prevent relative '.' matching process cwd)
+	for _, idx := range indexes {
+		src := strings.TrimSpace(idx.SourceDir)
+		if src == "" || !filepath.IsAbs(src) {
+			continue
+		}
+		cleanSrc := filepath.Clean(src)
+		if realSrc, err := filepath.EvalSymlinks(cleanSrc); err == nil {
+			cleanSrc = filepath.Clean(realSrc)
+		}
+		if cleanSrc == absDir {
+			return idx.Name
+		}
+	}
+
+	// 2. Directory contains or is contained in SourceDir (require absolute SourceDir)
+	for _, idx := range indexes {
+		src := strings.TrimSpace(idx.SourceDir)
+		if src == "" || !filepath.IsAbs(src) {
+			continue
+		}
+		cleanSrc := filepath.Clean(src)
+		if realSrc, err := filepath.EvalSymlinks(cleanSrc); err == nil {
+			cleanSrc = filepath.Clean(realSrc)
+		}
+		rel, err1 := filepath.Rel(cleanSrc, absDir)
+		if err1 == nil && !strings.HasPrefix(rel, "..") {
+			return idx.Name
+		}
+		rel2, err2 := filepath.Rel(absDir, cleanSrc)
+		if err2 == nil && !strings.HasPrefix(rel2, "..") {
+			return idx.Name
+		}
+	}
+
+	// 3. Name matches base directory
+	dirBase := strings.ToLower(filepath.Base(absDir))
+	for _, idx := range indexes {
+		if strings.EqualFold(idx.Name, dirBase) {
+			return idx.Name
+		}
+	}
+
+	return ""
+}
+
+func getActiveInstallIndex(dir string) string {
+	if activeInstallIndex != "" {
+		return activeInstallIndex
+	}
+	return resolveIndexNameForDir(dir, "")
+}
+
+func getClaudeMDSection(indexName string) string {
+	idx := indexName
+	if idx == "" {
+		idx = "<name>"
+	}
+	return strings.ReplaceAll(claudeMDSection, "<name>", idx)
+}
+
+func getGeminiMDSection(indexName string) string {
+	idx := indexName
+	if idx == "" {
+		idx = "<name>"
+	}
+	return strings.ReplaceAll(geminiMDSection, "<name>", idx)
+}
+
+func getCursorRulesContent(indexName string) string {
+	idx := indexName
+	if idx == "" {
+		idx = "<name>"
+	}
+	return strings.ReplaceAll(cursorRulesContent, "<name>", idx)
+}
+
+func getSkillMDContent(indexName string) string {
+	idx := indexName
+	if idx == "" {
+		idx = "<name>"
+	}
+	res := strings.ReplaceAll(skillMDContent, "<name>", idx)
+	res = strings.ReplaceAll(res, "<index>", idx)
+	res = strings.ReplaceAll(res, "<index-name>", idx)
+	return res
 }
 
 // ─── Shared content helpers ───────────────────────────────────────────────────
@@ -544,6 +741,11 @@ curl -X POST http://localhost:8080/a2a/v1/message:send \
 // appendOrCreateFile appends content to a file, creating it if absent.
 // It avoids duplicate sections by checking for the sentinel.
 func appendOrCreateFile(path, content, sentinel string) error {
+	sym, target, _ := isSymlink(path)
+	if sym && !followSymlinkFlag {
+		fmt.Printf("  ⚠ Skipped %s (points to symlink %s; use --follow-symlink to modify)\n", path, target)
+		return nil
+	}
 	existing, err := os.ReadFile(path)
 	if err == nil && strings.Contains(string(existing), sentinel) {
 		fmt.Printf("  (already configured in %s)\n", filepath.Base(path))
@@ -560,6 +762,11 @@ func appendOrCreateFile(path, content, sentinel string) error {
 
 // removeSection removes the gleann section from a file identified by start/end sentinels.
 func removeSection(path, startSentinel, endSentinel string) error {
+	sym, target, _ := isSymlink(path)
+	if sym && !followSymlinkFlag {
+		fmt.Printf("  ⚠ Skipped %s (points to symlink %s; use --follow-symlink to modify)\n", path, target)
+		return nil
+	}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil // file doesn't exist — nothing to do
@@ -650,7 +857,8 @@ export default {
 func installOpenCode(dir, home string) error {
 	// 1. AGENTS.md
 	agentsPath := filepath.Join(dir, "AGENTS.md")
-	if err := appendOrCreateFile(agentsPath, agentsMDSection, "gleann: Code Intelligence"); err != nil {
+	content := getAgentsMDContent(getActiveInstallIndex(dir))
+	if err := appendOrCreateFile(agentsPath, content, "gleann: Code Intelligence"); err != nil {
 		return fmt.Errorf("writing AGENTS.md: %w", err)
 	}
 	fmt.Printf("  • %s\n", agentsPath)
@@ -683,7 +891,7 @@ func installOpenCode(dir, home string) error {
 		fmt.Printf("  • %s  (mcp.gleann registered globally)\n", globalConfigPath)
 	}
 	globalAgentsPath := filepath.Join(globalConfigDir, "AGENTS.md")
-	if err := appendOrCreateFile(globalAgentsPath, agentsMDSection, "gleann: Code Intelligence"); err == nil {
+	if err := appendOrCreateFile(globalAgentsPath, getAgentsMDContent(""), "gleann: Code Intelligence"); err == nil {
 		fmt.Printf("  • %s  (global instructions for OpenCode agents)\n", globalAgentsPath)
 	}
 
@@ -691,6 +899,12 @@ func installOpenCode(dir, home string) error {
 }
 
 func patchOpenCodeJSON(path string) error {
+	sym, target, _ := isSymlink(path)
+	if sym && !followSymlinkFlag {
+		fmt.Printf("  ⚠ Skipped %s (points to symlink %s; use --follow-symlink to modify)\n", path, target)
+		return nil
+	}
+
 	// Read or initialise config.
 	var config map[string]interface{}
 	data, err := os.ReadFile(path)
@@ -722,8 +936,18 @@ func patchOpenCodeJSON(path string) error {
 	}
 	binPath := resolveInstalledGleannBin()
 
+	// In OpenCode V2, servers are defined under mcp.servers.<name>.
+	servers, _ := mcpSection["servers"].(map[string]interface{})
+	if servers == nil {
+		servers = make(map[string]interface{})
+		if legacy, ok := mcpSection["gleann"].(map[string]interface{}); ok {
+			servers["gleann"] = legacy
+		}
+	}
+	delete(mcpSection, "gleann") // purge legacy flat key to prevent OpenCode V2 validation warnings
+
 	// Check if already registered.
-	if existing, exists := mcpSection["gleann"]; exists {
+	if existing, exists := servers["gleann"]; exists {
 		// Ensure --clean-names is in command args, and heal any stale ephemeral runtime paths.
 		if exMap, ok := existing.(map[string]interface{}); ok {
 			cmdList, _ := exMap["command"].([]interface{})
@@ -746,6 +970,8 @@ func patchOpenCodeJSON(path string) error {
 			}
 			if updatedCmd {
 				exMap["command"] = cmdList
+				servers["gleann"] = exMap
+				mcpSection["servers"] = servers
 				config["mcp"] = mcpSection
 				out, err := json.MarshalIndent(config, "", "  ")
 				if err == nil {
@@ -753,15 +979,18 @@ func patchOpenCodeJSON(path string) error {
 				}
 			}
 		}
+		mcpSection["servers"] = servers
+		config["mcp"] = mcpSection
 		fmt.Printf("  (gleann mcp already in %s)\n", filepath.Base(path))
 		return nil
 	}
 
-	mcpSection["gleann"] = map[string]interface{}{
+	servers["gleann"] = map[string]interface{}{
 		"type":    "local",
 		"command": []interface{}{binPath, "mcp", "--clean-names"},
 		"enabled": true,
 	}
+	mcpSection["servers"] = servers
 	config["mcp"] = mcpSection
 
 	out, err := json.MarshalIndent(config, "", "  ")
@@ -776,14 +1005,24 @@ func uninstallOpenCode(dir, home string) error {
 	pluginPath := filepath.Join(dir, ".opencode", "plugins", "gleann.js")
 	_ = os.Remove(pluginPath)
 
-	// Deregister mcp.gleann from opencode.json.
+	// Deregister mcp.servers.gleann (and legacy mcp.gleann) from opencode.json.
 	ocConfigPath := filepath.Join(dir, "opencode.json")
 	if data, err := os.ReadFile(ocConfigPath); err == nil {
 		var config map[string]interface{}
 		if json.Unmarshal(data, &config) == nil {
 			if mcpSection, ok := config["mcp"].(map[string]interface{}); ok {
 				delete(mcpSection, "gleann")
-				config["mcp"] = mcpSection
+				if servers, ok := mcpSection["servers"].(map[string]interface{}); ok {
+					delete(servers, "gleann")
+					if len(servers) == 0 {
+						delete(mcpSection, "servers")
+					}
+				}
+				if len(mcpSection) == 0 {
+					delete(config, "mcp")
+				} else {
+					config["mcp"] = mcpSection
+				}
 				if out, err := json.MarshalIndent(config, "", "  "); err == nil {
 					_ = os.WriteFile(ocConfigPath, append(out, '\n'), 0o644)
 				}
@@ -815,7 +1054,7 @@ const claudeHookScript = `if [ -f "GRAPH_REPORT.md" ]; then echo "[gleann] GRAPH
 
 // installClaude writes the project-level CLAUDE.md into dir.
 func installClaude(dir, home string) error {
-	return installClaudeAt(filepath.Join(dir, "CLAUDE.md"), home)
+	return installClaudeAt(filepath.Join(dir, "CLAUDE.md"), home, getClaudeMDSection(getActiveInstallIndex(dir)))
 }
 
 // installClaudeUser writes the user-level ~/.claude/CLAUDE.md.
@@ -823,12 +1062,12 @@ func installClaudeUser(home string) error {
 	if err := os.MkdirAll(filepath.Join(home, ".claude"), 0o700); err != nil {
 		return fmt.Errorf("creating ~/.claude: %w", err)
 	}
-	return installClaudeAt(filepath.Join(home, ".claude", "CLAUDE.md"), home)
+	return installClaudeAt(filepath.Join(home, ".claude", "CLAUDE.md"), home, getClaudeMDSection(""))
 }
 
-func installClaudeAt(claudePath, home string) error {
+func installClaudeAt(claudePath, home string, content string) error {
 	// 1. CLAUDE.md
-	if err := appendOrCreateFile(claudePath, claudeMDSection, "gleann: Code Intelligence"); err != nil {
+	if err := appendOrCreateFile(claudePath, content, "gleann: Code Intelligence"); err != nil {
 		return fmt.Errorf("writing CLAUDE.md: %w", err)
 	}
 	fmt.Printf("  • %s\n", claudePath)
@@ -847,6 +1086,12 @@ func installClaudeAt(claudePath, home string) error {
 }
 
 func patchClaudeSettings(path string) error {
+	sym, target, _ := isSymlink(path)
+	if sym && !followSymlinkFlag {
+		fmt.Printf("  ⚠ Skipped %s (points to symlink %s; use --follow-symlink to modify)\n", path, target)
+		return nil
+	}
+
 	var settings map[string]interface{}
 	data, err := os.ReadFile(path)
 	if err == nil {
@@ -986,7 +1231,8 @@ func installCursor(dir, home string) error {
 		return fmt.Errorf("creating .cursor/rules: %w", err)
 	}
 	rulesPath := filepath.Join(rulesDir, "gleann.mdc")
-	if err := os.WriteFile(rulesPath, []byte(cursorRulesContent), 0o644); err != nil {
+	content := getCursorRulesContent(getActiveInstallIndex(dir))
+	if err := os.WriteFile(rulesPath, []byte(content), 0o644); err != nil {
 		return fmt.Errorf("writing rules file: %w", err)
 	}
 	fmt.Printf("  • %s  (alwaysApply: true)\n", rulesPath)
@@ -1031,7 +1277,8 @@ const codexHooksContent = `{
 
 func installCodex(dir, home string) error {
 	agentsPath := filepath.Join(dir, "AGENTS.md")
-	if err := appendOrCreateFile(agentsPath, agentsMDSection, "gleann: Code Intelligence"); err != nil {
+	content := getAgentsMDContent(getActiveInstallIndex(dir))
+	if err := appendOrCreateFile(agentsPath, content, "gleann: Code Intelligence"); err != nil {
 		return fmt.Errorf("writing AGENTS.md: %w", err)
 	}
 	fmt.Printf("  • %s\n", agentsPath)
@@ -1070,21 +1317,21 @@ const geminiHook = `if [ -f GRAPH_REPORT.md ]; then echo '[gleann] GRAPH_REPORT.
 
 // installGemini writes the project-level GEMINI.md and .gemini/ into dir.
 func installGemini(dir, home string) error {
-	return installGeminiAt(filepath.Join(dir, "GEMINI.md"), filepath.Join(dir, ".gemini"))
+	return installGeminiAt(filepath.Join(dir, "GEMINI.md"), filepath.Join(dir, ".gemini"), getGeminiMDSection(getActiveInstallIndex(dir)))
 }
 
 // installGeminiUser writes the user-level ~/.gemini/GEMINI.md and settings.
 func installGeminiUser(home string) error {
 	geminiDir := filepath.Join(home, ".gemini")
-	return installGeminiAt(filepath.Join(geminiDir, "GEMINI.md"), geminiDir)
+	return installGeminiAt(filepath.Join(geminiDir, "GEMINI.md"), geminiDir, getGeminiMDSection(""))
 }
 
-func installGeminiAt(geminiMDPath, geminiDir string) error {
+func installGeminiAt(geminiMDPath, geminiDir, content string) error {
 	if err := os.MkdirAll(geminiDir, 0o755); err != nil {
 		return fmt.Errorf("creating .gemini: %w", err)
 	}
 	// GEMINI.md
-	if err := appendOrCreateFile(geminiMDPath, geminiMDSection, "<!-- gleann -->"); err != nil {
+	if err := appendOrCreateFile(geminiMDPath, content, "<!-- gleann -->"); err != nil {
 		return fmt.Errorf("writing GEMINI.md: %w", err)
 	}
 	fmt.Printf("  • %s\n", geminiMDPath)
@@ -1102,6 +1349,12 @@ func installGeminiAt(geminiMDPath, geminiDir string) error {
 }
 
 func patchGeminiSettings(path string) error {
+	sym, target, _ := isSymlink(path)
+	if sym && !followSymlinkFlag {
+		fmt.Printf("  ⚠ Skipped %s (points to symlink %s; use --follow-symlink to modify)\n", path, target)
+		return nil
+	}
+
 	var settings map[string]interface{}
 	data, err := os.ReadFile(path)
 	if err == nil {
@@ -1165,7 +1418,8 @@ func uninstallGeminiAt(geminiMDPath, geminiDir string) error {
 
 func installClaw(dir, home string) error {
 	agentsPath := filepath.Join(dir, "AGENTS.md")
-	if err := appendOrCreateFile(agentsPath, agentsMDSection, "gleann: Code Intelligence"); err != nil {
+	content := getAgentsMDContent(getActiveInstallIndex(dir))
+	if err := appendOrCreateFile(agentsPath, content, "gleann: Code Intelligence"); err != nil {
 		return fmt.Errorf("writing AGENTS.md: %w", err)
 	}
 	fmt.Printf("  • %s\n", agentsPath)
@@ -1175,7 +1429,8 @@ func installClaw(dir, home string) error {
 		return fmt.Errorf("creating skill dir: %w", err)
 	}
 	skillPath := filepath.Join(skillDir, "SKILL.md")
-	if err := os.WriteFile(skillPath, []byte(skillMDContent), 0o644); err != nil {
+	skillContent := getSkillMDContent(getActiveInstallIndex(dir))
+	if err := os.WriteFile(skillPath, []byte(skillContent), 0o644); err != nil {
 		return fmt.Errorf("writing SKILL.md: %w", err)
 	}
 	fmt.Printf("  • %s\n", skillPath)
@@ -1192,7 +1447,8 @@ func uninstallClaw(dir, home string) error {
 
 func installAider(dir, home string) error {
 	agentsPath := filepath.Join(dir, "AGENTS.md")
-	if err := appendOrCreateFile(agentsPath, agentsMDSection, "gleann: Code Intelligence"); err != nil {
+	content := getAgentsMDContent(getActiveInstallIndex(dir))
+	if err := appendOrCreateFile(agentsPath, content, "gleann: Code Intelligence"); err != nil {
 		return fmt.Errorf("writing AGENTS.md: %w", err)
 	}
 	fmt.Printf("  • %s\n", agentsPath)
@@ -1230,7 +1486,8 @@ func installWindsurf(dir, home string) error {
 		return fmt.Errorf("creating .windsurf/rules: %w", err)
 	}
 	rulesPath := filepath.Join(rulesDir, "gleann.md")
-	if err := os.WriteFile(rulesPath, []byte(cursorRulesContent), 0o644); err != nil {
+	content := getCursorRulesContent(getActiveInstallIndex(dir))
+	if err := os.WriteFile(rulesPath, []byte(content), 0o644); err != nil {
 		return fmt.Errorf("writing rules: %w", err)
 	}
 	fmt.Printf("  • %s\n", rulesPath)
@@ -1245,7 +1502,8 @@ func uninstallWindsurf(dir, home string) error {
 
 func installCline(dir, home string) error {
 	agentsPath := filepath.Join(dir, "AGENTS.md")
-	if err := appendOrCreateFile(agentsPath, agentsMDSection, "gleann: Code Intelligence"); err != nil {
+	content := getAgentsMDContent(getActiveInstallIndex(dir))
+	if err := appendOrCreateFile(agentsPath, content, "gleann: Code Intelligence"); err != nil {
 		return fmt.Errorf("writing AGENTS.md: %w", err)
 	}
 	fmt.Printf("  • %s\n", agentsPath)
@@ -1280,7 +1538,8 @@ func uninstallCline(dir, home string) error {
 
 func installAmp(dir, home string) error {
 	agentsPath := filepath.Join(dir, "AGENTS.md")
-	if err := appendOrCreateFile(agentsPath, agentsMDSection, "gleann: Code Intelligence"); err != nil {
+	content := getAgentsMDContent(getActiveInstallIndex(dir))
+	if err := appendOrCreateFile(agentsPath, content, "gleann: Code Intelligence"); err != nil {
 		return fmt.Errorf("writing AGENTS.md: %w", err)
 	}
 	fmt.Printf("  • %s\n", agentsPath)
@@ -1299,7 +1558,8 @@ func installKiro(dir, home string) error {
 		return fmt.Errorf("creating .kiro/rules: %w", err)
 	}
 	rulesPath := filepath.Join(rulesDir, "gleann.md")
-	if err := os.WriteFile(rulesPath, []byte(cursorRulesContent), 0o644); err != nil {
+	content := getCursorRulesContent(getActiveInstallIndex(dir))
+	if err := os.WriteFile(rulesPath, []byte(content), 0o644); err != nil {
 		return fmt.Errorf("writing rules: %w", err)
 	}
 	fmt.Printf("  • %s\n", rulesPath)
@@ -1314,7 +1574,8 @@ func uninstallKiro(dir, home string) error {
 
 func installAmazonQ(dir, home string) error {
 	agentsPath := filepath.Join(dir, "AGENTS.md")
-	if err := appendOrCreateFile(agentsPath, agentsMDSection, "gleann: Code Intelligence"); err != nil {
+	content := getAgentsMDContent(getActiveInstallIndex(dir))
+	if err := appendOrCreateFile(agentsPath, content, "gleann: Code Intelligence"); err != nil {
 		return fmt.Errorf("writing AGENTS.md: %w", err)
 	}
 	fmt.Printf("  • %s\n", agentsPath)
@@ -1329,7 +1590,8 @@ func uninstallAmazonQ(dir, home string) error {
 
 func installContinue(dir, home string) error {
 	agentsPath := filepath.Join(dir, "AGENTS.md")
-	if err := appendOrCreateFile(agentsPath, agentsMDSection, "gleann: Code Intelligence"); err != nil {
+	content := getAgentsMDContent(getActiveInstallIndex(dir))
+	if err := appendOrCreateFile(agentsPath, content, "gleann: Code Intelligence"); err != nil {
 		return fmt.Errorf("writing AGENTS.md: %w", err)
 	}
 	fmt.Printf("  • %s\n", agentsPath)
@@ -1344,7 +1606,8 @@ func uninstallContinue(dir, home string) error {
 
 func installZed(dir, home string) error {
 	agentsPath := filepath.Join(dir, "AGENTS.md")
-	if err := appendOrCreateFile(agentsPath, agentsMDSection, "gleann: Code Intelligence"); err != nil {
+	content := getAgentsMDContent(getActiveInstallIndex(dir))
+	if err := appendOrCreateFile(agentsPath, content, "gleann: Code Intelligence"); err != nil {
 		return fmt.Errorf("writing AGENTS.md: %w", err)
 	}
 	fmt.Printf("  • %s\n", agentsPath)
@@ -1359,7 +1622,8 @@ func uninstallZed(dir, home string) error {
 
 func installNeovim(dir, home string) error {
 	agentsPath := filepath.Join(dir, "AGENTS.md")
-	if err := appendOrCreateFile(agentsPath, agentsMDSection, "gleann: Code Intelligence"); err != nil {
+	content := getAgentsMDContent(getActiveInstallIndex(dir))
+	if err := appendOrCreateFile(agentsPath, content, "gleann: Code Intelligence"); err != nil {
 		return fmt.Errorf("writing AGENTS.md: %w", err)
 	}
 	fmt.Printf("  • %s\n", agentsPath)
@@ -1374,7 +1638,8 @@ func uninstallNeovim(dir, home string) error {
 
 func installJetBrains(dir, home string) error {
 	agentsPath := filepath.Join(dir, "AGENTS.md")
-	if err := appendOrCreateFile(agentsPath, agentsMDSection, "gleann: Code Intelligence"); err != nil {
+	content := getAgentsMDContent(getActiveInstallIndex(dir))
+	if err := appendOrCreateFile(agentsPath, content, "gleann: Code Intelligence"); err != nil {
 		return fmt.Errorf("writing AGENTS.md: %w", err)
 	}
 	fmt.Printf("  • %s\n", agentsPath)
@@ -1385,7 +1650,7 @@ func installJetBrains(dir, home string) error {
 		return fmt.Errorf("creating .junie: %w", err)
 	}
 	guidelinesPath := filepath.Join(junieDir, "guidelines.md")
-	if err := appendOrCreateFile(guidelinesPath, agentsMDSection, "gleann: Code Intelligence"); err != nil {
+	if err := appendOrCreateFile(guidelinesPath, content, "gleann: Code Intelligence"); err != nil {
 		return fmt.Errorf("writing guidelines.md: %w", err)
 	}
 	fmt.Printf("  • %s\n", guidelinesPath)
@@ -1401,6 +1666,11 @@ func uninstallJetBrains(dir, home string) error {
 
 // writeJSONIfAbsent writes content to path only if the file does not already exist.
 func writeJSONIfAbsent(path, content string) error {
+	sym, target, _ := isSymlink(path)
+	if sym && !followSymlinkFlag {
+		fmt.Printf("  ⚠ Skipped %s (points to symlink %s; use --follow-symlink to modify)\n", path, target)
+		return nil
+	}
 	if _, err := os.Stat(path); err == nil {
 		fmt.Printf("  (already exists: %s)\n", filepath.Base(path))
 		return nil

@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/tevfik/gleann/internal/service"
 )
@@ -16,7 +17,7 @@ func cmdService(args []string) {
 	sub := args[0]
 	switch sub {
 	case "install":
-		addr := getFlag(args[1:], "--addr")
+		addr := resolveServiceAddr(args[1:])
 		bin := getFlag(args[1:], "--bin")
 		if err := service.Install(bin, addr); err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
@@ -33,7 +34,7 @@ func cmdService(args []string) {
 		fmt.Println("✅ gleann service uninstalled")
 
 	case "start":
-		addr := getFlag(args[1:], "--addr")
+		addr := resolveServiceAddr(args[1:])
 		bin := getFlag(args[1:], "--bin")
 		if err := service.Start(bin, addr); err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
@@ -51,7 +52,7 @@ func cmdService(args []string) {
 
 	case "restart":
 		service.Stop() // ignore error if not running
-		addr := getFlag(args[1:], "--addr")
+		addr := resolveServiceAddr(args[1:])
 		bin := getFlag(args[1:], "--bin")
 		if err := service.Start(bin, addr); err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
@@ -104,4 +105,22 @@ Platforms:
   Linux    systemd user service (~/.config/systemd/user/)
   macOS    launchd agent (~/Library/LaunchAgents/)
   Windows  Task Scheduler (schtasks)`)
+}
+
+func resolveServiceAddr(args []string) string {
+	addr := getFlag(args, "--addr")
+	if addr == "" {
+		portFlag := getFlag(args, "--port")
+		if portFlag == "" {
+			portFlag = getFlag(args, "-p")
+		}
+		if portFlag != "" {
+			if !strings.HasPrefix(portFlag, ":") {
+				addr = ":" + portFlag
+			} else {
+				addr = portFlag
+			}
+		}
+	}
+	return addr
 }

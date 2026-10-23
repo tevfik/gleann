@@ -13,6 +13,7 @@ import (
 
 	"github.com/tevfik/gleann/internal/autosetup"
 	"github.com/tevfik/gleann/internal/server"
+	"github.com/tevfik/gleann/internal/tui"
 	"github.com/tevfik/gleann/pkg/gleann"
 )
 
@@ -69,6 +70,8 @@ Options:
 			} else {
 				addr = portFlag
 			}
+		} else if savedCfg := tui.LoadSavedConfig(); savedCfg != nil && savedCfg.ServerAddr != "" {
+			addr = savedCfg.ServerAddr
 		} else {
 			addr = gleann.DefaultServerAddr
 		}

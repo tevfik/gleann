@@ -457,8 +457,14 @@ func TestOnboardServerUpDownEnter(t *testing.T) {
 	if !om.serverEnabled {
 		t.Error("should be enabled")
 	}
+	if om.phase != phaseServerAddr {
+		t.Errorf("phase = %d, want phaseServerAddr", om.phase)
+	}
+
+	result, _ = om.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	om = result.(OnboardModel)
 	if om.phase != phaseSummary {
-		t.Errorf("phase = %d", om.phase)
+		t.Errorf("phase = %d, want phaseSummary", om.phase)
 	}
 }
 
@@ -750,5 +756,50 @@ func TestOnboardCodeAndDocEmbModelMenu(t *testing.T) {
 	}
 	if om.codeEmbeddingModel != "code-bert" {
 		t.Errorf("expected code-bert, got %q", om.codeEmbeddingModel)
+	}
+}
+
+func TestOnboardMenuInstallOptionZeroReturnsToMenu(t *testing.T) {
+	cfg := &OnboardResult{EmbeddingProvider: "ollama", LLMProvider: "ollama"}
+	m := NewOnboardModelWithConfig(cfg)
+	m.phase = phaseInstall
+	m.installOptionIdx = 0 // "Don't install"
+
+	res, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	om := res.(OnboardModel)
+	if om.done {
+		t.Error("expected om.done to be false when selecting 'Don't install' from menu")
+	}
+	if om.phase != phaseMenu {
+		t.Errorf("expected phaseMenu, got %v", om.phase)
+	}
+	if cmd != nil {
+		t.Error("expected no quit command on option 0 in menuMode")
+	}
+}
+
+func TestOnboardMenuServerAddrFlow(t *testing.T) {
+	cfg := &OnboardResult{EmbeddingProvider: "ollama", LLMProvider: "ollama"}
+	m := NewOnboardModelWithConfig(cfg)
+	m.phase = phaseServer
+	m.serverOptionIdx = 1 // Enable server
+
+	res, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	om := res.(OnboardModel)
+	if om.phase != phaseServerAddr {
+		t.Fatalf("expected phaseServerAddr, got %v", om.phase)
+	}
+
+	om.serverAddrInput.SetValue("9090")
+	res, _ = om.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	om = res.(OnboardModel)
+	if om.phase != phaseMenu {
+		t.Errorf("expected phaseMenu, got %v", om.phase)
+	}
+	if om.serverAddrInput.Value() != ":9090" {
+		t.Errorf("expected :9090, got %q", om.serverAddrInput.Value())
+	}
+	if !om.serverEnabled {
+		t.Error("expected serverEnabled to be true")
 	}
 }

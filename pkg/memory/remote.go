@@ -17,6 +17,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -47,22 +48,67 @@ func probeAddress(addr string) bool {
 	if err != nil {
 		return false
 	}
-	resp.Body.Close()
-	return resp.StatusCode == http.StatusOK
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return false
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 2048))
+	if err != nil {
+		return false
+	}
+	var health struct {
+		Engine  string `json:"engine"`
+		Service string `json:"service"`
+		Status  string `json:"status"`
+	}
+	if err := json.Unmarshal(body, &health); err != nil {
+		return false
+	}
+	return health.Engine == "gleann-go" || health.Service == "gleann" || strings.HasPrefix(health.Engine, "gleann")
+}
+
+func normalizeURL(addr string) string {
+	addr = strings.TrimSpace(addr)
+	if addr == "" {
+		return ""
+	}
+	if strings.HasPrefix(addr, ":") {
+		return "http://localhost" + addr
+	}
+	if !strings.Contains(addr, "://") {
+		return "http://" + addr
+	}
+	return strings.TrimRight(addr, "/")
+}
+
+func readConfigServerAddr() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	cfgPath := filepath.Join(home, ".gleann", "config.json")
+	data, err := os.ReadFile(cfgPath)
+	if err != nil {
+		return ""
+	}
+	var raw struct {
+		ServerAddr string `json:"server_addr"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return ""
+	}
+	return strings.TrimSpace(raw.ServerAddr)
 }
 
 // Remote returns a cached RemoteClient if a gleann server is reachable
-// at GLEANN_REMOTE_ADDR (default http://localhost:8080), or nil if unreachable
+// (precedence: GLEANN_REMOTE_ADDR env > ~/.gleann/config.json server_addr > http://localhost:8080),
+// verifying that the target server is actually a gleann instance, or nil if unreachable
 // or disabled via GLEANN_REMOTE_ADDR="off". Re-probes periodically (every 2s).
 func Remote() *RemoteClient {
-	addr := os.Getenv("GLEANN_REMOTE_ADDR")
-	if addr == "off" {
+	envAddr := os.Getenv("GLEANN_REMOTE_ADDR")
+	if envAddr == "off" {
 		return nil
 	}
-	if addr == "" {
-		addr = DefaultRemoteAddr
-	}
-	addr = strings.TrimRight(addr, "/")
 
 	remoteMu.RLock()
 	if remoteVal != nil && time.Since(lastProbeTime) < probeTTL {
@@ -81,15 +127,29 @@ func Remote() *RemoteClient {
 	}
 
 	lastProbeTime = time.Now()
-	if probeAddress(addr) {
-		remoteVal = &RemoteClient{
-			base:   addr,
-			client: &http.Client{Timeout: 30 * time.Second},
-		}
+
+	var candidates []string
+	if envAddr != "" {
+		candidates = append(candidates, normalizeURL(envAddr))
 	} else {
-		remoteVal = nil
+		if cfgAddr := readConfigServerAddr(); cfgAddr != "" {
+			candidates = append(candidates, normalizeURL(cfgAddr))
+		}
+		candidates = append(candidates, DefaultRemoteAddr)
 	}
-	return remoteVal
+
+	for _, cand := range candidates {
+		if cand != "" && probeAddress(cand) {
+			remoteVal = &RemoteClient{
+				base:   cand,
+				client: &http.Client{Timeout: 30 * time.Second},
+			}
+			return remoteVal
+		}
+	}
+
+	remoteVal = nil
+	return nil
 }
 
 // EnsureDaemon ensures a gleann daemon is running at addr (default http://localhost:8080).

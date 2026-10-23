@@ -17,8 +17,9 @@ func TestMCPMemoryRemoteRouting(t *testing.T) {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{"status":"ok"}`))
+		_, _ = w.Write([]byte(`{"engine":"gleann-go","status":"ok"}`))
 	})
 
 	mux.HandleFunc("POST /api/blocks", func(w http.ResponseWriter, r *http.Request) {

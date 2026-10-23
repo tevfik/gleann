@@ -15,8 +15,9 @@ func TestRemoteClient(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.URL.Path == "/health" && r.Method == http.MethodGet:
+			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write([]byte("OK"))
+			_, _ = w.Write([]byte(`{"engine":"gleann-go","status":"ok"}`))
 
 		case r.URL.Path == "/api/blocks" && r.Method == http.MethodPost:
 			var req map[string]any
@@ -151,5 +152,28 @@ func TestRemoteClient(t *testing.T) {
 	ResetRemoteForTesting()
 	if cOff := Remote(); cOff != nil {
 		t.Fatalf("expected nil when GLEANN_REMOTE_ADDR=off")
+	}
+}
+
+func TestRemote_RejectsNonGleannServer(t *testing.T) {
+	// A server that returns HTTP 200 on /health but is not gleann (e.g. Strata or other daemon)
+	foreign := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/health" {
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"status":"ok","model":"strata"}`))
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer foreign.Close()
+
+	ResetRemoteForTesting()
+	origAddr := os.Getenv("GLEANN_REMOTE_ADDR")
+	defer os.Setenv("GLEANN_REMOTE_ADDR", origAddr)
+
+	os.Setenv("GLEANN_REMOTE_ADDR", foreign.URL)
+	c := Remote()
+	if c != nil {
+		t.Fatalf("expected Remote() to reject non-gleann server at %s", foreign.URL)
 	}
 }

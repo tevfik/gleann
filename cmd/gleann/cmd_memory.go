@@ -189,12 +189,11 @@ func cmdMemoryRemember(args []string) {
 			label = "note"
 		}
 		block, err := rc.Add(memory.TierLong, label, content, tags)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "error (remote): %v\n", err)
-			os.Exit(1)
+		if err == nil {
+			fmt.Printf("✅ Remembered [%s]: %s  (via running server)\n", block.ID[:8], truncateStr(content, 80))
+			return
 		}
-		fmt.Printf("✅ Remembered [%s]: %s  (via running server)\n", block.ID[:8], truncateStr(content, 80))
-		return
+		// Fallback to local store if remote call failed
 	}
 
 	mgr := openMemoryManager()
@@ -228,12 +227,11 @@ func cmdMemoryForget(args []string) {
 
 	if rc := remoteMemoryClient(); rc != nil {
 		count, err := rc.Forget(query)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "error (remote): %v\n", err)
-			os.Exit(1)
+		if err == nil {
+			fmt.Printf("🗑  Forgot %d memory block(s) matching %q  (via running server)\n", count, query)
+			return
 		}
-		fmt.Printf("🗑  Forgot %d memory block(s) matching %q  (via running server)\n", count, query)
-		return
+		// Fallback to local store if remote call failed
 	}
 
 	mgr := openMemoryManager()
@@ -263,9 +261,14 @@ func cmdMemoryList(args []string) {
 
 	var blocks []memory.Block
 	var err error
+	var remoteOk bool
 	if rc := remoteMemoryClient(); rc != nil {
 		blocks, err = rc.List(tier)
-	} else {
+		if err == nil {
+			remoteOk = true
+		}
+	}
+	if !remoteOk {
 		mgr := openMemoryManager()
 		defer mgr.Close()
 		blocks, err = mgr.List(tier)
@@ -318,9 +321,14 @@ func cmdMemorySearch(args []string) {
 
 	var blocks []memory.Block
 	var err error
+	var remoteOk bool
 	if rc := remoteMemoryClient(); rc != nil {
 		blocks, err = rc.Search(query)
-	} else {
+		if err == nil {
+			remoteOk = true
+		}
+	}
+	if !remoteOk {
 		mgr := openMemoryManager()
 		defer mgr.Close()
 		blocks, err = mgr.Search(query)
@@ -363,16 +371,15 @@ func cmdMemoryClear(args []string) {
 
 	if rc := remoteMemoryClient(); rc != nil {
 		count, err := rc.Clear(tier)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "error (remote): %v\n", err)
-			os.Exit(1)
+		if err == nil {
+			if tier != "" {
+				fmt.Printf("🗑  Cleared %d memory block(s) from tier %q  (via running server)\n", count, tier)
+			} else {
+				fmt.Printf("🗑  Cleared %d memory block(s) from all tiers  (via running server)\n", count)
+			}
+			return
 		}
-		if tier != "" {
-			fmt.Printf("🗑  Cleared %d memory block(s) from tier %q  (via running server)\n", count, tier)
-		} else {
-			fmt.Printf("🗑  Cleared %d memory block(s) from all tiers  (via running server)\n", count)
-		}
-		return
+		// Fallback to local store if remote call failed
 	}
 
 	mgr := openMemoryManager()
@@ -437,12 +444,11 @@ func cmdMemoryAdd(args []string) {
 
 	if rc := remoteMemoryClient(); rc != nil {
 		block, err := rc.Add(tier, label, content, tags)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "error (remote): %v\n", err)
-			os.Exit(1)
+		if err == nil {
+			fmt.Printf("✅ Added to %s [%s]: %s  (via running server)\n", tier, block.ID[:8], truncateStr(content, 80))
+			return
 		}
-		fmt.Printf("✅ Added to %s [%s]: %s  (via running server)\n", tier, block.ID[:8], truncateStr(content, 80))
-		return
+		// Fallback to local store if remote call failed
 	}
 
 	mgr := openMemoryManager()
@@ -460,17 +466,16 @@ func cmdMemoryAdd(args []string) {
 func cmdMemoryStats() {
 	if rc := remoteMemoryClient(); rc != nil {
 		stats, err := rc.Stats()
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "error (remote): %v\n", err)
-			os.Exit(1)
+		if err == nil {
+			fmt.Println("🧠 Memory Statistics (via running server):")
+			fmt.Printf("  Short-term:  %d blocks (in-memory)\n", stats.ShortTermCount)
+			fmt.Printf("  Medium-term: %d blocks (BBolt)\n", stats.MediumTermCount)
+			fmt.Printf("  Long-term:   %d blocks (BBolt)\n", stats.LongTermCount)
+			fmt.Printf("  Total:       %d blocks\n", stats.TotalCount)
+			fmt.Printf("  Disk size:   %s\n", formatMemSize(stats.DiskSizeBytes))
+			return
 		}
-		fmt.Println("🧠 Memory Statistics (via running server):")
-		fmt.Printf("  Short-term:  %d blocks (in-memory)\n", stats.ShortTermCount)
-		fmt.Printf("  Medium-term: %d blocks (BBolt)\n", stats.MediumTermCount)
-		fmt.Printf("  Long-term:   %d blocks (BBolt)\n", stats.LongTermCount)
-		fmt.Printf("  Total:       %d blocks\n", stats.TotalCount)
-		fmt.Printf("  Disk size:   %s\n", formatMemSize(stats.DiskSizeBytes))
-		return
+		// Fallback to local store if remote call failed
 	}
 
 	mgr := openMemoryManager()
@@ -632,16 +637,15 @@ func cmdMemoryPrune(args []string) {
 func cmdMemoryContext() {
 	if rc := remoteMemoryClient(); rc != nil {
 		rendered, err := rc.Context("")
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "error (remote): %v\n", err)
-			os.Exit(1)
-		}
-		if rendered == "" {
-			fmt.Println("(empty memory context)")
+		if err == nil {
+			if rendered == "" {
+				fmt.Println("(empty memory context)")
+				return
+			}
+			fmt.Println(rendered)
 			return
 		}
-		fmt.Println(rendered)
-		return
+		// Fallback to local store if remote call failed
 	}
 
 	mgr := openMemoryManager()
