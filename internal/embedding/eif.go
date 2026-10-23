@@ -34,13 +34,23 @@ import (
 	"path/filepath"
 	"runtime"
 	"sync"
+	"sync/atomic"
 	"unsafe"
 )
 
 // EIFComputer executes in-process high-performance CPU embeddings using bitllm.c.
+//
+// bert is the primary instance. Compute spreads a batch over several
+// independent instances (extra, grown on demand) that each run single-threaded
+// and pull passages from a shared queue. Splitting one short passage across
+// OpenMP threads scales badly (a fork/join per small GEMM, and a static split
+// waits for the slowest E-core on hybrid CPUs); one passage per thread keeps
+// every core busy. The model file is mapped read-only, so extra instances only
+// add their activation scratch.
 type EIFComputer struct {
 	modelPath string
-	bert      C.eif_bert_t
+	bert      *C.eif_bert_t // C memory, see growWorkers
+	extra     []*C.eif_bert_t
 	dim       int
 	mu        sync.Mutex
 	closed    bool
@@ -126,10 +136,12 @@ func GetOrLoadEIF(model string) (*EIFComputer, error) {
 
 	inst := &EIFComputer{
 		modelPath: resolved,
+		bert:      (*C.eif_bert_t)(C.calloc(1, C.sizeof_eif_bert_t)),
 	}
 
-	rc := C.eif_bert_load(&inst.bert, cPath)
+	rc := C.eif_bert_load(inst.bert, cPath)
 	if rc != 0 {
+		C.free(unsafe.Pointer(inst.bert))
 		return nil, fmt.Errorf("failed to load EIF model %q (code %d)", resolved, int(rc))
 	}
 
@@ -146,9 +158,48 @@ func (e *EIFComputer) Close() {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	if !e.closed {
-		C.eif_bert_free(&e.bert)
+		for _, b := range e.extra {
+			C.eif_bert_free(b)
+			C.free(unsafe.Pointer(b))
+		}
+		e.extra = nil
+		C.eif_bert_free(e.bert)
+		C.free(unsafe.Pointer(e.bert))
 		e.closed = true
 	}
+}
+
+// growWorkers makes sure n worker instances exist (the primary counts as one)
+// and returns them. Called with e.mu held.
+func (e *EIFComputer) growWorkers(n int) []*C.eif_bert_t {
+	cPath := C.CString(e.modelPath)
+	defer C.free(unsafe.Pointer(cPath))
+	for len(e.extra)+1 < n {
+		// C memory: the struct points into itself, which cgo rejects for
+		// a whole Go-allocated struct.
+		b := (*C.eif_bert_t)(C.calloc(1, C.sizeof_eif_bert_t))
+		if C.eif_bert_load(b, cPath) != 0 {
+			C.free(unsafe.Pointer(b))
+			break // run with what we have
+		}
+		e.extra = append(e.extra, b)
+	}
+	workers := make([]*C.eif_bert_t, 0, 1+len(e.extra))
+	workers = append(workers, e.bert)
+	workers = append(workers, e.extra...)
+	if len(workers) > n {
+		workers = workers[:n]
+	}
+	return workers
+}
+
+// embedOne embeds one text on a single OpenMP thread.
+func embedOne(b *C.eif_bert_t, txt string, dim int) ([]float32, C.int) {
+	cText := C.CString(txt)
+	defer C.free(unsafe.Pointer(cText))
+	vec := make([]float32, dim)
+	rc := C.eif_embed_with_threads(b, cText, (*C.float)(unsafe.Pointer(&vec[0])), 1)
+	return vec, rc
 }
 
 // Dim returns the embedding dimensionality.
@@ -171,26 +222,49 @@ func (e *EIFComputer) Compute(ctx context.Context, texts []string) ([][]float32,
 
 	dim := e.dim
 	results := make([][]float32, len(texts))
-	threads := C.int(embedThreads())
 
-	for i, txt := range texts {
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		default:
-		}
-
-		cText := C.CString(txt)
-		vec := make([]float32, dim)
-		rc := C.eif_embed_with_threads(&e.bert, cText, (*C.float)(unsafe.Pointer(&vec[0])), threads)
-		C.free(unsafe.Pointer(cText))
-
-		if rc != 0 {
-			return nil, fmt.Errorf("eif_bert_embed failed on text %d with code %d", i, int(rc))
-		}
-		results[i] = vec
+	n := embedThreads()
+	if n > len(texts) {
+		n = len(texts)
 	}
+	workers := e.growWorkers(n)
 
+	var (
+		next     atomic.Int64
+		wg       sync.WaitGroup
+		errOnce  sync.Once
+		firstErr error
+		failed   atomic.Bool
+	)
+	for _, w := range workers {
+		wg.Add(1)
+		go func(b *C.eif_bert_t) {
+			defer wg.Done()
+			for !failed.Load() {
+				i := int(next.Add(1) - 1)
+				if i >= len(texts) {
+					return
+				}
+				if err := ctx.Err(); err != nil {
+					errOnce.Do(func() { firstErr = err; failed.Store(true) })
+					return
+				}
+				vec, rc := embedOne(b, texts[i], dim)
+				if rc != 0 {
+					errOnce.Do(func() {
+						firstErr = fmt.Errorf("eif_bert_embed failed on text %d with code %d", i, int(rc))
+						failed.Store(true)
+					})
+					return
+				}
+				results[i] = vec
+			}
+		}(w)
+	}
+	wg.Wait()
+	if firstErr != nil {
+		return nil, firstErr
+	}
 	return results, nil
 }
 

@@ -93,3 +93,32 @@ func TestEIFComputerSnowflakeXS_Q8(t *testing.T) {
 func TestEIFComputerGranite30M_Q8(t *testing.T) {
 	testEmbeddingWithModel(t, "granite-30m-q8_0.gguf")
 }
+
+// The parallel worker pool must produce exactly the vectors a single
+// instance does, in input order.
+func TestEIFParallelMatchesSerial(t *testing.T) {
+	eng, err := GetOrLoadEIF("granite-30m-q8_0")
+	if err != nil {
+		t.Skipf("model not available: %v", err)
+	}
+	texts := make([]string, 37)
+	for i := range texts {
+		texts[i] = strings.Repeat("func Example() { return value } // passage ", 1+i%9) + string(rune('a'+i%26))
+	}
+	got, err := eng.Compute(context.Background(), texts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i, txt := range texts {
+		want, rc := embedOne(eng.bert, txt, eng.Dim())
+		if rc != 0 {
+			t.Fatalf("serial embed %d failed: %d", i, rc)
+		}
+		if cs := cosineSimilarity(got[i], want); cs < 0.99999 {
+			t.Fatalf("text %d: parallel vs serial cosine %.6f", i, cs)
+		}
+	}
+	if len(eng.extra) == 0 && embedThreads() > 1 {
+		t.Fatalf("expected extra worker instances to be created")
+	}
+}
