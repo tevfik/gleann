@@ -99,6 +99,7 @@ Options:
   --no-plugins            Disable external document extraction plugins
   --multimodal-model <m>  Model for media files (images, audio, video)
   --host <url>            Ollama server address (default: saved config / OLLAMA_HOST)
+  --openai-base-url <url> OpenAI-compatible endpoint for --provider openai (e.g. local llama-server)
   --ollama-api-key <key>  Optional Ollama API key (auth proxy / hosted Ollama; env: OLLAMA_API_KEY)
   --no-report             Skip automatic GRAPH_REPORT.md generation
   --no-agents             Skip automatic AGENTS.md generation

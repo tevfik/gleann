@@ -443,3 +443,10 @@ func TestStrValExtended(t *testing.T) {
 		t.Errorf("strVal(nil, key) = %q, want ''", got)
 	}
 }
+
+func TestGetConfig_OpenAIBaseURLFlag(t *testing.T) {
+	cfg := getConfig([]string{"--provider", "openai", "--openai-base-url", "http://127.0.0.1:8792/"})
+	if cfg.OpenAIBaseURL != "http://127.0.0.1:8792" {
+		t.Fatalf("OpenAIBaseURL = %q, want http://127.0.0.1:8792", cfg.OpenAIBaseURL)
+	}
+}

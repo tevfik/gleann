@@ -761,7 +761,7 @@ func extractPositionalArgs(args []string) ([]string, []string) {
 		"--continue": true, "--title": true, "--role": true, "--format": true,
 		"--word-wrap": true, "--llm-model": true, "--llm-provider": true,
 		"--rerank-model": true, "--top-k": true, "--metric": true,
-		"--model": true, "--provider": true, "--host": true,
+		"--model": true, "--provider": true, "--host": true, "--openai-base-url": true,
 		"--api-key": true, "--ollama-api-key": true,
 		"--attach": true, "--image": true,
 		"--repeat-penalty": true, "--repetition-penalty": true,

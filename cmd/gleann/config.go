@@ -190,6 +190,14 @@ func getConfig(args []string) gleann.Config {
 				config.OllamaAPIKey = args[i+1]
 				i++
 			}
+		case "--openai-base-url":
+			// Endpoint for --provider openai/llamacpp embeddings. Without
+			// this, index build/search silently fell back to the saved
+			// config and then api.openai.com.
+			if i+1 < len(args) {
+				config.OpenAIBaseURL = strings.TrimRight(args[i+1], "/")
+				i++
+			}
 		}
 	}
 
