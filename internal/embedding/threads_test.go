@@ -1,3 +1,5 @@
+//go:build eif
+
 package embedding
 
 import "testing"
