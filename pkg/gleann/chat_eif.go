@@ -11,7 +11,16 @@ package gleann
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
+#if defined(__linux__) && defined(__has_include)
+#if __has_include(<omp.h>)
 #include <omp.h>
+#define GLEANN_HAVE_OMP 1
+#endif
+#endif
+#ifndef GLEANN_HAVE_OMP
+// macOS/Windows builds link bitllm.c without libomp (see release.yml).
+static inline void omp_set_num_threads(int n) { (void)n; }
+#endif
 
 static int c_eif_count_tokens(eif_llm_t *llm, const char *text) {
     int cap = (int)strlen(text) + 16;

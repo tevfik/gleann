@@ -9,7 +9,16 @@ package embedding
 #cgo windows LDFLAGS: ${SRCDIR}/../../ext/bitllm.c/build/libbitllm.a -lm
 #include "eif_bert.h"
 #include <stdlib.h>
+#if defined(__linux__) && defined(__has_include)
+#if __has_include(<omp.h>)
 #include <omp.h>
+#define GLEANN_HAVE_OMP 1
+#endif
+#endif
+#ifndef GLEANN_HAVE_OMP
+// macOS/Windows builds link bitllm.c without libomp (see release.yml).
+static inline void omp_set_num_threads(int n) { (void)n; }
+#endif
 
 // omp_set_num_threads only affects the calling thread, so it has to happen in
 // the same cgo call that runs the embedding.
