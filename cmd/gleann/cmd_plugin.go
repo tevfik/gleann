@@ -51,6 +51,12 @@ func cmdPlugin(args []string) {
 			os.Exit(1)
 		}
 		pluginInfo(args[1])
+	case "models":
+		if len(args) < 2 {
+			fmt.Fprintln(os.Stderr, "usage: gleann plugin models <name> [list|download|verify] [flags...]")
+			os.Exit(1)
+		}
+		pluginModels(args[1], args[2:])
 	case "help", "-h", "--help":
 		pluginUsage()
 	default:
@@ -67,6 +73,7 @@ Usage:
   gleann plugin list                Show registered plugins + live status
   gleann plugin install <name>      Install & register plugin via CLI
   gleann plugin info <name>         Fetch live /info from a plugin
+  gleann plugin models <name> [...] Manage local models for a plugin (list, download, verify)
   gleann plugin update [name]       update installed plugins from their latest release
                                     (--check only reports, --force reinstalls)
 
@@ -376,4 +383,79 @@ func installCatalogPlugin(meta gleann.PluginMeta) {
 		return
 	}
 	fmt.Printf("✓ %s\n", out)
+}
+
+// pluginModels executes the `models` subcommand of a target plugin binary.
+func pluginModels(name string, subArgs []string) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+
+	fullName := name
+	if !strings.HasPrefix(fullName, "gleann-plugin-") {
+		fullName = "gleann-plugin-" + name
+	}
+
+	binaryPath := ""
+
+	// 1. Try ~/.gleann/plugins.json
+	if reg, err := gleann.LoadPlugins(); err == nil {
+		for _, p := range reg.Plugins {
+			if p.Name == name || p.Name == fullName || strings.TrimPrefix(p.Name, "gleann-plugin-") == name {
+				if len(p.Command) > 0 && p.Command[0] != "" {
+					binaryPath = p.Command[0]
+					break
+				}
+			}
+		}
+	}
+
+	// 2. Candidate paths
+	if binaryPath == "" || !fileExists(binaryPath) {
+		candidates := []string{
+			filepath.Join(home, ".gleann", "plugins", fullName, fullName),
+			filepath.Join(home, ".gleann", "plugins", fullName, "bin", fullName),
+			filepath.Join(home, ".gleann", "plugins", fullName, "build", fullName),
+			filepath.Join(home, ".gleann", "plugins", "_repos", fullName, fullName),
+			filepath.Join(home, ".gleann", "plugins", "_repos", fullName, "bin", fullName),
+			filepath.Join(home, ".gleann", "plugins", "_repos", fullName, "build", fullName),
+			filepath.Join(home, "WORKSPACE", "gleann_plugin", fullName, "bin", fullName),
+			filepath.Join(home, "WORKSPACE", "gleann_plugin", fullName, "build", fullName),
+		}
+		for _, cand := range candidates {
+			if fileExists(cand) {
+				binaryPath = cand
+				break
+			}
+		}
+	}
+
+	if binaryPath == "" || !fileExists(binaryPath) {
+		fmt.Fprintf(os.Stderr, "plugin binary for %q not found. Install it first with `gleann plugin install %s`.\n", name, name)
+		os.Exit(1)
+	}
+
+	args := append([]string{"models"}, subArgs...)
+	if len(subArgs) == 0 {
+		args = append(args, "list")
+	}
+
+	cmd := exec.Command(binaryPath, args...)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	cmd.Stdin = os.Stdin
+	if err := cmd.Run(); err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			os.Exit(exitErr.ExitCode())
+		}
+		fmt.Fprintf(os.Stderr, "failed to run %s models: %v\n", filepath.Base(binaryPath), err)
+		os.Exit(1)
+	}
+}
+
+func fileExists(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && !info.IsDir()
 }

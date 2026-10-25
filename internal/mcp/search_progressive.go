@@ -109,7 +109,7 @@ func (s *Server) handleSearchIDs(ctx context.Context, request mcp.CallToolReques
 
 	searcher, err := s.getSearcher(indexName)
 	if err != nil {
-		return mcp.NewToolResultError(fmt.Sprintf("error loading index %q: %v", indexName, err)), nil
+		return s.indexBusyError(indexName, err), nil
 	}
 
 	searchOpts := []gleann.SearchOption{gleann.WithTopK(topK)}
@@ -219,7 +219,7 @@ func (s *Server) handleFetch(ctx context.Context, request mcp.CallToolRequest) (
 
 	searcher, err := s.getSearcher(indexName)
 	if err != nil {
-		return mcp.NewToolResultError(fmt.Sprintf("error loading index %q: %v", indexName, err)), nil
+		return s.indexBusyError(indexName, err), nil
 	}
 
 	pm := searcher.PassageManager()
@@ -282,7 +282,7 @@ func (s *Server) handleGet(ctx context.Context, request mcp.CallToolRequest) (*m
 
 	searcher, err := s.getSearcher(indexName)
 	if err != nil {
-		return mcp.NewToolResultError(fmt.Sprintf("error loading index %q: %v", indexName, err)), nil
+		return s.indexBusyError(indexName, err), nil
 	}
 
 	p, err := searcher.PassageManager().Get(passageID)

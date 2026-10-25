@@ -6,6 +6,7 @@ package gleann
 import (
 	"encoding/json"
 	"fmt"
+	"runtime/debug"
 	"strings"
 	"time"
 )
@@ -70,24 +71,50 @@ type Passage struct {
 
 // IndexMeta stores metadata about a built index.
 type IndexMeta struct {
-	Name           string    `json:"name"`
-	Backend        string    `json:"backend"`
-	EmbeddingModel string    `json:"embedding_model"`
-	Dimensions     int       `json:"dimensions"`
-	NumPassages    int       `json:"num_passages"`
-	SourceDir      string    `json:"source_dir,omitempty"`
-	AutoWatch      bool      `json:"auto_watch,omitempty"`
-	Tags           []string  `json:"tags,omitempty"`
-	Description    string    `json:"description,omitempty"`
-	MCPExposed     *bool     `json:"mcp_exposed,omitempty"`
-	CreatedAt      time.Time `json:"created_at"`
-	UpdatedAt      time.Time `json:"updated_at"`
-	Version        string    `json:"version"`
+	Name           string            `json:"name"`
+	Backend        string            `json:"backend"`
+	EmbeddingModel string            `json:"embedding_model"`
+	Dimensions     int               `json:"dimensions"`
+	NumPassages    int               `json:"num_passages"`
+	SourceDir      string            `json:"source_dir,omitempty"`
+	AutoWatch      bool              `json:"auto_watch,omitempty"`
+	Tags           []string          `json:"tags,omitempty"`
+	Description    string            `json:"description,omitempty"`
+	MCPExposed     *bool             `json:"mcp_exposed,omitempty"`
+	CreatedAt      time.Time         `json:"created_at"`
+	UpdatedAt      time.Time         `json:"updated_at"`
+	Version        string            `json:"version"`
+	GleannVersion  string            `json:"gleann_version,omitempty"`
+	PluginVersions map[string]string `json:"plugin_versions,omitempty"`
 
 	// Staged / Two-phase indexing status
 	LexicalOnly    bool `json:"lexical_only,omitempty"`
 	VectorReady    bool `json:"vector_ready,omitempty"`
 	SignaturesOnly bool `json:"signatures_only,omitempty"`
+}
+
+// CurrentVersion is optionally set by the entrypoint (e.g. cmd/gleann/main.go).
+var CurrentVersion = "dev"
+
+// GetGleannVersion returns CurrentVersion or reads VCS build info.
+func GetGleannVersion() string {
+	if CurrentVersion != "" && CurrentVersion != "dev" {
+		return CurrentVersion
+	}
+	if info, ok := debug.ReadBuildInfo(); ok {
+		if info.Main.Version != "" && info.Main.Version != "(devel)" {
+			return info.Main.Version
+		}
+		for _, s := range info.Settings {
+			if s.Key == "vcs.revision" && len(s.Value) >= 7 {
+				return "git-" + s.Value[:7]
+			}
+		}
+	}
+	if CurrentVersion != "" {
+		return CurrentVersion
+	}
+	return "dev"
 }
 
 // IsMCPExposed returns true if this index is allowed to be accessed by MCP agents.

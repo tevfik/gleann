@@ -251,6 +251,8 @@ func buildOne(ctx context.Context, opts BuildOptions) (*BuildResult, error) {
 
 	_ = gleann.UpdateIndexMeta(cfg.IndexDir, name, func(meta *gleann.IndexMeta) {
 		meta.SourceDir = docsDir
+		meta.GleannVersion = gleann.GetGleannVersion()
+		meta.PluginVersions = gleann.GetInstalledPluginVersions()
 		for _, t := range opts.Tags {
 			t = strings.TrimSpace(t)
 			if t != "" && !meta.HasTag(t) {
@@ -435,6 +437,8 @@ func (e *pipelineEnv) rebuild(ctx context.Context, name, docsDir string) ([]*Plu
 	}
 	_ = gleann.UpdateIndexMeta(e.cfg.IndexDir, name, func(meta *gleann.IndexMeta) {
 		meta.SourceDir = docsDir
+		meta.GleannVersion = gleann.GetGleannVersion()
+		meta.PluginVersions = gleann.GetInstalledPluginVersions()
 		if prevErr == nil && prev != nil {
 			if !prev.CreatedAt.IsZero() {
 				meta.CreatedAt = prev.CreatedAt

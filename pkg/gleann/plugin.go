@@ -659,3 +659,22 @@ func (m *PluginManager) processRaw(plugin *Plugin, filePath string) (map[string]
 
 	return result, nil
 }
+
+// GetInstalledPluginVersions returns a map of registered plugin names and their versions.
+func GetInstalledPluginVersions() map[string]string {
+	reg, err := LoadPlugins()
+	if err != nil || reg == nil || len(reg.Plugins) == 0 {
+		return nil
+	}
+	versions := make(map[string]string, len(reg.Plugins))
+	for _, p := range reg.Plugins {
+		if p.Name != "" {
+			v := p.Version
+			if v == "" {
+				v = "v1-legacy"
+			}
+			versions[p.Name] = v
+		}
+	}
+	return versions
+}

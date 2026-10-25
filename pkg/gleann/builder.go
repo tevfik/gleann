@@ -82,6 +82,8 @@ func (b *LeannBuilder) BuildPassages(name string, items []Item) ([]int64, error)
 		CreatedAt:      time.Now(),
 		UpdatedAt:      time.Now(),
 		Version:        "1.0.0",
+		GleannVersion:  GetGleannVersion(),
+		PluginVersions: GetInstalledPluginVersions(),
 		LexicalOnly:    true,
 		VectorReady:    false,
 		SignaturesOnly: b.config.ChunkConfig.SignaturesOnly,

@@ -59,7 +59,7 @@ func (s *Server) handleDef(ctx context.Context, request mcp.CallToolRequest) (*m
 
 	searcher, err := s.getSearcher(indexName)
 	if err != nil {
-		return mcp.NewToolResultError(fmt.Sprintf("Error loading index %q: %v", indexName, err)), nil
+		return s.indexBusyError(indexName, err), nil
 	}
 
 	topK := 5

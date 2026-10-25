@@ -861,21 +861,7 @@ func (s *Server) handleSearch(ctx context.Context, request mcp.CallToolRequest) 
 	} else {
 		searcher, err := s.getSearcher(indexName)
 		if err != nil {
-			if s.isSyncRunning(indexName) {
-				s.syncMu.Lock()
-				t := s.syncTasks[indexName]
-				s.syncMu.Unlock()
-				progressInfo := ""
-				if t != nil {
-					t.mu.RLock()
-					if t.totalItems > 0 {
-						progressInfo = fmt.Sprintf(" (%.1f%% complete, %d/%d items, ETA: %.0fs)", t.pct, t.itemsDone, t.totalItems, t.etaSec)
-					}
-					t.mu.RUnlock()
-				}
-				return mcp.NewToolResultError(fmt.Sprintf("Index %q is currently being built in the background%s. Please wait a moment for initial indexing to complete.", indexName, progressInfo)), nil
-			}
-			return mcp.NewToolResultError(fmt.Sprintf("Error loading index %q: %v", indexName, err)), nil
+			return s.indexBusyError(indexName, err), nil
 		}
 
 		warnings = searcher.Warnings()
@@ -1055,7 +1041,7 @@ func (s *Server) handleAsk(ctx context.Context, request mcp.CallToolRequest) (*m
 
 	searcher, err := s.getSearcher(indexName)
 	if err != nil {
-		return mcp.NewToolResultError(fmt.Sprintf("Error loading index %q: %v", indexName, err)), nil
+		return s.indexBusyError(indexName, err), nil
 	}
 
 	chatConfig := gleann.DefaultChatConfig()
@@ -1129,7 +1115,7 @@ func (s *Server) handleGraphNeighbors(ctx context.Context, request mcp.CallToolR
 
 	searcher, err := s.getSearcher(indexName)
 	if err != nil {
-		return mcp.NewToolResultError(fmt.Sprintf("Error loading index %q: %v", indexName, err)), nil
+		return s.indexBusyError(indexName, err), nil
 	}
 
 	db := searcher.GraphDB()
@@ -1272,7 +1258,7 @@ func (s *Server) handleDocumentLinks(ctx context.Context, request mcp.CallToolRe
 
 	searcher, err := s.getSearcher(indexName)
 	if err != nil {
-		return mcp.NewToolResultError(fmt.Sprintf("Error loading index %q: %v", indexName, err)), nil
+		return s.indexBusyError(indexName, err), nil
 	}
 
 	db := searcher.GraphDB()
@@ -1358,7 +1344,7 @@ func (s *Server) handleReadFullDocument(ctx context.Context, request mcp.CallToo
 	}
 
 	if err != nil {
-		return mcp.NewToolResultError(fmt.Sprintf("Error loading index %q: %v", indexName, err)), nil
+		return s.indexBusyError(indexName, err), nil
 	}
 
 	return mcp.NewToolResultError(fmt.Sprintf("document %q not found in index %q (or on disk). Do not guess markdown file paths. Use gleann_search to locate relevant passages, or check available documents using gleann_document_toc.", vpath, indexName)), nil
@@ -1411,7 +1397,7 @@ func (s *Server) handleDocumentTOC(ctx context.Context, request mcp.CallToolRequ
 
 	searcher, err := s.getSearcher(indexName)
 	if err != nil {
-		return mcp.NewToolResultError(fmt.Sprintf("Error loading index %q: %v", indexName, err)), nil
+		return s.indexBusyError(indexName, err), nil
 	}
 	db := searcher.GraphDB()
 	if db == nil {
@@ -1534,7 +1520,7 @@ func (s *Server) handleImpact(ctx context.Context, request mcp.CallToolRequest) 
 
 	searcher, err := s.getSearcher(indexName)
 	if err != nil {
-		return mcp.NewToolResultError(fmt.Sprintf("Error loading index %q: %v", indexName, err)), nil
+		return s.indexBusyError(indexName, err), nil
 	}
 
 	db := searcher.GraphDB()
@@ -1654,7 +1640,7 @@ func (s *Server) handleGraphStats(ctx context.Context, request mcp.CallToolReque
 
 	searcher, err := s.getSearcher(indexName)
 	if err != nil {
-		return mcp.NewToolResultError(fmt.Sprintf("Error loading index %q: %v", indexName, err)), nil
+		return s.indexBusyError(indexName, err), nil
 	}
 
 	db := searcher.GraphDB()
@@ -1716,7 +1702,7 @@ func (s *Server) handleSymbolsInFile(ctx context.Context, request mcp.CallToolRe
 
 	searcher, err := s.getSearcher(indexName)
 	if err != nil {
-		return mcp.NewToolResultError(fmt.Sprintf("Error loading index %q: %v", indexName, err)), nil
+		return s.indexBusyError(indexName, err), nil
 	}
 
 	db := searcher.GraphDB()
@@ -1780,6 +1766,34 @@ func (s *Server) isSyncRunning(indexName string) bool {
 	default:
 		return true
 	}
+}
+
+func (s *Server) indexBusyError(indexName string, err error) *mcp.CallToolResult {
+	if err == nil {
+		return nil
+	}
+	errMsg := err.Error()
+	isTimeoutOrLock := strings.Contains(errMsg, "timeout") ||
+		strings.Contains(errMsg, "lock") ||
+		strings.Contains(errMsg, "bbolt") ||
+		strings.Contains(errMsg, "resource temporarily unavailable") ||
+		strings.Contains(errMsg, "status 1")
+
+	if s.isSyncRunning(indexName) || isTimeoutOrLock {
+		s.syncMu.Lock()
+		t := s.syncTasks[indexName]
+		s.syncMu.Unlock()
+		progressInfo := ""
+		if t != nil {
+			t.mu.RLock()
+			if t.totalItems > 0 {
+				progressInfo = fmt.Sprintf(" (%.1f%% complete, %d/%d items, ETA: %.0fs)", t.pct, t.itemsDone, t.totalItems, t.etaSec)
+			}
+			t.mu.RUnlock()
+		}
+		return mcp.NewToolResultError(fmt.Sprintf("Index %q is currently being built or synced in the background%s. Please wait a moment and retry shortly.", indexName, progressInfo))
+	}
+	return mcp.NewToolResultError(fmt.Sprintf("Error loading index %q: %v", indexName, err))
 }
 
 func (s *Server) handleSync(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {

@@ -5,12 +5,14 @@ import (
 	"os"
 
 	_ "github.com/tevfik/gleann/pkg/backends"
+	"github.com/tevfik/gleann/pkg/gleann"
 )
 
 // version is set at build time via -ldflags "-X main.version=..."
 var version = "dev"
 
 func main() {
+	gleann.CurrentVersion = version
 	defer cleanupLlamaCPP()
 	if len(os.Args) < 2 {
 		printUsage()

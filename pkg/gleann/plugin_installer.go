@@ -203,6 +203,8 @@ func setupGoPluginWithProgress(pluginDir, name string, progress chan<- string) (
 		if strings.Contains(name, "docs") {
 			prepareDocsOCR(binaryPath, progress)
 			ensureDoclingModel(owner, repo, progress)
+		} else if strings.Contains(name, "sound") {
+			prepareSoundModels(binaryPath, progress)
 		}
 		return fmt.Sprintf("Installed %s (Go binary)", name), nil
 	}
@@ -222,6 +224,8 @@ func setupGoPluginWithProgress(pluginDir, name string, progress chan<- string) (
 			if strings.Contains(name, "docs") {
 				prepareDocsOCR(candidate, progress)
 				ensureDoclingModel(owner, repo, progress)
+			} else if strings.Contains(name, "sound") {
+				prepareSoundModels(candidate, progress)
 			}
 			return fmt.Sprintf("Installed %s (Go binary)", name), nil
 		}
@@ -270,6 +274,8 @@ func setupGoPluginWithProgress(pluginDir, name string, progress chan<- string) (
 	if strings.Contains(name, "docs") {
 		prepareDocsOCR(binaryPath, progress)
 		ensureDoclingModel(owner, repo, progress)
+	} else if strings.Contains(name, "sound") {
+		prepareSoundModels(binaryPath, progress)
 	}
 
 	return fmt.Sprintf("Installed %s (Go binary)", name), nil
@@ -290,6 +296,21 @@ func prepareDocsOCR(binary string, progress chan<- string) {
 		return
 	}
 	progress <- "✓ OCR runtime and models ready"
+}
+
+// prepareSoundModels asks the sound plugin to fetch the default speech recognition
+// model (base.en + Silero VAD) via `models download --default`.
+func prepareSoundModels(binary string, progress chan<- string) {
+	progress <- "📦 Fetching default speech recognition models (base.en + Silero VAD)..."
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, binary, "models", "download", "--default").CombinedOutput()
+	if err != nil {
+		progress <- fmt.Sprintf("⚠️  Sound models setup skipped: %v (run `%s models download --default` later)", err, filepath.Base(binary))
+		_ = out
+		return
+	}
+	progress <- "✓ Speech recognition models ready"
 }
 
 func UninstallPlugin(name string) (string, error) {

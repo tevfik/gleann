@@ -337,6 +337,8 @@ func Sync(ctx context.Context, opts SyncOptions) (*SyncResult, error) {
 
 	_ = gleann.UpdateIndexMeta(cfg.IndexDir, name, func(m *gleann.IndexMeta) {
 		m.SourceDir = absDocsDir
+		m.GleannVersion = gleann.GetGleannVersion()
+		m.PluginVersions = gleann.GetInstalledPluginVersions()
 	})
 
 	// Without a saved manifest the next sync sees these files as changed again

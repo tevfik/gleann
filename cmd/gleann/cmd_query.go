@@ -175,6 +175,16 @@ Options:
 	}
 	fmt.Printf("   Created:     %s\n", meta.CreatedAt.Format(time.RFC3339))
 	fmt.Printf("   Updated:     %s\n", meta.UpdatedAt.Format(time.RFC3339))
+	if meta.GleannVersion != "" {
+		fmt.Printf("   Engine Ver:  %s\n", meta.GleannVersion)
+	}
+	if len(meta.PluginVersions) > 0 {
+		var plList []string
+		for k, v := range meta.PluginVersions {
+			plList = append(plList, fmt.Sprintf("%s=%s", k, v))
+		}
+		fmt.Printf("   Plugins:     %s\n", strings.Join(plList, ", "))
+	}
 
 	// Show file sizes.
 	files := []string{".index", ".passages.jsonl", ".passages.idx", ".meta.json"}
