@@ -12,6 +12,7 @@ import (
 	"time"
 
 	bolt "go.etcd.io/bbolt"
+	bolterrors "go.etcd.io/bbolt/errors"
 )
 
 func TestRemoteClient(t *testing.T) {
@@ -219,7 +220,7 @@ func TestStoreLockTimeoutError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected second bolt.Open to fail with timeout")
 	}
-	if !errors.Is(err, bolt.ErrTimeout) && !strings.Contains(err.Error(), "timeout") {
+	if !errors.Is(err, bolterrors.ErrTimeout) && !strings.Contains(err.Error(), "timeout") {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
