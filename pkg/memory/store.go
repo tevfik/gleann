@@ -3,6 +3,7 @@ package memory
 import (
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -54,6 +55,9 @@ func OpenStore(path string) (*Store, error) {
 
 	db, err := bolt.Open(path, 0o600, &bolt.Options{Timeout: 5 * time.Second})
 	if err != nil {
+		if errors.Is(err, bolt.ErrTimeout) || strings.Contains(err.Error(), "timeout") {
+			return nil, fmt.Errorf("open memory db: timeout: database file %q is locked by another process (gleann serve, another MCP server, or stale process); start gleann service to route requests via REST or stop the locking process", path)
+		}
 		return nil, fmt.Errorf("open memory db: %w", err)
 	}
 

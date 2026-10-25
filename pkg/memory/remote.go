@@ -72,13 +72,17 @@ func normalizeURL(addr string) string {
 	if addr == "" {
 		return ""
 	}
+	addr = strings.TrimRight(addr, "/")
+	if strings.HasPrefix(addr, "http://") || strings.HasPrefix(addr, "https://") {
+		return addr
+	}
 	if strings.HasPrefix(addr, ":") {
 		return "http://localhost" + addr
 	}
-	if !strings.Contains(addr, "://") {
-		return "http://" + addr
+	if !strings.Contains(addr, "/") && !strings.Contains(addr, ":") {
+		return "http://localhost:" + addr
 	}
-	return strings.TrimRight(addr, "/")
+	return "http://" + addr
 }
 
 func readConfigServerAddr() string {
@@ -100,10 +104,34 @@ func readConfigServerAddr() string {
 	return strings.TrimSpace(raw.ServerAddr)
 }
 
-// Remote returns a cached RemoteClient if a gleann server is reachable
-// (precedence: GLEANN_REMOTE_ADDR env > ~/.gleann/config.json server_addr > http://localhost:8080),
-// verifying that the target server is actually a gleann instance, or nil if unreachable
-// or disabled via GLEANN_REMOTE_ADDR="off". Re-probes periodically (every 2s).
+func readPIDServerAddr() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	pidPath := filepath.Join(home, ".gleann", "server.pid")
+	data, err := os.ReadFile(pidPath)
+	if err != nil {
+		return ""
+	}
+	var p struct {
+		Addr string `json:"addr"`
+	}
+	if err := json.Unmarshal(data, &p); err != nil {
+		return ""
+	}
+	return strings.TrimSpace(p.Addr)
+}
+
+// Remote returns a cached RemoteClient if a gleann server is reachable.
+// Candidates are probed in order:
+//  1. GLEANN_REMOTE_ADDR (env var)
+//  2. server_addr from ~/.gleann/config.json
+//  3. addr from ~/.gleann/server.pid
+//  4. DefaultRemoteAddr (http://localhost:8080)
+//
+// If GLEANN_REMOTE_ADDR is explicitly "off", remote connection is disabled and nil is returned.
+// Re-probes periodically (every 2s).
 func Remote() *RemoteClient {
 	envAddr := os.Getenv("GLEANN_REMOTE_ADDR")
 	if envAddr == "off" {
@@ -129,17 +157,29 @@ func Remote() *RemoteClient {
 	lastProbeTime = time.Now()
 
 	var candidates []string
-	if envAddr != "" {
-		candidates = append(candidates, normalizeURL(envAddr))
-	} else {
-		if cfgAddr := readConfigServerAddr(); cfgAddr != "" {
-			candidates = append(candidates, normalizeURL(cfgAddr))
+	addCandidate := func(raw string) {
+		norm := normalizeURL(raw)
+		if norm == "" {
+			return
 		}
-		candidates = append(candidates, DefaultRemoteAddr)
+		for _, c := range candidates {
+			if c == norm {
+				return
+			}
+		}
+		candidates = append(candidates, norm)
+	}
+
+	if envAddr != "" {
+		addCandidate(envAddr)
+	} else {
+		addCandidate(readConfigServerAddr())
+		addCandidate(readPIDServerAddr())
+		addCandidate(DefaultRemoteAddr)
 	}
 
 	for _, cand := range candidates {
-		if cand != "" && probeAddress(cand) {
+		if probeAddress(cand) {
 			remoteVal = &RemoteClient{
 				base:   cand,
 				client: &http.Client{Timeout: 30 * time.Second},
@@ -152,7 +192,7 @@ func Remote() *RemoteClient {
 	return nil
 }
 
-// EnsureDaemon ensures a gleann daemon is running at addr (default http://localhost:8080).
+// EnsureDaemon ensures a gleann daemon is running at addr.
 // If not reachable, it auto-spawns `gleann serve` in the background.
 func EnsureDaemon(addr string) (*RemoteClient, error) {
 	if c := Remote(); c != nil {
@@ -168,9 +208,12 @@ func EnsureDaemon(addr string) (*RemoteClient, error) {
 		addr = envAddr
 	}
 	if addr == "" {
+		addr = readConfigServerAddr()
+	}
+	if addr == "" {
 		addr = DefaultRemoteAddr
 	}
-	addr = strings.TrimRight(addr, "/")
+	addr = normalizeURL(addr)
 
 	// Attempt to spawn gleann serve
 	binPath, err := os.Executable()

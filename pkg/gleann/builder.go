@@ -264,6 +264,10 @@ func (b *LeannBuilder) updateIndex(ctx context.Context, name string, newItems []
 	indexPath := basePath + ".index"
 	indexData, err := os.ReadFile(indexPath)
 	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) && len(newItems) == 0 {
+			// An index that does not exist has nothing to remove.
+			return nil
+		}
 		// An index emptied by removing its last passage has no vector file (the
 		// backends cannot represent an empty index); adding to it starts over.
 		meta, metaErr := GetIndexMeta(b.config.IndexDir, name)

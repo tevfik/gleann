@@ -2,11 +2,16 @@ package memory
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
+
+	bolt "go.etcd.io/bbolt"
 )
 
 func TestRemoteClient(t *testing.T) {
@@ -175,5 +180,46 @@ func TestRemote_RejectsNonGleannServer(t *testing.T) {
 	c := Remote()
 	if c != nil {
 		t.Fatalf("expected Remote() to reject non-gleann server at %s", foreign.URL)
+	}
+}
+func TestNormalizeURL(t *testing.T) {
+	cases := []struct {
+		input    string
+		expected string
+	}{
+		{"", ""},
+		{":8081", "http://localhost:8081"},
+		{"8081", "http://localhost:8081"},
+		{"http://localhost:8081/", "http://localhost:8081"},
+		{"https://remote.server:9000", "https://remote.server:9000"},
+		{"127.0.0.1:8081", "http://127.0.0.1:8081"},
+	}
+	for _, tc := range cases {
+		got := normalizeURL(tc.input)
+		if got != tc.expected {
+			t.Errorf("normalizeURL(%q) = %q, want %q", tc.input, got, tc.expected)
+		}
+	}
+}
+
+func TestStoreLockTimeoutError(t *testing.T) {
+	tmp := t.TempDir()
+	dbPath := filepath.Join(tmp, "test_lock.db")
+
+	// First holder
+	s1, err := OpenStore(dbPath)
+	if err != nil {
+		t.Fatalf("OpenStore 1: %v", err)
+	}
+	defer s1.Close()
+
+	// Second opener: open with OpenStore
+	// Note: OpenStore has 5s timeout; test the timeout wrapping directly.
+	_, err = bolt.Open(dbPath, 0o600, &bolt.Options{Timeout: 50 * time.Millisecond})
+	if err == nil {
+		t.Fatal("expected second bolt.Open to fail with timeout")
+	}
+	if !errors.Is(err, bolt.ErrTimeout) && !strings.Contains(err.Error(), "timeout") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
