@@ -410,7 +410,7 @@ func TestHomeModelEnterPlugins(t *testing.T) {
 
 func TestHomeModelEnterQuitOption(t *testing.T) {
 	m := NewHomeModel()
-	m.cursor = 4 // Quit menu item
+	m.cursor = 5 // Quit menu item
 
 	updated, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	hm := updated.(HomeModel)

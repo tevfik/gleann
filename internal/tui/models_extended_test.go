@@ -206,6 +206,7 @@ func TestHomeModelChoose(t *testing.T) {
 		{1, ScreenChat},
 		{2, ScreenIndexes},
 		{3, ScreenPlugins},
+		{4, ScreenUpdate},
 	}
 	for _, tt := range tests {
 		m := NewHomeModel()
@@ -217,13 +218,13 @@ func TestHomeModelChoose(t *testing.T) {
 		}
 	}
 
-	// Quit option (cursor 4).
+	// Quit option (cursor 5).
 	m := NewHomeModel()
-	m.cursor = 4
+	m.cursor = 5
 	result, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	hm := result.(HomeModel)
 	if !hm.Quitting() {
-		t.Error("cursor=4 should quit")
+		t.Error("cursor=5 should quit")
 	}
 }
 

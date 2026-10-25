@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -52,8 +53,26 @@ func Run() error {
 			if err := runPlugins(); err != nil {
 				return err
 			}
+		case ScreenUpdate:
+			runUpdate()
 		}
 	}
+}
+
+func runUpdate() {
+	exe, err := os.Executable()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		return
+	}
+	cmd := exec.Command(exe, "update")
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	_ = cmd.Run()
+	fmt.Println("\nPress enter to return to menu...")
+	buf := make([]byte, 1)
+	_, _ = os.Stdin.Read(buf)
 }
 
 // RunOnboardWithPlugins runs the onboarding wizard and also returns whether
