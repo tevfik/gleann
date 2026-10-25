@@ -6,7 +6,7 @@ export PYTHONUSERBASE ?= $(ORIGINAL_HOME)/.local
 #   make               — build pure Go binary (gleann)
 #   make full          — build FAISS + tree-sitter binary (gleann-full)
 #   make install       — install gleann to /usr/local/bin
-#   make install-user  — install gleann-full to ~/.local/bin/gleann
+#   make install-user  — install gleann to ~/.local/bin
 #   make test          — run all tests
 #   make test-faiss    — run FAISS backend tests
 #   make release       — build all release artifacts into dist/
@@ -300,17 +300,17 @@ $(BINARY_FULL): build-eif-lib prepare-assets builder-image
 
 # ── Install ─────────────────────────────────────────────────────────────────
 
-# install-user — build gleann-full and install to ~/.local/bin/gleann
+# install-user — build full binary and install to ~/.local/bin/gleann
 .PHONY: install-user
 install-user: $(BINARY_FULL)
 	@mkdir -p $(USER_BIN_DIR) $(USER_LIB_DIR)
 	install -m 0755 $(BINARY_FULL) $(USER_BIN_DIR)/gleann
-	install -m 0755 $(BINARY_FULL) $(USER_BIN_DIR)/gleann-full
+	@rm -f $(USER_BIN_DIR)/gleann-full 2>/dev/null || true
 	@if [ -f $(BUILD_DIR)/libkuzu.so ]; then \
 		install -m 0755 $(BUILD_DIR)/libkuzu.so $(USER_LIB_DIR)/; \
 		install -m 0755 $(BUILD_DIR)/libkuzu.so $(USER_BIN_DIR)/; \
 	fi
-	@echo "✅ Installed gleann-full → $(USER_BIN_DIR)/gleann"
+	@echo "✅ Installed gleann → $(USER_BIN_DIR)/gleann"
 	@echo "   Make sure $(USER_BIN_DIR) is in your PATH."
 
 # install-user-lite — build plain gleann (no CGo) and install to ~/.local/bin/gleann
@@ -327,7 +327,7 @@ install: $(BINARY_FULL)
 	@if [ -f $(BUILD_DIR)/libkuzu.so ]; then \
 		install -m 0755 $(BUILD_DIR)/libkuzu.so /usr/local/lib/ 2>/dev/null || true; \
 	fi
-	@echo "✅ Installed $(BINARY_FULL) → $(INSTALL_DIR)/gleann"
+	@echo "✅ Installed gleann → $(INSTALL_DIR)/gleann"
 
 # ── Tests ────────────────────────────────────────────────────────────────────
 ORIGINAL_GOPATH ?= $(shell go env GOPATH 2>/dev/null || echo $(HOME)/go)

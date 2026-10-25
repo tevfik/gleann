@@ -18,9 +18,8 @@ func newMemoryMCPServer(t *testing.T) *Server {
 	dir := t.TempDir()
 	srv := NewServer(Config{
 		IndexDir:          dir,
-		EmbeddingProvider: "ollama",
-		EmbeddingModel:    "bge-m3",
-		OllamaHost:        gleann.DefaultOllamaHost,
+		EmbeddingProvider: "mock",
+		EmbeddingModel:    "mock",
 		Version:           "test",
 	})
 	t.Cleanup(srv.Close)

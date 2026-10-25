@@ -4,7 +4,9 @@ package kuzu
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io/fs"
 	"strings"
 	"sync"
 
@@ -83,6 +85,8 @@ func (s *LeannSyncer) AddContent(ctx context.Context, nodeID, content string, at
 		if strings.Contains(err.Error(), "no such file or directory") || strings.Contains(err.Error(), "read existing index") {
 			if buildErr := s.builder.Build(ctx, s.name, []gleann.Item{item}); buildErr == nil {
 				return nil
+			} else {
+				return fmt.Errorf("leann syncer: add content for node %q: build index: %w", nodeID, buildErr)
 			}
 		}
 		return fmt.Errorf("leann syncer: add content for node %q: %w", nodeID, err)
@@ -104,6 +108,9 @@ func (s *LeannSyncer) DeleteContent(ctx context.Context, nodeID string) error {
 	defer s.mu.Unlock()
 
 	if err := s.builder.UpdateIndex(ctx, s.name, nil, []string{source}); err != nil {
+		if errors.Is(err, fs.ErrNotExist) || strings.Contains(err.Error(), "no such file or directory") || strings.Contains(err.Error(), "read existing index") {
+			return nil
+		}
 		return fmt.Errorf("leann syncer: delete content for node %q: %w", nodeID, err)
 	}
 	return nil
