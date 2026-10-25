@@ -24,7 +24,7 @@ import (
 )
 
 const (
-	DefaultRemoteAddr = "http://localhost:8080"
+	DefaultRemoteAddr = "http://localhost:8081"
 	remoteProbePath   = "/health"
 	remoteProbeTOms   = 200
 )

@@ -13,7 +13,7 @@ import (
 // Default host/address constants used across the codebase.
 const (
 	DefaultOllamaHost   = "http://localhost:11434"
-	DefaultServerAddr   = ":8080"
+	DefaultServerAddr   = ":8081"
 	DefaultLlamaCPPHost = "http://localhost:8787"
 )
 
