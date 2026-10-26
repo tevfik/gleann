@@ -176,6 +176,7 @@ func itoaTest(n int) string {
 func TestResolveModelPathLooksInModelsDir(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home) // os.UserHomeDir on Windows
 	dir := filepath.Join(home, ".gleann", "models")
 	_ = os.MkdirAll(dir, 0o755)
 	_ = os.WriteFile(filepath.Join(dir, "m.gguf"), []byte("x"), 0o644)
