@@ -623,11 +623,13 @@ func TestOnboardUpdateRerankModelsFetchedError(t *testing.T) {
 		err:         &testError{msg: "no models"},
 	})
 	om := result.(OnboardModel)
-	if om.rerankEnabled {
-		t.Error("should disable reranker on error")
+	// The list could not be fetched: suggestions plus the Custom row, not a
+	// silent switch-off (esc still goes back to the on/off choice).
+	if om.phase != phaseRerankModel {
+		t.Errorf("phase = %d, want phaseRerankModel", om.phase)
 	}
-	if om.phase != phaseReranker {
-		t.Errorf("phase = %d, want phaseReranker", om.phase)
+	if len(om.rerankModels) == 0 || om.fetchErr == "" {
+		t.Errorf("want suggestions and an error note, got %+v / %q", om.rerankModels, om.fetchErr)
 	}
 }
 

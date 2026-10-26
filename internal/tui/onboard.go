@@ -222,6 +222,14 @@ type OnboardModel struct {
 	customHFInput   textinput.Model
 	customHFForWhat string // "emb", "llm", or "reranker"
 
+	// "Custom…" row at the end of every model list, with a text field for a
+	// model the service does not list (or any model when the list could not
+	// be fetched). onCustom: that row is highlighted; only then do keys go
+	// to the field, so j/k and tab keep their list meaning elsewhere.
+	modelInput      textinput.Model
+	modelInputPhase wizardPhase // phase the row state belongs to; reset on another
+	onCustom        bool
+
 	// Final result.
 	result OnboardResult
 }
@@ -318,7 +326,14 @@ func NewOnboardModel() OnboardModel {
 	customHF.CharLimit = 256
 	customHF.SetWidth(44)
 
+	modelIn := textinput.New()
+	modelIn.Placeholder = "model name, tag or file path"
+	modelIn.CharLimit = 512
+	modelIn.SetWidth(56)
+
 	return OnboardModel{
+		modelInput:        modelIn,
+		modelInputPhase:   phaseMenu,
 		phase:             phaseQuickOrAdv,
 		quickAdvOptions:   []string{"⚡ Quick Setup (auto-detect, 30 seconds)", "🔧 Advanced Setup (full control, all options)"},
 		quickAdvOptionIdx: 0,
@@ -498,8 +513,13 @@ func (m OnboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.rerankEnabled = true
 					m.phase = phaseRerankModel
 				} else {
-					m.fetchErr = "No reranker models found. Pull one with: ollama pull bge-reranker-v2-m3"
-					m.phase = phaseReranker
+					// Let the user name one rather than silently turning reranking off.
+					m.fetchErr = "Could not list reranker models"
+					m.rerankAllModels = []ModelInfo{{Name: "bge-reranker-v2-m3"}, {Name: "jina-reranker-v2-base-multilingual"}}
+					m.rerankModels = m.rerankAllModels
+					m.rerankModels, m.rerankModelIdx = selectModel(m.rerankModels, m.currentRerankModel(), false)
+					m.rerankEnabled = true
+					m.phase = phaseRerankModel
 				}
 			} else if msg.forLLM {
 				if m.llmProviders[m.llmProviderIdx] == "llamacpp" || m.llmProviders[m.llmProviderIdx] == "eif" {
@@ -513,6 +533,8 @@ func (m OnboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				} else {
 					m.llmModels = []ModelInfo{{Name: "nemotron-3-nano:4b"}, {Name: "phi-4:14b"}, {Name: "qwen2.5:32b"}}
 				}
+				m.llmAllModels = m.llmModels
+				m.llmModels, m.llmModelIdx = selectModel(m.llmModels, m.currentLLMModel(), m.llmIsLocal())
 				m.llmAllModels = m.llmModels
 				m.phase = phaseLLMModel
 			} else {
@@ -533,6 +555,7 @@ func (m OnboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				} else {
 					m.embModels = []ModelInfo{{Name: "bge-m3"}, {Name: "nomic-embed-text"}, {Name: "text-embedding-3-small"}}
 				}
+				m.embModels, m.embModelIdx = selectModel(m.embModels, m.currentEmbModel(), m.embIsLocal())
 				m.embAllModels = m.embModels
 				m.phase = phaseEmbModel
 			}
@@ -553,12 +576,15 @@ func (m OnboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.rerankModelIdx = 0
 					m.phase = phaseRerankModel
 				} else {
-					m.rerankEnabled = false
-					m.fetchErr = "No reranker models found. Pull one first: ollama pull bge-reranker-v2-m3"
-					m.phase = phaseReranker
+					// None looks like a reranker: show everything and let the
+					// user pick or type one (e.g. ollama pull bge-reranker-v2-m3).
+					m.rerankModels = m.rerankAllModels
+					m.rerankShowAll = true
+					m.rerankModels, m.rerankModelIdx = selectModel(m.rerankModels, m.currentRerankModel(), false)
+					m.phase = phaseRerankModel
 				}
 			} else {
-				m.rerankModelIdx = 0
+				m.rerankModels, m.rerankModelIdx = selectModel(m.rerankModels, m.currentRerankModel(), false)
 				m.phase = phaseRerankModel
 			}
 		} else if msg.forLLM {
@@ -569,7 +595,7 @@ func (m OnboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			} else {
 				m.llmModels = filterLLMModels(msg.models)
 			}
-			m.llmModelIdx = 0
+			m.llmModels, m.llmModelIdx = selectModel(m.llmModels, m.currentLLMModel(), m.llmIsLocal())
 			m.phase = phaseLLMModel
 		} else {
 			m.embAllModels = msg.models
@@ -579,7 +605,7 @@ func (m OnboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			} else {
 				m.embModels = filterEmbeddingModels(msg.models)
 			}
-			m.embModelIdx = 0
+			m.embModels, m.embModelIdx = selectModel(m.embModels, m.currentEmbModel(), m.embIsLocal())
 			if m.returnPhase == phaseCodeEmbModel || m.returnPhase == phaseDocEmbModel {
 				m.phase = m.returnPhase
 				if m.phase == phaseCodeEmbModel {
@@ -633,6 +659,14 @@ func (m OnboardModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.fetchErr = ""
 		m.focusActiveInput()
 		return m, nil
+	}
+
+	if isModelSelectPhase(m.phase) {
+		mm, cmd, handled := m.handleModelInputKey(msg)
+		if handled {
+			return mm, cmd
+		}
+		m = mm // a typed name may now be the selected entry
 	}
 
 	switch m.phase {
@@ -1886,7 +1920,7 @@ func (m OnboardModel) renderModelSelect(num, title string, models []ModelInfo, c
 	b.WriteString("\n")
 
 	if m.fetchErr != "" {
-		errorMsg := "     ⚠ Could not reach service — showing defaults"
+		errorMsg := "     ⚠ Could not list the service's models — pick a suggestion or enter the name under Custom…"
 		if strings.Contains(m.fetchErr, ".gguf") {
 			errorMsg = "     ⚠ No local .gguf models found — please download one to ~/.gleann/models"
 		}
@@ -1938,7 +1972,7 @@ func (m OnboardModel) renderModelSelect(num, title string, models []ModelInfo, c
 			detail += " " + lipgloss.NewStyle().Foreground(ColorDimFg).Render(mdl.Tag)
 		}
 
-		if i == cursor {
+		if i == cursor && !(m.onCustom && m.modelInputPhase == m.phase) {
 			b.WriteString("  " + SelectedDot.String())
 			b.WriteString(ActiveItemStyle.Render(name))
 			b.WriteString(detail)
@@ -1956,7 +1990,17 @@ func (m OnboardModel) renderModelSelect(num, title string, models []ModelInfo, c
 	}
 
 	b.WriteString("\n")
+	onCustom := m.onCustom && m.modelInputPhase == m.phase
+	if onCustom {
+		b.WriteString("  " + SelectedDot.String() + ActiveItemStyle.Render("Custom…") + "  " + m.modelInput.View() + "\n")
+	} else {
+		b.WriteString("  " + UnselectedDot.String() + NormalItemStyle.Render("Custom…") + "\n")
+	}
+	b.WriteString("\n")
 	help := "  ↑/↓ select • enter confirm • esc back"
+	if onCustom {
+		help = "  type the model name • enter use it • ↑ back to the list • esc back"
+	}
 	if hasFiltered {
 		help += " • tab toggle filter"
 	}
@@ -2197,6 +2241,9 @@ func (m OnboardModel) codeModelOptions() []ModelInfo {
 		}
 		opts = append(opts, mdl)
 	}
+	if cur := m.codeEmbeddingModel; cur != "" && !hasModel(opts, cur) {
+		opts = append(opts, ModelInfo{Name: cur, Tag: cur, Size: "current"})
+	}
 	return opts
 }
 
@@ -2217,6 +2264,9 @@ func (m OnboardModel) docModelOptions() []ModelInfo {
 			continue
 		}
 		opts = append(opts, mdl)
+	}
+	if cur := m.docEmbeddingModel; cur != "" && !hasModel(opts, cur) {
+		opts = append(opts, ModelInfo{Name: cur, Tag: cur, Size: "current"})
 	}
 	return opts
 }
@@ -2531,4 +2581,165 @@ func (m OnboardModel) handleInstallKeys(key string) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 	}
 	return m, nil
+}
+
+// ── Free-text model entry ─────────────────────────────────────
+
+// isModelSelectPhase reports whether phase shows a model list with the
+// free-text "Other model" field.
+func isModelSelectPhase(p wizardPhase) bool {
+	switch p {
+	case phaseEmbModel, phaseCodeEmbModel, phaseDocEmbModel, phaseLLMModel, phaseRerankModel:
+		return true
+	}
+	return false
+}
+
+// modelListPos returns the length of the current model list and its cursor.
+func (m OnboardModel) modelListPos() (n, cursor int) {
+	switch m.phase {
+	case phaseEmbModel:
+		return len(m.embModels), m.embModelIdx
+	case phaseCodeEmbModel:
+		return len(m.codeModelOptions()), m.codeEmbModelIdx
+	case phaseDocEmbModel:
+		return len(m.docModelOptions()), m.docEmbModelIdx
+	case phaseLLMModel:
+		return len(m.llmModels), m.llmModelIdx
+	case phaseRerankModel:
+		return len(m.rerankModels), m.rerankModelIdx
+	}
+	return 0, 0
+}
+
+// handleModelInputKey handles the "Custom…" row below a model list. Moving
+// down past the last model selects it; while it is selected, typing edits the
+// field, up returns to the list and enter uses the typed name. Every other
+// key is left to the list (handled=false), which works as before.
+func (m OnboardModel) handleModelInputKey(msg tea.KeyPressMsg) (OnboardModel, tea.Cmd, bool) {
+	if m.modelInputPhase != m.phase {
+		m.modelInput.SetValue("")
+		m.modelInput.Blur()
+		m.onCustom = false
+		m.modelInputPhase = m.phase
+	}
+	key := msg.String()
+	n, cursor := m.modelListPos()
+	if !m.onCustom {
+		if (key == "down" || key == "j") && cursor >= n-1 {
+			m.onCustom = true
+			return m, m.modelInput.Focus(), true
+		}
+		return m, nil, false
+	}
+	switch key {
+	case "up":
+		if n > 0 {
+			m.onCustom = false
+			m.modelInput.Blur()
+		}
+		return m, nil, true
+	case "down":
+		return m, nil, true
+	case "tab", "shift+tab":
+		m.onCustom = false // the filter toggle resets the cursor to the top
+		m.modelInput.Blur()
+		return m, nil, false
+	case "enter":
+		typed := strings.TrimSpace(m.modelInput.Value())
+		if typed == "" {
+			return m, nil, true // nothing to use yet
+		}
+		m.useTypedModel(typed)
+		m.onCustom = false
+		m.modelInput.Blur()
+		return m, nil, false // the list's own enter confirms the now-selected entry
+	}
+	var cmd tea.Cmd
+	m.modelInput, cmd = m.modelInput.Update(msg)
+	return m, cmd, true
+}
+
+// useTypedModel makes the typed name the highlighted entry of the current list.
+func (m *OnboardModel) useTypedModel(name string) {
+	switch m.phase {
+	case phaseEmbModel:
+		m.embModels, m.embModelIdx = selectModel(m.embModels, name, m.embIsLocal())
+		m.embAllModels, _ = selectModel(m.embAllModels, name, m.embIsLocal())
+	case phaseLLMModel:
+		m.llmModels, m.llmModelIdx = selectModel(m.llmModels, name, m.llmIsLocal())
+		m.llmAllModels, _ = selectModel(m.llmAllModels, name, m.llmIsLocal())
+	case phaseRerankModel:
+		m.rerankModels, m.rerankModelIdx = selectModel(m.rerankModels, name, false)
+		m.rerankAllModels, _ = selectModel(m.rerankAllModels, name, false)
+	case phaseCodeEmbModel:
+		m.codeEmbeddingModel = name
+		m.syncCodeEmbModelIdx()
+	case phaseDocEmbModel:
+		m.docEmbeddingModel = name
+		m.syncDocEmbModelIdx()
+	}
+}
+
+// selectModel returns models with name selected: the matching entry, or a new
+// first entry when the list does not have it (a model the service did not
+// list, or the fallback defaults). local stores name in Tag too, which local
+// providers (eif, llamacpp) save instead of Name.
+func selectModel(models []ModelInfo, name string, local bool) ([]ModelInfo, int) {
+	if name == "" {
+		return models, 0
+	}
+	for i, mdl := range models {
+		if mdl.Name == name || mdl.Tag == name {
+			return models, i
+		}
+	}
+	entry := ModelInfo{Name: name, Size: "current"}
+	if local {
+		entry.Tag = name
+	}
+	return append([]ModelInfo{entry}, models...), 0
+}
+
+func hasModel(models []ModelInfo, name string) bool {
+	for _, mdl := range models {
+		if mdl.Name == name || mdl.Tag == name {
+			return true
+		}
+	}
+	return false
+}
+
+func (m OnboardModel) embIsLocal() bool {
+	p := m.embProviders[m.embProviderIdx]
+	return p == "eif" || p == "llamacpp"
+}
+
+func (m OnboardModel) llmIsLocal() bool {
+	p := m.llmProviders[m.llmProviderIdx]
+	return p == "eif" || p == "llamacpp"
+}
+
+// currentEmbModel / currentLLMModel are the saved models when the provider is
+// unchanged, so reopening a setting keeps them selected instead of silently
+// switching to the first fetched or default entry.
+func (m OnboardModel) currentEmbModel() string {
+	if m.existingCfg == nil || m.existingCfg.EmbeddingProvider != m.embProviders[m.embProviderIdx] {
+		return ""
+	}
+	return m.existingCfg.EmbeddingModel
+}
+
+func (m OnboardModel) currentLLMModel() string {
+	if m.existingCfg == nil || m.existingCfg.LLMProvider != m.llmProviders[m.llmProviderIdx] {
+		return ""
+	}
+	return m.existingCfg.LLMModel
+}
+
+func (m OnboardModel) currentRerankModel() string {
+	if m.existingCfg == nil {
+		return ""
+	}
+	return m.existingCfg.RerankModel
 }
