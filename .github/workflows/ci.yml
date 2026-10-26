@@ -97,6 +97,15 @@ jobs:
           GOTOOLCHAIN=auto CGO_ENABLED=1 go test -tags treesitter -race -timeout 8m -coverprofile=coverage-chunking.out ./...
         shell: bash
 
+      - name: Test (modules/settings)
+        # The settings registry plugins import; a separate module (stdlib only).
+        if: matrix.os != 'windows-latest'
+        timeout-minutes: 5
+        run: |
+          cd modules/settings
+          GOTOOLCHAIN=auto go test -race -timeout 4m ./...
+        shell: bash
+
       - name: Upload coverage to Codecov
         if: matrix.os == 'ubuntu-latest'
         uses: codecov/codecov-action@v4

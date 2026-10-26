@@ -3,11 +3,14 @@ package tui
 import (
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
@@ -114,9 +117,20 @@ type PluginModel struct {
 	width         int
 	height        int
 	quitting      bool
-	status        string   // transient message
-	actionMsg     string   // action in progress
-	progressLines []string // detailed progress log
+	status        string       // transient message
+	actionMsg     string       // action in progress
+	progressLines []string     // detailed progress log
+	settings      []settingRow // current settings of the plugin in the detail view
+}
+
+// settingRow is one setting shown in the detail view.
+type settingRow struct{ label, value string }
+
+// settingsSummaryMsg carries a plugin's current settings, read from its
+// GET /settings form (the one the web UI edits).
+type settingsSummaryMsg struct {
+	plugin string
+	rows   []settingRow
 }
 
 // NewPluginModel creates a new plugin management screen.
@@ -150,39 +164,41 @@ func (m *PluginModel) refreshStatuses() {
 	m.markitdown = detectMarkitdown()
 }
 
+// pluginAliases accepts legacy short-form names (e.g. "gleann-sound" →
+// "gleann-plugin-sound") so plugins installed before the v2 rename are still
+// recognised.
+var pluginAliases = map[string][]string{
+	"gleann-plugin-docs":   {"gleann-docs"},
+	"gleann-plugin-marker": {"gleann-marker"},
+	"gleann-plugin-sound":  {"gleann-sound"},
+	"gleann-plugin-vision": {"gleann-vision"},
+}
+
+// registered returns the plugins.json entry of a catalog plugin, or nil.
+func registered(reg *gleann.PluginRegistry, info gleann.PluginMeta) *gleann.Plugin {
+	if reg == nil {
+		return nil
+	}
+	candidates := append([]string{info.Name}, pluginAliases[info.Name]...)
+	for i := range reg.Plugins {
+		for _, c := range candidates {
+			if reg.Plugins[i].Name == c {
+				return &reg.Plugins[i]
+			}
+		}
+	}
+	return nil
+}
+
 func (m *PluginModel) checkPluginStatus(info gleann.PluginMeta) pluginStatus {
 	if m.registry == nil {
 		return statusNotInstalled
 	}
 
-	// Accept legacy short-form names (e.g. "gleann-sound" → "gleann-plugin-sound")
-	// so plugins installed before the v2 rename are still recognised.
-	aliases := map[string][]string{
-		"gleann-plugin-docs":   {"gleann-docs"},
-		"gleann-plugin-marker": {"gleann-marker"},
-		"gleann-plugin-sound":  {"gleann-sound"},
-		"gleann-plugin-vision": {"gleann-vision"},
-	}
-	candidates := append([]string{info.Name}, aliases[info.Name]...)
-
-	for _, p := range m.registry.Plugins {
-		matched := false
-		for _, c := range candidates {
-			if p.Name == c {
-				matched = true
-				break
-			}
-		}
-		if !matched {
-			continue
-		}
-		if p.URL != "" {
-			if m.manager != nil {
-				if h, err := m.manager.PingPlugin(&p); err == nil && h != nil {
-					if h.Ready || h.Status == "ok" {
-						return statusRunning
-					}
-				}
+	if p := registered(m.registry, info); p != nil {
+		if p.URL != "" && m.manager != nil {
+			if h, err := m.manager.PingPlugin(p); err == nil && h != nil && (h.Ready || h.Status == "ok") {
+				return statusRunning
 			}
 		}
 		return statusInstalled
@@ -190,6 +206,7 @@ func (m *PluginModel) checkPluginStatus(info gleann.PluginMeta) pluginStatus {
 
 	// Check if the plugin dir exists in ~/.gleann/plugins/.
 	home, _ := os.UserHomeDir()
+	candidates := append([]string{info.Name}, pluginAliases[info.Name]...)
 	for _, c := range candidates {
 		pluginDir := filepath.Join(home, ".gleann", "plugins", c)
 		if _, err := os.Stat(pluginDir); err == nil {
@@ -220,6 +237,12 @@ func (m PluginModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		// Continue listening.
 		return m, msg.continueCmd
+
+	case settingsSummaryMsg:
+		if m.state == psDetail && msg.plugin == m.plugins[m.cursor].Name {
+			m.settings = msg.rows
+		}
+		return m, nil
 
 	case pluginActionMsg:
 		if msg.err != nil {
@@ -266,7 +289,12 @@ func (m PluginModel) updateMain(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 
 	case "enter", "right", "l":
-		m.state = psDetail
+		m.state, m.settings = psDetail, nil
+		if m.statuses[m.cursor] == statusRunning {
+			if p := registered(m.registry, m.plugins[m.cursor]); p != nil {
+				return m, fetchSettingsSummary(m.plugins[m.cursor].Name, p.URL)
+			}
+		}
 
 	case "i":
 		// Quick install.
@@ -413,7 +441,7 @@ func (m PluginModel) startConfigure() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	binary := resolveBinary(info)
+	binary := resolveBinary(info, registered(m.registry, info))
 	if binary == "" {
 		return m, func() tea.Msg {
 			return pluginActionMsg{
@@ -435,11 +463,20 @@ func (m PluginModel) startConfigure() (tea.Model, tea.Cmd) {
 
 // resolveBinary finds the executable for a plugin's settings command.
 // Search order:
+//  0. The registered command (plugins.json), when it is that binary: the
+//     plugin gleann runs, which may differ from an older copy on PATH
 //  1. PATH
 //  2. ~/.gleann/plugins/<name>/<binary>  (directory layout)
 //  3. Repo root resolved via symlink     (binary-in-repo-root layout)
-func resolveBinary(info gleann.PluginMeta) string {
+func resolveBinary(info gleann.PluginMeta, reg *gleann.Plugin) string {
 	binary := info.SettingsCmd[0]
+
+	// 0. The registered command.
+	if reg != nil && len(reg.Command) > 0 && filepath.Base(reg.Command[0]) == binary {
+		if fi, err := os.Stat(reg.Command[0]); err == nil && !fi.IsDir() {
+			return reg.Command[0]
+		}
+	}
 
 	// 1. PATH.
 	if p, err := exec.LookPath(binary); err == nil {
@@ -475,50 +512,58 @@ func resolveBinary(info gleann.PluginMeta) string {
 	return ""
 }
 
-// loadPluginConfigSummary reads display-ready key/value pairs from the plugin's
-// own config file. Returns nil when the file does not exist or is not supported.
-func loadPluginConfigSummary(name string) map[string]string {
-	home, _ := os.UserHomeDir()
-
-	var cfgPath string
-	switch name {
-	case "gleann-sound":
-		cfgPath = filepath.Join(home, ".gleann", "sound.json")
-	default:
-		return nil
-	}
-
-	data, err := os.ReadFile(cfgPath)
-	if err != nil {
-		return nil
-	}
-
-	var raw map[string]any
-	if err := json.Unmarshal(data, &raw); err != nil {
-		return nil
-	}
-
-	labels := map[string]string{
-		"default_model": "Model",
-		"language":      "Language",
-		"hotkey":        "Hotkey",
-		"backend":       "Backend",
-		"audio_source":  "Audio Source",
-	}
-
-	summary := make(map[string]string)
-	for jsonKey, label := range labels {
-		if v, ok := raw[jsonKey]; ok {
-			if s, ok := v.(string); ok && s != "" {
-				summary[label] = s
+// fetchSettingsSummary reads a running plugin's settings from its GET
+// /settings form, so the detail view shows the same values the web UI and the
+// plugin's own TUI edit, for any plugin, without knowing its config file.
+func fetchSettingsSummary(name, url string) tea.Cmd {
+	return func() tea.Msg {
+		client := &http.Client{Timeout: 2 * time.Second}
+		resp, err := client.Get(strings.TrimRight(url, "/") + "/settings")
+		if err != nil {
+			return settingsSummaryMsg{plugin: name}
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			return settingsSummaryMsg{plugin: name}
+		}
+		var form struct {
+			Fields []struct {
+				Key, Label, Type string
+				Value            any
+				Placeholder      string
+				VisibleIf        *struct {
+					Key    string
+					Equals any
+				} `json:"visible_if"`
 			}
 		}
+		if json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&form) != nil {
+			return settingsSummaryMsg{plugin: name}
+		}
+		values := map[string]string{}
+		for _, f := range form.Fields {
+			values[f.Key] = fmt.Sprint(f.Value)
+		}
+		var rows []settingRow
+		for _, f := range form.Fields {
+			if f.Type == "secret" || (f.VisibleIf != nil && values[f.VisibleIf.Key] != fmt.Sprint(f.VisibleIf.Equals)) {
+				continue
+			}
+			v := values[f.Key]
+			switch {
+			case f.Type == "bool" && v == "true":
+				v = "on"
+			case f.Type == "bool":
+				v = "off"
+			case v == "" && f.Placeholder != "":
+				v = "auto: " + f.Placeholder
+			case v == "" || v == "<nil>":
+				continue
+			}
+			rows = append(rows, settingRow{f.Label, v})
+		}
+		return settingsSummaryMsg{plugin: name, rows: rows}
 	}
-
-	if len(summary) == 0 {
-		return nil
-	}
-	return summary
 }
 
 func (m PluginModel) startUninstall() (tea.Model, tea.Cmd) {
@@ -692,15 +737,18 @@ func (m PluginModel) viewDetail() string {
 		}
 	}
 
-	// Config summary (only when installed and a config file exists).
-	summary := loadPluginConfigSummary(info.Name)
-	if status != statusNotInstalled && len(summary) > 0 {
+	// Current settings, read from the running plugin (see fetchSettingsSummary).
+	if status != statusNotInstalled && len(m.settings) > 0 {
 		b.WriteString("\n")
 		b.WriteString("  " + lipgloss.NewStyle().Foreground(ColorAccent).Bold(true).Render("Settings") + "\n")
-		for _, key := range []string{"Model", "Language", "Hotkey", "Backend", "Audio Source"} {
-			if val, ok := summary[key]; ok {
-				b.WriteString("  " + labelSt.Render(key+":") + " " + valueSt.Render(val) + "\n")
-			}
+		// Setting labels are longer than the fixed-width labels above.
+		w := 0
+		for _, r := range m.settings {
+			w = max(w, lipgloss.Width(r.label)+1)
+		}
+		setLabel := labelSt.Width(w)
+		for _, r := range m.settings {
+			b.WriteString("  " + setLabel.Render(r.label+":") + " " + valueSt.Render(r.value) + "\n")
 		}
 	}
 

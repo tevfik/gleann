@@ -1,11 +1,13 @@
-import { useEffect, useMemo, useState } from 'react';
-import { X, Settings, AlertCircle, CheckCircle2 } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { X, Settings, AlertCircle, CheckCircle2, RotateCw } from 'lucide-react';
 
 // A plugin describes its own settings form (GET /api/plugins/{name}/settings,
 // proxied from the plugin's GET /settings), so this component renders any
 // plugin without knowing what it configures.
-import { changedValues, type Edits, type SettingField, type SettingsForm } from './pluginSettingsModel';
+import { ModelCatalog } from './ModelCatalog';
+import { changedValues, currentValue, isVisible, type Edits, type SettingField, type SettingsForm } from './pluginSettingsModel';
 
+const CUSTOM = '__custom__'; // the select value of the "Custom…" entry
 const inputCls = 'w-full bg-black/40 border border-white/10 rounded px-3 py-2 text-sm text-gray-200 focus:outline-none focus:border-blue-500/50';
 
 export function PluginSettings({ plugin, onClose }: { plugin: { name: string; settings_cmd?: string[] }; onClose: () => void }) {
@@ -15,6 +17,10 @@ export function PluginSettings({ plugin, onClose }: { plugin: { name: string; se
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  const [conflict, setConflict] = useState<string | null>(null);
+  const [reloads, setReloads] = useState(0);
+  // Selects with allow_custom whose "Custom…" entry is chosen.
+  const [custom, setCustom] = useState<Record<string, boolean>>({});
 
   const url = `/api/plugins/${encodeURIComponent(plugin.name)}/settings`;
 
@@ -28,18 +34,31 @@ export function PluginSettings({ plugin, onClose }: { plugin: { name: string; se
           : body.error || `HTTP ${res.status}`);
         return body as SettingsForm;
       })
-      .then(f => alive && setForm(f))
+      .then(f => {
+        if (!alive) return;
+        setForm(f);
+        setEdits({});
+        setConflict(null);
+        setLoadError(null);
+      })
       .catch(e => alive && setLoadError(String(e.message || e)));
     return () => { alive = false; };
-  }, [url, plugin.settings_cmd]);
+  }, [url, plugin.settings_cmd, reloads]);
 
-  const groups = useMemo(() => {
-    const g: Record<string, SettingField[]> = {};
-    for (const f of form?.fields ?? []) (g[f.group || 'General'] ||= []).push(f);
-    return g;
-  }, [form]);
+  // Fields hidden by visible_if follow the edits, so they are grouped on every render.
+  const groups: Record<string, SettingField[]> = {};
+  for (const f of form?.fields ?? []) {
+    if (isVisible(f, form!.fields, edits)) (groups[f.group || 'General'] ||= []).push(f);
+  }
 
-  const valueOf = (f: SettingField) => (f.key in edits ? edits[f.key] : f.value ?? '');
+  const valueOf = (f: SettingField) => currentValue(f, edits);
+
+  // After a download the plugin lists the new model among a field's options:
+  // re-read the form but keep what the user is editing.
+  const refreshForm = async () => {
+    const res = await fetch(url);
+    if (res.ok) setForm(await res.json());
+  };
   const pending = form ? changedValues(form.fields, edits) : {};
   const dirty = Object.keys(pending).length > 0;
 
@@ -51,7 +70,7 @@ export function PluginSettings({ plugin, onClose }: { plugin: { name: string; se
       const res = await fetch(url, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ values: pending }),
+        body: JSON.stringify({ values: pending, revision: form?.revision }),
       });
       const body = await res.json().catch(() => ({}));
       if (res.status === 422 && body.errors) {
@@ -59,9 +78,19 @@ export function PluginSettings({ plugin, onClose }: { plugin: { name: string; se
         setNotice(null);
         return;
       }
+      if (res.status === 409) {
+        setConflict(body.error || 'The settings were changed elsewhere. Reload to see them.');
+        return;
+      }
       if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
-      // Adopt the saved values as the new baseline.
-      setForm(f => f && { ...f, fields: f.fields.map(x => x.key in pending ? { ...x, value: pending[x.key] } : x) });
+      // Adopt the saved values as the new baseline (a secret stays hidden, now set).
+      setForm(f => f && {
+        ...f,
+        revision: body.revision ?? f.revision,
+        fields: f.fields.map(x => !(x.key in pending) ? x
+          : x.type === 'secret' ? { ...x, value: '', is_set: pending[x.key] !== '' }
+          : { ...x, value: pending[x.key] }),
+      });
       setEdits({});
       setNotice(body.restart_required ? (form?.restart_note || 'Saved. Restart the plugin to apply.') : 'Saved.');
     } catch (e: any) {
@@ -90,6 +119,15 @@ export function PluginSettings({ plugin, onClose }: { plugin: { name: string; se
               <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" /> {loadError}
             </p>
           )}
+          {conflict && (
+            <p className="flex items-center gap-2 text-sm text-amber-300 bg-amber-500/10 border border-amber-500/20 rounded p-3">
+              <AlertCircle className="w-4 h-4 shrink-0" /> <span className="flex-1">{conflict}</span>
+              <button onClick={() => setReloads(n => n + 1)} className="flex items-center gap-1 text-xs bg-white/5 hover:bg-white/10 border border-white/10 rounded px-2 py-1">
+                <RotateCw className="w-3 h-3" /> Reload
+              </button>
+            </p>
+          )}
+          {fieldErrors[''] && <p className="text-sm text-red-300">{fieldErrors['']}</p>}
           {Object.entries(groups).map(([group, fields]) => (
             <fieldset key={group} className="space-y-3">
               <legend className="text-[11px] uppercase tracking-wider text-gray-500 mb-1">{group}</legend>
@@ -97,33 +135,61 @@ export function PluginSettings({ plugin, onClose }: { plugin: { name: string; se
                 const id = `${plugin.name}-${f.key}`;
                 const v = valueOf(f);
                 const known = f.options?.some(o => o.value === String(v));
+                const showCustom = f.type === 'select' && f.allow_custom && (custom[f.key] || (!known && v !== ''));
                 return (
                   <div key={f.key}>
-                    <label htmlFor={id} className="block text-xs text-gray-300 mb-1">{f.label}</label>
-                    {f.type === 'select' ? (
+                    {f.type !== 'bool' && <label htmlFor={id} className="block text-xs text-gray-300 mb-1">{f.label}</label>}
+                    {f.type === 'bool' ? (
+                      <label htmlFor={id} className="flex items-center gap-2 text-xs text-gray-300 cursor-pointer">
+                        <input id={id} type="checkbox" className="accent-blue-500" checked={v === true || v === 'true'}
+                          onChange={e => setEdits({ ...edits, [f.key]: e.target.checked })} />
+                        {f.label}
+                      </label>
+                    ) : f.type === 'select' && !f.allow_custom ? (
                       <select id={id} className={inputCls} value={String(v)} onChange={e => setEdits({ ...edits, [f.key]: e.target.value })}>
                         {!known && <option value={String(v)}>{String(v) || '(unset)'}</option>}
                         {f.options?.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
                       </select>
+                    ) : f.type === 'select' ? (
+                      // allow_custom: the choices, then "Custom…" which opens a text field.
+                      <>
+                        <select id={id} className={inputCls} value={showCustom ? CUSTOM : String(v)}
+                          onChange={e => {
+                            const pick = e.target.value;
+                            setCustom({ ...custom, [f.key]: pick === CUSTOM });
+                            if (pick !== CUSTOM) setEdits({ ...edits, [f.key]: pick });
+                          }}>
+                          {f.options?.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                          <option value={CUSTOM}>Custom…</option>
+                        </select>
+                        {showCustom && (
+                          <input id={`${id}-custom`} className={`${inputCls} mt-2`} value={String(v)} autoFocus
+                            placeholder="type a value" onChange={e => setEdits({ ...edits, [f.key]: e.target.value })} />
+                        )}
+                      </>
                     ) : (
                       <>
                         <input
                           id={id}
                           className={inputCls}
-                          type={f.type === 'number' ? 'number' : 'text'}
-                          step={f.type === 'number' ? 'any' : undefined}
+                          type={f.type === 'number' ? 'number' : f.type === 'secret' ? 'password' : 'text'}
+                          step={f.type === 'number' ? (f.step ?? 'any') : undefined}
                           min={f.min}
                           max={f.max}
-                          list={f.type === 'path' && f.options?.length ? `${id}-opts` : undefined}
+                          autoComplete={f.type === 'secret' ? 'new-password' : undefined}
+                          list={f.options?.length ? `${id}-opts` : undefined}
                           value={String(v)}
-                          placeholder={f.default !== undefined ? String(f.default) : undefined}
+                          placeholder={f.type === 'secret'
+                            ? (f.is_set ? '•••••• (set — type to replace)' : '(not set)')
+                            : f.placeholder ? `auto: ${f.placeholder}` : f.default !== undefined ? String(f.default) : undefined}
                           onChange={e => setEdits({ ...edits, [f.key]: e.target.value })}
                         />
-                        {f.type === 'path' && f.options?.length ? (
+                        {f.options?.length ? (
                           <datalist id={`${id}-opts`}>{f.options.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}</datalist>
                         ) : null}
                       </>
                     )}
+                    {f.options_error && <p className="text-[11px] text-amber-400 mt-1">Could not list the choices ({f.options_error}); pick a suggestion or type a value.</p>}
                     {f.help && <p className="text-[11px] text-gray-500 mt-1">{f.help}</p>}
                     {fieldErrors[f.key] && <p className="text-[11px] text-red-400 mt-1">{fieldErrors[f.key]}</p>}
                   </div>
@@ -131,6 +197,14 @@ export function PluginSettings({ plugin, onClose }: { plugin: { name: string; se
               })}
             </fieldset>
           ))}
+          {form?.models && (
+            <fieldset className="space-y-2">
+              <legend className="text-[11px] uppercase tracking-wider text-gray-500 mb-1">Models</legend>
+              <p className="text-[11px] text-gray-500">Downloads run on the server and continue if you close this window.</p>
+              {/* keyed by revision: a saved setting (e.g. a license) can unlock a model */}
+              <ModelCatalog key={form.revision} url={`/api/plugins/${encodeURIComponent(plugin.name)}/models`} onInstalled={refreshForm} />
+            </fieldset>
+          )}
         </div>
 
         <div className="flex items-center justify-between gap-3 px-5 py-3 border-t border-white/10">

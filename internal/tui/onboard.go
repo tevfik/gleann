@@ -2,10 +2,10 @@ package tui
 
 import (
 	"fmt"
-	"path/filepath"
 	"runtime"
 	"strings"
 
+	"github.com/tevfik/gleann/internal/modelcatalog"
 	"github.com/tevfik/gleann/pkg/gleann"
 
 	"charm.land/bubbles/v2/spinner"
@@ -506,9 +506,7 @@ func (m OnboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.rerankEnabled = false
 				if m.embProviders[m.embProviderIdx] == "llamacpp" {
 					m.fetchErr = "No local .gguf models found. Select one to download to ~/.gleann/models"
-					m.rerankAllModels = []ModelInfo{
-						{Name: "(Download) bge-reranker-v2-m3", Tag: "bge-reranker-v2-m3-q4_k_m.gguf"},
-					}
+					m.rerankAllModels = catalogOptions(modelcatalog.Reranker, false, nil)
 					m.rerankModels = m.rerankAllModels
 					m.rerankEnabled = true
 					m.phase = phaseRerankModel
@@ -524,12 +522,8 @@ func (m OnboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			} else if msg.forLLM {
 				if m.llmProviders[m.llmProviderIdx] == "llamacpp" || m.llmProviders[m.llmProviderIdx] == "eif" {
 					m.fetchErr = "No local .gguf models found. Select one to download to ~/.gleann/models"
-					m.llmModels = []ModelInfo{
-						{Name: "(Download) Qwen2.5-Coder-1.5B", Tag: "qwen2.5-coder-1.5b-instruct-q4_k_m.gguf"},
-						{Name: "(Download) Llama-3-8B-Instruct", Tag: "Meta-Llama-3-8B-Instruct-Q4_K_M.gguf"},
-						{Name: "(Download) Phi-3-Mini-4K", Tag: "Phi-3-mini-4k-instruct-q4.gguf"},
-						{Name: "(Custom) Enter HF Repo...", Tag: "custom"},
-					}
+					m.llmModels = append(catalogOptions(modelcatalog.LLM, m.llmProviders[m.llmProviderIdx] == "eif", nil),
+						ModelInfo{Name: "(Custom) Enter HF Repo...", Tag: "custom"})
 				} else {
 					m.llmModels = []ModelInfo{{Name: "nemotron-3-nano:4b"}, {Name: "phi-4:14b"}, {Name: "qwen2.5:32b"}}
 				}
@@ -540,18 +534,12 @@ func (m OnboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			} else {
 				if m.embProviders[m.embProviderIdx] == "llamacpp" {
 					m.fetchErr = "No local .gguf models found. Select one to download to ~/.gleann/models"
-					m.embModels = []ModelInfo{
-						{Name: "(Download) BGE-M3 (Multilingual)", Tag: "bge-m3-q4_k_m.gguf"},
-						{Name: "(Download) Nomic-Embed-Text", Tag: "nomic-embed-text-v1.5.Q4_K_M.gguf"},
-						{Name: "(Custom) Enter HF Repo...", Tag: "custom"},
-					}
+					m.embModels = append(catalogOptions(modelcatalog.Embedding, false, nil),
+						ModelInfo{Name: "(Custom) Enter HF Repo...", Tag: "custom"})
 				} else if m.embProviders[m.embProviderIdx] == "eif" {
 					m.fetchErr = "No local models found. Add a BERT model (.gguf / .eifm) to ~/.gleann/models"
-					m.embModels = []ModelInfo{
-						{Name: "all-MiniLM-L6-v2 (GGUF)", Tag: filepath.Join(DefaultModelsDir(), "minilm.gguf")},
-						{Name: "all-MiniLM-L6-v2 (EIFM)", Tag: filepath.Join(DefaultModelsDir(), "minilm_bert.eifm")},
-						{Name: "(Custom) Enter model path...", Tag: "custom"},
-					}
+					m.embModels = append(catalogOptions(modelcatalog.Embedding, true, nil),
+						ModelInfo{Name: "(Custom) Enter model path...", Tag: "custom"})
 				} else {
 					m.embModels = []ModelInfo{{Name: "bge-m3"}, {Name: "nomic-embed-text"}, {Name: "text-embedding-3-small"}}
 				}
@@ -569,9 +557,7 @@ func (m OnboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.rerankOptionIdx = 0
 				if m.embProviders[m.embProviderIdx] == "llamacpp" {
 					m.fetchErr = "No local .gguf models found. Select one to download to ~/.gleann/models"
-					m.rerankAllModels = []ModelInfo{
-						{Name: "(Download) bge-reranker-v2-m3", Tag: "bge-reranker-v2-m3-q4_k_m.gguf"},
-					}
+					m.rerankAllModels = catalogOptions(modelcatalog.Reranker, false, nil)
 					m.rerankModels = m.rerankAllModels
 					m.rerankModelIdx = 0
 					m.phase = phaseRerankModel
@@ -590,7 +576,8 @@ func (m OnboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else if msg.forLLM {
 			m.llmAllModels = msg.models
 			if m.llmProviders[m.llmProviderIdx] == "eif" || m.llmProviders[m.llmProviderIdx] == "llamacpp" {
-				m.llmModels = msg.models
+				m.llmModels = withCatalog(msg.models, modelcatalog.LLM, m.llmProviders[m.llmProviderIdx] == "eif")
+				m.llmAllModels = m.llmModels
 				m.llmShowAll = true
 			} else {
 				m.llmModels = filterLLMModels(msg.models)
@@ -600,7 +587,8 @@ func (m OnboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.embAllModels = msg.models
 			if m.embProviders[m.embProviderIdx] == "eif" || m.embProviders[m.embProviderIdx] == "llamacpp" {
-				m.embModels = msg.models
+				m.embModels = withCatalog(msg.models, modelcatalog.Embedding, m.embProviders[m.embProviderIdx] == "eif")
+				m.embAllModels = m.embModels
 				m.embShowAll = true
 			} else {
 				m.embModels = filterEmbeddingModels(msg.models)
@@ -1604,7 +1592,7 @@ func (m OnboardModel) View() tea.View {
 		b.WriteString(m.renderSummary())
 
 	case phaseInstall:
-		b.WriteString(m.renderSelect("13", "Install / Uninstall",
+		b.WriteString(m.renderSelect("14", "Install / Uninstall",
 			"Install gleann to your PATH, or uninstall a previous installation.\n  CLI: gleann install --user | gleann install --system | gleann uninstall [--all]",
 			m.installOptions, m.installOptionIdx,
 			[]string{

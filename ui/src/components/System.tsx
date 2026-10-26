@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Settings, Terminal, Activity, Sparkles, Database, AlertCircle } from 'lucide-react';
 import { PluginSettings } from './PluginSettings';
+import { ModelCatalog } from './ModelCatalog';
 
 // Providers that load a local GGUF file (embedded llama.cpp / EIF runtime).
 const isLocalGGUF = (provider?: string) => provider === 'llamacpp' || provider === 'eif';
@@ -20,6 +21,12 @@ export function System() {
   const [embeddingModels, setEmbeddingModels] = useState<string[]>([]);
   const [llmModels, setLlmModels] = useState<string[]>([]);
   const [localModels, setLocalModels] = useState<string[]>([]);
+  // Files in ~/.gleann/models (the local model pickers); re-read after a download.
+  const refreshLocalModels = () =>
+    fetch('/api/models/local')
+      .then(res => res.json())
+      .then(data => setLocalModels(data.models || []))
+      .catch(console.error);
 
   // Config edit state
   const [editConfig, setEditConfig] = useState<any>(null);
@@ -63,10 +70,7 @@ export function System() {
         .then(data => setServerVersion(data.version || 'Unknown'))
         .catch(console.error);
 
-      fetch('/api/models/local')
-        .then(res => res.json())
-        .then(data => setLocalModels(data.models || []))
-        .catch(console.error);
+      refreshLocalModels();
     };
 
     fetchSystemInfo();
@@ -355,34 +359,11 @@ export function System() {
                         <span className="text-amber-400">⚡</span>
                         <span className="text-xs font-semibold text-amber-300">Local GGUF model required — models are stored in <code className="bg-black/30 px-1 rounded">~/.gleann/models/</code></span>
                       </div>
-                      <p className="text-[11px] text-amber-400/70">Click a model below to select it, then click the HuggingFace link to download it. You can also type a custom filename.</p>
-                      <div className="flex flex-wrap gap-2">
-                        {[
-                          { label: 'BGE-Micro v2 (Tiny/Fast)', file: 'bge-micro-v2-q4_k_m.gguf', hf: 'https://huggingface.co/BARTOWSKI/bge-micro-v2-GGUF/resolve/main/bge-micro-v2-q4_k_m.gguf' },
-                          { label: 'Nomic Embed Text v1.5', file: 'nomic-embed-text-v1.5.Q4_K_M.gguf', hf: 'https://huggingface.co/nomic-ai/nomic-embed-text-v1.5-GGUF/resolve/main/nomic-embed-text-v1.5.Q4_K_M.gguf' },
-                        ].map(m => (
-                          <div key={m.file} className={`flex items-center gap-1 rounded-lg border text-[11px] overflow-hidden transition-all ${
-                            editConfig.embedding_model === m.file
-                              ? 'border-amber-400/60 bg-amber-500/20'
-                              : 'border-white/10 bg-black/30 hover:border-amber-500/40'
-                          }`}>
-                            <button
-                              type="button"
-                              onClick={() => setEditConfig({...editConfig, embedding_model: m.file})}
-                              className="px-2.5 py-1.5 text-amber-200 hover:text-white font-mono"
-                              title="Click to select this model"
-                            >
-                              {m.label}
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => handleDownloadModel(m.hf, m.file)}
-                              className="px-2 py-1.5 bg-amber-500/20 hover:bg-amber-500/40 text-amber-400 hover:text-white border-l border-amber-500/20 transition-colors"
-                              title="Download from HuggingFace to server"
-                            >↓</button>
-                          </div>
-                        ))}
-                      </div>
+                      <p className="text-[11px] text-amber-400/70">Download a model to the server, then click Use. Or pick a file already in ~/.gleann/models, or type a custom filename.</p>
+                      <ModelCatalog url="/api/models/catalog" groups={['Embedding models']}
+                        selected={editConfig.embedding_model}
+                        onUse={v => setEditConfig({...editConfig, embedding_model: v})}
+                        onInstalled={refreshLocalModels} />
                       <div>
                         <label className="text-[11px] text-amber-400/70 mb-1 block">Select Local Model or Enter Custom Filename:</label>
                         <div className="flex gap-2 mb-2">
@@ -534,35 +515,11 @@ export function System() {
                         <span className="text-violet-400">🧠</span>
                         <span className="text-xs font-semibold text-violet-300">Local GGUF model required — models are stored in <code className="bg-black/30 px-1 rounded">~/.gleann/models/</code></span>
                       </div>
-                      <p className="text-[11px] text-violet-400/70">Click a model to select it, then click ↓ to download from HuggingFace. You can also type a custom filename.</p>
-                      <div className="flex flex-wrap gap-2">
-                        {[
-                          { label: 'Qwen2.5 Coder 1.5B', file: 'qwen2.5-coder-1.5b-instruct-q4_k_m.gguf', hf: 'https://huggingface.co/Qwen/Qwen2.5-Coder-1.5B-Instruct-GGUF/resolve/main/qwen2.5-coder-1.5b-instruct-q4_k_m.gguf' },
-                          { label: 'Qwen2.5 0.5B Instruct', file: 'qwen2.5-0.5b-instruct-q4_k_m.gguf', hf: 'https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-instruct-q4_k_m.gguf' },
-                          { label: 'Llama 3.2 1B Instruct', file: 'Llama-3.2-1B-Instruct-Q4_K_M.gguf', hf: 'https://huggingface.co/bartowski/Llama-3.2-1B-Instruct-GGUF/resolve/main/Llama-3.2-1B-Instruct-Q4_K_M.gguf' },
-                        ].map(m => (
-                          <div key={m.file} className={`flex items-center gap-1 rounded-lg border text-[11px] overflow-hidden transition-all ${
-                            editConfig.llm_model === m.file
-                              ? 'border-violet-400/60 bg-violet-500/20'
-                              : 'border-white/10 bg-black/30 hover:border-violet-500/40'
-                          }`}>
-                            <button
-                              type="button"
-                              onClick={() => setEditConfig({...editConfig, llm_model: m.file})}
-                              className="px-2.5 py-1.5 text-violet-200 hover:text-white font-mono"
-                              title="Click to select this model"
-                            >
-                              {m.label}
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => handleDownloadModel(m.hf, m.file)}
-                              className="px-2 py-1.5 bg-violet-500/20 hover:bg-violet-500/40 text-violet-400 hover:text-white border-l border-violet-500/20 transition-colors"
-                              title="Download from HuggingFace to server"
-                            >↓</button>
-                          </div>
-                        ))}
-                      </div>
+                      <p className="text-[11px] text-violet-400/70">Download a model to the server, then click Use. Or pick a file already in ~/.gleann/models, or type a custom filename.</p>
+                      <ModelCatalog url="/api/models/catalog" groups={['LLMs']}
+                        selected={editConfig.llm_model}
+                        onUse={v => setEditConfig({...editConfig, llm_model: v})}
+                        onInstalled={refreshLocalModels} />
                       <div>
                         <label className="text-[11px] text-violet-400/70 mb-1 block">Select Local Model or Enter Custom Filename:</label>
                         <div className="flex gap-2 mb-2">
@@ -719,37 +676,11 @@ export function System() {
                             <span className="text-pink-400">⚡</span>
                             <span className="text-xs font-semibold text-pink-300">Local GGUF model required — models are stored in <code className="bg-black/30 px-1 rounded">~/.gleann/models/</code></span>
                           </div>
-                          <p className="text-[11px] text-pink-400/70">Click a model to select it, then click ↓ to download from HuggingFace. You can also type a custom filename.</p>
-                          <div className="flex flex-wrap gap-2">
-                            {[
-                              { label: 'BGE Reranker v2 M3', file: 'bge-reranker-v2-m3-Q4_K_M.gguf', hf: 'https://huggingface.co/lmstudio-ai/bge-reranker-v2-m3-GGUF/resolve/main/bge-reranker-v2-m3-Q4_K_M.gguf' }
-                            ].map(m => (
-                              <div key={m.file} className={`flex items-center gap-1 rounded-lg border text-[11px] overflow-hidden transition-all ${
-                                editConfig.search_config?.reranker_config?.model === m.file
-                                  ? 'border-pink-400/60 bg-pink-500/20'
-                                  : 'border-white/10 bg-black/30 hover:border-pink-500/40'
-                              }`}>
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    const sc = editConfig.search_config || {};
-                                    const rc = sc.reranker_config || {};
-                                    setEditConfig({...editConfig, search_config: {...sc, reranker_config: {...rc, model: m.file}}});
-                                  }}
-                                  className="px-2.5 py-1.5 text-pink-200 hover:text-white font-mono"
-                                  title="Click to select this model"
-                                >
-                                  {m.label}
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => handleDownloadModel(m.hf, m.file)}
-                                  className="px-2 py-1.5 bg-pink-500/20 hover:bg-pink-500/40 text-pink-400 hover:text-white border-l border-pink-500/20 transition-colors"
-                                  title="Download from HuggingFace to server"
-                                >↓</button>
-                              </div>
-                            ))}
-                          </div>
+                          <p className="text-[11px] text-pink-400/70">Download a model to the server, then click Use. Or pick a file already in ~/.gleann/models, or type a custom filename.</p>
+                          <ModelCatalog url="/api/models/catalog" groups={['Rerankers']}
+                            selected={editConfig.search_config?.reranker_config?.model}
+                            onUse={v => { const sc = editConfig.search_config || {}; const rc = sc.reranker_config || {}; setEditConfig({...editConfig, search_config: {...sc, reranker_config: {...rc, model: v}}}); }}
+                            onInstalled={refreshLocalModels} />
                           <div>
                             <label className="text-[11px] text-pink-400/70 mb-1 block">Select Local Model or Enter Custom Filename:</label>
                             <div className="flex gap-2">

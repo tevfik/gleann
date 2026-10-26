@@ -24,6 +24,7 @@ import (
 	"github.com/tevfik/gleann/internal/background"
 	"github.com/tevfik/gleann/internal/embedding"
 	"github.com/tevfik/gleann/internal/indexing"
+	"github.com/tevfik/gleann/internal/modelcatalog"
 	"github.com/tevfik/gleann/internal/multimodal"
 
 	"github.com/tevfik/gleann/internal/eventbus"
@@ -285,10 +286,16 @@ func (s *Server) buildMux() *http.ServeMux {
 	mux.HandleFunc("DELETE /api/plugins/{name}", s.handleUninstallPlugin)
 	mux.HandleFunc("GET /api/plugins/{name}/settings", s.handlePluginSettings)
 	mux.HandleFunc("PUT /api/plugins/{name}/settings", s.handlePluginSettings)
+	mux.HandleFunc("GET /api/plugins/{name}/models", s.handlePluginModels)
+	mux.HandleFunc("POST /api/plugins/{name}/models", s.handlePluginModels)
 
 	// Models
 	mux.HandleFunc("POST /api/models/download", s.handleDownloadModel)
 	mux.HandleFunc("GET /api/models/local", s.handleListLocalModels)
+	// The local GGUF catalog (internal/modelcatalog/models.json): list and download.
+	catalog := modelcatalog.Catalog().Handler(s.lifetime(), nil)
+	mux.Handle("GET /api/models/catalog", catalog)
+	mux.Handle("POST /api/models/catalog", catalog)
 
 	// Unified memory API (orchestrates blocks + graph + vector).
 	s.mountUnifiedMemory(mux)
@@ -1539,7 +1546,9 @@ func withMiddleware(next http.Handler) http.Handler {
 			r.URL.Path == "/api/logs" ||
 			r.URL.Path == "/api/config" ||
 			r.URL.Path == "/api/plugins" ||
-			r.URL.Path == "/api/models/local")
+			r.URL.Path == "/api/models/local" ||
+			r.URL.Path == "/api/models/catalog" ||
+			(strings.HasPrefix(r.URL.Path, "/api/plugins/") && strings.HasSuffix(r.URL.Path, "/models")))
 		if !isPolling {
 			log.Printf("%s %s %s", r.Method, r.URL.Path, time.Since(start))
 		}

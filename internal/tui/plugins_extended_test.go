@@ -1,9 +1,11 @@
 package tui
 
 import (
-	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -321,33 +323,47 @@ func TestPluginProgressMsg(t *testing.T) {
 	}
 }
 
-func TestLoadPluginConfigSummary(t *testing.T) {
-	// Unknown plugin.
-	s := loadPluginConfigSummary("unknown-plugin")
-	if s != nil {
-		t.Error("expected nil for unknown plugin")
-	}
+func TestFetchSettingsSummaryReadsThePluginForm(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/settings" {
+			http.NotFound(w, r)
+			return
+		}
+		_, _ = w.Write([]byte(`{"schema_version":2,"fields":[
+			{"key":"engine","label":"Page parser","type":"select","value":"auto"},
+			{"key":"vlm","label":"Granite VLM","type":"bool","value":false},
+			{"key":"deep","label":"Deep tables","type":"bool","value":false,"visible_if":{"key":"vlm","equals":true}},
+			{"key":"ort","label":"ONNX Runtime","type":"path","value":"","placeholder":"/lib/libonnxruntime.so"},
+			{"key":"out","label":"Output","type":"path","value":""},
+			{"key":"token","label":"Token","type":"secret","value":"","is_set":true}]}`))
+	}))
+	defer srv.Close()
 
-	// gleann-sound with config.
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	t.Setenv("USERPROFILE", home)
-	gleannDir := filepath.Join(home, ".gleann")
-	os.MkdirAll(gleannDir, 0755)
-	cfg := map[string]any{
-		"default_model": "base.en",
-		"language":      "en",
-		"backend":       "whisper",
+	msg := fetchSettingsSummary("p", srv.URL)().(settingsSummaryMsg)
+	want := []settingRow{{"Page parser", "auto"}, {"Granite VLM", "off"}, {"ONNX Runtime", "auto: /lib/libonnxruntime.so"}}
+	if !reflect.DeepEqual(msg.rows, want) {
+		t.Errorf("rows = %+v\nwant  %+v", msg.rows, want)
 	}
-	data, _ := json.Marshal(cfg)
-	os.WriteFile(filepath.Join(gleannDir, "sound.json"), data, 0644)
+	// A plugin without a settings form shows no settings, and no error.
+	if msg := fetchSettingsSummary("p", srv.URL+"/nothing")().(settingsSummaryMsg); msg.rows != nil {
+		t.Errorf("rows for a plugin without settings: %+v", msg.rows)
+	}
+}
 
-	// Note: loadPluginConfigSummary uses os.UserHomeDir which reads $HOME.
-	s = loadPluginConfigSummary("gleann-sound")
-	if s == nil {
-		t.Skip("loadPluginConfigSummary returned nil (HOME may not affect os.UserHomeDir)")
+func TestResolveBinaryPrefersTheRegisteredCommand(t *testing.T) {
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "gleann-plugin-docs")
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
 	}
-	if s["Model"] != "base.en" {
-		t.Errorf("Model = %q", s["Model"])
+	info := gleann.PluginMeta{Name: "gleann-plugin-docs", SettingsCmd: []string{"gleann-plugin-docs", "tui"}}
+	reg := &gleann.Plugin{Name: "gleann-plugin-docs", Command: []string{bin, "--serve"}}
+	if got := resolveBinary(info, reg); got != bin {
+		t.Errorf("resolveBinary = %q, want the registered %q", got, bin)
+	}
+	// A wrapper script under another name is not the settings binary.
+	reg.Command = []string{filepath.Join(dir, "run-docs.sh")}
+	if got := resolveBinary(info, reg); got == reg.Command[0] {
+		t.Error("a differently named registered command was used")
 	}
 }

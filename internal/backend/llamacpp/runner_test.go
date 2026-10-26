@@ -172,3 +172,23 @@ func itoaTest(n int) string {
 	}
 	return string(b)
 }
+
+func TestResolveModelPathLooksInModelsDir(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	dir := filepath.Join(home, ".gleann", "models")
+	_ = os.MkdirAll(dir, 0o755)
+	_ = os.WriteFile(filepath.Join(dir, "m.gguf"), []byte("x"), 0o644)
+	if got := ResolveModelPath("m.gguf"); got != filepath.Join(dir, "m.gguf") {
+		t.Errorf("bare name: %q", got)
+	}
+	if got := ResolveModelPath("/abs/x.gguf"); got != "/abs/x.gguf" {
+		t.Errorf("absolute path changed: %q", got)
+	}
+	if got := ResolveModelPath("missing.gguf"); got != "missing.gguf" {
+		t.Errorf("missing file: %q", got)
+	}
+	if err := NewRunner("missing.gguf").Start(context.Background()); err == nil || !strings.Contains(err.Error(), "not found") {
+		t.Errorf("Start with a missing model: %v", err)
+	}
+}

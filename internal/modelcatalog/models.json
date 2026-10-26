@@ -1,0 +1,104 @@
+{
+  "_comment": "Local GGUF models gleann can download into ~/.gleann/models for the llamacpp and eif providers. Embedded in the binary; the web UI, `gleann setup` and `gleann models` read it. sha256 is Hugging Face's x-linked-etag of the file.",
+  "models": [
+    {
+      "id": "granite-embedding-30m-english",
+      "name": "Granite Embedding 30M English Q8 (small, fast)",
+      "kind": "embedding",
+      "file": "granite-embedding-30m-english-Q8_0.gguf",
+      "url": "https://huggingface.co/bartowski/granite-embedding-30m-english-GGUF/resolve/main/granite-embedding-30m-english-Q8_0.gguf",
+      "bytes": 34474464,
+      "sha256": "a57286132b82145aef99b98e70171b0f89945cdc25f756ad026d4fc664cceab3"
+    },
+    {
+      "id": "multilingual-e5-small",
+      "name": "Multilingual E5 Small Q8 (multilingual, Turkish)",
+      "kind": "embedding",
+      "file": "multilingual-e5-small-q8_0.gguf",
+      "url": "https://huggingface.co/cstr/multilingual-e5-small-GGUF/resolve/main/multilingual-e5-small-q8_0.gguf",
+      "bytes": 131624960,
+      "sha256": "0a34067a40f25d3149b36885faa62bee0e5284d0f9edc102acfc00e115d953e8"
+    },
+    {
+      "id": "all-minilm-l6-v2",
+      "name": "all-MiniLM-L6-v2 Q8 (tiny, fast)",
+      "kind": "embedding",
+      "file": "all-MiniLM-L6-v2-Q8_0.gguf",
+      "url": "https://huggingface.co/second-state/All-MiniLM-L6-v2-Embedding-GGUF/resolve/main/all-MiniLM-L6-v2-Q8_0.gguf",
+      "bytes": 25008064,
+      "sha256": "263215c3cadd6e16740741a7624ab4cbb6c8e777688bd5331ecfbf5681c2f8ed"
+    },
+    {
+      "id": "nomic-embed-text-v1.5",
+      "name": "Nomic Embed Text v1.5 Q4",
+      "kind": "embedding",
+      "file": "nomic-embed-text-v1.5.Q4_K_M.gguf",
+      "url": "https://huggingface.co/nomic-ai/nomic-embed-text-v1.5-GGUF/resolve/main/nomic-embed-text-v1.5.Q4_K_M.gguf",
+      "bytes": 84106624,
+      "sha256": "d4e388894e09cf3816e8b0896d81d265b55e7a9fff9ab03fe8bf4ef5e11295ac"
+    },
+    {
+      "id": "bge-m3",
+      "name": "BGE-M3 Q4 (multilingual, Turkish)",
+      "kind": "embedding",
+      "file": "bge-m3-Q4_K_M.gguf",
+      "url": "https://huggingface.co/gpustack/bge-m3-GGUF/resolve/main/bge-m3-Q4_K_M.gguf",
+      "bytes": 437778496,
+      "sha256": "6d39681b26c61279ac1f82db35a04a05009e94c415b51c858ff571489a82fc06"
+    },
+    {
+      "id": "qwen2.5-0.5b-instruct",
+      "name": "Qwen2.5 0.5B Instruct Q4",
+      "kind": "llm",
+      "file": "qwen2.5-0.5b-instruct-q4_k_m.gguf",
+      "url": "https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-instruct-q4_k_m.gguf",
+      "bytes": 491400032,
+      "sha256": "74a4da8c9fdbcd15bd1f6d01d621410d31c6fc00986f5eb687824e7b93d7a9db"
+    },
+    {
+      "id": "llama-3.2-1b-instruct",
+      "name": "Llama 3.2 1B Instruct Q4",
+      "kind": "llm",
+      "file": "Llama-3.2-1B-Instruct-Q4_K_M.gguf",
+      "url": "https://huggingface.co/bartowski/Llama-3.2-1B-Instruct-GGUF/resolve/main/Llama-3.2-1B-Instruct-Q4_K_M.gguf",
+      "bytes": 807694464,
+      "sha256": "6f85a640a97cf2bf5b8e764087b1e83da0fdb51d7c9fab7d0fece9385611df83"
+    },
+    {
+      "id": "qwen2.5-coder-1.5b-instruct",
+      "name": "Qwen2.5 Coder 1.5B Instruct Q4",
+      "kind": "llm",
+      "file": "qwen2.5-coder-1.5b-instruct-q4_k_m.gguf",
+      "url": "https://huggingface.co/Qwen/Qwen2.5-Coder-1.5B-Instruct-GGUF/resolve/main/qwen2.5-coder-1.5b-instruct-q4_k_m.gguf",
+      "bytes": 1117320768,
+      "sha256": "cc324af070c2ecbfd324a30884d2f951a7ff756aba85cb811a6ec436933bb046"
+    },
+    {
+      "id": "phi-3-mini-4k-instruct",
+      "name": "Phi-3 Mini 4K Instruct Q4",
+      "kind": "llm",
+      "file": "Phi-3-mini-4k-instruct-q4.gguf",
+      "url": "https://huggingface.co/microsoft/Phi-3-mini-4k-instruct-gguf/resolve/main/Phi-3-mini-4k-instruct-q4.gguf",
+      "bytes": 2393231072,
+      "sha256": "8a83c7fb9049a9b2e92266fa7ad04933bb53aa1e85136b7b30f1b8000ff2edef"
+    },
+    {
+      "id": "llama-3-8b-instruct",
+      "name": "Llama 3 8B Instruct Q4",
+      "kind": "llm",
+      "file": "Meta-Llama-3-8B-Instruct-Q4_K_M.gguf",
+      "url": "https://huggingface.co/bartowski/Meta-Llama-3-8B-Instruct-GGUF/resolve/main/Meta-Llama-3-8B-Instruct-Q4_K_M.gguf",
+      "bytes": 4920734272,
+      "sha256": "8ba9baf3a7345f705a11878397500fb25174034f0fd784e83aa4a96aaa47735f"
+    },
+    {
+      "id": "bge-reranker-v2-m3",
+      "name": "BGE Reranker v2 M3 Q4",
+      "kind": "reranker",
+      "file": "bge-reranker-v2-m3-Q4_K_M.gguf",
+      "url": "https://huggingface.co/gpustack/bge-reranker-v2-m3-GGUF/resolve/main/bge-reranker-v2-m3-Q4_K_M.gguf",
+      "bytes": 438376864,
+      "sha256": "e186a244ed455b4ab66ec64339ce7427a6ae13f5c0b5e544de96e50f0f8b3673"
+    }
+  ]
+}

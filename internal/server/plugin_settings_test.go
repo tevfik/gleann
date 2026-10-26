@@ -57,6 +57,8 @@ func pluginAPI(t *testing.T, plugins map[string]string) *httptest.Server {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/plugins/{name}/settings", s.handlePluginSettings)
 	mux.HandleFunc("PUT /api/plugins/{name}/settings", s.handlePluginSettings)
+	mux.HandleFunc("GET /api/plugins/{name}/models", s.handlePluginModels)
+	mux.HandleFunc("POST /api/plugins/{name}/models", s.handlePluginModels)
 	ts := httptest.NewServer(mux)
 	t.Cleanup(ts.Close)
 	return ts
@@ -113,5 +115,49 @@ func TestPluginSettingsProxyErrors(t *testing.T) {
 		if resp.StatusCode != want && !(strings.Contains(path, "..") && resp.StatusCode == http.StatusNotFound) {
 			t.Errorf("%s = %d, want %d", path, resp.StatusCode, want)
 		}
+	}
+}
+
+func TestPluginModelsProxy(t *testing.T) {
+	var posted string
+	mux := http.NewServeMux()
+	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, `{"status":"ok"}`) })
+	mux.HandleFunc("/models", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			b, _ := io.ReadAll(r.Body)
+			posted = r.Header.Get("Content-Type") + "|" + string(b)
+			if strings.Contains(string(b), "nope") {
+				w.WriteHeader(http.StatusNotFound)
+				fmt.Fprint(w, `{"error":"unknown model nope"}`)
+				return
+			}
+			w.WriteHeader(http.StatusAccepted)
+			fmt.Fprint(w, `{"id":"small","state":"downloading"}`)
+			return
+		}
+		fmt.Fprint(w, `{"models":[{"id":"small","name":"Small","state":"available"}]}`)
+	})
+	withModels := httptest.NewServer(mux)
+	t.Cleanup(withModels.Close)
+	without, _ := settingsPlugin(t, true)
+	api := pluginAPI(t, map[string]string{"gleann-plugin-sound": withModels.URL, "gleann-plugin-docs": without})
+
+	resp, err := http.Get(api.URL + "/api/plugins/gleann-plugin-sound/models")
+	if err != nil || resp.StatusCode != 200 {
+		t.Fatalf("GET models: %v %v", resp, err)
+	}
+	resp, _ = http.Post(api.URL+"/api/plugins/gleann-plugin-sound/models", "application/json", strings.NewReader(`{"id":"small"}`))
+	if resp.StatusCode != http.StatusAccepted || posted != `application/json|{"id":"small"}` {
+		t.Errorf("POST models: %d %q", resp.StatusCode, posted)
+	}
+	// The plugin's own 404 (unknown model) passes through on POST.
+	resp, _ = http.Post(api.URL+"/api/plugins/gleann-plugin-sound/models", "application/json", strings.NewReader(`{"id":"nope"}`))
+	if resp.StatusCode != http.StatusNotFound {
+		t.Errorf("unknown model: %d", resp.StatusCode)
+	}
+	// A plugin without a catalog answers 501 with a clear message.
+	resp, _ = http.Get(api.URL + "/api/plugins/gleann-plugin-docs/models")
+	if resp.StatusCode != http.StatusNotImplemented {
+		t.Errorf("plugin without models: %d", resp.StatusCode)
 	}
 }

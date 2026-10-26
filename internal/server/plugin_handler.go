@@ -153,6 +153,20 @@ func (s *Server) closePluginManager() {
 // The plugin is started first when it is registered but not running. Only the
 // /settings path of the registered plugin URL is ever contacted.
 func (s *Server) handlePluginSettings(w http.ResponseWriter, r *http.Request) {
+	s.proxyPlugin(w, r, "/settings", "this plugin has no web-editable settings")
+}
+
+// handlePluginModels proxies a plugin's model catalog the same way:
+//
+//	GET  /api/plugins/{name}/models -> the plugin's GET /models (models + download state)
+//	POST /api/plugins/{name}/models -> the plugin's POST /models ({"id":...}: start a download)
+func (s *Server) handlePluginModels(w http.ResponseWriter, r *http.Request) {
+	s.proxyPlugin(w, r, "/models", "this plugin offers no model downloads")
+}
+
+// proxyPlugin forwards r to path on the named registered plugin; missing is
+// the 501 message for a plugin without that path.
+func (s *Server) proxyPlugin(w http.ResponseWriter, r *http.Request, path, missing string) {
 	name := r.PathValue("name")
 	if err := gleann.ValidateName(name); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid plugin name: "+err.Error())
@@ -186,10 +200,10 @@ func (s *Server) handlePluginSettings(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var body io.Reader
-	if r.Method == http.MethodPut {
+	if r.Method == http.MethodPut || r.Method == http.MethodPost {
 		body = http.MaxBytesReader(w, r.Body, 1<<20)
 	}
-	req, err := http.NewRequestWithContext(r.Context(), r.Method, strings.TrimRight(plugin.URL, "/")+"/settings", body)
+	req, err := http.NewRequestWithContext(r.Context(), r.Method, strings.TrimRight(plugin.URL, "/")+path, body)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -203,8 +217,10 @@ func (s *Server) handlePluginSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode == http.StatusNotFound {
-		writeError(w, http.StatusNotImplemented, "this plugin has no web-editable settings")
+	// A 404 on GET (or on /settings) means a plugin without the path; a 404
+	// on POST /models is the plugin's own "unknown model" and is passed on.
+	if resp.StatusCode == http.StatusNotFound && (r.Method == http.MethodGet || path == "/settings") {
+		writeError(w, http.StatusNotImplemented, missing)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")

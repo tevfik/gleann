@@ -152,13 +152,17 @@ func runOnboard() error {
 		return nil // go back to home
 	}
 
-	// If the user chose "Manage Plugins", launch the plugin screen.
+	// If the user chose "Manage Plugins", launch the plugin screen, then come
+	// back to the settings it was opened from.
 	if ob.OpenPlugins() {
 		r := ob.Result()
 		if r.Completed {
 			_ = SaveConfig(r)
 		}
-		return runPlugins()
+		if err := runPlugins(); err != nil {
+			return err
+		}
+		return runOnboard()
 	}
 
 	r := ob.Result()
@@ -173,6 +177,11 @@ func runOnboard() error {
 		// Save config to ~/.gleann/config.json
 		if err := SaveConfig(r); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: could not save config: %v\n", err)
+		}
+		// "(Download) …" choices: fetch them now, in the terminal.
+		if downloadChosenModels(context.Background(), r, os.Stdout) && r.InstallPath == "" {
+			fmt.Println("\nPress Enter to return to main menu...")
+			fmt.Scanln()
 		}
 		if r.InstallPath != "" {
 			RunInstall(&r)

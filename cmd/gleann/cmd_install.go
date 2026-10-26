@@ -371,7 +371,7 @@ func cmdInstall(args []string) {
 		} else {
 			fmt.Printf("Target directory: %s\n", dir)
 			if dirFlag == "" && indexFlag == "" {
-				fmt.Printf("ℹ️  No index found matching %s (using <name> placeholder). You can build an index with: gleann build <name> --docs %s\n", dir, dir)
+				fmt.Printf("ℹ️  No index found matching %s (using <name> placeholder). You can build an index with: gleann index build <name> --docs %s\n", dir, dir)
 			}
 		}
 	} else {

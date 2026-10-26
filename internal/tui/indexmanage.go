@@ -212,7 +212,7 @@ func (m IndexManageModel) viewList() string {
 
 	if len(m.indexes) == 0 {
 		empty := lipgloss.NewStyle().Foreground(ColorMuted).
-			Render("  No indexes found. Build one first:\n\n    gleann build my-docs --docs ./documents/")
+			Render("  No indexes found. Build one first:\n\n    gleann index build my-docs --docs ./documents/")
 		b.WriteString(empty)
 		b.WriteString("\n\n")
 		b.WriteString(HelpStyle.Render("  esc back"))

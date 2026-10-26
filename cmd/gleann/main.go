@@ -63,6 +63,8 @@ func main() {
 		cmdService(args)
 	case "doctor":
 		cmdDoctor()
+	case "models":
+		cmdModels(args)
 	case "tasks":
 		cmdTasks(args)
 	case "benchmark", "bench":
@@ -127,6 +129,7 @@ Long-term Memory Engine:
 Service & Setup:
   setup [--auto]               Interactive setup wizard (or zero-config auto)
   doctor                       System health and dependencies check
+  models [list|download <id>]  Local GGUF models (llamacpp/eif) to download
   update    [--check]          Update gleann to the latest GitHub release (plugins: gleann plugin update)
   agents [dump]                Generate or dump AGENTS.md for AI coding agents
   service install|start|status Manage Gleann as a background system service

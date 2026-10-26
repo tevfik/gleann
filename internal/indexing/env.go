@@ -60,7 +60,7 @@ func startLlamaCPP(ctx context.Context, cfg *gleann.Config, p *printer) (stop fu
 		return func() {}, nil
 	}
 	if cfg.EmbeddingModel == "" || cfg.EmbeddingModel == "bge-m3" {
-		return func() {}, fmt.Errorf("llamacpp provider requires an absolute path to a .gguf file as the embedding model")
+		return func() {}, fmt.Errorf("llamacpp provider requires a .gguf model (a path, or a file name in ~/.gleann/models) as the embedding model")
 	}
 	p.Printf("🚀 Starting embedded llama.cpp server for model %s\n", cfg.EmbeddingModel)
 	runner := llamacpp.NewRunner(cfg.EmbeddingModel)

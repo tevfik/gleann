@@ -21,11 +21,34 @@ type Runner struct {
 	embedding bool
 }
 
-// NewRunner creates a new Runner instance.
+// NewRunner creates a new Runner instance. A bare file name (what the setup
+// wizard and the web UI store) is looked up in ~/.gleann/models.
 func NewRunner(modelPath string) *Runner {
 	return &Runner{
-		modelPath: modelPath,
+		modelPath: ResolveModelPath(modelPath),
 	}
+}
+
+// ResolveModelPath returns p when it names an existing file, else the file of
+// that name in ~/.gleann/models when there is one, else p unchanged.
+func ResolveModelPath(p string) string {
+	if p == "" || filepath.IsAbs(p) {
+		return p
+	}
+	if _, err := os.Stat(p); err == nil {
+		return p
+	}
+	if home, err := os.UserHomeDir(); err == nil {
+		if c := filepath.Join(home, ".gleann", "models", p); fileExists(c) {
+			return c
+		}
+	}
+	return p
+}
+
+func fileExists(p string) bool {
+	fi, err := os.Stat(p)
+	return err == nil && !fi.IsDir()
 }
 
 // SetEmbedding configures whether the server should be launched in embedding mode.
@@ -35,6 +58,10 @@ func (r *Runner) SetEmbedding(embedding bool) {
 
 // Start extracts the embedded binary, finds a free port, and starts the server.
 func (r *Runner) Start(ctx context.Context) error {
+	// llama-server aborts the whole process on a missing model; say why instead.
+	if !fileExists(r.modelPath) {
+		return fmt.Errorf("model file %q not found (put it in ~/.gleann/models, e.g. with: gleann models download <id>)", r.modelPath)
+	}
 	// 1. Determine platform and binary name
 	var binName string
 	switch runtime.GOOS {
