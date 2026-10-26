@@ -8,7 +8,15 @@
 # Options (via environment variables):
 #   GLEANN_VERSION=v1.2.3   Install a specific version (default: latest)
 #   GLEANN_INSTALL_DIR=...  Install directory (default: ~/.local/bin)
-#   GLEANN_FULL=1           Install full build (with tree-sitter)
+#   GLEANN_VARIANT=...      Which build to install:
+#                             lite (default)  pure Go, no native code
+#                             eif             + bitllm.c local embeddings (EIF runtime)
+#                             full            + bitllm.c, FAISS, tree-sitter code graph, Kuzu
+#                           eif and full exist for linux-amd64, linux-arm64, darwin-arm64.
+#   GLEANN_EIF=1            Same as GLEANN_VARIANT=eif
+#   GLEANN_FULL=1           Same as GLEANN_VARIANT=full
+#
+#   e.g. curl -sSfL .../install.sh | GLEANN_VARIANT=full sh
 #
 set -e
 
@@ -91,11 +99,30 @@ main() {
     log "Platform: ${OS}/${ARCH}"
     log "Version:  ${VERSION}"
 
-    # Build variant (lite or full).
-    VARIANT="gleann"
-    if [ "${GLEANN_FULL}" = "1" ]; then
-        VARIANT="gleann-full"
+    # Build variant: lite, eif (bitllm.c) or full (bitllm.c + FAISS + tree-sitter).
+    KIND="${GLEANN_VARIANT:-}"
+    if [ -z "${KIND}" ]; then
+        KIND="lite"
+        [ "${GLEANN_EIF}" = "1" ] && KIND="eif"
+        [ "${GLEANN_FULL}" = "1" ] && KIND="full"
     fi
+    case "${KIND}" in
+        lite) VARIANT="gleann" ;;
+        eif)  VARIANT="gleann-eif" ;;
+        full) VARIANT="gleann-full" ;;
+        *)    fail "Unknown GLEANN_VARIANT=${KIND}. Use lite, eif or full." ;;
+    esac
+    if [ "${KIND}" != "lite" ]; then
+        case "${OS}-${ARCH}" in
+            linux-amd64|linux-arm64|darwin-arm64) ;;
+            *) fail "The ${KIND} build is not published for ${OS}/${ARCH} (only linux-amd64, linux-arm64, darwin-arm64). Use GLEANN_VARIANT=lite or build from source." ;;
+        esac
+    fi
+    case "${KIND}" in
+        lite) log "Build:    lite (pure Go; bitllm.c embeddings and FAISS not included — GLEANN_VARIANT=eif or full adds them)" ;;
+        eif)  log "Build:    eif (bitllm.c local embeddings)" ;;
+        full) log "Build:    full (bitllm.c, FAISS, tree-sitter, Kuzu; unpacks to ~/.gleann/runtime on first run)" ;;
+    esac
 
     # Construct download URL.
     EXT=""

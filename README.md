@@ -23,9 +23,18 @@ Single Go binary (~34MB). Zero Python virtual environments, zero Docker required
 # Go install (Recommended)
 go install github.com/tevfik/gleann/cmd/gleann@latest
 
-# Or One-Liner (Linux & macOS)
+# Or One-Liner (Linux & macOS) — installs the lite build
 curl -sSfL https://raw.githubusercontent.com/tevfik/gleann/main/scripts/install.sh | sh
+
+# With bitllm.c local embeddings, FAISS and the tree-sitter code graph
+curl -sSfL https://raw.githubusercontent.com/tevfik/gleann/main/scripts/install.sh | GLEANN_VARIANT=full sh
 ```
+
+| `GLEANN_VARIANT` | Includes | Platforms |
+|---|---|---|
+| `lite` (default) | pure Go; no bitllm.c, FAISS or code graph | all |
+| `eif` | + bitllm.c local embeddings (EIF runtime) | linux-amd64, linux-arm64, darwin-arm64 |
+| `full` | + bitllm.c, FAISS, tree-sitter code graph, Kuzu | linux-amd64, linux-arm64, darwin-arm64 |
 
 Later, update gleann and its plugins from the latest GitHub release:
 
