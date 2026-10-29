@@ -4,6 +4,7 @@
 [![Go Report Card](https://goreportcard.com/badge/github.com/tevfik/gleann)](https://goreportcard.com/report/github.com/tevfik/gleann)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Go Reference](https://pkg.go.dev/badge/github.com/tevfik/gleann.svg)](https://pkg.go.dev/github.com/tevfik/gleann)
+[![codecov](https://codecov.io/gh/tevfik/gleann/branch/main/graph/badge.svg)](https://codecov.io/gh/tevfik/gleann)
 
 **High-performance local AI workspace, codebase intelligence, and persistent cross-session memory for AI coding agents and terminal power users.**
 

@@ -225,3 +225,26 @@ func TestTreeSitterAvailable(t *testing.T) {
 	// Just ensure it doesn't panic
 	_ = TreeSitterAvailable()
 }
+
+func TestExtractImports(t *testing.T) {
+	source := `package main
+
+import (
+	"fmt"
+	"os"
+)
+
+func main() {
+	fmt.Println(os.Args)
+}
+`
+	imports := NewParser(DefaultConfig()).ExtractImports(source, "main.go")
+	// If chunks contain preamble or import, verify
+	if len(imports) > 0 {
+		for _, imp := range imports {
+			if imp.NodeType != "preamble" && imp.NodeType != "import" {
+				t.Errorf("unexpected import node type: %s", imp.NodeType)
+			}
+		}
+	}
+}

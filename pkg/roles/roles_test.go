@@ -1,6 +1,8 @@
 package roles
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -166,5 +168,47 @@ func TestLoadMessagePathTraversalSecurity(t *testing.T) {
 		t.Error("expected security error for absolute path traversal, but got none")
 	} else if !strings.Contains(err.Error(), "outside allowed roles directory") {
 		t.Errorf("expected security error message, got: %v", err)
+	}
+}
+
+func TestLoadMessageHTTP(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("Prompt from HTTP server."))
+	}))
+	defer ts.Close()
+
+	content, err := LoadMessage(ts.URL)
+	if err != nil {
+		t.Fatalf("unexpected error fetching from HTTP: %v", err)
+	}
+	if content != "Prompt from HTTP server." {
+		t.Errorf("got %q, want 'Prompt from HTTP server.'", content)
+	}
+
+	// Invalid URL
+	_, err = LoadMessage("http://127.0.0.1:0/invalid")
+	if err == nil {
+		t.Error("expected error for unreachable HTTP URL")
+	}
+}
+
+func TestResolveAndSystemPromptErrors(t *testing.T) {
+	reg := NewRegistry(map[string][]string{
+		"broken": {"file://nonexistent_file_that_does_not_exist.txt"},
+	})
+
+	_, err := reg.Resolve("broken")
+	if err == nil {
+		t.Error("expected error for nonexistent file in Resolve")
+	}
+
+	_, err = reg.SystemPrompt("broken")
+	if err == nil {
+		t.Error("expected error for nonexistent file in SystemPrompt")
+	}
+
+	_, err = reg.Resolve("unknown_role")
+	if err == nil {
+		t.Error("expected error for unknown role in Resolve")
 	}
 }
