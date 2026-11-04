@@ -44,6 +44,7 @@ indexes/
 
 # Local-only documents (not committed)
 LOCAL_*.md
+GRAPH_REPORT.md
 
 # AI agent instruction files (local only)
 AGENTS.md

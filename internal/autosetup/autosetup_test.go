@@ -131,6 +131,35 @@ func TestEnsureConfig_SkipsExisting(t *testing.T) {
 	}
 }
 
+func TestEnsureConfig_PreservesConfigWithoutCompletedFlag(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("HOME", tmpDir)
+	t.Setenv("USERPROFILE", tmpDir)
+
+	gleannDir := filepath.Join(tmpDir, ".gleann")
+	os.MkdirAll(gleannDir, 0o755)
+	// Config has custom model settings but no "completed": true
+	cfg := map[string]any{"embedding_model": "custom-model", "embedding_provider": "openai"}
+	data, _ := json.Marshal(cfg)
+	os.WriteFile(filepath.Join(gleannDir, "config.json"), data, 0o644)
+
+	bootstrapped, err := EnsureConfig("", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bootstrapped {
+		t.Fatal("expected bootstrap to be skipped when model settings already exist")
+	}
+
+	// Verify content wasn't overwritten
+	saved, _ := os.ReadFile(filepath.Join(gleannDir, "config.json"))
+	var readBack map[string]any
+	_ = json.Unmarshal(saved, &readBack)
+	if readBack["embedding_model"] != "custom-model" {
+		t.Fatalf("expected embedding_model to be preserved, got %v", readBack["embedding_model"])
+	}
+}
+
 // ── ModelTier / EmbeddingTiers tests ──────────────────────────────────────
 
 func TestEmbeddingTiers(t *testing.T) {

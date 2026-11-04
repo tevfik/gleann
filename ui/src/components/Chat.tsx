@@ -642,9 +642,9 @@ export function Chat() {
 
       {/* Main Chat Area */}
       <div className="flex-1 flex flex-col relative z-10">
-        <main className="flex-1 flex flex-col max-w-5xl lg:max-w-6xl xl:max-w-7xl mx-auto w-full px-4 pt-6 pb-28 overflow-hidden">
+        <main className="flex-1 flex flex-col max-w-5xl lg:max-w-6xl xl:max-w-7xl mx-auto w-full px-4 pt-6 pb-2 overflow-hidden">
           {messages.length === 0 ? (
-            <div className="flex-1 flex flex-col items-center justify-center opacity-80 mt-10">
+            <div className="flex-1 flex flex-col items-center justify-center opacity-80 mt-10 pb-48">
               <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-blue-500/20 to-blue-500/20 flex items-center justify-center border border-white/10 mb-6">
                 <Brain className="w-8 h-8 text-blue-400" />
               </div>
@@ -666,7 +666,7 @@ export function Chat() {
               )}
             </div>
           ) : (
-            <div className="flex-1 overflow-y-auto no-scrollbar flex flex-col gap-6" style={{ scrollbarWidth: 'none' }}>
+            <div className="flex-1 overflow-y-auto no-scrollbar flex flex-col gap-6 pb-64 lg:pb-72" style={{ scrollbarWidth: 'none' }}>
               {activeConvId && (
                 <div className="flex items-center justify-center py-2 border-b border-white/5 mb-2 sticky top-0 bg-[#0b0c10]/90 backdrop-blur z-10">
                   {isEditingTitle ? (
@@ -693,7 +693,7 @@ export function Chat() {
                   onPreviewImage={setPreviewImage}
                 />
               ))}
-              <div ref={messagesEndRef} />
+              <div ref={messagesEndRef} className="h-4 shrink-0" />
             </div>
           )}
         </main>

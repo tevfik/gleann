@@ -131,6 +131,12 @@ func EnsureConfig(ollamaHost string, quiet bool) (bool, error) {
 			if completed, ok := cfg["completed"].(bool); ok && completed {
 				return false, nil
 			}
+			// If embedding or LLM settings are already defined, preserve user configuration.
+			if (cfg["embedding_provider"] != nil && cfg["embedding_provider"] != "") ||
+				(cfg["embedding_model"] != nil && cfg["embedding_model"] != "") ||
+				(cfg["llm_provider"] != nil && cfg["llm_provider"] != "") {
+				return false, nil
+			}
 		}
 	}
 

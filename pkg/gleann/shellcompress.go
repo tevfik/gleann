@@ -60,7 +60,7 @@ func (sc *ShellCompressor) Compress(cmdLine, output string) CompressResult {
 	tool, sub := parseCmdLine(cmdLine)
 	pattern := sc.findPattern(tool, sub)
 
-	compressed := output
+	var compressed string
 	patternName := ""
 
 	if pattern != nil {
