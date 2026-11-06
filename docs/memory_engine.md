@@ -342,7 +342,7 @@ gleann memory add short "Issue #42 needs Turkish translation" \
   --scope "myorg/backend/auth"
 
 # Build context for the feature scope -> sees BOTH facts
-gleann memory ctx --scope "myorg/backend/auth" --query "commit message?"
+gleann memory context --scope "myorg/backend/auth" --query "commit message?"
 ```
 
 Flat (single-segment) scopes still behave exactly as before — the change

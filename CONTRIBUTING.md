@@ -24,8 +24,8 @@ make build-cgo
 # Run tests
 make test
 
-# Run all pre-commit checks (vet + test + e2e)
-make pre-commit
+# Run all pre-commit checks (vet + test)
+make vet && make test
 
 # Run linter
 go vet ./...
@@ -52,10 +52,9 @@ tests/
 ```
 
 - **Unit tests**: Co-located with source (`*_test.go`). Run with `make test`.
-- **Integration tests**: `make test-e2e` (requires Ollama + markitdown).
-- **Full E2E suite**: `make test-e2e-full` (requires gleann-full binary).
-- **Benchmark scoring**: `make test-benchmark` (outputs JSON with weak point detection).
-- **Go benchmarks**: `make test-bench` (HNSW insert/search/recall).
+- **Integration tests**: `make test-integration`.
+- **Full E2E suite**: `make test-e2e` (requires Ollama + markitdown).
+- **Go benchmarks**: `go test -bench=. ./...`.
 - Write tests for all new functionality.
 - Aim for >80% coverage on new code.
 
@@ -64,7 +63,7 @@ tests/
 - Keep PRs focused on a single change
 - Include tests for new functionality
 - Update documentation if behavior changes
-- Ensure `make pre-commit` passes before submitting
+- Ensure `make vet && make test` pass before submitting
 
 ## Reporting Issues
 

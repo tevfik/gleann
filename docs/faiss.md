@@ -14,7 +14,7 @@ cd /tmp/faiss-src && mkdir build && cd build
 cmake .. -DFAISS_ENABLE_C_API=ON -DFAISS_ENABLE_GPU=OFF \
          -DBUILD_TESTING=OFF -DFAISS_ENABLE_PYTHON=OFF \
          -DCMAKE_BUILD_TYPE=Release
-task deps:faiss
+make -j$(nproc) faiss faiss_c
 
 # Install
 sudo cp -r c_api/libfaiss_c.a faiss/libfaiss.a /usr/local/lib/
@@ -76,7 +76,7 @@ All benchmarks on Intel i9-13900H (20 threads), Linux. Both backends use M=32, e
 | **Best for** | Simplicity, portability | Maximum throughput |
 | **Dependencies** | None | libfaiss, OpenBLAS, libomp |
 | **Cross-compile** | Yes | No (needs C toolchain) |
-| **Binary size** | ~2.5 MB | ~15 MB |
+| **Binary size** | ~34 MB (with embedded UI) | see the release assets |
 | **Build speed** | Instant | Requires FAISS from source |
 | **SIMD** | No | AVX2/SSE (auto-detected) |
 | **Recall@10** | 98.8% (ef=128) | Tunable via efSearch |

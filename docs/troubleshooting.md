@@ -97,8 +97,8 @@ echo "node_modules/" >> .gleannignore
 echo "*.min.js" >> .gleannignore
 echo ".git/" >> .gleannignore
 
-# Rebuild with pruning (skip unchanged files)
-gleann index rebuild my-code --docs ./src --prune
+# Rebuild index to apply new ignore rules
+gleann index rebuild my-code --docs ./src
 ```
 
 ## Search Quality Issues
@@ -110,9 +110,9 @@ gleann index rebuild my-code --docs ./src --prune
    gleann search my-docs "query" --rerank
    ```
 
-2. **Try hybrid search** (vector + keyword):
+2. **Tune hybrid search weighting** (vector + keyword balance):
    ```bash
-   gleann search my-docs "query" --hybrid
+   gleann search my-docs "query" --hybrid-alpha 0.5
    ```
 
 3. **Increase result count** and review:

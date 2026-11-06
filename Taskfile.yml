@@ -126,9 +126,7 @@ tasks:
           for lib in /usr/lib/*-linux-gnu/libopenblas.so.0 \
                      /usr/lib/*-linux-gnu/libgomp.so.1 \
                      /usr/lib/*-linux-gnu/libgfortran.so.5 \
-                     /usr/lib/*-linux-gnu/libquadmath.so.0 \
-                     /usr/lib/*-linux-gnu/libmvec.so.1 \
-                     /lib/*-linux-gnu/libmvec.so.1; do
+                     /usr/lib/*-linux-gnu/libquadmath.so.0; do
             if [ -f "$lib" ]; then
               cp "$lib" {{.BUILD_DIR}}/stage/ 2>/dev/null || true
             fi
@@ -160,10 +158,12 @@ tasks:
         fi
       - |
         if command -v patchelf >/dev/null 2>&1 && [ -f {{.BUILD_DIR}}/stage/gleann-full-bin ]; then
-          patchelf --set-rpath '$ORIGIN:$ORIGIN/../lib:/usr/local/lib:{{.USER_BIN_DIR}}' {{.BUILD_DIR}}/stage/gleann-full-bin 2>/dev/null || true
+          # libmvec is part of glibc and must come from the system, and a bundled
+          # build must not pick up a mismatched system faiss/kuzu from /usr/local/lib.
+          patchelf --set-rpath '$ORIGIN:$ORIGIN/../lib' {{.BUILD_DIR}}/stage/gleann-full-bin 2>/dev/null || true
           for so in {{.BUILD_DIR}}/stage/*.so*; do
             if [ -f "$so" ]; then
-              patchelf --set-rpath '$ORIGIN:$ORIGIN/../lib:/usr/local/lib' "$so" 2>/dev/null || true
+              patchelf --set-rpath '$ORIGIN:$ORIGIN/../lib' "$so" 2>/dev/null || true
             fi
           done
         fi

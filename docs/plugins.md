@@ -42,27 +42,35 @@ The TUI plugin manager downloads the correct binary for your platform and regist
 Plugins must implement this HTTP API:
 
 ### `GET /health`
-Returns `200 OK` when the plugin is ready.
+Returns `200 OK` when the plugin is ready, along with status metadata:
+```json
+{
+  "status": "ok",
+  "ready": true,
+  "schema_version": 2,
+  "version": "1.5.3",
+  "timeout": 120
+}
+```
 
 ### `GET /info`
 Returns plugin metadata:
 ```json
 {
   "name": "gleann-plugin-docs",
-  "version": "1.0.0",
+  "version": "1.5.3",
+  "schema_version": 2,
+  "capabilities": ["document-extraction"],
   "extensions": [".pdf", ".docx", ".xlsx", ".pptx"]
 }
 ```
 
-### `POST /extract`
-Extracts content from a file.
+### `POST /convert`
+Extracts structured content from a file uploaded via `multipart/form-data`.
 
 **Request:**
-```json
-{
-  "path": "/absolute/path/to/file.pdf"
-}
-```
+- `Content-Type: multipart/form-data`
+- Form field `file`: Binary file upload with filename preserved.
 
 **Response — `PluginResult` schema:**
 ```json
@@ -70,79 +78,65 @@ Extracts content from a file.
   "nodes": [
     {
       "id": "doc-1",
-      "label": "Document",
-      "properties": {
-        "title": "Quarterly Report Q3 2025",
-        "source": "/path/to/report.pdf",
-        "page_count": 42,
-        "content": "Full extracted text content..."
-      }
+      "_type": "Document",
+      "title": "Quarterly Report Q3 2025",
+      "path": "/path/to/report.pdf",
+      "page_count": 42,
+      "content": "Full extracted text content..."
     },
     {
       "id": "sec-1",
-      "label": "Section",
-      "properties": {
-        "title": "Executive Summary",
-        "content": "Section text content...",
-        "page": 1,
-        "order": 0
-      }
+      "_type": "Section",
+      "title": "Executive Summary",
+      "content": "Section text content...",
+      "page": 1,
+      "order": 0
     }
   ],
   "edges": [
     {
-      "source": "doc-1",
-      "target": "sec-1",
-      "label": "HAS_SECTION"
+      "_type": "HAS_SECTION",
+      "from": "doc-1",
+      "to": "sec-1"
     },
     {
-      "source": "sec-1",
-      "target": "sec-2",
-      "label": "HAS_SUBSECTION"
+      "_type": "HAS_SUBSECTION",
+      "from": "sec-1",
+      "to": "sec-2"
     }
   ],
-  "chunks": [
-    {
-      "text": "Chunk of text suitable for embedding...",
-      "metadata": {
-        "source": "/path/to/report.pdf",
-        "section": "Executive Summary",
-        "page": 1
-      }
-    }
-  ]
+  "markdown": "# Quarterly Report Q3 2025\n\n## Executive Summary\n..."
 }
 ```
 
-**Node labels:**
-| Label | Description |
-|-------|------------|
-| `Document` | Top-level file node. Must have `title`, `source`, `content` properties |
-| `Section` | A heading or logical section. Must have `title`, `content` |
-| `Table` | An extracted table. `content` holds rendered text |
-| `Image` | An extracted image. `content` holds OCR text or caption |
+**Node types (`_type`):**
+| Type | Description |
+|------|------------|
+| `Document` | Top-level file node. Contains `title`, `path`, `content` |
+| `Section` | A heading or logical section. Contains `title`, `content`, `page` |
+| `Table` | An extracted table |
+| `Image` | An extracted image or figure |
 
-**Edge labels:**
-| Label | Description |
+All properties for nodes are stored flat on the node object alongside `_type`.
+
+**Edge schema:**
+| Field | Description |
 |-------|------------|
-| `HAS_SECTION` | Document → Section |
-| `HAS_SUBSECTION` | Section → Section (nested hierarchy) |
-| `HAS_TABLE` | Section → Table |
-| `HAS_IMAGE` | Section → Image |
+| `_type` | Edge relationship type (`HAS_SECTION`, `HAS_SUBSECTION`, `HAS_TABLE`, `HAS_IMAGE`) |
+| `from` | Source node ID |
+| `to` | Target node ID |
 
 **HTTP Status Codes:**
 | Code | Meaning |
 |------|---------|
 | `200` | Success — returns PluginResult JSON |
-| `400` | Bad request (missing `path` field, invalid JSON) |
-| `404` | File not found at the given `path` |
-| `415` | Unsupported file type |
+| `400` / `422` | Bad request (missing `file` field, unsupported extension, invalid multipart) |
 | `500` | Internal extraction error |
 
 **Error response format:**
 ```json
 {
-  "error": "file not found: /path/to/missing.pdf"
+  "error": "conversion failed: reason"
 }
 ```
 
@@ -179,7 +173,7 @@ reference implementation (`internal/httpserver/settings.go`).
 A plugin can be written in any language. It must:
 
 1. Accept a `--port` flag to set the HTTP listen port
-2. Implement the three endpoints above (`/health`, `/info`, `/extract`)
+2. Implement the three endpoints above (`/health`, `/info`, `/convert`)
 3. Return structured content following the `PluginResult` schema
 4. Exit cleanly when the parent process sends SIGTERM
 
@@ -203,16 +197,17 @@ def info():
         "extensions": [".xyz"]
     })
 
-@app.route("/extract", methods=["POST"])
-def extract():
-    path = request.json.get("path")
-    if not path:
-        return jsonify({"error": "missing 'path' field"}), 400
+@app.route("/convert", methods=["POST"])
+def convert():
+    if "file" not in request.files:
+        return jsonify({"error": "missing 'file' field"}), 400
+    file = request.files["file"]
+    filename = file.filename
     # ... extract content from the file ...
     return jsonify({
-        "nodes": [{"id": "doc-1", "label": "Document", "properties": {"title": path, "source": path, "content": "..."}}],
+        "nodes": [{"id": "doc-1", "_type": "Document", "title": filename, "path": filename, "content": "..."}],
         "edges": [],
-        "chunks": [{"text": "...", "metadata": {"source": path}}]
+        "markdown": "# Extracted content..."
     })
 
 if __name__ == "__main__":
@@ -230,9 +225,8 @@ if __name__ == "__main__":
 curl http://localhost:9200/health
 
 # Test extraction
-curl -X POST http://localhost:9200/extract \
-  -H "Content-Type: application/json" \
-  -d '{"path": "/path/to/test-file.xyz"}'
+curl -X POST http://localhost:9200/convert \
+  -F "file=@/path/to/test-file.xyz"
 
 # Check gleann's plugin log during index build
 GLEANN_LOG_LEVEL=debug gleann index build test --docs ./
@@ -274,4 +268,4 @@ go test ./tests/benchmarks/ -run TestPluginBenchmark -v -timeout 300s
 ## Further Reading
 
 - [Plugin Installation Guide](plugin-install-guide.md) — Step-by-step install instructions
-- [Troubleshooting — Plugins](troubleshooting.md#plugins) — Common plugin issues
+- [Troubleshooting — Plugins](troubleshooting.md#plugin-issues) — Common plugin issues

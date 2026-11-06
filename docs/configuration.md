@@ -128,8 +128,12 @@ CLI flags override both defaults and config file values.
 --rerank-model <model>  # Reranker model
 --rerank-pool <n>       # Candidates sent to the reranker (default: max(4*top-k, 50))
 --rerank-url <url>      # Rerank through a llama-server --reranking endpoint (/v1/rerank), e.g. http://127.0.0.1:8791
---hybrid                # Hybrid search (vector + BM25)
+--no-hybrid             # Disable BM25 hybrid scoring (vector only)
+--hybrid-alpha <float>  # BM25 hybrid weight (default: 0.7)
 --graph                 # Enrich results with AST and/or hierarchical document context
+--kind <code|docs|all>  # Filter search results by content kind
+--one-per-file          # Return at most one result per file
+--include-tests         # Include test files in search results
 --ef-search <n>         # HNSW ef_search parameter
 ```
 
@@ -169,6 +173,18 @@ On code (gleann's own Go source, 100 generated tasks per kind, file-level rank,
 granite-30m embeddings) reranking is not a clear win: natural-language
 descriptions R@1 68 -> 70, doc-comment queries 92 -> 100, but identifier-style
 queries drop from 92 to 65, so prefer it for documents and for prose queries.
+
+### Vector storage
+
+HNSW indexes keep their vectors by default (`storage_mode: "store"`), so a search embeds only the query. `recompute` keeps just the graph and re-embeds the visited nodes on every search: the index is much smaller, a search is one to two orders of magnitude slower (about 6 s for 3k passages, about 10 s for 6k with a local Ollama). DiskANN always stores vectors.
+
+```bash
+gleann index build docs --docs ./docs --storage recompute   # one build
+gleann index storage                                        # table of all indexes: mode and size
+gleann index storage docs --set store                       # convert in place (uses the embedding cache, rolls back on failure)
+```
+
+`storage_mode` in `~/.gleann/config.json` sets the default for new indexes. In the TUI Index Manager, `s` switches the highlighted index and `g` toggles the default.
 
 ### Build Options
 
@@ -210,11 +226,11 @@ queries drop from 92 to 65, so prefer it for documents and for prose queries.
 ### Conversation Management
 
 ```bash
-gleann conversations --list                # List all saved conversations
-gleann conversations --show <id>           # Show a specific conversation
-gleann conversations --show-last           # Show the most recent conversation
-gleann conversations --delete <id> [id...] # Delete specific conversations
-gleann conversations --delete-older-than 30d  # Delete old conversations
+gleann chat --list                # List all saved conversations
+gleann chat --show <id>           # Show a specific conversation
+gleann chat --show-last           # Show the most recent conversation
+gleann chat --delete <id> [id...] # Delete specific conversations
+gleann chat --delete-older-than 30d  # Delete old conversations
 ```
 
 ## Vector Backends

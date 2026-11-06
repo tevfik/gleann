@@ -39,6 +39,9 @@ When the server is running, interactive Swagger UI documentation is available at
 | PATCH | `/api/indexes/{name}` | Update index governance (`tags`, `description`, `mcp_exposed`) |
 | POST | `/api/indexes/{name}/build` | Build index from texts/items |
 | POST | `/api/indexes/{name}/update` | Remove the passages of some sources and/or add items |
+| POST | `/api/indexes/{name}/index-path` | Update source path for index |
+| POST | `/api/indexes/{name}/watch` | Watch and auto-rebuild index on changes |
+| POST | `/api/indexes/{name}/upload` | Upload documents to index |
 | DELETE | `/api/indexes/{name}` | Delete an index |
 
 
@@ -55,6 +58,8 @@ When the server is running, interactive Swagger UI documentation is available at
 | Method | Path | Description |
 |--------|------|-------------|
 | GET | `/api/graph/{name}` | Graph statistics |
+| GET | `/api/graph/{name}/toc` | Document table of contents |
+| GET | `/api/graph/{name}/documents` | List indexed documents in graph |
 | POST | `/api/graph/{name}/query` | Query the code graph |
 | POST | `/api/graph/{name}/index` | Trigger AST graph indexing |
 
@@ -92,7 +97,9 @@ pipeline.  Each `{name}` corresponds to an independent KuzuDB store under
 |--------|------|-------------|
 | GET | `/api/conversations` | List saved conversations |
 | GET | `/api/conversations/{id}` | Get conversation by ID |
+| PUT | `/api/conversations/{id}` | Update conversation title |
 | DELETE | `/api/conversations/{id}` | Delete a conversation |
+| DELETE | `/api/conversations` | Delete all conversations |
 
 ### Memory Blocks (Long-term Memory)
 
@@ -107,6 +114,7 @@ Hierarchical BBolt memory store with three tiers (short, medium, long). Blocks s
 | GET | `/api/blocks/search?q=` | Full-text search across all tiers (optional `?scope=`) |
 | GET | `/api/blocks/context` | Compiled memory context (optional `?scope=`, `?format=xml`) |
 | GET | `/api/blocks/stats` | Storage statistics per tier |
+| POST | `/api/blocks/compact` | Trigger memory compaction |
 
 ### OpenAI-Compatible Proxy
 
@@ -263,6 +271,17 @@ and mounted at startup from `$GLEANN_PACKS_DIR` (default `<IndexDir>/packs`).
 
 Knowledge packs are immutable once loaded. To update a pack, drop the
 new version into the packs directory and call `POST /api/packs/reload`.
+
+### System & Configuration
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/config` | Get server configuration |
+| POST | `/api/config` | Update server configuration |
+| GET | `/api/logs` | Retrieve recent server logs |
+| GET | `/api/proxy/models` | List available models from configured provider |
+| GET | `/api/plugins` | List registered plugins |
+| POST | `/api/models/download` | Download a model |
 
 ## Examples
 
@@ -681,7 +700,7 @@ gleann_cached_searchers 3
 
 **Available metrics**: `gleann_up`, `gleann_uptime_seconds`, `gleann_search_requests_total`, `gleann_search_errors_total`, `gleann_search_latency_avg_ms`, `gleann_multi_search_requests_total`, `gleann_build_requests_total`, `gleann_build_errors_total`, `gleann_build_latency_avg_ms`, `gleann_ask_requests_total`, `gleann_update_requests_total{mode}`, `gleann_update_errors_total`, `gleann_update_latency_avg_ms`, `gleann_update_embedded_texts_total`, `gleann_delete_requests_total`, `gleann_webhooks_fired_total`, `gleann_cached_searchers`.
 
-**Grafana / Prometheus integration**: Point your Prometheus scraper at `http://<host>:8080/metrics`.
+**Grafana / Prometheus integration**: Point your Prometheus scraper at `http://<host>:8080/metrics`. `/metrics` needs an `admin` token (`authorization: {type: Bearer, credentials: <token>}` in the scrape config).
 
 ### Conversations
 
@@ -708,15 +727,38 @@ curl -X POST http://localhost:8080/api/indexes/my-code/ask \
   -d '{"question": "What about error handling?", "conversation_id": "a1b2c3d4..."}'
 ```
 
+## Authentication
+
+> The `curl` examples in this file leave out the header for brevity. Add `-H "Authorization: Bearer $GLEANN_API_TOKEN"` (export the token with `export GLEANN_API_TOKEN=$(gleann token show)`), unless the server runs with `auth: off`.
+
+Every route except `GET /health`, `GET /.well-known/agent-card.json`, `GET /api/docs`,
+`GET /api/openapi.json` and the static web UI requires a bearer token:
+
+```bash
+curl -H "Authorization: Bearer $GLEANN_API_TOKEN" http://127.0.0.1:8081/api/indexes
+```
+
+- `gleann serve` creates an **admin** token on first start (`~/.gleann/auth/admin.token`, mode 0600) and
+  prints a web UI URL with `?token=`; the server turns it into an `HttpOnly; SameSite=Strict` cookie.
+- `gleann token create <name> [--scope query|admin]`, `list`, `revoke`, `rotate`, `show`.
+  Tokens are shown once; only SHA-256 hashes are stored (`~/.gleann/auth/tokens.json`).
+- Scopes: `query` = search, ask, `/v1/*`, `/a2a/*`, read-only index/graph/memory/conversation routes;
+  `admin` = everything else (config, build, delete, plugins, memory writes, ...).
+- The CLI and stdio MCP memory tools read `GLEANN_API_TOKEN` or `~/.gleann/auth/admin.token` automatically.
+- OpenAI-compatible clients: set `api_key` to a token. A2A clients: the agent card advertises `gleannBearer`.
+- `401` = missing/invalid token, `403` = scope too low, wrong `Host`, or cross-origin cookie request.
+- `auth: "off"` (config) / `GLEANN_AUTH=off` disables authentication and is refused unless the server binds a loopback address.
+
+The server binds `127.0.0.1:8081` by default; `--port N` also binds loopback. Use `--addr :8081` (or `0.0.0.0:...`)
+to listen on all interfaces. On a loopback bind the `Host` header must be a loopback name
+(add others with `GLEANN_ALLOWED_HOSTS`).
+
 ## CORS
 
-All endpoints include CORS headers for cross-origin access:
-
-```
-Access-Control-Allow-Origin: *
-Access-Control-Allow-Methods: GET, POST, DELETE, OPTIONS
-Access-Control-Allow-Headers: Content-Type, Authorization
-```
+No CORS headers are sent by default (the web UI is same-origin). To allow a browser app on another origin, list it in
+`cors_origins` (config) or `GLEANN_CORS_ORIGINS` (comma separated); allowed origins get
+`Access-Control-Allow-Origin: <origin>` and `Access-Control-Allow-Methods: GET, POST, PUT, PATCH, DELETE, OPTIONS`.
+Cross-origin calls still need a bearer token.
 
 ## Error Responses
 
@@ -871,7 +913,7 @@ curl http://localhost:8080/v1/models
 ```python
 from openai import OpenAI
 
-client = OpenAI(base_url="http://localhost:8080/v1", api_key="unused")
+client = OpenAI(base_url="http://localhost:8080/v1", api_key=os.environ["GLEANN_API_TOKEN"])  # a gleann token; "unused" gets 401
 response = client.chat.completions.create(
     model="gleann/my-code",
     messages=[{"role": "user", "content": "Explain the auth flow"}],

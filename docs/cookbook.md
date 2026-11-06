@@ -85,13 +85,13 @@ Run gleann as an API server for integration with other tools:
 gleann serve --port 8080
 
 # From another process:
-curl -X POST http://localhost:8080/api/v1/search \
+curl -X POST http://localhost:8080/api/indexes/myproject/search \
   -H "Content-Type: application/json" \
-  -d '{"index": "myproject", "query": "authentication flow", "top_k": 5}'
+  -d '{"query": "authentication flow", "top_k": 5}'
 
-curl -X POST http://localhost:8080/api/v1/ask \
+curl -X POST http://localhost:8080/api/indexes/myproject/ask \
   -H "Content-Type: application/json" \
-  -d '{"index": "myproject", "question": "How does auth work?"}'
+  -d '{"question": "How does auth work?"}'
 ```
 
 ## 7. MCP Server (for LLM Tool Use)
@@ -170,9 +170,9 @@ services:
     image: gleann:latest
     ports: ["8080:8080"]
     environment:
-      OLLAMA_URL: http://ollama:11434
+      OLLAMA_HOST: http://ollama:11434
     volumes: ["gleann_data:/root/.gleann"]
-    command: ["serve", "--port", "8080"]
+    command: ["serve", "--addr", "0.0.0.0:8080"]   # --port binds 127.0.0.1 only; set GLEANN_API_TOKEN for a stable token
     depends_on: [ollama]
 
 volumes:
@@ -193,16 +193,16 @@ Override settings without editing config files:
 
 ```bash
 # Use a different Ollama server
-OLLAMA_URL=http://gpu-server:11434 gleann ask myproject "explain auth"
+OLLAMA_HOST=http://gpu-server:11434 gleann ask myproject "explain auth"
 
-# Use a specific model
-GLEANN_CHAT_MODEL=llama3.1:8b gleann chat myproject
+# Use a specific LLM model
+gleann chat myproject --llm-model llama3.1:8b
 
 # Custom embedding model
-GLEANN_EMBEDDING_MODEL=nomic-embed-text gleann index build myproject --docs ./
+gleann index build myproject --docs ./ --model nomic-embed-text
 
-# Change data directory
-GLEANN_DATA_DIR=/mnt/ssd/gleann gleann index build bigproject --docs ./
+# Change index directory
+GLEANN_INDEX_DIR=/mnt/ssd/gleann gleann index build bigproject --docs ./
 ```
 
 See [Environment Variables Reference](env-vars.md) for the complete list.
@@ -322,7 +322,7 @@ Use gleann as a drop-in replacement for OpenAI in any compatible tool:
 # Python — OpenAI SDK
 from openai import OpenAI
 
-client = OpenAI(base_url="http://localhost:8080/v1", api_key="unused")
+client = OpenAI(base_url="http://localhost:8080/v1", api_key=os.environ["GLEANN_API_TOKEN"])  # a gleann token; "unused" gets 401
 resp = client.chat.completions.create(
     model="gleann/my-code",
     messages=[{"role": "user", "content": "Explain the auth flow"}],

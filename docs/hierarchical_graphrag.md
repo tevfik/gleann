@@ -22,7 +22,7 @@ The traditional, flawed solution is to "make chunks bigger" (e.g., 8000 tokens),
 
 ## The Solution: The Hierarchical Spatial Graph
 
-Gleann solves this by mapping the entire structural hierarchy of your workspace into KuzuDB nodes and edges during `gleann build`.
+Gleann solves this by mapping the entire structural hierarchy of your workspace into KuzuDB nodes and edges during `gleann index build`.
 
 ### 1. The Graph Schema Structure
 
@@ -32,7 +32,7 @@ Instead of just storing chunks in a flat vector database, Gleann creates the fol
 - `Folder`
     - *Metadata:* `name` (e.g., "production"), `vpath` (e.g., "/docs/production")
 - `Document` 
-    - *Metadata:* `name` (e.g., "maintenance.md"), `rpath` (e.g., "/home/tevfik/projects/repo/docs/maintenance.md"), `vpath` (relative project path e.g., "/docs/maintenance.md"), `hash` (SHA-256 for fast incremental `gleann watch`), `summary` (Extractive 3-sentence summary)
+    - *Metadata:* `name` (e.g., "maintenance.md"), `rpath` (e.g., "/home/tevfik/projects/repo/docs/maintenance.md"), `vpath` (relative project path e.g., "/docs/maintenance.md"), `hash` (SHA-256 for fast incremental `gleann index watch`), `summary` (Extractive 3-sentence summary)
 - `Heading` 
     - *Metadata:* `name` (e.g., "Database Operations"), `level` (1-6)
 - `Chunk` 

@@ -56,13 +56,16 @@ chmod +x ~/.gleann/plugins/gleann-plugin-docs
 ```bash
 # Add to plugins.json (create if missing)
 cat > ~/.gleann/plugins.json << 'EOF'
-[
-  {
-    "name": "gleann-plugin-docs",
-    "path": "~/.gleann/plugins/gleann-plugin-docs",
-    "extensions": [".pdf", ".docx", ".xlsx", ".pptx"]
-  }
-]
+{
+  "plugins": [
+    {
+      "name": "gleann-plugin-docs",
+      "command": ["/home/user/.gleann/plugins/gleann-plugin-docs"],
+      "capabilities": ["document-extraction"],
+      "extensions": [".pdf", ".docx", ".xlsx", ".pptx"]
+    }
+  ]
+}
 EOF
 ```
 
@@ -102,20 +105,24 @@ chmod +x ~/.gleann/plugins/gleann-plugin-sound
 
 **Register the plugin:**
 ```bash
-# Append to plugins.json
+# Add to plugins.json
 cat > ~/.gleann/plugins.json << 'EOF'
-[
-  {
-    "name": "gleann-plugin-docs",
-    "path": "~/.gleann/plugins/gleann-plugin-docs",
-    "extensions": [".pdf", ".docx", ".xlsx", ".pptx"]
-  },
-  {
-    "name": "gleann-plugin-sound",
-    "path": "~/.gleann/plugins/gleann-plugin-sound",
-    "extensions": [".mp3", ".wav", ".mp4", ".ogg", ".flac", ".m4a"]
-  }
-]
+{
+  "plugins": [
+    {
+      "name": "gleann-plugin-docs",
+      "command": ["/home/user/.gleann/plugins/gleann-plugin-docs"],
+      "capabilities": ["document-extraction"],
+      "extensions": [".pdf", ".docx", ".xlsx", ".pptx"]
+    },
+    {
+      "name": "gleann-plugin-sound",
+      "command": ["/home/user/.gleann/plugins/gleann-plugin-sound"],
+      "capabilities": ["audio-transcription", "document-extraction"],
+      "extensions": [".mp3", ".wav", ".mp4", ".ogg", ".flac", ".m4a"]
+    }
+  ]
+}
 EOF
 ```
 
@@ -137,7 +144,7 @@ gleann index build meetings --docs ./recordings/
 
 1. **Discovery**: Gleann reads `~/.gleann/plugins.json` on startup
 2. **Auto-start**: When a matching file extension is found, gleann starts the plugin on a random port
-3. **Extraction**: Files are sent to the plugin's `/extract` endpoint
+3. **Extraction**: Files are sent to the plugin's `/convert` endpoint
 4. **Shutdown**: Plugins are stopped when gleann finishes the operation
 
 You don't need to manually start or stop plugins — gleann handles everything automatically.
@@ -159,9 +166,8 @@ ls -la ~/.gleann/plugins/gleann-plugin-docs
 ```bash
 # Test the plugin directly
 ~/.gleann/plugins/gleann-plugin-docs --port 9100 &
-curl -X POST http://localhost:9100/extract \
-  -H "Content-Type: application/json" \
-  -d '{"path": "/absolute/path/to/test.pdf"}'
+curl -X POST http://localhost:9100/convert \
+  -F "file=@/absolute/path/to/test.pdf"
 kill %1
 ```
 

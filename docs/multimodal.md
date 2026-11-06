@@ -147,7 +147,7 @@ items, err := proc.ProcessDirectory("./assets", nil, func(cur, total int, path s
 // items[i].MediaType   → Image, Audio, or Video
 ```
 
-This enables `gleann build` with `--multimodal-model` to include media descriptions in the vector index alongside text documents.
+This enables `gleann index build` with `--multimodal-model` to include media descriptions in the vector index alongside text documents.
 
 ## Auto-Detection Flow
 

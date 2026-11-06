@@ -155,12 +155,17 @@ Add to `claude_desktop_config.json`:
 |------|-------------|
 | `gleann_search` | Semantic vector search across indexes |
 | `gleann_search_multi` | Fan-out search across multiple indexes |
+| `gleann_def` | Go-to-definition for symbols (functions, methods, types, structs) |
 | `gleann_list` | List all available indexes |
 | `gleann_ask` | RAG Q&A with an index |
 | `gleann_graph_neighbors` | Query callers/callees of a symbol |
 | `gleann_document_links` | Get document structure links |
 | `gleann_impact` | Blast radius analysis for a symbol |
 | `gleann_read_full_document` | Retrieve intact full document text via KuzuDB path resolution or graph chunks |
+| `gleann_communities` | Run Louvain community detection on code graph |
+| `gleann_risk_analysis` | Compute change risk scores for symbols via PageRank and coupling |
+| `gleann_repo_map` | Compact text map of repository ranked by symbol importance |
+| `gleann_navigate_symbol` | Navigate symbol definition, callers, and callees |
 
 ### Progressive Disclosure Tools
 
@@ -229,7 +234,7 @@ gives agents persistent knowledge across sessions.
 Gleann supports scoping the MCP surface to prevent token bloat in client context windows:
 
 ```bash
-# Core profile (default, 9 essential tools for fast coding agent loops)
+# Core profile (default, 10 essential tools for fast coding agent loops)
 gleann mcp --tools core
 
 # Full profile (all tools registered)
@@ -239,7 +244,7 @@ gleann mcp --tools full
 gleann mcp --tools "search,read,symbol,recall,sync"
 ```
 
-The `core` profile exposes: `gleann_search`, `gleann_read`, `gleann_graph_neighbors`, `gleann_impact`, `memory_remember`, `memory_context`, `memory_search`, `memory_forget`, `gleann_sync`.
+The `core` profile exposes: `gleann_search`, `gleann_read`, `gleann_def`, `gleann_graph_neighbors`, `gleann_impact`, `memory_remember`, `memory_context`, `memory_search`, `memory_forget`, `gleann_sync`.
 
 You can also set the default profile using the `GLEANN_TOOLS` environment variable. Passing `--clean-names` strips the `gleann_` prefix (e.g. `search`, `read`, `impact`).
 
@@ -338,6 +343,18 @@ Agents can search across all indexes tagged with a collection by prefixing the t
 Gleann searches all accessible indexes tagged with `work`, combines and re-ranks the results by relevance score, and returns the top-K fragments annotated with their source index `[index: <name>]`.
 
 
+### gleann_def
+
+Go-to-definition for symbols (functions, methods, types, classes, structs). Returns file:line, signature, and documentation in a compact format (~500 tokens).
+
+```json
+{
+  "symbol": "TokenManager",
+  "index": "my-code",
+  "kind": "struct"
+}
+```
+
 ### gleann_graph_neighbors
 
 Find callers and callees of a function:
@@ -345,9 +362,7 @@ Find callers and callees of a function:
 ```json
 {
   "index": "my-code",
-  "symbol": "main.handleSearch",
-  "direction": "both",
-  "depth": 2
+  "node_fqn": "main.handleSearch"
 }
 ```
 
@@ -463,7 +478,7 @@ The text result highlights the start node with `*` and lists edges as:
 
 ---
 
-### gleann_memory_remember
+### memory_remember
 
 Store a fact in persistent long-term memory. Facts are injected into every
 subsequent LLM query as part of the `<memory_context>` system message.
@@ -475,7 +490,7 @@ subsequent LLM query as part of the `<memory_context>` system message.
 }
 ```
 
-### gleann_memory_forget
+### memory_forget
 
 Delete a memory block by ID or by content match:
 
@@ -485,7 +500,7 @@ Delete a memory block by ID or by content match:
 }
 ```
 
-### gleann_memory_search
+### memory_search
 
 Search across all memory tiers:
 
@@ -495,7 +510,7 @@ Search across all memory tiers:
 }
 ```
 
-### gleann_memory_list
+### memory_list
 
 List all memory blocks, optionally filtered by tier:
 
@@ -505,7 +520,7 @@ List all memory blocks, optionally filtered by tier:
 }
 ```
 
-### gleann_memory_context
+### memory_context
 
 Returns the compiled memory context string — exactly what the LLM currently
 receives as a system message. No arguments required.

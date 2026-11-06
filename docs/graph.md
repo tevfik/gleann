@@ -6,10 +6,10 @@ gleann can build a property graph of your codebase **in parallel** with the vect
 
 ```bash
 # Build the vector index AND the call graph at the same time
-gleann build my-code --docs ./src --graph
+gleann index build my-code --docs ./src --graph
 
 # Rebuild from scratch (remove + build)
-gleann rebuild my-code --docs ./src --graph
+gleann index rebuild my-code --docs ./src --graph
 
 # Query direct and transitive dependencies (outgoing CALLS)
 gleann graph deps "github.com/tevfik/gleann/pkg/gleann.MyFunc" --index my-code
@@ -49,8 +49,7 @@ The KuzuDB property graph models both source code ASTs and the structural layout
 
 When `gleann mcp` is running, AI editors can call these graph tools:
 
-- **`gleann_graph_deps`** — returns what a given symbol depends on  
-- **`gleann_graph_callers`** — returns who calls a given symbol
+- **`gleann_graph_neighbors`** — inspect incoming or outgoing edges (callers, callees, declarations)
 - **`gleann_impact`** — blast radius analysis: direct callers, transitive callers, affected files
 
 The AI can autonomously trace code execution paths without leaving the editor.
@@ -85,12 +84,13 @@ Find the blast radius of changing any symbol — all direct callers, transitive 
 
 ```bash
 # REST API
-curl -X POST http://localhost:8080/graph -d '{
-  "index": "my-code",
-  "query_type": "impact",
-  "symbol": "github.com/tevfik/gleann/pkg/gleann.Search",
-  "max_depth": 5
-}'
+curl -X POST http://localhost:8080/api/graph/my-code/query \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "impact",
+    "symbol": "github.com/tevfik/gleann/pkg/gleann.Search",
+    "max_depth": 5
+  }'
 
 # MCP tool call
 {"tool": "gleann_impact", "arguments": {"index": "my-code", "symbol": "...", "max_depth": 5}}

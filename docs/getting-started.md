@@ -34,7 +34,7 @@ For first-time setup or advanced configuration, continue with the steps below.
 
 | Requirement | Why | Install |
 |-------------|-----|---------|
-| **Go 1.24+** | Build gleann | [go.dev/dl](https://go.dev/dl/) |
+| **Go 1.25+** | Build gleann | [go.dev/dl](https://go.dev/dl/) |
 | **Ollama** | Local LLM + embeddings | [ollama.com/download](https://ollama.com/download) |
 
 ## Step 1: Install Gleann
@@ -240,7 +240,7 @@ gleann serve
 # (after gleann serve is running)
 python3 -c "
 from openai import OpenAI
-client = OpenAI(base_url='http://localhost:8080/v1', api_key='none')
+client = OpenAI(base_url='http://localhost:8081/v1', api_key=__import__('os').environ['GLEANN_API_TOKEN'])
 r = client.chat.completions.create(
     model='gleann/my-docs',
     messages=[{'role':'user','content':'How does auth work?'}]
@@ -285,6 +285,8 @@ source <(gleann completion bash)
 | Background server | `gleann service start` |
 | Auto-start on login | `gleann service install` |
 | Server status | `gleann service status` |
+| Shell completion | `gleann completion [bash\|zsh\|fish]` |
+| Token estimate | `gleann tokens <file-or-dir>` |
 | Health check | `gleann doctor` |
 | Help | `gleann help` |
 

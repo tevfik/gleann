@@ -143,7 +143,7 @@ knowledge that external agents inject via MCP or REST (no CLI interaction).
 
 
 
-Instead of storing all embedding vectors, gleann stores only the HNSW graph structure (CSR format) and recomputes embeddings on-demand during search. This is the core LEANN innovation:
+In `recompute` storage mode (opt-in since v1.8.11; the default is `store`, which keeps the vectors in the index), gleann stores only the HNSW graph structure (CSR format) and recomputes embeddings on-demand during search. This is the core LEANN innovation:
 
 1. **Build time**: Insert all vectors into HNSW graph, convert to CSR, prune embeddings
 2. **Search time**: Traverse graph structure, recompute embeddings only for visited nodes
