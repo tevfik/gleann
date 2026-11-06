@@ -36,4 +36,3 @@ func TestGetConfigDir_Default(t *testing.T) {
 		t.Errorf("got %q, want %q", dir, expected)
 	}
 }
-

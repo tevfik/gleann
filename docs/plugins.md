@@ -16,8 +16,11 @@ Plugins are standalone executables that expose a local HTTP API. Gleann manages 
 | Plugin | Formats | Backend | Description |
 |--------|---------|---------|-------------|
 | [gleann-plugin-docs](https://github.com/tevfik/gleann-plugin-docs) | PDF, DOCX, XLSX, PPTX, CSV, PNG, JPG | Go + C (`bitllm.c` Docling BitNet 1.58b VLM) | Standalone native document extraction with OCR & OTSL table parsing |
-| [gleann-plugin-marker](https://github.com/tevfik/gleann-plugin-marker) | PDF, DOCX, EPUB, HTML, images | marker-pdf + Surya OCR | High-accuracy extraction with deep learning OCR |
 | [gleann-plugin-sound](https://github.com/tevfik/gleann-plugin-sound) | MP3, WAV, MP4, etc. | whisper.cpp | Audio/video transcription |
+
+`gleann-plugin-marker` (Python, marker-pdf + Surya OCR) is archived and no longer
+listed in the catalog; gleann-plugin-docs replaces it. `gleann plugin install marker`
+still clones the read-only repository and prints a warning.
 
 ## Installation
 
@@ -235,12 +238,12 @@ GLEANN_LOG_LEVEL=debug gleann index build test --docs ./
 ### Reference Implementations
 
 - [gleann-plugin-docs](https://github.com/tevfik/gleann-plugin-docs) — PDF/DOCX/Office (Go + C: in-process Docling BitNet VLM + OTSL table parser, fast pdftotext hybrid)
-- [gleann-plugin-marker](https://github.com/tevfik/gleann-plugin-marker) — High-accuracy PDF/DOCX/images (Python: marker-pdf + Surya OCR)
+- [gleann-plugin-marker](https://github.com/tevfik/gleann-plugin-marker) — archived; High-accuracy PDF/DOCX/images (Python: marker-pdf + Surya OCR)
 - [gleann-plugin-sound](https://github.com/tevfik/gleann-plugin-sound) — Audio transcription (Go + whisper.cpp)
 
 ## Extraction Backend Benchmark
 
-For a comprehensive comparison of all 4 extraction backends (go-native, markitdown-cli, plugin-docs, plugin-marker) across 6 file formats with 12+ metrics, see the standalone benchmark document:
+For a comprehensive comparison of all 4 extraction backends (go-native, markitdown-cli, plugin-docs, plugin-marker (archived)) across 6 file formats with 12+ metrics, see the standalone benchmark document:
 
 **[PLUGIN_BENCHMARK.md](PLUGIN_BENCHMARK.md)**
 

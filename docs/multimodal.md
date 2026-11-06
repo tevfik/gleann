@@ -102,7 +102,7 @@ Hybrid PDF processing: marker plugin for text → page rendering → VLM for tab
 cfg := multimodal.DefaultPDFConfig()
 cfg.DPI = 150       // Render resolution
 cfg.MaxPages = 0    // 0 = all pages
-cfg.UseMarker = true // Try gleann-plugin-marker first
+cfg.UseMarker = true // Try a marker-compatible plugin first (GLEANN_MARKER_PLUGIN_URL, default :8766)
 
 proc := multimodal.NewProcessor("http://localhost:11434")
 analysis, err := proc.AnalyzePDF("report.pdf", cfg)
@@ -118,7 +118,8 @@ analysis, err := proc.AnalyzePDF("report.pdf", cfg)
 - `mutool` (mupdf-tools) — fallback
 
 The pipeline:
-1. If `UseMarker` is true, attempt text extraction via gleann-plugin-marker
+1. If `UseMarker` is true and a marker-compatible plugin answers on `GLEANN_MARKER_PLUGIN_URL`
+   (default `http://localhost:8766`; gleann-plugin-marker is archived), use its text
 2. Render each page to JPEG at configured DPI
 3. Send page images to VLM with a structured prompt
 4. Detect tables and charts from VLM response

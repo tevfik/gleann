@@ -12,15 +12,6 @@
     "version": "1.0.0"
   },
   {
-    "name": "gleann-plugin-marker",
-    "icon": "🖊️",
-    "description": "High-accuracy PDF/image extraction via marker-pdf + surya OCR. Heavier than docs; pick it for table-rich PDFs and scanned documents.",
-    "repo_url": "https://github.com/tevfik/gleann-plugin-marker",
-    "language": "python (marker-pdf, surya OCR)",
-    "extensions": [".pdf", ".docx", ".xlsx", ".pptx", ".epub", ".html", ".png", ".jpg"],
-    "version": "1.0.0"
-  },
-  {
     "name": "gleann-plugin-sound",
     "icon": "🔊",
     "description": "Local speech-to-text: transcribes audio/video during index builds, plus live dictation, a live WebSocket and speaker names. Settings are editable from the Web UI.",

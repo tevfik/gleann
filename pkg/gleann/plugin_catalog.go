@@ -46,14 +46,6 @@ var defaultCatalog = []PluginMeta{
 		SettingsCmd:        []string{"gleann-plugin-docs", "tui"},
 	},
 	{
-		Name:        "gleann-plugin-marker",
-		Icon:        "🖊️",
-		Description: "High-accuracy PDF/image extraction via marker-pdf + surya OCR. Heavier than docs; pick it for table-rich PDFs and scanned documents.",
-		RepoURL:     "https://github.com/tevfik/gleann-plugin-marker",
-		Language:    "python (marker-pdf, surya OCR)",
-		Extensions:  []string{".pdf", ".docx", ".xlsx", ".pptx", ".epub", ".html", ".png", ".jpg"},
-	},
-	{
 		Name:        "gleann-plugin-sound",
 		Icon:        "🎙️",
 		Description: "Local speech-to-text: transcribes audio/video during index builds, plus live dictation, a live WebSocket and speaker names. Settings are editable from the Web UI.",

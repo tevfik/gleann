@@ -300,9 +300,13 @@ func pluginInstall(names []string) {
 				parts := strings.Split(name, "/")
 				fullName = strings.TrimSuffix(parts[len(parts)-1], ".git")
 			} else {
-				fmt.Fprintf(os.Stderr, "Unknown plugin %q. Known plugins: gleann-plugin-marker, gleann-plugin-sound, gleann-plugin-docs or a git URL.\n", name)
+				fmt.Fprintf(os.Stderr, "Unknown plugin %q. Known plugins: gleann-plugin-docs, gleann-plugin-sound, gleann-plugin-marker (archived) or a git URL.\n", name)
 				continue
 			}
+		}
+
+		if archivedPlugins[fullName] {
+			fmt.Fprintf(os.Stderr, "[install] warning: %s is archived and no longer maintained; gleann-plugin-docs replaces it.\n", fullName)
 		}
 
 		targetDir := filepath.Join(reposDir, fullName)
@@ -352,6 +356,10 @@ var knownPluginRepos = map[string]string{
 	"docs":                 "https://github.com/tevfik/gleann-plugin-docs",
 	"sound":                "https://github.com/tevfik/gleann-plugin-sound",
 }
+
+// archivedPlugins are still installable from their (read-only) repository but
+// are no longer listed in the catalog.
+var archivedPlugins = map[string]bool{"gleann-plugin-marker": true}
 
 // catalogPluginFor resolves a plugin name or short alias ("docs", "gleann-docs",
 // "gleann-plugin-docs") to its catalog entry.
