@@ -11,6 +11,7 @@ import (
 func TestEnsureConfig_InvalidJSONIsLeftUntouched(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home) // Windows
 	_ = os.MkdirAll(filepath.Join(home, ".gleann"), 0o700)
 	p := filepath.Join(home, ".gleann", "config.json")
 	bad := `{"openai_api_key":"sk-secret","embedding_model":"x",}`
@@ -26,6 +27,7 @@ func TestEnsureConfig_InvalidJSONIsLeftUntouched(t *testing.T) {
 func TestEnsureConfig_PartialConfigIsMergedNotReplaced(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home) // Windows
 	_ = os.MkdirAll(filepath.Join(home, ".gleann"), 0o700)
 	p := filepath.Join(home, ".gleann", "config.json")
 	_ = os.WriteFile(p, []byte(`{"server_addr":"127.0.0.1:9999","openai_api_key":"sk-keep"}`), 0o600)

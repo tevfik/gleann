@@ -3,6 +3,7 @@ package server
 import (
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"testing"
 
 	"github.com/tevfik/gleann/internal/auth"
@@ -130,6 +131,7 @@ func TestAuth_CookieExchangeAndCSRF(t *testing.T) {
 
 func TestPrepareAuth_RefusesOffOnPublicBind(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
+	t.Setenv("USERPROFILE", os.Getenv("HOME")) // Windows
 	s := &Server{addr: ":8081"}
 	s.config.Auth = "off"
 	if _, err := s.PrepareAuth(); err == nil {

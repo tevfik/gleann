@@ -16,6 +16,7 @@ import (
 func TestConfigSave_DoesNotPersistRuntimeOverrides(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", os.Getenv("HOME")) // Windows
 	dir := filepath.Join(home, ".gleann")
 	_ = os.MkdirAll(dir, 0o700)
 	cfgPath := filepath.Join(dir, "config.json")

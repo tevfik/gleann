@@ -11,6 +11,7 @@ import (
 func TestSaveConfig_PreservesUnknownKeys(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", os.Getenv("HOME")) // Windows
 	_ = os.MkdirAll(filepath.Join(home, ".gleann"), 0o700)
 	p := filepath.Join(home, ".gleann", "config.json")
 	_ = os.WriteFile(p, []byte(`{"embedding_model":"a","search_config":{"top_k":42},"timezone":"Europe/Istanbul","rate_limit":5}`), 0o600)

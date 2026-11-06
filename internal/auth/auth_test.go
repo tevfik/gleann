@@ -2,6 +2,7 @@ package auth
 
 import (
 	"os"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -40,7 +41,7 @@ func TestStoreLifecycle(t *testing.T) {
 	if strings.Contains(string(data), q) || strings.Contains(string(data), admin) {
 		t.Fatal("raw token persisted in tokens.json")
 	}
-	if fi, _ := os.Stat(s.tokensPath()); fi.Mode().Perm() != 0o600 {
+	if fi, _ := os.Stat(s.tokensPath()); runtime.GOOS != "windows" && fi.Mode().Perm() != 0o600 {
 		t.Fatalf("tokens.json mode %v", fi.Mode().Perm())
 	}
 	if err := s.Revoke("opencode"); err != nil {

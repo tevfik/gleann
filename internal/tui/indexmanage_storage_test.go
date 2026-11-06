@@ -24,6 +24,7 @@ func imKey(s string) tea.KeyPressMsg { return tea.KeyPressMsg{Code: rune(s[0]), 
 func TestIndexManage_StorageBadgeAndSwitch(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", os.Getenv("HOME")) // Windows
 	dir := t.TempDir()
 	small := mkIndex(t, dir, "small", "hnsw", 1000, 768, 50_000) // << 3 MB expected => recompute
 	big := mkIndex(t, dir, "big", "hnsw", 1000, 768, 3_200_000)  // >= 70% of 3 MB => store
@@ -80,6 +81,7 @@ func TestIndexManage_StorageBadgeAndSwitch(t *testing.T) {
 
 func TestIndexManage_DefaultModeToggle(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
+	t.Setenv("USERPROFILE", os.Getenv("HOME")) // Windows
 	m := IndexManageModel{indexDir: t.TempDir(), state: imList, defaultMode: "store", indexes: []gleann.IndexMeta{{Name: "x"}}}
 	r, _ := m.Update(imKey("g"))
 	im := r.(IndexManageModel)
