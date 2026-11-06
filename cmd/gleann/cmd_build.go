@@ -83,6 +83,7 @@ Options:
   --lexical-only          Alias for --instant
   --code-model <m>        Model for code indexing (triggers dual-index build if --doc-model is also set)
   --doc-model <m>         Model for documentation indexing (alias: --docs-model)
+  --storage <store|recompute>  Keep vectors in the index (default, fast search) or recompute them per search (small index, slow search; HNSW only)
   --mode <code|docs|all>  Index mode:
                             code - fast source code & AST graph only
                             docs - documents only (pdf, docx, etc.)
@@ -374,6 +375,7 @@ Watch a source directory and automatically re-index on file changes.
 Options:
   --docs <dir>            Source directory to watch (required)
   --graph                 Also update AST call graph
+  --storage <store|recompute>  Keep vectors in the index (default, fast search) or recompute them per search (small index, slow search; HNSW only)
   --mode <code|docs|all>  Index mode: code, docs, all (default: all)
   --interval <seconds>    Polling interval (default: 5)
   -h, --help              Show this help message`)
@@ -458,10 +460,23 @@ Options:
 		return pDocs
 	}
 
-	// Initial build.
-	pluginDocs := rebuild()
-	if buildGraph {
-		buildGraphIndex(name, docsDir, config.IndexDir, pluginDocs, nil, includeSubmodules)
+	// Initial build. An existing index is brought up to date with an
+	// incremental sync instead of being deleted and re-embedded (N-04).
+	if _, statErr := os.Stat(filepath.Join(config.IndexDir, name, name+".meta.json")); statErr == nil {
+		fmt.Printf("📂 Index %q exists, syncing instead of rebuilding...\n", name)
+		if _, err := indexing.Sync(ctx, indexing.SyncOptions{
+			Options: opts,
+			Name:    name,
+			DocsDir: docsDir,
+			Graph:   buildGraph,
+		}); err != nil {
+			fmt.Fprintf(os.Stderr, "error: initial sync failed: %v\n(run `gleann index rebuild %s` to rebuild from scratch)\n", err, name)
+		}
+	} else {
+		pluginDocs := rebuild()
+		if buildGraph {
+			buildGraphIndex(name, docsDir, config.IndexDir, pluginDocs, nil, includeSubmodules)
+		}
 	}
 
 	// Accumulate changed file paths from fsnotify events.

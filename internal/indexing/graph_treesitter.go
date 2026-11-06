@@ -38,6 +38,14 @@ func buildGraphIndex(opts GraphOptions, p *printer) error {
 	graphStart := time.Now()
 
 	dbPath := filepath.Join(opts.IndexDir, opts.Name+"_graph")
+	// A graph that does not exist yet must be built from the whole tree: an
+	// incremental update would leave it holding only the changed files for
+	// good (C-04). A stale content-hash store from a deleted graph would make
+	// IndexDir skip every file, so it is removed together with the fresh DB.
+	if _, statErr := os.Stat(dbPath); os.IsNotExist(statErr) {
+		opts.ChangedFiles = nil
+		_ = os.Remove(indexer.DefaultHashStorePath(opts.IndexDir, opts.Name))
+	}
 	db, err := kgraph.Open(dbPath)
 	if err != nil {
 		if errors.Is(err, kgraph.ErrOpenFailed) {

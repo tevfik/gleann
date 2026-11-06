@@ -118,6 +118,7 @@ func (g *DB) AddReferences(refererFQN, refereeFQN string) error {
 // and the CodeFile node for the given file path. This ensures clean
 // re-indexing without duplicate primary key violations.
 func DeleteFileQueries(path string) []string {
+	path = SanitizeCSVField(path) // stored keys are sanitised (C-05)
 	return []string{
 		fmt.Sprintf(`MATCH (s:Symbol {file: %q}) DETACH DELETE s`, path),
 		fmt.Sprintf(`MATCH (f:CodeFile {path: %q}) DETACH DELETE f`, path),
@@ -545,6 +546,7 @@ func DeleteDocumentQuery(docVPath string) string {
 // then deletes the file node itself. Used for incremental graph updates:
 // remove old data for changed files before re-indexing.
 func (g *DB) RemoveFileSymbols(filePath string) error {
+	filePath = SanitizeCSVField(filePath) // stored keys are sanitised (C-05)
 	// 1. Delete edges FROM symbols declared by this file.
 	cypher1 := fmt.Sprintf(
 		`MATCH (f:CodeFile {path: %q})-[:DECLARES]->(s:Symbol)-[r]->() DELETE r`,

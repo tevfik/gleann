@@ -1108,3 +1108,40 @@ func TestIndexFilesKeepsCallersFromOtherFiles(t *testing.T) {
 		t.Errorf("new symbol Added missing from lib/lib.go: %v", syms)
 	}
 }
+
+// C-05: a path with characters the CSV importer cannot take (comma, quote) is
+// stored sanitised; incremental updates must find it under that key instead
+// of failing with a duplicate primary key.
+func TestIncrementalUpdateWithSanitisedPath(t *testing.T) {
+	db, err := kgraph.Open("")
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer db.Close()
+	root := t.TempDir()
+	dir := filepath.Join(root, "bob's,tools")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	f := filepath.Join(dir, "x.go")
+	for i, src := range []string{
+		"package tools\n\nfunc X() {}\n",
+		"package tools\n\nfunc X() {}\nfunc Y() {}\n",
+		"package tools\n\nfunc X() {}\nfunc Y() {}\nfunc Z() {}\n",
+	} {
+		if err := os.WriteFile(f, []byte(src), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		idx := indexer.New(db, "example.com/app", root)
+		if err := idx.IndexFiles([]string{f}); err != nil {
+			t.Fatalf("update #%d: %v", i, err)
+		}
+	}
+	st, err := db.Stats()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Files != 1 || st.DeclareEdges != 3 {
+		t.Fatalf("files=%d declares=%d, want 1 and 3", st.Files, st.DeclareEdges)
+	}
+}

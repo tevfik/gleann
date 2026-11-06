@@ -702,7 +702,7 @@ gleann search idx1,idx2 "query"                   # multi-index (comma-separated
 gleann search --all "query"                       # across all indexes
 gleann search <index> "query" --rerank            # + cross-encoder reranking
 gleann ask    <index> "natural language Q"        # RAG-powered Q&A
-gleann index watch <name> --docs ./src/           # auto-rebuild on file changes
+gleann index watch <name> --docs ./src/           # auto-sync on file changes
 ` + "```" + `
 
 ### Graph traversal
@@ -718,7 +718,7 @@ gleann graph viz      --index <name>                 # interactive HTML graph
 ` + "```python" + `
 # gleann serve → exposes /v1/chat/completions
 from openai import OpenAI
-client = OpenAI(base_url="http://localhost:8080/v1", api_key="none")
+client = OpenAI(base_url="http://localhost:8080/v1", api_key=os.environ["GLEANN_API_TOKEN"])  # gleann token create --name x
 r = client.chat.completions.create(
     model="gleann/<index-name>",
     messages=[{"role": "user", "content": "How does auth work?"}]

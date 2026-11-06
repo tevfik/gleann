@@ -25,6 +25,9 @@ func (g *DB) IncomingEdges(files []string) (IncomingEdges, error) {
 	if len(files) == 0 {
 		return out, nil
 	}
+	// Stored paths are sanitised for the CSV importer; look them up the same
+	// way (C-05).
+	files = sanitizeAll(files)
 	conn, err := g.NewConn()
 	if err != nil {
 		return out, err
@@ -112,6 +115,17 @@ func (g *DB) ExistingSymbolFQNs(fqns []string) (map[string]bool, error) {
 		return nil, err
 	}
 	defer conn.Close()
+	// Stored FQNs are sanitised for the CSV importer; query the sanitised
+	// form and report both spellings as found (C-05).
+	raw := fqns
+	fqns = sanitizeAll(raw)
+	defer func() {
+		for i, f := range fqns {
+			if found[f] {
+				found[raw[i]] = true
+			}
+		}
+	}()
 	const chunk = 500
 	for start := 0; start < len(fqns); start += chunk {
 		end := start + chunk
@@ -146,4 +160,12 @@ func cypherList(items []string) string {
 		q[i] = fmt.Sprintf("%q", s)
 	}
 	return "[" + strings.Join(q, ",") + "]"
+}
+
+func sanitizeAll(in []string) []string {
+	out := make([]string, len(in))
+	for i, v := range in {
+		out[i] = SanitizeCSVField(v)
+	}
+	return out
 }

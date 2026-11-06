@@ -310,9 +310,15 @@ func Sync(ctx context.Context, opts SyncOptions) (*SyncResult, error) {
 			p.Warnf("%v, falling back to full rebuild\n", incErr)
 			p.Printf("⚠️  Incremental vector update not supported or failed, running full rebuild...\n")
 			res.FullRebuild = true
-			pDocs, err = env.rebuild(ctx, name, absDocsDir)
+			// A failed rebuild (e.g. the embedder is still down) must not
+			// leave a degraded index behind: roll back to the previous one.
+			err = withIndexRollback(cfg.IndexDir, name, func() error {
+				var rerr error
+				pDocs, rerr = env.rebuild(ctx, name, absDocsDir)
+				return rerr
+			})
 			if err != nil {
-				return nil, fmt.Errorf("full rebuild: %w", err)
+				return nil, fmt.Errorf("full rebuild (previous index restored): %w", err)
 			}
 			if buildGraph {
 				graphOpts.ChangedFiles = nil
@@ -460,4 +466,44 @@ func bootstrapTrackerFromIndex(ctx context.Context, tracker *vault.Tracker, docs
 		_ = tracker.BatchUpsertRecords(ctx, records)
 		p.Printf("✅ Tracker synchronized with %d existing file(s) in %s\n", len(records), time.Since(start).Round(time.Millisecond))
 	}
+}
+
+// withIndexRollback runs fn, which rewrites the index <indexDir>/<name>. The
+// existing index directory is moved aside first and restored if fn fails, so a
+// failure never replaces a working index with a partial or lexical-only one.
+func withIndexRollback(indexDir, name string, fn func() error) error {
+	dir := filepath.Join(indexDir, name)
+	bak := dir + ".sync-bak"
+	_ = os.RemoveAll(bak)
+	prevMeta, _ := gleann.GetIndexMeta(indexDir, name)
+	moved := false
+	if _, err := os.Stat(dir); err == nil {
+		if err := os.Rename(dir, bak); err != nil {
+			return fmt.Errorf("preparing rollback copy: %w", err)
+		}
+		moved = true
+	}
+	if err := fn(); err != nil {
+		if moved {
+			_ = os.RemoveAll(dir)
+			if rerr := os.Rename(bak, dir); rerr != nil {
+				return fmt.Errorf("%w (and restoring the previous index failed: %v; it is in %s)", err, rerr, bak)
+			}
+		}
+		return err
+	}
+	if prevMeta != nil {
+		// Keep what the user attached to the index across the rebuild.
+		_ = gleann.UpdateIndexMeta(indexDir, name, func(m *gleann.IndexMeta) {
+			m.SourceDir, m.AutoWatch, m.Tags = prevMeta.SourceDir, prevMeta.AutoWatch, prevMeta.Tags
+			m.Description, m.MCPExposed = prevMeta.Description, prevMeta.MCPExposed
+			if !prevMeta.CreatedAt.IsZero() {
+				m.CreatedAt = prevMeta.CreatedAt
+			}
+		})
+	}
+	if moved {
+		_ = os.RemoveAll(bak)
+	}
+	return nil
 }

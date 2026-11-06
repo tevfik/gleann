@@ -483,15 +483,11 @@ func (idx *Indexer) IndexDir(root string) error {
 	}
 	allFiles = uniqueFiles
 
-	uniqueSymbols := make([]kuzu.SymbolNode, 0, len(allSymbols))
-	seenSymbols := make(map[string]bool)
+	allSymbols = dedupeSymbols(allSymbols)
+	seenSymbols := make(map[string]bool, len(allSymbols))
 	for _, sym := range allSymbols {
-		if sym.FQN != "" && !seenSymbols[sym.FQN] {
-			seenSymbols[sym.FQN] = true
-			uniqueSymbols = append(uniqueSymbols, sym)
-		}
+		seenSymbols[sym.FQN] = true
 	}
-	allSymbols = uniqueSymbols
 
 	uniqueDeclares := make([]kuzu.EdgeDeclares, 0, len(allDeclares))
 	seenDeclares := make(map[string]bool)
@@ -694,13 +690,6 @@ func (idx *Indexer) IndexFiles(files []string) error {
 		return fmt.Errorf("capture edges into changed files: %w", err)
 	}
 
-	// Delta step: remove old symbols for changed files before re-indexing.
-	for _, p := range toReindex {
-		if err := idx.db.RemoveFileSymbols(p.relPath); err != nil {
-			log.Printf("warning: RemoveFileSymbols(%s): %v", p.relPath, err)
-		}
-	}
-
 	type docResult struct {
 		file     *kuzu.FileNode
 		symbols  []kuzu.SymbolNode
@@ -736,7 +725,15 @@ func (idx *Indexer) IndexFiles(files []string) error {
 		})
 	}
 	if err := g.Wait(); err != nil {
-		return err
+		return err // nothing has been deleted yet: the graph is untouched (C-06)
+	}
+
+	// Delta step: remove old symbols for changed files only once every file
+	// parsed, so a read or parse failure cannot leave the graph half-deleted.
+	for _, p := range toReindex {
+		if err := idx.db.RemoveFileSymbols(p.relPath); err != nil {
+			log.Printf("warning: RemoveFileSymbols(%s): %v", p.relPath, err)
+		}
 	}
 
 	// Merge and deduplicate.
@@ -758,15 +755,11 @@ func (idx *Indexer) IndexFiles(files []string) error {
 	}
 
 	// Deduplicate symbols.
+	allSymbols = dedupeSymbols(allSymbols)
 	seenSymbols := make(map[string]bool, len(allSymbols))
-	uniqueSymbols := make([]kuzu.SymbolNode, 0, len(allSymbols))
 	for _, sym := range allSymbols {
-		if !seenSymbols[sym.FQN] {
-			seenSymbols[sym.FQN] = true
-			uniqueSymbols = append(uniqueSymbols, sym)
-		}
+		seenSymbols[sym.FQN] = true
 	}
-	allSymbols = uniqueSymbols
 
 	// Deduplicate declares.
 	seenDeclares := make(map[string]bool, len(allDeclares))
@@ -1107,4 +1100,26 @@ func attachRationale(rationale map[int]rationaleComment, startLine, endLine int)
 		return ""
 	}
 	return strings.Join(parts, "; ")
+}
+
+// dedupeSymbols keeps one node per FQN. A callee stub (no File) must never
+// shadow the real declaration, whatever order the workers finished in, so a
+// declared symbol replaces an earlier stub (C-03).
+func dedupeSymbols(in []kuzu.SymbolNode) []kuzu.SymbolNode {
+	pos := make(map[string]int, len(in))
+	out := make([]kuzu.SymbolNode, 0, len(in))
+	for _, sym := range in {
+		if sym.FQN == "" {
+			continue
+		}
+		if i, ok := pos[sym.FQN]; ok {
+			if out[i].File == "" && sym.File != "" {
+				out[i] = sym
+			}
+			continue
+		}
+		pos[sym.FQN] = len(out)
+		out = append(out, sym)
+	}
+	return out
 }

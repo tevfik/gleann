@@ -459,6 +459,11 @@ func (e *pipelineEnv) incremental(ctx context.Context, name, docsDir string, cha
 		relPath, _ := filepath.Rel(docsDir, f)
 		if _, err := os.Stat(f); err != nil {
 			removeSources = append(removeSources, relPath)
+		} else if !fileInMode(e.opts.Mode, f) {
+			// Outside the index mode (e.g. a .json/.pdf in a code-mode sync):
+			// readDocumentsForFiles would skip it, so removing its passages here
+			// would silently delete it from the index. Leave it untouched.
+			continue
 		} else {
 			// File exists (new or modified) — remove old passages, then re-add.
 			existingFiles = append(existingFiles, f)

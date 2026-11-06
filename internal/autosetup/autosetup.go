@@ -6,6 +6,7 @@ package autosetup
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -123,21 +124,26 @@ func EnsureConfig(ollamaHost string, quiet bool) (bool, error) {
 	}
 
 	cfgPath := home + "/.gleann/config.json"
-	if _, err := os.Stat(cfgPath); err == nil {
-		// Config exists — check if it's complete.
-		data, _ := os.ReadFile(cfgPath)
-		var cfg map[string]any
-		if json.Unmarshal(data, &cfg) == nil {
-			if completed, ok := cfg["completed"].(bool); ok && completed {
-				return false, nil
-			}
-			// If embedding or LLM settings are already defined, preserve user configuration.
-			if (cfg["embedding_provider"] != nil && cfg["embedding_provider"] != "") ||
-				(cfg["embedding_model"] != nil && cfg["embedding_model"] != "") ||
-				(cfg["llm_provider"] != nil && cfg["llm_provider"] != "") {
-				return false, nil
-			}
+	// existing holds the user's current keys; defaults are only ever added
+	// for keys that are missing, never replacing what the user wrote.
+	var existing map[string]any
+	if data, rerr := os.ReadFile(cfgPath); rerr == nil {
+		if uerr := json.Unmarshal(data, &existing); uerr != nil {
+			// Never overwrite a file we cannot parse: it may hold hand-written
+			// settings and API keys. Let the user fix it.
+			return false, fmt.Errorf("%s is not valid JSON (%v); fix or remove it — it was left untouched", cfgPath, uerr)
 		}
+		if completed, ok := existing["completed"].(bool); ok && completed {
+			return false, nil
+		}
+		// If embedding or LLM settings are already defined, preserve user configuration.
+		if (existing["embedding_provider"] != nil && existing["embedding_provider"] != "") ||
+			(existing["embedding_model"] != nil && existing["embedding_model"] != "") ||
+			(existing["llm_provider"] != nil && existing["llm_provider"] != "") {
+			return false, nil
+		}
+	} else if !errors.Is(rerr, os.ErrNotExist) {
+		return false, rerr
 	}
 
 	// Auto-detect.
@@ -176,16 +182,38 @@ func EnsureConfig(ollamaHost string, quiet bool) (bool, error) {
 		cfg["rerank_model"] = det.RerankModel
 	}
 
-	// Write.
+	// Merge: keys the user already has win over detected defaults.
+	for k, v := range existing {
+		cfg[k] = v
+	}
+	cfg["completed"] = true
+
+	// Write atomically (tmp + rename), keeping a .bak of any previous file.
 	if err := os.MkdirAll(home+"/.gleann", 0o755); err != nil {
 		return false, err
 	}
 	data, _ := json.MarshalIndent(cfg, "", "  ")
-	// The config holds API keys: keep it private (also for pre-existing files).
-	if err := os.WriteFile(cfgPath, data, 0o600); err != nil {
+	if prev, perr := os.ReadFile(cfgPath); perr == nil {
+		_ = os.WriteFile(cfgPath+".bak", prev, 0o600)
+	}
+	tmp, err := os.CreateTemp(home+"/.gleann", ".config-*.tmp")
+	if err != nil {
 		return false, err
 	}
-	if err := os.Chmod(cfgPath, 0o600); err != nil {
+	defer os.Remove(tmp.Name())
+	// The config holds API keys: keep it private.
+	if err := tmp.Chmod(0o600); err != nil {
+		tmp.Close()
+		return false, err
+	}
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		return false, err
+	}
+	if err := tmp.Close(); err != nil {
+		return false, err
+	}
+	if err := os.Rename(tmp.Name(), cfgPath); err != nil {
 		return false, err
 	}
 

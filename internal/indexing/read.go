@@ -774,3 +774,20 @@ func readDocumentsForFiles(ctx context.Context, dir string, filePaths []string, 
 func visionPDFEnabled(p *multimodal.Processor) bool {
 	return p != nil && p.Model != ""
 }
+
+// fileInMode reports whether a file of this extension is indexed in mode
+// (the same rule readDocumentsForFiles applies). Files outside the mode are
+// skipped by the reader, so callers must not delete their passages.
+func fileInMode(mode Mode, path string) bool {
+	ext := strings.ToLower(filepath.Ext(path))
+	switch mode {
+	case ModeCode:
+		if IsOfficeDocExtension(ext) || binaryExts[ext] {
+			return false
+		}
+		return IsCodeExtension(ext) || IsDocumentationExtension(ext)
+	case ModeDocs:
+		return IsOfficeDocExtension(ext) || IsDocumentationExtension(ext)
+	}
+	return true
+}
