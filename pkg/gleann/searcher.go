@@ -920,6 +920,15 @@ func RemoveIndex(indexDir, name string) error {
 		return fmt.Errorf("remove graph database: %w", err)
 	}
 
+	// The graph's companions: Kuzu's write-ahead log and the per-file content
+	// hash store. A hash store left behind makes a later graph of the same name
+	// skip every file as "unchanged".
+	for _, suffix := range []string{"_graph.wal", "_graph.shadow", "_graph_file_hashes.db"} {
+		if err := os.Remove(filepath.Join(indexDir, name+suffix)); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("remove %s: %w", name+suffix, err)
+		}
+	}
+
 	// 3. Remove the sync state file if it exists
 	syncPath := filepath.Join(indexDir, name+".sync.json")
 	if err := os.Remove(syncPath); err != nil && !os.IsNotExist(err) {

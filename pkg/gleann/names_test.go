@@ -141,3 +141,25 @@ func TestConfigRestoreRedactedSecrets(t *testing.T) {
 		t.Errorf("empty secret should clear, got %q", in.SearchConfig.RerankerConfig.APIKey)
 	}
 }
+
+// RemoveIndex must also delete the graph's write-ahead log and hash store, but
+// leave another index whose name merely starts the same way alone.
+func TestRemoveIndex_RemovesGraphCompanions(t *testing.T) {
+	dir := t.TempDir()
+	for _, f := range []string{"a_graph", "a_graph.wal", "a_graph_file_hashes.db", "a_graph_x_graph"} {
+		if err := os.WriteFile(filepath.Join(dir, f), []byte("x"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := RemoveIndex(dir, "a"); err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range []string{"a_graph", "a_graph.wal", "a_graph_file_hashes.db"} {
+		if _, err := os.Stat(filepath.Join(dir, f)); err == nil {
+			t.Errorf("%s was not removed", f)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(dir, "a_graph_x_graph")); err != nil {
+		t.Errorf("unrelated file removed: %v", err)
+	}
+}
