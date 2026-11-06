@@ -40,6 +40,8 @@ func cmdIndex(args []string) {
 		cmdSync(subArgs)
 	case "repair":
 		cmdRepair(subArgs)
+	case "storage":
+		cmdStorage(subArgs)
 	case "tag":
 		cmdTag(subArgs)
 	case "set":
@@ -65,6 +67,7 @@ Usage:
   gleann index rebuild <name> --docs <dir>  Remove & rebuild index from scratch
   gleann index info   <name>                Show index metadata
   gleann index watch  <name> --docs <dir>   Watch & auto-rebuild on changes
+  gleann index storage [<name>] [--set store|recompute]  Show/change how vectors are kept (fast vs. small)
   gleann index tag    <name> [--add <t>] [--remove <t>]  Manage index tags
   gleann index set    <name> [--mcp=true|false] [--desc <d>]  Configure MCP exposure & description
 

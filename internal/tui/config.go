@@ -2,8 +2,10 @@ package tui
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strings"
 )
@@ -134,6 +136,9 @@ func mergeConfig(existing, incoming *OnboardResult) OnboardResult {
 	if incoming.Backend != "" {
 		merged.Backend = incoming.Backend
 	}
+	if incoming.StorageMode != "" {
+		merged.StorageMode = incoming.StorageMode
+	}
 	if incoming.MultimodalModel != "" {
 		merged.MultimodalModel = incoming.MultimodalModel
 	}
@@ -216,21 +221,69 @@ func SaveConfig(r OnboardResult) error {
 	existing := LoadSavedConfig()
 	merged := mergeConfig(existing, &r)
 
-	data, err := json.MarshalIndent(merged, "", "  ")
+	// Keys that OnboardResult does not model (search_config, chunk_config,
+	// rate_limit, timezone, ...) live in the same file: preserve them.
+	out := map[string]any{}
+	if raw, rerr := os.ReadFile(path); rerr == nil && len(strings.TrimSpace(string(raw))) > 0 {
+		if uerr := json.Unmarshal(raw, &out); uerr != nil {
+			return fmt.Errorf("existing %s is not valid JSON (%v); fix or remove it — not overwritten", path, uerr)
+		}
+	}
+	mergedJSON, err := json.Marshal(merged)
+	if err != nil {
+		return err
+	}
+	mergedMap := map[string]any{}
+	if err := json.Unmarshal(mergedJSON, &mergedMap); err != nil {
+		return err
+	}
+	for _, k := range onboardJSONKeys() {
+		delete(out, k)
+	}
+	for k, v := range mergedMap {
+		out[k] = v
+	}
+	data, err := json.MarshalIndent(out, "", "  ")
 	if err != nil {
 		return err
 	}
 	return writeSecretFile(path, data)
 }
 
+// onboardJSONKeys lists the JSON keys owned by OnboardResult.
+func onboardJSONKeys() []string {
+	t := reflect.TypeOf(OnboardResult{})
+	keys := make([]string, 0, t.NumField())
+	for i := 0; i < t.NumField(); i++ {
+		name, _, _ := strings.Cut(t.Field(i).Tag.Get("json"), ",")
+		if name != "" && name != "-" {
+			keys = append(keys, name)
+		}
+	}
+	return keys
+}
+
 // writeSecretFile writes data to path with mode 0600. The config holds API
 // keys, so it must not be readable by other users; os.WriteFile only applies
 // the mode when it creates the file, so existing files are tightened too.
 func writeSecretFile(path string, data []byte) error {
-	if err := os.WriteFile(path, data, 0o600); err != nil {
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".config-*.tmp")
+	if err != nil {
 		return err
 	}
-	return os.Chmod(path, 0o600)
+	defer os.Remove(tmp.Name())
+	if err := tmp.Chmod(0o600); err != nil {
+		tmp.Close()
+		return err
+	}
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmp.Name(), path)
 }
 
 // UpdateConfig reads the existing config, applies the mutator function,

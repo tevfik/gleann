@@ -312,6 +312,13 @@ func (s *LeannSearcher) Search(ctx context.Context, query string, opts ...Search
 		return nil, fmt.Errorf("compute query embedding: %w", err)
 	}
 
+	// A query vector of the wrong size makes DiskANN panic and HNSW return
+	// meaningless results (C-07).
+	if s.meta.Dimensions > 0 && len(queryEmb) != s.meta.Dimensions {
+		return nil, fmt.Errorf("query embedding has %d dimensions but index was built with %d (model %q); use the index's embedding model or rebuild the index",
+			len(queryEmb), s.meta.Dimensions, s.meta.EmbeddingModel)
+	}
+
 	// Vector search.
 	var ids []int64
 	var distances []float32

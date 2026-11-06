@@ -132,6 +132,15 @@ func getConfig(args []string) gleann.Config {
 				config.HNSWConfig.PruneEmbeddings = true
 				i++
 			}
+		case "--storage":
+			if i+1 < len(args) {
+				config.StorageMode = args[i+1]
+				if err := config.ApplyStorageMode(); err != nil {
+					fmt.Fprintf(os.Stderr, "error: --storage: %v\n", err)
+					os.Exit(1)
+				}
+				i++
+			}
 		case "--backend":
 			if i+1 < len(args) {
 				config.Backend = args[i+1]
@@ -290,8 +299,13 @@ func applySavedConfig(config *gleann.Config, args []string) {
 	if getFlag(args, "--llm-model") == "" && savedCfg.LLMModel != "" {
 		config.LLMModel = savedCfg.LLMModel
 	}
+	// Vector storage mode from saved config (an explicit --prune/--storage wins).
+	if getFlag(args, "--storage") == "" && getFlag(args, "--prune") == "" && savedCfg.StorageMode != "" {
+		config.StorageMode = savedCfg.StorageMode
+		_ = config.ApplyStorageMode()
+	}
 	// Backend from saved config.
-	if savedCfg.Backend != "" {
+	if getFlag(args, "--backend") == "" && savedCfg.Backend != "" {
 		config.Backend = savedCfg.Backend
 	}
 	// Dual embedding models from saved config.

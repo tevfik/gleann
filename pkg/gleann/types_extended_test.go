@@ -36,8 +36,8 @@ func TestDefaultConfig(t *testing.T) {
 	if !cfg.HNSWConfig.UseHeuristic {
 		t.Error("HNSW.UseHeuristic should be true")
 	}
-	if !cfg.HNSWConfig.PruneEmbeddings {
-		t.Error("HNSW.PruneEmbeddings should be true")
+	if cfg.HNSWConfig.PruneEmbeddings {
+		t.Error("HNSW.PruneEmbeddings should be false (vectors stored by default)")
 	}
 	if cfg.SearchConfig.TopK != 10 {
 		t.Errorf("SearchConfig.TopK = %d, want 10", cfg.SearchConfig.TopK)

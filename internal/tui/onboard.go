@@ -95,6 +95,9 @@ type OnboardResult struct {
 
 	// Vector backend.
 	Backend string `json:"backend,omitempty"`
+	// StorageMode: "store" (default) or "recompute" — how new indexes keep
+	// their vectors. Managed from the Index Manager screen.
+	StorageMode string `json:"storage_mode,omitempty"`
 
 	// Multimodal model (set via Web UI or config).
 	MultimodalModel string `json:"multimodal_model,omitempty"`

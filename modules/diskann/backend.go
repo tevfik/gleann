@@ -139,6 +139,7 @@ func (s *Searcher) SearchWithRecompute(ctx context.Context, query []float32, top
 	}
 
 	// Reranking fetches embeddings via the recompute callback (=disk read).
+	var recomputeErr error
 	getVector := func(id int64) []float32 {
 		// Try in-memory first (if embeddings are loaded).
 		if s.idx.Embeddings != nil && id >= 0 && id < s.idx.NumNodes && s.idx.Embeddings[id] != nil {
@@ -147,12 +148,18 @@ func (s *Searcher) SearchWithRecompute(ctx context.Context, query []float32, top
 		// Fall back to recompute callback.
 		vecs, err := recompute(ctx, []int64{id})
 		if err != nil || len(vecs) == 0 {
+			if recomputeErr == nil {
+				recomputeErr = fmt.Errorf("recompute embedding for node %d: %v", id, err)
+			}
 			return nil
 		}
 		return vecs[0]
 	}
 
 	candidates := SearchDiskIndex(s.idx, query, topK, searchL, rerankK, distFunc, getVector)
+	if recomputeErr != nil {
+		return nil, nil, recomputeErr
+	}
 
 	ids := make([]int64, len(candidates))
 	distances := make([]float32, len(candidates))

@@ -14,7 +14,7 @@ import (
 // Default host/address constants used across the codebase.
 const (
 	DefaultOllamaHost   = "http://localhost:11434"
-	DefaultServerAddr   = ":8081"
+	DefaultServerAddr   = "127.0.0.1:8081"
 	DefaultLlamaCPPHost = "http://localhost:8787"
 )
 
@@ -177,6 +177,21 @@ type Config struct {
 	// IndexDir is the directory where indexes are stored.
 	IndexDir string `json:"index_dir"`
 
+	// StorageMode selects how vector indexes keep their vectors: "store"
+	// (default; fast search) or "recompute" (no vectors on disk, re-embedded on
+	// every search; slow). Empty means the default. Applies to new builds;
+	// convert an existing index with `gleann index storage`.
+	StorageMode string `json:"storage_mode,omitempty"`
+
+	// Auth controls API authentication: "" or "on" (default) requires a bearer
+	// token on every non-public route; "off" disables it and is only accepted
+	// when the server binds to a loopback address.
+	Auth string `json:"auth,omitempty"`
+
+	// CORSOrigins lists browser origins allowed to call the API cross-origin.
+	// Empty (default) means same-origin only.
+	CORSOrigins []string `json:"cors_origins,omitempty"`
+
 	// Backend is the backend to use (e.g., "hnsw", "ivf").
 	Backend string `json:"backend"`
 
@@ -290,7 +305,7 @@ type HNSWConfig struct {
 	// diversity in neighbor connections. Default: true.
 	UseHeuristic bool `json:"use_heuristic"`
 
-	// PruneEmbeddings enables storage-saving embedding pruning (default: true).
+	// PruneEmbeddings enables storage-saving embedding pruning, i.e. recompute mode: vectors are not stored and are re-embedded on every search (default: false = vectors stored; see StorageMode).
 	PruneEmbeddings bool `json:"prune_embeddings"`
 
 	// PruneKeepFraction is the fraction of embeddings to keep (default: 0.0 = keep none).
@@ -440,7 +455,7 @@ func DefaultConfig() Config {
 			EfSearch:          128,
 			UseMmap:           true,
 			UseHeuristic:      true,
-			PruneEmbeddings:   true,
+			PruneEmbeddings:   false,
 			PruneKeepFraction: 0.0,
 		},
 		SearchConfig: SearchConfig{

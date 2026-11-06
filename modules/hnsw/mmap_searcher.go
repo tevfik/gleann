@@ -70,15 +70,28 @@ func (s *MmapSearcher) SearchWithRecompute(ctx context.Context, query []float32,
 		ef = topK
 	}
 
-	recomputeSync := func(id int64) []float32 {
-		vecs, err := recompute(ctx, []int64{id})
-		if err != nil || len(vecs) == 0 {
-			return nil
+	// Embedding failures are recorded and returned: skipping the node would
+	// give a silently degraded result (E-04).
+	var recomputeErr error
+	recomputeBatch := func(ids []int64) [][]float32 {
+		if recomputeErr != nil {
+			return make([][]float32, len(ids))
 		}
-		return vecs[0]
+		vecs, err := recompute(ctx, ids)
+		if err == nil && len(vecs) != len(ids) {
+			err = fmt.Errorf("embedder returned %d vectors for %d nodes", len(vecs), len(ids))
+		}
+		if err != nil {
+			recomputeErr = fmt.Errorf("recompute embeddings: %w", err)
+			return make([][]float32, len(ids))
+		}
+		return vecs
 	}
 
-	candidates := s.searchZeroCopy(query, topK, ef, distFunc, recomputeSync)
+	candidates := s.searchZeroCopy(query, topK, ef, distFunc, recomputeBatch)
+	if recomputeErr != nil {
+		return nil, nil, recomputeErr
+	}
 
 	ids := make([]int64, len(candidates))
 	distances := make([]float32, len(candidates))
@@ -91,7 +104,7 @@ func (s *MmapSearcher) SearchWithRecompute(ctx context.Context, query []float32,
 	return ids, distances, nil
 }
 
-func (s *MmapSearcher) searchZeroCopy(query []float32, topK, ef int, distFunc DistanceFunc, recompute func(int64) []float32) []Candidate {
+func (s *MmapSearcher) searchZeroCopy(query []float32, topK, ef int, distFunc DistanceFunc, recompute func([]int64) [][]float32) []Candidate {
 	epIdx := s.mmapGraph.EntryPoint
 	maxLevel := s.mmapGraph.MaxLevel
 
@@ -108,11 +121,37 @@ func (s *MmapSearcher) searchZeroCopy(query []float32, topK, ef int, distFunc Di
 			return vec
 		}
 		// Recompute uses external ID
-		vec = recompute(extID)
+		vec = recompute([]int64{extID})[0]
 		if vec != nil {
 			embeddingCache[idx] = vec
 		}
 		return vec
+	}
+	// prefetch recomputes every neighbour that is not cached or stored in one
+	// batched call instead of one request per node.
+	prefetch := func(idxs []int64) {
+		var missing, extIDs []int64
+		for _, idx := range idxs {
+			if _, ok := embeddingCache[idx]; ok {
+				continue
+			}
+			extID := s.mmapGraph.GetExternalID(idx)
+			if vec := s.mmapGraph.GetStoredEmbedding(extID); vec != nil {
+				embeddingCache[idx] = vec
+				continue
+			}
+			missing = append(missing, idx)
+			extIDs = append(extIDs, extID)
+		}
+		if len(missing) == 0 {
+			return
+		}
+		vecs := recompute(extIDs)
+		for i, idx := range missing {
+			if vecs[i] != nil {
+				embeddingCache[idx] = vecs[i]
+			}
+		}
 	}
 
 	// Traverse top down
@@ -131,6 +170,7 @@ func (s *MmapSearcher) searchZeroCopy(query []float32, topK, ef int, distFunc Di
 		for changed {
 			changed = false
 			neighbors := s.mmapGraph.GetNeighbors(epIdx, lc)
+			prefetch(neighbors)
 
 			for _, nIdx := range neighbors {
 				nVec := getEmbedding(nIdx)
@@ -174,6 +214,13 @@ func (s *MmapSearcher) searchZeroCopy(query []float32, topK, ef int, distFunc Di
 		}
 
 		neighbors := s.mmapGraph.GetNeighbors(current.ID, 0)
+		unvisited := make([]int64, 0, len(neighbors))
+		for _, nIdx := range neighbors {
+			if !visited[nIdx] {
+				unvisited = append(unvisited, nIdx)
+			}
+		}
+		prefetch(unvisited)
 		for _, nIdx := range neighbors {
 			if visited[nIdx] {
 				continue

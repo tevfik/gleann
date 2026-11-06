@@ -77,7 +77,7 @@ func DefaultConfig() Config {
 			EfSearch:          128,
 			UseMmap:           true,
 			UseHeuristic:      true,
-			PruneEmbeddings:   true,
+			PruneEmbeddings:   false,
 			PruneKeepFraction: 0.0,
 		},
 	}

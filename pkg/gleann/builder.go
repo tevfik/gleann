@@ -62,6 +62,9 @@ func (b *LeannBuilder) BuildPassages(name string, items []Item) ([]int64, error)
 
 	basePath := filepath.Join(indexDir, name)
 
+	// Rebuilding must not forget what the user attached to the index.
+	prevMeta, _ := GetIndexMeta(b.config.IndexDir, name)
+
 	// Clean up any old passages database to ensure we start from ID 0.
 	os.Remove(basePath + ".passages.db")
 
@@ -91,6 +94,16 @@ func (b *LeannBuilder) BuildPassages(name string, items []Item) ([]int64, error)
 	if b.embedder != nil {
 		meta.EmbeddingModel = b.embedder.ModelName()
 		meta.Dimensions = b.embedder.Dimensions()
+	}
+	if prevMeta != nil {
+		meta.SourceDir = prevMeta.SourceDir
+		meta.AutoWatch = prevMeta.AutoWatch
+		meta.Tags = prevMeta.Tags
+		meta.Description = prevMeta.Description
+		meta.MCPExposed = prevMeta.MCPExposed
+		if !prevMeta.CreatedAt.IsZero() {
+			meta.CreatedAt = prevMeta.CreatedAt
+		}
 	}
 
 	metaPath := basePath + ".meta.json"
@@ -380,9 +393,15 @@ func (b *LeannBuilder) appendInPlace(ctx context.Context, name string, pm *Passa
 	}
 	if len(embeddings) > 0 {
 		// Checked before the passage store is touched, so a mismatch leaves
-		// the index exactly as it was.
+		// the index exactly as it was. Every row is checked: a torn cache
+		// entry can be shorter than the rest (C-08).
 		if err := b.checkDimensions(name, len(embeddings[0])); err != nil {
 			return false, err
+		}
+		for i, e := range embeddings {
+			if len(e) != len(embeddings[0]) {
+				return false, fmt.Errorf("embedding row %d has %d dims, expected %d", i, len(e), len(embeddings[0]))
+			}
 		}
 	}
 
@@ -395,7 +414,7 @@ func (b *LeannBuilder) appendInPlace(ctx context.Context, name string, pm *Passa
 		_ = pm.RollbackAdd(ids)
 		return false, nil
 	}
-	newData, err := b.backend.AddVectors(ctx, indexData, embeddings, ids[0])
+	newData, err := b.addVectorsSafe(ctx, indexData, embeddings, ids[0])
 	if err != nil {
 		_ = pm.RollbackAdd(ids)
 		return false, nil // e.g. a pruned HNSW graph cannot be edited
@@ -562,4 +581,15 @@ func (b *LeannBuilder) BuildFromTexts(ctx context.Context, name string, texts []
 // AddToIndex adds new items to an existing index.
 func (b *LeannBuilder) AddToIndex(ctx context.Context, name string, items []Item) error {
 	return b.UpdateIndex(ctx, name, items, nil)
+}
+
+// addVectorsSafe calls backend.AddVectors and turns a backend panic into an
+// error, so the caller can roll the passage store back (C-08).
+func (b *LeannBuilder) addVectorsSafe(ctx context.Context, indexData []byte, embeddings [][]float32, startID int64) (out []byte, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			out, err = nil, fmt.Errorf("vector backend panic: %v", r)
+		}
+	}()
+	return b.backend.AddVectors(ctx, indexData, embeddings, startID)
 }
