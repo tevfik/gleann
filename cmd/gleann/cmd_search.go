@@ -44,23 +44,7 @@ Examples:
 	}
 
 	name := args[0]
-	query := strings.Join(args[1:], " ")
-
-	// Remove flags from query.
-	queryParts := []string{}
-	skip := false
-	for _, part := range strings.Fields(query) {
-		if skip {
-			skip = false
-			continue
-		}
-		if strings.HasPrefix(part, "--") {
-			skip = true
-			continue
-		}
-		queryParts = append(queryParts, part)
-	}
-	query = strings.Join(queryParts, " ")
+	query := stripSearchFlags(args[1:])
 
 	config := getConfig(args)
 	asJSON := hasFlag(args, "--json")
@@ -242,4 +226,38 @@ func rerankerConfigFromFlags(config gleann.Config, args []string) gleann.Reranke
 		cfg.APIKey = config.APIKeyForProvider("ollama")
 	}
 	return cfg
+}
+
+// searchValueFlags are the search/config flags that consume the next argument.
+// Every other --flag is a boolean switch and must not swallow a query word.
+var searchValueFlags = map[string]bool{
+	"--top-k": true, "--top": true, "--model": true, "--code-model": true,
+	"--code-embedding-model": true, "--docs-model": true, "--provider": true,
+	"--host": true, "--base-url": true, "--openai-base-url": true,
+	"--api-key": true, "--ollama-api-key": true, "--index-dir": true,
+	"--kind": true, "--llm-model": true, "--llm-provider": true,
+	"--rerank-model": true, "--rerank-url": true, "--rerank-pool": true,
+	"--hybrid": true, "--hybrid-alpha": true, "--prune": true,
+}
+
+// stripSearchFlags returns the query text from the arguments after the index
+// name, dropping flags and (only for value-taking flags) their values.
+// "--" ends flag parsing; "--flag=value" is a single token.
+func stripSearchFlags(args []string) string {
+	parts := make([]string, 0, len(args))
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		if a == "--" {
+			parts = append(parts, args[i+1:]...)
+			break
+		}
+		if strings.HasPrefix(a, "--") {
+			if !strings.Contains(a, "=") && searchValueFlags[a] {
+				i++
+			}
+			continue
+		}
+		parts = append(parts, a)
+	}
+	return strings.Join(parts, " ")
 }

@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/tevfik/gleann/internal/auth"
 	"io"
 	"io/fs"
 	"log"
@@ -77,6 +78,14 @@ type Server struct {
 
 	bus    *eventbus.Bus // In-process pub/sub for lifecycle events
 	stopCh chan struct{} // closed on Stop() to signal background goroutines
+
+	sec *securityConfig // resolved by PrepareAuth
+
+	// runtimeOverrides are config keys whose in-memory value differs from the
+	// persisted file because of start-up resolution (embedded llama-server,
+	// provider fallback). Saving the config must not write those values.
+	overridesMu      sync.RWMutex
+	runtimeOverrides map[string]bool
 
 	// Server-lifetime context: cancelled by Stop so that background work
 	// (self-exec'd index builds, model downloads, searcher loads) does not
@@ -154,6 +163,7 @@ func (s *Server) Bus() *eventbus.Bus {
 // NewServer creates a new REST API server.
 // version is the build-time version string (injected via -ldflags).
 func NewServer(config gleann.Config, addr, version string) *Server {
+	_ = config.ApplyStorageMode()
 	baseURL := config.OllamaHost
 	if config.EmbeddingProvider == "openai" && config.OpenAIBaseURL != "" {
 		baseURL = config.OpenAIBaseURL
@@ -329,13 +339,44 @@ func (s *Server) buildMux() *http.ServeMux {
 	return mux
 }
 
+// PrepareAuth resolves the auth/transport policy and, when auth is on,
+// provisions the admin token. It returns the admin token ("" when auth is off).
+// It refuses auth:"off" on a non-loopback bind. Safe to call more than once.
+func (s *Server) PrepareAuth() (string, error) {
+	cfg := s.cfg()
+	off := strings.EqualFold(cfg.Auth, "off") || os.Getenv("GLEANN_AUTH") == "off"
+	if off {
+		if !bindIsLoopback(s.addr) {
+			return "", fmt.Errorf("auth is disabled but %q is not a loopback address: refusing to expose an unauthenticated API (bind 127.0.0.1 or enable auth)", s.addr)
+		}
+		log.Printf("WARNING: API authentication is disabled (auth=off)")
+		s.sec = newSecurityConfig(s.addr, nil, cfg.CORSOrigins)
+		return "", nil
+	}
+	store, err := auth.Open(auth.DefaultDir())
+	if err != nil {
+		return "", fmt.Errorf("auth: %w", err)
+	}
+	admin, _, err := store.EnsureAdmin()
+	if err != nil {
+		return "", fmt.Errorf("auth: %w", err)
+	}
+	s.sec = newSecurityConfig(s.addr, store, cfg.CORSOrigins)
+	return admin, nil
+}
+
 // Start starts the server.
 func (s *Server) Start() error {
+	if s.sec == nil {
+		if _, err := s.PrepareAuth(); err != nil {
+			return err
+		}
+	}
 	mux := s.buildMux()
 
 	s.server = &http.Server{
 		Addr:         s.addr,
-		Handler:      withMiddleware(mux),
+		Handler:      securityMiddleware(s.sec, withMiddleware(mux)),
 		ReadTimeout:  30 * time.Minute,
 		WriteTimeout: 30 * time.Minute,
 		IdleTimeout:  60 * time.Second,
@@ -1209,6 +1250,12 @@ func (s *Server) handleUpdateIndex(w http.ResponseWriter, r *http.Request) {
 	// If no explicit items were provided, read sources from disk under DocsRoot
 	if len(items) == 0 && req.DocsRoot != "" {
 		for _, src := range req.Sources {
+			// Sources are relative to docs_root and must not escape it
+			// (absolute paths and ".." are rejected).
+			if filepath.IsAbs(src) || !filepath.IsLocal(src) {
+				writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid source path %q: must be relative to docs_root and stay inside it", src))
+				return
+			}
 			fullPath := filepath.Join(req.DocsRoot, src)
 			content, err := os.ReadFile(fullPath)
 			if err != nil {
@@ -1255,7 +1302,7 @@ func (s *Server) handleUpdateIndex(w http.ResponseWriter, r *http.Request) {
 	// requests release it).
 	s.invalidateSearcher(name)
 
-	writeJSON(w, http.StatusOK, map[string]any{
+	resp := map[string]any{
 		"status":          "ok",
 		"index":           name,
 		"updated_sources": req.Sources,
@@ -1267,7 +1314,14 @@ func (s *Server) handleUpdateIndex(w http.ResponseWriter, r *http.Request) {
 		"passages":       stats.Passages,
 		"removed":        stats.Removed,
 		"embedded_texts": stats.Embedded,
-	})
+	}
+	// This endpoint updates passages and the lexical index only. An existing
+	// code graph is not touched, so say so instead of silently drifting (N-02).
+	if _, statErr := os.Stat(filepath.Join(cfg.IndexDir, name+"_graph")); statErr == nil {
+		resp["graph_stale"] = true
+		resp["warning"] = "the code graph was not updated; run `gleann index sync " + name + " --graph` or rebuild the graph"
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 // removeIndexTimeout bounds how long a delete waits for in-flight searches to
@@ -1525,11 +1579,7 @@ func (s *Server) checkIndexAccess(r *http.Request, indexName string) error {
 func withMiddleware(next http.Handler) http.Handler {
 	// Chain: body-limit → rate limiter → timeout → CORS/logging.
 	return bodyLimitMiddleware(rateLimitMiddleware(timeoutMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// CORS.
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Gleann-Target, X-Gleann-Index, X-Gleann-Top-K, X-Gleann-Min-Score")
-
+		// CORS headers are handled by securityMiddleware (allow-list only).
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusOK)
 			return
@@ -1587,8 +1637,100 @@ func (b *LogBuffer) GetLogs() []string {
 
 // handleGetConfig returns the server configuration with secrets redacted
 // (see gleann.Config.Redacted).
+// SetRuntimeOverrides records config keys that were rewritten at start-up and
+// must not be persisted unless the user changes them explicitly.
+func (s *Server) SetRuntimeOverrides(keys []string) {
+	m := make(map[string]bool, len(keys))
+	for _, k := range keys {
+		m[k] = true
+	}
+	s.overridesMu.Lock()
+	s.runtimeOverrides = m
+	s.overridesMu.Unlock()
+}
+
+// handleGetConfig returns the effective config plus, under
+// "runtime_overrides", the persisted value of every key that differs because
+// of start-up resolution (so a UI can show "effective X, saved Y").
 func (s *Server) handleGetConfig(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, s.cfg().Redacted())
+	raw, err := json.Marshal(s.cfg().Redacted())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	out := map[string]any{}
+	_ = json.Unmarshal(raw, &out)
+	s.overridesMu.RLock()
+	n := len(s.runtimeOverrides)
+	s.overridesMu.RUnlock()
+	if n > 0 {
+		disk := readPersistedConfigMap()
+		ov := map[string]any{}
+		s.overridesMu.RLock()
+		for k := range s.runtimeOverrides {
+			ov[k] = disk[k]
+		}
+		s.overridesMu.RUnlock()
+		for k := range ov {
+			if isSecretKey(k) {
+				ov[k] = gleann.RedactedSecret
+			}
+		}
+		out["runtime_overrides"] = ov
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+func isSecretKey(k string) bool { return k == "openai_api_key" || k == "ollama_api_key" }
+
+// readPersistedConfigMap returns ~/.gleann/config.json as a raw map (empty on
+// any error).
+func readPersistedConfigMap() map[string]any {
+	m := map[string]any{}
+	if p, err := serverConfigPath(); err == nil {
+		if data, err := os.ReadFile(p); err == nil {
+			_ = json.Unmarshal(data, &m)
+		}
+	}
+	return m
+}
+
+// withoutRuntimeOverrides returns cfg with every overridden key that the
+// client left at its runtime value reset to the persisted value, so a UI Save
+// cannot write the embedded-server URL or a fallback model to disk.
+// Keys the client actually changed are kept (and returned in changed).
+func (s *Server) withoutRuntimeOverrides(cfg, runtime gleann.Config) (out gleann.Config, changed []string) {
+	s.overridesMu.RLock()
+	defer s.overridesMu.RUnlock()
+	if len(s.runtimeOverrides) == 0 {
+		return cfg, nil
+	}
+	cm, rm, disk := configToMap(cfg), configToMap(runtime), readPersistedConfigMap()
+	for k := range s.runtimeOverrides {
+		if reflect.DeepEqual(cm[k], rm[k]) {
+			if v, ok := disk[k]; ok {
+				cm[k] = v
+			} else {
+				delete(cm, k)
+			}
+		} else {
+			changed = append(changed, k)
+		}
+	}
+	raw, _ := json.Marshal(cm)
+	var res gleann.Config
+	if err := json.Unmarshal(raw, &res); err != nil {
+		return cfg, nil
+	}
+	res.EmbedderResolver = cfg.EmbedderResolver
+	return res, changed
+}
+
+func configToMap(c gleann.Config) map[string]any {
+	raw, _ := json.Marshal(c)
+	m := map[string]any{}
+	_ = json.Unmarshal(raw, &m)
+	return m
 }
 
 func (s *Server) handleUpdateConfig(w http.ResponseWriter, r *http.Request) {
@@ -1614,12 +1756,18 @@ func (s *Server) handleUpdateConfig(w http.ResponseWriter, r *http.Request) {
 	// current value", an empty string means "clear".
 	prev := s.cfg()
 	newConfig.RestoreRedactedSecrets(prev)
+	if err := newConfig.ApplyStorageMode(); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	// Non-serialisable fields cannot come from the client; keep them.
 	newConfig.EmbedderResolver = prev.EmbedderResolver
 
 	// Persist first so the in-memory config never diverges from what a
-	// restart would load.
-	if err := saveServerConfig(newConfig); err != nil {
+	// restart would load. Start-up-only overrides (embedded llama-server URL,
+	// provider fallback) are not written unless the user changed them.
+	toSave, changedOverrides := s.withoutRuntimeOverrides(newConfig, prev)
+	if err := saveServerConfig(toSave); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to save config: "+err.Error())
 		return
 	}
@@ -1639,6 +1787,13 @@ func (s *Server) handleUpdateConfig(w http.ResponseWriter, r *http.Request) {
 	s.config = newConfig
 	s.embedder = embedder
 	s.cfgMu.Unlock()
+	if len(changedOverrides) > 0 {
+		s.overridesMu.Lock()
+		for _, k := range changedOverrides {
+			delete(s.runtimeOverrides, k) // now an explicit user choice
+		}
+		s.overridesMu.Unlock()
+	}
 
 	// Cached searchers hold the old config/embedder; drop them (each is
 	// closed once in-flight requests release it).
@@ -1927,6 +2082,14 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	if err := gleann.ValidateName(name); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid index name: "+err.Error())
+		return
+	}
+
+	// The upload is indexed with a full build from a temp dir that holds only
+	// the new file. On an existing index that would replace all of its content,
+	// so refuse instead of silently destroying it.
+	if meta, merr := gleann.GetIndexMeta(s.cfg().IndexDir, name); merr == nil && meta.NumPassages > 0 {
+		writeError(w, http.StatusConflict, fmt.Sprintf("index %q already has %d passages; uploading would replace them. Upload into a new index name, or add the file to the index's source directory and run sync", name, meta.NumPassages))
 		return
 	}
 

@@ -20,6 +20,14 @@ type Webhook struct {
 	Secret string   `json:"secret,omitempty"`
 }
 
+// redacted returns a copy with the signing secret masked.
+func (wh Webhook) redacted() Webhook {
+	if wh.Secret != "" {
+		wh.Secret = "********"
+	}
+	return wh
+}
+
 // webhookStore manages registered webhooks (in-memory).
 type webhookStore struct {
 	mu       sync.RWMutex
@@ -40,9 +48,14 @@ func (s *Server) handleListWebhooks(w http.ResponseWriter, r *http.Request) {
 	globalWebhooks.mu.RLock()
 	defer globalWebhooks.mu.RUnlock()
 
+	// Never echo secrets back to clients.
+	hooks := make([]Webhook, len(globalWebhooks.webhooks))
+	for i, wh := range globalWebhooks.webhooks {
+		hooks[i] = wh.redacted()
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"webhooks": globalWebhooks.webhooks,
-		"count":    len(globalWebhooks.webhooks),
+		"webhooks": hooks,
+		"count":    len(hooks),
 	})
 }
 
@@ -75,7 +88,7 @@ func (s *Server) handleRegisterWebhook(w http.ResponseWriter, r *http.Request) {
 
 	writeJSON(w, http.StatusCreated, map[string]any{
 		"status":  "registered",
-		"webhook": wh,
+		"webhook": wh.redacted(),
 	})
 }
 

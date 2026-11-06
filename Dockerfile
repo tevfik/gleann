@@ -35,4 +35,4 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
   CMD ["/usr/local/bin/gleann", "version"]
 
 ENTRYPOINT ["gleann"]
-CMD ["serve", "--port", "8080"]
+CMD ["serve", "--addr", "0.0.0.0:8080"]

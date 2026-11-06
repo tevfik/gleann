@@ -33,6 +33,8 @@ func main() {
 		cmdAsk(args)
 	case "serve":
 		cmdServe(args)
+	case "token":
+		cmdToken(args)
 	case "graph":
 		cmdGraph(args)
 	case "chat":
@@ -99,13 +101,16 @@ Core Commands:
   def       <symbol>           Find where a symbol is defined (Go-to-Definition)
   ask       <name> <question>  RAG question-answering with LLM synthesis
   chat      [name]             Interactive terminal chat session
-  serve     [--addr :8080]     Start REST API & Web UI server
+  serve     [--addr 127.0.0.1:8081]  Start REST API & Web UI server (loopback by default)
+  token     create|list|revoke|rotate|show   Manage API bearer tokens
   mcp                          Start MCP server (stdio transport for AI agents)
   benchmark [--index <i>]      Run retrieval & token reduction benchmarks
 
 Index Management & Governance:
   index build <name> --docs <dir> [--graph] [--multimodal-model <m>]
                                Index documents or code (optionally with AST graph)
+  index storage [<name>] [--set store|recompute]
+                               Show or switch how vectors are kept (store = fast search, recompute = small index)
   index list [--tag <t>] [--mcp]  List indexes with stats, tags, and MCP status
   index tag  <name> --add/--remove <tag>   Assign governance tags (e.g. work, private)
   index set  <name> [--mcp=true|false] [--desc "..."]

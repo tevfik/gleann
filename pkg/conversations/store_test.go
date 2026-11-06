@@ -249,3 +249,18 @@ func TestDefaultStore(t *testing.T) {
 		t.Skip("no home dir")
 	}
 }
+
+func TestStore_RejectsTraversalIDs(t *testing.T) {
+	dir := t.TempDir()
+	s := &Store{dir: dir + "/conv"}
+	_ = os.MkdirAll(s.dir, 0o755)
+	_ = os.WriteFile(dir+"/outside.json", []byte(`{"id":"x","title":"OUTSIDE"}`), 0o644)
+	for _, id := range []string{"../outside", "..", "a/b", `a\b`, ".hidden"} {
+		if _, err := s.Load(id); err == nil {
+			t.Errorf("Load(%q) must fail", id)
+		}
+		if err := s.Save(&Conversation{ID: id, Title: "t"}); err == nil {
+			t.Errorf("Save(%q) must fail", id)
+		}
+	}
+}

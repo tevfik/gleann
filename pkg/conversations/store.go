@@ -75,6 +75,9 @@ func (s *Store) Save(conv *Conversation) error {
 		conv.Title = autoTitle(conv)
 	}
 
+	if !validID(conv.ID) {
+		return fmt.Errorf("invalid conversation id %q", conv.ID)
+	}
 	data, err := json.MarshalIndent(conv, "", "  ")
 	if err != nil {
 		return err
@@ -184,6 +187,9 @@ func (s *Store) Latest() (*Conversation, error) {
 }
 
 func (s *Store) loadByID(id string) (*Conversation, error) {
+	if !validID(id) {
+		return nil, fmt.Errorf("invalid conversation id %q", id)
+	}
 	data, err := os.ReadFile(s.path(id))
 	if err != nil {
 		return nil, err
@@ -193,6 +199,14 @@ func (s *Store) loadByID(id string) (*Conversation, error) {
 		return nil, err
 	}
 	return &conv, nil
+}
+
+// validID rejects anything that could escape the store directory.
+func validID(id string) bool {
+	if id == "" || id == "." || id == ".." || strings.HasPrefix(id, ".") {
+		return false
+	}
+	return !strings.ContainsAny(id, `/\`+"\x00")
 }
 
 func (s *Store) path(id string) string {

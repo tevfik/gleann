@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -565,6 +566,10 @@ func (s *Server) proxyStoredKey(provider, host string) string {
 func (s *Server) handleProxyModels(w http.ResponseWriter, r *http.Request) {
 	provider := r.URL.Query().Get("provider")
 	host := r.URL.Query().Get("host")
+	if err := validateProxyHost(host); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	apiKey := r.URL.Query().Get("apikey")
 	// An empty or redacted ("********") key means "use the stored key" for
 	// this provider — the Web UI round-trips redacted secrets from /api/config.
@@ -688,4 +693,20 @@ func sameBaseURL(a, b string) bool {
 		return s
 	}
 	return norm(a) == norm(b)
+}
+
+// validateProxyHost rejects hosts that could be used to smuggle a path/query
+// into the upstream request (the handler appends /api/tags or /models).
+func validateProxyHost(host string) error {
+	if host == "" {
+		return nil
+	}
+	u, err := url.Parse(host)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		return fmt.Errorf("invalid host: must be an http(s) URL")
+	}
+	if u.RawQuery != "" || u.Fragment != "" || strings.ContainsAny(host, "?#") || u.User != nil {
+		return fmt.Errorf("invalid host: query, fragment and credentials are not allowed")
+	}
+	return nil
 }

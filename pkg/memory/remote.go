@@ -13,6 +13,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"github.com/tevfik/gleann/internal/auth"
 	"io"
 	"net/http"
 	"net/url"
@@ -182,7 +183,7 @@ func Remote() *RemoteClient {
 		if probeAddress(cand) {
 			remoteVal = &RemoteClient{
 				base:   cand,
-				client: &http.Client{Timeout: 30 * time.Second},
+				client: newRemoteHTTPClient(),
 			}
 			return remoteVal
 		}
@@ -243,7 +244,7 @@ func EnsureDaemon(addr string) (*RemoteClient, error) {
 			lastProbeTime = time.Now()
 			remoteVal = &RemoteClient{
 				base:   addr,
-				client: &http.Client{Timeout: 30 * time.Second},
+				client: newRemoteHTTPClient(),
 			}
 			c := remoteVal
 			remoteMu.Unlock()
@@ -258,7 +259,7 @@ func EnsureDaemon(addr string) (*RemoteClient, error) {
 func NewRemoteClient(baseURL string) *RemoteClient {
 	return &RemoteClient{
 		base:   strings.TrimRight(baseURL, "/"),
-		client: &http.Client{Timeout: 30 * time.Second},
+		client: newRemoteHTTPClient(),
 	}
 }
 
@@ -511,4 +512,24 @@ func decodeError(resp *http.Response) error {
 		return fmt.Errorf("server %d: %s", resp.StatusCode, env.Error)
 	}
 	return fmt.Errorf("server %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+}
+
+// authTransport adds the local bearer token (GLEANN_API_TOKEN or
+// ~/.gleann/auth/admin.token) to requests so the CLI and stdio MCP can use a
+// token-protected local server without any configuration. The token is read per
+// request so `gleann token rotate` takes effect immediately.
+type authTransport struct{ base http.RoundTripper }
+
+func (t authTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	if req.Header.Get("Authorization") == "" {
+		if tok := auth.ClientToken(); tok != "" {
+			req = req.Clone(req.Context())
+			req.Header.Set("Authorization", "Bearer "+tok)
+		}
+	}
+	return t.base.RoundTrip(req)
+}
+
+func newRemoteHTTPClient() *http.Client {
+	return &http.Client{Timeout: 30 * time.Second, Transport: authTransport{base: http.DefaultTransport}}
 }

@@ -2,8 +2,10 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
+	"net/http"
 	"os"
 	"os/signal"
 	"strconv"
@@ -24,8 +26,8 @@ func cmdServe(args []string) {
 Start the Gleann REST API server, Swagger UI, OpenAI-compatible proxy, and A2A service.
 
 Options:
-  --addr <host:port>    Listen address (default: :8080)
-  --port, -p <port>     Port number (shorthand for --addr :<port>)
+  --addr <host:port>    Listen address (default: 127.0.0.1:8081; use 0.0.0.0:<port> to expose it)
+  --port, -p <port>     Port number (shorthand for --addr 127.0.0.1:<port>, loopback only)
   --host <url>          Ollama host URL
   --quiet               Suppress model bootstrap output
   --ollama-api-key <k>  API key for Ollama / proxy authentication`)
@@ -65,10 +67,11 @@ Options:
 			portFlag = getFlag(args, "-p")
 		}
 		if portFlag != "" {
+			// A bare port binds loopback only; use --addr :PORT to expose.
 			if !strings.HasPrefix(portFlag, ":") {
-				addr = ":" + portFlag
+				addr = "127.0.0.1:" + portFlag
 			} else {
-				addr = portFlag
+				addr = "127.0.0.1" + portFlag
 			}
 		} else if savedCfg := tui.LoadSavedConfig(); savedCfg != nil && savedCfg.ServerAddr != "" {
 			addr = savedCfg.ServerAddr
@@ -94,6 +97,7 @@ Options:
 		fmt.Fprintf(os.Stderr, "warning: port %d requires root privileges (did you mean :%d?)\n", port, port+8000)
 	}
 
+	configAsLoaded := config
 	if err := initLlamaCPP(context.Background(), &config); err != nil {
 		fmt.Fprintf(os.Stderr, "⚠️  warning: failed to start embedded llamacpp: %v\n", err)
 		fmt.Fprintf(os.Stderr, "   Falling back to Ollama provider for missing models...\n")
@@ -117,20 +121,41 @@ Options:
 
 	config.EmbedderResolver = defaultEmbedderResolver(config)
 	srv := server.NewServer(config, addr, version)
+	// Remember what start-up changed in memory so a UI Save cannot persist it.
+	srv.SetRuntimeOverrides(gleann.ChangedKeys(configAsLoaded, config))
 
 	// Graceful shutdown.
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
 
+	stopped := make(chan struct{})
 	go func() {
 		<-stop
 		fmt.Println("\nShutting down...")
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		srv.Stop(ctx)
+		close(stopped)
 	}()
 
+	adminToken, err := srv.PrepareAuth()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		cleanupLlamaCPP()
+		os.Exit(1)
+	}
+	if !bindIsLoopbackAddr(addr) {
+		fmt.Fprintf(os.Stderr, "⚠️  server listens on %s (not loopback): reachable from the network; every request needs a token\n", addr)
+	}
+
 	fmt.Printf("🚀 gleann server starting on %s\n", addr)
+	if adminToken != "" {
+		fmt.Printf("   Auth:      bearer token required (admin token: %s)\n", authTokenPath())
+		fmt.Printf("   Web UI:    http://%s/?token=%s\n", uiHost(addr), adminToken)
+		fmt.Println("   New token: gleann token create <name> [--scope query|admin]")
+	} else {
+		fmt.Println("   Auth:      DISABLED (loopback only)")
+	}
 	fmt.Printf("   Index dir: %s\n", config.IndexDir)
 	fmt.Printf("   Model:     %s (%s)\n", config.EmbeddingModel, config.EmbeddingProvider)
 	if config.OllamaHost != "" {
@@ -177,8 +202,41 @@ Options:
 	fmt.Println("   GET  /a2a/v1/tasks/{id}            Get task status")
 	fmt.Println()
 
-	if err := srv.Start(); err != nil {
+	err = srv.Start()
+	if errors.Is(err, http.ErrServerClosed) {
+		// Graceful stop requested by a signal: wait for srv.Stop to finish,
+		// stop the embedded llama-server and exit 0.
+		<-stopped
+		cleanupLlamaCPP()
+		return
+	}
+	if err != nil {
 		fmt.Fprintf(os.Stderr, "server error: %v\n", err)
+		cleanupLlamaCPP()
 		os.Exit(1)
 	}
+}
+
+func bindIsLoopbackAddr(addr string) bool {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		return false
+	}
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
+
+// uiHost turns a listen address into something a browser can open.
+func uiHost(addr string) string {
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return addr
+	}
+	if host == "" || host == "0.0.0.0" || host == "::" {
+		host = "localhost"
+	}
+	return net.JoinHostPort(host, port)
 }

@@ -35,6 +35,16 @@ type AgentCard struct {
 	Skills              []AgentSkill      `json:"skills"`
 	DocumentationURL    string            `json:"documentationUrl,omitempty"`
 	IconURL             string            `json:"iconUrl,omitempty"`
+	// SecuritySchemes/Security advertise how callers authenticate (A2A spec).
+	SecuritySchemes map[string]SecurityScheme `json:"securitySchemes,omitempty"`
+	Security        []map[string][]string     `json:"security,omitempty"`
+}
+
+// SecurityScheme is an OpenAPI-style security scheme (HTTP bearer here).
+type SecurityScheme struct {
+	Type        string `json:"type"`
+	Scheme      string `json:"scheme,omitempty"`
+	Description string `json:"description,omitempty"`
 }
 
 // AgentInterface declares a protocol binding endpoint.
@@ -498,6 +508,10 @@ func DefaultAgentCard(version, baseURL string) AgentCard {
 	}
 
 	return AgentCard{
+		SecuritySchemes: map[string]SecurityScheme{
+			"gleannBearer": {Type: "http", Scheme: "bearer", Description: "gleann API token (gleann token create)"},
+		},
+		Security:    []map[string][]string{{"gleannBearer": {}}},
 		Name:        "gleann",
 		Description: "Local-first semantic search, RAG, and persistent memory engine with code graph analysis. Indexes documents and code, answers questions with retrieved context, manages hierarchical long-term memory, and analyzes code dependencies.",
 		Version:     version,

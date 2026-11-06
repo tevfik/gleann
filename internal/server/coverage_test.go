@@ -580,8 +580,8 @@ func TestWithMiddleware_CORSHeaders(t *testing.T) {
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
 
-	if w.Header().Get("Access-Control-Allow-Origin") != "*" {
-		t.Error("expected CORS origin header")
+	if w.Header().Get("Access-Control-Allow-Origin") != "" {
+		t.Error("wildcard/any CORS header must not be set by default")
 	}
 }
 

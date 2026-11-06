@@ -3,6 +3,7 @@ package server
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -185,7 +186,7 @@ func TestNewTimeoutConfig_EnvOverrides(t *testing.T) {
 
 func TestTimeoutWriter_Write(t *testing.T) {
 	w := httptest.NewRecorder()
-	tw := &timeoutWriter{ResponseWriter: w}
+	tw := &timeoutWriter{w: w, h: make(http.Header)}
 	n, err := tw.Write([]byte("hello"))
 	if err != nil || n != 5 {
 		t.Fatalf("expected 5 bytes, got %d, err=%v", n, err)
@@ -197,7 +198,33 @@ func TestTimeoutWriter_Write(t *testing.T) {
 
 func TestTimeoutWriter_Flush(t *testing.T) {
 	w := httptest.NewRecorder()
-	tw := &timeoutWriter{ResponseWriter: w}
+	tw := &timeoutWriter{w: w, h: make(http.Header)}
 	// Flush should not panic even without prior write.
 	tw.Flush()
+}
+
+// A handler that outlives the deadline and writes late must not interleave
+// with the 504 (run with -race).
+func TestTimeoutMiddleware_LateWriteIsDropped(t *testing.T) {
+	t.Setenv("GLEANN_TIMEOUT_DEFAULT_S", "1")
+	old := globalTimeouts
+	globalTimeouts = newTimeoutConfig()
+	defer func() { globalTimeouts = old }()
+	globalTimeouts.dflt = 50 * time.Millisecond
+
+	h := timeoutMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		<-r.Context().Done()
+		time.Sleep(20 * time.Millisecond)
+		w.Header().Set("X-Late", "1")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("late body"))
+	}))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest("GET", "/api/x", nil))
+	if rec.Code != http.StatusGatewayTimeout {
+		t.Fatalf("code = %d, want 504", rec.Code)
+	}
+	if strings.Contains(rec.Body.String(), "late body") || rec.Header().Get("X-Late") != "" {
+		t.Fatalf("late handler output leaked: %q %v", rec.Body.String(), rec.Header())
+	}
 }

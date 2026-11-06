@@ -97,26 +97,22 @@ func timeoutMiddleware(next http.Handler) http.Handler {
 		ctx, cancel := context.WithTimeout(r.Context(), d)
 		defer cancel()
 
-		// Use a custom ResponseWriter that detects whether the handler already
-		// wrote a status.  If the context deadline fires after headers are sent
-		// there is nothing useful we can do; if it fires before, we return 504.
-		tw := &timeoutWriter{ResponseWriter: w}
+		// The handler writes into a buffered header map and is serialized with
+		// the middleware by tw.mu, so a late handler write can never interleave
+		// with the 504 (same approach as http.TimeoutHandler).
+		tw := &timeoutWriter{w: w, h: make(http.Header)}
 		done := make(chan struct{})
 
 		go func() {
+			defer close(done)
 			next.ServeHTTP(tw, r.WithContext(ctx))
-			close(done)
 		}()
 
 		select {
 		case <-done:
 			// Normal completion; nothing to do.
 		case <-ctx.Done():
-			tw.mu.Lock()
-			wrote := tw.wroteHeader
-			tw.mu.Unlock()
-
-			if !wrote {
+			if tw.timeout() {
 				writeError(w, http.StatusGatewayTimeout,
 					"request timed out — try a shorter query or increase GLEANN_TIMEOUT_*_S")
 			}
@@ -125,31 +121,78 @@ func timeoutMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-// timeoutWriter tracks whether WriteHeader has been called so the outer
-// goroutine knows whether it is safe to write a 504 response.
+// timeoutWriter isolates the handler's response from the real writer. Once
+// the deadline has produced a 504, further handler writes are dropped.
 type timeoutWriter struct {
-	http.ResponseWriter
+	w           http.ResponseWriter
+	h           http.Header
 	mu          sync.Mutex
 	wroteHeader bool
+	timedOut    bool
+}
+
+func (tw *timeoutWriter) Header() http.Header { return tw.h }
+
+// timeout marks the request as timed out. It reports true when nothing has
+// been sent yet, i.e. the caller may write the 504.
+func (tw *timeoutWriter) timeout() bool {
+	tw.mu.Lock()
+	defer tw.mu.Unlock()
+	if tw.wroteHeader {
+		return false
+	}
+	tw.timedOut = true
+	return true
 }
 
 func (tw *timeoutWriter) WriteHeader(code int) {
 	tw.mu.Lock()
+	defer tw.mu.Unlock()
+	if tw.timedOut || tw.wroteHeader {
+		return
+	}
 	tw.wroteHeader = true
-	tw.mu.Unlock()
-	tw.ResponseWriter.WriteHeader(code)
+	dst := tw.w.Header()
+	for k, v := range tw.h {
+		dst[k] = v
+	}
+	tw.w.WriteHeader(code)
 }
 
 func (tw *timeoutWriter) Write(b []byte) (int, error) {
 	tw.mu.Lock()
-	tw.wroteHeader = true
-	tw.mu.Unlock()
-	return tw.ResponseWriter.Write(b)
+	if tw.timedOut {
+		tw.mu.Unlock()
+		return 0, http.ErrHandlerTimeout
+	}
+	if !tw.wroteHeader {
+		tw.wroteHeader = true
+		dst := tw.w.Header()
+		for k, v := range tw.h {
+			dst[k] = v
+		}
+		tw.w.WriteHeader(http.StatusOK)
+	}
+	defer tw.mu.Unlock()
+	return tw.w.Write(b)
 }
 
 // Flush propagates the Flusher interface for SSE (though streaming skips the timeout).
 func (tw *timeoutWriter) Flush() {
-	if f, ok := tw.ResponseWriter.(http.Flusher); ok {
+	tw.mu.Lock()
+	defer tw.mu.Unlock()
+	if tw.timedOut {
+		return
+	}
+	if !tw.wroteHeader {
+		tw.wroteHeader = true
+		dst := tw.w.Header()
+		for k, v := range tw.h {
+			dst[k] = v
+		}
+		tw.w.WriteHeader(http.StatusOK)
+	}
+	if f, ok := tw.w.(http.Flusher); ok {
 		f.Flush()
 	}
 }
