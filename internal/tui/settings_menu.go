@@ -19,7 +19,6 @@ type SettingsModel struct {
 	reg    *settings.Registry[OnboardResult]
 	cfg    *OnboardResult
 	cursor int
-	offset int // first visible row (scrolling)
 	height int
 
 	editing bool   // typing a text, path, secret or number
