@@ -1,10 +1,11 @@
 package llamacpp
 
 import (
+	"bytes"
 	"context"
 	"fmt"
-	"io"
 	"net"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -16,6 +17,8 @@ import (
 // Runner manages the lifecycle of the embedded llama-server process.
 type Runner struct {
 	cmd       *exec.Cmd
+	exited    chan struct{} // closed when cmd has exited
+	waitErr   error         // cmd.Wait result, valid after exited is closed
 	port      int
 	modelPath string
 	embedding bool
@@ -63,16 +66,9 @@ func (r *Runner) Start(ctx context.Context) error {
 		return fmt.Errorf("model file %q not found (put it in ~/.gleann/models, e.g. with: gleann models download <id>)", r.modelPath)
 	}
 	// 1. Determine platform and binary name
-	var binName string
-	switch runtime.GOOS {
-	case "windows":
-		binName = "llama-server-windows-amd64.exe"
-	case "darwin":
-		binName = "llama-server-macos-amd64" // Hypothetical, adjust to your needs
-	case "linux":
-		binName = "llama-server-linux-amd64"
-	default:
-		return fmt.Errorf("unsupported OS for embedded llama-server: %s", runtime.GOOS)
+	binName := fmt.Sprintf("llama-server-%s-%s", runtime.GOOS, runtime.GOARCH)
+	if runtime.GOOS == "windows" {
+		binName += ".exe"
 	}
 
 	// 2. Extract binaries and libraries
@@ -93,7 +89,6 @@ func (r *Runner) Start(ctx context.Context) error {
 		"--model", r.modelPath,
 		"--host", "127.0.0.1",
 		"--port", fmt.Sprintf("%d", port),
-		"--mlock",       // Optional: prevent swapping
 		"--log-disable", // Keep stdout clean
 	}
 	if r.embedding {
@@ -106,13 +101,18 @@ func (r *Runner) Start(ctx context.Context) error {
 	destDir := filepath.Dir(exePath)
 	r.cmd.Env = append(os.Environ(), "LD_LIBRARY_PATH="+destDir)
 
-	// We can bind stdout/stderr here for debugging if needed
-	r.cmd.Stdout = os.Stdout
+	// stderr, not stdout: callers such as `gleann search --json` own stdout.
+	r.cmd.Stdout = os.Stderr
 	r.cmd.Stderr = os.Stderr
 
 	if err := r.cmd.Start(); err != nil {
 		return fmt.Errorf("failed to start llama-server: %w", err)
 	}
+	r.exited = make(chan struct{})
+	go func(cmd *exec.Cmd, exited chan struct{}) {
+		r.waitErr = cmd.Wait()
+		close(exited)
+	}(r.cmd, r.exited)
 
 	// 5. Wait for server to be ready (simple ping loop)
 	if err := r.waitForReady(ctx); err != nil {
@@ -125,20 +125,22 @@ func (r *Runner) Start(ctx context.Context) error {
 
 // Stop gracefully shuts down the server process.
 func (r *Runner) Stop() error {
-	if r.cmd != nil && r.cmd.Process != nil {
-		// Send SIGTERM for graceful shutdown; the process should exit on its own.
-		_ = r.cmd.Process.Signal(syscall.SIGTERM)
-		// Wait briefly then force-kill if still running.
-		done := make(chan error, 1)
-		go func() { done <- r.cmd.Wait() }()
-		select {
-		case <-done:
-			return nil
-		case <-time.After(5 * time.Second):
-			return r.cmd.Process.Kill()
-		}
+	if r.cmd == nil || r.cmd.Process == nil || r.exited == nil {
+		return nil
 	}
-	return nil
+	select {
+	case <-r.exited:
+		return nil
+	default:
+	}
+	// Send SIGTERM for graceful shutdown; force-kill if still running after 5s.
+	_ = r.cmd.Process.Signal(syscall.SIGTERM)
+	select {
+	case <-r.exited:
+		return nil
+	case <-time.After(5 * time.Second):
+		return r.cmd.Process.Kill()
+	}
 }
 
 // BaseURL returns the URL to access the OpenAI compatible API.
@@ -146,24 +148,33 @@ func (r *Runner) BaseURL() string {
 	return fmt.Sprintf("http://127.0.0.1:%d", r.port)
 }
 
-func (r *Runner) waitForReady(ctx context.Context) error {
-	// Simple polling to check if the port is listening
-	addr := fmt.Sprintf("127.0.0.1:%d", r.port)
-	for i := 0; i < 30; i++ {
-		conn, err := net.DialTimeout("tcp", addr, 100*time.Millisecond)
-		if err == nil {
-			conn.Close()
-			return nil
-		}
+// readyTimeout bounds how long Start waits for the model to load.
+var readyTimeout = 120 * time.Second
 
+// waitForReady polls /health until it answers 200. llama-server opens its port
+// before the model is loaded and answers 503 meanwhile, so an open port is not
+// enough. If the process exits first (bad flag, unsupported model, missing
+// library) it fails at once instead of waiting for the timeout.
+func (r *Runner) waitForReady(ctx context.Context) error {
+	url := fmt.Sprintf("http://127.0.0.1:%d/health", r.port)
+	client := &http.Client{Timeout: time.Second}
+	deadline := time.Now().Add(readyTimeout)
+	for time.Now().Before(deadline) {
+		if resp, err := client.Get(url); err == nil {
+			resp.Body.Close()
+			if resp.StatusCode == http.StatusOK {
+				return nil
+			}
+		}
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-time.After(1 * time.Second):
-			// retry
+		case <-r.exited:
+			return fmt.Errorf("llama-server exited before it was ready: %v (see its output above)", r.waitErr)
+		case <-time.After(250 * time.Millisecond):
 		}
 	}
-	return fmt.Errorf("timeout waiting for llama-server to start on %s", addr)
+	return fmt.Errorf("timeout waiting for llama-server on 127.0.0.1:%d", r.port)
 }
 
 func extractAllBinaries(mainBinName string) (string, error) {
@@ -177,43 +188,65 @@ func extractAllBinaries(mainBinName string) (string, error) {
 		return "", err
 	}
 
-	entries, err := embeddedBinaries.ReadDir("bin")
-	if err != nil {
-		return "", fmt.Errorf("failed to read embedded bin directory: %w", err)
+	entries, err := embeddedBinaries.ReadDir(embeddedDir)
+	if err != nil || len(entries) == 0 {
+		return "", fmt.Errorf("no embedded llama-server for %s/%s: use an external server (--rerank-url / openai_base_url) instead", runtime.GOOS, runtime.GOARCH)
+	}
+
+	for _, name := range staleBinaries {
+		_ = os.Remove(filepath.Join(destDir, name))
 	}
 
 	for _, entry := range entries {
 		if entry.IsDir() {
 			continue
 		}
-
-		destPath := filepath.Join(destDir, entry.Name())
-
-		// Check if already extracted
-		if info, err := os.Stat(destPath); err == nil && info.Size() > 0 {
-			continue
-		}
-
-		fileData, err := embeddedBinaries.Open("bin/" + entry.Name())
+		data, err := embeddedBinaries.ReadFile(embeddedDir + "/" + entry.Name())
 		if err != nil {
-			return "", fmt.Errorf("failed to open embedded asset %s: %w", entry.Name(), err)
+			return "", fmt.Errorf("failed to read embedded asset %s: %w", entry.Name(), err)
 		}
-
-		out, err := os.OpenFile(destPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0755)
-		if err != nil {
-			fileData.Close()
-			return "", err
-		}
-
-		_, err = io.Copy(out, fileData)
-		fileData.Close()
-		out.Close()
-		if err != nil {
-			return "", err
+		if err := writeIfChanged(filepath.Join(destDir, entry.Name()), data); err != nil {
+			return "", fmt.Errorf("failed to extract %s: %w", entry.Name(), err)
 		}
 	}
 
 	return filepath.Join(destDir, mainBinName), nil
+}
+
+// staleBinaries are files an older gleann extracted to ~/.gleann/bin that the
+// current llama.cpp build no longer ships. They are removed because ggml loads
+// CPU backends from the executable's directory, and an old libggml-cpu.so
+// built against a different libggml-base would be ABI-incompatible.
+var staleBinaries = []string{
+	"libllava_shared.so", "libggml-cpu.so", "libggml.so", "libggml-base.so",
+	"libggml-rpc.so", "libllama.so",
+}
+
+// writeIfChanged writes data to path unless the file already holds exactly
+// that content. An upgraded gleann therefore replaces the llama-server it
+// extracted earlier, instead of keeping the old one forever. The write goes
+// to a temporary file that is renamed into place, so a llama-server that is
+// still running from the old file is not affected ("text file busy").
+func writeIfChanged(path string, data []byte) error {
+	if old, err := os.ReadFile(path); err == nil && bytes.Equal(old, data) {
+		return nil
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".tmp-*")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(tmp.Name())
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := os.Chmod(tmp.Name(), 0o755); err != nil {
+		return err
+	}
+	return os.Rename(tmp.Name(), path)
 }
 
 func getFreePort() (int, error) {

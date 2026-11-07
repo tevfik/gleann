@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"os"
 
 	"github.com/tevfik/gleann/internal/backend/llamacpp"
 	"github.com/tevfik/gleann/pkg/gleann"
@@ -21,7 +22,7 @@ func initLlamaCPP(ctx context.Context, config *gleann.Config) error {
 		return fmt.Errorf("llamacpp provider requires a .gguf model (a path, or a file name in ~/.gleann/models) as --model")
 	}
 
-	fmt.Printf("🚀 Starting embedded llama.cpp server for model %s\n", config.EmbeddingModel)
+	fmt.Fprintf(os.Stderr, "🚀 Starting embedded llama.cpp server for model %s\n", config.EmbeddingModel)
 	globalLlamaRunner = llamacpp.NewRunner(config.EmbeddingModel)
 	globalLlamaRunner.SetEmbedding(true)
 
@@ -41,14 +42,14 @@ func initLlamaCPP(ctx context.Context, config *gleann.Config) error {
 		config.Concurrency = 2
 	}
 
-	fmt.Printf("✅ Embedded llama-server is ready at %s\n", config.OpenAIBaseURL)
+	fmt.Fprintf(os.Stderr, "✅ Embedded llama-server is ready at %s\n", config.OpenAIBaseURL)
 	return nil
 }
 
 // cleanupLlamaCPP ensures the server is stopped when the command exits.
 func cleanupLlamaCPP() {
 	if globalLlamaRunner != nil {
-		fmt.Printf("\nShutting down embedded llama-server...\n")
+		fmt.Fprintf(os.Stderr, "\nShutting down embedded llama-server...\n")
 		globalLlamaRunner.Stop()
 	}
 }

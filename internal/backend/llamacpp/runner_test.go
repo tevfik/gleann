@@ -2,11 +2,15 @@ package llamacpp
 
 import (
 	"context"
+	"errors"
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -90,22 +94,54 @@ func TestWaitForReady_TimeoutOnDeadPort(t *testing.T) {
 	}
 }
 
-// TestWaitForReady_SucceedsWhenPortListens covers the success branch.
-func TestWaitForReady_SucceedsWhenPortListens(t *testing.T) {
-	l, err := net.Listen("tcp", "127.0.0.1:0")
+// TestWaitForReady_WaitsForHealthy covers the success branch: an open port
+// that still answers 503 (model loading) is not ready; a 200 on /health is.
+func TestWaitForReady_WaitsForHealthy(t *testing.T) {
+	var calls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		if req.URL.Path != "/health" {
+			t.Errorf("unexpected path %s", req.URL.Path)
+		}
+		if calls.Add(1) < 3 {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	r := NewRunner("/m")
+	r.port = srv.Listener.Addr().(*net.TCPAddr).Port
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := r.waitForReady(ctx); err != nil {
+		t.Fatalf("expected success, got %v", err)
+	}
+	if n := calls.Load(); n < 3 {
+		t.Errorf("ready after %d health checks; 503 must not count as ready", n)
+	}
+}
+
+// TestWaitForReady_ProcessExited: a server that dies at start-up (for example
+// on an unknown flag) is reported at once, not after the ready timeout.
+func TestWaitForReady_ProcessExited(t *testing.T) {
+	port, err := getFreePort()
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer l.Close()
-
-	port := l.Addr().(*net.TCPAddr).Port
 	r := NewRunner("/m")
 	r.port = port
+	r.exited = make(chan struct{})
+	r.waitErr = errors.New("exit status 1")
+	close(r.exited)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-	if err := r.waitForReady(ctx); err != nil {
-		t.Errorf("expected success, got %v", err)
+	start := time.Now()
+	err = r.waitForReady(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "exited before it was ready") {
+		t.Fatalf("expected early-exit error, got %v", err)
+	}
+	if time.Since(start) > 2*time.Second {
+		t.Errorf("early exit took %v to report", time.Since(start))
 	}
 }
 
