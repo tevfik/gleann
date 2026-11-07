@@ -4,6 +4,15 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [v1.8.13] — 2026-11-07
+
+See [docs/releases/v1.8.13.md](docs/releases/v1.8.13.md).
+
+### Fixed
+- CI: removed an unused field of the TUI settings screen that failed `staticcheck` (U1000). No change in behaviour.
+
+## [v1.8.12] — 2026-11-07
+
 ### Added
 - **One settings list for the web UI and the TUI.** gleann's own settings are described once with `modules/settings` (`internal/tui.Settings`): the web UI renders them from `GET/PUT /api/settings` (System → Settings) and the TUI from the same list (`gleann setup` → All Settings), with the same fields, options, defaults, help and validation. A test fails when a `config.json` key has no setting. Saving in the web UI applies to the running server without a restart (except providers, address and services).
 - **Reranker engine setting** (`rerank_provider`: `auto`, `eif`, `ollama`, `llamacpp`, `jina`, `cohere`, `voyage`) and `--rerank-provider`, `--no-rerank`. `auto` uses the built-in bitllm.c cross-encoder when the build has it and the model is a local GGUF.
@@ -22,8 +31,6 @@ All notable changes to this project will be documented in this file.
 - Reranker settings saved in the web UI were lost on restart (they were written to `search_config`, which no command reads); they are now stored in `rerank_enabled` / `rerank_model` / `rerank_provider` like the TUI's.
 - The setup wizard dropped the saved repeat penalty, and stored a catalog reranker as its "(Download) …" label instead of the file name.
 - A cross-encoder (bge-reranker, mmarco) is no longer offered as an embedding model.
-
-## [v1.8.12] — 2026-11-07
 
 See [docs/releases/v1.8.12.md](docs/releases/v1.8.12.md). Releases v1.8.8 to v1.8.11 are
 described only in `docs/releases/`.
