@@ -432,26 +432,14 @@ func (s *Server) getSearcher(name string) (*gleann.LeannSearcher, error) {
 
 	// Configure reranker if enabled via config or environment
 	if s.config.SearchConfig.UseReranker || os.Getenv("GLEANN_RERANK") == "1" || os.Getenv("GLEANN_RERANK") == "true" {
-		rerankModel := s.config.SearchConfig.RerankerConfig.Model
-		if rerankModel == "" {
-			rerankModel = os.Getenv("GLEANN_RERANK_MODEL")
+		cfg := s.config
+		if s.config.SearchConfig.RerankerConfig.Model == "" {
+			cfg.SearchConfig.RerankerConfig.Model = os.Getenv("GLEANN_RERANK_MODEL")
 		}
-		if rerankModel == "" {
-			rerankModel = "bge-reranker-v2-m3"
-		}
-		provider := gleann.RerankerProvider(s.config.EmbeddingProvider)
 		if pEnv := os.Getenv("GLEANN_RERANK_PROVIDER"); pEnv != "" {
-			provider = gleann.RerankerProvider(pEnv)
+			cfg.SearchConfig.RerankerConfig.Provider = gleann.RerankerProvider(pEnv)
 		}
-		rerankerCfg := gleann.RerankerConfig{
-			Provider: provider,
-			Model:    rerankModel,
-			BaseURL:  s.config.OllamaHost,
-		}
-		if rerankerCfg.Provider == gleann.RerankerOllama {
-			rerankerCfg.APIKey = s.config.APIKeyForProvider("ollama")
-		}
-		searcher.SetReranker(gleann.NewReranker(rerankerCfg))
+		searcher.SetReranker(gleann.NewReranker(gleann.ResolveRerankerConfig(cfg, "")))
 	}
 
 	ctx := context.Background()

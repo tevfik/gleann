@@ -67,7 +67,7 @@ var (
 // model: an embedding model loaded as a reranker would give meaningless scores.
 func resolveRerankModelPath(model string) (string, error) {
 	if model == "" {
-		model = "bge-reranker-v2-m3"
+		model = gleann.DefaultEIFRerankModel
 	}
 	if fi, err := os.Stat(model); err == nil && !fi.IsDir() {
 		return model, nil

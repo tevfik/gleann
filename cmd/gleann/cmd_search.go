@@ -67,8 +67,8 @@ Examples:
 		searcher.SetScorer(nil)
 	}
 
-	// Set up reranker if --rerank is specified.
-	if hasFlag(args, "--rerank") {
+	// Rerank with --rerank or when enabled in the settings (--no-rerank turns it off).
+	if wantRerank(config, args) {
 		rerankerCfg := rerankerConfigFromFlags(config, args)
 		searcher.SetReranker(gleann.NewReranker(rerankerCfg))
 		config.SearchConfig.UseReranker = true
@@ -205,27 +205,32 @@ Examples:
 	}
 }
 
+// wantRerank reports whether a search reranks: --rerank, or the saved
+// rerank_enabled setting unless --no-rerank is given.
+func wantRerank(config gleann.Config, args []string) bool {
+	if hasFlag(args, "--no-rerank") {
+		return false
+	}
+	return hasFlag(args, "--rerank") || config.SearchConfig.UseReranker
+}
+
 // rerankerConfigFromFlags builds the reranker config for --rerank. With
 // --rerank-url the reranker is any server speaking /v1/rerank (llama-server
-// --reranking, Jina-compatible); otherwise the embedding provider is reused,
-// which only works for providers that implement reranking.
+// --reranking, Jina-compatible); otherwise the saved reranker settings apply
+// (gleann.ResolveRerankerConfig), with --rerank-model and --rerank-provider
+// overriding them.
 func rerankerConfigFromFlags(config gleann.Config, args []string) gleann.RerankerConfig {
 	model := getFlag(args, "--rerank-model")
-	if model == "" {
-		model = "bge-reranker-v2-m3"
-	}
 	if url := getFlag(args, "--rerank-url"); url != "" {
+		if model == "" {
+			model = gleann.DefaultServerRerankModel
+		}
 		return gleann.RerankerConfig{Provider: gleann.RerankerJina, Model: model, BaseURL: url}
 	}
-	cfg := gleann.RerankerConfig{
-		Provider: gleann.RerankerProvider(config.EmbeddingProvider),
-		Model:    model,
-		BaseURL:  config.OllamaHost,
+	if p := getFlag(args, "--rerank-provider"); p != "" {
+		config.SearchConfig.RerankerConfig.Provider = gleann.RerankerProvider(p)
 	}
-	if cfg.Provider == gleann.RerankerOllama {
-		cfg.APIKey = config.APIKeyForProvider("ollama")
-	}
-	return cfg
+	return gleann.ResolveRerankerConfig(config, model)
 }
 
 // searchValueFlags are the search/config flags that consume the next argument.
@@ -236,7 +241,7 @@ var searchValueFlags = map[string]bool{
 	"--host": true, "--base-url": true, "--openai-base-url": true,
 	"--api-key": true, "--ollama-api-key": true, "--index-dir": true,
 	"--kind": true, "--llm-model": true, "--llm-provider": true,
-	"--rerank-model": true, "--rerank-url": true, "--rerank-pool": true,
+	"--rerank-model": true, "--rerank-url": true, "--rerank-pool": true, "--rerank-provider": true,
 	"--hybrid": true, "--hybrid-alpha": true, "--prune": true,
 }
 

@@ -179,6 +179,9 @@ func filterEmbeddingModels(models []ModelInfo) []ModelInfo {
 	}
 	for _, m := range models {
 		lower := strings.ToLower(m.Name)
+		if isRerankerName(m.Name) {
+			continue // a cross-encoder gives meaningless embeddings
+		}
 		// Any .eifm file is an embedding model by definition
 		if strings.HasSuffix(lower, ".eifm") {
 			result = append(result, m)
@@ -224,18 +227,25 @@ func filterLLMModels(models []ModelInfo) []ModelInfo {
 // Only models with reranker-specific names are returned (e.g. bge-reranker,
 // jina-reranker, mxbai-rerank). Returns nil if no reranker models are found.
 func filterRerankerModels(models []ModelInfo) []ModelInfo {
-	rerankKW := []string{"rerank", "reranker", "cross-encoder"}
 	var rerankers []ModelInfo
 	for _, m := range models {
-		lower := strings.ToLower(m.Name)
-		for _, kw := range rerankKW {
-			if strings.Contains(lower, kw) {
-				rerankers = append(rerankers, m)
-				break
-			}
+		if isRerankerName(m.Name) {
+			rerankers = append(rerankers, m)
 		}
 	}
 	return rerankers
+}
+
+// isRerankerName reports whether a model name looks like a cross-encoder
+// (bge-reranker, jina-reranker, mxbai-rerank, mmarco-mMiniLMv2, ...).
+func isRerankerName(name string) bool {
+	lower := strings.ToLower(name)
+	for _, kw := range []string{"rerank", "cross-encoder", "mmarco"} {
+		if strings.Contains(lower, kw) {
+			return true
+		}
+	}
+	return false
 }
 
 func formatModelSize(bytes int64) string {

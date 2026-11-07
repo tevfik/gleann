@@ -92,13 +92,24 @@
       "sha256": "8ba9baf3a7345f705a11878397500fb25174034f0fd784e83aa4a96aaa47735f"
     },
     {
-      "id": "bge-reranker-v2-m3",
-      "name": "BGE Reranker v2 M3 Q4",
+      "id": "mmarco-mminilmv2-l12",
+      "name": "mMiniLMv2 mMARCO Reranker Q8 (multilingual, fast — recommended)",
       "kind": "reranker",
-      "file": "bge-reranker-v2-m3-Q4_K_M.gguf",
-      "url": "https://huggingface.co/gpustack/bge-reranker-v2-m3-GGUF/resolve/main/bge-reranker-v2-m3-Q4_K_M.gguf",
-      "bytes": 438376864,
-      "sha256": "e186a244ed455b4ab66ec64339ce7427a6ae13f5c0b5e544de96e50f0f8b3673"
+      "file": "mmarco-mMiniLMv2-L12-H384-v1-Q8_0.gguf",
+      "url": "https://huggingface.co/keisuke-miyako/mmarco-mMiniLMv2-L12-H384-v1-gguf-q8_0/resolve/main/mmarco-mMiniLMv2-L12-H384-v1-Q8_0.gguf",
+      "bytes": 132584000,
+      "sha256": "91d70301828ba735c22eda56adb649f48975f371337e8c8b046326b885e26eed",
+      "note": "Recommended default. 118M cross-encoder, multilingual (Turkish included). About 0.4 s per query for 20 candidates on a CPU; +6 to +9 nDCG@10 on hard Turkish retrieval."
+    },
+    {
+      "id": "bge-reranker-v2-m3",
+      "name": "BGE Reranker v2 M3 Q8 (multilingual, best quality, slow on CPU)",
+      "kind": "reranker",
+      "file": "bge-reranker-v2-m3-Q8_0.gguf",
+      "url": "https://huggingface.co/gpustack/bge-reranker-v2-m3-GGUF/resolve/main/bge-reranker-v2-m3-Q8_0.gguf",
+      "bytes": 635676416,
+      "sha256": "a43c7c9b11a4c1517e5bf95151960e1621d1b72f7a493364b01e386cf1aaa1d3",
+      "note": "Highest quality. 568M cross-encoder, multilingual. About 3 s per query on a CPU (up to 13 s on long passages): use with a GPU server or for batch work."
     }
   ]
 }

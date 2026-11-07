@@ -745,7 +745,7 @@ func createAskSearcher(ctx context.Context, name string, args []string, config g
 			os.Exit(1)
 		}
 
-		if hasFlag(args, "--rerank") {
+		if wantRerank(config, args) {
 			rerankerCfg := rerankerConfigFromFlags(config, args)
 			s.SetReranker(gleann.NewReranker(rerankerCfg))
 			config.SearchConfig.UseReranker = true

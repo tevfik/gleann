@@ -40,6 +40,8 @@ type Entry struct {
 	URL    string `json:"url"`
 	Bytes  int64  `json:"bytes"`
 	SHA256 string `json:"sha256"`
+	// Note tells the user when to pick this model (speed, quality, languages).
+	Note string `json:"note,omitempty"`
 }
 
 // All returns every catalog entry.
@@ -176,7 +178,7 @@ func Catalog() *settings.Catalog {
 			for _, e := range All() {
 				out = append(out, settings.Model{
 					ID: e.ID, Name: e.Name, Group: kindGroup[e.Kind], Size: settings.HumanSize(e.Bytes),
-					Value: e.File, Installed: e.Installed(),
+					Note: e.Note, Value: e.File, Installed: e.Installed(),
 				})
 			}
 			return out

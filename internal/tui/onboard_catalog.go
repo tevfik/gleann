@@ -9,6 +9,7 @@ import (
 
 	"github.com/tevfik/gleann/internal/modelcatalog"
 	"github.com/tevfik/gleann/modules/settings"
+	"github.com/tevfik/gleann/pkg/gleann"
 )
 
 // catalogOptions are the catalog models of a kind that are not on disk yet,
@@ -65,6 +66,9 @@ func downloadChosenModels(ctx context.Context, r OnboardResult, out io.Writer) b
 	if local(r.LLMProvider) {
 		chosen = append(chosen, r.LLMModel)
 	}
+	if r.RerankEnabled && !local(r.EmbeddingProvider) {
+		chosen = append(chosen, r.RerankModel) // the built-in reranker runs GGUF files whatever the embedder
+	}
 
 	seen := map[string]bool{}
 	did := false
@@ -88,4 +92,51 @@ func downloadChosenModels(ctx context.Context, r OnboardResult, out io.Writer) b
 		fmt.Fprintf(out, "\n✓ %s\n", e.Path())
 	}
 	return did
+}
+
+// withRerankCatalog puts the catalog's rerankers (recommended first) in front
+// of models when this build reranks in process; a catalog model already in
+// models is not listed twice.
+func withRerankCatalog(models []ModelInfo) []ModelInfo {
+	if !gleann.EIFRerankAvailable() {
+		return models
+	}
+	have := map[string]bool{}
+	for _, m := range models {
+		have[strings.ToLower(filepath.Base(m.Name))] = true
+		have[strings.ToLower(filepath.Base(m.Tag))] = true
+	}
+	var out []ModelInfo
+	for _, e := range modelcatalog.OfKind(modelcatalog.Reranker) {
+		if have[strings.ToLower(e.File)] {
+			continue
+		}
+		name := e.Name
+		if !e.Installed() {
+			name = "(Download) " + name
+		}
+		out = append(out, ModelInfo{Name: name, Tag: e.File, Size: settings.HumanSize(e.Bytes)})
+	}
+	return append(out, models...)
+}
+
+// localModelValue is what a chosen model is saved as: a GGUF file in
+// ~/.gleann/models by name, another GGUF file by path, a server model by name.
+func localModelValue(mi ModelInfo) string {
+	tag := strings.ToLower(mi.Tag)
+	if !strings.HasSuffix(tag, ".gguf") && !strings.HasSuffix(tag, ".eifm") {
+		return mi.Name
+	}
+	if !strings.ContainsAny(mi.Tag, `/\`) || filepath.Dir(mi.Tag) == DefaultModelsDir() {
+		return filepath.Base(mi.Tag)
+	}
+	return mi.Tag
+}
+
+// rerankEnableHint describes the reranker the wizard will set up.
+func rerankEnableHint() string {
+	if gleann.EIFRerankAvailable() {
+		return "Recommended: built-in mMiniLMv2 mMARCO (multilingual, fast); BGE v2 M3 is more accurate but ~3 s/query on CPU"
+	}
+	return "Two-stage reranking through your provider (this build has no built-in reranker)"
 }
