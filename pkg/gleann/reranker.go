@@ -33,7 +33,22 @@ const (
 
 	// RerankerLlamacpp uses standard llama.cpp /api/embed functionality
 	RerankerLlamacpp RerankerProvider = "llamacpp"
+
+	// RerankerEIF runs a GGUF cross-encoder (bge-reranker-v2-m3,
+	// mmarco-mMiniLMv2, ...) in process through bitllm.c. Needs a build with
+	// the eif tag; Model is a path or a file name in ~/.gleann/models.
+	RerankerEIF RerankerProvider = "eif"
 )
+
+// EIFRankFunc scores docs against query with an in-process cross-encoder and
+// returns one relevance logit per doc (higher is more relevant).
+type EIFRankFunc func(ctx context.Context, model, query string, docs []string) ([]float32, error)
+
+var eifRank EIFRankFunc
+
+// RegisterEIFRanker installs the in-process cross-encoder used by the "eif"
+// reranker provider. The eif build of internal/embedding calls it from init.
+func RegisterEIFRanker(fn EIFRankFunc) { eifRank = fn }
 
 // RerankerConfig configures the reranker.
 type RerankerConfig struct {
@@ -141,6 +156,8 @@ func (r *CrossEncoderReranker) Rerank(ctx context.Context, query string, results
 		return r.rerankCohere(ctx, query, results, topN)
 	case RerankerVoyage:
 		return r.rerankVoyage(ctx, query, results, topN)
+	case RerankerEIF:
+		return r.rerankEIF(ctx, query, results, topN)
 	default:
 		return nil, fmt.Errorf("unsupported reranker provider: %s", r.config.Provider)
 	}
@@ -234,6 +251,35 @@ func (r *CrossEncoderReranker) ollamaEmbed(ctx context.Context, texts []string) 
 		return nil, fmt.Errorf("decode ollama response: %w", err)
 	}
 	return result.Embeddings, nil
+}
+
+// ── In-process cross-encoder (bitllm.c) ────────────────────────
+
+func (r *CrossEncoderReranker) rerankEIF(ctx context.Context, query string, results []SearchResult, topN int) ([]SearchResult, error) {
+	if eifRank == nil {
+		return nil, fmt.Errorf("eif reranker: this gleann build has no in-process engine (build with -tags eif), or use --rerank-url")
+	}
+	docs := make([]string, len(results))
+	for i, res := range results {
+		docs[i] = res.Text
+	}
+	scores, err := eifRank(ctx, r.config.Model, query, docs)
+	if err != nil {
+		return nil, fmt.Errorf("eif reranker: %w", err)
+	}
+	if len(scores) != len(results) {
+		return nil, fmt.Errorf("eif reranker: got %d scores for %d documents", len(scores), len(results))
+	}
+	reranked := make([]SearchResult, len(results))
+	copy(reranked, results)
+	for i := range reranked {
+		reranked[i].Score = scores[i]
+	}
+	sort.SliceStable(reranked, func(i, j int) bool { return reranked[i].Score > reranked[j].Score })
+	if topN > 0 && len(reranked) > topN {
+		reranked = reranked[:topN]
+	}
+	return reranked, nil
 }
 
 // ── Jina Reranker API ──────────────────────────────────────────

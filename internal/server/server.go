@@ -675,6 +675,7 @@ type searchRequest struct {
 	RecomputeEmbeddings bool                    `json:"recompute_embeddings,omitempty"`
 	Rerank              bool                    `json:"rerank,omitempty"`
 	RerankModel         string                  `json:"rerank_model,omitempty"`
+	RerankPool          int                     `json:"rerank_pool,omitempty"` // candidates sent to the reranker (default max(4*top_k, 50))
 	MetadataFilters     []gleann.MetadataFilter `json:"metadata_filters,omitempty"`
 	FilterLogic         string                  `json:"filter_logic,omitempty"`
 	GraphContext        bool                    `json:"graph_context,omitempty"`
@@ -766,6 +767,9 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 			APIKey:   cfg.APIKeyForProvider(cfg.EmbeddingProvider),
 		}
 		opts = append(opts, gleann.WithCustomReranker(gleann.NewReranker(rerankerCfg)))
+		if req.RerankPool > 0 {
+			opts = append(opts, gleann.WithRerankPool(req.RerankPool))
+		}
 	}
 
 	results, err := searcher.Search(r.Context(), req.Query, opts...)
