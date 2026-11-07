@@ -15,9 +15,9 @@
       "name": "Multilingual E5 Small Q8 (multilingual, Turkish)",
       "kind": "embedding",
       "file": "multilingual-e5-small-q8_0.gguf",
-      "url": "https://huggingface.co/cstr/multilingual-e5-small-GGUF/resolve/main/multilingual-e5-small-q8_0.gguf",
-      "bytes": 131624960,
-      "sha256": "0a34067a40f25d3149b36885faa62bee0e5284d0f9edc102acfc00e115d953e8"
+      "url": "https://huggingface.co/TwinSunsLLC/multilingual-e5-small-gguf/resolve/main/multilingual-e5-small-q8_0.gguf",
+      "bytes": 132439008,
+      "sha256": "e011debc1208e31bf7b6aebee2d9fc8bd2ca11694a77ed66ac9d0c9d0a877c93"
     },
     {
       "id": "all-minilm-l6-v2",
