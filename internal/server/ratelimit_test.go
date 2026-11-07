@@ -179,6 +179,38 @@ func TestRateLimitMiddleware_Returns429WhenLimited(t *testing.T) {
 	}
 }
 
+// Local clients are not limited; traffic a local proxy forwards from outside is.
+func TestRateLimitMiddleware_LoopbackExemptForwardedNot(t *testing.T) {
+	rl := &rateLimiter{buckets: make(map[string]*bucket), rate: 0.0001, burst: 1, ttl: time.Minute, cleaned: time.Now()}
+	handler := rl.middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) }))
+	send := func(remote, xff string) int {
+		req := httptest.NewRequest(http.MethodPost, "/api/indexes/x/search", nil)
+		req.RemoteAddr = remote
+		if xff != "" {
+			req.Header.Set("X-Forwarded-For", xff)
+		}
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, req)
+		return w.Code
+	}
+	for _, remote := range []string{"127.0.0.1:5000", "[::1]:5000"} {
+		for i := 0; i < 20; i++ {
+			if code := send(remote, ""); code != http.StatusOK {
+				t.Fatalf("%s request %d: got %d, loopback must not be limited", remote, i, code)
+			}
+		}
+	}
+	limited := false
+	for i := 0; i < 5; i++ {
+		if send("127.0.0.1:5000", "203.0.113.7") == http.StatusTooManyRequests {
+			limited = true
+		}
+	}
+	if !limited {
+		t.Error("requests a local proxy forwards from a public client must still be limited")
+	}
+}
+
 // --- newRateLimiter env var tests ---
 
 func TestNewRateLimiter_EnvVarOverride(t *testing.T) {

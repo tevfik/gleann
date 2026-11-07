@@ -10,7 +10,8 @@
 //	GLEANN_RATE_LIMIT   — tokens/second sustained (default 60)
 //	GLEANN_RATE_BURST   — burst capacity         (default 120)
 //
-// Skipped paths: /health, /metrics (monitoring always allowed).
+// Skipped: /health, /metrics (monitoring always allowed) and loopback clients
+// (the machine's own agents and scripts; see middleware).
 package server
 
 import (
@@ -124,6 +125,15 @@ func (rl *rateLimiter) middleware(next http.Handler) http.Handler {
 		}
 
 		ip := clientIP(r)
+		// Local clients (MCP agents, the web UI, CLI scripts) are not limited:
+		// the limiter protects a server exposed to a network, and throttling
+		// the machine's own batch jobs only breaks them. clientIP resolves a
+		// local reverse proxy to the forwarded address, so traffic it relays
+		// from outside is still limited.
+		if isLoopbackIP(ip) {
+			next.ServeHTTP(w, r)
+			return
+		}
 		if !rl.allow(ip) {
 			w.Header().Set("Retry-After", "1")
 			writeError(w, http.StatusTooManyRequests, "rate limit exceeded — slow down")
@@ -162,6 +172,12 @@ func clientIP(r *http.Request) string {
 		return r.RemoteAddr
 	}
 	return host
+}
+
+// isLoopbackIP reports whether ip (no port) is a loopback address.
+func isLoopbackIP(ip string) bool {
+	parsed := net.ParseIP(ip)
+	return parsed != nil && parsed.IsLoopback()
 }
 
 // sanitizeIP parses and returns a trimmed IP string, or "" on failure.
