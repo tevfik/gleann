@@ -4,6 +4,25 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [v1.8.12] — 2026-11-07
+
+See [docs/releases/v1.8.12.md](docs/releases/v1.8.12.md). Releases v1.8.8 to v1.8.11 are
+described only in `docs/releases/`.
+
+### Fixed
+- The catalog's `multilingual-e5-small` GGUF had the wrong tokenizer; it is replaced by a correct conversion. Rebuild indexes made with it.
+- Loopback clients are no longer rate-limited; proxied traffic still is.
+- `gleann llamacpp` status lines go to stderr, so `--json` output stays valid.
+
+### Added
+- In-process cross-encoder reranking with bitllm.c (`reranker: eif`); before, reranking was skipped for the `eif` provider.
+- `rerank_pool` in REST search.
+- Embedded llama-server for `linux-arm64`.
+
+### Changed
+- Embedded llama-server updated from llama.cpp b4898 to b12176; readiness waits for `/health`, `--mlock` is no longer passed.
+- The full Docker image installs `libgomp1` and `libssl3` for the embedded llama-server.
+
 ## [v1.8.7] — 2026-10-19
 
 ### Added

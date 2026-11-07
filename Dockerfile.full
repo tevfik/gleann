@@ -31,8 +31,9 @@ RUN CGO_ENABLED=1 GOOS=linux GOARCH=amd64 \
 # ── Stage 2: Runtime ─────────────────────────────────────────────────────────
 FROM debian:bookworm-slim
 
+# libgomp1 and libssl3: runtime dependencies of the embedded llama-server (b12176)
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates \
+    ca-certificates libgomp1 libssl3 \
     && rm -rf /var/lib/apt/lists/*
 
 RUN groupadd -r gleann && useradd -r -g gleann gleann
