@@ -48,6 +48,7 @@ const (
 	phaseSummary                           // summary & confirm
 	phaseInstall                           // select: system install option
 	phasePlugins                           // navigate to plugin manager
+	phaseSettingsScreen                    // open the full settings screen (same fields as the web UI)
 )
 
 // totalVisibleSteps for the progress bar (skip fetching phases).
@@ -80,8 +81,11 @@ type OnboardResult struct {
 	LLMModel           string `json:"llm_model"`
 	RerankEnabled      bool   `json:"rerank_enabled"`
 	RerankModel        string `json:"rerank_model,omitempty"`
-	IndexDir           string `json:"index_dir"`
-	Completed          bool   `json:"completed"`
+	// RerankProvider: "" or "auto" (bitllm.c in process when available, else
+	// the embedding provider), "eif", "ollama", "llamacpp", "jina", "cohere", "voyage".
+	RerankProvider string `json:"rerank_provider,omitempty"`
+	IndexDir       string `json:"index_dir"`
+	Completed      bool   `json:"completed"`
 
 	// LlamaCPP Config
 	LlamaCPPConfig gleann.LlamaCPPConfig `json:"llamacpp_config,omitempty"`
@@ -115,6 +119,13 @@ type OnboardResult struct {
 	// REST API server.
 	ServerEnabled bool   `json:"server_enabled,omitempty"`
 	ServerAddr    string `json:"server_addr,omitempty"`
+	// Auth: "" or "on" (token required), "off" (loopback binds only).
+	Auth        string   `json:"auth,omitempty"`
+	CORSOrigins []string `json:"cors_origins,omitempty"`
+	RateLimit   int      `json:"rate_limit,omitempty"` // requests/s per client IP (default 60)
+	RateBurst   int      `json:"rate_burst,omitempty"` // burst per client IP (default 120)
+	// corsText is cors_origins as the settings screens edit it (comma-separated).
+	corsText string
 
 	// CLI behavior.
 	Quiet    bool `json:"quiet,omitempty"`     // Suppress status messages.
@@ -135,12 +146,13 @@ type OnboardResult struct {
 
 // OnboardModel is the Bubble Tea model for configuration onboarding.
 type OnboardModel struct {
-	phase       wizardPhase
-	width       int
-	height      int
-	cancelled   bool
-	done        bool
-	openPlugins bool
+	phase        wizardPhase
+	width        int
+	height       int
+	cancelled    bool
+	done         bool
+	openPlugins  bool
+	openSettings bool
 
 	// Menu mode (existing config).
 	menuMode    bool
@@ -246,6 +258,7 @@ type settingsItem struct {
 // settingsMenuItems returns the menu items for the settings menu.
 func settingsMenuItems() []settingsItem {
 	return []settingsItem{
+		{"All Settings (same as web UI)", phaseSettingsScreen},
 		{"Embedding Provider", phaseEmbProvider},
 		{"Embedding Host/Key", phaseEmbHost},
 		{"Embedding Model", phaseEmbModel},
@@ -507,7 +520,15 @@ func (m OnboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Allow retry or manual entry, advance with fallback defaults.
 			if msg.forReranker {
 				m.rerankEnabled = false
-				if m.embProviders[m.embProviderIdx] == "llamacpp" {
+				if gleann.EIFRerankAvailable() {
+					// The built-in reranker needs no server: offer its models.
+					m.fetchErr = "Could not list the provider's reranker models; the built-in ones below need no server"
+					m.rerankAllModels = withRerankCatalog(nil)
+					m.rerankModels = m.rerankAllModels
+					m.rerankModels, m.rerankModelIdx = selectModel(m.rerankModels, m.currentRerankModel(), false)
+					m.rerankEnabled = true
+					m.phase = phaseRerankModel
+				} else if m.embProviders[m.embProviderIdx] == "llamacpp" {
 					m.fetchErr = "No local .gguf models found. Select one to download to ~/.gleann/models"
 					m.rerankAllModels = catalogOptions(modelcatalog.Reranker, false, nil)
 					m.rerankModels = m.rerankAllModels
@@ -554,8 +575,8 @@ func (m OnboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.fetchErr = ""
 		if msg.forReranker {
-			m.rerankAllModels = msg.models
-			m.rerankModels = filterRerankerModels(msg.models)
+			m.rerankAllModels = withRerankCatalog(msg.models)
+			m.rerankModels = withRerankCatalog(filterRerankerModels(msg.models))
 			if len(m.rerankModels) == 0 {
 				m.rerankOptionIdx = 0
 				if m.embProviders[m.embProviderIdx] == "llamacpp" {
@@ -910,6 +931,11 @@ func (m OnboardModel) handleMenuKeys(key string) (tea.Model, tea.Cmd) {
 			m.done = true
 			return m, tea.Quit
 		}
+		if item.phase == phaseSettingsScreen {
+			m.openSettings = true // nothing to save: the settings screen saves each change
+			m.done = true
+			return m, tea.Quit
+		}
 		target := item.phase
 		if target == phaseEmbHost {
 			if m.embProviders[m.embProviderIdx] == "native" {
@@ -1256,7 +1282,7 @@ func (m *OnboardModel) buildResult() {
 	}
 	rerankModel := ""
 	if m.rerankEnabled && len(m.rerankModels) > 0 && m.rerankModelIdx < len(m.rerankModels) {
-		rerankModel = m.rerankModels[m.rerankModelIdx].Name
+		rerankModel = localModelValue(m.rerankModels[m.rerankModelIdx])
 	} else if m.existingCfg != nil && m.rerankEnabled && m.existingCfg.RerankModel != "" {
 		rerankModel = m.existingCfg.RerankModel
 	}
@@ -1383,7 +1409,14 @@ func (m *OnboardModel) buildResult() {
 		m.result.Temperature = m.existingCfg.Temperature
 		m.result.MaxTokens = m.existingCfg.MaxTokens
 		m.result.TopK = m.existingCfg.TopK
+		m.result.RepeatPenalty = m.existingCfg.RepeatPenalty
 		m.result.AnthropicKey = m.existingCfg.AnthropicKey
+		// The wizard does not ask for the reranker engine: keep the saved one
+		// while the model is the same, otherwise let "auto" pick it (a GGUF
+		// file runs in process, a server model name on its server).
+		if m.existingCfg.RerankModel == m.result.RerankModel {
+			m.result.RerankProvider = m.existingCfg.RerankProvider
+		}
 		// Preserve MCP if not explicitly changed in menu mode.
 		if !m.menuMode || m.mcpEnabled {
 			// Already set above via m.mcpEnabled
@@ -1404,6 +1437,11 @@ func (m OnboardModel) Cancelled() bool {
 // OpenPlugins returns whether the user wants to open the plugin manager.
 func (m OnboardModel) OpenPlugins() bool {
 	return m.openPlugins
+}
+
+// OpenSettings returns whether the user wants the full settings screen.
+func (m OnboardModel) OpenSettings() bool {
+	return m.openSettings
 }
 
 // ── View ───────────────────────────────────────────────────────
@@ -1562,11 +1600,12 @@ func (m OnboardModel) View() tea.View {
 
 	case phaseReranker:
 		b.WriteString(m.renderSelect("7", "Reranker",
-			"Reranking improves search accuracy using a second-stage model.\nUseful for RAG — can be skipped for basic search.",
+			"A cross-encoder re-scores the best candidates before answering. Clearly better on hard and\n"+
+				"     multilingual questions (+6 to +9 nDCG@10 on Turkish); ~0.4 s per query with the recommended model.",
 			m.rerankOptions, m.rerankOptionIdx,
 			[]string{
-				"No reranking — faster, uses only embedding similarity",
-				"Enable two-stage reranking for higher accuracy",
+				"No reranking — faster, uses only embedding + keyword similarity",
+				rerankEnableHint(),
 			}))
 
 	case phaseRerankFetching:

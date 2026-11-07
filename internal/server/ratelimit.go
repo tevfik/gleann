@@ -68,6 +68,20 @@ func newRateLimiter() *rateLimiter {
 	}
 }
 
+// applyConfigRates sets the rates from config.json (rate_limit, rate_burst)
+// unless GLEANN_RATE_LIMIT / GLEANN_RATE_BURST are set: the environment wins,
+// then the config, then the defaults. Zero means "keep".
+func (rl *rateLimiter) applyConfigRates(rate, burst int) {
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
+	if rate > 0 && os.Getenv("GLEANN_RATE_LIMIT") == "" {
+		rl.rate = float64(rate)
+	}
+	if burst > 0 && os.Getenv("GLEANN_RATE_BURST") == "" {
+		rl.burst = float64(burst)
+	}
+}
+
 // allow returns true if the request from ip is within the rate limit.
 func (rl *rateLimiter) allow(ip string) bool {
 	now := time.Now()

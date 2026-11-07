@@ -23,7 +23,8 @@ Cross-encoders evaluate the query and candidate passage simultaneously, computin
 
 | Model | Provider | Strengths | MCP / CLI Flag |
 |---|---|---|---|
-| **`bge-reranker-v2-m3`** *(Default)* | Ollama / LlamaCPP | Multilingual, optimized for technical code & docs | `--rerank-model bge-reranker-v2-m3` |
+| **`mmarco-mMiniLMv2-L12-H384-v1`** *(Default, built-in)* | Built-in bitllm.c (eif builds) | Multilingual (Turkish included), 118M, ~0.4 s per query for 20 candidates on CPU | `gleann models download mmarco-mminilmv2-l12` |
+| **`bge-reranker-v2-m3`** | Built-in bitllm.c / llama.cpp server | Multilingual, most accurate; ~3 s per query on CPU, use a GPU server for interactive use | `gleann models download bge-reranker-v2-m3` |
 | **`jina-reranker-v2-base-multilingual`** | Jina AI / HTTP | 8K context, high code rank accuracy | `--rerank-model jina-reranker-v2-base-multilingual` |
 | **`cohere-rerank-v3.5`** | Cohere API | Industry standard accuracy for complex reasoning | `--rerank-model rerank-english-v3.0` |
 

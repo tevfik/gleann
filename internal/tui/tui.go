@@ -152,6 +152,14 @@ func runOnboard() error {
 		return nil // go back to home
 	}
 
+	// "All Settings": the registry screen saves every change itself.
+	if ob.OpenSettings() {
+		if err := RunSettings(); err != nil {
+			return err
+		}
+		return runOnboard()
+	}
+
 	// If the user chose "Manage Plugins", launch the plugin screen, then come
 	// back to the settings it was opened from.
 	if ob.OpenPlugins() {
@@ -361,4 +369,14 @@ func loadConfig() gleann.Config {
 		}
 	}
 	return cfg
+}
+
+// RunSettings runs the full settings screen (the fields of Settings(), the
+// same the web UI's System → Settings form shows).
+func RunSettings() error {
+	_, err := tea.NewProgram(NewSettingsModel()).Run()
+	if err != nil {
+		return fmt.Errorf("settings: %w", err)
+	}
+	return nil
 }

@@ -122,7 +122,14 @@ Options:
 	config.EmbedderResolver = defaultEmbedderResolver(config)
 	srv := server.NewServer(config, addr, version)
 	// Remember what start-up changed in memory so a UI Save cannot persist it.
-	srv.SetRuntimeOverrides(gleann.ChangedKeys(configAsLoaded, config))
+	overrides := gleann.ChangedKeys(configAsLoaded, config)
+	srv.SetRuntimeOverrides(overrides)
+	mountSettings(srv, args, configAsLoaded, overrides)
+	// POST /api/indexes/{name}/storage: the same in-place conversion as
+	// `gleann index storage <name> --set` and the TUI Index Manager.
+	srv.SetStorageSwitcher(func(cfg gleann.Config, name, target string) error {
+		return setStorageMode(cfg, name, target, "none")
+	})
 
 	// Graceful shutdown.
 	stop := make(chan os.Signal, 1)

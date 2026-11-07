@@ -51,6 +51,11 @@ type Server struct {
 	embedder *embedding.Computer
 	cfgMu    sync.RWMutex
 
+	// settingsHandler serves GET/PUT /api/settings (see SetSettingsHandler).
+	settingsHandler http.Handler
+	// storageSwitcher converts an index's vector storage (SetStorageSwitcher).
+	storageSwitcher StorageSwitcher
+
 	logBuffer *LogBuffer
 
 	// searchers caches loaded index searchers. mu guards searchers,
@@ -287,6 +292,13 @@ func (s *Server) buildMux() *http.ServeMux {
 	// System & Config.
 	mux.HandleFunc("GET /api/config", s.handleGetConfig)
 	mux.HandleFunc("POST /api/config", s.handleUpdateConfig)
+	mux.HandleFunc("POST /api/indexes/{name}/storage", s.handleSetStorage)
+	if s.settingsHandler != nil {
+		// gleann's own settings form (modules/settings contract), the same
+		// fields the TUI settings screen edits.
+		mux.Handle("GET /api/settings", s.settingsHandler)
+		mux.Handle("PUT /api/settings", s.settingsHandler)
+	}
 	mux.HandleFunc("GET /api/logs", s.handleGetLogs)
 	mux.HandleFunc("GET /api/proxy/models", s.handleProxyModels)
 
@@ -372,6 +384,8 @@ func (s *Server) Start() error {
 			return err
 		}
 	}
+	cfg := s.cfg()
+	globalRateLimiter.applyConfigRates(cfg.RateLimit, cfg.RateBurst)
 	mux := s.buildMux()
 
 	s.server = &http.Server{
@@ -574,6 +588,7 @@ func (s *Server) handleListIndexes(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"indexes":                  filtered,
+		"storage":                  indexStorage(cfg.IndexDir, filtered),
 		"count":                    len(filtered),
 		"current_embedding_model":  embedderName,
 		"current_embedding_models": activeEmbeddingModels(embedderName, cfg),
@@ -753,19 +768,7 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 
 	// Set up per-request reranker if requested.
 	if cfg := s.cfg(); req.Rerank || cfg.SearchConfig.UseReranker {
-		rerankModel := req.RerankModel
-		if rerankModel == "" {
-			rerankModel = cfg.SearchConfig.RerankerConfig.Model
-		}
-		if rerankModel == "" {
-			rerankModel = "bge-reranker-v2-m3"
-		}
-		rerankerCfg := gleann.RerankerConfig{
-			Provider: gleann.RerankerProvider(cfg.EmbeddingProvider),
-			Model:    rerankModel,
-			BaseURL:  cfg.OllamaHost,
-			APIKey:   cfg.APIKeyForProvider(cfg.EmbeddingProvider),
-		}
+		rerankerCfg := gleann.ResolveRerankerConfig(cfg, req.RerankModel)
 		opts = append(opts, gleann.WithCustomReranker(gleann.NewReranker(rerankerCfg)))
 		if req.RerankPool > 0 {
 			opts = append(opts, gleann.WithRerankPool(req.RerankPool))
@@ -1776,21 +1779,7 @@ func (s *Server) handleUpdateConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	baseURL := newConfig.OllamaHost
-	if newConfig.EmbeddingProvider == "openai" && newConfig.OpenAIBaseURL != "" {
-		baseURL = newConfig.OpenAIBaseURL
-	}
-	embedder := embedding.NewComputer(embedding.Options{
-		Provider: embedding.Provider(newConfig.EmbeddingProvider),
-		Model:    newConfig.EmbeddingModel,
-		BaseURL:  baseURL,
-		APIKey:   newConfig.APIKeyForProvider(newConfig.EmbeddingProvider),
-	})
-
-	s.cfgMu.Lock()
-	s.config = newConfig
-	s.embedder = embedder
-	s.cfgMu.Unlock()
+	s.ApplyConfig(newConfig)
 	if len(changedOverrides) > 0 {
 		s.overridesMu.Lock()
 		for _, k := range changedOverrides {
@@ -1798,13 +1787,39 @@ func (s *Server) handleUpdateConfig(w http.ResponseWriter, r *http.Request) {
 		}
 		s.overridesMu.Unlock()
 	}
-
-	// Cached searchers hold the old config/embedder; drop them (each is
-	// closed once in-flight requests release it).
-	s.invalidateAllSearchers()
-
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
+
+// ApplyConfig makes cfg the running config: it builds a new embedder and
+// drops the cached searchers (each is closed once in-flight requests release
+// it). POST /api/config and the settings registry (PUT /api/settings) call it
+// after saving.
+func (s *Server) ApplyConfig(cfg gleann.Config) {
+	_ = cfg.ApplyStorageMode()
+	baseURL := cfg.OllamaHost
+	if cfg.EmbeddingProvider == "openai" && cfg.OpenAIBaseURL != "" {
+		baseURL = cfg.OpenAIBaseURL
+	}
+	embedder := embedding.NewComputer(embedding.Options{
+		Provider: embedding.Provider(cfg.EmbeddingProvider),
+		Model:    cfg.EmbeddingModel,
+		BaseURL:  baseURL,
+		APIKey:   cfg.APIKeyForProvider(cfg.EmbeddingProvider),
+	})
+	s.cfgMu.Lock()
+	s.config = cfg
+	s.embedder = embedder
+	s.cfgMu.Unlock()
+	s.invalidateAllSearchers()
+}
+
+// CurrentConfig returns the running config.
+func (s *Server) CurrentConfig() gleann.Config { return s.cfg() }
+
+// SetSettingsHandler mounts the settings registry at GET/PUT /api/settings.
+// cmd/gleann builds it (internal/tui.Settings), which the server does not
+// import. Call it before Start.
+func (s *Server) SetSettingsHandler(h http.Handler) { s.settingsHandler = h }
 
 // configUpdateMu serialises handleUpdateConfig (read-merge-write of the
 // config file and the in-memory config).
@@ -1853,6 +1868,19 @@ func saveServerConfig(cfg gleann.Config) error {
 	incoming := make(map[string]any)
 	if err := json.Unmarshal(raw, &incoming); err != nil {
 		return fmt.Errorf("re-decode config: %w", err)
+	}
+	// The reranker is persisted in the flat keys every command reads
+	// (rerank_enabled / rerank_model / rerank_provider, see
+	// cmd/gleann applySavedReranker), so a save from here reaches the CLI,
+	// the MCP server and the TUI as well.
+	incoming["rerank_enabled"] = cfg.SearchConfig.UseReranker
+	delete(existing, "rerank_model")
+	delete(existing, "rerank_provider")
+	if m := cfg.SearchConfig.RerankerConfig.Model; m != "" {
+		incoming["rerank_model"] = m
+	}
+	if p := cfg.SearchConfig.RerankerConfig.Provider; p != "" {
+		incoming["rerank_provider"] = string(p)
 	}
 	// Keys owned by gleann.Config that were omitted (omitempty, i.e. now
 	// empty) must be removed, otherwise clearing a value such as an API

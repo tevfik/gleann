@@ -10,6 +10,10 @@ export function Indexes() {
   const [currentModel, setCurrentModel] = useState<string>('');
   const [activeModels, setActiveModels] = useState<string[]>([]);
   const [tagFilter, setTagFilter] = useState<string>('all');
+  // Vector storage per index (GET /api/indexes "storage"); switched with
+  // POST /api/indexes/{name}/storage, like the TUI Index Manager's "s".
+  const [storage, setStorage] = useState<Record<string, { mode: string; index_bytes: number; full_bytes: number; convertible: boolean; note?: string }>>({});
+  const [switching, setSwitching] = useState<string | null>(null);
 
   // Form: Create New Index
   const [newIndexName, setNewIndexName] = useState('');
@@ -75,6 +79,7 @@ export function Indexes() {
       .then(data => {
         const idxs: IndexInfo[] = data.indexes || [];
         setIndexes(idxs);
+        setStorage(data.storage || {});
         setCurrentModel(data.current_embedding_model || '');
         setActiveModels(data.current_embedding_models || []);
         if (idxs.length > 0 && !targetIndex) {
@@ -194,6 +199,29 @@ export function Indexes() {
     } catch (err) {
       console.error(err);
       loadIndexes();
+    }
+  };
+
+  const handleSwitchStorage = async (name: string, target: string) => {
+    const msg = target === 'store'
+      ? `Store the vectors of "${name}"? Searches become fast (only the query is embedded); the index file grows.`
+      : `Prune the vectors of "${name}"? The index file shrinks, but every search re-embeds hundreds of passages (seconds per query).`;
+    if (!confirm(`${msg}\n\nThe index is rebuilt from its stored passages in the background; the old files are restored if it fails.`)) return;
+    setSwitching(name);
+    try {
+      const res = await fetch(`/api/indexes/${encodeURIComponent(name)}/storage`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mode: target }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
+      if (!body.unchanged) alert(`Switching "${name}" to ${target} storage. Follow it under System → Background Tasks.`);
+    } catch (e: any) {
+      alert(`Could not switch storage: ${e.message || e}`);
+    } finally {
+      setSwitching(null);
+      setTimeout(loadIndexes, 3000);
     }
   };
 
@@ -786,6 +814,23 @@ export function Indexes() {
 
                   <td className="px-5 py-4 font-mono text-xs text-gray-400">
                     {idx.num_passages ?? idx.count ?? 0}
+                    {storage[idx.name] && storage[idx.name].mode !== 'none' && (
+                      <div className="mt-1.5 font-sans" title={storage[idx.name].note}>
+                        <span className={`text-[10px] px-1.5 py-0.5 rounded border ${storage[idx.name].mode === 'recompute'
+                          ? 'bg-amber-500/10 text-amber-300 border-amber-500/30' : 'bg-white/5 text-gray-400 border-white/10'}`}>
+                          {storage[idx.name].mode}
+                        </span>
+                        {storage[idx.name].convertible && (storage[idx.name].mode === 'store' || storage[idx.name].mode === 'recompute') && (
+                          <button
+                            disabled={switching === idx.name}
+                            onClick={() => handleSwitchStorage(idx.name, storage[idx.name].mode === 'store' ? 'recompute' : 'store')}
+                            className="ml-1.5 text-[10px] text-blue-400 hover:text-blue-300 disabled:opacity-40"
+                          >
+                            {switching === idx.name ? '…' : storage[idx.name].mode === 'store' ? '→ recompute' : '→ store'}
+                          </button>
+                        )}
+                      </div>
+                    )}
                   </td>
 
                   <td className="px-5 py-4">

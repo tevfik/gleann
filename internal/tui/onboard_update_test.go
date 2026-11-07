@@ -535,11 +535,23 @@ func TestOnboardMenuSaveAndExit(t *testing.T) {
 func TestOnboardMenuEnterSubPhase(t *testing.T) {
 	cfg := &OnboardResult{EmbeddingProvider: "ollama", LLMProvider: "ollama"}
 	m := NewOnboardModelWithConfig(cfg)
-	m.menuCursor = 0 // Embedding Provider
+	m.menuCursor = 1 // Embedding Provider (0 is All Settings)
 	result, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	om := result.(OnboardModel)
 	if om.phase != phaseEmbProvider {
 		t.Errorf("phase = %d, want %d", om.phase, phaseEmbProvider)
+	}
+}
+
+func TestOnboardMenuOpensAllSettings(t *testing.T) {
+	m := NewOnboardModelWithConfig(&OnboardResult{EmbeddingProvider: "ollama", LLMProvider: "ollama"})
+	if m.menuItems[0].phase != phaseSettingsScreen {
+		t.Fatalf("All Settings must be the first menu item, got %q", m.menuItems[0].label)
+	}
+	result, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	om := result.(OnboardModel)
+	if !om.OpenSettings() || om.OpenPlugins() || om.Result().Completed {
+		t.Fatal("All Settings opens the settings screen and saves nothing itself")
 	}
 }
 

@@ -319,6 +319,40 @@ func applySavedConfig(config *gleann.Config, args []string) {
 	if savedCfg.MultimodalModel != "" {
 		config.MultimodalModel = savedCfg.MultimodalModel
 	}
+	// Reranker: the TUI, the web UI (/api/settings) and `gleann config` all
+	// write rerank_enabled / rerank_model / rerank_provider; every command
+	// reads them here into SearchConfig.
+	applySavedReranker(config, savedCfg)
+	// REST server policy (auth, CORS, rate limit); GLEANN_AUTH,
+	// GLEANN_CORS_ORIGINS and GLEANN_RATE_* still win where the server reads them.
+	if savedCfg.Auth != "" {
+		config.Auth = savedCfg.Auth
+	}
+	if len(savedCfg.CORSOrigins) > 0 {
+		config.CORSOrigins = savedCfg.CORSOrigins
+	}
+	if savedCfg.RateLimit > 0 {
+		config.RateLimit = savedCfg.RateLimit
+	}
+	if savedCfg.RateBurst > 0 {
+		config.RateBurst = savedCfg.RateBurst
+	}
+}
+
+// applySavedReranker copies the saved reranker settings into config. A
+// --rerank-model or --rerank-provider flag still wins (rerankerConfigFromFlags).
+func applySavedReranker(config *gleann.Config, saved *tui.OnboardResult) {
+	if saved == nil {
+		return
+	}
+	config.SearchConfig.UseReranker = saved.RerankEnabled
+	rc := &config.SearchConfig.RerankerConfig
+	if saved.RerankModel != "" {
+		rc.Model = saved.RerankModel
+	}
+	if saved.RerankProvider != "" {
+		rc.Provider = gleann.RerankerProvider(saved.RerankProvider)
+	}
 }
 
 // resolveOllamaAPIKey returns the Ollama API key to use: the value in cfg

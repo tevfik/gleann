@@ -148,6 +148,7 @@ func mergeConfig(existing, incoming *OnboardResult) OnboardResult {
 		merged.Completed = true
 		merged.RerankEnabled = incoming.RerankEnabled
 		merged.RerankModel = incoming.RerankModel
+		merged.RerankProvider = incoming.RerankProvider
 		merged.ServerEnabled = incoming.ServerEnabled
 		merged.MCPEnabled = incoming.MCPEnabled
 		if incoming.A2AEnabled != nil {
@@ -157,6 +158,7 @@ func mergeConfig(existing, incoming *OnboardResult) OnboardResult {
 		if incoming.RerankEnabled {
 			merged.RerankEnabled = true
 			merged.RerankModel = incoming.RerankModel
+			merged.RerankProvider = incoming.RerankProvider
 		}
 		if incoming.ServerEnabled {
 			merged.ServerEnabled = true
@@ -220,7 +222,16 @@ func SaveConfig(r OnboardResult) error {
 
 	existing := LoadSavedConfig()
 	merged := mergeConfig(existing, &r)
+	return saveExact(path, merged)
+}
 
+// saveExact writes merged as it is (no merge: an empty value clears the
+// key), keeping the keys of config.json that OnboardResult does not model.
+// The settings registry saves through it, so a field can be cleared.
+func saveExact(path string, merged OnboardResult) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
 	// Keys that OnboardResult does not model (search_config, chunk_config,
 	// rate_limit, timezone, ...) live in the same file: preserve them.
 	out := map[string]any{}

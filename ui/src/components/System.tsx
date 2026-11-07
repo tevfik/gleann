@@ -1,15 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Settings, Terminal, Activity, Sparkles, Database, AlertCircle } from 'lucide-react';
 import { PluginSettings } from './PluginSettings';
-import { ModelCatalog } from './ModelCatalog';
-
-// Providers that load a local GGUF file (embedded llama.cpp / EIF runtime).
-const isLocalGGUF = (provider?: string) => provider === 'llamacpp' || provider === 'eif';
-
-// A <select> silently shows its first option when its value matches none, so a
-// provider the list does not know about must still be rendered as an option.
-const providerOptions = (known: string[], current?: string) =>
-  current && !known.includes(current) ? [current] : [];
+import { SettingsForm } from './SettingsForm';
 
 export function System() {
   const [tasks, setTasks] = useState<any[]>([]);
@@ -18,19 +10,7 @@ export function System() {
   const [plugins, setPlugins] = useState<any[]>([]);
   const [configuring, setConfiguring] = useState<any>(null);
   const [serverVersion, setServerVersion] = useState<string>('Unknown');
-  const [embeddingModels, setEmbeddingModels] = useState<string[]>([]);
-  const [llmModels, setLlmModels] = useState<string[]>([]);
-  const [localModels, setLocalModels] = useState<string[]>([]);
-  // Files in ~/.gleann/models (the local model pickers); re-read after a download.
-  const refreshLocalModels = () =>
-    fetch('/api/models/local')
-      .then(res => res.json())
-      .then(data => setLocalModels(data.models || []))
-      .catch(console.error);
-
-  // Config edit state
-  const [editConfig, setEditConfig] = useState<any>(null);
-  const [savingConfig, setSavingConfig] = useState(false);
+  const [customUrl, setCustomUrl] = useState('');
 
   useEffect(() => {
     const fetchSystemInfo = () => {
@@ -48,13 +28,6 @@ export function System() {
         .then(data => setStats(data))
         .catch(console.error);
 
-      fetch('/api/config')
-        .then(res => res.json())
-        .then(data => {
-          setEditConfig((prev: any) => prev ? prev : data);
-        })
-        .catch(console.error);
-
       fetch('/api/logs')
         .then(res => res.json())
         .then(data => setLogs(data.logs || []))
@@ -70,7 +43,6 @@ export function System() {
         .then(data => setServerVersion(data.version || 'Unknown'))
         .catch(console.error);
 
-      refreshLocalModels();
     };
 
     fetchSystemInfo();
@@ -86,62 +58,6 @@ export function System() {
       document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
   }, []);
-
-  useEffect(() => {
-    if (!editConfig) return;
-    const fetchModels = async (provider: string, host: string, apikey: string, setter: any) => {
-      if (provider !== 'ollama' && provider !== 'openai') {
-        setter([]);
-        return;
-      }
-      try {
-        const u = new URL('/api/proxy/models', window.location.href);
-        u.searchParams.set('provider', provider);
-        u.searchParams.set('host', host || '');
-        u.searchParams.set('apikey', apikey || '');
-        const r = await fetch(u.toString());
-        const d = await r.json();
-        setter(d.models || []);
-      } catch (err) {
-        console.error(err);
-      }
-    };
-    
-    fetchModels(
-      editConfig.embedding_provider, 
-      editConfig.embedding_provider === 'ollama' ? editConfig.ollama_host : editConfig.openai_base_url,
-      editConfig.embedding_provider === 'ollama' ? editConfig.ollama_api_key : editConfig.openai_api_key,
-      setEmbeddingModels
-    );
-  }, [editConfig?.embedding_provider, editConfig?.ollama_host, editConfig?.openai_base_url, editConfig?.openai_api_key, editConfig?.ollama_api_key]);
-
-  useEffect(() => {
-    if (!editConfig) return;
-    const fetchModels = async (provider: string, host: string, apikey: string, setter: any) => {
-      if (provider !== 'ollama' && provider !== 'openai') {
-        setter([]);
-        return;
-      }
-      try {
-        const u = new URL('/api/proxy/models', window.location.href);
-        u.searchParams.set('provider', provider);
-        u.searchParams.set('host', host || '');
-        u.searchParams.set('apikey', apikey || '');
-        const r = await fetch(u.toString());
-        const d = await r.json();
-        setter(d.models || []);
-      } catch (err) {
-        console.error(err);
-      }
-    };
-    
-    fetchModels(
-      editConfig.llm_provider, 
-      editConfig.llm_provider === 'ollama' ? editConfig.ollama_host : editConfig.openai_base_url,
-      editConfig.llm_provider === 'ollama' ? editConfig.ollama_api_key : editConfig.openai_api_key,
-      setLlmModels
-    );
-  }, [editConfig?.llm_provider, editConfig?.ollama_host, editConfig?.openai_base_url, editConfig?.openai_api_key, editConfig?.ollama_api_key]);
 
   const handleInstallPlugin = async (name: string) => {
     try {
@@ -181,23 +97,6 @@ export function System() {
 
   // The plugin describes its own settings form; PluginSettings renders it.
   const handleConfigurePlugin = (p: any) => setConfiguring(p);
-
-  const handleSaveConfig = async () => {
-    setSavingConfig(true);
-    try {
-      await fetch('/api/config', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(editConfig)
-      });
-      alert('Configuration updated successfully! Note: Some changes may require a server restart.');
-    } catch (err) {
-      console.error(err);
-      alert('Failed to update configuration.');
-    } finally {
-      setSavingConfig(false);
-    }
-  };
 
   const handleFormatSystem = async () => {
     const confirmation = prompt('⚠️ DANGER: This will delete ALL indexes, ALL conversations, and ALL memories. This action CANNOT be undone. Type "FORMAT" to confirm:');
@@ -285,513 +184,23 @@ export function System() {
 
         <div className="space-y-6">
           <div className="bg-[#1a1b23] border border-white/10 rounded-xl p-5 shadow-lg">
-            <div className="flex justify-between items-center mb-4">
-              <h2 className="text-lg font-semibold text-white flex items-center gap-2">
-                <Database className="w-5 h-5 text-blue-400" /> Active Configuration
-              </h2>
-              <button 
-                onClick={handleSaveConfig}
-                disabled={savingConfig}
-                className="bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white px-3 py-1.5 rounded text-xs font-medium transition-colors"
-              >
-                {savingConfig ? 'Saving...' : 'Save Changes'}
-              </button>
-            </div>
-            {editConfig ? (
-              <div className="bg-black/30 rounded-lg overflow-hidden border border-white/5 p-4 flex flex-col gap-6">
-
-                {/* Storage & Vector Backend */}
-                <div className="space-y-3">
-                  <h3 className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-2 border-b border-white/5 pb-2">Storage Pipeline</h3>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div className="md:col-span-2">
-                      <label className="text-xs text-gray-500 font-medium block mb-1">Index Directory</label>
-                      <input 
-                        type="text" 
-                        value={editConfig.index_dir || ''} 
-                        onChange={e => setEditConfig({...editConfig, index_dir: e.target.value})}
-                        className="w-full bg-black/50 border border-white/10 rounded px-3 py-1.5 text-sm text-gray-300 outline-none focus:border-blue-500/50 transition-colors"
-                      />
-                    </div>
-                    <div>
-                      <label className="text-xs text-gray-500 font-medium block mb-1">Vector Backend</label>
-                      <select 
-                        value={editConfig.backend || 'faiss'} 
-                        onChange={e => setEditConfig({...editConfig, backend: e.target.value})}
-                        className="w-full bg-black/50 border border-white/10 rounded px-3 py-1.5 text-sm text-gray-300 outline-none focus:border-blue-500/50 transition-colors"
-                      >
-                        <option value="hnsw">HNSW (In-Memory)</option>
-                        <option value="faiss">FAISS (Flat/IVF)</option>
-                        <option value="faiss-hybrid">FAISS Hybrid (Dense+Sparse)</option>
-                        <option value="diskann">DiskANN</option>
-                      </select>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Embedding Provider */}
-                <div className="space-y-3">
-                  <h3 className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-2 border-b border-white/5 pb-2">Embedding Engine</h3>
-                  <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                    <div>
-                      <label className="text-xs text-gray-500 font-medium block mb-1">Provider</label>
-                      <select 
-                        value={editConfig.embedding_provider || 'native'} 
-                        onChange={e => setEditConfig({...editConfig, embedding_provider: e.target.value})}
-                        className="w-full bg-black/50 border border-white/10 rounded px-3 py-1.5 text-sm text-gray-300 outline-none focus:border-blue-500/50 transition-colors"
-                      >
-                        <option value="ollama">Ollama</option>
-                        <option value="openai">OpenAI</option>
-                        <option value="native">Native (Go)</option>
-                        <option value="llamacpp">Llama.cpp (Local GGUF)</option>
-                        <option value="eif">EIF (Embedded GGUF)</option>
-                        {providerOptions(['ollama', 'openai', 'native', 'llamacpp', 'eif'], editConfig.embedding_provider).map(p => (
-                          <option key={p} value={p}>{p}</option>
-                        ))}
-                      </select>
-                    </div>
-                  </div>
-
-                  {/* local GGUF model picker for embedding */}
-                  {isLocalGGUF(editConfig.embedding_provider) && (
-                    <div className="mt-3 bg-amber-500/10 border border-amber-500/30 rounded-xl p-4 space-y-3">
-                      <div className="flex items-center gap-2">
-                        <span className="text-amber-400">⚡</span>
-                        <span className="text-xs font-semibold text-amber-300">Local GGUF model required — models are stored in <code className="bg-black/30 px-1 rounded">~/.gleann/models/</code></span>
-                      </div>
-                      <p className="text-[11px] text-amber-400/70">Download a model to the server, then click Use. Or pick a file already in ~/.gleann/models, or type a custom filename.</p>
-                      <ModelCatalog url="/api/models/catalog" groups={['Embedding models']}
-                        selected={editConfig.embedding_model}
-                        onUse={v => setEditConfig({...editConfig, embedding_model: v})}
-                        onInstalled={refreshLocalModels} />
-                      <div>
-                        <label className="text-[11px] text-amber-400/70 mb-1 block">Select Local Model or Enter Custom Filename:</label>
-                        <div className="flex gap-2 mb-2">
-                          <select
-                            value={localModels.includes(editConfig.embedding_model) ? editConfig.embedding_model : (editConfig.embedding_model ? 'custom' : '')}
-                            onChange={e => {
-                              if (e.target.value !== 'custom') setEditConfig({...editConfig, embedding_model: e.target.value})
-                            }}
-                            className="flex-1 bg-black/50 border border-amber-500/30 rounded px-3 py-1.5 text-sm text-gray-300 outline-none focus:border-amber-400/60 transition-colors font-mono"
-                          >
-                            <option value="">-- Select a local model --</option>
-                            {localModels.map(m => (
-                              <option key={m} value={m}>{m}</option>
-                            ))}
-                            <option value="custom">-- Custom Filename / Download --</option>
-                          </select>
-                        </div>
-                        {(!localModels.includes(editConfig.embedding_model) || editConfig.embedding_model === '') && (
-                          <div className="flex gap-2">
-                            <input
-                              type="text"
-                              value={editConfig.embedding_model || ''}
-                              onChange={e => setEditConfig({...editConfig, embedding_model: e.target.value})}
-                              placeholder="e.g. my-model-q4_k_m.gguf"
-                              className="flex-1 bg-black/50 border border-amber-500/30 rounded px-3 py-1.5 text-sm text-gray-300 outline-none focus:border-amber-400/60 transition-colors font-mono"
-                            />
-                            <button
-                              type="button"
-                              onClick={() => {
-                                if (!editConfig.embedding_model) return alert("Please enter a filename first.");
-                                const url = prompt(`Enter HuggingFace or direct download URL for ${editConfig.embedding_model}:`);
-                                if (url) handleDownloadModel(url, editConfig.embedding_model);
-                              }}
-                              className="px-3 py-1.5 bg-amber-600 hover:bg-amber-500 text-white rounded text-xs font-medium transition-colors"
-                            >
-                              Download
-                            </button>
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Endpoint & Auth (when applicable) */}
-                  {((editConfig.embedding_provider || 'native') === 'ollama' || (editConfig.embedding_provider || 'native') === 'openai') && (
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-3">
-                      <div>
-                        <label className="text-xs text-gray-500 font-medium block mb-1">Endpoint URL</label>
-                        <input 
-                          type="text" 
-                          value={(editConfig.embedding_provider || 'native') === 'ollama' ? (editConfig.ollama_host || 'http://localhost:11434') : (editConfig.openai_base_url || 'https://api.openai.com/v1')} 
-                          onChange={e => {
-                            const prov = editConfig.embedding_provider || 'native';
-                            if (prov === 'ollama') setEditConfig({...editConfig, ollama_host: e.target.value})
-                            else if (prov === 'openai') setEditConfig({...editConfig, openai_base_url: e.target.value})
-                          }}
-                          placeholder={(editConfig.embedding_provider || 'native') === 'ollama' ? 'http://localhost:11434' : 'https://api.openai.com/v1'}
-                          className="w-full bg-black/50 border border-white/10 rounded px-3 py-1.5 text-sm text-gray-300 outline-none focus:border-blue-500/50 transition-colors"
-                        />
-                      </div>
-                      <div>
-                        <label className="text-xs text-gray-500 font-medium block mb-1">API Key</label>
-                        <input
-                          type="password"
-                          value={(editConfig.embedding_provider || 'native') === 'ollama' ? (editConfig.ollama_api_key || '') : (editConfig.openai_api_key || '')}
-                          onChange={e => {
-                            const prov = editConfig.embedding_provider || 'native';
-                            if (prov === 'ollama') setEditConfig({...editConfig, ollama_api_key: e.target.value})
-                            else if (prov === 'openai') setEditConfig({...editConfig, openai_api_key: e.target.value})
-                          }}
-                          disabled={(editConfig.embedding_provider || 'native') !== 'openai' && (editConfig.embedding_provider || 'native') !== 'ollama'}
-                          placeholder={(editConfig.embedding_provider || 'native') === 'openai' ? 'sk-...' : (editConfig.embedding_provider || 'native') === 'ollama' ? 'Optional' : 'Not required'}
-                          className="w-full bg-black/50 border border-white/10 rounded px-3 py-1.5 text-sm text-gray-300 outline-none focus:border-blue-500/50 transition-colors disabled:opacity-50"
-                        />
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Embedding Model Selection (General, Code, Docs) */}
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-3">
-                    <div>
-                      <label className="text-xs text-gray-400 font-medium block mb-1">General Embedding Model</label>
-                      <input 
-                        type="text" 
-                        list="embedding_models_list"
-                        value={editConfig.embedding_model || ''} 
-                        onChange={e => setEditConfig({...editConfig, embedding_model: e.target.value})}
-                        placeholder="e.g. bge-m3, nomic-embed-text"
-                        className="w-full bg-black/50 border border-white/10 rounded px-3 py-1.5 text-sm text-gray-300 outline-none focus:border-blue-500/50 transition-colors"
-                      />
-                    </div>
-                    <div>
-                      <label className="text-xs text-blue-400 font-medium block mb-1">💻 Code Embedding Model</label>
-                      <input 
-                        type="text" 
-                        list="embedding_models_list"
-                        value={editConfig.code_embedding_model || ''} 
-                        onChange={e => setEditConfig({...editConfig, code_embedding_model: e.target.value})}
-                        placeholder="Optional — inherits General model"
-                        className="w-full bg-black/50 border border-white/10 rounded px-3 py-1.5 text-sm text-gray-300 outline-none focus:border-blue-500/50 transition-colors"
-                      />
-                    </div>
-                    <div>
-                      <label className="text-xs text-emerald-400 font-medium block mb-1">📄 Docs Embedding Model</label>
-                      <input 
-                        type="text" 
-                        list="embedding_models_list"
-                        value={editConfig.doc_embedding_model || ''} 
-                        onChange={e => setEditConfig({...editConfig, doc_embedding_model: e.target.value})}
-                        placeholder="Optional — inherits General model"
-                        className="w-full bg-black/50 border border-white/10 rounded px-3 py-1.5 text-sm text-gray-300 outline-none focus:border-emerald-500/50 transition-colors"
-                      />
-                    </div>
-                  </div>
-                  {Array.from(new Set([...embeddingModels, ...localModels])).length > 0 && (
-                    <datalist id="embedding_models_list">
-                      {Array.from(new Set([...embeddingModels, ...localModels])).map(m => <option key={m} value={m} />)}
-                    </datalist>
-                  )}
-                </div>
-
-                {/* LLM Provider */}
-                <div className="space-y-3">
-                  <h3 className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-2 border-b border-white/5 pb-2">Language Models</h3>
-                  <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                    <div>
-                      <label className="text-xs text-gray-500 font-medium block mb-1">LLM Provider</label>
-                      <select 
-                        value={editConfig.llm_provider || 'ollama'} 
-                        onChange={e => setEditConfig({...editConfig, llm_provider: e.target.value})}
-                        className="w-full bg-black/50 border border-white/10 rounded px-3 py-1.5 text-sm text-gray-300 outline-none focus:border-blue-500/50 transition-colors"
-                      >
-                        <option value="ollama">Ollama</option>
-                        <option value="openai">OpenAI</option>
-                        <option value="anthropic">Anthropic</option>
-                        <option value="llamacpp">Llama.cpp (Local GGUF)</option>
-                        <option value="eif">EIF (Embedded GGUF)</option>
-                        {providerOptions(['ollama', 'openai', 'anthropic', 'llamacpp', 'eif'], editConfig.llm_provider).map(p => (
-                          <option key={p} value={p}>{p}</option>
-                        ))}
-                      </select>
-                    </div>
-                  </div>
-
-                  {/* local GGUF model picker for LLM */}
-                  {isLocalGGUF(editConfig.llm_provider) && (
-                    <div className="mt-3 bg-violet-500/10 border border-violet-500/30 rounded-xl p-4 space-y-3">
-                      <div className="flex items-center gap-2">
-                        <span className="text-violet-400">🧠</span>
-                        <span className="text-xs font-semibold text-violet-300">Local GGUF model required — models are stored in <code className="bg-black/30 px-1 rounded">~/.gleann/models/</code></span>
-                      </div>
-                      <p className="text-[11px] text-violet-400/70">Download a model to the server, then click Use. Or pick a file already in ~/.gleann/models, or type a custom filename.</p>
-                      <ModelCatalog url="/api/models/catalog" groups={['LLMs']}
-                        selected={editConfig.llm_model}
-                        onUse={v => setEditConfig({...editConfig, llm_model: v})}
-                        onInstalled={refreshLocalModels} />
-                      <div>
-                        <label className="text-[11px] text-violet-400/70 mb-1 block">Select Local Model or Enter Custom Filename:</label>
-                        <div className="flex gap-2 mb-2">
-                          <select
-                            value={localModels.includes(editConfig.llm_model) ? editConfig.llm_model : (editConfig.llm_model ? 'custom' : '')}
-                            onChange={e => {
-                              if (e.target.value !== 'custom') setEditConfig({...editConfig, llm_model: e.target.value})
-                            }}
-                            className="flex-1 bg-black/50 border border-violet-500/30 rounded px-3 py-1.5 text-sm text-gray-300 outline-none focus:border-violet-400/60 transition-colors font-mono"
-                          >
-                            <option value="">-- Select a local model --</option>
-                            {localModels.map(m => (
-                              <option key={m} value={m}>{m}</option>
-                            ))}
-                            <option value="custom">-- Custom Filename / Download --</option>
-                          </select>
-                        </div>
-                        {(!localModels.includes(editConfig.llm_model) || editConfig.llm_model === '') && (
-                          <div className="flex gap-2">
-                            <input
-                              type="text"
-                              value={editConfig.llm_model || ''}
-                              onChange={e => setEditConfig({...editConfig, llm_model: e.target.value})}
-                              placeholder="e.g. my-llm-q4_k_m.gguf"
-                              className="flex-1 bg-black/50 border border-violet-500/30 rounded px-3 py-1.5 text-sm text-gray-300 outline-none focus:border-violet-400/60 transition-colors font-mono"
-                            />
-                            <button
-                              type="button"
-                              onClick={() => {
-                                if (!editConfig.llm_model) return alert("Please enter a filename first.");
-                                const url = prompt(`Enter HuggingFace or direct download URL for ${editConfig.llm_model}:`);
-                                if (url) handleDownloadModel(url, editConfig.llm_model);
-                              }}
-                              className="px-3 py-1.5 bg-violet-600 hover:bg-violet-500 text-white rounded text-xs font-medium transition-colors"
-                            >
-                              Download
-                            </button>
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  )}
-
-
-
-                  {!isLocalGGUF(editConfig.llm_provider || 'ollama') && (
-                    <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mt-3">
-                    <div>
-                      <label className="text-xs text-gray-500 font-medium block mb-1">Endpoint URL</label>
-                      <input 
-                        type="text" 
-                        value={(editConfig.llm_provider || 'ollama') === 'ollama' ? (editConfig.ollama_host || 'http://localhost:11434') : (editConfig.llm_provider || 'ollama') === 'openai' ? (editConfig.openai_base_url || 'https://api.openai.com/v1') : ''} 
-                        onChange={e => {
-                          const prov = editConfig.llm_provider || 'ollama';
-                          if (prov === 'ollama') setEditConfig({...editConfig, ollama_host: e.target.value})
-                          else if (prov === 'openai') setEditConfig({...editConfig, openai_base_url: e.target.value})
-                        }}
-                        disabled={(editConfig.llm_provider || 'ollama') === 'anthropic' || isLocalGGUF(editConfig.llm_provider || 'ollama')}
-                        placeholder={(editConfig.llm_provider || 'ollama') === 'ollama' ? 'http://localhost:11434' : (editConfig.llm_provider || 'ollama') === 'llamacpp' ? 'Managed automatically' : 'https://api.openai.com/v1'}
-                        className="w-full bg-black/50 border border-white/10 rounded px-3 py-1.5 text-sm text-gray-300 outline-none focus:border-blue-500/50 transition-colors disabled:opacity-50"
-                      />
-                    </div>
-                    <div>
-                      <label className="text-xs text-gray-500 font-medium block mb-1">API Key</label>
-                      <input 
-                        type="password" 
-                        value={(editConfig.llm_provider || 'ollama') === 'openai' ? (editConfig.openai_api_key || '') : (editConfig.llm_provider || 'ollama') === 'ollama' ? (editConfig.ollama_api_key || '') : ''}
-                        onChange={e => {
-                          const prov = editConfig.llm_provider || 'ollama';
-                          if (prov === 'openai') setEditConfig({...editConfig, openai_api_key: e.target.value})
-                          else if (prov === 'ollama') setEditConfig({...editConfig, ollama_api_key: e.target.value})
-                        }}
-                        disabled={(editConfig.llm_provider || 'ollama') !== 'openai' && (editConfig.llm_provider || 'ollama') !== 'anthropic' && (editConfig.llm_provider || 'ollama') !== 'ollama'}
-                        placeholder={(editConfig.llm_provider || 'ollama') === 'ollama' ? 'Optional' : 'sk-...'}
-                        className="w-full bg-black/50 border border-white/10 rounded px-3 py-1.5 text-sm text-gray-300 outline-none focus:border-blue-500/50 transition-colors disabled:opacity-50"
-                      />
-                    </div>
-                    <div>
-                      <label className="text-xs text-gray-500 font-medium block mb-1">LLM Model</label>
-                      <input 
-                        type="text"
-                        list="llm_models_list"
-                        value={editConfig.llm_model || ''} 
-                        onChange={e => setEditConfig({...editConfig, llm_model: e.target.value})}
-                        placeholder="e.g. llama3, gpt-4o"
-                        className="w-full bg-black/50 border border-white/10 rounded px-3 py-1.5 text-sm text-gray-300 outline-none focus:border-blue-500/50 transition-colors"
-                      />
-                      {llmModels.length > 0 && (
-                        <datalist id="llm_models_list">
-                           {llmModels.map(m => <option key={m} value={m} />)}
-                        </datalist>
-                      )}
-                    </div>
-                    <div className="md:col-span-2">
-                      <label className="text-xs text-gray-500 font-medium block mb-1">Multimodal Model (Optional)</label>
-                      <input 
-                        type="text" 
-                        list="multimodal_models_list"
-                        value={editConfig.multimodal_model || ''} 
-                        onChange={e => setEditConfig({...editConfig, multimodal_model: e.target.value})}
-                        placeholder="e.g. llava, minicpm-v"
-                        className="w-full bg-black/50 border border-white/10 rounded px-3 py-1.5 text-sm text-gray-300 outline-none focus:border-blue-500/50 transition-colors"
-                      />
-                      {llmModels.length > 0 && (
-                        <datalist id="multimodal_models_list">
-                           {llmModels.map(m => <option key={m} value={m} />)}
-                        </datalist>
-                      )}
-                    </div>
-                  </div>
-                  )}
-                </div>
-
-                <div className="space-y-3 mt-6 mb-6 bg-black/20 p-4 rounded-xl border border-white/5">
-                  <div className="flex flex-col md:flex-row gap-4 items-center">
-                    <label className="flex items-center gap-2 cursor-pointer whitespace-nowrap">
-                      <input 
-                        type="checkbox" 
-                        checked={editConfig.search_config?.use_reranker || false}
-                        onChange={e => {
-                          const sc = editConfig.search_config || {};
-                          setEditConfig({...editConfig, search_config: {...sc, use_reranker: e.target.checked}});
-                        }}
-                        className="w-4 h-4 rounded border-white/10 bg-black/50 text-blue-500 focus:ring-blue-500/50 focus:ring-offset-0"
-                      />
-                      <h3 className="text-sm font-bold text-gray-300 uppercase tracking-wider">Enable Reranker</h3>
-                    </label>
-                    {editConfig.search_config?.use_reranker && (
-                      <div className="flex-1 flex gap-2">
-                        <select
-                          value={editConfig.search_config?.reranker_config?.provider || 'ollama'}
-                          onChange={e => {
-                            const sc = editConfig.search_config || {};
-                            const rc = sc.reranker_config || {};
-                            setEditConfig({...editConfig, search_config: {...sc, reranker_config: {...rc, provider: e.target.value}}});
-                          }}
-                          className="bg-black/50 border border-white/10 rounded px-3 py-1.5 text-sm text-gray-300 outline-none focus:border-blue-500/50"
-                        >
-                          <option value="ollama">Ollama</option>
-                          <option value="huggingface">HuggingFace TEI</option>
-                          <option value="openai">OpenAI Compatible</option>
-                          <option value="llamacpp">Llama.cpp</option>
-                        </select>
-                      </div>
-                    )}
-                  </div>
-                  
-                  {editConfig.search_config?.use_reranker && (
-                    <>
-                      {/* llamacpp model picker for Reranker */}
-                      {(editConfig.search_config?.reranker_config?.provider === 'llamacpp') && (
-                        <div className="mt-3 bg-pink-500/10 border border-pink-500/30 rounded-xl p-4 space-y-3">
-                          <div className="flex items-center gap-2">
-                            <span className="text-pink-400">⚡</span>
-                            <span className="text-xs font-semibold text-pink-300">Local GGUF model required — models are stored in <code className="bg-black/30 px-1 rounded">~/.gleann/models/</code></span>
-                          </div>
-                          <p className="text-[11px] text-pink-400/70">Download a model to the server, then click Use. Or pick a file already in ~/.gleann/models, or type a custom filename.</p>
-                          <ModelCatalog url="/api/models/catalog" groups={['Rerankers']}
-                            selected={editConfig.search_config?.reranker_config?.model}
-                            onUse={v => { const sc = editConfig.search_config || {}; const rc = sc.reranker_config || {}; setEditConfig({...editConfig, search_config: {...sc, reranker_config: {...rc, model: v}}}); }}
-                            onInstalled={refreshLocalModels} />
-                          <div>
-                            <label className="text-[11px] text-pink-400/70 mb-1 block">Select Local Model or Enter Custom Filename:</label>
-                            <div className="flex gap-2">
-                              <select
-                                value={localModels.includes(editConfig.search_config?.reranker_config?.model || '') ? (editConfig.search_config?.reranker_config?.model || '') : (editConfig.search_config?.reranker_config?.model ? 'custom' : '')}
-                                onChange={e => {
-                                  if (e.target.value !== 'custom') {
-                                    const sc = editConfig.search_config || {};
-                                    const rc = sc.reranker_config || {};
-                                    setEditConfig({...editConfig, search_config: {...sc, reranker_config: {...rc, model: e.target.value}}});
-                                  }
-                                }}
-                                className="w-1/2 bg-black/50 border border-pink-500/30 rounded px-3 py-1.5 text-sm text-pink-100 outline-none focus:border-pink-500/70"
-                              >
-                                <option value="">-- Downloaded Models --</option>
-                                {localModels.map(m => <option key={m} value={m}>{m}</option>)}
-                                <option value="custom">-- Custom Filename --</option>
-                              </select>
-                              {(!localModels.includes(editConfig.search_config?.reranker_config?.model || '') || !editConfig.search_config?.reranker_config?.model) && (
-                                <input
-                                  type="text"
-                                  value={editConfig.search_config?.reranker_config?.model || ''}
-                                  onChange={e => {
-                                    const sc = editConfig.search_config || {};
-                                    const rc = sc.reranker_config || {};
-                                    setEditConfig({...editConfig, search_config: {...sc, reranker_config: {...rc, model: e.target.value}}});
-                                  }}
-                                  placeholder="Custom model filename..."
-                                  className="flex-1 bg-black/50 border border-pink-500/30 rounded px-3 py-1.5 text-sm text-pink-100 outline-none focus:border-pink-500/70"
-                                />
-                              )}
-                            </div>
-                          </div>
-                        </div>
-                      )}
-
-                      {(editConfig.search_config?.reranker_config?.provider || 'ollama') !== 'llamacpp' && (
-                        <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mt-3">
-                          <div>
-                            <label className="text-xs text-gray-500 font-medium block mb-1">Endpoint URL</label>
-                            <input 
-                              type="text" 
-                              value={(editConfig.search_config?.reranker_config?.provider || 'ollama') === 'ollama' ? (editConfig.search_config?.reranker_config?.base_url || 'http://localhost:11434') : (editConfig.search_config?.reranker_config?.base_url || '')} 
-                              onChange={e => {
-                                const sc = editConfig.search_config || {};
-                                const rc = sc.reranker_config || {};
-                                setEditConfig({...editConfig, search_config: {...sc, reranker_config: {...rc, base_url: e.target.value}}});
-                              }}
-                              placeholder={(editConfig.search_config?.reranker_config?.provider || 'ollama') === 'ollama' ? 'http://localhost:11434' : 'https://api...'}
-                              className="w-full bg-black/50 border border-white/10 rounded px-3 py-1.5 text-sm text-gray-300 outline-none focus:border-blue-500/50 transition-colors disabled:opacity-50"
-                            />
-                          </div>
-                          <div>
-                            <label className="text-xs text-gray-500 font-medium block mb-1">API Key</label>
-                            <input 
-                              type="password" 
-                              value={editConfig.search_config?.reranker_config?.api_key || ''} 
-                              onChange={e => {
-                                const sc = editConfig.search_config || {};
-                                const rc = sc.reranker_config || {};
-                                setEditConfig({...editConfig, search_config: {...sc, reranker_config: {...rc, api_key: e.target.value}}});
-                              }}
-                              disabled={(editConfig.search_config?.reranker_config?.provider || 'ollama') === 'ollama'}
-                              placeholder={(editConfig.search_config?.reranker_config?.provider || 'ollama') === 'ollama' ? 'Not required' : 'sk-...'}
-                              className="w-full bg-black/50 border border-white/10 rounded px-3 py-1.5 text-sm text-gray-300 outline-none focus:border-blue-500/50 transition-colors disabled:opacity-50"
-                            />
-                          </div>
-                          <div className="md:col-span-2">
-                            <label className="text-xs text-gray-500 font-medium block mb-1">Model Name</label>
-                            <input
-                              type="text"
-                              value={editConfig.search_config?.reranker_config?.model || ''}
-                              onChange={e => {
-                                const sc = editConfig.search_config || {};
-                                const rc = sc.reranker_config || {};
-                                setEditConfig({...editConfig, search_config: {...sc, reranker_config: {...rc, model: e.target.value}}});
-                              }}
-                              placeholder="Model (e.g. bge-reranker-v2-m3)"
-                              className="w-full bg-black/50 border border-white/10 rounded px-3 py-1.5 text-sm text-gray-300 outline-none focus:border-blue-500/50"
-                            />
-                          </div>
-                        </div>
-                      )}
-                    </>
-                  )}
-                </div>
-
-                <div className="flex flex-col gap-3 border-t border-white/5 pt-4">
-                  <label className="text-sm text-gray-300 font-medium cursor-pointer flex items-center gap-3 hover:text-white transition-colors">
-                    <input 
-                      type="checkbox" 
-                      checked={editConfig.a2a_enabled !== false}
-                      onChange={e => setEditConfig({...editConfig, a2a_enabled: e.target.checked})}
-                      className="w-4 h-4 rounded bg-black/50 border-white/10 text-blue-500 focus:ring-blue-500/50 focus:ring-offset-0"
-                    />
-                    Enable Agent-to-Agent (A2A) Protocol
-                  </label>
-                  <label className="text-sm text-gray-300 font-medium cursor-pointer flex items-center gap-3 hover:text-white transition-colors">
-                    <input 
-                      type="checkbox" 
-                      checked={editConfig.auto_index || false}
-                      onChange={e => setEditConfig({...editConfig, auto_index: e.target.checked})}
-                      className="w-4 h-4 rounded bg-black/50 border-white/10 text-blue-500 focus:ring-blue-500/50 focus:ring-offset-0"
-                    />
-                    Enable Auto-Indexing on Startup
-                  </label>
-                </div>
+            <h2 className="text-lg font-semibold text-white flex items-center gap-2 mb-1">
+              <Database className="w-5 h-5 text-blue-400" /> Settings
+            </h2>
+            <p className="text-[11px] text-gray-500 mb-4">
+              The same settings as the terminal (gleann setup → All Settings), saved to ~/.gleann/config.json.
+            </p>
+            <SettingsForm url="/api/settings" catalogUrl="/api/models/catalog" idPrefix="gleann" />
+            <details className="mt-4 border-t border-white/5 pt-3">
+              <summary className="text-xs text-gray-400 cursor-pointer">Download another GGUF from a URL</summary>
+              <div className="flex gap-2 mt-2">
+                <input value={customUrl} onChange={e => setCustomUrl(e.target.value)} placeholder="https://huggingface.co/…/resolve/main/model.gguf"
+                  className="flex-1 bg-black/40 border border-white/10 rounded px-3 py-1.5 text-xs text-gray-200 focus:outline-none focus:border-blue-500/50" />
+                <button disabled={!customUrl.trim()} onClick={() => handleDownloadModel(customUrl.trim(), customUrl.trim().split('/').pop()?.split('?')[0] || 'model.gguf')}
+                  className="bg-white/5 hover:bg-white/10 disabled:opacity-40 text-gray-300 border border-white/10 px-3 py-1.5 rounded text-xs">Download</button>
               </div>
-            ) : (
-              <div className="text-sm text-gray-500">Loading config...</div>
-            )}
+              <p className="text-[11px] text-gray-500 mt-1">Saved to ~/.gleann/models; it then appears in the model lists above.</p>
+            </details>
           </div>
 
           <div className="bg-[#1a1b23] border border-white/10 rounded-xl p-5 shadow-lg">

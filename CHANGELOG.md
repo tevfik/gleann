@@ -4,6 +4,25 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+- **One settings list for the web UI and the TUI.** gleann's own settings are described once with `modules/settings` (`internal/tui.Settings`): the web UI renders them from `GET/PUT /api/settings` (System → Settings) and the TUI from the same list (`gleann setup` → All Settings), with the same fields, options, defaults, help and validation. A test fails when a `config.json` key has no setting. Saving in the web UI applies to the running server without a restart (except providers, address and services).
+- **Reranker engine setting** (`rerank_provider`: `auto`, `eif`, `ollama`, `llamacpp`, `jina`, `cohere`, `voyage`) and `--rerank-provider`, `--no-rerank`. `auto` uses the built-in bitllm.c cross-encoder when the build has it and the model is a local GGUF.
+- Catalog: `mmarco-mminilmv2-l12` (multilingual cross-encoder, the recommended default) and catalog notes that say when to pick a model.
+- Vector storage mode (`storage_mode`) in the settings of both screens.
+- Web UI: the Indexes page shows each index's vector storage and switches it (`POST /api/indexes/{name}/storage`, a background task), like the TUI Index Manager. `GET /api/indexes` returns `storage` per index.
+- `auth`, `cors_origins`, `rate_limit` and `rate_burst` in `config.json` are read (they were ignored; only the environment variables worked) and editable in both settings screens. The environment variables still win.
+
+### Changed
+- Every reranker (CLI, REST, MCP, TUI chat) is resolved by `gleann.ResolveRerankerConfig`; before, the engine followed the embedding provider and the TUI chat always used Ollama.
+- `rerank_enabled` now applies to CLI `search` and `ask` as it already did to REST and MCP.
+- The catalog's `bge-reranker-v2-m3` is the Q8_0 file (the Q4_K_M one could not run in the built-in engine).
+- The web UI's hand-written configuration panel is replaced by the settings form; its unused "auto-indexing" switch (`auto_index`, read by nothing) is gone.
+
+### Fixed
+- Reranker settings saved in the web UI were lost on restart (they were written to `search_config`, which no command reads); they are now stored in `rerank_enabled` / `rerank_model` / `rerank_provider` like the TUI's.
+- The setup wizard dropped the saved repeat penalty, and stored a catalog reranker as its "(Download) …" label instead of the file name.
+- A cross-encoder (bge-reranker, mmarco) is no longer offered as an embedding model.
+
 ## [v1.8.12] — 2026-11-07
 
 See [docs/releases/v1.8.12.md](docs/releases/v1.8.12.md). Releases v1.8.8 to v1.8.11 are

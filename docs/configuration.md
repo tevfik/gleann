@@ -98,6 +98,15 @@ Location: `~/.gleann/config.json`
 | `backend` | `diskann` | Vector search backend: `diskann`, `hnsw`, `faiss`, `faiss-hybrid` |
 | `llm_provider` | `ollama` | Provider for ask/chat: `ollama`, `openai`, `anthropic` |
 | `llm_model` | `nemotron-3-nano:4b` | LLM model for ask/chat commands |
+| `rerank_enabled` | `false` | Rerank search results (CLI `search`/`ask`, REST, MCP, chat). `--rerank` turns it on for one command, `--no-rerank` off |
+| `rerank_provider` | `auto` | Reranker engine: `auto`, `eif` (built-in bitllm.c cross-encoder), `ollama`, `llamacpp`, `jina`, `cohere`, `voyage`. `auto` uses the built-in engine when the build has it and the model is a local GGUF, otherwise the embedding provider |
+| `rerank_model` | `mmarco-mMiniLMv2-L12-H384-v1-Q8_0.gguf` (built-in) / `bge-reranker-v2-m3` | Reranker model: a GGUF in `~/.gleann/models` (or a path) for the built-in engine, a model name for a server |
+| `storage_mode` | `store` | Vector storage of new indexes: `store` or `recompute` (see below) |
+| `auth` | `on` | REST API authentication: `on` (token required) or `off` (accepted only on a loopback address). `GLEANN_AUTH` overrides it |
+| `cors_origins` | — | Origins whose web pages may call the API, e.g. `["https://app.example.com"]`. `GLEANN_CORS_ORIGINS` adds more |
+| `rate_limit` / `rate_burst` | `60` / `120` | Requests per second / burst per client address (loopback clients are not limited). `GLEANN_RATE_LIMIT` / `GLEANN_RATE_BURST` override them |
+
+Every field above is also editable from `gleann setup` → All Settings and from the web UI (System → Settings); both are built from the same list, so they offer the same values and checks.
 | `quiet` | `false` | Suppress status messages globally |
 | `word_wrap` | `0` | Wrap output at N columns (0 = terminal width) |
 | `roles` | — | Custom named roles (map of name → system prompt lines) |
@@ -124,8 +133,10 @@ CLI flags override both defaults and config file values.
 --top-k <n>             # Number of results (default: 10)
 --metric <metric>       # Distance metric: l2, cosine, ip
 --json                  # Output as JSON
---rerank                # Enable two-stage reranking
---rerank-model <model>  # Reranker model
+--rerank                # Enable two-stage reranking (on by default when rerank_enabled is saved)
+--no-rerank             # Do not rerank, even when rerank_enabled is saved
+--rerank-model <model>  # Reranker model (overrides rerank_model)
+--rerank-provider <p>   # Reranker engine (overrides rerank_provider): auto, eif, ollama, llamacpp, jina, cohere, voyage
 --rerank-pool <n>       # Candidates sent to the reranker (default: max(4*top-k, 50))
 --rerank-url <url>      # Rerank through a llama-server --reranking endpoint (/v1/rerank), e.g. http://127.0.0.1:8791
 --no-hybrid             # Disable BM25 hybrid scoring (vector only)
@@ -139,8 +150,26 @@ CLI flags override both defaults and config file values.
 
 ### Reranking with a local cross-encoder
 
-`--rerank` re-scores the top candidates with a cross-encoder. With the `eif`
-embedding provider, point it at a `llama-server` started in reranking mode:
+`--rerank` (or `rerank_enabled`) re-scores the top candidates with a
+cross-encoder. Builds with the `eif` tag (the `gleann-full` and `gleann-eif`
+releases) run the cross-encoder in process with bitllm.c, so no server is
+needed:
+
+```bash
+gleann models download mmarco-mminilmv2-l12     # recommended: multilingual, ~0.4 s/query for 20 candidates on CPU
+gleann models download bge-reranker-v2-m3       # most accurate, ~3 s/query on CPU (up to 13 s on long passages)
+gleann search my-docs "query" --rerank          # uses rerank_model, or mmarco when none is set
+```
+
+Measured on MTEB TurHistQuadRetrieval (Turkish) on an ARM CPU, hybrid
+retrieval with multilingual-e5-small, 20 candidates: nDCG@10 0.436 → 0.493
+with mmarco, MRR@10 0.57 → 0.72 (full report: the gleann-rag-test benchmark).
+Pick the model and the engine in the settings (`gleann setup` → All Settings,
+or System → Settings in the web UI); both list the recommended models first.
+
+Ollama has no cross-encoder API: with `rerank_provider: ollama` gleann compares
+embeddings of the reranker model, which is much weaker. A real cross-encoder
+server can also be used through llama.cpp, started in reranking mode:
 
 ```bash
 # bge-reranker-v2-m3 (GGUF). Add -ngl 99 for a GPU build; use -ngl 0 on CPU.
@@ -184,7 +213,7 @@ gleann index storage                                        # table of all index
 gleann index storage docs --set store                       # convert in place (uses the embedding cache, rolls back on failure)
 ```
 
-`storage_mode` in `~/.gleann/config.json` sets the default for new indexes. In the TUI Index Manager, `s` switches the highlighted index and `g` toggles the default.
+`storage_mode` in `~/.gleann/config.json` sets the default for new indexes (Settings → Vector storage in the TUI and the web UI). In the TUI Index Manager, `s` switches the highlighted index and `g` toggles the default; in the web UI the Indexes page shows each index's mode with a switch button (`POST /api/indexes/{name}/storage {"mode":"store"|"recompute"}`, runs as a background task).
 
 ### Build Options
 

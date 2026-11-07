@@ -1545,49 +1545,34 @@ func intAbs(x int) int {
 	return x
 }
 
-// fetchRerankModelList fetches models from the embedding provider and filters for reranker-capable ones.
-// Returns the model name list and the index of the previously-selected model (or 0).
+// fetchRerankModelList lists the reranker models the settings offer for the
+// configured engine (rerankModelOptions: the built-in catalog models, or the
+// provider's reranker models), so the chat settings panel shows the same list
+// as the settings screen and the web UI. It returns the names and the index
+// of the saved model (added to the list when it is not in it).
 func fetchRerankModelList(savedCfg *OnboardResult) ([]string, int) {
-	var allModels []ModelInfo
-	var err error
-	if savedCfg != nil && savedCfg.EmbeddingProvider != "" {
-		host := savedCfg.OllamaHost
-		key := savedCfg.OpenAIKey
-		if savedCfg.EmbeddingProvider == "openai" {
-			host = savedCfg.OpenAIBaseURL
-		} else if savedCfg.EmbeddingProvider == "ollama" {
-			key = savedCfg.OllamaAPIKey
-		}
-		allModels, err = fetchModels(savedCfg.EmbeddingProvider, host, key)
-	} else {
-		// Fallback
-		allModels, err = fetchModels("ollama", gleann.DefaultOllamaHost, "")
+	cfg := savedCfg
+	if cfg == nil {
+		cfg = &OnboardResult{}
 	}
-	if err != nil || len(allModels) == 0 {
-		// Fallback: if saved config has a model, use that.
-		if savedCfg != nil && savedCfg.RerankModel != "" {
-			return []string{savedCfg.RerankModel}, 0
-		}
-		return nil, 0
+	opts, _ := rerankModelOptions(cfg)
+	names := make([]string, 0, len(opts)+1)
+	for _, o := range opts {
+		names = append(names, o.Value)
 	}
-
-	filtered := filterRerankerModels(allModels)
-	names := make([]string, len(filtered))
-	for i, m := range filtered {
-		names[i] = m.Name
+	saved := cfg.RerankModel
+	if saved == "" {
+		saved = resolvedReranker(cfg).Model
 	}
-
-	// Find saved model in the list.
-	selectedIdx := 0
-	if savedCfg != nil && savedCfg.RerankModel != "" {
-		for i, n := range names {
-			if n == savedCfg.RerankModel {
-				selectedIdx = i
-				break
-			}
+	for i, n := range names {
+		if n == saved {
+			return names, i
 		}
 	}
-	return names, selectedIdx
+	if saved != "" {
+		names = append([]string{saved}, names...)
+	}
+	return names, 0
 }
 
 // renderMarkdownContent renders markdown text using glamour for rich terminal display.
@@ -1888,10 +1873,14 @@ func (m *ChatModel) applyReranker() {
 		selectedRerankModel = m.rerankModels[m.rerankModelIdx]
 	}
 	if m.rerankEnabled && selectedRerankModel != "" {
-		m.chat.SetReranker(gleann.NewReranker(gleann.RerankerConfig{
-			Provider: gleann.RerankerOllama,
-			Model:    selectedRerankModel,
-		}))
+		// The same engine the CLI, REST and MCP use for these settings.
+		saved := LoadSavedConfig()
+		if saved == nil {
+			saved = &OnboardResult{}
+		}
+		rc := *saved
+		rc.RerankModel = selectedRerankModel
+		m.chat.SetReranker(gleann.NewReranker(resolvedReranker(&rc)))
 	} else {
 		m.chat.SetReranker(nil)
 	}
