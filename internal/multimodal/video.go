@@ -89,11 +89,12 @@ func ExtractFrames(videoPath string, cfg FrameExtractionConfig) ([]ExtractedFram
 	// Build ffmpeg command.
 	pattern := filepath.Join(outDir, "frame_%04d.jpg")
 
-	// Bug #5: prefer scene-change detection when configured. The vsync=vfr
-	// + select='gt(scene\,th)' pair yields visually distinct frames; we
-	// still cap with -frames:v to honour MaxFrames. If the source is too
-	// short or has no scene cuts, ffmpeg emits zero frames and we fall
-	// back to fixed-FPS sampling below.
+	// Bug #5: prefer scene-change detection when configured. The
+	// select='gt(scene\,th)' filter yields visually distinct frames; we
+	// still cap with -frames:v to honour MaxFrames. (Note: -vsync vfr was
+	// omitted for compatibility with modern ffmpeg 7+/9+ where -vsync is removed).
+	// If the source is too short or has no scene cuts, ffmpeg emits zero frames
+	// and we fall back to fixed-FPS sampling below.
 	var args []string
 	var usingScene bool
 	if cfg.SceneThreshold > 0 {
@@ -105,7 +106,6 @@ func ExtractFrames(videoPath string, cfg FrameExtractionConfig) ([]ExtractedFram
 		args = []string{
 			"-i", videoPath,
 			"-vf", filter,
-			"-vsync", "vfr",
 			"-q:v", strconv.Itoa((100 - cfg.Quality) * 31 / 100),
 			"-frames:v", strconv.Itoa(cfg.MaxFrames),
 			pattern,
