@@ -223,11 +223,14 @@ func (s *Server) handleMemoryRemember(ctx context.Context, req mcpsdk.CallToolRe
 	}
 
 	scope, _ := args["scope"].(string)
-	if scope == "" {
-		scope = detectRepoScope()
-	}
-
 	repo, _ := args["repo"].(string)
+	if scope == "" {
+		if repo != "" {
+			scope = repo
+		} else {
+			scope = detectRepoScope()
+		}
+	}
 	if repo == "" {
 		repo = scope
 	}

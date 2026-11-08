@@ -768,6 +768,55 @@ func TestMemoryAutoRepoScopeAndIsolation(t *testing.T) {
 	}
 }
 
+func TestMemoryScopeRepoFallback(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+	t.Setenv("USERPROFILE", tmp)
+	t.Setenv("GLEANN_MEMORY_DIR", tmp)
+
+	s := testMCPServer()
+	defer s.Close()
+
+	ctx := context.Background()
+
+	// 1. repo provided without scope -> scope should default to repo
+	_, err := s.handleMemoryRemember(ctx, makeCallToolReq(map[string]any{
+		"content": "Fork-specific note",
+		"tier":    "long",
+		"repo":    "github.com/citkane/gleann",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	mgr, err := s.blockMem.get()
+	if err != nil {
+		t.Fatal(err)
+	}
+	blocks, err := mgr.Store().List(memory.TierLong)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(blocks) != 1 {
+		t.Fatalf("expected 1 block, got %d", len(blocks))
+	}
+	if blocks[0].Scope != "github.com/citkane/gleann" {
+		t.Errorf("expected scope to default to repo 'github.com/citkane/gleann', got %q", blocks[0].Scope)
+	}
+
+	// 2. Context with that scope should find it
+	ctxRes, err := s.handleMemoryContext(ctx, makeCallToolReq(map[string]any{
+		"scope": "github.com/citkane/gleann",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctxText := ctxRes.Content[0].(mcpsdk.TextContent).Text
+	if !strings.Contains(ctxText, "Fork-specific note") {
+		t.Errorf("expected context to find block, got: %s", ctxText)
+	}
+}
+
 func TestMemoryProvenanceFields(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)
@@ -815,6 +864,9 @@ func TestMemoryProvenanceFields(t *testing.T) {
 	b := blocks[0]
 	if b.Repo != "github.com/tevfik/gleann" {
 		t.Errorf("expected repo 'github.com/tevfik/gleann', got %q", b.Repo)
+	}
+	if b.Scope != "github.com/tevfik/gleann" {
+		t.Errorf("expected scope 'github.com/tevfik/gleann' (defaulted from repo), got %q", b.Scope)
 	}
 	if len(b.Paths) != 2 || b.Paths[0] != "pkg/memory/store.go" {
 		t.Errorf("unexpected paths: %v", b.Paths)
