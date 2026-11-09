@@ -78,7 +78,7 @@ jobs:
           go-version: "1.25"
 
       - name: Install Task
-        uses: arduino/setup-task@v2
+        uses: go-task/setup-task@v2
         with:
           version: 3.x
           repo-token: ${{ secrets.GITHUB_TOKEN }}
@@ -158,7 +158,7 @@ jobs:
           go-version: "1.25"
 
       - name: Install Task
-        uses: arduino/setup-task@v2
+        uses: go-task/setup-task@v2
         with:
           version: 3.x
           repo-token: ${{ secrets.GITHUB_TOKEN }}
@@ -246,7 +246,7 @@ jobs:
           go-version: "1.25"
 
       - name: Install Task
-        uses: arduino/setup-task@v2
+        uses: go-task/setup-task@v2
         with:
           version: 3.x
           repo-token: ${{ secrets.GITHUB_TOKEN }}
