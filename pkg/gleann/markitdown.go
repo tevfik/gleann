@@ -1,11 +1,12 @@
-// Package gleann provides the MarkItDown CLI wrapper for Go-native document extraction.
+// Package gleann provides the CLI document extraction wrapper.
 //
 // This is "Layer 0" of the document extraction stack:
-//   - Layer 0: Go calls `markitdown` CLI directly → no Python server needed
-//   - Layer 1: Python plugin with Docling → higher quality PDF (optional)
+//   - Layer 1: Plugin server (e.g. gleann-plugin-docs with Docling / native Office / OCR)
+//   - Layer 0: High-speed Rust CLI (anydoc) or Python fallback (markitdown)
+//   - Layer -1: Pure Go-native extraction (zero deps, always available)
 //
-// When markitdown is on PATH, gleann can extract text from PDF, DOCX, XLSX,
-// PPTX, CSV, and image files without any Python server running.
+// When anydoc (or markitdown) is on PATH, gleann can extract text from PDF, DOCX, XLSX,
+// PPTX, CSV, ODT, RTF, EPUB and other files without any Python server running.
 package gleann
 
 import (
@@ -18,14 +19,31 @@ import (
 	"time"
 )
 
-// MarkItDownExtractor provides Go-native document extraction via the markitdown CLI.
-// It requires `markitdown` to be installed (`pipx install markitdown`).
-type MarkItDownExtractor struct {
+// AnyDocExtractor provides document extraction via the anydoc (Rust) or markitdown (Python) CLI.
+type AnyDocExtractor struct {
 	binaryPath string
+	isAnyDoc   bool
 	timeout    time.Duration
 }
 
-// markitdown supported extensions (same set as the Python plugin).
+// MarkItDownExtractor is a backwards-compatible alias for AnyDocExtractor.
+type MarkItDownExtractor = AnyDocExtractor
+
+// anydoc supported extensions (covers 14+ formats).
+var anyDocExts = map[string]bool{
+	".pdf":  true,
+	".docx": true, ".doc": true,
+	".xlsx": true, ".xls": true,
+	".pptx": true, ".ppt": true,
+	".csv": true,
+	".odt": true, ".ods": true, ".odp": true,
+	".rtf":  true,
+	".epub": true,
+	".html": true, ".htm": true,
+	".png": true, ".jpg": true, ".jpeg": true,
+}
+
+// markitdown supported extensions (legacy fallback set).
 var markitdownExts = map[string]bool{
 	".pdf":  true,
 	".docx": true, ".doc": true,
@@ -35,17 +53,47 @@ var markitdownExts = map[string]bool{
 	".png": true, ".jpg": true, ".jpeg": true,
 }
 
-// NewMarkItDownExtractor creates a new extractor, auto-detecting the markitdown binary.
-// Returns nil if markitdown is not found on PATH.
-func NewMarkItDownExtractor() *MarkItDownExtractor {
-	path, err := FindMarkItDown()
+// NewAnyDocExtractor creates a new extractor, preferring anydoc over markitdown.
+// Returns nil if neither CLI is found on PATH.
+func NewAnyDocExtractor() *AnyDocExtractor {
+	path, isAnyDoc, err := FindAnyDoc()
 	if err != nil {
 		return nil
 	}
-	return &MarkItDownExtractor{
+	return &AnyDocExtractor{
 		binaryPath: path,
+		isAnyDoc:   isAnyDoc,
 		timeout:    60 * time.Second,
 	}
+}
+
+// NewMarkItDownExtractor creates a new extractor (auto-detecting anydoc or markitdown).
+func NewMarkItDownExtractor() *MarkItDownExtractor {
+	return NewAnyDocExtractor()
+}
+
+// FindAnyDoc locates anydoc (preferred, Rust) or markitdown (legacy fallback) on PATH.
+func FindAnyDoc() (path string, isAnyDoc bool, err error) {
+	// 1. Prefer anydoc (Rust, ~4ms single-digit latency, zero Python).
+	candidates := []string{"anydoc"}
+	if home, err := os.UserHomeDir(); err == nil {
+		candidates = append(candidates,
+			filepath.Join(home, ".cargo", "bin", "anydoc"),
+			filepath.Join(home, ".local", "bin", "anydoc"),
+		)
+	}
+	for _, c := range candidates {
+		if p, err := exec.LookPath(c); err == nil {
+			return p, true, nil
+		}
+	}
+
+	// 2. Fall back to markitdown if anydoc is not installed.
+	if p, err := FindMarkItDown(); err == nil {
+		return p, false, nil
+	}
+
+	return "", false, fmt.Errorf("neither anydoc nor markitdown found on PATH")
 }
 
 // FindMarkItDown locates the markitdown binary on PATH.
@@ -129,47 +177,60 @@ func InstallMarkItDown() (string, error) {
 	return "", fmt.Errorf("neither pipx nor pip found — cannot auto-install markitdown")
 }
 
-// Available returns true if the markitdown binary was found.
-func (m *MarkItDownExtractor) Available() bool {
+// Available returns true if the converter binary was found.
+func (m *AnyDocExtractor) Available() bool {
 	return m != nil && m.binaryPath != ""
 }
 
-// BinaryPath returns the resolved path to the markitdown binary.
-func (m *MarkItDownExtractor) BinaryPath() string {
+// BinaryPath returns the resolved path to the converter binary.
+func (m *AnyDocExtractor) BinaryPath() string {
 	if m == nil {
 		return ""
 	}
 	return m.binaryPath
 }
 
-// CanHandle returns true if this extension is supported by markitdown.
-func (m *MarkItDownExtractor) CanHandle(ext string) bool {
-	return markitdownExts[strings.ToLower(ext)]
+// IsAnyDoc returns true if the detected CLI is anydoc (rather than markitdown).
+func (m *AnyDocExtractor) IsAnyDoc() bool {
+	return m != nil && m.isAnyDoc
 }
 
-// Extract converts a file to markdown using the markitdown CLI.
+// CanHandle returns true if this extension is supported by the active converter CLI.
+func (m *AnyDocExtractor) CanHandle(ext string) bool {
+	lExt := strings.ToLower(ext)
+	if m != nil && m.isAnyDoc {
+		return anyDocExts[lExt]
+	}
+	return markitdownExts[lExt]
+}
+
+// Extract converts a file to markdown using the CLI (anydoc or markitdown).
 // Returns the markdown string or an error.
-func (m *MarkItDownExtractor) Extract(filePath string) (string, error) {
+func (m *AnyDocExtractor) Extract(filePath string) (string, error) {
 	if m == nil || m.binaryPath == "" {
-		return "", fmt.Errorf("markitdown not available")
+		return "", fmt.Errorf("document converter CLI not available")
 	}
 
 	cmd := exec.Command(m.binaryPath, filePath)
 	output, err := cmd.Output()
 	if err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok {
-			return "", fmt.Errorf("markitdown failed: %s", string(exitErr.Stderr))
+			return "", fmt.Errorf("document extraction failed: %s", string(exitErr.Stderr))
 		}
-		return "", fmt.Errorf("markitdown exec: %w", err)
+		return "", fmt.Errorf("document extraction exec: %w", err)
 	}
 
 	return string(output), nil
 }
 
 // SupportedExtensions returns the list of extensions this extractor handles.
-func (m *MarkItDownExtractor) SupportedExtensions() []string {
-	exts := make([]string, 0, len(markitdownExts))
-	for ext := range markitdownExts {
+func (m *AnyDocExtractor) SupportedExtensions() []string {
+	extMap := markitdownExts
+	if m != nil && m.isAnyDoc {
+		extMap = anyDocExts
+	}
+	exts := make([]string, 0, len(extMap))
+	for ext := range extMap {
 		exts = append(exts, ext)
 	}
 	return exts

@@ -280,6 +280,25 @@ func TestCanHandle(t *testing.T) {
 	}
 }
 
+func TestAnyDocExtractor_CanHandle(t *testing.T) {
+	ext := &AnyDocExtractor{binaryPath: "anydoc", isAnyDoc: true}
+	if !ext.IsAnyDoc() {
+		t.Error("expected IsAnyDoc = true")
+	}
+
+	validExts := []string{".pdf", ".docx", ".xlsx", ".pptx", ".csv", ".odt", ".rtf", ".epub", ".html"}
+	for _, e := range validExts {
+		if !ext.CanHandle(e) {
+			t.Errorf("expected anydoc CanHandle(%s) = true", e)
+		}
+	}
+
+	exts := ext.SupportedExtensions()
+	if len(exts) < 10 {
+		t.Errorf("expected at least 10 extensions for anydoc, got %d", len(exts))
+	}
+}
+
 func TestCanHandle_CaseInsensitive(t *testing.T) {
 	ext := &MarkItDownExtractor{binaryPath: "markitdown"}
 	if !ext.CanHandle(".PDF") {
