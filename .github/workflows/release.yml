@@ -48,6 +48,7 @@ jobs:
     needs: test
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
         include:
           - goos: linux
@@ -77,12 +78,6 @@ jobs:
         with:
           go-version: "1.25"
 
-      - name: Install Task
-        uses: go-task/setup-task@v2
-        with:
-          version: 3.x
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
-
       - name: Determine version
         id: version
         # Use short commit hash if not a tag
@@ -99,7 +94,9 @@ jobs:
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: "0"
           VERSION: ${{ steps.version.outputs.version }}
-        run: task build
+        run: |
+          mkdir -p build
+          go build -ldflags "-s -w -X main.version=${VERSION}" -o build/gleann ./cmd/gleann
 
       - name: Compress binary
         run: |
@@ -157,12 +154,6 @@ jobs:
         with:
           go-version: "1.25"
 
-      - name: Install Task
-        uses: go-task/setup-task@v2
-        with:
-          version: 3.x
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
-
       - name: Install build dependencies
         shell: bash
         run: |
@@ -195,7 +186,11 @@ jobs:
             export CGO_CXXFLAGS="-fno-tree-vectorize -fmath-errno"
             export CMAKE_C_FLAGS="-fno-tree-vectorize -fmath-errno"
           fi
-          task build-eif
+          mkdir -p ext/bitllm.c/build
+          cmake -B ext/bitllm.c/build -S ext/bitllm.c -DCMAKE_BUILD_TYPE=Release -DEIF_ENABLE_VULKAN=OFF -DCMAKE_C_FLAGS="-D_DARWIN_C_SOURCE=1 -D_POSIX_C_SOURCE=200809L $CMAKE_C_FLAGS"
+          cmake --build ext/bitllm.c/build --target bitllm_static
+          mkdir -p build
+          go build -tags "eif" -ldflags "-s -w -X main.version=${VERSION}" -o build/gleann-eif ./cmd/gleann
 
       - name: Rename and compress binary
         shell: bash
@@ -246,10 +241,17 @@ jobs:
           go-version: "1.25"
 
       - name: Install Task
-        uses: go-task/setup-task@v2
-        with:
-          version: 3.x
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" == "macOS" ]; then
+            brew install go-task
+          else
+            if ! curl -fsSL --retry 3 https://taskfile.dev/install.sh | sudo sh -s -- -d -b /usr/local/bin; then
+              echo "Installing Task via go install fallback..."
+              go install github.com/go-task/task/v3/cmd/task@v3.54.0
+              sudo cp $(go env GOPATH)/bin/task /usr/local/bin/
+            fi
+          fi
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
