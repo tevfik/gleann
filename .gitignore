@@ -46,8 +46,7 @@ indexes/
 LOCAL_*.md
 GRAPH_REPORT.md
 
-# AI agent instruction files (local only)
-AGENTS.md
+# AI agent instruction files (local only, AGENTS.md is now tracked)
 CLAUDE.md
 GEMINI.md
 
