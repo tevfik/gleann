@@ -49,6 +49,8 @@ func TestAuth_RequiredAndScopes(t *testing.T) {
 		{"query can search", "POST", "/api/indexes/x/search", bearer(q), 200},
 		{"query can list", "GET", "/api/indexes", bearer(q), 200},
 		{"query cannot delete", "DELETE", "/api/indexes/x", bearer(q), 403},
+		{"query cannot read storage", "GET", "/api/storage", bearer(q), 403},
+		{"admin can read storage", "GET", "/api/storage", bearer(admin), 200},
 		{"query cannot write config", "POST", "/api/config", bearer(q), 403},
 		{"admin can write config", "POST", "/api/config", bearer(admin), 200},
 		{"v1 needs token", "POST", "/v1/chat/completions", nil, 401},

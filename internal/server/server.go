@@ -260,6 +260,7 @@ func (s *Server) buildMux() *http.ServeMux {
 	// Routes matching Python LEANN's FastAPI endpoints.
 	mux.HandleFunc("GET /health", s.handleHealth)
 	mux.HandleFunc("GET /api/indexes", s.handleListIndexes)
+	mux.HandleFunc("GET /api/storage", s.handleStorage)
 	mux.HandleFunc("GET /api/indexes/{name}", s.handleGetIndex)
 	mux.HandleFunc("POST /api/indexes/{name}/search", s.handleSearch)
 	mux.HandleFunc("POST /api/indexes/{name}/ask", s.handleAsk)
@@ -563,6 +564,17 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 		"version": s.version,
 		"engine":  "gleann-go",
 	})
+}
+
+// handleStorage reports the disk space of the index directory: every index's files, how many indexes and
+// passages there are, and the space of the file system that holds them.
+func (s *Server) handleStorage(w http.ResponseWriter, r *http.Request) {
+	usage, err := gleann.MeasureIndexUsage(s.cfg().IndexDir)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, usage)
 }
 
 func (s *Server) handleListIndexes(w http.ResponseWriter, r *http.Request) {

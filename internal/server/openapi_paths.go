@@ -33,6 +33,33 @@ func openAPIPathsHealth() map[string]any {
 // openAPIPathsIndexes returns the /api/indexes/* endpoint specs.
 func openAPIPathsIndexes() map[string]any {
 	return map[string]any{
+		"/api/storage": map[string]any{
+			"get": map[string]any{
+				"tags":        []string{"indexes"},
+				"summary":     "Disk space of the indexes (admin)",
+				"operationId": "getStorage",
+				"responses": map[string]any{
+					"200": map[string]any{
+						"description": "Bytes of all files under the index directory, index and passage counts, and the file system's size and free space",
+						"content": map[string]any{
+							"application/json": map[string]any{
+								"schema": map[string]any{
+									"type": "object",
+									"properties": map[string]any{
+										"index_dir":        map[string]any{"type": "string"},
+										"indexes":          map[string]any{"type": "integer"},
+										"passages":         map[string]any{"type": "integer"},
+										"bytes":            map[string]any{"type": "integer"},
+										"disk_total_bytes": map[string]any{"type": "integer"},
+										"disk_free_bytes":  map[string]any{"type": "integer"},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
 		"/api/indexes": map[string]any{
 			"get": map[string]any{
 				"tags":        []string{"indexes"},

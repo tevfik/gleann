@@ -66,6 +66,7 @@ func TestHandleOpenAPISpec(t *testing.T) {
 	expectedPaths := []string{
 		"/health",
 		"/api/indexes",
+		"/api/storage",
 		"/api/indexes/{name}",
 		"/api/indexes/{name}/search",
 		"/api/indexes/{name}/ask",
