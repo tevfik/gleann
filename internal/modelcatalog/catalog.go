@@ -178,9 +178,14 @@ func addPoolerTo(ctx context.Context, e Entry, path string) error {
 		_ = os.Remove(tmp)
 		return fmt.Errorf("pooler: %w", err)
 	}
-	if fi, err := os.Stat(tmp); err != nil || (e.Pooler.Bytes > 0 && fi.Size() != e.Pooler.Bytes) {
+	fi, err := os.Stat(tmp)
+	if err != nil {
 		_ = os.Remove(tmp)
-		return fmt.Errorf("pooler: patched file has the wrong size")
+		return fmt.Errorf("pooler: %w", err)
+	}
+	if e.Pooler.Bytes > 0 && fi.Size() != e.Pooler.Bytes {
+		_ = os.Remove(tmp)
+		return fmt.Errorf("pooler: patched file has %d bytes, want %d", fi.Size(), e.Pooler.Bytes)
 	}
 	return os.Rename(tmp, path)
 }

@@ -748,28 +748,27 @@ func createAskSearcher(ctx context.Context, name string, args []string, config g
 		}
 	}
 
+	// Search settings must be in config before NewSearcher/LoadMultiSearcher
+	// copy it: setting them afterwards left `ask --rerank` without reranking,
+	// and multi-index or <name>-code/<name>-docs asks never reranked. The
+	// reranker and expander instances are shared by all indexes.
+	if wantRerank(config, args) {
+		config.SearchConfig.UseReranker = true
+		config.SearchConfig.CustomReranker = gleann.NewReranker(rerankerConfigFromFlags(config, args))
+	}
+	if hasFlag(args, "--graph") {
+		config.SearchConfig.UseGraphContext = true
+	}
+	if wantExpand(config, args) {
+		config.SearchConfig.Expand = true
+		config.SearchConfig.Expander = newQueryExpander(gleann.NullSearcher{}, args, config)
+	}
+
 	if len(indexNames) == 1 {
-		// Search settings must be in config before NewSearcher copies it:
-		// setting them afterwards left `ask --rerank` without reranking.
-		rerank := wantRerank(config, args)
-		if rerank {
-			config.SearchConfig.UseReranker = true
-		}
-		if hasFlag(args, "--graph") {
-			config.SearchConfig.UseGraphContext = true
-		}
-		expand := wantExpand(config, args)
-		config.SearchConfig.Expand = expand
 		s := gleann.NewSearcher(config, embedder)
 		if err := s.Load(ctx, indexNames[0]); err != nil {
 			fmt.Fprintf(os.Stderr, "error loading index: %v\n", err)
 			os.Exit(1)
-		}
-		if rerank {
-			s.SetReranker(gleann.NewReranker(rerankerConfigFromFlags(config, args)))
-		}
-		if expand {
-			s.SetQueryExpander(newQueryExpander(s, args, config))
 		}
 		return s
 	}
@@ -794,6 +793,7 @@ func extractPositionalArgs(args []string) ([]string, []string) {
 		"--attach": true, "--image": true,
 		"--repeat-penalty": true, "--repetition-penalty": true,
 		"--expand-model": true,
+		"--rerank-url":   true, "--rerank-pool": true, "--rerank-provider": true,
 	}
 	for i := 0; i < len(args); i++ {
 		if (args[i] == "--attach" || args[i] == "--image") && i+1 < len(args) {

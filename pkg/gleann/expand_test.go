@@ -103,3 +103,16 @@ func TestLLMQueryExpanderCaches(t *testing.T) {
 		t.Fatalf("language must be part of the cache key (calls %d, err %v)", calls.Load(), err)
 	}
 }
+
+func TestDominantLanguageBeforeLoad(t *testing.T) {
+	s := &LeannSearcher{}
+	if got := s.DominantLanguage(10); got != "" {
+		t.Fatalf("unloaded searcher language = %q", got)
+	}
+	// The once must not have been used up by the unloaded call.
+	ran := false
+	s.langOnce.Do(func() { ran = true })
+	if !ran {
+		t.Fatal("DominantLanguage consumed the once before the index was loaded")
+	}
+}

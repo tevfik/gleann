@@ -860,6 +860,9 @@ type askRequest struct {
 	// Cite links each answer sentence to the context passage it is closest
 	// to (gleann.Attribute) and returns the result in "citations".
 	Cite bool `json:"cite,omitempty"`
+	// Expand enables HyDE query expansion for the retrieval step (see
+	// searchRequest.Expand); the expand setting turns it on by default.
+	Expand bool `json:"expand,omitempty"`
 }
 
 type askResponse struct {
@@ -963,6 +966,9 @@ func (s *Server) handleAsk(w http.ResponseWriter, r *http.Request) {
 	var opts []gleann.SearchOption
 	if req.TopK > 0 {
 		opts = append(opts, gleann.WithTopK(req.TopK))
+	}
+	if cfg := s.cfg(); req.Expand || cfg.SearchConfig.Expand {
+		opts = append(opts, gleann.WithQueryExpander(s.queryExpander(cfg)))
 	}
 
 	serverMetrics.RecordAsk()

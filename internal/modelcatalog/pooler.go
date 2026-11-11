@@ -97,7 +97,10 @@ func fetchPooler(ctx context.Context, p Pooler) (weight, bias []float32, err err
 		}
 		var t stTensor
 		if err := json.Unmarshal(raw, &t); err != nil {
-			return nil, nil, err
+			return nil, nil, fmt.Errorf("tensor %s: %w", name, err)
+		}
+		if t.Offsets[0] < 0 || t.Offsets[1] <= t.Offsets[0] || t.Offsets[1]-t.Offsets[0] > 64<<20 {
+			return nil, nil, fmt.Errorf("tensor %s: bad data offsets %v", name, t.Offsets)
 		}
 		b, err := fetchRange(ctx, p.URL, 8+n+t.Offsets[0], 8+n+t.Offsets[1])
 		if err != nil {
@@ -114,8 +117,9 @@ func fetchPooler(ctx context.Context, p Pooler) (weight, bias []float32, err err
 	if err != nil {
 		return nil, nil, err
 	}
-	if len(bs) != 1 || len(ws) != 2 || ws[0] != bs[0] || ws[1] != bs[0] {
-		return nil, nil, fmt.Errorf("pooler shapes %v / %v, want [d d] / [d]", ws, bs)
+	if len(bs) != 1 || len(ws) != 2 || ws[0] != bs[0] || ws[1] != bs[0] ||
+		int64(len(bias)) != bs[0] || int64(len(weight)) != ws[0]*ws[1] {
+		return nil, nil, fmt.Errorf("pooler shapes %v / %v (%d / %d values), want [d d] / [d]", ws, bs, len(weight), len(bias))
 	}
 	return weight, bias, nil
 }
@@ -293,6 +297,12 @@ func AddPooler(src, dst string, weight, bias []float32) error {
 		return err
 	}
 	blobLen := fi.Size() - dataStart
+	if blobLen < 0 {
+		return fmt.Errorf("%s: truncated GGUF (data starts at %d, file has %d bytes)", src, dataStart, fi.Size())
+	}
+	if len(weight) != len(bias)*len(bias) || len(bias) == 0 {
+		return fmt.Errorf("pooler: weight has %d values, want %d", len(weight), len(bias)*len(bias))
+	}
 	dim := uint64(len(bias))
 	offW := uint64(pad(blobLen))
 	offB := uint64(pad(int64(offW) + int64(4*len(weight))))

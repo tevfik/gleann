@@ -194,6 +194,8 @@ func runContextBenchmark(config gleann.Config, indexName, tasksFile string, topK
 	// Strategy 4f: two-stage with the configured cross-encoder reranker
 	// (GLEANN_BENCH_RERANK=1; uses the saved reranker settings or
 	// GLEANN_BENCH_RERANK_MODEL / _PROVIDER).
+	var benchRR gleann.Reranker // reused by the HyDE + rerank strategy
+	benchPool := 20
 	if os.Getenv("GLEANN_BENCH_RERANK") == "1" {
 		rcfg := gleann.ResolveRerankerConfig(config, os.Getenv("GLEANN_BENCH_RERANK_MODEL"))
 		if p := os.Getenv("GLEANN_BENCH_RERANK_PROVIDER"); p != "" {
@@ -212,6 +214,7 @@ func runContextBenchmark(config gleann.Config, indexName, tasksFile string, topK
 		}
 		rcfg.MaxDocChars = chars
 		rr := gleann.NewReranker(rcfg)
+		benchRR, benchPool = rr, pool
 		for _, gate := range []bool{false, true} {
 			label := fmt.Sprintf("Rerank pool=%d chars=%d", pool, chars)
 			if gate {
@@ -230,15 +233,9 @@ func runContextBenchmark(config gleann.Config, indexName, tasksFile string, topK
 		cc.MaxTokens = 120
 		exp := gleann.NewLLMQueryExpander(searcher, cc)
 		runner.RegisterStrategy("Hybrid + HyDE("+m+")", hybridWith(gleann.WithQueryExpander(exp)))
-		if os.Getenv("GLEANN_BENCH_RERANK") == "1" {
-			rcfg := gleann.ResolveRerankerConfig(config, os.Getenv("GLEANN_BENCH_RERANK_MODEL"))
-			if p := os.Getenv("GLEANN_BENCH_RERANK_PROVIDER"); p != "" {
-				rcfg.Provider = gleann.RerankerProvider(p)
-			}
-			rcfg.MaxDocChars = 500
-			rr := gleann.NewReranker(rcfg)
-			runner.RegisterStrategy("Hybrid + HyDE + rerank pool=20 +skip-ident", hybridWith(gleann.WithQueryExpander(exp),
-				gleann.WithCustomReranker(rr), gleann.WithReranker(true), gleann.WithRerankPool(20), gleann.WithRerankSkipIdentifiers(true)))
+		if benchRR != nil {
+			runner.RegisterStrategy(fmt.Sprintf("Hybrid + HyDE + rerank pool=%d +skip-ident", benchPool), hybridWith(gleann.WithQueryExpander(exp),
+				gleann.WithCustomReranker(benchRR), gleann.WithReranker(true), gleann.WithRerankPool(benchPool), gleann.WithRerankSkipIdentifiers(true)))
 		}
 	}
 

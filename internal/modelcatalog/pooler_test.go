@@ -314,3 +314,62 @@ func TestDownloadAddsPooler(t *testing.T) {
 		t.Fatal("a failed patch left a file under the real name")
 	}
 }
+
+func TestFetchPoolerRejectsBadHeaders(t *testing.T) {
+	serve := func(hdr map[string]any, data []byte) *httptest.Server {
+		hj, _ := json.Marshal(hdr)
+		var b bytes.Buffer
+		_ = binary.Write(&b, binary.LittleEndian, uint64(len(hj)))
+		b.Write(hj)
+		b.Write(data)
+		body := b.Bytes()
+		return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			http.ServeContent(w, r, "m.safetensors", testTime, bytes.NewReader(body))
+		}))
+	}
+	p := Pooler{Weight: "w", Bias: "b"}
+	cases := map[string]map[string]any{
+		"reversed offsets": {
+			"w": map[string]any{"dtype": "F32", "shape": []int{2, 2}, "data_offsets": []int{16, 0}},
+			"b": map[string]any{"dtype": "F32", "shape": []int{2}, "data_offsets": []int{16, 24}},
+		},
+		"shape larger than data": {
+			"w": map[string]any{"dtype": "F32", "shape": []int{4, 4}, "data_offsets": []int{0, 16}},
+			"b": map[string]any{"dtype": "F32", "shape": []int{4}, "data_offsets": []int{16, 32}},
+		},
+		"unsupported dtype": {
+			"w": map[string]any{"dtype": "I8", "shape": []int{2, 2}, "data_offsets": []int{0, 4}},
+			"b": map[string]any{"dtype": "F32", "shape": []int{2}, "data_offsets": []int{4, 12}},
+		},
+	}
+	for name, hdr := range cases {
+		t.Run(name, func(t *testing.T) {
+			srv := serve(hdr, make([]byte, 64))
+			defer srv.Close()
+			p.URL = srv.URL
+			if _, _, err := fetchPooler(context.Background(), p); err == nil {
+				t.Fatal("want an error")
+			}
+		})
+	}
+}
+
+func TestAddPoolerRejectsBadInput(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "in.gguf")
+	gg := tinyGGUF(t, 4)
+	// Truncated: header claims a tensor but the file ends inside the header.
+	if err := os.WriteFile(src, gg[:40], 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := AddPooler(src, filepath.Join(dir, "o1"), make([]float32, 16), make([]float32, 4)); err == nil {
+		t.Fatal("truncated GGUF: want an error")
+	}
+	// Weight/bias size mismatch.
+	if err := os.WriteFile(src, gg, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := AddPooler(src, filepath.Join(dir, "o2"), make([]float32, 15), make([]float32, 4)); err == nil {
+		t.Fatal("weight/bias mismatch: want an error")
+	}
+}

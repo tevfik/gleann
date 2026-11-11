@@ -109,10 +109,10 @@ var vendorDirs = []string{"vendor/", "deps/", "third_party/", "node_modules/", "
 // so a prefix sample can pick the wrong language. maxPassages > 0 caps the
 // scan for very large indexes.
 func (s *LeannSearcher) DominantLanguage(maxPassages int) string {
+	if s.passages == nil {
+		return s.language // not loaded yet: do not consume the once
+	}
 	s.langOnce.Do(func() {
-		if s.passages == nil {
-			return
-		}
 		count := map[string]int{}
 		n := 0
 		_ = s.passages.ForEachPassage(func(p Passage) error {
@@ -124,6 +124,7 @@ func (s *LeannSearcher) DominantLanguage(maxPassages int) string {
 			if src == "" {
 				src, _ = p.Metadata["file"].(string)
 			}
+			src = filepath.ToSlash(src)
 			for _, v := range vendorDirs {
 				if strings.Contains(src, v) {
 					return nil

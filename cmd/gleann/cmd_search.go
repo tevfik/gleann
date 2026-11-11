@@ -73,9 +73,11 @@ Examples:
 	}
 
 	// Rerank with --rerank or when enabled in the settings (--no-rerank turns it off).
+	// The reranker is passed per request, so multi-index searches (which
+	// open their own searchers) rerank too.
+	var reranker gleann.Reranker
 	if wantRerank(config, args) {
-		rerankerCfg := rerankerConfigFromFlags(config, args)
-		searcher.SetReranker(gleann.NewReranker(rerankerCfg))
+		reranker = gleann.NewReranker(rerankerConfigFromFlags(config, args))
 		config.SearchConfig.UseReranker = true
 	}
 
@@ -87,8 +89,8 @@ Examples:
 		// Per-request expander so multi-index searches use it too.
 		searchOpts = append(searchOpts, gleann.WithQueryExpander(newQueryExpander(searcher, args, config)))
 	}
-	if config.SearchConfig.UseReranker {
-		searchOpts = append(searchOpts, gleann.WithReranker(true))
+	if reranker != nil {
+		searchOpts = append(searchOpts, gleann.WithCustomReranker(reranker), gleann.WithReranker(true))
 	}
 	if hasFlag(args, "--graph") {
 		searchOpts = append(searchOpts, gleann.WithGraphContext(true))
@@ -141,6 +143,9 @@ Examples:
 		}
 		// indexNames == nil means "all indexes"
 
+		if hasFlag(args, "--explain") {
+			fmt.Fprintln(os.Stderr, "note: --explain works for a single index only; showing results without explanations")
+		}
 		start := time.Now()
 		multiResults, err := gleann.SearchMultiple(ctx, config, embedder, indexNames, query, searchOpts...)
 		if err != nil {
