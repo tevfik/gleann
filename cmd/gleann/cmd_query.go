@@ -703,6 +703,8 @@ func printCmdAskUsage() {
 	fmt.Fprintln(os.Stderr, "  --image FILE         Alias for --attach (attach image file)")
 	fmt.Fprintln(os.Stderr, "  --raw                Output raw text (no formatting); auto-enabled when piped")
 	fmt.Fprintln(os.Stderr, "  --cite               After the answer, list the sources each sentence came from")
+	fmt.Fprintln(os.Stderr, "  --expand             HyDE: let the LLM sketch the code first and search with it (+1-3 s, better recall for questions)")
+	fmt.Fprintln(os.Stderr, "  --expand-model <m>   LLM used by --expand (default: the chat model)")
 	fmt.Fprintln(os.Stderr, "  --quiet              Suppress status messages")
 	fmt.Fprintln(os.Stderr, "  --word-wrap N        Wrap output at N columns (default: terminal width)")
 	fmt.Fprintln(os.Stderr, "  --no-cache           Do not save conversation")
@@ -756,6 +758,8 @@ func createAskSearcher(ctx context.Context, name string, args []string, config g
 		if hasFlag(args, "--graph") {
 			config.SearchConfig.UseGraphContext = true
 		}
+		expand := wantExpand(config, args)
+		config.SearchConfig.Expand = expand
 		s := gleann.NewSearcher(config, embedder)
 		if err := s.Load(ctx, indexNames[0]); err != nil {
 			fmt.Fprintf(os.Stderr, "error loading index: %v\n", err)
@@ -763,6 +767,9 @@ func createAskSearcher(ctx context.Context, name string, args []string, config g
 		}
 		if rerank {
 			s.SetReranker(gleann.NewReranker(rerankerConfigFromFlags(config, args)))
+		}
+		if expand {
+			s.SetQueryExpander(newQueryExpander(s, args, config))
 		}
 		return s
 	}
@@ -786,6 +793,7 @@ func extractPositionalArgs(args []string) ([]string, []string) {
 		"--api-key": true, "--ollama-api-key": true,
 		"--attach": true, "--image": true,
 		"--repeat-penalty": true, "--repetition-penalty": true,
+		"--expand-model": true,
 	}
 	for i := 0; i < len(args); i++ {
 		if (args[i] == "--attach" || args[i] == "--image") && i+1 < len(args) {

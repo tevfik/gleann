@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -27,6 +28,10 @@ type LeannSearcher struct {
 	embServer        EmbeddingServer
 	graphDB          GraphDB
 	embedderResolver EmbedderResolver
+	expander         QueryExpander
+
+	langOnce sync.Once
+	language string // dominant source language, for query expansion
 
 	loaded          bool
 	vectorAvailable bool
@@ -279,9 +284,13 @@ func (s *LeannSearcher) Search(ctx context.Context, query string, opts ...Search
 		}
 	}
 
+	// Text used for embedding and BM25 (query + HyDE expansion when
+	// enabled). Symbol boosts and the reranker keep the original query.
+	rq := s.retrievalQuery(ctx, query, searchOpts)
+
 	// Fallback to pure lexical search if vector backend is not available or lexical-only search is requested
 	if !s.vectorAvailable || s.backend == nil || searchOpts.HybridAlpha == 0.0 {
-		results, err := s.SearchBM25(ctx, query, retrieveK)
+		results, err := s.SearchBM25(ctx, rq, retrieveK)
 		if err != nil {
 			return nil, err
 		}
@@ -306,13 +315,13 @@ func (s *LeannSearcher) Search(ctx context.Context, query string, opts ...Search
 
 	// Compute query embedding.
 	if s.embedder == nil {
-		return s.SearchBM25(ctx, query, topK)
+		return s.SearchBM25(ctx, rq, topK)
 	}
-	queryEmb, err := s.embedder.ComputeSingle(ctx, query)
+	queryEmb, err := s.embedder.ComputeSingle(ctx, rq)
 	if err != nil {
 		if s.scorer != nil {
 			log.Printf("⚠  Embedder error (%v); falling back to pure BM25 retrieval", err)
-			return s.SearchBM25(ctx, query, topK)
+			return s.SearchBM25(ctx, rq, topK)
 		}
 		return nil, fmt.Errorf("compute query embedding: %w", err)
 	}
@@ -380,7 +389,7 @@ func (s *LeannSearcher) Search(ctx context.Context, query string, opts ...Search
 	var bm25IDs []int64
 	if s.scorer != nil && alpha < 1.0 {
 		if topKScorer, ok := s.scorer.(TopKScorer); ok {
-			bm25IDs, _ = topKScorer.TopK(query, retrieveK)
+			bm25IDs, _ = topKScorer.TopK(rq, retrieveK)
 		}
 	}
 
@@ -421,6 +430,13 @@ func (s *LeannSearcher) Search(ctx context.Context, query string, opts ...Search
 	qClean := strings.TrimSpace(query)
 	qLower := strings.ToLower(qClean)
 	queryMentionsTest := strings.Contains(qLower, "test") || strings.Contains(qLower, "benchmark")
+	// The "contains symbol name" boost also sees the expansion: symbols
+	// named in the hypothetical code are the bridge HyDE provides (without
+	// it the offline gain of MRR +0.19 vanished end to end).
+	containsLower := qLower
+	if rq != query {
+		containsLower = strings.ToLower(rq)
+	}
 
 	results := make([]SearchResult, 0, len(finalScores))
 	for id, score := range finalScores {
@@ -454,7 +470,7 @@ func (s *LeannSearcher) Search(ctx context.Context, query string, opts ...Search
 		if name, ok := passage.Metadata["name"].(string); ok && name != "" {
 			if strings.EqualFold(qClean, name) {
 				score += 0.5 // Exact symbol match
-			} else if strings.Contains(qLower, strings.ToLower(name)) && len(name) >= 3 {
+			} else if strings.Contains(containsLower, strings.ToLower(name)) && len(name) >= 3 {
 				score += 0.2 // Query contains symbol name
 			}
 		}

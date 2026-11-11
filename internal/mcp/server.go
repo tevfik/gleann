@@ -72,6 +72,42 @@ type Server struct {
 	lifeOnce    sync.Once
 	lifeCtx     context.Context
 	lifeCancel  context.CancelFunc
+	// expander is the shared HyDE query expander (created on first use).
+	expandOnce sync.Once
+	expander   *gleann.LLMQueryExpander
+}
+
+// chatConfig returns the LLM settings of the server configuration.
+func (s *Server) chatConfig() gleann.ChatConfig {
+	chatConfig := gleann.DefaultChatConfig()
+	if s.config.LLMModel != "" {
+		chatConfig.Model = s.config.LLMModel
+	}
+	if s.config.LLMProvider != "" {
+		chatConfig.Provider = gleann.LLMProvider(s.config.LLMProvider)
+	}
+	if s.config.OllamaHost != "" {
+		chatConfig.BaseURL = s.config.OllamaHost
+	}
+	chatConfig.APIKey = s.config.APIKeyForProvider(string(chatConfig.Provider))
+	if s.config.OpenAIBaseURL != "" && chatConfig.Provider == gleann.LLMOpenAI {
+		chatConfig.BaseURL = s.config.OpenAIBaseURL
+	}
+	return chatConfig
+}
+
+// queryExpander returns the shared HyDE expander (expand_model or the chat
+// model); its cache is shared by all requests.
+func (s *Server) queryExpander() *gleann.LLMQueryExpander {
+	s.expandOnce.Do(func() {
+		cc := s.chatConfig()
+		if m := s.config.SearchConfig.ExpandModel; m != "" {
+			cc.Model = m
+		}
+		cc.MaxTokens = 120
+		s.expander = gleann.NewLLMQueryExpander(gleann.NullSearcher{}, cc)
+	})
+	return s.expander
 }
 
 // syncTask tracks a background indexing or synchronization task for an index.
@@ -677,6 +713,10 @@ func (s *Server) buildSearchTool() mcp.Tool {
 					"type":        "boolean",
 					"description": "If true, re-score candidates using a cross-encoder reranker for higher precision.",
 				},
+				"expand": map[string]interface{}{
+					"type":        "boolean",
+					"description": "If true, an LLM first sketches code that would answer the query and the search uses it too (HyDE). Much better for natural-language 'how/where is X done' questions (benchmark question MRR 0.49 -> 0.63 with a 9B model); adds 1-3 s. Ignored for identifier queries.",
+				},
 				"focus": map[string]interface{}{
 					"type":        "boolean",
 					"description": "If true, each result shows only its most query-relevant lines (about a quarter of the passage, chosen by occlusion with the embedding model) instead of the head of the passage. Uses ~4x fewer tokens; adds ~70 ms per result.",
@@ -777,6 +817,9 @@ func (s *Server) handleSearch(ctx context.Context, request mcp.CallToolRequest) 
 	}
 	if rerank, ok := args["rerank"].(bool); ok && rerank {
 		searchOpts = append(searchOpts, gleann.WithReranker(true))
+	}
+	if expand, ok := args["expand"].(bool); ok && expand {
+		searchOpts = append(searchOpts, gleann.WithQueryExpander(s.queryExpander()))
 	}
 
 	var results []gleann.SearchResult
@@ -1040,21 +1083,7 @@ func (s *Server) handleAsk(ctx context.Context, request mcp.CallToolRequest) (*m
 		return s.indexBusyError(indexName, err), nil
 	}
 
-	chatConfig := gleann.DefaultChatConfig()
-	if s.config.LLMModel != "" {
-		chatConfig.Model = s.config.LLMModel
-	}
-	if s.config.LLMProvider != "" {
-		chatConfig.Provider = gleann.LLMProvider(s.config.LLMProvider)
-	}
-	if s.config.OllamaHost != "" {
-		chatConfig.BaseURL = s.config.OllamaHost
-	}
-	chatConfig.APIKey = s.config.APIKeyForProvider(string(chatConfig.Provider))
-	if s.config.OpenAIBaseURL != "" && chatConfig.Provider == gleann.LLMOpenAI {
-		chatConfig.BaseURL = s.config.OpenAIBaseURL
-	}
-	chat := gleann.NewChat(searcher, chatConfig)
+	chat := gleann.NewChat(searcher, s.chatConfig())
 
 	var searchOpts []gleann.SearchOption
 	if filters, logic := parseFilters(args); len(filters) > 0 {

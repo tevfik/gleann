@@ -75,6 +75,10 @@ type Server struct {
 	blockMem   *memory.Manager     // BBolt hierarchical memory blocks (pkg/memory)
 	bgManager  *background.Manager // Background task manager
 
+	// expanders caches HyDE query expanders by LLM endpoint and model.
+	expanderMu sync.Mutex
+	expanders  map[string]*gleann.LLMQueryExpander
+
 	pluginMu  sync.Mutex            // guards pluginMgr
 	pluginMgr *gleann.PluginManager // started lazily for plugin settings proxying
 
@@ -102,6 +106,41 @@ type Server struct {
 }
 
 // cfg returns a snapshot of the current server configuration.
+// queryExpander returns the HyDE expander for cfg's LLM settings
+// (expand_model or the chat model), shared so its cache is reused.
+func (s *Server) queryExpander(cfg gleann.Config) *gleann.LLMQueryExpander {
+	cc := gleann.DefaultChatConfig()
+	if cfg.LLMModel != "" {
+		cc.Model = cfg.LLMModel
+	}
+	if cfg.SearchConfig.ExpandModel != "" {
+		cc.Model = cfg.SearchConfig.ExpandModel
+	}
+	if cfg.LLMProvider != "" {
+		cc.Provider = gleann.LLMProvider(cfg.LLMProvider)
+	}
+	if cfg.OllamaHost != "" {
+		cc.BaseURL = cfg.OllamaHost
+	}
+	cc.APIKey = cfg.APIKeyForProvider(string(cc.Provider))
+	if cfg.OpenAIBaseURL != "" && cc.Provider == gleann.LLMOpenAI {
+		cc.BaseURL = cfg.OpenAIBaseURL
+	}
+	cc.MaxTokens = 120
+	key := string(cc.Provider) + "|" + cc.BaseURL + "|" + cc.Model
+	s.expanderMu.Lock()
+	defer s.expanderMu.Unlock()
+	if e, ok := s.expanders[key]; ok {
+		return e
+	}
+	if s.expanders == nil {
+		s.expanders = map[string]*gleann.LLMQueryExpander{}
+	}
+	e := gleann.NewLLMQueryExpander(gleann.NullSearcher{}, cc)
+	s.expanders[key] = e
+	return e
+}
+
 func (s *Server) cfg() gleann.Config {
 	s.cfgMu.RLock()
 	defer s.cfgMu.RUnlock()
@@ -696,6 +735,9 @@ type searchRequest struct {
 	GraphContext        bool                    `json:"graph_context,omitempty"`
 	IncludeTests        bool                    `json:"include_tests,omitempty"`
 	Kind                string                  `json:"kind,omitempty"`
+	// Expand enables HyDE query expansion: the LLM sketches code for the
+	// question and the search uses it too (+1-3 s; ignored for identifiers).
+	Expand bool `json:"expand,omitempty"`
 }
 
 type searchResponse struct {
@@ -773,6 +815,10 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		if req.RerankPool > 0 {
 			opts = append(opts, gleann.WithRerankPool(req.RerankPool))
 		}
+	}
+
+	if cfg := s.cfg(); req.Expand || cfg.SearchConfig.Expand {
+		opts = append(opts, gleann.WithQueryExpander(s.queryExpander(cfg)))
 	}
 
 	results, err := searcher.Search(r.Context(), req.Query, opts...)

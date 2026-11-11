@@ -121,6 +121,15 @@ func settingsFields() []settings.Field[OnboardResult] {
 			Bind:        func(c *OnboardResult) any { return &c.RerankModel },
 			OptionsFrom: rerankModelOptions,
 			Placeholder: func(c *OnboardResult) string { return resolvedReranker(c).Model }},
+		{Key: "expand", Label: "Expand questions (HyDE)", Type: settings.Bool, Group: groupReranker,
+			Help: "Before searching, the language model sketches the code that would answer a natural-language question, " +
+				"and the search uses it too. On gleann's code benchmark question MRR rose by 0.14 with a 9B model; costs one LLM call " +
+				"(1-3 s on a GPU) per new question. Identifier queries are never expanded. Best together with reranking.",
+			Bind: func(c *OnboardResult) any { return &c.QueryExpand }},
+		{Key: "expand_model", Label: "Expansion model", Type: settings.Text, Group: groupReranker,
+			Help:      "LLM that writes the hypothetical code (empty = the chat model). Use a capable model (about 9B, e.g. qwen3.5:9b): a 3B model gained little on the benchmark.",
+			VisibleIf: &settings.Cond{Key: "expand", Equals: true},
+			Bind:      func(c *OnboardResult) any { return &c.ExpandModel }},
 
 		// ── Provider endpoints & keys ──
 		{Key: "ollama_host", Label: "Ollama URL", Type: settings.Text, Group: groupProviders, Default: gleann.DefaultOllamaHost,

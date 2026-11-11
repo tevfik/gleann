@@ -353,6 +353,8 @@ func applySavedReranker(config *gleann.Config, saved *tui.OnboardResult) {
 	if saved.RerankProvider != "" {
 		rc.Provider = gleann.RerankerProvider(saved.RerankProvider)
 	}
+	config.SearchConfig.Expand = saved.QueryExpand
+	config.SearchConfig.ExpandModel = saved.ExpandModel
 }
 
 // resolveOllamaAPIKey returns the Ollama API key to use: the value in cfg

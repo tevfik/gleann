@@ -222,6 +222,26 @@ func runContextBenchmark(config gleann.Config, indexName, tasksFile string, topK
 		}
 	}
 
+	// Strategy 4g: HyDE query expansion (GLEANN_BENCH_EXPAND_MODEL=<ollama
+	// model>), alone and followed by the reranker configured above.
+	if m := os.Getenv("GLEANN_BENCH_EXPAND_MODEL"); m != "" {
+		cc := gleann.DefaultChatConfig()
+		cc.Provider, cc.Model, cc.BaseURL = gleann.LLMOllama, m, config.OllamaHost
+		cc.MaxTokens = 120
+		exp := gleann.NewLLMQueryExpander(searcher, cc)
+		runner.RegisterStrategy("Hybrid + HyDE("+m+")", hybridWith(gleann.WithQueryExpander(exp)))
+		if os.Getenv("GLEANN_BENCH_RERANK") == "1" {
+			rcfg := gleann.ResolveRerankerConfig(config, os.Getenv("GLEANN_BENCH_RERANK_MODEL"))
+			if p := os.Getenv("GLEANN_BENCH_RERANK_PROVIDER"); p != "" {
+				rcfg.Provider = gleann.RerankerProvider(p)
+			}
+			rcfg.MaxDocChars = 500
+			rr := gleann.NewReranker(rcfg)
+			runner.RegisterStrategy("Hybrid + HyDE + rerank pool=20 +skip-ident", hybridWith(gleann.WithQueryExpander(exp),
+				gleann.WithCustomReranker(rr), gleann.WithReranker(true), gleann.WithRerankPool(20), gleann.WithRerankSkipIdentifiers(true)))
+		}
+	}
+
 	// Strategy 4c: keep only the best chunk per file, so several chunks of one
 	// file do not use up top-k slots that other files could fill.
 	runner.RegisterStrategy("Hybrid (1 chunk/file)", func(ctx context.Context, query string, k int) ([]string, int, error) {

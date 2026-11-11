@@ -15,6 +15,7 @@ func openAPISchemasSearch() map[string]any {
 				"recompute_embeddings": map[string]any{"type": "boolean", "default": false},
 				"rerank":               map[string]any{"type": "boolean", "default": false, "description": "Enable reranking of results"},
 				"rerank_model":         map[string]any{"type": "string", "description": "Reranker model name (default: bge-reranker-v2-m3)"},
+				"expand":               map[string]any{"type": "boolean", "default": false, "description": "HyDE query expansion: an LLM sketches code for the question and the search uses it too (+1-3 s, better for natural-language questions)"},
 				"graph_context":        map[string]any{"type": "boolean", "default": false, "description": "Include code graph context (callers/callees) in results"},
 				"metadata_filters": map[string]any{
 					"type": "array",

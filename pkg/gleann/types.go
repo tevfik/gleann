@@ -444,6 +444,18 @@ type SearchConfig struct {
 	// "parse_args", "pkg.Func") in first-stage order. Passage rerankers are
 	// trained on natural-language questions and demote exact symbol hits.
 	RerankSkipIdentifiers bool `json:"rerank_skip_identifiers,omitempty"`
+
+	// Expand adds an LLM-written hypothetical code snippet to
+	// natural-language queries before retrieval (HyDE). Needs an expander.
+	Expand bool `json:"expand,omitempty"`
+
+	// ExpandModel is the LLM that writes the snippet ("" = the chat model).
+	// Use a capable model: on the gleann benchmark qwen3.5:9b raised
+	// question MRR by 0.14 end to end, llama3.2:3b by only 0.03.
+	ExpandModel string `json:"expand_model,omitempty"`
+
+	// Expander is a per-request query expander (see WithQueryExpander).
+	Expander QueryExpander `json:"-"`
 }
 
 // DefaultConfig returns a Config with sensible defaults.

@@ -30,6 +30,9 @@ Options:
   --rerank                Rerank results with cross-encoder
   --rerank-url <url>      Rerank through a /v1/rerank server (e.g. llama-server --reranking)
   --rerank-pool <N>       Candidates sent to the reranker (default: max(4*top-k, 50))
+  --expand                HyDE: an LLM sketches the code for the question and the
+                          search uses it too (+1-3 s; best for "how/where" questions)
+  --expand-model <m>      LLM for --expand (default: expand_model setting or chat model)
   --explain               Show why each result matched: most important segments
                           and BM25 term weights (~70 ms per result)
   --json                  Output results as JSON
@@ -80,6 +83,10 @@ Examples:
 
 	// Build common search options.
 	var searchOpts []gleann.SearchOption
+	if wantExpand(config, args) {
+		// Per-request expander so multi-index searches use it too.
+		searchOpts = append(searchOpts, gleann.WithQueryExpander(newQueryExpander(searcher, args, config)))
+	}
 	if config.SearchConfig.UseReranker {
 		searchOpts = append(searchOpts, gleann.WithReranker(true))
 	}
@@ -314,7 +321,8 @@ var searchValueFlags = map[string]bool{
 	"--api-key": true, "--ollama-api-key": true, "--index-dir": true,
 	"--kind": true, "--llm-model": true, "--llm-provider": true,
 	"--rerank-model": true, "--rerank-url": true, "--rerank-pool": true, "--rerank-provider": true,
-	"--hybrid": true, "--hybrid-alpha": true, "--prune": true,
+	"--expand-model": true,
+	"--hybrid":       true, "--hybrid-alpha": true, "--prune": true,
 }
 
 // stripSearchFlags returns the query text from the arguments after the index

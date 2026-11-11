@@ -84,8 +84,12 @@ type OnboardResult struct {
 	// RerankProvider: "" or "auto" (bitllm.c in process when available, else
 	// the embedding provider), "eif", "ollama", "llamacpp", "jina", "cohere", "voyage".
 	RerankProvider string `json:"rerank_provider,omitempty"`
-	IndexDir       string `json:"index_dir"`
-	Completed      bool   `json:"completed"`
+	// QueryExpand turns on HyDE query expansion for searches (--expand);
+	// ExpandModel is its LLM ("" = the chat model).
+	QueryExpand bool   `json:"expand,omitempty"`
+	ExpandModel string `json:"expand_model,omitempty"`
+	IndexDir    string `json:"index_dir"`
+	Completed   bool   `json:"completed"`
 
 	// LlamaCPP Config
 	LlamaCPPConfig gleann.LlamaCPPConfig `json:"llamacpp_config,omitempty"`
