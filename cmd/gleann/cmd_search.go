@@ -30,6 +30,8 @@ Options:
   --rerank                Rerank results with cross-encoder
   --rerank-url <url>      Rerank through a /v1/rerank server (e.g. llama-server --reranking)
   --rerank-pool <N>       Candidates sent to the reranker (default: max(4*top-k, 50))
+  --explain               Show why each result matched: most important segments
+                          and BM25 term weights (~70 ms per result)
   --json                  Output results as JSON
   -h, --help              Show this help message
 
@@ -173,19 +175,50 @@ Examples:
 	}
 	elapsed := time.Since(start)
 
+	// --explain: occlusion-based segment importance + BM25 term breakdown.
+	var explanations []*gleann.Explanation
+	if hasFlag(args, "--explain") {
+		explanations = make([]*gleann.Explanation, len(results))
+		for i, r := range results {
+			exp, err := searcher.ExplainResult(ctx, query, r, gleann.ExplainOptions{})
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "explain: %v\n", err)
+				break
+			}
+			explanations[i] = exp
+		}
+	}
+
 	if asJSON {
-		data, _ := json.MarshalIndent(results, "", "  ")
+		var data []byte
+		if explanations != nil {
+			type explained struct {
+				gleann.SearchResult
+				Explanation *gleann.Explanation `json:"explanation,omitempty"`
+			}
+			out := make([]explained, len(results))
+			for i, r := range results {
+				out[i] = explained{SearchResult: r, Explanation: explanations[i]}
+			}
+			data, _ = json.MarshalIndent(out, "", "  ")
+		} else {
+			data, _ = json.MarshalIndent(results, "", "  ")
+		}
 		fmt.Println(string(data))
 		return
 	}
 
 	fmt.Printf("🔍 Results for %q (%d results in %s):\n\n", query, len(results), elapsed.Round(time.Millisecond))
 	for i, result := range results {
+		fmt.Printf("[%d] Score: %.4f\n", i+1, result.Score)
+		if explanations != nil && explanations[i] != nil {
+			printExplanation(result, explanations[i])
+			continue
+		}
 		text := result.Text
 		if len(text) > 200 {
 			text = text[:200] + "..."
 		}
-		fmt.Printf("[%d] Score: %.4f\n", i+1, result.Score)
 		fmt.Printf("    %s\n\n", strings.ReplaceAll(text, "\n", "\n    "))
 
 		// Show graph context if available.
@@ -203,6 +236,45 @@ Examples:
 			fmt.Println()
 		}
 	}
+}
+
+// printExplanation shows where a result matches: the passage's source, the
+// most important segments (by drop in similarity when removed) and the BM25
+// contribution of each query term.
+func printExplanation(r gleann.SearchResult, e *gleann.Explanation) {
+	src := getMetaStr(r.Metadata, "source")
+	if src == "" {
+		src = getMetaStr(r.Metadata, "file")
+	}
+	fmt.Printf("    %s  (similarity %.3f)\n", src, e.Similarity)
+	for i, sg := range e.Segments {
+		if i == 2 || (i > 0 && sg.Delta <= 0) {
+			break
+		}
+		// Passage text carries its own source line numbers ("12|..."), so
+		// only the importance is printed here.
+		fmt.Printf("    ▸ Δ%+.3f\n", sg.Delta)
+		text := sg.Text
+		if len(text) > 300 {
+			text = text[:300] + "..."
+		}
+		fmt.Printf("      %s\n", strings.ReplaceAll(text, "\n", "\n      "))
+	}
+	var hit, miss []string
+	for _, t := range e.Terms {
+		if t.TF > 0 {
+			hit = append(hit, fmt.Sprintf("%s ×%d (%.2f)", t.Term, t.TF, t.Score))
+		} else {
+			miss = append(miss, t.Term)
+		}
+	}
+	if len(hit) > 0 {
+		fmt.Printf("    BM25 terms: %s\n", strings.Join(hit, ", "))
+	}
+	if len(miss) > 0 {
+		fmt.Printf("    missing terms: %s\n", strings.Join(miss, ", "))
+	}
+	fmt.Println()
 }
 
 // wantRerank reports whether a search reranks: --rerank, or the saved

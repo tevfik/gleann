@@ -677,6 +677,10 @@ func (s *Server) buildSearchTool() mcp.Tool {
 					"type":        "boolean",
 					"description": "If true, re-score candidates using a cross-encoder reranker for higher precision.",
 				},
+				"focus": map[string]interface{}{
+					"type":        "boolean",
+					"description": "If true, each result shows only its most query-relevant lines (about a quarter of the passage, chosen by occlusion with the embedding model) instead of the head of the passage. Uses ~4x fewer tokens; adds ~70 ms per result.",
+				},
 				"max_tokens": map[string]interface{}{
 					"type":        "integer",
 					"description": "Optional strict token budget for the response (minimum 32). When exceeded, subsequent results degrade to locators (citations only) and extra results are dropped to guarantee context limit.",
@@ -885,6 +889,10 @@ func (s *Server) handleSearch(ctx context.Context, request mcp.CallToolRequest) 
 			}
 		}
 		results = cft.EnrichSearchResults(results, signalMap)
+	}
+
+	if focus, ok := args["focus"].(bool); ok && focus {
+		results = s.focusResults(ctx, indexName, query, results)
 	}
 
 	maxTokens := 0
@@ -2267,6 +2275,32 @@ func dedupStrings(ss []string) []string {
 		if !seen[v] {
 			seen[v] = true
 			out = append(out, v)
+		}
+	}
+	return out
+}
+
+// focusResults replaces each result's text with its most query-relevant
+// segments (see gleann.ExplainResult). Results that cannot be explained
+// (lexical-only index, embedder error) keep their full text.
+func (s *Server) focusResults(ctx context.Context, indexName, query string, results []gleann.SearchResult) []gleann.SearchResult {
+	out := make([]gleann.SearchResult, len(results))
+	for i, r := range results {
+		out[i] = r
+		name := indexName
+		if idx, ok := r.Metadata["_index"].(string); ok && idx != "" {
+			name = idx
+		}
+		searcher, err := s.getSearcher(name)
+		if err != nil {
+			continue
+		}
+		exp, err := searcher.ExplainResult(ctx, query, r, gleann.ExplainOptions{})
+		if err != nil || len(exp.Segments) < 4 {
+			continue
+		}
+		if snip := exp.Snippet(max(1, len(exp.Segments)/4)); snip != "" {
+			out[i].Text = snip
 		}
 	}
 	return out

@@ -60,3 +60,14 @@ func (a *BM25Adapter) IndexedCount() int {
 func (a *BM25Adapter) TopK(query string, k int) ([]int64, []float32) {
 	return a.scorer.TopK(query, k)
 }
+
+// ExplainTerms implements TermExplainer: the BM25 contribution of each query
+// term to passage id (matching terms first, by contribution).
+func (a *BM25Adapter) ExplainTerms(query string, id int64) []TermExplanation {
+	contribs := a.scorer.ExplainDoc(query, id)
+	out := make([]TermExplanation, 0, len(contribs))
+	for _, c := range contribs {
+		out = append(out, TermExplanation{Term: c.Term, TF: c.TF, Score: c.Score * float64(c.QueryCount)})
+	}
+	return out
+}

@@ -1,6 +1,7 @@
 package bm25
 
 import (
+	"math"
 	"testing"
 )
 
@@ -219,5 +220,173 @@ func TestScore_NoStatisticDriftOnRepeatedQueries(t *testing.T) {
 	finalScore := s.ScoreDocIDs("OpenStore", []int64{1})[0]
 	if finalScore != initialScore {
 		t.Fatalf("score drifted! initial=%f, final=%f", initialScore, finalScore)
+	}
+}
+
+func TestExplainDoc_SumMatchesScoreDocIDs(t *testing.T) {
+	s := NewScorer()
+	s.AddDocument(0, "func parseHTTPRequest(r io.Reader) (*Request, error) { return nil, nil }")
+	s.AddDocument(1, "parse HTTP request headers and parse HTTP request body")
+	s.AddDocument(2, "the quick brown fox jumps over the lazy dog")
+	s.AddDocument(3, "quantum computing and natural language processing with neural networks")
+	s.AddDocument(4, "handling HTTP requests and responses in Go")
+
+	queries := []string{
+		"parseHTTPRequest",
+		"parse HTTP request",
+		"parse parse parse request",      // repeated term
+		"request request",                // repeated term
+		"quick brown fox fox fox",        // repeated term
+		"HTTP parseHTTPRequest handling", // mixed camelCase
+		"language processing neural",
+		"nonexistent terms in query", // all missing
+		"HTTP nonexistent query",     // mixed matching and missing
+	}
+
+	docIDs := []int64{0, 1, 2, 3, 4}
+
+	for _, q := range queries {
+		for _, id := range docIDs {
+			exps := s.ExplainDoc(q, id)
+			expectedScores := s.ScoreDocIDs(q, []int64{id})
+			expectedScore := expectedScores[0]
+
+			var sum float64
+			for _, exp := range exps {
+				sum += exp.Score * float64(exp.QueryCount)
+			}
+			gotScore := float32(sum)
+
+			if math.Abs(float64(gotScore-expectedScore)) > 1e-5 {
+				t.Errorf("query %q doc %d: sum(Score*QueryCount)=%f, ScoreDocIDs=%f", q, id, gotScore, expectedScore)
+			}
+		}
+	}
+}
+
+func TestExplainDoc_MissingTerms(t *testing.T) {
+	s := NewScorer()
+	s.AddDocument(0, "apple banana cherry")
+	s.AddDocument(1, "cherry date elderberry fig")
+
+	// Query has 2 matching terms for doc 0 ("banana", "apple") and 2 missing terms ("date", "fig")
+	// Note: in query, date comes before fig.
+	query := "banana date apple fig"
+	exps := s.ExplainDoc(query, 0)
+
+	if len(exps) != 4 {
+		t.Fatalf("expected 4 terms, got %d", len(exps))
+	}
+
+	// First terms must be matching (Score > 0, TF > 0)
+	// Missing terms must follow matching terms with Score == 0, TF == 0
+	foundMissing := false
+	var missingOrder []string
+	for _, exp := range exps {
+		if exp.TF == 0 {
+			foundMissing = true
+			if exp.Score != 0 {
+				t.Errorf("missing term %q has non-zero score: %f", exp.Term, exp.Score)
+			}
+			missingOrder = append(missingOrder, exp.Term)
+		} else {
+			if foundMissing {
+				t.Errorf("matching term %q appeared after a missing term", exp.Term)
+			}
+			if exp.Score <= 0 {
+				t.Errorf("matching term %q has non-positive score: %f", exp.Term, exp.Score)
+			}
+		}
+	}
+
+	// Missing terms must be in query order ("date", "fig")
+	if len(missingOrder) != 2 || missingOrder[0] != "date" || missingOrder[1] != "fig" {
+		t.Errorf("expected missing terms in query order [date, fig], got %v", missingOrder)
+	}
+
+	// Verify DF and IDF for missing terms
+	for _, exp := range exps {
+		if exp.Term == "date" {
+			if exp.DF != 1 {
+				t.Errorf("expected DF=1 for 'date', got %d", exp.DF)
+			}
+			if exp.IDF <= 0 {
+				t.Errorf("expected IDF > 0 for 'date', got %f", exp.IDF)
+			}
+		}
+	}
+}
+
+func TestExplainDoc_OrderScoreDescending(t *testing.T) {
+	s := NewScorer()
+	// Create corpus where "rare" appears in 1 doc, "common" appears in 3 docs
+	s.AddDocument(0, "rare rare rare common")
+	s.AddDocument(1, "common common words")
+	s.AddDocument(2, "common phrases and common text")
+
+	// Query with common term first, rare term second
+	exps := s.ExplainDoc("common rare", 0)
+	if len(exps) < 2 {
+		t.Fatalf("expected at least 2 explanations, got %d", len(exps))
+	}
+
+	// "rare" has higher TF (3) and higher IDF (df=1) than "common" (TF=1, df=3) in doc 0.
+	// Therefore "rare" must come first due to Score descending sort.
+	if exps[0].Term != "rare" {
+		t.Errorf("expected 'rare' to be first, got %q", exps[0].Term)
+	}
+	if exps[0].Score <= exps[1].Score {
+		t.Errorf("expected exps[0].Score (%f) > exps[1].Score (%f)", exps[0].Score, exps[1].Score)
+	}
+
+	// Check general property: matching scores must be non-increasing
+	for i := 1; i < len(exps); i++ {
+		if exps[i].TF > 0 && exps[i-1].TF > 0 {
+			if exps[i].Score > exps[i-1].Score {
+				t.Errorf("scores not descending: index %d (%f) > index %d (%f)", i, exps[i].Score, i-1, exps[i-1].Score)
+			}
+		}
+	}
+}
+
+func TestExplainDoc_NilReturns(t *testing.T) {
+	s := NewScorer()
+	s.AddDocument(0, "the quick brown fox")
+
+	// Unknown doc ID
+	if got := s.ExplainDoc("quick fox", 999); got != nil {
+		t.Errorf("expected nil for unknown doc ID, got %v", got)
+	}
+
+	// Empty query
+	if got := s.ExplainDoc("", 0); got != nil {
+		t.Errorf("expected nil for empty query, got %v", got)
+	}
+
+	// Whitespace only
+	if got := s.ExplainDoc("   \t\n  ", 0); got != nil {
+		t.Errorf("expected nil for whitespace query, got %v", got)
+	}
+
+	// Stop-word-only query
+	if got := s.ExplainDoc("the is at which on a an and", 0); got != nil {
+		t.Errorf("expected nil for stop-word-only query, got %v", got)
+	}
+
+	// Punctuation only
+	if got := s.ExplainDoc("!@#$%^&*()_+", 0); got != nil {
+		t.Errorf("expected nil for punctuation-only query, got %v", got)
+	}
+}
+
+func BenchmarkExplainDoc(b *testing.B) {
+	s := NewScorer()
+	for i := 0; i < 1000; i++ {
+		s.AddDocument(int64(i), "this is a sample document with some words for benchmarking purposes and testing explain")
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		s.ExplainDoc("sample document benchmark testing missingTerm", int64(i%1000))
 	}
 }

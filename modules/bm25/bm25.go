@@ -125,7 +125,9 @@ func (s *Scorer) Score(query string) map[int64]float32 {
 				continue
 			}
 
-			// IDF component.
+			// IDF component. Kept inline (not via termScore) because this is
+			// the hot loop; TestExplainDoc_SumMatchesScoreDocIDs guards that
+			// both stay the same formula.
 			docFreq := s.df[term]
 			idf := math.Log(1 + (float64(s.docCount)-float64(docFreq)+0.5)/(float64(docFreq)+0.5))
 
@@ -170,7 +172,9 @@ func (s *Scorer) ScoreDocIDs(query string, ids []int64) []float32 {
 				continue
 			}
 
-			// IDF component.
+			// IDF component. Kept inline (not via termScore) because this is
+			// the hot loop; TestExplainDoc_SumMatchesScoreDocIDs guards that
+			// both stay the same formula.
 			docFreq := s.df[term]
 			idf := math.Log(1 + (float64(s.docCount)-float64(docFreq)+0.5)/(float64(docFreq)+0.5))
 
@@ -186,6 +190,89 @@ func (s *Scorer) ScoreDocIDs(query string, ids []int64) []float32 {
 		}
 	}
 	return scores
+}
+
+// termScore calculates the IDF and BM25 score contribution (used by ExplainDoc) for a term given its frequency in a document,
+// document frequency in the corpus, and document length.
+func (s *Scorer) termScore(termFreq, docFreq int, docLen float64) (idf, score float64) {
+	idf = math.Log(1 + (float64(s.docCount)-float64(docFreq)+0.5)/(float64(docFreq)+0.5))
+	if termFreq <= 0 {
+		return idf, 0
+	}
+	tfNorm := (float64(termFreq) * (s.k1 + 1)) /
+		(float64(termFreq) + s.k1*(1-s.b+s.b*docLen/s.avgDocLen))
+	return idf, idf * tfNorm
+}
+
+// TermContribution is one query term's share of a document's BM25 score.
+type TermContribution struct {
+	Term       string // tokenized query term (after camelCase split, lowercasing, stop-word removal — exactly what tokenize() produces)
+	TF         int    // term frequency in the document
+	DF         int    // number of documents containing the term
+	IDF        float64
+	Score      float64 // idf * tfNorm for one occurrence, same formula as Score()/ScoreDocIDs()
+	QueryCount int     // occurrences of the term in the query
+}
+
+// ExplainDoc returns the contribution of every query term to doc id's score,
+// sorted by Score descending. Terms absent from the document follow with TF=0
+// and Score=0, in query order. A repeated query term is reported once with
+// QueryCount set, so sum(Score*QueryCount) equals ScoreDocIDs(query, [id]).
+// Returns nil if the id is not indexed or the query has no terms.
+func (s *Scorer) ExplainDoc(query string, id int64) []TermContribution {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	queryTerms := tokenize(query)
+	if len(queryTerms) == 0 {
+		return nil
+	}
+
+	tf, ok := s.docTermFreqs[id]
+	if !ok {
+		return nil
+	}
+
+	docLen := float64(s.docLens[id])
+
+	counts := make(map[string]int, len(queryTerms))
+	uniqueTerms := make([]string, 0, len(queryTerms))
+	for _, term := range queryTerms {
+		if counts[term] == 0 {
+			uniqueTerms = append(uniqueTerms, term)
+		}
+		counts[term]++
+	}
+
+	var matching []TermContribution
+	var missing []TermContribution
+
+	for _, term := range uniqueTerms {
+		termFreq := tf[term]
+		docFreq := s.df[term]
+		idf, score := s.termScore(termFreq, docFreq, docLen)
+
+		contrib := TermContribution{
+			Term:       term,
+			TF:         termFreq,
+			DF:         docFreq,
+			IDF:        idf,
+			Score:      score,
+			QueryCount: counts[term],
+		}
+
+		if termFreq > 0 {
+			matching = append(matching, contrib)
+		} else {
+			missing = append(missing, contrib)
+		}
+	}
+
+	sort.SliceStable(matching, func(i, j int) bool {
+		return matching[i].Score > matching[j].Score
+	})
+
+	return append(matching, missing...)
 }
 
 // TopK returns the top K document IDs sorted by BM25 score.
@@ -310,3 +397,7 @@ var stopWords = map[string]bool{
 func isStopWord(word string) bool {
 	return stopWords[word]
 }
+
+// Tokenize splits text into the terms the scorer indexes: lowercase words,
+// camelCase / letter-digit sub-words, with stop words removed.
+func Tokenize(text string) []string { return tokenize(text) }
