@@ -140,15 +140,24 @@ func SearchMultiple(ctx context.Context, config Config, embedder EmbeddingComput
 		}
 	}
 
-	sort.Slice(merged, func(i, j int) bool {
-		return merged[i].Score > merged[j].Score
-	})
-
 	// Apply topK from opts if configured.
 	searchOpts := config.SearchConfig
 	for _, opt := range opts {
 		opt(&searchOpts)
 	}
+	// Ranked together by their raw relevance (CrossIndexScores), not by each index's own Score.
+	plain := make([]SearchResult, len(merged))
+	for i := range merged {
+		plain[i] = merged[i].SearchResult
+	}
+	if scores, ok := CrossIndexScores(plain, len(allParts), searchOpts.HybridAlpha); ok {
+		for i := range merged {
+			merged[i].Score = scores[i]
+		}
+	}
+	sort.SliceStable(merged, func(i, j int) bool {
+		return merged[i].Score > merged[j].Score
+	})
 	topK := searchOpts.TopK
 	if topK <= 0 {
 		topK = 10

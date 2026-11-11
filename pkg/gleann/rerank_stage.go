@@ -39,6 +39,9 @@ func rerankStage(ctx context.Context, rr Reranker, query string, results []Searc
 		fmt.Fprintf(os.Stderr, "reranker warning: %v (using original ranking)\n", err)
 		return cut(results)
 	}
+	for i := range reranked {
+		reranked[i].Reranked = true
+	}
 	return cut(reranked)
 }
 

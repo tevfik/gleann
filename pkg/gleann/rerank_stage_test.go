@@ -115,3 +115,17 @@ func equalIDs(a, b []int64) bool {
 	}
 	return true
 }
+
+func TestRerankStage_MarksReranked(t *testing.T) {
+	got := rerankStage(context.Background(), &reverseReranker{}, "how does it work", stageInput(5), 3, SearchConfig{})
+	for _, r := range got {
+		if !r.Reranked {
+			t.Fatalf("result %d not marked reranked", r.ID)
+		}
+	}
+	// Identifier queries skip the reranker and stay unmarked.
+	got = rerankStage(context.Background(), &reverseReranker{}, "LeannSearcher", stageInput(5), 3, SearchConfig{RerankSkipIdentifiers: true})
+	if got[0].Reranked {
+		t.Fatal("first-stage results marked reranked")
+	}
+}

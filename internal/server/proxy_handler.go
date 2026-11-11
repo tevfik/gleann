@@ -421,14 +421,29 @@ type proxyHit struct {
 	result gleann.SearchResult
 }
 
-// mergeProxyHits ranks the results of several indexes together: by score (highest first; equal scores keep the
+// mergeProxyHits ranks the results of several indexes together: by their raw relevance when they carry it
+// (gleann.CrossIndexScores: each index's own Score puts its best passages on top whatever their relevance, alpha
+// weighs vector against BM25), else by score (highest first; equal scores keep the
 // order of names, then each index's own order) and keeps the best k overall, so a query over many indexes gets the
 // same number of passages as a query over one, and the best ones whichever index they are in.
-func mergeProxyHits(perIndex map[string][]gleann.SearchResult, names []string, k int) []proxyHit {
+func mergeProxyHits(perIndex map[string][]gleann.SearchResult, names []string, k int, alpha float32) []proxyHit {
 	var hits []proxyHit
+	indexes := 0
 	for _, name := range names {
+		if len(perIndex[name]) > 0 {
+			indexes++
+		}
 		for _, r := range perIndex[name] {
 			hits = append(hits, proxyHit{index: name, result: r})
+		}
+	}
+	plain := make([]gleann.SearchResult, len(hits))
+	for i, h := range hits {
+		plain[i] = h.result
+	}
+	if scores, ok := gleann.CrossIndexScores(plain, indexes, alpha); ok {
+		for i := range hits {
+			hits[i].result.Score = scores[i]
 		}
 	}
 	sort.SliceStable(hits, func(i, j int) bool { return hits[i].result.Score > hits[j].result.Score })
@@ -436,6 +451,14 @@ func mergeProxyHits(perIndex map[string][]gleann.SearchResult, names []string, k
 		hits = hits[:k]
 	}
 	return hits
+}
+
+// proxyAlpha is the vector/BM25 weight of a search with searchOpts over base (the server's search settings).
+func proxyAlpha(base gleann.SearchConfig, searchOpts []gleann.SearchOption) float32 {
+	for _, o := range searchOpts {
+		o(&base)
+	}
+	return base.HybridAlpha
 }
 
 // proxyTopK is the number of passages searchOpts ask for (the searcher's default 10 when they set none).
@@ -519,7 +542,7 @@ func (s *Server) retrieveProxyContextLimited(
 		k = proxyTopK(searchOpts)
 	}
 	used := 0
-	for i, h := range mergeProxyHits(perIndex, resolvedNames, k) {
+	for i, h := range mergeProxyHits(perIndex, resolvedNames, k, proxyAlpha(s.cfg().SearchConfig, searchOpts)) {
 		if maxChars > 0 && i > 0 && used+len(h.result.Text) > maxChars {
 			break
 		}

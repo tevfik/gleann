@@ -54,6 +54,14 @@ type SearchResult struct {
 	Score        float32           `json:"score"`
 	Metadata     map[string]any    `json:"metadata,omitempty"`
 	GraphContext *GraphContextInfo `json:"graph_context,omitempty"`
+	// The raw relevance behind Score, which is relative to the index (a fusion of ranks): the vector distance (lower
+	// is closer; comparable between indexes of one embedding model) and the BM25 score, when the search had them.
+	// FuseAcrossIndexes ranks the results of several indexes together by them.
+	VectorDistance *float32 `json:"vector_distance,omitempty"`
+	BM25Score      *float32 `json:"bm25_score,omitempty"`
+	// Reranked is set when Score comes from a cross-encoder. Such scores are
+	// comparable between indexes, so FuseAcrossIndexes keeps them.
+	Reranked bool `json:"reranked,omitempty"`
 }
 
 // Item represents a text item to be indexed.

@@ -97,16 +97,13 @@ func (ms *MultiSearcher) Search(ctx context.Context, query string, opts ...Searc
 		}
 	}
 
-	// Sort by score descending.
-	sort.Slice(merged, func(i, j int) bool {
-		return merged[i].Score > merged[j].Score
-	})
-
 	// Apply topK from options.
-	searchOpts := SearchConfig{TopK: 10}
+	searchOpts := SearchConfig{TopK: 10, HybridAlpha: 0.7}
 	for _, opt := range opts {
 		opt(&searchOpts)
 	}
+	// Ranked together by their raw relevance (FuseAcrossIndexes), not by each index's own Score.
+	merged = FuseAcrossIndexes(merged, len(allParts), searchOpts.HybridAlpha)
 	topK := searchOpts.TopK
 	if topK <= 0 {
 		topK = 10

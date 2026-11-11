@@ -365,6 +365,12 @@ func (s *LeannSearcher) Search(ctx context.Context, query string, opts ...Search
 		return nil, fmt.Errorf("vector search: %w", err)
 	}
 
+	// Raw distances, kept on the results for ranking several indexes together (FuseAcrossIndexes).
+	rawDistances := make(map[int64]float32, len(ids))
+	for i, id := range ids {
+		rawDistances[id] = distances[i]
+	}
+
 	// Convert distances to cosine-like scores (higher = better).
 	vectorScores := make(map[int64]float32, len(ids))
 	maxDist := float32(0)
@@ -387,9 +393,16 @@ func (s *LeannSearcher) Search(ctx context.Context, query string, opts ...Search
 
 	// If BM25 scorer is configured and alpha < 1.0, perform full-corpus lexical retrieval
 	var bm25IDs []int64
+	bm25Raw := map[int64]float32{}
 	if s.scorer != nil && alpha < 1.0 {
 		if topKScorer, ok := s.scorer.(TopKScorer); ok {
-			bm25IDs, _ = topKScorer.TopK(rq, retrieveK)
+			var bm25Scores []float32
+			bm25IDs, bm25Scores = topKScorer.TopK(rq, retrieveK)
+			for i, id := range bm25IDs {
+				if i < len(bm25Scores) {
+					bm25Raw[id] = bm25Scores[i]
+				}
+			}
 		}
 	}
 
@@ -530,12 +543,19 @@ func (s *LeannSearcher) Search(ctx context.Context, query string, opts ...Search
 		}
 
 		if score >= searchOpts.MinScore {
-			results = append(results, SearchResult{
+			r := SearchResult{
 				ID:       id,
 				Text:     passage.Text,
 				Score:    score,
 				Metadata: passage.Metadata,
-			})
+			}
+			if d, ok := rawDistances[id]; ok {
+				r.VectorDistance = &d
+			}
+			if b, ok := bm25Raw[id]; ok {
+				r.BM25Score = &b
+			}
+			results = append(results, r)
 		}
 	}
 
@@ -987,11 +1007,13 @@ func (s *LeannSearcher) SearchBM25(ctx context.Context, query string, topK int) 
 		if err != nil {
 			continue
 		}
+		bm25 := scores[i]
 		results = append(results, SearchResult{
-			ID:       id,
-			Score:    scores[i],
-			Text:     p.Text,
-			Metadata: p.Metadata,
+			ID:        id,
+			Score:     scores[i],
+			Text:      p.Text,
+			Metadata:  p.Metadata,
+			BM25Score: &bm25,
 		})
 	}
 	return results, nil
