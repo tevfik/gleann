@@ -16,6 +16,8 @@ Planned as v1.9.0; see [docs/releases/v1.9.0.md](docs/releases/v1.9.0.md).
 - [docs/retrieval-experiments.md](docs/retrieval-experiments.md): what was measured, what was shipped and what was left out, including the CPU cost of reranking.
 
 ### Changed
+- **Built-in reranker defaults.** With no `rerank_model` set, results that are mostly source code are reranked with `ms-marco-minilm-l6` when it is downloaded (mMiniLMv2 otherwise and for documents), and the built-in engine scores 20 candidates of 500 characters instead of every candidate in full (~2.5× cheaper on a CPU, no loss on the benchmark). `--rerank-pool` and a configured model still win; server rerankers are unchanged.
+- Catalog ids work as reranker models (`--rerank-model ms-marco-minilm-l6`), also when the engine is chosen automatically.
 - **Identifier queries are not reranked.** One-word or code-shaped queries (`LeannSearcher`, `parse_args`, `func NewServer`) keep the first-stage order: passage rerankers demote exact symbol hits (symbol-query MRR −0.05 without this).
 - `--rerank-pool` limits only the candidates sent to the reranker; the first stage keeps its wide lists (narrowing them lowered quality).
 - **`rerank_provider: ollama` returns an error.** Ollama has no rerank API; the old fallback compared embeddings, scored worse than no reranking and crashed for bge-reranker-v2-m3. Use `eif` or `llamacpp` with a llama-server `--reranking` (which now uses `/v1/rerank`).

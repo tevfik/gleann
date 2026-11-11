@@ -165,10 +165,17 @@ Kept as is, with reasons:
 | Score fusion `--fusion convex/bb25` | No gain over RRF. |
 | ColBERT, os-v3 sparse, LLM knowledge graph | Too costly to index for the gain (see the experiments doc). |
 
-## 8. Open Questions for Maintainers
+## 8. Maintainer Decisions
 
-1. **Default reranker for code indexes.** Should MiniLM-L6 be the default?
-   mMiniLMv2 stays the better choice for multilingual documents.
-2. **Pool and truncation defaults.** Should enabling reranking default to
-   pool 20 and 500 characters? Today it uses `max(4·top-k, 50)` candidates
-   and full text, which is about 2.5× the cost in the CPU table.
+Both questions this RFC raised were accepted.
+
+1. **Default model for code.** With no `rerank_model` set, the in-process
+   engine reranks candidates that are mostly source code (by file
+   extension) with `ms-marco-minilm-l6` when it is downloaded. In every
+   other case it uses mMiniLMv2, which stays the choice for multilingual
+   documents.
+2. **Pool and truncation.** The in-process engine defaults to 20
+   candidates of 500 characters each (`RerankerConfig.Pool`,
+   `MaxDocChars`). Server rerankers keep scoring every candidate in full:
+   the PDF benchmark measured bge-reranker-v2-m3 on a GPU with 50
+   candidates. `--rerank-pool` and explicit settings still win.

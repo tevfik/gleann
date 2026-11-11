@@ -100,7 +100,7 @@ Location: `~/.gleann/config.json`
 | `llm_model` | `nemotron-3-nano:4b` | LLM model for ask/chat commands |
 | `rerank_enabled` | `false` | Rerank search results (CLI `search`/`ask`, REST, MCP, chat). `--rerank` turns it on for one command, `--no-rerank` off |
 | `rerank_provider` | `auto` | Reranker engine: `auto`, `eif` (built-in bitllm.c cross-encoder), `ollama`, `llamacpp`, `jina`, `cohere`, `voyage`. `auto` uses the built-in engine when the build has it and the model is a local GGUF, otherwise the embedding provider |
-| `rerank_model` | `mmarco-mMiniLMv2-L12-H384-v1-Q8_0.gguf` (built-in) / `bge-reranker-v2-m3` | Reranker model: a GGUF in `~/.gleann/models` (or a path) for the built-in engine, a model name for a server |
+| `rerank_model` | built-in: `ms-marco-minilm-l6` for mostly-code results when downloaded, else `mmarco-mMiniLMv2-L12-H384-v1-Q8_0.gguf`; server: `bge-reranker-v2-m3` | Reranker model: a catalog id, a GGUF in `~/.gleann/models` or a path for the built-in engine, a model name for a server |
 | `expand` / `expand_model` | `false` / chat model | HyDE query expansion by default (see Query expansion); `--no-expand` turns it off for one command |
 | `storage_mode` | `store` | Vector storage of new indexes: `store` or `recompute` (see below) |
 | `auth` | `on` | REST API authentication: `on` (token required) or `off` (accepted only on a loopback address). `GLEANN_AUTH` overrides it |
@@ -138,7 +138,7 @@ CLI flags override both defaults and config file values.
 --no-rerank             # Do not rerank, even when rerank_enabled is saved
 --rerank-model <model>  # Reranker model (overrides rerank_model)
 --rerank-provider <p>   # Reranker engine (overrides rerank_provider): auto, eif, ollama, llamacpp, jina, cohere, voyage
---rerank-pool <n>       # Candidates sent to the reranker (default: max(4*top-k, 50))
+--rerank-pool <n>       # Candidates sent to the reranker (default: 20 for the built-in reranker, max(4*top-k, 50) for a server)
 --rerank-url <url>      # Rerank through a llama-server --reranking endpoint (/v1/rerank), e.g. http://127.0.0.1:8791
 --no-hybrid             # Disable BM25 hybrid scoring (vector only)
 --hybrid-alpha <float>  # BM25 hybrid weight (default: 0.7)
@@ -202,7 +202,7 @@ needed:
 gleann models download mmarco-mminilmv2-l12     # recommended: multilingual, ~0.4 s/query for 20 candidates on CPU
 gleann models download bge-reranker-v2-m3       # most accurate, ~3 s/query on CPU (up to 13 s on long passages)
 gleann models download ms-marco-minilm-l6       # English code and docs: fastest, best on the code benchmark
-gleann search my-docs "query" --rerank          # uses rerank_model, or mmarco when none is set
+gleann search my-docs "query" --rerank          # uses rerank_model; when none is set: ms-marco-minilm-l6 for code, mmarco otherwise
 ```
 
 Measured on MTEB TurHistQuadRetrieval (Turkish) on an ARM CPU, hybrid
@@ -234,9 +234,11 @@ llama-server -m bge-reranker-v2-m3-f16.gguf --reranking --port 8791 \
 gleann search my-docs "query" --top-k 10 --rerank --rerank-url http://127.0.0.1:8791
 ```
 
-With `--rerank` gleann fetches `max(top-k * 4, 50)` candidates (change with
-`--rerank-pool <n>`) and sends their full text to the reranker, then returns
-the best `top-k`.
+With `--rerank` gleann fetches `max(top-k * 4, 50)` candidates. The built-in
+engine scores the best 20 of them, using the first 500 characters of each.
+Server rerankers score all of them in full. Change the count with
+`--rerank-pool <n>` (`rerank_pool` in REST search). gleann then returns the
+best `top-k`.
 
 Measured on a 25-PDF document corpus (109 questions, digital and scanned PDFs,
 hybrid retrieval; answer found at rank N):
