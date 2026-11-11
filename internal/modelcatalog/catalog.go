@@ -42,6 +42,17 @@ type Entry struct {
 	SHA256 string `json:"sha256"`
 	// Note tells the user when to pick this model (speed, quality, languages).
 	Note string `json:"note,omitempty"`
+	// Pooler, when set, is appended to the downloaded GGUF (see Pooler);
+	// Bytes and SHA256 then describe the download, Pooler.Bytes the result.
+	Pooler *Pooler `json:"pooler,omitempty"`
+}
+
+// finalBytes is the expected size of the installed file.
+func (e Entry) finalBytes() int64 {
+	if e.Pooler != nil {
+		return e.Pooler.Bytes
+	}
+	return e.Bytes
 }
 
 // All returns every catalog entry.
@@ -90,7 +101,7 @@ func (e Entry) Path() string { return filepath.Join(Dir(), e.File) }
 // Installed reports whether the file is on disk with its catalog size.
 func (e Entry) Installed() bool {
 	fi, err := os.Stat(e.Path())
-	return err == nil && (e.Bytes == 0 || fi.Size() == e.Bytes)
+	return err == nil && (e.finalBytes() == 0 || fi.Size() == e.finalBytes())
 }
 
 // client has no overall timeout (multi-GB files) but bounds connection setup.
@@ -145,11 +156,33 @@ func Download(ctx context.Context, e Entry, progress func(done, total int64)) er
 	if sum := hex.EncodeToString(h.Sum(nil)); err == nil && e.SHA256 != "" && sum != e.SHA256 {
 		err = fmt.Errorf("checksum mismatch (got %s, want %s)", sum, e.SHA256)
 	}
+	if err == nil && e.Pooler != nil {
+		err = addPoolerTo(ctx, e, part)
+	}
 	if err != nil {
 		_ = os.Remove(part)
 		return fmt.Errorf("download %s: %w", e.Name, err)
 	}
 	return os.Rename(part, e.Path())
+}
+
+// addPoolerTo replaces the downloaded GGUF at path with a copy that has the
+// entry's pooler tensors appended.
+func addPoolerTo(ctx context.Context, e Entry, path string) error {
+	w, b, err := fetchPooler(ctx, *e.Pooler)
+	if err != nil {
+		return fmt.Errorf("pooler: %w", err)
+	}
+	tmp := path + ".pooler"
+	if err := AddPooler(path, tmp, w, b); err != nil {
+		_ = os.Remove(tmp)
+		return fmt.Errorf("pooler: %w", err)
+	}
+	if fi, err := os.Stat(tmp); err != nil || (e.Pooler.Bytes > 0 && fi.Size() != e.Pooler.Bytes) {
+		_ = os.Remove(tmp)
+		return fmt.Errorf("pooler: patched file has the wrong size")
+	}
+	return os.Rename(tmp, path)
 }
 
 type progressWriter struct {

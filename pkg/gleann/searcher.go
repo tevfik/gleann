@@ -258,8 +258,13 @@ func (s *LeannSearcher) Search(ctx context.Context, query string, opts ...Search
 		if retrieveK < 50 {
 			retrieveK = 50
 		}
+		// RerankPool only limits how many candidates reach the reranker;
+		// the first stage keeps its wide lists. Narrowing the dense and
+		// BM25 lists to the pool size lowers the quality of the pool
+		// itself (gleann benchmark: MiniLM rerank of the top 20 gave MRR
+		// 0.535 with 20-wide lists vs 0.58 with 50-wide lists).
 		if searchOpts.RerankPool > 0 {
-			retrieveK = max(searchOpts.RerankPool, topK)
+			retrieveK = max(retrieveK, searchOpts.RerankPool, topK)
 		}
 	}
 	if searchOpts.OnePerFile && retrieveK < topK*4 {
@@ -291,7 +296,7 @@ func (s *LeannSearcher) Search(ctx context.Context, query string, opts ...Search
 			results = onePerFile(results)
 		}
 		if activeReranker != nil && searchOpts.UseReranker && len(results) > 0 {
-			return activeReranker.Rerank(ctx, query, results, topK)
+			return rerankStage(ctx, activeReranker, query, results, topK, searchOpts), nil
 		}
 		if len(results) > topK {
 			results = results[:topK]
@@ -541,24 +546,10 @@ func (s *LeannSearcher) Search(ctx context.Context, query string, opts ...Search
 	}
 
 	// Truncate to topK if not reranking (reranker handles topK internally).
-	if !(s.reranker != nil && searchOpts.UseReranker) {
-		if len(results) > topK {
-			results = results[:topK]
-		}
-	}
-
-	// Reranking stage: re-score results with cross-encoder if configured.
 	if activeReranker != nil && searchOpts.UseReranker {
-		reranked, err := activeReranker.Rerank(ctx, query, results, topK)
-		if err != nil {
-			// Log but don't fail — fall back to original ranking.
-			fmt.Fprintf(os.Stderr, "reranker warning: %v (using original ranking)\n", err)
-			if len(results) > topK {
-				results = results[:topK]
-			}
-		} else {
-			results = reranked
-		}
+		results = rerankStage(ctx, activeReranker, query, results, topK, searchOpts)
+	} else if len(results) > topK {
+		results = results[:topK]
 	}
 
 	// Graph-augmented search: enrich results with caller/callee context.
@@ -761,6 +752,13 @@ func WithMetadataFilters(filters []MetadataFilter, logic ...string) SearchOption
 		if len(logic) > 0 {
 			c.FilterLogic = logic[0]
 		}
+	}
+}
+
+// WithRerankSkipIdentifiers keeps identifier-like queries in first-stage order.
+func WithRerankSkipIdentifiers(skip bool) SearchOption {
+	return func(c *SearchConfig) {
+		c.RerankSkipIdentifiers = skip
 	}
 }
 
@@ -1094,4 +1092,15 @@ func SameEmbeddingModel(a, b string) bool {
 		return strings.TrimSuffix(s, ".gguf")
 	}
 	return norm(a) == norm(b)
+}
+
+// Embedder returns the embedding model resolved for the loaded index
+// (nil for lexical-only searchers).
+func (s *LeannSearcher) Embedder() EmbeddingComputer {
+	return s.embedder
+}
+
+// IndexPath returns the directory that holds the loaded index's files.
+func (s *LeannSearcher) IndexPath() string {
+	return filepath.Join(s.config.IndexDir, s.meta.Name)
 }

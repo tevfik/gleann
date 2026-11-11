@@ -739,19 +739,22 @@ func createAskSearcher(ctx context.Context, name string, args []string, config g
 	}
 
 	if len(indexNames) == 1 {
+		// Search settings must be in config before NewSearcher copies it:
+		// setting them afterwards left `ask --rerank` without reranking.
+		rerank := wantRerank(config, args)
+		if rerank {
+			config.SearchConfig.UseReranker = true
+		}
+		if hasFlag(args, "--graph") {
+			config.SearchConfig.UseGraphContext = true
+		}
 		s := gleann.NewSearcher(config, embedder)
 		if err := s.Load(ctx, indexNames[0]); err != nil {
 			fmt.Fprintf(os.Stderr, "error loading index: %v\n", err)
 			os.Exit(1)
 		}
-
-		if wantRerank(config, args) {
-			rerankerCfg := rerankerConfigFromFlags(config, args)
-			s.SetReranker(gleann.NewReranker(rerankerCfg))
-			config.SearchConfig.UseReranker = true
-		}
-		if hasFlag(args, "--graph") {
-			config.SearchConfig.UseGraphContext = true
+		if rerank {
+			s.SetReranker(gleann.NewReranker(rerankerConfigFromFlags(config, args)))
 		}
 		return s
 	}

@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"os"
 	"strings"
 	"time"
 )
@@ -83,6 +84,16 @@ func (r *Runner) Run(ctx context.Context, topK int) (map[string]SummaryResult, e
 
 	strategyResults := make(map[string][]StrategyResult)
 
+	// GLEANN_BENCH_PERTASK=<file> writes one JSON line per (task, strategy)
+	// so strategies can be compared with paired significance tests.
+	var perTask *json.Encoder
+	if path := os.Getenv("GLEANN_BENCH_PERTASK"); path != "" {
+		if f, err := os.Create(path); err == nil {
+			defer f.Close()
+			perTask = json.NewEncoder(f)
+		}
+	}
+
 	for _, task := range r.tasks {
 		for name, searcher := range r.strategies {
 			start := time.Now()
@@ -95,6 +106,13 @@ func (r *Runner) Run(ctx context.Context, topK int) (map[string]SummaryResult, e
 			res := evaluateTask(task, foundPaths, tokens, latency)
 			res.Strategy = name
 			strategyResults[name] = append(strategyResults[name], res)
+			if perTask != nil {
+				_ = perTask.Encode(map[string]any{
+					"task": task.ID, "strategy": name,
+					"r1": res.Recall1, "r5": res.Recall5, "r10": res.Recall10,
+					"mrr": res.MRR, "tokens": res.Tokens, "latency_ms": float64(res.Latency.Microseconds()) / 1000,
+				})
+			}
 		}
 	}
 

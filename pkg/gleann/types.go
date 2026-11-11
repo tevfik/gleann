@@ -439,6 +439,11 @@ type SearchConfig struct {
 	// RerankPool is the number of stage-1 candidates sent to the reranker.
 	// Zero means max(4*top-k, 50).
 	RerankPool int `json:"rerank_pool,omitempty"`
+
+	// RerankSkipIdentifiers leaves identifier-like queries ("LeannSearcher",
+	// "parse_args", "pkg.Func") in first-stage order. Passage rerankers are
+	// trained on natural-language questions and demote exact symbol hits.
+	RerankSkipIdentifiers bool `json:"rerank_skip_identifiers,omitempty"`
 }
 
 // DefaultConfig returns a Config with sensible defaults.
@@ -461,6 +466,10 @@ func DefaultConfig() Config {
 		SearchConfig: SearchConfig{
 			TopK:        10,
 			HybridAlpha: 0.7,
+			// Passage rerankers demote exact symbol hits; on the gleann
+			// benchmark the gate turned a significant symbol-query loss
+			// (MRR -0.05) into no change.
+			RerankSkipIdentifiers: true,
 		},
 		ChunkConfig: DefaultChunkConfig(),
 		LlamaCPPConfig: LlamaCPPConfig{

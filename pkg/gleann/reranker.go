@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -17,7 +18,12 @@ import (
 type RerankerProvider string
 
 const (
-	// RerankerOllama uses Ollama's embedding model in cross-encoder mode.
+	// RerankerOllama is accepted for configuration compatibility, but Ollama
+	// has no cross-encoder (rerank) API: embedding a reranker model and
+	// comparing vectors is not reranking (it lowered MRR on the gleann
+	// benchmark and crashes for bge-reranker-v2-m3). Rerank returns an
+	// error, so search keeps the first-stage order. Use "eif" (in process)
+	// or "llamacpp" with a llama-server --reranking URL.
 	// Reranks by computing query-document cosine similarity with a
 	// different (typically stronger) embedding model.
 	RerankerOllama RerankerProvider = "ollama"
@@ -31,7 +37,8 @@ const (
 	// RerankerVoyage uses Voyage AI's reranking API.
 	RerankerVoyage RerankerProvider = "voyage"
 
-	// RerankerLlamacpp uses standard llama.cpp /api/embed functionality
+	// RerankerLlamacpp calls a llama-server started with --reranking
+	// (POST {BaseURL}/v1/rerank, Jina-compatible).
 	RerankerLlamacpp RerankerProvider = "llamacpp"
 
 	// RerankerEIF runs a GGUF cross-encoder (bge-reranker-v2-m3,
@@ -70,6 +77,12 @@ type RerankerConfig struct {
 
 	// TopN is how many results to keep after reranking (0 = keep all).
 	TopN int `json:"top_n,omitempty"`
+
+	// MaxDocChars truncates each candidate's text before scoring (0 = no
+	// limit). Cross-encoders cost grows with input length, and on the
+	// gleann benchmark the first ~128 tokens of a chunk ranked as well as
+	// the whole chunk (see docs/retrieval-experiments.md).
+	MaxDocChars int `json:"max_doc_chars,omitempty"`
 }
 
 // DefaultRerankerConfig returns a default config using Ollama with bge-reranker.
@@ -147,10 +160,14 @@ func (r *CrossEncoderReranker) Rerank(ctx context.Context, query string, results
 		}
 	}
 
+	if n := r.config.MaxDocChars; n > 0 {
+		return r.rerankTruncated(ctx, query, results, topN, n)
+	}
+
 	switch r.config.Provider {
-	case RerankerOllama, RerankerLlamacpp:
-		return r.rerankOllama(ctx, query, results, topN)
-	case RerankerJina:
+	case RerankerOllama:
+		return nil, errOllamaNoRerank
+	case RerankerLlamacpp, RerankerJina:
 		return r.rerankJina(ctx, query, results, topN)
 	case RerankerCohere:
 		return r.rerankCohere(ctx, query, results, topN)
@@ -163,95 +180,51 @@ func (r *CrossEncoderReranker) Rerank(ctx context.Context, query string, results
 	}
 }
 
-// ── Ollama (cross-encoder via embedding similarity) ────────────
-
-// Ollama doesn't have a native rerank API, so we simulate cross-encoder
-// by computing embeddings for query and each document, then taking
-// cosine similarity. This works well with models like bge-reranker-v2-m3
-// run through ollama's /api/embed endpoint.
-func (r *CrossEncoderReranker) rerankOllama(ctx context.Context, query string, results []SearchResult, topN int) ([]SearchResult, error) {
-	// Build all texts: [query, doc1, doc2, ...]
-	texts := make([]string, 0, len(results)+1)
-	texts = append(texts, query)
-	for _, res := range results {
-		texts = append(texts, res.Text)
+// rerankTruncated scores truncated copies of the candidates and returns the
+// reranked results with their full text restored.
+func (r *CrossEncoderReranker) rerankTruncated(ctx context.Context, query string, results []SearchResult, topN, maxChars int) ([]SearchResult, error) {
+	full := make(map[int64]string, len(results))
+	short := make([]SearchResult, len(results))
+	for i, res := range results {
+		if _, dup := full[res.ID]; dup {
+			// IDs collide (e.g. results from several indexes): score full texts.
+			cfg := r.config
+			cfg.MaxDocChars = 0
+			return (&CrossEncoderReranker{config: cfg, client: r.client}).Rerank(ctx, query, results, topN)
+		}
+		full[res.ID] = res.Text
+		short[i] = res
+		short[i].Text = truncateRunes(res.Text, maxChars)
 	}
-
-	// Compute embeddings for all texts in one batch.
-	embeddings, err := r.ollamaEmbed(ctx, texts)
-	if err != nil {
-		return nil, fmt.Errorf("ollama embed for reranking: %w", err)
-	}
-
-	if len(embeddings) != len(texts) {
-		return nil, fmt.Errorf("expected %d embeddings, got %d", len(texts), len(embeddings))
-	}
-
-	// Score each document against query by cosine similarity.
-	queryEmb := embeddings[0]
-	scored := make([]SearchResult, len(results))
-	copy(scored, results)
-
-	for i := range scored {
-		scored[i].Score = cosineSimilarity(queryEmb, embeddings[i+1])
-	}
-
-	sort.Slice(scored, func(i, j int) bool {
-		return scored[i].Score > scored[j].Score
-	})
-
-	if topN < len(scored) {
-		scored = scored[:topN]
-	}
-	return scored, nil
-}
-
-type ollamaEmbedRequest struct {
-	Model string   `json:"model"`
-	Input []string `json:"input"`
-}
-
-type ollamaEmbedResponse struct {
-	Embeddings [][]float32 `json:"embeddings"`
-}
-
-func (r *CrossEncoderReranker) ollamaEmbed(ctx context.Context, texts []string) ([][]float32, error) {
-	body, err := json.Marshal(ollamaEmbedRequest{
-		Model: r.config.Model,
-		Input: texts,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("marshal ollama request: %w", err)
-	}
-
-	url := strings.TrimRight(r.config.BaseURL, "/") + "/api/embed"
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+	cfg := r.config
+	cfg.MaxDocChars = 0
+	out, err := (&CrossEncoderReranker{config: cfg, client: r.client}).Rerank(ctx, query, short, topN)
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("Content-Type", "application/json")
-	SetBearerAuth(req, r.config.APIKey)
-
-	resp, err := r.client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("ollama request: %w", err)
+	for i := range out {
+		out[i].Text = full[out[i].ID]
 	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		errBody, readErr := io.ReadAll(resp.Body)
-		if readErr != nil {
-			errBody = []byte("(body unreadable)")
-		}
-		return nil, fmt.Errorf("ollama error %d: %s", resp.StatusCode, string(errBody))
-	}
-
-	var result ollamaEmbedResponse
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("decode ollama response: %w", err)
-	}
-	return result.Embeddings, nil
+	return out, nil
 }
+
+// truncateRunes returns at most n runes of s.
+func truncateRunes(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	i := 0
+	for pos := range s {
+		if i == n {
+			return s[:pos]
+		}
+		i++
+	}
+	return s
+}
+
+// errOllamaNoRerank explains why the Ollama reranker is not used.
+var errOllamaNoRerank = errors.New("ollama has no rerank API; set rerank_provider to \"eif\" (in-process GGUF cross-encoder) or \"llamacpp\" with rerank_url pointing at a llama-server --reranking")
 
 // ── In-process cross-encoder (bitllm.c) ────────────────────────
 

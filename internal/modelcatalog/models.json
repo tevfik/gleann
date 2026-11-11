@@ -102,6 +102,22 @@
       "note": "Recommended default. 118M cross-encoder, multilingual (Turkish included). About 0.4 s per query for 20 candidates on a CPU; +6 to +9 nDCG@10 on hard Turkish retrieval."
     },
     {
+      "id": "ms-marco-minilm-l6",
+      "name": "MS MARCO MiniLM-L6 Reranker Q8 (English, fastest — best for code)",
+      "kind": "reranker",
+      "file": "ms-marco-MiniLM-L6-v2-pooler-Q8_0.gguf",
+      "url": "https://huggingface.co/keisuke-miyako/ms-marco-MiniLM-L6-v2-gguf-q8_0/resolve/main/ms-marco-MiniLM-L6-v2-Q8_0.gguf",
+      "bytes": 25284192,
+      "sha256": "8e6875c28ff76d01d8003334dc0d505f98e2758acc58c106ed1ec25db373f793",
+      "pooler": {
+        "url": "https://huggingface.co/cross-encoder/ms-marco-MiniLM-L6-v2/resolve/233902d25c440f23af6f7d6e94d2946bac0bee0a/model.safetensors",
+        "weight": "bert.pooler.dense.weight",
+        "bias": "bert.pooler.dense.bias",
+        "bytes": 25875648
+      },
+      "note": "22M English cross-encoder. Best for English code and docs: on gleann's code benchmark it raised question MRR by 0.07 (mMiniLMv2: 0.01) at ~0.4 s per query for 20 candidates on a CPU. The pooler layer missing from the published GGUF is added at download (~600 KB from the original checkpoint)."
+    },
+    {
       "id": "bge-reranker-v2-m3",
       "name": "BGE Reranker v2 M3 Q8 (multilingual, best quality, slow on CPU)",
       "kind": "reranker",

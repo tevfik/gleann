@@ -76,6 +76,11 @@ func runContextBenchmark(config gleann.Config, indexName, tasksFile string, topK
 
 	ctx := context.Background()
 
+	// Resolve the embedder from the index's own metadata (as `gleann search`
+	// does). Without this a config/index model mismatch makes every query
+	// fail to embed and silently fall back to BM25, so all strategies
+	// report identical numbers.
+	config.EmbedderResolver = defaultEmbedderResolver(config)
 	embedder := newEmbedder(config)
 
 	searcher := gleann.NewSearcher(config, embedder)
@@ -185,6 +190,37 @@ func runContextBenchmark(config gleann.Config, indexName, tasksFile string, topK
 	}
 	runner.RegisterStrategy("Hybrid (α=0.7)", hybridWith(gleann.WithHybridAlpha(0.7)))
 	runner.RegisterStrategy("Hybrid (α=0.3)", hybridWith(gleann.WithHybridAlpha(0.3)))
+
+	// Strategy 4f: two-stage with the configured cross-encoder reranker
+	// (GLEANN_BENCH_RERANK=1; uses the saved reranker settings or
+	// GLEANN_BENCH_RERANK_MODEL / _PROVIDER).
+	if os.Getenv("GLEANN_BENCH_RERANK") == "1" {
+		rcfg := gleann.ResolveRerankerConfig(config, os.Getenv("GLEANN_BENCH_RERANK_MODEL"))
+		if p := os.Getenv("GLEANN_BENCH_RERANK_PROVIDER"); p != "" {
+			rcfg.Provider = gleann.RerankerProvider(p)
+		}
+		if u := os.Getenv("GLEANN_BENCH_RERANK_URL"); u != "" { // llama-server --reranking
+			rcfg.Provider, rcfg.BaseURL = gleann.RerankerJina, u
+		}
+		pool := 20
+		if v, err := strconv.Atoi(os.Getenv("GLEANN_BENCH_RERANK_POOL")); err == nil && v > 0 {
+			pool = v
+		}
+		chars := 500
+		if v, err := strconv.Atoi(os.Getenv("GLEANN_BENCH_RERANK_CHARS")); err == nil && v >= 0 {
+			chars = v
+		}
+		rcfg.MaxDocChars = chars
+		rr := gleann.NewReranker(rcfg)
+		for _, gate := range []bool{false, true} {
+			label := fmt.Sprintf("Rerank pool=%d chars=%d", pool, chars)
+			if gate {
+				label += " +skip-ident"
+			}
+			runner.RegisterStrategy(label, hybridWith(gleann.WithCustomReranker(rr), gleann.WithReranker(true),
+				gleann.WithRerankPool(pool), gleann.WithRerankSkipIdentifiers(gate)))
+		}
+	}
 
 	// Strategy 4c: keep only the best chunk per file, so several chunks of one
 	// file do not use up top-k slots that other files could fill.

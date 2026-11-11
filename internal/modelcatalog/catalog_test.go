@@ -14,9 +14,15 @@ import (
 func TestModelsJSONIsComplete(t *testing.T) {
 	ids := map[string]bool{}
 	for _, e := range All() {
+		// A patched model (Pooler) is stored under its own name, so a plain
+		// copy of the published file is never mistaken for it.
+		sameName := strings.HasSuffix(e.URL, "/"+e.File)
 		if e.ID == "" || e.Name == "" || e.File == "" || e.Bytes <= 0 || len(e.SHA256) != 64 ||
-			!strings.HasPrefix(e.URL, "https://") || !strings.HasSuffix(e.URL, "/"+e.File) {
+			!strings.HasPrefix(e.URL, "https://") || sameName == (e.Pooler != nil) {
 			t.Errorf("incomplete entry: %+v", e)
+		}
+		if p := e.Pooler; p != nil && (!strings.HasPrefix(p.URL, "https://") || p.Weight == "" || p.Bias == "" || p.Bytes <= e.Bytes) {
+			t.Errorf("%s: incomplete pooler %+v", e.ID, *p)
 		}
 		if e.Kind != Embedding && e.Kind != LLM && e.Kind != Reranker {
 			t.Errorf("%s: unknown kind %q", e.ID, e.Kind)

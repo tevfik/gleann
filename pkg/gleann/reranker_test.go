@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -30,136 +31,83 @@ func TestRerank_UnsupportedProvider(t *testing.T) {
 	}
 }
 
+// llamaRerankServer fakes llama-server --reranking: POST /v1/rerank scores
+// each document by whether it contains the word "match".
+func llamaRerankServer(t *testing.T) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/rerank" {
+			http.NotFound(w, r)
+			return
+		}
+		var req jinaRerankRequest
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		var out jinaRerankResponse
+		for i, d := range req.Documents {
+			score := 0.0
+			if strings.Contains(d, "match") {
+				score = 1
+			}
+			out.Results = append(out.Results, jinaResult{Index: i, RelevanceScore: score})
+		}
+		_ = json.NewEncoder(w).Encode(out)
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
 func TestRerank_TopNFromConfig(t *testing.T) {
 	// When topN=0, falls back to config.TopN, then to len(results).
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Return embeddings: 3 vectors (1 query + 2 docs), all dimension 2.
-		json.NewEncoder(w).Encode(ollamaEmbedResponse{
-			Embeddings: [][]float32{
-				{1.0, 0.0}, // query
-				{1.0, 0.0}, // doc0 — identical to query → score=1.0
-				{0.0, 1.0}, // doc1 — orthogonal → score≈0.0
-			},
-		})
-	}))
-	defer srv.Close()
-
-	r := NewReranker(RerankerConfig{
-		Provider: RerankerOllama,
-		Model:    "test-model",
-		BaseURL:  srv.URL,
-		TopN:     1, // keep only top 1
-	})
-	results := []SearchResult{
-		{Text: "doc0", Score: 0.1},
-		{Text: "doc1", Score: 0.9},
-	}
+	srv := llamaRerankServer(t)
+	r := NewReranker(RerankerConfig{Provider: RerankerLlamacpp, BaseURL: srv.URL, TopN: 1})
+	results := []SearchResult{{Text: "doc0 match", Score: 0.1}, {Text: "doc1", Score: 0.9}}
 	got, err := r.Rerank(context.Background(), "query", results, 0 /* use config TopN */)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got) != 1 {
-		t.Fatalf("expected 1 result (topN from config), got %d", len(got))
-	}
-	if got[0].Text != "doc0" {
-		t.Errorf("expected doc0 (highest similarity), got %s", got[0].Text)
+	if len(got) != 1 || got[0].Text != "doc0 match" {
+		t.Fatalf("got %+v, want only doc0", got)
 	}
 }
 
-// ── Ollama reranker ────────────────────────────────────────────
+// ── Ollama: no rerank API ──────────────────────────────────────
 
-func TestRerankOllama_Success(t *testing.T) {
+func TestRerankOllama_ReturnsError(t *testing.T) {
+	r := NewReranker(RerankerConfig{Provider: RerankerOllama, Model: "bge-reranker-v2-m3"})
+	_, err := r.Rerank(context.Background(), "q", []SearchResult{{Text: "a"}}, 1)
+	if err == nil || !strings.Contains(err.Error(), "no rerank API") {
+		t.Fatalf("expected an explanatory error, got %v", err)
+	}
+}
+
+// ── Truncation ─────────────────────────────────────────────────
+
+func TestRerank_MaxDocCharsRestoresFullText(t *testing.T) {
+	var seen []string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/embed" {
-			t.Errorf("unexpected path: %s", r.URL.Path)
+		var req jinaRerankRequest
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		seen = req.Documents
+		var out jinaRerankResponse
+		for i := range req.Documents {
+			out.Results = append(out.Results, jinaResult{Index: i, RelevanceScore: float64(i)})
 		}
-		var req ollamaEmbedRequest
-		json.NewDecoder(r.Body).Decode(&req)
-		if req.Model != "test-model" {
-			t.Errorf("expected model test-model, got %s", req.Model)
-		}
-		if len(req.Input) != 4 { // query + 3 docs
-			t.Errorf("expected 4 inputs, got %d", len(req.Input))
-		}
-		// Return embeddings: query=[1,0], doc0=[0.9,0.1], doc1=[0,1], doc2=[0.5,0.5]
-		json.NewEncoder(w).Encode(ollamaEmbedResponse{
-			Embeddings: [][]float32{
-				{1.0, 0.0}, // query
-				{0.9, 0.1}, // doc0 — high similarity
-				{0.0, 1.0}, // doc1 — low similarity
-				{0.5, 0.5}, // doc2 — medium similarity
-			},
-		})
+		_ = json.NewEncoder(w).Encode(out)
 	}))
 	defer srv.Close()
-
-	r := NewReranker(RerankerConfig{
-		Provider: RerankerOllama,
-		Model:    "test-model",
-		BaseURL:  srv.URL,
-	})
-	results := []SearchResult{
-		{ID: 1, Text: "doc0", Score: 0.1},
-		{ID: 2, Text: "doc1", Score: 0.9},
-		{ID: 3, Text: "doc2", Score: 0.5},
-	}
-	got, err := r.Rerank(context.Background(), "query", results, 2)
+	r := NewReranker(RerankerConfig{Provider: RerankerLlamacpp, BaseURL: srv.URL, MaxDocChars: 4})
+	results := []SearchResult{{ID: 1, Text: "héllo world"}, {ID: 2, Text: "abcdefgh"}}
+	got, err := r.Rerank(context.Background(), "q", results, 2)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got) != 2 {
-		t.Fatalf("expected 2 results, got %d", len(got))
+	if seen[0] != "héll" || seen[1] != "abcd" {
+		t.Fatalf("server saw %q, want rune-truncated texts", seen)
 	}
-	// doc0 should be first (highest cosine similarity to query)
-	if got[0].Text != "doc0" {
-		t.Errorf("expected doc0 first, got %s", got[0].Text)
-	}
-	if got[1].Text != "doc2" {
-		t.Errorf("expected doc2 second, got %s", got[1].Text)
+	if got[0].ID != 2 || got[0].Text != "abcdefgh" || got[1].Text != "héllo world" {
+		t.Fatalf("full texts not restored: %+v", got)
 	}
 }
-
-func TestRerankOllama_ServerError(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusInternalServerError)
-		w.Write([]byte("model not found"))
-	}))
-	defer srv.Close()
-
-	r := NewReranker(RerankerConfig{
-		Provider: RerankerOllama,
-		Model:    "bad-model",
-		BaseURL:  srv.URL,
-	})
-	results := []SearchResult{{Text: "doc0", Score: 0.5}}
-	_, err := r.Rerank(context.Background(), "query", results, 5)
-	if err == nil {
-		t.Fatal("expected error for server error")
-	}
-}
-
-func TestRerankOllama_EmbeddingCountMismatch(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Return wrong number of embeddings.
-		json.NewEncoder(w).Encode(ollamaEmbedResponse{
-			Embeddings: [][]float32{{1.0, 0.0}}, // only 1 instead of 2
-		})
-	}))
-	defer srv.Close()
-
-	r := NewReranker(RerankerConfig{
-		Provider: RerankerOllama,
-		Model:    "test-model",
-		BaseURL:  srv.URL,
-	})
-	results := []SearchResult{{Text: "doc0", Score: 0.5}}
-	_, err := r.Rerank(context.Background(), "query", results, 5)
-	if err == nil {
-		t.Fatal("expected error for embedding count mismatch")
-	}
-}
-
-// ── Jina reranker ──────────────────────────────────────────────
 
 func TestRerankJina_Success(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -390,30 +338,17 @@ func TestRerankVoyage_OutOfRangeIndex(t *testing.T) {
 	}
 }
 
-// ── LlamaCPP provider routes to rerankOllama ───────────────────
+// ── LlamaCPP provider calls llama-server /v1/rerank ───────────
 
-func TestRerank_LlamaCPP_RoutesToOllama(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(ollamaEmbedResponse{
-			Embeddings: [][]float32{
-				{1.0, 0.0}, // query
-				{0.8, 0.2}, // doc0
-			},
-		})
-	}))
-	defer srv.Close()
-
-	r := NewReranker(RerankerConfig{
-		Provider: RerankerLlamacpp,
-		Model:    "test.gguf",
-		BaseURL:  srv.URL,
-	})
-	results := []SearchResult{{Text: "doc0", Score: 0.1}}
+func TestRerank_LlamaCPP_UsesRerankEndpoint(t *testing.T) {
+	srv := llamaRerankServer(t)
+	r := NewReranker(RerankerConfig{Provider: RerankerLlamacpp, Model: "test.gguf", BaseURL: srv.URL})
+	results := []SearchResult{{Text: "doc0", Score: 0.9}, {Text: "a match", Score: 0.1}}
 	got, err := r.Rerank(context.Background(), "query", results, 5)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got) != 1 {
-		t.Fatalf("expected 1 result, got %d", len(got))
+	if len(got) != 2 || got[0].Text != "a match" {
+		t.Fatalf("got %+v, want the matching doc first", got)
 	}
 }

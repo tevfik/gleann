@@ -45,13 +45,15 @@ func newOllamaAuthServer(t *testing.T) (*httptest.Server, *authCapture) {
 				Message: ChatMessage{Role: "assistant", Content: "ok"},
 			})
 		case "/api/embed":
-			var req ollamaEmbedRequest
+			var req struct {
+				Input []string `json:"input"`
+			}
 			_ = json.NewDecoder(r.Body).Decode(&req)
 			embs := make([][]float32, len(req.Input))
 			for i := range embs {
 				embs[i] = []float32{1, float32(i)}
 			}
-			_ = json.NewEncoder(w).Encode(ollamaEmbedResponse{Embeddings: embs})
+			_ = json.NewEncoder(w).Encode(map[string]any{"embeddings": embs})
 		case "/api/tags":
 			_, _ = w.Write([]byte(`{"models":[]}`))
 		default:
@@ -153,28 +155,6 @@ func TestChatOllamaNoKeyNoHeader(t *testing.T) {
 	}
 	if got, hits := ac.get(); got != "" || hits == 0 {
 		t.Errorf("Authorization = %q (hits=%d), want none", got, hits)
-	}
-}
-
-func TestRerankerOllamaBearer(t *testing.T) {
-	srv, ac := newOllamaAuthServer(t)
-	results := []SearchResult{{Text: "a"}, {Text: "b"}}
-
-	t.Setenv(OllamaAPIKeyEnv, "env-rr")
-	r := NewReranker(RerankerConfig{Provider: RerankerOllama, Model: "rr", BaseURL: srv.URL})
-	if _, err := r.Rerank(context.Background(), "q", results, 2); err != nil {
-		t.Fatal(err)
-	}
-	if got, _ := ac.get(); got != "Bearer env-rr" {
-		t.Errorf("reranker Authorization = %q, want Bearer env-rr", got)
-	}
-
-	r = NewReranker(RerankerConfig{Provider: RerankerOllama, Model: "rr", BaseURL: srv.URL, APIKey: "cfg-rr"})
-	if _, err := r.Rerank(context.Background(), "q", results, 2); err != nil {
-		t.Fatal(err)
-	}
-	if got, _ := ac.get(); got != "Bearer cfg-rr" {
-		t.Errorf("reranker Authorization = %q, want Bearer cfg-rr", got)
 	}
 }
 

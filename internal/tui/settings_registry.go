@@ -103,7 +103,7 @@ func settingsFields() []settings.Field[OnboardResult] {
 			Bind: func(c *OnboardResult) any { return &c.RerankEnabled }},
 		{Key: "rerank_provider", Label: "Reranker engine", Type: settings.Select, Group: groupReranker, Default: string(gleann.RerankerAuto),
 			Help: "auto: the built-in bitllm.c reranker when this build has it and the model is a local GGUF, " +
-				"otherwise the embedding provider. Ollama has no cross-encoder API: its \"reranker\" compares embeddings and is much weaker.",
+				"otherwise the embedding provider. Ollama has no cross-encoder API: pick eif, or llamacpp with a llama-server --reranking.",
 			VisibleIf: &settings.Cond{Key: "rerank_enabled", Equals: true},
 			Options:   rerankProviderOptions(),
 			Bind:      func(c *OnboardResult) any { return &c.RerankProvider },
