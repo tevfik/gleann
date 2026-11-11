@@ -12,6 +12,9 @@ Planned as v1.9.0; see [docs/releases/v1.9.0.md](docs/releases/v1.9.0.md).
 - **`gleann search --explain`.** Shows the most important segments of each result (~70 ms per result) and the BM25 weight of each query term.
 - **MCP `gleann_search` `focus`.** Returns only the most relevant quarter of each result, ~4× fewer tokens.
 - **`gleann ask --cite` and REST ask `"cite": true`.** Link each answer sentence to the context passage it came from and list the passages used (~100 ms, prompt unchanged).
+- **Pass-through mode for the OpenAI-compatible proxy** (`proxy_mode: passthrough` setting or `GLEANN_PROXY_MODE`). The client's request goes to the LLM server unchanged except for the retrieved context, and the reply streams back byte for byte (reasoning, metrics, extra fields); `POST /stop` is forwarded. Headers: `X-Gleann-Index`, `X-Gleann-Context: user` (keeps the LLM server's prompt cache), `X-Gleann-Max-Context-Chars`, `X-Gleann-Rerank`, `X-Gleann-Rerank-Pool`; the reply lists its sources in `X-Gleann-Sources`.
+- **`GET /api/storage`** (admin): disk space of every index, index and passage counts, and the free space of the file system.
+- Makefile: `ARM64_CFLAGS` for the arm64 eif cross build (e.g. `-march=armv8.2-a+dotprod+fp16`).
 - `gleann bench`: `GLEANN_BENCH_PERTASK` writes per-task rows; `GLEANN_BENCH_RERANK=1` and `GLEANN_BENCH_EXPAND_MODEL` add reranker and HyDE strategies.
 - [docs/retrieval-experiments.md](docs/retrieval-experiments.md): what was measured, what was shipped and what was left out, including the CPU cost of reranking.
 
@@ -23,6 +26,9 @@ Planned as v1.9.0; see [docs/releases/v1.9.0.md](docs/releases/v1.9.0.md).
 - **`rerank_provider: ollama` returns an error.** Ollama has no rerank API; the old fallback compared embeddings, scored worse than no reranking and crashed for bge-reranker-v2-m3. Use `eif` or `llamacpp` with a llama-server `--reranking` (which now uses `/v1/rerank`).
 
 ### Fixed
+- **E5 embedding models get their `passage: ` / `query: ` prefixes.** The prompt template settings were never used, so `multilingual-e5-small` (the Turkish-capable default) embedded text without the prefixes it is trained with and ranked relevant passages low. New indexes record the prefixes in their meta and every search, update, `--explain` and `--cite` uses them; existing indexes keep working unchanged (rebuild one to get the prefixes).
+- **Results of several indexes are ranked by their raw relevance.** Each index normalises its own best passage to about 1, so merged multi-index results put every document's best guesses on top and could crowd out the passage that answers the question. The proxy, `MultiSearcher` and `SearchMultiple` now fuse the raw vector distances and BM25 scores; reranked results keep their cross-encoder scores.
+- Index-building uploads (`POST /api/indexes/{name}/upload`, `index-path`, `update`) get the build timeout (`GLEANN_TIMEOUT_BUILD_S`, 10 min) instead of failing with 504 after 60 s.
 - `gleann ask --rerank` and `gleann ask --graph` had no effect unless saved in the settings, and multi-index or `<name>-code`/`<name>-docs` asks and multi-index `search --rerank` never reranked.
 - `gleann ask` put the values of `--rerank-url`, `--rerank-pool` and `--rerank-provider` into the question.
 - REST `ask` searched a second time to report sources, which could differ from the passages the answer was based on.
