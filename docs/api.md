@@ -129,6 +129,14 @@ Use gleann indexes as if they were OpenAI models. Compatible with any tool that 
 
 **Custom headers**: `X-Gleann-Top-K` (RAG result count), `X-Gleann-Min-Score` (score threshold).
 
+**Pass-through mode** (`proxy_mode: "passthrough"` in the config, or `GLEANN_PROXY_MODE=passthrough`): the request
+goes to the configured OpenAI-compatible server unchanged (every field, e.g. `chat_template_kwargs`), and its reply
+comes back byte for byte with its status code, so clients keep whatever their LLM server streams (reasoning,
+timing metrics, errors). The only change is the retrieved context, which is appended to the first system message
+(or added as one), and the model name, which becomes `llm_model` when it named indexes. Indexes can also be given
+in an `X-Gleann-Index` header (`docs,code`, `@tag`). The reply carries `X-Gleann-Sources`, the passages' sources in
+order as a percent-encoded JSON list. `POST /stop` is forwarded to the LLM server in this mode.
+
 ### A2A Protocol (Agent-to-Agent)
 
 Google's Agent-to-Agent protocol for agent discovery and inter-agent communication. Enabled by default; set `GLEANN_A2A_ENABLED=false` to disable.

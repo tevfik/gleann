@@ -103,6 +103,7 @@ Location: `~/.gleann/config.json`
 | `rerank_model` | built-in: `ms-marco-minilm-l6` for mostly-code results when downloaded, else `mmarco-mMiniLMv2-L12-H384-v1-Q8_0.gguf`; server: `bge-reranker-v2-m3` | Reranker model: a catalog id, a GGUF in `~/.gleann/models` or a path for the built-in engine, a model name for a server |
 | `expand` / `expand_model` | `false` / chat model | HyDE query expansion by default (see Query expansion); `--no-expand` turns it off for one command |
 | `storage_mode` | `store` | Vector storage of new indexes: `store` or `recompute` (see below) |
+| `proxy_mode` | — | `passthrough` makes `POST /v1/chat/completions` forward the client's request unchanged (plus the retrieved context) and stream the LLM server's reply back byte for byte; empty uses gleann's chat client. `GLEANN_PROXY_MODE` overrides it. See [REST API](api.md) |
 | `auth` | `on` | REST API authentication: `on` (token required) or `off` (accepted only on a loopback address). `GLEANN_AUTH` overrides it |
 | `cors_origins` | — | Origins whose web pages may call the API, e.g. `["https://app.example.com"]`. `GLEANN_CORS_ORIGINS` adds more |
 | `rate_limit` / `rate_burst` | `60` / `120` | Requests per second / burst per client address (loopback clients are not limited). `GLEANN_RATE_LIMIT` / `GLEANN_RATE_BURST` override them |

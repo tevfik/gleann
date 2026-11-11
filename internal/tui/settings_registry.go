@@ -227,6 +227,13 @@ func settingsFields() []settings.Field[OnboardResult] {
 			Help:  "Requests a client may send at once before the limit applies. GLEANN_RATE_BURST overrides it.",
 			Min:   settings.F(1), Max: settings.F(100000), Step: settings.F(10),
 			Bind: func(c *OnboardResult) any { return &c.RateBurst }},
+		{Key: "proxy_mode", Label: "Chat proxy mode", Type: settings.Select, Group: groupServices, Default: "",
+			Apply: settings.Restart,
+			Help: "How POST /v1/chat/completions reaches the LLM. Default: gleann's chat client rebuilds the request. " +
+				"Pass-through: the client's request goes to the LLM server unchanged except for the retrieved context, and " +
+				"the reply streams back byte for byte (reasoning, metrics, extra fields). GLEANN_PROXY_MODE overrides it.",
+			Options: settings.Opts("", "Default (gleann chat client)", "passthrough", "Pass-through"),
+			Bind:    func(c *OnboardResult) any { return &c.ProxyMode }},
 		{Key: "mcp_enabled", Label: "MCP server", Type: settings.Bool, Group: groupServices, Apply: settings.Restart,
 			Help: "Offer gleann's tools to AI agents (Claude Code, Cursor, ...) over MCP.",
 			Bind: func(c *OnboardResult) any { return &c.MCPEnabled }},

@@ -193,6 +193,13 @@ type Config struct {
 	// when the server binds to a loopback address.
 	Auth string `json:"auth,omitempty"`
 
+	// ProxyMode selects how POST /v1/chat/completions reaches the LLM: "" (default) rebuilds the
+	// conversation through gleann's own chat client; "passthrough" forwards the client's request unchanged
+	// (every field, the upstream's streamed reply byte for byte) after adding the retrieved context to it, for
+	// clients that rely on fields of their LLM server (e.g. a reasoning stream and timing metrics).
+	// GLEANN_PROXY_MODE overrides it.
+	ProxyMode string `json:"proxy_mode,omitempty"`
+
 	// CORSOrigins lists browser origins allowed to call the API cross-origin.
 	// Empty (default) means same-origin only.
 	CORSOrigins []string `json:"cors_origins,omitempty"`

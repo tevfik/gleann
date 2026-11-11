@@ -128,6 +128,8 @@ type OnboardResult struct {
 	CORSOrigins []string `json:"cors_origins,omitempty"`
 	RateLimit   int      `json:"rate_limit,omitempty"` // requests/s per client IP (default 60)
 	RateBurst   int      `json:"rate_burst,omitempty"` // burst per client IP (default 120)
+	// ProxyMode: "" (gleann's chat client) or "passthrough" for POST /v1/chat/completions.
+	ProxyMode string `json:"proxy_mode,omitempty"`
 	// corsText is cors_origins as the settings screens edit it (comma-separated).
 	corsText string
 

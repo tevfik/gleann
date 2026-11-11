@@ -337,6 +337,9 @@ func applySavedConfig(config *gleann.Config, args []string) {
 	if savedCfg.RateBurst > 0 {
 		config.RateBurst = savedCfg.RateBurst
 	}
+	if savedCfg.ProxyMode != "" {
+		config.ProxyMode = savedCfg.ProxyMode
+	}
 }
 
 // applySavedReranker copies the saved reranker settings into config. A

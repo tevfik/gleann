@@ -317,6 +317,7 @@ func (s *Server) buildMux() *http.ServeMux {
 	// OpenAI-compatible proxy endpoints.
 	mux.HandleFunc("GET /v1/models", s.handleListModels)
 	mux.HandleFunc("POST /v1/chat/completions", s.handleChatCompletions)
+	mux.HandleFunc("POST /stop", s.handleProxyStop) // proxy_mode passthrough: forwarded to the LLM server
 
 	// OpenAPI / Swagger documentation.
 	mux.HandleFunc("GET /api/openapi.json", s.handleOpenAPISpec)

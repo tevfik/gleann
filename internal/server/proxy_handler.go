@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -129,6 +130,10 @@ func (s *Server) handleListModels(w http.ResponseWriter, r *http.Request) {
 // based on the model name prefix, injects context, and streams or
 // returns the LLM response in OpenAI format.
 func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
+	if s.proxyPassthrough() {
+		s.passthroughChatCompletions(w, r)
+		return
+	}
 	var req oaiChatRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
@@ -385,84 +390,13 @@ func (s *Server) buildProxyMessages(
 	if len(indexNames) == 0 {
 		return messages, nil
 	}
-
-	// Use last user message as the search query.
-	query := lastUserContent(messages)
-	if query == "" {
-		return messages, nil
-	}
-
-	// Expand any @tag references into public matching indexes.
-	resolvedNames, err := s.expandProxyIndexNames(indexNames)
+	contextBlock, _, err := s.retrieveProxyContext(ctx, lastUserContent(messages), indexNames, searchOpts)
 	if err != nil {
 		return nil, err
 	}
-	if len(resolvedNames) == 0 {
+	if contextBlock == "" {
 		return messages, nil
 	}
-
-	// Load searcher(s) and search.
-	var contextParts []string
-	if len(resolvedNames) == 1 {
-		// Enforce governance: if index exists and is private, refuse proxy access.
-		if meta, err := gleann.GetIndexMeta(s.cfg().IndexDir, resolvedNames[0]); err == nil && !meta.IsMCPExposed() {
-			return nil, fmt.Errorf("index %q is private and not exposed via proxy", resolvedNames[0])
-		}
-
-		searcher, release, err := s.acquireSearcher(ctx, resolvedNames[0])
-		if err != nil {
-			return nil, fmt.Errorf("load index %q: %w", resolvedNames[0], err)
-		}
-		results, err := searcher.Search(ctx, query, searchOpts...)
-		release()
-		if err != nil {
-			return nil, fmt.Errorf("search: %w", err)
-		}
-		for i, r := range results {
-			src := ""
-			if v, ok := r.Metadata["source"]; ok {
-				src = fmt.Sprintf(" (source: %v)", v)
-			}
-			contextParts = append(contextParts, fmt.Sprintf("[%d]%s %s", i+1, src, r.Text))
-		}
-	} else {
-		// Multi-index: search each individually, merge results.
-		all := make(map[string][]gleann.SearchResult)
-		for _, name := range resolvedNames {
-			// Skip private indexes in multi-index queries
-			if meta, err := gleann.GetIndexMeta(s.cfg().IndexDir, name); err == nil && !meta.IsMCPExposed() {
-				continue
-			}
-			searcher, release, err := s.acquireSearcher(ctx, name)
-			if err != nil {
-				continue // skip unavailable indexes
-			}
-			results, err := searcher.Search(ctx, query, searchOpts...)
-			release()
-			if err != nil {
-				continue
-			}
-			all[name] = results
-		}
-		idx := 1
-		for idxName, results := range all {
-			for _, r := range results {
-				src := fmt.Sprintf("(index: %s", idxName)
-				if v, ok := r.Metadata["source"]; ok {
-					src += fmt.Sprintf(", source: %v", v)
-				}
-				src += ")"
-				contextParts = append(contextParts, fmt.Sprintf("[%d] %s %s", idx, src, r.Text))
-				idx++
-			}
-		}
-	}
-
-	if len(contextParts) == 0 {
-		return messages, nil
-	}
-
-	contextBlock := strings.Join(contextParts, "\n\n")
 	systemMsg := oaiMessage{
 		Role: "system",
 		Content: "You are a helpful assistant. Use the following context to answer the user's question.\n\n" +
@@ -471,6 +405,126 @@ func (s *Server) buildProxyMessages(
 
 	// Prepend context system message; keep any existing system messages after it.
 	return append([]oaiMessage{systemMsg}, messages...), nil
+}
+
+// proxySource describes one retrieved passage for the pass-through mode's X-Gleann-Sources header: its index, its
+// document (metadata "source", "" when unknown) and its search score.
+type proxySource struct {
+	Index  string  `json:"index"`
+	Source string  `json:"source,omitempty"`
+	Score  float32 `json:"score"`
+}
+
+// proxyHit is one search result with the index it came from.
+type proxyHit struct {
+	index  string
+	result gleann.SearchResult
+}
+
+// mergeProxyHits ranks the results of several indexes together: by score (highest first; equal scores keep the
+// order of names, then each index's own order) and keeps the best k overall, so a query over many indexes gets the
+// same number of passages as a query over one, and the best ones whichever index they are in.
+func mergeProxyHits(perIndex map[string][]gleann.SearchResult, names []string, k int) []proxyHit {
+	var hits []proxyHit
+	for _, name := range names {
+		for _, r := range perIndex[name] {
+			hits = append(hits, proxyHit{index: name, result: r})
+		}
+	}
+	sort.SliceStable(hits, func(i, j int) bool { return hits[i].result.Score > hits[j].result.Score })
+	if k > 0 && len(hits) > k {
+		hits = hits[:k]
+	}
+	return hits
+}
+
+// proxyTopK is the number of passages searchOpts ask for (the searcher's default 10 when they set none).
+func proxyTopK(searchOpts []gleann.SearchOption) int {
+	var c gleann.SearchConfig
+	for _, o := range searchOpts {
+		o(&c)
+	}
+	if c.TopK <= 0 {
+		return 10
+	}
+	return c.TopK
+}
+
+// retrieveProxyContext searches indexNames (after @tag expansion and the governance checks) for query and
+// returns the numbered passages as one block, and the passages' sources in order. With several indexes the
+// results are ranked together and the best top-k kept (mergeProxyHits).
+func (s *Server) retrieveProxyContext(
+	ctx context.Context,
+	query string,
+	indexNames []string,
+	searchOpts []gleann.SearchOption,
+) (string, []proxySource, error) {
+	if query == "" || len(indexNames) == 0 {
+		return "", nil, nil
+	}
+
+	// Expand any @tag references into public matching indexes.
+	resolvedNames, err := s.expandProxyIndexNames(indexNames)
+	if err != nil {
+		return "", nil, err
+	}
+	if len(resolvedNames) == 0 {
+		return "", nil, nil
+	}
+
+	single := len(resolvedNames) == 1
+	perIndex := make(map[string][]gleann.SearchResult)
+	for _, name := range resolvedNames {
+		// Governance: a private index is refused when asked for alone and skipped in multi-index queries.
+		if meta, err := gleann.GetIndexMeta(s.cfg().IndexDir, name); err == nil && !meta.IsMCPExposed() {
+			if single {
+				return "", nil, fmt.Errorf("index %q is private and not exposed via proxy", name)
+			}
+			continue
+		}
+		searcher, release, err := s.acquireSearcher(ctx, name)
+		if err != nil {
+			if single {
+				return "", nil, fmt.Errorf("load index %q: %w", name, err)
+			}
+			continue // skip unavailable indexes
+		}
+		results, err := searcher.Search(ctx, query, searchOpts...)
+		release()
+		if err != nil {
+			if single {
+				return "", nil, fmt.Errorf("search: %w", err)
+			}
+			continue
+		}
+		perIndex[name] = results
+	}
+
+	var contextParts []string
+	var sources []proxySource
+	k := 0 // one index: its own top-k as searched
+	if !single {
+		k = proxyTopK(searchOpts)
+	}
+	for i, h := range mergeProxyHits(perIndex, resolvedNames, k) {
+		source := ""
+		if v, ok := h.result.Metadata["source"]; ok {
+			source = fmt.Sprint(v)
+		}
+		label := ""
+		switch {
+		case single && source != "":
+			label = fmt.Sprintf(" (source: %s)", source)
+		case !single && source != "":
+			label = fmt.Sprintf(" (index: %s, source: %s)", h.index, source)
+		case !single:
+			label = fmt.Sprintf(" (index: %s)", h.index)
+		}
+		contextParts = append(contextParts, fmt.Sprintf("[%d]%s %s", i+1, label, h.result.Text))
+		sources = append(sources, proxySource{Index: h.index, Source: source, Score: h.result.Score})
+	}
+
+	return strings.Join(contextParts, "\n\n"), sources, nil
 }
 
 // lastUserContent returns the content of the last user message.

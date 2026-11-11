@@ -43,3 +43,15 @@ func TestSavedRerankerReachesSearchConfig(t *testing.T) {
 		t.Error("the saved setting turns reranking on; --no-rerank turns it off")
 	}
 }
+
+func TestSavedProxyModeReachesConfig(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	if err := tui.SaveConfig(tui.OnboardResult{ProxyMode: "passthrough", Completed: true}); err != nil {
+		t.Fatal(err)
+	}
+	cfg := gleann.DefaultConfig()
+	applySavedConfig(&cfg, nil)
+	if cfg.ProxyMode != "passthrough" {
+		t.Fatalf("ProxyMode = %q, want passthrough from config.json", cfg.ProxyMode)
+	}
+}
