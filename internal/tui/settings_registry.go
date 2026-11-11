@@ -370,7 +370,7 @@ func rerankProviderOptions() []settings.Option {
 		opts = append(opts, settings.Option{Value: string(gleann.RerankerEIF), Label: "Built-in bitllm.c cross-encoder (in process, local GGUF)"})
 	}
 	return append(opts, settings.Opts(
-		string(gleann.RerankerOllama), "Ollama (embedding similarity, weaker)",
+		string(gleann.RerankerOllama), "Ollama (has no rerank API: returns an error)",
 		string(gleann.RerankerLlamacpp), "llama.cpp server",
 		string(gleann.RerankerJina), "Jina AI API (JINA_API_KEY)",
 		string(gleann.RerankerCohere), "Cohere API (COHERE_API_KEY)",
