@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/tevfik/gleann/internal/modelcatalog"
 )
 
 // GLEANN_TEST_RERANK_MODEL points at a reranker GGUF (e.g.
@@ -58,5 +60,30 @@ func TestEIFRanker_RejectsEmbeddingModelAndMissing(t *testing.T) {
 	}
 	if _, err := GetOrLoadEIFRanker(emb); err == nil || !strings.Contains(err.Error(), "not a reranker") {
 		t.Errorf("embedding model loaded as reranker: %v", err)
+	}
+}
+
+func TestResolveRerankModelPath_CatalogID(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	// Not downloaded: the error names the download command.
+	_, err := resolveRerankModelPath("ms-marco-minilm-l6")
+	if err == nil || !strings.Contains(err.Error(), "gleann models download ms-marco-minilm-l6") {
+		t.Fatalf("want a download hint, got %v", err)
+	}
+	// Installed (catalog size): the id resolves to the catalog file.
+	e, ok := modelcatalog.Find("ms-marco-minilm-l6")
+	if !ok || e.Pooler == nil {
+		t.Fatal("catalog entry missing")
+	}
+	if err := os.MkdirAll(filepath.Dir(e.Path()), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(e.Path(), make([]byte, e.Pooler.Bytes), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got, err := resolveRerankModelPath("ms-marco-minilm-l6")
+	if err != nil || got != e.Path() {
+		t.Fatalf("got %q, %v; want %q", got, err, e.Path())
 	}
 }

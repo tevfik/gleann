@@ -34,6 +34,7 @@ import (
 	"sync/atomic"
 	"unsafe"
 
+	"github.com/tevfik/gleann/internal/modelcatalog"
 	"github.com/tevfik/gleann/pkg/gleann"
 )
 
@@ -63,7 +64,7 @@ var (
 
 // resolveRerankModelPath finds a reranker GGUF: a path, or a file in
 // ~/.gleann/models named model, model.gguf, or model-<quant>.gguf (Q8_0 is
-// preferred). Unlike the embedding resolver it never falls back to another
+// preferred), or a catalog id such as "ms-marco-minilm-l6". Unlike the embedding resolver it never falls back to another
 // model: an embedding model loaded as a reranker would give meaningless scores.
 func resolveRerankModelPath(model string) (string, error) {
 	if model == "" {
@@ -82,6 +83,13 @@ func resolveRerankModelPath(model string) (string, error) {
 		if fi, err := os.Stat(filepath.Join(dir, c)); err == nil && !fi.IsDir() {
 			return filepath.Join(dir, c), nil
 		}
+	}
+	// A catalog id or file name (gleann models download <id>).
+	if e, ok := modelcatalog.Find(model); ok && e.Kind == modelcatalog.Reranker {
+		if e.Installed() {
+			return e.Path(), nil
+		}
+		return "", fmt.Errorf("reranker model %q is not downloaded (run: gleann models download %s)", model, e.ID)
 	}
 	matches, _ := filepath.Glob(filepath.Join(dir, base+"[-_.]*.gguf"))
 	if len(matches) > 0 {
