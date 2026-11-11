@@ -811,12 +811,18 @@ type askRequest struct {
 	VisionRAG      bool     `json:"vision_rag,omitempty"`
 	Images         []string `json:"images,omitempty"`
 	Format         any      `json:"format,omitempty"`
+	// Cite links each answer sentence to the context passage it is closest
+	// to (gleann.Attribute) and returns the result in "citations".
+	Cite bool `json:"cite,omitempty"`
 }
 
 type askResponse struct {
-	Answer  string                `json:"answer"`
-	Sources []gleann.SearchResult `json:"sources"`
-	QueryMs int64                 `json:"query_ms"`
+	Answer string `json:"answer"`
+	// Sources are exactly the passages given to the LLM as context, in the
+	// [1]..[n] order of the prompt.
+	Sources   []gleann.SearchResult `json:"sources"`
+	Citations *gleann.Citations     `json:"citations,omitempty"`
+	QueryMs   int64                 `json:"query_ms"`
 }
 
 func (s *Server) handleAsk(w http.ResponseWriter, r *http.Request) {
@@ -959,6 +965,11 @@ func (s *Server) handleAsk(w http.ResponseWriter, r *http.Request) {
 
 	start := time.Now()
 
+	// Capture the passages the LLM actually saw instead of searching again
+	// (a second search could return different passages than the context).
+	var sources []gleann.SearchResult
+	chat.SetResultsHandler(func(rs []gleann.SearchResult) { sources = rs })
+
 	var answer string
 	var errAsk error
 	if len(visionImages) > 0 {
@@ -972,14 +983,14 @@ func (s *Server) handleAsk(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Get sources for transparency.
-	sources, _ := searcher.Search(r.Context(), req.Question, opts...)
-
-	writeJSON(w, http.StatusOK, askResponse{
-		Answer:  answer,
-		Sources: sources,
-		QueryMs: time.Since(start).Milliseconds(),
-	})
+	resp := askResponse{Answer: answer, Sources: sources}
+	if req.Cite {
+		if c, err := gleann.Attribute(r.Context(), searcher.Embedder(), answer, sources, 0); err == nil {
+			resp.Citations = &c
+		}
+	}
+	resp.QueryMs = time.Since(start).Milliseconds()
+	writeJSON(w, http.StatusOK, resp)
 }
 
 // handleAskStream streams LLM tokens via Server-Sent Events (SSE).

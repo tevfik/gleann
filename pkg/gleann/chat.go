@@ -229,11 +229,19 @@ func NewChat(searcher Searcher, config ChatConfig) *LeannChat {
 
 // Ask performs RAG: retrieves relevant context and generates an answer.
 func (c *LeannChat) Ask(ctx context.Context, question string, opts ...SearchOption) (string, error) {
+	answer, _, err := c.AskWithResults(ctx, question, opts...)
+	return answer, err
+}
+
+// AskWithResults is Ask that also returns the passages that were given to
+// the LLM as context, in the [1]..[n] order used in the prompt.
+func (c *LeannChat) AskWithResults(ctx context.Context, question string, opts ...SearchOption) (string, []SearchResult, error) {
 	// Step 1: Retrieve relevant context.
 	results, err := c.searcher.Search(ctx, question, opts...)
 	if err != nil {
-		return "", fmt.Errorf("search: %w", err)
+		return "", nil, fmt.Errorf("search: %w", err)
 	}
+	c.notifyResults(results)
 
 	// Step 2: Build context from results.
 	var contextParts []string
@@ -274,7 +282,7 @@ func (c *LeannChat) Ask(ctx context.Context, question string, opts ...SearchOpti
 	answer, err := c.chat(ctx, messages)
 
 	if err != nil {
-		return "", fmt.Errorf("chat: %w", err)
+		return "", nil, fmt.Errorf("chat: %w", err)
 	}
 
 	// Save to history.
@@ -283,7 +291,7 @@ func (c *LeannChat) Ask(ctx context.Context, question string, opts ...SearchOpti
 		ChatMessage{Role: "assistant", Content: answer},
 	)
 
-	return answer, nil
+	return answer, results, nil
 }
 
 // StreamCallback is called for each token received from the LLM.
@@ -389,6 +397,7 @@ func (c *LeannChat) AskWithImages(ctx context.Context, question string, images [
 	if searchErr != nil {
 		return "", fmt.Errorf("search: %w", searchErr)
 	}
+	c.notifyResults(results)
 
 	var contextParts []string
 	for i, r := range results {
@@ -1570,4 +1579,11 @@ func (c *LeannChat) AskStreamWithImages(ctx context.Context, question string, im
 		ChatMessage{Role: "assistant", Content: fullAnswer.String()},
 	)
 	return results, nil
+}
+
+// Complete sends messages to the configured LLM without retrieval or
+// history, and returns the reply. Use it for auxiliary calls (judging,
+// extraction) that must not see search context.
+func (c *LeannChat) Complete(ctx context.Context, messages []ChatMessage) (string, error) {
+	return c.chat(ctx, messages)
 }

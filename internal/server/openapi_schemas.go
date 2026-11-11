@@ -64,6 +64,7 @@ func openAPISchemasSearch() map[string]any {
 				"conversation_id": map[string]any{"type": "string", "description": "Continue an existing conversation by ID. Restores message history."},
 				"stream":          map[string]any{"type": "boolean", "default": false, "description": "Enable SSE streaming. When true, response is text/event-stream with `data: {\"token\": \"...\"}` events, ending with `data: [DONE]`"},
 				"vision_rag":      map[string]any{"type": "boolean", "default": false, "description": "Enable Deep Vision RAG. When true, dynamically extracts specific page images from PDF context and passes them to the VLM during generation."},
+				"cite":            map[string]any{"type": "boolean", "default": false, "description": "Link each answer sentence to the source passage it is closest to (embedding similarity, no prompt change) and return them in `citations`. Non-streaming only."},
 			},
 		},
 		"AskResponse": map[string]any{
@@ -71,8 +72,24 @@ func openAPISchemasSearch() map[string]any {
 			"properties": map[string]any{
 				"answer": map[string]any{"type": "string"},
 				"sources": map[string]any{
-					"type":  "array",
-					"items": refSchema("SearchResult"),
+					"type":        "array",
+					"description": "The passages given to the LLM as context, in prompt order: citation [n] refers to sources[n-1].",
+					"items":       refSchema("SearchResult"),
+				},
+				"citations": map[string]any{
+					"type":        "object",
+					"description": "Present when cite=true.",
+					"properties": map[string]any{
+						"sentences": map[string]any{"type": "array", "items": map[string]any{
+							"type": "object",
+							"properties": map[string]any{
+								"text": map[string]any{"type": "string"},
+								"refs": map[string]any{"type": "array", "items": map[string]any{"type": "integer"}, "description": "1-based indexes into sources"},
+							},
+						}},
+						"used":     map[string]any{"type": "array", "items": map[string]any{"type": "integer"}},
+						"coverage": map[string]any{"type": "number", "description": "Share of sentences linked to a source"},
+					},
 				},
 				"query_ms": map[string]any{"type": "integer", "format": "int64"},
 			},

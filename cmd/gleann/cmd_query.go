@@ -476,12 +476,16 @@ func cmdAsk(args []string) {
 	} else {
 		fmt.Print("")
 		var err error
+		var answer strings.Builder
+		var used []gleann.SearchResult
 		if len(attachFiles) > 0 {
-			_, err = chat.AskStreamWithMedia(ctx, question, attachFiles, func(token string) {
+			used, err = chat.AskStreamWithMedia(ctx, question, attachFiles, func(token string) {
+				answer.WriteString(token)
 				wrapper.Write(token)
 			})
 		} else {
-			_, err = chat.AskStream(ctx, question, func(token string) {
+			used, err = chat.AskStream(ctx, question, func(token string) {
+				answer.WriteString(token)
 				wrapper.Write(token)
 			})
 		}
@@ -494,6 +498,9 @@ func cmdAsk(args []string) {
 			renderMarkdown()
 		}
 		fmt.Println()
+		if hasFlag(args, "--cite") {
+			printAttribution(ctx, chat.GetSearcher(), config, answer.String(), used)
+		}
 		saveConversation()
 	}
 }
@@ -695,6 +702,7 @@ func printCmdAskUsage() {
 	fmt.Fprintln(os.Stderr, "  --attach FILE        Attach image/audio file (can repeat; requires multimodal model)")
 	fmt.Fprintln(os.Stderr, "  --image FILE         Alias for --attach (attach image file)")
 	fmt.Fprintln(os.Stderr, "  --raw                Output raw text (no formatting); auto-enabled when piped")
+	fmt.Fprintln(os.Stderr, "  --cite               After the answer, list the sources each sentence came from")
 	fmt.Fprintln(os.Stderr, "  --quiet              Suppress status messages")
 	fmt.Fprintln(os.Stderr, "  --word-wrap N        Wrap output at N columns (default: terminal width)")
 	fmt.Fprintln(os.Stderr, "  --no-cache           Do not save conversation")
@@ -975,4 +983,26 @@ func buildChatConfig(args []string, config gleann.Config) gleann.ChatConfig {
 		chatConfig.SystemPrompt = chatConfig.SystemPrompt + "\n\n" + formatMsg
 	}
 	return chatConfig
+}
+
+// printAttribution links each answer sentence to the context passage it is
+// closest to (gleann.Attribute) and prints the passages that were used.
+func printAttribution(ctx context.Context, searcher gleann.Searcher, config gleann.Config, answer string, results []gleann.SearchResult) {
+	var emb gleann.EmbeddingComputer
+	if ls, ok := searcher.(*gleann.LeannSearcher); ok {
+		emb = ls.Embedder()
+	}
+	if emb == nil {
+		emb = newEmbedder(config)
+	}
+	cites, err := gleann.Attribute(ctx, emb, answer, results, 0)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "cite: %v\n", err)
+		return
+	}
+	if refs := gleann.FormatReferences(cites, results); refs != "" {
+		fmt.Println()
+		fmt.Print(refs)
+		fmt.Printf("  (%.0f%% of sentences matched a source)\n", 100*cites.Coverage)
+	}
 }
