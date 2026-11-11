@@ -321,6 +321,9 @@ func TestPickTimeoutCov(t *testing.T) {
 		{"/v1/chat/completions", globalTimeouts.ask},
 		{"/api/search", globalTimeouts.search},
 		{"/index/build", globalTimeouts.build},
+		{"/api/indexes/docs/upload", globalTimeouts.build},
+		{"/api/indexes/docs/index-path", globalTimeouts.build},
+		{"/api/indexes/docs/update", globalTimeouts.build},
 		{"/api/other", globalTimeouts.dflt},
 	}
 	for _, tt := range tests {

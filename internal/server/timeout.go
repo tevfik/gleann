@@ -8,7 +8,8 @@
 //
 //	GLEANN_TIMEOUT_ASK_S    — seconds for /*/ask endpoints    (default 300 = 5 min)
 //	GLEANN_TIMEOUT_SEARCH_S — seconds for /*/search endpoints (default 30)
-//	GLEANN_TIMEOUT_BUILD_S  — seconds for /*/build endpoints  (default 600 = 10 min)
+//	GLEANN_TIMEOUT_BUILD_S  — seconds for /*/build endpoints and the others that build an index (upload,
+//	                          index-path, update)                (default 600 = 10 min)
 //	GLEANN_TIMEOUT_DEFAULT_S — seconds for all other paths    (default 60)
 package server
 
@@ -74,7 +75,9 @@ func pickTimeout(path string) time.Duration {
 		return globalTimeouts.ask
 	case strings.HasSuffix(path, "/search") || path == "/api/search":
 		return globalTimeouts.search
-	case strings.HasSuffix(path, "/build"):
+	case strings.HasSuffix(path, "/build") || strings.HasSuffix(path, "/upload") ||
+		strings.HasSuffix(path, "/index-path") || strings.HasSuffix(path, "/update"):
+		// These build or rebuild an index synchronously, like /build (an upload of a long PDF takes minutes).
 		return globalTimeouts.build
 	default:
 		return globalTimeouts.dflt
