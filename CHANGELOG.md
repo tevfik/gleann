@@ -4,7 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
-Planned as v1.9.0; see [docs/releases/v1.9.0.md](docs/releases/v1.9.0.md).
+## [v1.9.0] — 2026-11-11
+
+See [docs/releases/v1.9.0.md](docs/releases/v1.9.0.md).
 
 ### Added
 - **Query expansion (`--expand`, HyDE).** Before searching, an LLM writes a short code snippet that would answer a natural-language question, in the index's dominant language, and the search uses the question plus the snippet. `search`/`ask --expand`, `--no-expand`, `--expand-model`; REST search and ask `"expand": true`; MCP `gleann_search` `expand`; settings `expand` and `expand_model`. On 121 questions about the gleann code base MRR rose from 0.485 to 0.629 and R@10 from 0.71 to 0.81 with qwen3.5:9b (~1.5–3 s per new query on a GPU). Off by default: a 3B model gained only 0.03.

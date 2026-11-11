@@ -1,6 +1,6 @@
 # RFC 002: Retrieval Quality — Reranking, Query Expansion, Explanations, Citations
 
-* **Status:** Implemented on `main` (4 commits), awaiting maintainer review before release
+* **Status:** Accepted and implemented; released in v1.9.0
 * **Commits:** `feat(rerank)`, `feat(search)` explain, `feat(ask)` cite, `feat(search)` expand
 * **Evidence:** [docs/retrieval-experiments.md](../retrieval-experiments.md)
 
