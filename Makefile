@@ -17,6 +17,10 @@ BUILD_DIR   := build
 BINARY      := $(BUILD_DIR)/gleann
 BINARY_FULL := $(BUILD_DIR)/gleann-full
 CMD         := ./cmd/gleann
+# Extra C flags of the arm64 cross builds. bitllm.c's dot-product kernels sit in OpenMP regions, where
+# GCC does not apply the file's "+dotprod" target pragma, so a cross build for a CPU with the
+# dot-product extension sets it here, e.g. ARM64_CFLAGS=-march=armv8.2-a+dotprod+fp16.
+ARM64_CFLAGS ?=
 VERSION     ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 LDFLAGS     := -s -w -X main.version=$(VERSION)
 INSTALL_DIR ?= /usr/local/bin
@@ -208,14 +212,14 @@ docker-build-eif-arm64: docker-builder-arm64 prepare-assets
 				-DCMAKE_C_COMPILER=aarch64-linux-gnu-gcc \
 				-DCMAKE_BUILD_TYPE=Release \
 				-DEIF_ENABLE_VULKAN=OFF \
-				-DCMAKE_C_FLAGS='-fno-tree-vectorize -fmath-errno' && \
+				-DCMAKE_C_FLAGS='-fno-tree-vectorize -fmath-errno $(ARM64_CFLAGS)' && \
 			cmake --build ext/bitllm.c/build-arm64 --target bitllm_static && \
 			mkdir -p ext/bitllm.c/build && \
 			cp ext/bitllm.c/build-arm64/libbitllm.a ext/bitllm.c/build/libbitllm.a && \
 			CC=aarch64-linux-gnu-gcc CXX=aarch64-linux-gnu-g++ \
 			GOOS=linux GOARCH=arm64 CGO_ENABLED=1 \
-			CGO_CFLAGS='-w -fno-tree-vectorize -fmath-errno' \
-			CGO_CXXFLAGS='-w -fno-tree-vectorize -fmath-errno' \
+			CGO_CFLAGS='-w -fno-tree-vectorize -fmath-errno $(ARM64_CFLAGS)' \
+			CGO_CXXFLAGS='-w -fno-tree-vectorize -fmath-errno $(ARM64_CFLAGS)' \
 			go build -buildvcs=false -tags 'eif' -ldflags '$(LDFLAGS)' -o $(BUILD_DIR)/gleann-eif-linux-arm64 $(CMD) && \
 			chown -R $$(id -u):$$(id -g) /app/$(BUILD_DIR) ext/bitllm.c/build"
 	@echo "✅ Built $(BUILD_DIR)/gleann-eif-linux-arm64 via Docker"
