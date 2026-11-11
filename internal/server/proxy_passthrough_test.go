@@ -144,3 +144,27 @@ func TestLastUserText(t *testing.T) {
 		t.Fatalf("got %q", got)
 	}
 }
+
+func TestInjectContextUserKeepsHistory(t *testing.T) {
+	msgs := []map[string]any{
+		{"role": "system", "content": "Be brief."},
+		{"role": "user", "content": "First?"},
+		{"role": "assistant", "content": "A1"},
+		{"role": "user", "content": "Second?"},
+	}
+	out := injectContextUser(msgs, "CTX")
+	if len(out) != 4 || out[0]["content"] != "Be brief." || out[1]["content"] != "First?" || msgs[3]["content"] != "Second?" {
+		t.Fatalf("history changed: %v", out)
+	}
+	if out[3]["content"] != "CTX\n\nQuestion:\nSecond?" {
+		t.Fatalf("last user: %q", out[3]["content"])
+	}
+	parts := []any{map[string]any{"type": "image_url"}, map[string]any{"type": "text", "text": "What?"}}
+	out = injectContextUser([]map[string]any{{"role": "user", "content": parts}}, "CTX")
+	if got := out[0]["content"].([]any); len(got) != 3 || len(parts) != 2 {
+		t.Fatalf("parts: %v", out)
+	}
+	if out = injectContextUser([]map[string]any{{"role": "system", "content": "S"}}, "CTX"); out[0]["content"] != "S\n\nCTX" {
+		t.Fatalf("no user message: %v", out)
+	}
+}

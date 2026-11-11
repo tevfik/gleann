@@ -459,6 +459,18 @@ func (s *Server) retrieveProxyContext(
 	indexNames []string,
 	searchOpts []gleann.SearchOption,
 ) (string, []proxySource, error) {
+	return s.retrieveProxyContextLimited(ctx, query, indexNames, searchOpts, 0)
+}
+
+// retrieveProxyContextLimited is retrieveProxyContext keeping the best passages up to maxChars characters of
+// passage text (at least one passage; 0 = no limit).
+func (s *Server) retrieveProxyContextLimited(
+	ctx context.Context,
+	query string,
+	indexNames []string,
+	searchOpts []gleann.SearchOption,
+	maxChars int,
+) (string, []proxySource, error) {
 	if query == "" || len(indexNames) == 0 {
 		return "", nil, nil
 	}
@@ -506,7 +518,12 @@ func (s *Server) retrieveProxyContext(
 	if !single {
 		k = proxyTopK(searchOpts)
 	}
+	used := 0
 	for i, h := range mergeProxyHits(perIndex, resolvedNames, k) {
+		if maxChars > 0 && i > 0 && used+len(h.result.Text) > maxChars {
+			break
+		}
+		used += len(h.result.Text)
 		source := ""
 		if v, ok := h.result.Metadata["source"]; ok {
 			source = fmt.Sprint(v)

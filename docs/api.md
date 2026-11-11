@@ -135,7 +135,18 @@ comes back byte for byte with its status code, so clients keep whatever their LL
 timing metrics, errors). The only change is the retrieved context, which is appended to the first system message
 (or added as one), and the model name, which becomes `llm_model` when it named indexes. Indexes can also be given
 in an `X-Gleann-Index` header (`docs,code`, `@tag`). The reply carries `X-Gleann-Sources`, the passages' sources in
-order as a percent-encoded JSON list. `POST /stop` is forwarded to the LLM server in this mode.
+order as a percent-encoded JSON list of `{index, source, score}`. `POST /stop` is forwarded to the LLM server in
+this mode. Optional headers in this mode:
+
+| Header | Effect |
+|---|---|
+| `X-Gleann-Context: user` | Put the passages into the last user message (before its text) instead of the first system message. The conversation before it then stays the same from turn to turn, so the LLM server can reuse its prompt cache. |
+| `X-Gleann-Max-Context-Chars: N` | Keep the best passages up to N characters (at least one passage). |
+| `X-Gleann-Rerank: true` or a model | Rerank this request with the configured reranker, or with the named model. |
+| `X-Gleann-Rerank-Pool: N` | Candidates sent to the reranker. |
+
+With several indexes, the passages are ranked together and the best top-k are kept, whichever index they come
+from.
 
 ### A2A Protocol (Agent-to-Agent)
 

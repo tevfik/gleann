@@ -28,7 +28,15 @@ import (
 // at the start. The model name is replaced by llm_model when it named indexes. X-Gleann-Top-K and
 // X-Gleann-Min-Score work as in the default mode; with several indexes the passages are ranked together by score
 // and the best top-k kept. The reply carries X-Gleann-Sources, the passages in order as a percent-encoded JSON list
-// of {"index", "source", "score"}.
+// of {"index", "source", "score"}. Optional headers:
+//   - X-Gleann-Context: user puts the passages into the last user message (before its text) instead of the first
+//     system message, so the conversation before it stays the same from turn to turn and the LLM server can reuse
+//     its prompt cache for it;
+//   - X-Gleann-Max-Context-Chars: N keeps the best passages up to N characters (at least one);
+//   - X-Gleann-Rerank: true (the configured reranker) or a reranker model, X-Gleann-Rerank-Pool: N candidates.
+//
+// Example: X-Gleann-Index: project-docs,project-code; X-Gleann-Top-K: 8; X-Gleann-Context: user;
+// X-Gleann-Max-Context-Chars: 8000.
 
 // passthroughContextIntro opens the context the proxy adds to the system message.
 const passthroughContextIntro = "Use the following context, retrieved from the user's documents, to answer. " +
@@ -97,13 +105,28 @@ func (s *Server) passthroughChatCompletions(w http.ResponseWriter, r *http.Reque
 				searchOpts = append(searchOpts, gleann.WithMinScore(float32(f)))
 			}
 		}
-		block, sources, err := s.retrieveProxyContext(r.Context(), lastUserText(messages), indexNames, searchOpts)
+		if v := strings.TrimSpace(r.Header.Get("X-Gleann-Rerank")); v != "" && !strings.EqualFold(v, "false") && v != "0" {
+			model := ""
+			if !strings.EqualFold(v, "true") && v != "1" {
+				model = v
+			}
+			searchOpts = append(searchOpts, gleann.WithCustomReranker(gleann.NewReranker(gleann.ResolveRerankerConfig(s.cfg(), model))))
+			if n, err := strconv.Atoi(r.Header.Get("X-Gleann-Rerank-Pool")); err == nil && n > 0 {
+				searchOpts = append(searchOpts, gleann.WithRerankPool(n))
+			}
+		}
+		maxChars, _ := strconv.Atoi(r.Header.Get("X-Gleann-Max-Context-Chars"))
+		block, sources, err := s.retrieveProxyContextLimited(r.Context(), lastUserText(messages), indexNames, searchOpts, maxChars)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "RAG retrieval failed: "+err.Error())
 			return
 		}
 		if block != "" {
-			messages = injectContext(messages, passthroughContextIntro+block)
+			if strings.EqualFold(strings.TrimSpace(r.Header.Get("X-Gleann-Context")), "user") {
+				messages = injectContextUser(messages, passthroughContextIntro+block)
+			} else {
+				messages = injectContext(messages, passthroughContextIntro+block)
+			}
 			raw, _ := json.Marshal(messages)
 			req["messages"] = raw
 			if list, err := json.Marshal(sources); err == nil {
@@ -237,4 +260,30 @@ func injectContext(messages []map[string]any, text string) []map[string]any {
 		}
 	}
 	return append([]map[string]any{{"role": "system", "content": text}}, messages...)
+}
+
+// injectContextUser puts text before the content of the last user message, followed by "Question:" and the
+// message's own text (a content list gets text as its first part). The messages before it stay unchanged.
+func injectContextUser(messages []map[string]any, text string) []map[string]any {
+	for i := len(messages) - 1; i >= 0; i-- {
+		if role, _ := messages[i]["role"].(string); role != "user" {
+			continue
+		}
+		msg := make(map[string]any, len(messages[i]))
+		for k, v := range messages[i] {
+			msg[k] = v
+		}
+		switch c := msg["content"].(type) {
+		case string:
+			msg["content"] = text + "\n\nQuestion:\n" + c
+		case []any:
+			msg["content"] = append([]any{map[string]any{"type": "text", "text": text + "\n\nQuestion:"}}, c...)
+		default:
+			msg["content"] = text
+		}
+		out := append([]map[string]any{}, messages...)
+		out[i] = msg
+		return out
+	}
+	return injectContext(messages, text)
 }
