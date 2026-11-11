@@ -4,6 +4,28 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+Planned as v1.9.0; see [docs/releases/v1.9.0.md](docs/releases/v1.9.0.md).
+
+### Added
+- **Query expansion (`--expand`, HyDE).** Before searching, an LLM writes a short code snippet that would answer a natural-language question, in the index's dominant language, and the search uses the question plus the snippet. `search`/`ask --expand`, `--no-expand`, `--expand-model`; REST search and ask `"expand": true`; MCP `gleann_search` `expand`; settings `expand` and `expand_model`. On 121 questions about the gleann code base MRR rose from 0.485 to 0.629 and R@10 from 0.71 to 0.81 with qwen3.5:9b (~1.5–3 s per new query on a GPU). Off by default: a 3B model gained only 0.03.
+- **Catalog reranker `ms-marco-minilm-l6`.** English cross-encoder, best for code: on English code questions MRR +0.07 (mMiniLMv2: +0.01). The published GGUF lacks the model's pooler layer, which makes its scores nearly constant; `gleann models download` adds it from the original checkpoint (~600 KB, HTTP range requests).
+- **`gleann search --explain`.** Shows the most important segments of each result (~70 ms per result) and the BM25 weight of each query term.
+- **MCP `gleann_search` `focus`.** Returns only the most relevant quarter of each result, ~4× fewer tokens.
+- **`gleann ask --cite` and REST ask `"cite": true`.** Link each answer sentence to the context passage it came from and list the passages used (~100 ms, prompt unchanged).
+- `gleann bench`: `GLEANN_BENCH_PERTASK` writes per-task rows; `GLEANN_BENCH_RERANK=1` and `GLEANN_BENCH_EXPAND_MODEL` add reranker and HyDE strategies.
+- [docs/retrieval-experiments.md](docs/retrieval-experiments.md): what was measured, what was shipped and what was left out, including the CPU cost of reranking.
+
+### Changed
+- **Identifier queries are not reranked.** One-word or code-shaped queries (`LeannSearcher`, `parse_args`, `func NewServer`) keep the first-stage order: passage rerankers demote exact symbol hits (symbol-query MRR −0.05 without this).
+- `--rerank-pool` limits only the candidates sent to the reranker; the first stage keeps its wide lists (narrowing them lowered quality).
+- **`rerank_provider: ollama` returns an error.** Ollama has no rerank API; the old fallback compared embeddings, scored worse than no reranking and crashed for bge-reranker-v2-m3. Use `eif` or `llamacpp` with a llama-server `--reranking` (which now uses `/v1/rerank`).
+
+### Fixed
+- `gleann ask --rerank` and `gleann ask --graph` had no effect unless saved in the settings, and multi-index or `<name>-code`/`<name>-docs` asks and multi-index `search --rerank` never reranked.
+- `gleann ask` put the values of `--rerank-url`, `--rerank-pool` and `--rerank-provider` into the question.
+- REST `ask` searched a second time to report sources, which could differ from the passages the answer was based on.
+- `gleann bench` used the configured embedding model instead of the index's; a mismatch silently turned every strategy into BM25.
+
 ## [v1.8.13] — 2026-11-07
 
 See [docs/releases/v1.8.13.md](docs/releases/v1.8.13.md).

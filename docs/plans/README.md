@@ -32,3 +32,4 @@ This directory serves as the shared collaboration ground for both human engineer
 ## Active RFCs
 
 - [001-code-graph-rebuild.md](./001-code-graph-rebuild.md) — Code graph: phantom symbol prevention, qualified identifiers, and unified multi-language AST extraction.
+- [002-retrieval-quality.md](./002-retrieval-quality.md) — Retrieval quality: rerank stage and identifier gate, MiniLM-L6 pooler patch, HyDE query expansion, explanations, post-hoc citations.

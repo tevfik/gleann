@@ -101,6 +101,7 @@ Location: `~/.gleann/config.json`
 | `rerank_enabled` | `false` | Rerank search results (CLI `search`/`ask`, REST, MCP, chat). `--rerank` turns it on for one command, `--no-rerank` off |
 | `rerank_provider` | `auto` | Reranker engine: `auto`, `eif` (built-in bitllm.c cross-encoder), `ollama`, `llamacpp`, `jina`, `cohere`, `voyage`. `auto` uses the built-in engine when the build has it and the model is a local GGUF, otherwise the embedding provider |
 | `rerank_model` | `mmarco-mMiniLMv2-L12-H384-v1-Q8_0.gguf` (built-in) / `bge-reranker-v2-m3` | Reranker model: a GGUF in `~/.gleann/models` (or a path) for the built-in engine, a model name for a server |
+| `expand` / `expand_model` | `false` / chat model | HyDE query expansion by default (see Query expansion); `--no-expand` turns it off for one command |
 | `storage_mode` | `store` | Vector storage of new indexes: `store` or `recompute` (see below) |
 | `auth` | `on` | REST API authentication: `on` (token required) or `off` (accepted only on a loopback address). `GLEANN_AUTH` overrides it |
 | `cors_origins` | — | Origins whose web pages may call the API, e.g. `["https://app.example.com"]`. `GLEANN_CORS_ORIGINS` adds more |
@@ -144,9 +145,51 @@ CLI flags override both defaults and config file values.
 --graph                 # Enrich results with AST and/or hierarchical document context
 --kind <code|docs|all>  # Filter search results by content kind
 --one-per-file          # Return at most one result per file
+--explain               # Show why each result matched: most important segments
+                        # (occlusion, 8 segments ≈ 70 ms/result) and BM25 term weights
 --include-tests         # Include test files in search results
 --ef-search <n>         # HNSW ef_search parameter
+--expand                # HyDE query expansion (see below; also for `ask`)
+--no-expand             # Do not expand, even when `expand` is saved
+--expand-model <model>  # LLM for --expand (default: expand_model, else llm_model)
 ```
+
+### Query expansion (HyDE)
+
+Natural-language questions ("where are search results deduplicated?") share
+few words with the code that answers them. With `--expand` the LLM first
+writes a short hypothetical code snippet for the question, in the dominant
+language of the index; gleann then embeds and BM25-matches the question
+plus that snippet. Identifier-like queries (`LeannSearcher`, `parse_args`,
+`func NewServer`) are searched as typed. Snippets are cached per query.
+
+```bash
+gleann search my-repo "how are results reranked" --expand
+gleann ask my-repo "how does sync detect deleted files?" --expand --expand-model qwen3.5:9b
+```
+
+REST: `"expand": true` in `POST /api/indexes/{name}/search` and `.../ask`; MCP: `expand`
+on `gleann_search`. Save `expand: true` / `expand_model` in the search
+settings to turn it on by default.
+
+Measured with `gleann bench` on 121 natural-language questions about the
+gleann code base (hybrid retrieval with nomic-embed-text, top-10 chunks; the
+LLM on a GPU):
+
+| | R@1 | R@10 | MRR | added latency |
+|---|---|---|---|---|
+| hybrid | 0.34 | 0.71 | 0.49 | – |
+| + expand, qwen3.5:9b | 0.49 | 0.81 | 0.63 | ~1.5–3 s |
+| + expand + rerank (ms-marco-minilm-l6) | 0.47 | 0.81 | 0.61 | + ~0.4 s |
+| + expand, llama3.2:3b | – | – | 0.52 | ~1 s |
+
+The model matters: use a ~9B model for `expand_model` (the default chat
+model, llama3.2:3b, gains little). On queries phrased like doc comments
+("returns the …") expansion alone loses a little (MRR −0.05); with
+`--rerank` no query set lost (391 tasks). Expansion costs one LLM call per
+new query, so it suits `ask`, agents and "how/where" questions more than
+interactive keyword lookups; on a CPU-only machine the LLM call usually
+costs more than it is worth. Details: docs/retrieval-experiments.md.
 
 ### Reranking with a local cross-encoder
 
@@ -158,18 +201,30 @@ needed:
 ```bash
 gleann models download mmarco-mminilmv2-l12     # recommended: multilingual, ~0.4 s/query for 20 candidates on CPU
 gleann models download bge-reranker-v2-m3       # most accurate, ~3 s/query on CPU (up to 13 s on long passages)
+gleann models download ms-marco-minilm-l6       # English code and docs: fastest, best on the code benchmark
 gleann search my-docs "query" --rerank          # uses rerank_model, or mmarco when none is set
 ```
 
 Measured on MTEB TurHistQuadRetrieval (Turkish) on an ARM CPU, hybrid
 retrieval with multilingual-e5-small, 20 candidates: nDCG@10 0.436 → 0.493
 with mmarco, MRR@10 0.57 → 0.72 (full report: the gleann-rag-test benchmark).
+On English source code (gleann's own benchmark, 391 tasks, 20 candidates of
+500 characters) ms-marco-minilm-l6 raised question MRR by 0.07 and mMiniLMv2
+by 0.01. Identifier queries (`LeannSearcher`, `parse_args`, `func NewServer`)
+are left in first-stage order, since passage rerankers demote exact symbol
+hits. The published GGUF of ms-marco-MiniLM-L6 lacks the model's pooler
+layer, which makes its scores nearly constant; `gleann models download`
+adds it from the original checkpoint (~600 KB). See
+docs/retrieval-experiments.md.
+
 Pick the model and the engine in the settings (`gleann setup` → All Settings,
 or System → Settings in the web UI); both list the recommended models first.
 
-Ollama has no cross-encoder API: with `rerank_provider: ollama` gleann compares
-embeddings of the reranker model, which is much weaker. A real cross-encoder
-server can also be used through llama.cpp, started in reranking mode:
+Ollama has no cross-encoder API, so `rerank_provider: ollama` returns an error
+explaining this (earlier versions silently compared embeddings of the reranker
+model, which scored worse than no reranking). A real cross-encoder server can
+be used through llama.cpp, started in reranking mode (`rerank_provider:
+llamacpp` with `rerank_url`, or `--rerank-url`):
 
 ```bash
 # bge-reranker-v2-m3 (GGUF). Add -ngl 99 for a GPU build; use -ngl 0 on CPU.
@@ -248,6 +303,9 @@ gleann index storage docs --set store                       # convert in place (
 --graph                 # Inject AST and structural document context into the LLM prompt
 --format <fmt>          # Output format: json, markdown, raw
 --raw                   # Output raw text (no formatting); auto-enabled when piped
+--cite                  # After the answer, list the sources each sentence came from
+                        # (embedding match of answer sentences to context passages,
+                        # no prompt change; ~0.1 s). REST: {"cite": true} → "citations"
 --quiet                 # Suppress status messages (for scripting)
 --word-wrap <n>         # Wrap output at N columns (default: terminal width)
 ```
