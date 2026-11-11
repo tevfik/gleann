@@ -27,7 +27,11 @@ func rerankStage(ctx context.Context, rr Reranker, query string, results []Searc
 		return cut(results)
 	}
 	pool := results
-	if p := opts.RerankPool; p > 0 && len(pool) > max(p, topK) {
+	p := opts.RerankPool
+	if pp, ok := rr.(interface{ PreferredPool() int }); ok && p <= 0 {
+		p = pp.PreferredPool()
+	}
+	if p > 0 && len(pool) > max(p, topK) {
 		pool = pool[:max(p, topK)]
 	}
 	reranked, err := rr.Rerank(ctx, query, pool, len(pool))

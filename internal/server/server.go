@@ -729,7 +729,7 @@ type searchRequest struct {
 	RecomputeEmbeddings bool                    `json:"recompute_embeddings,omitempty"`
 	Rerank              bool                    `json:"rerank,omitempty"`
 	RerankModel         string                  `json:"rerank_model,omitempty"`
-	RerankPool          int                     `json:"rerank_pool,omitempty"` // candidates sent to the reranker (default max(4*top_k, 50))
+	RerankPool          int                     `json:"rerank_pool,omitempty"` // candidates sent to the reranker (default 20 built-in, max(4*top_k, 50) for a server)
 	MetadataFilters     []gleann.MetadataFilter `json:"metadata_filters,omitempty"`
 	FilterLogic         string                  `json:"filter_logic,omitempty"`
 	GraphContext        bool                    `json:"graph_context,omitempty"`

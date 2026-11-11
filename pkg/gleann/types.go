@@ -437,7 +437,8 @@ type SearchConfig struct {
 	OnePerFile bool `json:"one_per_file,omitempty"`
 
 	// RerankPool is the number of stage-1 candidates sent to the reranker.
-	// Zero means max(4*top-k, 50).
+	// Zero means the reranker's preferred pool (20 for the built-in engine),
+	// else max(4*top-k, 50).
 	RerankPool int `json:"rerank_pool,omitempty"`
 
 	// RerankSkipIdentifiers leaves identifier-like queries ("LeannSearcher",

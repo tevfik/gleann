@@ -12,6 +12,17 @@ import (
 const (
 	DefaultEIFRerankModel    = "mmarco-mMiniLMv2-L12-H384-v1-Q8_0.gguf"
 	DefaultServerRerankModel = "bge-reranker-v2-m3"
+
+	// DefaultEIFCodeRerankModel reranks candidates that are mostly source
+	// code when no model is configured and it is downloaded: on English
+	// code questions it raised MRR by 0.07, mMiniLMv2 by 0.01.
+	DefaultEIFCodeRerankModel = "ms-marco-minilm-l6"
+
+	// In-process defaults: 20 candidates of 500 characters. On a CPU the
+	// cost is about linear in both; 50 full candidates cost ~2.5x as much
+	// and ranked no better on the gleann benchmark.
+	DefaultEIFRerankPool  = 20
+	DefaultEIFRerankChars = 500
 )
 
 // RerankerAuto lets gleann pick the reranker provider (see AutoRerankerProvider).
@@ -41,9 +52,13 @@ func AutoRerankerProvider(embeddingProvider, model string) RerankerProvider {
 }
 
 // isLocalGGUF reports whether model names a GGUF file: a .gguf path or name,
-// or a name with a matching file in ~/.gleann/models.
+// a downloaded catalog id, or a name with a matching file in ~/.gleann/models.
 func isLocalGGUF(model string) bool {
 	if strings.HasSuffix(strings.ToLower(model), ".gguf") {
+		return true
+	}
+	// Catalog ids ("ms-marco-minilm-l6") resolve to their downloaded file.
+	if model != "" && eifRerankModelInstalled != nil && eifRerankModelInstalled(model) {
 		return true
 	}
 	home, err := os.UserHomeDir()
@@ -71,6 +86,15 @@ func ResolveRerankerConfig(cfg Config, model string) RerankerConfig {
 		rc.Model = DefaultServerRerankModel
 		if rc.Provider == RerankerEIF {
 			rc.Model = DefaultEIFRerankModel
+			rc.autoCodeModel = true
+		}
+	}
+	if rc.Provider == RerankerEIF {
+		if rc.Pool == 0 {
+			rc.Pool = DefaultEIFRerankPool
+		}
+		if rc.MaxDocChars == 0 {
+			rc.MaxDocChars = DefaultEIFRerankChars
 		}
 	}
 	switch rc.Provider {

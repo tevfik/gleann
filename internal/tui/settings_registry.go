@@ -114,7 +114,8 @@ func settingsFields() []settings.Field[OnboardResult] {
 				return v, nil
 			}},
 		{Key: "rerank_model", Label: "Reranker model", Type: settings.Select, Group: groupReranker, AllowCustom: true,
-			Help: "Recommended: mMiniLMv2 mMARCO — multilingual, ~0.4 s per query on a CPU. BGE Reranker v2 M3 is the most " +
+			Help: "Leave empty for the built-in default: MS MARCO MiniLM-L6 for code results (when downloaded) and mMiniLMv2 mMARCO " +
+				"(multilingual, ~0.4 s per query on a CPU) for documents. BGE Reranker v2 M3 is the most " +
 				"accurate but ~3 s per query on a CPU (up to 13 s on long passages): pick it with a GPU server or for batch work. " +
 				"Built-in models are Q8_0 GGUF files in ~/.gleann/models; download them under Models.",
 			VisibleIf:   &settings.Cond{Key: "rerank_enabled", Equals: true},

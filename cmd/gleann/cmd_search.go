@@ -29,7 +29,8 @@ Options:
   --top-k <N>             Number of top results to return (default: 5)
   --rerank                Rerank results with cross-encoder
   --rerank-url <url>      Rerank through a /v1/rerank server (e.g. llama-server --reranking)
-  --rerank-pool <N>       Candidates sent to the reranker (default: max(4*top-k, 50))
+  --rerank-pool <N>       Candidates sent to the reranker (default: 20 for the built-in reranker,
+                          max(4*top-k, 50) for a server)
   --expand                HyDE: an LLM sketches the code for the question and the
                           search uses it too (+1-3 s; best for "how/where" questions)
   --expand-model <m>      LLM for --expand (default: expand_model setting or chat model)

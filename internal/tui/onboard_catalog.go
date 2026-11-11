@@ -136,7 +136,7 @@ func localModelValue(mi ModelInfo) string {
 // rerankEnableHint describes the reranker the wizard will set up.
 func rerankEnableHint() string {
 	if gleann.EIFRerankAvailable() {
-		return "Recommended: built-in mMiniLMv2 mMARCO (multilingual, fast); BGE v2 M3 is more accurate but ~3 s/query on CPU"
+		return "Recommended: built-in mMiniLMv2 mMARCO (multilingual, fast) plus MS MARCO MiniLM-L6 for code; BGE v2 M3 is more accurate but ~3 s/query on CPU"
 	}
 	return "Two-stage reranking through your provider (this build has no built-in reranker)"
 }

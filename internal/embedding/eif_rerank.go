@@ -39,6 +39,10 @@ import (
 )
 
 func init() {
+	gleann.RegisterEIFRerankModelCheck(func(model string) bool {
+		_, err := resolveRerankModelPath(model)
+		return err == nil
+	})
 	gleann.RegisterEIFRanker(func(ctx context.Context, model, query string, docs []string) ([]float32, error) {
 		r, err := GetOrLoadEIFRanker(model)
 		if err != nil {

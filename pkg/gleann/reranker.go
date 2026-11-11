@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -57,6 +58,14 @@ var eifRank EIFRankFunc
 // reranker provider. The eif build of internal/embedding calls it from init.
 func RegisterEIFRanker(fn EIFRankFunc) { eifRank = fn }
 
+// eifRerankModelInstalled reports whether a reranker model resolves to a
+// local file (set by the eif build of internal/embedding).
+var eifRerankModelInstalled func(model string) bool
+
+// RegisterEIFRerankModelCheck installs the check used to pick the code
+// reranker only when it is downloaded.
+func RegisterEIFRerankModelCheck(fn func(model string) bool) { eifRerankModelInstalled = fn }
+
 // RerankerConfig configures the reranker.
 type RerankerConfig struct {
 	// Provider selects the reranking service.
@@ -83,6 +92,15 @@ type RerankerConfig struct {
 	// gleann benchmark the first ~128 tokens of a chunk ranked as well as
 	// the whole chunk (see docs/retrieval-experiments.md).
 	MaxDocChars int `json:"max_doc_chars,omitempty"`
+
+	// Pool is how many first-stage candidates this reranker scores when the
+	// search sets no RerankPool (0 = all the search retrieved).
+	Pool int `json:"pool,omitempty"`
+
+	// autoCodeModel is set when the model was not chosen by the user: the
+	// in-process engine then reranks mostly-code candidates with
+	// DefaultEIFCodeRerankModel when that model is installed.
+	autoCodeModel bool
 }
 
 // DefaultRerankerConfig returns a default config using Ollama with bge-reranker.
@@ -236,7 +254,12 @@ func (r *CrossEncoderReranker) rerankEIF(ctx context.Context, query string, resu
 	for i, res := range results {
 		docs[i] = res.Text
 	}
-	scores, err := eifRank(ctx, r.config.Model, query, docs)
+	model := r.config.Model
+	if r.config.autoCodeModel && mostlyCode(results) && eifRerankModelInstalled != nil &&
+		eifRerankModelInstalled(DefaultEIFCodeRerankModel) {
+		model = DefaultEIFCodeRerankModel
+	}
+	scores, err := eifRank(ctx, model, query, docs)
 	if err != nil {
 		return nil, fmt.Errorf("eif reranker: %w", err)
 	}
@@ -491,4 +514,27 @@ func (r *CrossEncoderReranker) rerankVoyage(ctx context.Context, query string, r
 	})
 
 	return reranked, nil
+}
+
+// PreferredPool is the candidate count the reranker scores by default
+// (RerankerConfig.Pool; 0 = all).
+func (r *CrossEncoderReranker) PreferredPool() int { return r.config.Pool }
+
+// mostlyCode reports whether at least half of the results come from source
+// code files (by extension).
+func mostlyCode(results []SearchResult) bool {
+	if len(results) == 0 {
+		return false
+	}
+	code := 0
+	for _, r := range results {
+		src, _ := r.Metadata["source"].(string)
+		if src == "" {
+			src, _ = r.Metadata["file"].(string)
+		}
+		if _, ok := languageByExt[strings.ToLower(filepath.Ext(src))]; ok {
+			code++
+		}
+	}
+	return 2*code >= len(results)
 }

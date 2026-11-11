@@ -778,8 +778,9 @@ func WithRerankSkipIdentifiers(skip bool) SearchOption {
 	}
 }
 
-// WithRerankPool sets how many stage-1 candidates the reranker scores (default
-// max(4*top-k, 50)); a smaller pool is faster on a CPU-only reranker.
+// WithRerankPool sets how many stage-1 candidates the reranker scores. The
+// default is the reranker's preferred pool (20 for the built-in engine), else
+// everything the first stage retrieved (max(4*top-k, 50)).
 func WithRerankPool(n int) SearchOption {
 	return func(c *SearchConfig) {
 		c.RerankPool = n
