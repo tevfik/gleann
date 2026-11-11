@@ -125,11 +125,13 @@ func (s *LeannSearcher) ExplainResult(ctx context.Context, query string, result 
 		return exp, nil
 	}
 
+	// Embed like the index does: query and passage prefixes (E5 models).
+	pp := s.meta.PassagePrefix
 	texts := make([]string, 0, len(segs)+2)
-	texts = append(texts, query, result.Text)
+	texts = append(texts, s.meta.QueryPrefix+query, pp+result.Text)
 	if len(segs) > 1 {
 		for _, sg := range segs {
-			texts = append(texts, maskSegment(result.Text, sg.StartLine, sg.EndLine))
+			texts = append(texts, pp+maskSegment(result.Text, sg.StartLine, sg.EndLine))
 		}
 	}
 	embs, err := s.embedder.Compute(ctx, texts)

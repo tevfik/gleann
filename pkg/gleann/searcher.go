@@ -317,7 +317,7 @@ func (s *LeannSearcher) Search(ctx context.Context, query string, opts ...Search
 	if s.embedder == nil {
 		return s.SearchBM25(ctx, rq, topK)
 	}
-	queryEmb, err := s.embedder.ComputeSingle(ctx, rq)
+	queryEmb, err := s.embedder.ComputeSingle(ctx, s.meta.QueryPrefix+rq) // the prefix the index was built for
 	if err != nil {
 		if s.scorer != nil {
 			log.Printf("⚠  Embedder error (%v); falling back to pure BM25 retrieval", err)
@@ -353,7 +353,7 @@ func (s *LeannSearcher) Search(ctx context.Context, query string, opts ...Search
 					texts = append(texts, "")
 				}
 			}
-			return s.embedder.Compute(ctx, texts)
+			return s.embedder.Compute(ctx, withPrefix(s.meta.PassagePrefix, texts)) // as the index was built
 		}
 		// HNSW/mmap passes context natively if we wrapper it or we just ignore the inner errors.
 		ids, distances, err = s.backend.SearchWithRecompute(ctx, queryEmb, retrieveK, adHocRecompute)

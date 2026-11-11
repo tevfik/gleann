@@ -172,6 +172,14 @@ const DefaultAttributionThreshold = 0.6
 // (0.72 vs 0.60), and with a 3B model it pointed at the right file in 19/20
 // answers instead of 12–14/20.
 func Attribute(ctx context.Context, emb EmbeddingComputer, answer string, results []SearchResult, threshold float64) (Citations, error) {
+	return AttributeWithPrefixes(ctx, emb, "", "", answer, results, threshold)
+}
+
+// AttributeWithPrefixes is Attribute for embedding models that expect
+// prefixes (E5: "query: " / "passage: "): answer sentences are embedded
+// with queryPrefix, passages with passagePrefix. Use the prefixes of the
+// index the passages came from (LeannSearcher.EmbeddingPrefixes).
+func AttributeWithPrefixes(ctx context.Context, emb EmbeddingComputer, queryPrefix, passagePrefix, answer string, results []SearchResult, threshold float64) (Citations, error) {
 	if threshold <= 0 {
 		threshold = DefaultAttributionThreshold
 	}
@@ -185,10 +193,10 @@ func Attribute(ctx context.Context, emb EmbeddingComputer, answer string, result
 	}
 	texts := make([]string, 0, len(sents)+len(results))
 	for _, s := range sents {
-		texts = append(texts, citeMarkerRe.ReplaceAllString(s, ""))
+		texts = append(texts, queryPrefix+citeMarkerRe.ReplaceAllString(s, ""))
 	}
 	for _, r := range results {
-		texts = append(texts, r.Text)
+		texts = append(texts, passagePrefix+r.Text)
 	}
 	vecs, err := emb.Compute(ctx, texts)
 	if err != nil {

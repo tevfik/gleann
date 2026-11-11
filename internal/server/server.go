@@ -1037,7 +1037,8 @@ func (s *Server) handleAsk(w http.ResponseWriter, r *http.Request) {
 
 	resp := askResponse{Answer: answer, Sources: sources}
 	if req.Cite {
-		if c, err := gleann.Attribute(r.Context(), searcher.Embedder(), answer, sources, 0); err == nil {
+		pp, qp := searcher.EmbeddingPrefixes()
+		if c, err := gleann.AttributeWithPrefixes(r.Context(), searcher.Embedder(), qp, pp, answer, sources, 0); err == nil {
 			resp.Citations = &c
 		}
 	}

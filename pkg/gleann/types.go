@@ -87,6 +87,11 @@ type IndexMeta struct {
 	GleannVersion  string            `json:"gleann_version,omitempty"`
 	PluginVersions map[string]string `json:"plugin_versions,omitempty"`
 
+	// Text put before passages and queries when they were embedded (EmbeddingPrefixes); searches and updates of
+	// the index use these. Empty for indexes built before prefixes were recorded.
+	PassagePrefix string `json:"passage_prefix,omitempty"`
+	QueryPrefix   string `json:"query_prefix,omitempty"`
+
 	// Staged / Two-phase indexing status
 	LexicalOnly    bool `json:"lexical_only,omitempty"`
 	VectorReady    bool `json:"vector_ready,omitempty"`

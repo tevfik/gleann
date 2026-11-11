@@ -131,10 +131,11 @@ func (b *LeannBuilder) BuildVectors(ctx context.Context, name string, items []It
 	indexDir := filepath.Join(b.config.IndexDir, name)
 	basePath := filepath.Join(indexDir, name)
 
-	// Extract texts for embedding computation.
+	// Extract texts for embedding computation, with the model's passage prefix (recorded in the meta below).
+	passagePrefix, queryPrefix := EmbeddingPrefixes(b.config, b.embedder.ModelName())
 	texts := make([]string, len(items))
 	for i, item := range items {
-		texts[i] = item.Text
+		texts[i] = passagePrefix + item.Text
 	}
 
 	// Wire progress reporting from embedder if supported
@@ -181,6 +182,7 @@ func (b *LeannBuilder) BuildVectors(ctx context.Context, name string, items []It
 	_ = UpdateIndexMeta(b.config.IndexDir, name, func(m *IndexMeta) {
 		m.EmbeddingModel = b.embedder.ModelName()
 		m.Dimensions = expectedDim
+		m.PassagePrefix, m.QueryPrefix = passagePrefix, queryPrefix
 		m.VectorReady = true
 		m.LexicalOnly = false
 		m.SignaturesOnly = b.config.ChunkConfig.SignaturesOnly
@@ -381,9 +383,9 @@ func (b *LeannBuilder) appendInPlace(ctx context.Context, name string, pm *Passa
 	for i, item := range newItems {
 		texts[i] = item.Text
 	}
-	// Compute embeddings before touching the passage store.
+	// Compute embeddings before touching the passage store (with the prefix the index was built with).
 	embedStart := time.Now()
-	embeddings, err := b.embedder.Compute(ctx, texts)
+	embeddings, err := b.embedder.Compute(ctx, withPrefix(recordedPassagePrefix(b.config.IndexDir, name), texts))
 	st.Embedded, st.EmbedTime = len(texts), time.Since(embedStart)
 	if err != nil {
 		return false, fmt.Errorf("compute embeddings: %w", err)
@@ -472,7 +474,7 @@ func (b *LeannBuilder) compact(ctx context.Context, name string, pm *PassageMana
 		})
 	}
 	embedStart := time.Now()
-	embeddings, err := b.embedder.Compute(ctx, texts)
+	embeddings, err := b.embedder.Compute(ctx, withPrefix(recordedPassagePrefix(b.config.IndexDir, name), texts))
 	st.Embedded, st.EmbedTime = len(texts), time.Since(embedStart)
 	if err != nil {
 		return fmt.Errorf("compute embeddings: %w", err)

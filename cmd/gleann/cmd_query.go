@@ -997,13 +997,15 @@ func buildChatConfig(args []string, config gleann.Config) gleann.ChatConfig {
 // closest to (gleann.Attribute) and prints the passages that were used.
 func printAttribution(ctx context.Context, searcher gleann.Searcher, config gleann.Config, answer string, results []gleann.SearchResult) {
 	var emb gleann.EmbeddingComputer
+	var passagePrefix, queryPrefix string
 	if ls, ok := searcher.(*gleann.LeannSearcher); ok {
 		emb = ls.Embedder()
+		passagePrefix, queryPrefix = ls.EmbeddingPrefixes()
 	}
 	if emb == nil {
 		emb = newEmbedder(config)
 	}
-	cites, err := gleann.Attribute(ctx, emb, answer, results, 0)
+	cites, err := gleann.AttributeWithPrefixes(ctx, emb, queryPrefix, passagePrefix, answer, results, 0)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "cite: %v\n", err)
 		return
