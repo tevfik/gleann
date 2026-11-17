@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/tevfik/gleann/pkg/gleann"
@@ -39,7 +40,10 @@ func TestHandleStorage(t *testing.T) {
 	if got.Indexes != 1 || got.Passages != 5 || got.Bytes != int64(2048+len(meta)) || got.IndexDir != dir {
 		t.Fatalf("got %+v", got)
 	}
-	if got.DiskTotalBytes == 0 || got.DiskFreeBytes == 0 || got.DiskFreeBytes > got.DiskTotalBytes {
-		t.Fatalf("disk %d free of %d", got.DiskFreeBytes, got.DiskTotalBytes)
+	switch runtime.GOOS {
+	case "linux", "darwin", "windows": // disk space is reported here
+		if got.DiskTotalBytes == 0 || got.DiskFreeBytes == 0 || got.DiskFreeBytes > got.DiskTotalBytes {
+			t.Fatalf("disk %d free of %d", got.DiskFreeBytes, got.DiskTotalBytes)
+		}
 	}
 }
