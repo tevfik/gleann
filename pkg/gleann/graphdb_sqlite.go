@@ -251,7 +251,7 @@ func (d *sqliteGraphDB) Impact(fqn string, maxDepth int) (*ImpactResult, error) 
 	if len(seeds) == 0 {
 		return res, nil
 	}
-	// Two passes over the seeds mirror kuzu.Impact (query.go lines 733-757):
+	// Two passes over the seeds mirror the former kuzu.Impact:
 	// kuzu.Callers(fqn) returns the union of every resolved seed's direct
 	// callers, all of which are enqueued in `visited` before the BFS expands.
 	// A symbol that is a direct caller of any seed therefore never reappears

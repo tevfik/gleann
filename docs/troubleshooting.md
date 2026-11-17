@@ -179,13 +179,16 @@ gleann index repair my-docs --force
   task full   # CGo build with tree-sitter support
   ```
 
-### "graph database requires CGo (build with -tags treesitter)"
+### "index X has no code graph yet"
 
-This binary has no graph support. The pure-Go builds (`gleann-linux-arm64`, ...) and the
-EIF-only build (`task build-eif`, `make build-eif-arm64`) are compiled without the
-`treesitter` tag and do not include KuzuDB. The REST API answers `503` for graph
-endpoints in that case. Use the full build, which includes graph, FAISS and EIF
-(`gleann-full-linux-arm64` on ARM64), or build with `task full`.
+Every build (pure Go included) serves the code graph of a format-2 index from its
+SQLite database. The graph is missing when the index was built without `--graph`
+(build it with `gleann index build X --docs <dir> --graph`), or when the index uses
+the old store format (format 1), which has no code graph since Kùzu was removed:
+convert it with `gleann index migrate X`, then build the graph. The REST API
+answers 404 for such an index (409 for `POST /api/graph/X/index` on format 1).
+An old `X_graph` directory from gleann v1.9 is not read; `gleann index remove X`
+deletes it.
 
 ## Plugin Issues
 

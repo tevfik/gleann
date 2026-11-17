@@ -41,6 +41,11 @@ type LeannSearcher struct {
 	storeFormat     int // passage-store format detected at Load: 1 bbolt, 2 SQLite (RFC 003)
 	name            string
 	estimatedSize   int64
+
+	// fresh is the published state of the format-2 database recorded at Load
+	// (freshKnown false when none was recorded); see freshness.go.
+	fresh      indexFreshness
+	freshKnown bool
 }
 
 // VectorAvailable reports whether a vector index is loaded and available for search.
@@ -138,7 +143,7 @@ func (s *LeannSearcher) Load(ctx context.Context, name string) (retErr error) {
 	// format-2 attachment below always re-opens, and no adapter outlives its
 	// store (a stale adapter would query a closed database). Close on the
 	// SQLite backend is a no-op because the graph store is owned by the
-	// passage store; a Kùzu backend's Close releases its own handle.
+	// passage store.
 	if s.graphDB != nil {
 		s.graphDB.Close()
 		s.graphDB = nil
@@ -220,6 +225,13 @@ func (s *LeannSearcher) Load(ctx context.Context, name string) (retErr error) {
 			s.meta = fresh
 		}
 	}
+	// Record the published state before anything is read from it, so a
+	// change that lands during this Load is seen as stale afterwards.
+	if err := s.recordFreshness(ctx); err != nil {
+		_ = s.passages.Close()
+		s.passages = nil
+		return err
+	}
 	if err := s.passages.Load(); err != nil {
 		return fmt.Errorf("load passages: %w", err)
 	}
@@ -272,15 +284,12 @@ func (s *LeannSearcher) Load(ctx context.Context, name string) (retErr error) {
 		s.vectorAvailable = true
 	}
 
-	// The format-2 code graph lives in the index's own SQLite database
-	// (symbols/edges/doc_nodes tables, RFC 003 sections 3.4 and 3.7), not in
-	// a Kùzu sidecar, so a format-2 index with graph data gets graph queries
-	// in every build including CGO_ENABLED=0, sharing the passage store's
-	// connection pools (RFC 003 section 8 step 7). For a format-2 index the
-	// SQLite graph wins when it has data, even over a stale <name>_graph Kùzu
-	// directory left behind by a format-1 migration (RFC 003 section 6.4:
-	// migrate never deletes Kùzu directories); the Kùzu path below is only
-	// consulted when the SQLite tables are empty, or for a format-1 index.
+	// The code graph lives in the index's own SQLite database
+	// (symbols/edges/doc_nodes tables, RFC 003 sections 3.4 and 3.7), so a
+	// format-2 index with graph data gets graph queries in every build
+	// including CGO_ENABLED=0, sharing the passage store's connection pools
+	// (RFC 003 section 8 step 7). A format-1 index has no code graph; an old
+	// <name>_graph Kùzu directory next to it is never read (RFC 004 A3).
 	if s.storeFormat == 2 {
 		if sp, ok := s.passages.(*storePassages); ok && sp.st != nil {
 			gs := graphstore.New(sp.st)
@@ -289,28 +298,6 @@ func (s *LeannSearcher) Load(ctx context.Context, name string) (retErr error) {
 				log.Printf("⚠  WARNING: Checking graph data for index %q failed: %v", name, err)
 			} else if has {
 				s.graphDB = &sqliteGraphDB{g: gs}
-			}
-		}
-	}
-
-	// Attempt to load the Kùzu Graph DB if it exists and no format-2 graph
-	// was attached above. Primary path: {indexDir}/{name}_graph (written by
-	// buildGraphIndex). Fallback: {basePath}/.kuzu (legacy location).
-	if s.graphDB == nil {
-		graphDir := filepath.Join(s.config.IndexDir, name+"_graph")
-		if _, err := os.Stat(graphDir); err != nil {
-			// Try legacy path
-			graphDir = filepath.Join(basePath, ".kuzu")
-		}
-		if _, err := os.Stat(graphDir); err == nil {
-			if GraphDBOpener != nil {
-				if db, openErr := GraphDBOpener(graphDir); openErr == nil {
-					s.graphDB = db
-				} else {
-					log.Printf("⚠  WARNING: Found graph database at %s but failed to open: %v", graphDir, openErr)
-				}
-			} else {
-				log.Printf("ℹ️  Graph database found at %s but gleann was not built with graph support (Cgo/treesitter disabled)", graphDir)
 			}
 		}
 	}
@@ -402,8 +389,25 @@ func (s *LeannSearcher) Load(ctx context.Context, name string) (retErr error) {
 	return nil
 }
 
-// Search performs a search and returns results.
+// Search performs a search and returns results. When another process
+// published a new vector generation while the query ran, the result is
+// discarded with ErrIndexChanged instead of returning passages resolved
+// through renumbered slots (see freshness.go).
 func (s *LeannSearcher) Search(ctx context.Context, query string, opts ...SearchOption) ([]SearchResult, error) {
+	results, err := s.search(ctx, query, opts...)
+	if err != nil {
+		return nil, err
+	}
+	if stale, serr := s.vectorStale(ctx); stale {
+		if serr != nil {
+			return nil, fmt.Errorf("%w: %v", ErrIndexChanged, serr)
+		}
+		return nil, ErrIndexChanged
+	}
+	return results, nil
+}
+
+func (s *LeannSearcher) search(ctx context.Context, query string, opts ...SearchOption) ([]SearchResult, error) {
 	if !s.loaded {
 		return nil, fmt.Errorf("no index loaded; call Load() first")
 	}
@@ -1074,15 +1078,15 @@ func RemoveIndex(indexDir, name string) error {
 		return fmt.Errorf("remove index directory: %w", err)
 	}
 
-	// 2. Remove the graph database associated with the index (Cgo/KuzuDB path)
+	// 2. Remove the old Kùzu graph directory of a v1.9 index, if any: index
+	// remove deletes everything of an index, including leftovers.
 	graphPath := filepath.Join(indexDir, name+"_graph")
 	if err := os.RemoveAll(graphPath); err != nil {
 		return fmt.Errorf("remove graph database: %w", err)
 	}
 
-	// The graph's companions: Kuzu's write-ahead log and the per-file content
-	// hash store. A hash store left behind makes a later graph of the same name
-	// skip every file as "unchanged".
+	// Its companions: the Kùzu write-ahead log and shadow file and the v1.9
+	// per-file content hash store.
 	for _, suffix := range []string{"_graph.wal", "_graph.shadow", "_graph_file_hashes.db"} {
 		if err := os.Remove(filepath.Join(indexDir, name+suffix)); err != nil && !os.IsNotExist(err) {
 			return fmt.Errorf("remove %s: %w", name+suffix, err)

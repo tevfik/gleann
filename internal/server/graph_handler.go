@@ -1,6 +1,7 @@
-// Package server — graph API handlers for KuzuDB graph queries.
+// Package server — graph API handlers for code graph queries.
 // These endpoints allow external tools (e.g. external agents or IDE extensions) to query the
-// code graph over HTTP instead of linking KuzuDB as an embedded library.
+// code graph over HTTP. A format-2 index serves them from its SQLite graph in every build;
+// a format-1 index has no code graph.
 package server
 
 import (
@@ -18,11 +19,12 @@ import (
 // GraphQueryRequest is the request body for POST /api/graph/{name}/query.
 type GraphQueryRequest struct {
 	// Query is one of the predefined query types:
-	//   "callees", "callers", "symbols_in_file", "impact", "cypher", "toc"
+	//   "callees", "callers", "symbols_in_file", "impact", "toc"
+	// ("cypher" is answered with 400 for a format-2 index: raw Cypher was removed)
 	Query    string `json:"query"`
 	Symbol   string `json:"symbol,omitempty"`    // FQN for callees/callers/impact/toc
 	File     string `json:"file,omitempty"`      // file path for symbols_in_file/toc
-	Cypher   string `json:"cypher,omitempty"`    // raw Cypher for advanced queries
+	Cypher   string `json:"cypher,omitempty"`    // removed: raw Cypher is answered with 400
 	MaxDepth int    `json:"max_depth,omitempty"` // max traversal depth for impact (default 5)
 }
 
@@ -43,10 +45,12 @@ type GraphNode struct {
 // GraphIndexRequest is the request body for POST /api/graph/{name}/index.
 type GraphIndexRequest struct {
 	DocsDir string `json:"docs_dir"`
-	Module  string `json:"module,omitempty"` // Go module name, e.g. "github.com/foo/bar"
+	Module  string `json:"module,omitempty"` // accepted and ignored: the Go module is read from go.mod
 }
 
-// GraphStatsResponse is returned by GET /api/graph/{name}.
+// GraphStatsResponse is returned by GET /api/graph/{name}. file_count is the
+// number of files that declare symbols; DBPath is the index database
+// (<name>/<name>.db) of a format-2 index, the <name>_graph sidecar otherwise.
 type GraphStatsResponse struct {
 	Name       string `json:"name"`
 	DBPath     string `json:"db_path"`
@@ -68,18 +72,17 @@ type ImpactResponse struct {
 	QueryMs           int64    `json:"query_ms"`
 }
 
-// graphDBPool caches open KuzuDB connections per index name.
-// KuzuDB is an embedded database — only one process can open a given
-// directory at a time. The pool ensures we reuse connections.
+// graphDBPool caches open code graph handles per index name (the SQLite graph
+// of a format-2 index). The pool reuses them; runBuild and index
+// removal close them so the files can be rewritten or deleted.
 type graphDBPool struct {
 	mu  sync.RWMutex
 	dbs map[string]graphDBHandle
 	dir string // base index directory
 }
 
-// graphDBHandle holds a cached graph database reference.
-// We use an interface so the CGo-dependent concrete type stays in
-// a build-tagged file.
+// graphDBHandle holds a cached graph database reference. storeHandle
+// (graph_sqlite.go) serves format-2 indexes in every build.
 type graphDBHandle interface {
 	Callees(fqn string) ([]GraphNode, error)
 	Callers(fqn string) ([]GraphNode, error)
@@ -120,27 +123,26 @@ func (p *graphDBPool) get(name string) (graphDBHandle, error) {
 	if err := gleann.ValidateName(name); err != nil {
 		return nil, err
 	}
-	dbPath := filepath.Join(p.dir, name+"_graph")
-	h, err := openGraphDB(dbPath) // build-tagged function
+	h, err := openStoreHandle(p.dir, name)
 	if err != nil {
 		return nil, err
+	}
+	if h == nil {
+		return nil, fmt.Errorf("%w: %v (or POST /api/graph/%s/index)", errNoCodeGraph, gleann.NoCodeGraphError(p.dir, name), name)
 	}
 	p.dbs[name] = h
 	return h, nil
 }
 
-// errGraphUnsupported is returned by the build-tagged openGraphDB when this
-// binary was compiled without graph support (no `treesitter` tag).
-var errGraphUnsupported = errors.New("graph database requires CGo (build with -tags treesitter); " +
-	"this binary has no graph support — use the gleann-full build (e.g. gleann-full-linux-arm64)")
+// graphDBPath is where the code graph of an index lives: the index database
+// <name>/<name>.db.
+func graphDBPath(indexDir, name string) string {
+	return filepath.Join(indexDir, name, name+".db")
+}
 
-// writeGraphOpenError reports a failed graph open: a binary without graph
-// support is a 503, anything else is a missing or unreadable graph index.
+// writeGraphOpenError reports a failed graph open: a missing or unreadable
+// graph index.
 func writeGraphOpenError(w http.ResponseWriter, name string, err error) {
-	if errors.Is(err, errGraphUnsupported) {
-		writeError(w, http.StatusServiceUnavailable, err.Error())
-		return
-	}
 	writeError(w, http.StatusNotFound, fmt.Sprintf("graph index %q not found: %v", name, err))
 }
 
@@ -184,7 +186,7 @@ func (s *Server) handleGraphQuery(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if s.graphPool == nil {
-		writeError(w, http.StatusServiceUnavailable, "graph database not available (build with -tags treesitter)")
+		writeError(w, http.StatusServiceUnavailable, "graph database not available")
 		return
 	}
 
@@ -250,6 +252,10 @@ func (s *Server) handleGraphQuery(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		rows, qErr := db.RawCypher(req.Cypher)
+		if errors.Is(qErr, errCypherRemoved) {
+			writeError(w, http.StatusBadRequest, qErr.Error())
+			return
+		}
 		if qErr != nil {
 			writeError(w, http.StatusInternalServerError, "cypher failed: "+qErr.Error())
 			return
@@ -272,6 +278,12 @@ func (s *Server) handleGraphQuery(w http.ResponseWriter, r *http.Request) {
 		}
 		toc, tocErr := db.DocumentTOC(path)
 		if tocErr != nil {
+			if isDocumentNotFound(tocErr) {
+				// A code file (or any path that is not an indexed document)
+				// has no TOC: a missing resource, not a server fault.
+				writeError(w, http.StatusNotFound, fmt.Sprintf("no document %q in graph %q: %v", path, name, tocErr))
+				return
+			}
 			writeError(w, http.StatusInternalServerError, "document toc failed: "+tocErr.Error())
 			return
 		}
@@ -282,7 +294,7 @@ func (s *Server) handleGraphQuery(w http.ResponseWriter, r *http.Request) {
 		return
 
 	default:
-		writeError(w, http.StatusBadRequest, fmt.Sprintf("unknown query type %q (use callees, callers, symbols_in_file, impact, cypher, toc)", req.Query))
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("unknown query type %q (use callees, callers, symbols_in_file, impact, toc)", req.Query))
 		return
 	}
 
@@ -321,11 +333,8 @@ func (s *Server) handleGraphStats(w http.ResponseWriter, r *http.Request) {
 
 	db, err := s.graphPool.get(name)
 	if err != nil {
-		writeJSON(w, http.StatusOK, GraphStatsResponse{
-			Name:      name,
-			DBPath:    filepath.Join(s.cfg().IndexDir, name+"_graph"),
-			Available: false,
-		})
+		// An index without a code graph is a 404.
+		writeGraphOpenError(w, name, err)
 		return
 	}
 
@@ -336,7 +345,7 @@ func (s *Server) handleGraphStats(w http.ResponseWriter, r *http.Request) {
 
 	writeJSON(w, http.StatusOK, GraphStatsResponse{
 		Name:       name,
-		DBPath:     filepath.Join(s.cfg().IndexDir, name+"_graph"),
+		DBPath:     graphDBPath(s.cfg().IndexDir, name),
 		Available:  true,
 		FileCount:  fc,
 		SymCount:   sc,
@@ -346,7 +355,8 @@ func (s *Server) handleGraphStats(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleGraphIndex handles POST /api/graph/{name}/index.
-// Triggers AST indexing for a directory into the KuzuDB graph.
+// Triggers AST indexing for a directory into the index's code graph (the
+// SQLite tables of a format-2 index; a format-1 index answers 409).
 func (s *Server) handleGraphIndex(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	if err := gleann.ValidateName(name); err != nil {
@@ -381,7 +391,11 @@ func (s *Server) handleGraphIndex(w http.ResponseWriter, r *http.Request) {
 	}
 
 	start := time.Now()
-	err := runGraphIndex(name, docsDir, s.cfg().IndexDir, req.Module)
+	err := runGraphIndex(name, docsDir, s.cfg().IndexDir)
+	if errors.Is(err, errNoCodeGraph) {
+		writeError(w, http.StatusConflict, err.Error())
+		return
+	}
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "indexing failed: "+err.Error())
 		return
@@ -414,7 +428,7 @@ func (s *Server) handleDocumentTOC(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if s.graphPool == nil {
-		writeError(w, http.StatusServiceUnavailable, "graph database not available (build with -tags treesitter)")
+		writeError(w, http.StatusServiceUnavailable, "graph database not available")
 		return
 	}
 
@@ -461,7 +475,7 @@ func (s *Server) handleListDocuments(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if s.graphPool == nil {
-		writeError(w, http.StatusServiceUnavailable, "graph database not available (build with -tags treesitter)")
+		writeError(w, http.StatusServiceUnavailable, "graph database not available")
 		return
 	}
 

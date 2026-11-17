@@ -21,6 +21,10 @@ import (
 	"modernc.org/sqlite"
 )
 
+// ErrUnsupportedFormat is returned (wrapped) by Open for a database whose
+// store_format is newer than this build understands.
+var ErrUnsupportedFormat = errors.New("unsupported store_format")
+
 // Options controls Open. The zero value is usable.
 type Options struct {
 	// Log receives warnings, e.g. the network-file-system fallback.
@@ -411,7 +415,7 @@ func migrate(w *sql.DB) error {
 	}
 
 	if format != "" && format != "2" {
-		return fmt.Errorf("unsupported store_format %q; this binary understands formats up to %q", format, "2")
+		return fmt.Errorf("%w %q; this binary understands formats up to %q", ErrUnsupportedFormat, format, "2")
 	}
 
 	for _, m := range migrations {
@@ -466,7 +470,7 @@ func applyMigration(w *sql.DB, m migration) error {
 		return fmt.Errorf("re-reading store_format: %w", err)
 	}
 	if current != "" && current != "2" {
-		return fmt.Errorf("unsupported store_format %q; this binary understands formats up to %q", current, "2")
+		return fmt.Errorf("%w %q; this binary understands formats up to %q", ErrUnsupportedFormat, current, "2")
 	}
 
 	// For an existing database that already ran format_2 before step tracking,

@@ -121,8 +121,8 @@ func TestHandleGraphQuery_IndexNotFound(t *testing.T) {
 	req.SetPathValue("name", "nonexistent")
 	w := httptest.NewRecorder()
 	s.handleGraphQuery(w, req)
-	if w.Code != missingGraphIndexStatus {
-		t.Errorf("expected %d, got %d", missingGraphIndexStatus, w.Code)
+	if w.Code != http.StatusNotFound {
+		t.Errorf("expected %d, got %d", http.StatusNotFound, w.Code)
 	}
 }
 
@@ -397,13 +397,9 @@ func TestHandleGraphStats_IndexNotFound(t *testing.T) {
 	req.SetPathValue("name", "nonexistent")
 	w := httptest.NewRecorder()
 	s.handleGraphStats(w, req)
-	if w.Code != http.StatusOK {
-		t.Errorf("expected 200, got %d", w.Code)
-	}
-	var resp GraphStatsResponse
-	json.NewDecoder(w.Body).Decode(&resp)
-	if resp.Available {
-		t.Error("expected Available=false for missing index")
+	// A0 froze 200 available:false here; an index without a code graph is a 404.
+	if w.Code != http.StatusNotFound {
+		t.Errorf("expected 404, got %d", w.Code)
 	}
 }
 

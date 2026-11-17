@@ -1,7 +1,7 @@
 // Package mcp — Memory Block MCP tool definitions.
 //
-// These tools expose gleann's hierarchical BBolt memory (pkg/memory) to
-// external AI agents via the Model Context Protocol.  Unlike the KuzuDB
+// These tools expose gleann's hierarchical memory (pkg/memory) to
+// external AI agents via the Model Context Protocol.  Unlike the
 // Knowledge Graph tools, these operate on simple text blocks organized into
 // short / medium / long tiers — providing infinite persistent memory for LLMs.
 //

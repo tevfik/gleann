@@ -114,7 +114,7 @@ Rate-limited requests receive `429 Too Many Requests` with a `Retry-After: 1` he
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `GLEANN_TOOLS` | `core` | MCP tool profile (read only by MCP): `core` (essential 10 tools, 8 without `-tags treesitter`), `full` (all tools), or comma-separated list of tool names/aliases |
+| `GLEANN_TOOLS` | `core` | MCP tool profile (read only by MCP): `core` (essential tools; the graph tools only when a format-2 code graph can exist), `full` (all tools), or comma-separated list of tool names/aliases |
 
 | `GLEANN_INDEX` | — | Index used when none is named: by the MCP tools, `gleann agents` and `gleann install` (before they fall back to the directory name) |
 | `GLEANN_TAGS` | — | Comma-separated tags; indexes without one of them are hidden from the MCP server, the multi-index search and the server's `GET /api/indexes` (this cannot be bypassed by a client query parameter) |
@@ -183,12 +183,6 @@ When a `gleann serve` instance is running, the bbolt memory store holds an exclu
 | `GLEANN_REMOTE_ADDR` | `http://localhost:8080` | Base URL of a running `gleann serve` instance. Set to `off` (or empty) to disable REST auto-routing and always open the local bbolt store |
 
 When the auto-probe succeeds, affected commands print a `(via running server)` tag so it is obvious which path serviced the request.
-
-## Graph Storage Resilience
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `GLEANN_KUZU_AUTOREPAIR` | `1` (enabled) | When KuzuDB fails to open an existing on-disk database, automatically rename the corrupt directory to `<path>.corrupted-<unix-ts>` and recreate a fresh database. Set to `0` to disable auto-quarantine and surface the original open error instead. **Note**: quarantined data is retained on disk for manual recovery; nothing is deleted |
 
 ## Lexical Search
 

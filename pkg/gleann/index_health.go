@@ -95,18 +95,6 @@ func CheckIndexHealth(indexDir, name string) (*IndexHealth, error) {
 		}
 	}
 
-	// Check graph database if present on disk.
-	graphDir := filepath.Join(indexDir, name+"_graph")
-	if info, err := os.Stat(graphDir); err == nil && (info.IsDir() || info.Size() > 0) {
-		if GraphDBOpener != nil {
-			if db, err := GraphDBOpener(graphDir); err != nil {
-				h.Problems = append(h.Problems, fmt.Sprintf("the graph database cannot be opened (%v)", err))
-			} else {
-				db.Close()
-			}
-		}
-	}
-
 	return h, nil
 }
 

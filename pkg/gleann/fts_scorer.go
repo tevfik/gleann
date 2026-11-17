@@ -28,6 +28,7 @@ var (
 	_ Scorer          = (*FTSScorer)(nil)
 	_ TopKScorer      = (*FTSScorer)(nil)
 	_ PersistedScorer = (*FTSScorer)(nil)
+	_ TermExplainer   = (*FTSScorer)(nil)
 )
 
 // Persisted reports that the lexical index lives on disk, so Searcher.Load
@@ -165,6 +166,34 @@ func (f *FTSScorer) ScoreRowIDs(query string, rowids []int64) map[int64]float32 
 		return map[int64]float32{}
 	}
 	return scores
+}
+
+// ExplainTerms implements TermExplainer: the FTS5 bm25 contribution of each
+// query term to passage id (a searcher ID), best first. A store error or an
+// unknown passage degrades to no explanation.
+func (f *FTSScorer) ExplainTerms(query string, id int64) []TermExplanation {
+	ctx := context.Background()
+	rowid := id
+	if f.slotIDs {
+		if id < 0 {
+			rowid = -id
+		} else {
+			ps, err := f.store.BySlot(ctx, []int64{id})
+			if err != nil || len(ps) == 0 {
+				return nil
+			}
+			rowid = ps[0].ID
+		}
+	}
+	terms, err := f.store.ExplainTerms(ctx, store.LexQuery{Text: query, Analyzer: f.analyzer, Options: f.opts}, rowid)
+	if err != nil {
+		return nil
+	}
+	out := make([]TermExplanation, 0, len(terms))
+	for _, t := range terms {
+		out = append(out, TermExplanation{Term: t.Term, TF: t.TF, Score: t.Score})
+	}
+	return out
 }
 
 // Close releases the database handle. For a format-2 index the handle is

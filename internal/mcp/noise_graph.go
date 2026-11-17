@@ -1,5 +1,3 @@
-//go:build treesitter
-
 package mcp
 
 import "strings"

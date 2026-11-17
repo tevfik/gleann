@@ -13,9 +13,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log/slog"
-	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 
@@ -34,14 +31,12 @@ type mcpMemoryPool struct {
 	store         *memory.Store
 	dir           string
 	syncerFactory func(name string) gleann.VectorSyncer // optional
-	warned        map[string]bool
 }
 
 func newMCPMemoryPool(indexDir string) *mcpMemoryPool {
 	return &mcpMemoryPool{
 		services: make(map[string]gleann.MemoryService),
 		dir:      indexDir,
-		warned:   make(map[string]bool),
 	}
 }
 
@@ -73,17 +68,8 @@ func (p *mcpMemoryPool) get(name string) (gleann.MemoryService, error) {
 		p.store = s
 	}
 
-	// Check if legacy Kùzu data exists and SQLite namespace is empty.
-	kuzuPath := filepath.Join(p.dir, name+"_memory")
-	if fi, err := os.Stat(kuzuPath); err == nil && fi.IsDir() {
-		if !p.warned[name] {
-			if empty, err := p.store.EntityNamespaceEmpty(name); err == nil && empty {
-				p.warned[name] = true
-				slog.Warn("legacy Kùzu memory data detected; old entities need gleann index migrate in a kuzu build",
-					"index", name, "path", kuzuPath)
-			}
-		}
-	}
+	// Entities of gleann v1.9 live in an old Kùzu store until imported.
+	p.store.WarnLegacyKuzuOnce(p.dir, name)
 
 	var syncer gleann.VectorSyncer
 	if p.syncerFactory != nil {

@@ -110,7 +110,7 @@ func (g *SQLite) symbolsQuery(query string, args ...any) ([]Symbol, error) {
 
 // baseName returns the last '.'-separated, ':'-separated or '/'-separated
 // component of q, or q itself when there is no separator. It is the "base
-// name" of kuzu's three-step lookup (internal/graph/kuzu/query.go).
+// name" of kuzu's three-step lookup (the former internal/graph/kuzu/query.go).
 func baseName(q string) string {
 	parts := strings.FieldsFunc(q, func(r rune) bool {
 		return r == ':' || r == '.' || r == '/'
@@ -785,6 +785,17 @@ func (g *SQLite) Stats() (Stats, error) {
 	return st, nil
 }
 
+// CodeFileCount is the number of files that declare at least one symbol: the
+// CodeFile count of the Kùzu graph. Stats.Files counts the shared files table
+// instead, which also holds documents and files without symbols.
+func (g *SQLite) CodeFileCount() (int, error) {
+	var n int
+	if err := g.reader.QueryRowContext(readCtx(), `SELECT count(DISTINCT file) FROM symbols`).Scan(&n); err != nil {
+		return 0, fmt.Errorf("counting code files: %w", err)
+	}
+	return n, nil
+}
+
 // InDegreeTop returns the n most-called symbols (n <= 0 means 10), most
 // calls first, ties by FQN. This is the GROUP BY aggregate the MCP risk
 // tools ran as Cypher count(caller) (RFC 003 section 6.2); counting edge
@@ -794,8 +805,18 @@ func (g *SQLite) Stats() (Stats, error) {
 // symbol lookup; every internal dst has a symbols row (dropUnresolved and
 // checkSources guarantee it), so the join drops nothing.
 func (g *SQLite) InDegreeTop(n int) ([]InDegree, error) {
+	return g.InDegreeTopExcluding(n)
+}
+
+// InDegreeTopExcluding is InDegreeTop without the symbols of the given kinds
+// (the risk tools drop "macro"). The kind filter needs the symbols row, so
+// with a filter the join runs before the LIMIT.
+func (g *SQLite) InDegreeTopExcluding(n int, excludeKinds ...string) ([]InDegree, error) {
 	if n <= 0 {
 		n = 10
+	}
+	if len(excludeKinds) > 0 {
+		return g.inDegreeTopFiltered(n, excludeKinds)
 	}
 	rows, err := g.reader.QueryContext(readCtx(), `WITH top AS (
   SELECT dst, count(*) AS in_degree
@@ -808,6 +829,38 @@ func (g *SQLite) InDegreeTop(n int) ([]InDegree, error) {
 SELECT t.dst, s.name, s.kind, s.file, t.in_degree
 FROM top t JOIN symbols s ON s.fqn = t.dst
 ORDER BY t.in_degree DESC, t.dst`, n)
+	if err != nil {
+		return nil, fmt.Errorf("aggregating in-degrees: %w", err)
+	}
+	defer rows.Close()
+	var out []InDegree
+	for rows.Next() {
+		var d InDegree
+		if err := rows.Scan(&d.FQN, &d.Name, &d.Kind, &d.File, &d.InDegree); err != nil {
+			return nil, fmt.Errorf("aggregating in-degrees: %w", err)
+		}
+		out = append(out, d)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("aggregating in-degrees: %w", err)
+	}
+	return out, nil
+}
+
+func (g *SQLite) inDegreeTopFiltered(n int, excludeKinds []string) ([]InDegree, error) {
+	args := make([]any, 0, len(excludeKinds)+1)
+	marks := make([]string, len(excludeKinds))
+	for i, k := range excludeKinds {
+		marks[i] = "?"
+		args = append(args, k)
+	}
+	args = append(args, n)
+	rows, err := g.reader.QueryContext(readCtx(), `SELECT e.dst, s.name, s.kind, s.file, count(*) AS in_degree
+FROM edges e JOIN symbols s ON s.fqn = e.dst
+WHERE e.kind = 'CALLS' AND e.dst_external = 0 AND s.kind NOT IN (`+strings.Join(marks, ",")+`)
+GROUP BY e.dst
+ORDER BY in_degree DESC, e.dst
+LIMIT ?`, args...)
 	if err != nil {
 		return nil, fmt.Errorf("aggregating in-degrees: %w", err)
 	}

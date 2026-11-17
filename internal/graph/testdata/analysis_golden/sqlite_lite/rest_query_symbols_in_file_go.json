@@ -1,0 +1,54 @@
+{
+  "body": {
+    "count": 9,
+    "query_ms": 0,
+    "results": [
+      {
+        "fqn": "example.com/fixture/service.New",
+        "kind": "function",
+        "name": "New"
+      },
+      {
+        "fqn": "example.com/fixture/service.Service",
+        "kind": "struct",
+        "name": "Service"
+      },
+      {
+        "fqn": "example.com/fixture/service.Service.Load",
+        "kind": "method",
+        "name": "Service.Load"
+      },
+      {
+        "fqn": "example.com/fixture/service.Service.Report",
+        "kind": "method",
+        "name": "Service.Report"
+      },
+      {
+        "fqn": "example.com/fixture/service.Service.Save",
+        "kind": "method",
+        "name": "Service.Save"
+      },
+      {
+        "fqn": "example.com/fixture/service.emptyError",
+        "kind": "struct",
+        "name": "emptyError"
+      },
+      {
+        "fqn": "example.com/fixture/service.emptyError.Error",
+        "kind": "method",
+        "name": "emptyError.Error"
+      },
+      {
+        "fqn": "example.com/fixture/service.errEmpty",
+        "kind": "var",
+        "name": "errEmpty"
+      },
+      {
+        "fqn": "example.com/fixture/service.validate",
+        "kind": "function",
+        "name": "validate"
+      }
+    ]
+  },
+  "status": 200
+}

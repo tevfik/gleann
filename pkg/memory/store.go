@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/tevfik/gleann/internal/analysis"
@@ -27,12 +28,13 @@ import (
 // makes an old binary's exclusive bbolt.Open time out, exactly as the old
 // exclusive bbolt lock did; any number of SQLite processes open concurrently.
 type Store struct {
-	writer     *sql.DB
-	reader     *sql.DB
-	path       string // legacy path passed to OpenStore; Path() returns it
-	sqlitePath string
-	guard      *os.File // shared-locked legacy-path file, held until Close
-	analyzer   analysis.Analyzer
+	writer       *sql.DB
+	reader       *sql.DB
+	path         string // legacy path passed to OpenStore; Path() returns it
+	sqlitePath   string
+	guard        *os.File // shared-locked legacy-path file, held until Close
+	analyzer     analysis.Analyzer
+	legacyWarned sync.Map // index names already reported by WarnLegacyKuzuOnce
 
 	// In-memory short-term cache (session-scoped).
 	shortTerm []Block

@@ -126,14 +126,8 @@ func Sync(ctx context.Context, opts SyncOptions) (*SyncResult, error) {
 	// Determine if graph indexing is requested or exists.
 	buildGraph := opts.Graph
 	if !buildGraph {
-		// KuzuDB stores the graph as a single file (newer releases) or a
-		// directory (older ones); either means a graph exists.
-		if _, err := os.Stat(filepath.Join(cfg.IndexDir, name+"_graph")); err == nil {
-			buildGraph = true
-		} else if format2GraphHasData(cfg.IndexDir, name) {
-			// A format-2 index keeps its graph in the index database.
-			buildGraph = true
-		}
+		// A format-2 index keeps its graph in the index database.
+		buildGraph = gleann.HasCodeGraph(cfg.IndexDir, name)
 	}
 
 	res := &SyncResult{Name: name, DocsDir: absDocsDir}
@@ -314,6 +308,13 @@ func Sync(ctx context.Context, opts SyncOptions) (*SyncResult, error) {
 			return nil, fmt.Errorf("updating lexical index: %w", err)
 		}
 		p.Printf("⚡ Lexical index updated in %s\n", time.Since(start).Round(time.Millisecond))
+		if builder.DatabaseRecreated() {
+			// The database was recreated (damaged, or from an incompatible
+			// build) and took the graph with it: rebuild it in full.
+			p.Printf("⚠️  The index database was recreated, so the code graph is rebuilt from the sources.\n")
+			buildGraph = true
+			graphOpts.ChangedFiles = nil
+		}
 		if buildGraph {
 			graphOpts.PluginDocs = pDocs
 			graphErr = buildGraphIndex(graphOpts, p)

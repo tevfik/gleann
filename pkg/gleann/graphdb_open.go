@@ -13,8 +13,8 @@ import (
 // The graph lives in the index's own SQLite database (RFC 003 sections 3.4
 // and 3.7), so this works in every build including CGO_ENABLED=0. It returns
 // (nil, nil) when the index is not format-2 or its graph tables hold no data;
-// the caller may then fall back to the Kùzu sidecar via GraphDBOpener. The
-// returned GraphDB owns its store: Close releases both.
+// the caller then reports NoCodeGraphError. The returned GraphDB owns its
+// store: Close releases both.
 func OpenGraphDB(indexDir, name string) (GraphDB, error) {
 	base := filepath.Join(indexDir, name, name)
 	if StoreFormatOf(base) != 2 {
@@ -48,4 +48,71 @@ type ownedGraphDB struct {
 func (d *ownedGraphDB) Close() {
 	d.GraphDB.Close()
 	d.st.Close()
+}
+
+// GraphStore is the format-2 code graph of an index opened for analysis
+// (communities, risk, repo map, REST and MCP tools): the graphstore handle
+// plus the index database it borrows. Close releases the database.
+type GraphStore struct {
+	*graphstore.SQLite
+	st *store.Store
+}
+
+// Close releases the index database.
+func (g *GraphStore) Close() { g.st.Close() }
+
+// GraphDB returns the GraphDB view of the same graph (callers, callees,
+// symbols in a file, impact, document TOC). Its Close is a no-op; the
+// GraphStore owns the database and closing it invalidates the view.
+func (g *GraphStore) GraphDB() GraphDB { return &sqliteGraphDB{g: g.SQLite} }
+
+// OpenGraphStore opens the SQLite code graph of a format-2 index (any build).
+// Like OpenGraphDB it returns (nil, nil) when the index is not format-2 or
+// its graph tables hold no data, so the caller can tell "no graph" from an
+// error. The returned handle owns its store; callers must Close it.
+func OpenGraphStore(indexDir, name string) (*GraphStore, error) {
+	base := filepath.Join(indexDir, name, name)
+	if StoreFormatOf(base) != 2 {
+		return nil, nil
+	}
+	st, err := store.Open(base+".db", store.Options{})
+	if err != nil {
+		return nil, fmt.Errorf("opening index store for graph analysis: %w", err)
+	}
+	gs := graphstore.New(st)
+	has, err := gs.HasData()
+	if err != nil {
+		st.Close()
+		return nil, fmt.Errorf("checking graph data of index %q: %w", name, err)
+	}
+	if !has {
+		st.Close()
+		return nil, nil
+	}
+	return &GraphStore{SQLite: gs, st: st}, nil
+}
+
+// HasCodeGraph reports whether the index has a code graph to query: the
+// graph data (symbols or documents) of a format-2 index in <name>.db. A
+// format-1 index has no code graph: its old Kùzu <name>_graph directory is
+// not read since Kùzu was removed (RFC 004 A3). It is the single probe behind
+// the TUI agent scope, the update endpoint's graph_stale flag,
+// `gleann benchmark` and sync.
+func HasCodeGraph(indexDir, name string) bool {
+	g, err := OpenGraphStore(indexDir, name)
+	if err == nil && g != nil {
+		g.Close()
+		return true
+	}
+	return false
+}
+
+// NoCodeGraphError is the error every graph command (CLI, REST, MCP, A2A)
+// returns for an index without a code graph. Only format 2 stores a code
+// graph, so the hint for a format-1 index names the conversion first.
+func NoCodeGraphError(indexDir, name string) error {
+	if DetectStoreFormat(filepath.Join(indexDir, name, name)) == StoreV1 {
+		return fmt.Errorf("index %q has no code graph yet: it uses the old store format, which has none; convert it with: gleann index migrate %s, then build the graph with: gleann index build %s --docs <dir> --graph", name, name, name)
+	}
+	return fmt.Errorf("index %q has no code graph yet; build it with: gleann index build %s --docs <dir> --graph", name, name)
 }

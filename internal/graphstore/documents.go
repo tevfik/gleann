@@ -9,6 +9,12 @@ import (
 	"strings"
 )
 
+// ErrDocumentNotFound is wrapped by the document lookups (DocumentContext,
+// DocumentTOC, FullDocument, DocumentSymbols) when no document matches the
+// path, so callers can tell a missing document from a failure (the REST
+// handlers answer 404 instead of 500).
+var ErrDocumentNotFound = errors.New("document not found")
+
 // DocNode is one row of the document hierarchy (doc_nodes, RFC 003 section
 // 3.4): a folder, document, heading or chunk with a parent pointer. The
 // single parent column replaces Kùzu's six node and relation tables; the
@@ -123,7 +129,7 @@ func (g *SQLite) findDocument(path string) (DocNode, error) {
 WHERE type = 'document' AND length(?) > 0 AND (substr(rpath, -length(?)) = ? OR substr(id, -length(?)) = ?)
 ORDER BY rpath, id LIMIT 1`, path, path, path, path, path))
 	if errors.Is(err, sql.ErrNoRows) {
-		return DocNode{}, fmt.Errorf("no document found with path %q", path)
+		return DocNode{}, fmt.Errorf("no document found with path %q: %w", path, ErrDocumentNotFound)
 	}
 	if err != nil {
 		return DocNode{}, fmt.Errorf("looking up document %q: %w", path, err)

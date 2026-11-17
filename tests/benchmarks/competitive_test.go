@@ -357,7 +357,7 @@ func TestCompetitive_FeatureMatrix(t *testing.T) {
 		{"Deployment", [5]string{"Embedded", "Embedded", "Client-Server", "Client-Server", "Client-Server"}},
 		{"Vector Index", [5]string{"HNSW+CSR", "Brute Force", "HNSW", "HNSW", "HNSW"}},
 		{"Hybrid Search", [5]string{"Vector+BM25", "No", "Sparse+Dense", "BM25+Vector", "No"}},
-		{"Graph DB", [5]string{"KuzuDB", "No", "No", "No", "No"}},
+		{"Graph DB", [5]string{"SQLite (embedded)", "No", "No", "No", "No"}},
 		{"AST Parsing", [5]string{"Tree-sitter", "No", "No", "No", "No"}},
 		{"LLM Integration", [5]string{"Ollama/OpenAI", "No", "No", "Generative", "No"}},
 		{"RAG Built-in", [5]string{"Yes", "No", "No", "Yes", "No"}},

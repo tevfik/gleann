@@ -1,5 +1,3 @@
-//go:build treesitter
-
 package community
 
 import (
@@ -131,7 +129,10 @@ func ComputeRiskScores(nodes []Node, edges []Edge, cfg RiskConfig) []RiskScore {
 
 	// Sort by score descending.
 	sort.Slice(results, func(i, j int) bool {
-		return results[i].Score > results[j].Score
+		if results[i].Score != results[j].Score {
+			return results[i].Score > results[j].Score
+		}
+		return results[i].ID < results[j].ID
 	})
 
 	return results
@@ -156,6 +157,8 @@ func FileRiskSummary(scores []RiskScore) []RiskScore {
 		if s.File == "" {
 			continue
 		}
+		// Scores arrive sorted (score desc, ID asc), so on equal scores the
+		// first symbol seen, the lowest ID, stays the file's representative.
 		if existing, ok := fileMax[s.File]; !ok || s.Score > existing.Score {
 			fileMax[s.File] = s
 		}
@@ -166,7 +169,10 @@ func FileRiskSummary(scores []RiskScore) []RiskScore {
 		result = append(result, *rs)
 	}
 	sort.Slice(result, func(i, j int) bool {
-		return result[i].Score > result[j].Score
+		if result[i].Score != result[j].Score {
+			return result[i].Score > result[j].Score
+		}
+		return result[i].File < result[j].File
 	})
 	return result
 }

@@ -1,8 +1,8 @@
 # AST Graph Indexer
 
-gleann can build a property graph of your codebase **in parallel** with the vector embedding index, using KuzuDB as the storage engine and tree-sitter (or `go/ast`) as the parser.
+gleann can build a property graph of your codebase **in parallel** with the vector embedding index, stored in the index's own SQLite database and parsed with `go/ast` (Go) and tree-sitter (other languages, `-tags treesitter`).
 
-**Format-2 indexes (`GLEANN_STORE_FORMAT=2`) keep the graph in the index database instead** (`<name>/<name>.db`, tables `symbols`, `edges`, `doc_nodes`, `doc_explains`; RFC 003 step 7) and build and serve it in every build, including the pure-Go `CGO_ENABLED=0` binary: `index build --graph`, `index sync` and `graph deps|callers|explain|path|query|toc` work there, and no `<name>_graph` Kùzu directory is created. Without tree-sitter the graph is extracted with `go/ast`: Go files get CALLS, IMPLEMENTS and REFERENCES edges, other languages contribute their declarations only. The analysis commands (`graph viz|report|communities|export|wiki|hook|map|risk`) still need a `-tags treesitter` build and a Kùzu graph.
+**Format-2 indexes (`GLEANN_STORE_FORMAT=2`) keep the graph in the index database** (`<name>/<name>.db`, tables `symbols`, `edges`, `doc_nodes`, `doc_explains`; RFC 003 step 7) and build and serve it in every build, including the pure-Go `CGO_ENABLED=0` binary: `index build --graph`, `index sync` and `graph deps|callers|explain|path|query|toc` work there, and no other graph store is created. Without tree-sitter the graph is extracted with `go/ast`: Go files get CALLS, IMPLEMENTS and REFERENCES edges, other languages contribute their declarations only. The analysis commands (`graph viz|report|communities|export|wiki|hook|map|risk`), the MCP tools `gleann_communities`, `gleann_risk_analysis`, `gleann_repo_map`, `gleann_navigate_symbol` and the REST/A2A graph endpoints run on this SQLite graph in every build. **Kùzu was removed (v1.20, RFC 004):** a format-1 index has no code graph; graph commands on it say so and name the conversion (`gleann index migrate <name>`), and `index build --graph` on it skips the graph with a notice. An old `<name>_graph` directory is never read; `gleann index remove` deletes it. Community detection, PageRank, risk, the repo map, export and viz are deterministic: the same graph gives the same output on every run. Raw Cypher (`POST /api/graph/{name}/query` with `cypher`, and the UI option) is removed.
 
 ## Usage
 
@@ -25,7 +25,7 @@ gleann search my-code "handleSearch" --graph
 
 ## Graph Schema
 
-The KuzuDB property graph models both source code ASTs and the structural layout of documents. For a deeper dive into document structures, see [Hierarchical GraphRAG](hierarchical_graphrag.md).
+The property graph models both source code ASTs and the structural layout of documents. For a deeper dive into document structures, see [Hierarchical GraphRAG](hierarchical_graphrag.md).
 
 | Node | Properties |
 |------|------------|
@@ -176,15 +176,7 @@ Output: `Token Reduction: 62.1x` — raw corpus tokens / RAG context tokens.
 
 ## Graph Index Performance
 
-Graph indexing was optimized using **KuzuDB CSV Bulk Load** (`COPY FROM`) instead of individual Cypher statements:
-
-| Method | 1500-file Go repo | Notes |
-|--------|------------------|---------|
-| Single statements (MERGE) | 8 min 31 sec | One transaction per symbol |
-| Batch statements (tx) | ~2 min | Chunked transactions |
-| **CSV Bulk Load (COPY FROM)** | **84 ms** | Current approach |
-
-FK integrity is enforced by filtering CALLS edges — only symbol-to-symbol references within the indexed codebase are stored (cross-package / stdlib calls are discarded).
+A full build replaces the graph in one bulk load (`graphstore.ReplaceAll`); an incremental sync applies one `FileDelta` per changed file in a transaction (`ApplyFileDelta`). Calls to symbols outside the indexed codebase (cross-module, stdlib) are kept as external edges (`dst_external`), never as symbol rows. Measured numbers against the former Kùzu store are in [benchmarks.md](benchmarks.md) and the graph-database benchmark (`make bench-graphdb`).
 
 ## Risk Scoring
 
@@ -241,9 +233,9 @@ Output example:
 - function `Search`
 - function `HybridSearch`
 
-### internal/graph/kuzu/kuzu.go
-- function `BuildGraph`
-- method `Query`
+### internal/graphstore/sqlite.go
+- function `New`
+- method `Callers`
 ```
 
 **Configuration:**

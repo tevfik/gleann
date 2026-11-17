@@ -84,14 +84,14 @@ jobs:
           path: test.log
 
       - name: Test (unit, treesitter tag)
-        # Runs the indexer, kuzu, and community packages that require CGo + the
-        # `treesitter` build tag. The default-tag run above silently
-        # skips these packages because every .go file inside them is
-        # build-tag-gated. We need this second pass to actually cover
-        # the AST/query/heuristics code paths.
+        # Runs the graph, graph store and indexing packages with CGo and the
+        # `treesitter` build tag, which adds the tree-sitter parsers (CALLS
+        # for non-Go languages). The default-tag run above covers the same
+        # packages without them; this pass covers the tree-sitter
+        # extraction, query and heuristics code paths.
         if: matrix.os != 'windows-latest'
         timeout-minutes: 10
-        run: GOTOOLCHAIN=auto CGO_ENABLED=1 go test -tags treesitter -race -timeout 8m -coverprofile=coverage-ts.out ./internal/graph/indexer/... ./internal/graph/kuzu/... ./internal/graph/community/...
+        run: GOTOOLCHAIN=auto CGO_ENABLED=1 go test -tags treesitter -race -timeout 8m -coverprofile=coverage-ts.out ./internal/graph/... ./internal/graphstore/... ./internal/indexing/...
         shell: bash
 
       - name: Test (unit, treesitter tag — modules/chunking)
@@ -119,6 +119,16 @@ jobs:
         run: |
           cd bench/graphdb
           GOTOOLCHAIN=auto CGO_ENABLED=0 go test -timeout 4m ./...
+        shell: bash
+
+      - name: Build and test (tools/kuzu-memory-export, CGo)
+        # Exporter of v1.9 Kùzu memory stores; a nested module with the Kùzu
+        # binding, so the main module and the other jobs never compile it.
+        if: matrix.os == 'ubuntu-latest'
+        timeout-minutes: 10
+        run: |
+          cd tools/kuzu-memory-export
+          GOTOOLCHAIN=auto CGO_ENABLED=1 go build ./... && GOTOOLCHAIN=auto CGO_ENABLED=1 go test ./...
         shell: bash
 
       - name: Upload coverage to Codecov

@@ -1,0 +1,48 @@
+## Repository Map (by importance)
+
+### service/service.go
+- method `example.com/fixture/service.Service.Load`
+- function `example.com/fixture/service.New`
+- function `example.com/fixture/service.validate`
+- method `example.com/fixture/service.Service.Report`
+- method `example.com/fixture/service.Service.Save`
+- struct `example.com/fixture/service.Service`
+- struct `example.com/fixture/service.emptyError`
+- method `example.com/fixture/service.emptyError.Error`
+- var `example.com/fixture/service.errEmpty`
+
+### py/app.py
+- class `example.com/fixture/py.Registry`
+- method `example.com/fixture/py.__init__`
+- method `example.com/fixture/py.add`
+- function `example.com/fixture/py.build_registry`
+- method `example.com/fixture/py.describe`
+- function `example.com/fixture/py.main`
+
+### store/store.go
+- function `example.com/fixture/store.NewMemStore`
+- function `example.com/fixture/store.normalize`
+- struct `example.com/fixture/store.MemStore`
+
+### rs/main.rs
+- struct `example.com/fixture/rs.Counter`
+- function `example.com/fixture/rs.main`
+- function `example.com/fixture/rs.run_all`
+- module `example.com/fixture/rs.util`
+
+### main.go
+- function `example.com/fixture.run`
+- function `example.com/fixture.main`
+
+### py/util.py
+- function `example.com/fixture/py.clean`
+- function `example.com/fixture/py.join_words`
+
+### rs/util.rs
+- function `example.com/fixture/rs.clamp`
+- function `example.com/fixture/rs.double`
+
+### service/service_test.go
+- function `example.com/fixture/service.TestReport`
+- function `example.com/fixture/service.TestSaveLoad`
+

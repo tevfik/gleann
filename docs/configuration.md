@@ -310,7 +310,7 @@ gleann index storage docs --set store                       # convert in place (
 --continue-last         # Continue the most recent conversation
 --title <title>         # Set conversation title
 --role <role>           # Use a named role (code, shell, explain, summarize, or custom)
---agent                 # Enable ReAct Agent mode (with access to KuzuDB and full documents)
+--agent                 # Enable ReAct Agent mode (with access to the code graph and full documents)
 --graph                 # Inject AST and structural document context into the LLM prompt
 --format <fmt>          # Output format: json, markdown, raw
 --raw                   # Output raw text (no formatting); auto-enabled when piped

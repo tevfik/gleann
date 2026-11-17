@@ -1,7 +1,7 @@
-# ── Stage 1: Build (CGo enabled for tree-sitter + KuzuDB) ────────────────────
+# ── Stage 1: Build (CGo enabled for tree-sitter) ─────────────────────────────
 FROM golang:1.24-bookworm AS builder
 
-# Install tree-sitter and KuzuDB build dependencies.
+# Install tree-sitter build dependencies.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     cmake \

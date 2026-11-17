@@ -1,0 +1,255 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<graphml xmlns="http://graphml.graphstruct.org/graphml"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xsi:schemaLocation="http://graphml.graphstruct.org/graphml http://graphml.graphstruct.org/xmlns/1.0/graphml.xsd">
+  <key id="d0" for="node" attr.name="label" attr.type="string"/>
+  <key id="d1" for="node" attr.name="kind" attr.type="string"/>
+  <key id="d2" for="node" attr.name="file" attr.type="string"/>
+  <key id="d3" for="edge" attr.name="relation" attr.type="string"/>
+  <graph id="G" edgemode="directed">
+    <node id="example.com/fixture.main">
+      <data key="d0">main</data>
+      <data key="d1">function</data>
+      <data key="d2">main.go</data>
+    </node>
+    <node id="example.com/fixture.run">
+      <data key="d0">run</data>
+      <data key="d1">function</data>
+      <data key="d2">main.go</data>
+    </node>
+    <node id="example.com/fixture/py.Registry">
+      <data key="d0">Registry</data>
+      <data key="d1">class</data>
+      <data key="d2">py/app.py</data>
+    </node>
+    <node id="example.com/fixture/py.__init__">
+      <data key="d0">__init__</data>
+      <data key="d1">method</data>
+      <data key="d2">py/app.py</data>
+    </node>
+    <node id="example.com/fixture/py.add">
+      <data key="d0">add</data>
+      <data key="d1">method</data>
+      <data key="d2">py/app.py</data>
+    </node>
+    <node id="example.com/fixture/py.build_registry">
+      <data key="d0">build_registry</data>
+      <data key="d1">function</data>
+      <data key="d2">py/app.py</data>
+    </node>
+    <node id="example.com/fixture/py.clean">
+      <data key="d0">clean</data>
+      <data key="d1">function</data>
+      <data key="d2">py/util.py</data>
+    </node>
+    <node id="example.com/fixture/py.describe">
+      <data key="d0">describe</data>
+      <data key="d1">method</data>
+      <data key="d2">py/app.py</data>
+    </node>
+    <node id="example.com/fixture/py.join_words">
+      <data key="d0">join_words</data>
+      <data key="d1">function</data>
+      <data key="d2">py/util.py</data>
+    </node>
+    <node id="example.com/fixture/py.main">
+      <data key="d0">main</data>
+      <data key="d1">function</data>
+      <data key="d2">py/app.py</data>
+    </node>
+    <node id="example.com/fixture/rs.Counter">
+      <data key="d0">Counter</data>
+      <data key="d1">struct</data>
+      <data key="d2">rs/main.rs</data>
+    </node>
+    <node id="example.com/fixture/rs.clamp">
+      <data key="d0">clamp</data>
+      <data key="d1">function</data>
+      <data key="d2">rs/util.rs</data>
+    </node>
+    <node id="example.com/fixture/rs.double">
+      <data key="d0">double</data>
+      <data key="d1">function</data>
+      <data key="d2">rs/util.rs</data>
+    </node>
+    <node id="example.com/fixture/rs.main">
+      <data key="d0">main</data>
+      <data key="d1">function</data>
+      <data key="d2">rs/main.rs</data>
+    </node>
+    <node id="example.com/fixture/rs.run_all">
+      <data key="d0">run_all</data>
+      <data key="d1">function</data>
+      <data key="d2">rs/main.rs</data>
+    </node>
+    <node id="example.com/fixture/rs.util">
+      <data key="d0">util</data>
+      <data key="d1">module</data>
+      <data key="d2">rs/main.rs</data>
+    </node>
+    <node id="example.com/fixture/service.New">
+      <data key="d0">New</data>
+      <data key="d1">function</data>
+      <data key="d2">service/service.go</data>
+    </node>
+    <node id="example.com/fixture/service.Service">
+      <data key="d0">Service</data>
+      <data key="d1">struct</data>
+      <data key="d2">service/service.go</data>
+    </node>
+    <node id="example.com/fixture/service.Service.Load">
+      <data key="d0">Service.Load</data>
+      <data key="d1">method</data>
+      <data key="d2">service/service.go</data>
+    </node>
+    <node id="example.com/fixture/service.Service.Report">
+      <data key="d0">Service.Report</data>
+      <data key="d1">method</data>
+      <data key="d2">service/service.go</data>
+    </node>
+    <node id="example.com/fixture/service.Service.Save">
+      <data key="d0">Service.Save</data>
+      <data key="d1">method</data>
+      <data key="d2">service/service.go</data>
+    </node>
+    <node id="example.com/fixture/service.TestReport">
+      <data key="d0">TestReport</data>
+      <data key="d1">function</data>
+      <data key="d2">service/service_test.go</data>
+    </node>
+    <node id="example.com/fixture/service.TestSaveLoad">
+      <data key="d0">TestSaveLoad</data>
+      <data key="d1">function</data>
+      <data key="d2">service/service_test.go</data>
+    </node>
+    <node id="example.com/fixture/service.emptyError">
+      <data key="d0">emptyError</data>
+      <data key="d1">struct</data>
+      <data key="d2">service/service.go</data>
+    </node>
+    <node id="example.com/fixture/service.emptyError.Error">
+      <data key="d0">emptyError.Error</data>
+      <data key="d1">method</data>
+      <data key="d2">service/service.go</data>
+    </node>
+    <node id="example.com/fixture/service.errEmpty">
+      <data key="d0">errEmpty</data>
+      <data key="d1">var</data>
+      <data key="d2">service/service.go</data>
+    </node>
+    <node id="example.com/fixture/service.validate">
+      <data key="d0">validate</data>
+      <data key="d1">function</data>
+      <data key="d2">service/service.go</data>
+    </node>
+    <node id="example.com/fixture/store.MemStore">
+      <data key="d0">MemStore</data>
+      <data key="d1">struct</data>
+      <data key="d2">store/store.go</data>
+    </node>
+    <node id="example.com/fixture/store.MemStore.Get">
+      <data key="d0">MemStore.Get</data>
+      <data key="d1">method</data>
+      <data key="d2">store/store.go</data>
+    </node>
+    <node id="example.com/fixture/store.MemStore.Keys">
+      <data key="d0">MemStore.Keys</data>
+      <data key="d1">method</data>
+      <data key="d2">store/store.go</data>
+    </node>
+    <node id="example.com/fixture/store.MemStore.Put">
+      <data key="d0">MemStore.Put</data>
+      <data key="d1">method</data>
+      <data key="d2">store/store.go</data>
+    </node>
+    <node id="example.com/fixture/store.NewMemStore">
+      <data key="d0">NewMemStore</data>
+      <data key="d1">function</data>
+      <data key="d2">store/store.go</data>
+    </node>
+    <node id="example.com/fixture/store.Store">
+      <data key="d0">Store</data>
+      <data key="d1">interface</data>
+      <data key="d2">store/store.go</data>
+    </node>
+    <node id="example.com/fixture/store.normalize">
+      <data key="d0">normalize</data>
+      <data key="d1">function</data>
+      <data key="d2">store/store.go</data>
+    </node>
+    <node id="example.com/fixture/ts.Shape">
+      <data key="d0">Shape</data>
+      <data key="d1">interface</data>
+      <data key="d2">ts/app.ts</data>
+    </node>
+    <node id="example.com/fixture/ts.Square">
+      <data key="d0">Square</data>
+      <data key="d1">class</data>
+      <data key="d2">ts/app.ts</data>
+    </node>
+    <node id="example.com/fixture/ts.describeAll">
+      <data key="d0">describeAll</data>
+      <data key="d1">function</data>
+      <data key="d2">ts/app.ts</data>
+    </node>
+    <node id="example.com/fixture/ts.main">
+      <data key="d0">main</data>
+      <data key="d1">function</data>
+      <data key="d2">ts/app.ts</data>
+    </node>
+    <node id="example.com/fixture/ts.pluralize">
+      <data key="d0">pluralize</data>
+      <data key="d1">function</data>
+      <data key="d2">ts/util.ts</data>
+    </node>
+    <node id="example.com/fixture/ts.slug">
+      <data key="d0">slug</data>
+      <data key="d1">function</data>
+      <data key="d2">ts/util.ts</data>
+    </node>
+    <node id="example.com/fixture/ts.totalArea">
+      <data key="d0">totalArea</data>
+      <data key="d1">function</data>
+      <data key="d2">ts/app.ts</data>
+    </node>
+    <edge id="e0" source="example.com/fixture.main" target="example.com/fixture.run">
+      <data key="d3">CALLS</data>
+    </edge>
+    <edge id="e1" source="example.com/fixture.main" target="example.com/fixture/service.New">
+      <data key="d3">CALLS</data>
+    </edge>
+    <edge id="e2" source="example.com/fixture.main" target="example.com/fixture/service.Service.Report">
+      <data key="d3">CALLS</data>
+    </edge>
+    <edge id="e3" source="example.com/fixture.main" target="example.com/fixture/service.Service.Save">
+      <data key="d3">CALLS</data>
+    </edge>
+    <edge id="e4" source="example.com/fixture.main" target="example.com/fixture/store.NewMemStore">
+      <data key="d3">CALLS</data>
+    </edge>
+    <edge id="e5" source="example.com/fixture.run" target="example.com/fixture/service.Service.Load">
+      <data key="d3">CALLS</data>
+    </edge>
+    <edge id="e6" source="example.com/fixture/service.Service.Report" target="example.com/fixture/service.Service.Load">
+      <data key="d3">CALLS</data>
+    </edge>
+    <edge id="e7" source="example.com/fixture/service.Service.Save" target="example.com/fixture/service.validate">
+      <data key="d3">CALLS</data>
+    </edge>
+    <edge id="e8" source="example.com/fixture/service.TestReport" target="example.com/fixture/service.New">
+      <data key="d3">CALLS</data>
+    </edge>
+    <edge id="e9" source="example.com/fixture/service.TestReport" target="example.com/fixture/store.NewMemStore">
+      <data key="d3">CALLS</data>
+    </edge>
+    <edge id="e10" source="example.com/fixture/service.TestSaveLoad" target="example.com/fixture/service.New">
+      <data key="d3">CALLS</data>
+    </edge>
+    <edge id="e11" source="example.com/fixture/service.TestSaveLoad" target="example.com/fixture/store.NewMemStore">
+      <data key="d3">CALLS</data>
+    </edge>
+    <edge id="e12" source="example.com/fixture/store.MemStore.Put" target="example.com/fixture/store.normalize">
+      <data key="d3">CALLS</data>
+    </edge>
+  </graph>
+</graphml>

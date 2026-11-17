@@ -1,11 +1,10 @@
-//go:build treesitter
-
 package mcp
 
 import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -13,27 +12,96 @@ import (
 
 	mcpsdk "github.com/mark3labs/mcp-go/mcp"
 	"github.com/tevfik/gleann/internal/graph/community"
-	kgraph "github.com/tevfik/gleann/internal/graph/kuzu"
+	"github.com/tevfik/gleann/internal/graphstore"
 	"github.com/tevfik/gleann/pkg/gleann"
 )
 
-// ── Graph DB pool for community detection ────────────────────────────────
+// ── Graph pool for the analysis tools ────────────────────────────────────
 
-// graphPool caches open KuzuDB handles for community detection queries.
+// analysisGraph is the code graph of one index as the analysis tools
+// (communities, risk, repo map, navigate) need it: the format-2 SQLite graph,
+// in every build.
+type analysisGraph interface {
+	// CallGraph is the CALLS-only view (every symbol, internal CALLS edges).
+	CallGraph() (*community.Graph, error)
+	// FullGraph adds the file nodes, their DECLARES links and IMPLEMENTS edges.
+	FullGraph() (*community.Graph, error)
+	Communities(godNodeThreshold, maxSurprising int) (*community.Result, error)
+	SymbolCount() (int, error)
+	// InDegreeTop lists the most-called symbols (internal CALLS edges), most
+	// calls first, ties by FQN, without the given symbol kinds.
+	InDegreeTop(n int, excludeKinds ...string) ([]graphstore.InDegree, error)
+	// Declarations lists up to limit declared symbols, ordered by FQN,
+	// without the given kinds.
+	Declarations(limit int, excludeKinds ...string) ([]graphstore.Symbol, error)
+	// DB is the GraphDB view (callers, callees, symbol search).
+	DB() gleann.GraphDB
+	Close()
+}
+
+// storeGraph is the format-2 analysisGraph.
+type storeGraph struct{ g *gleann.GraphStore }
+
+func (s storeGraph) CallGraph() (*community.Graph, error) {
+	return community.LoadCallGraphFromStore(s.g.SQLite)
+}
+func (s storeGraph) FullGraph() (*community.Graph, error) {
+	return community.LoadGraphFromStore(s.g.SQLite)
+}
+func (s storeGraph) Communities(god, maxSurprising int) (*community.Result, error) {
+	return community.FromStore(s.g.SQLite, god, maxSurprising)
+}
+func (s storeGraph) SymbolCount() (int, error) {
+	st, err := s.g.Stats()
+	return st.Symbols, err
+}
+func (s storeGraph) InDegreeTop(n int, excludeKinds ...string) ([]graphstore.InDegree, error) {
+	return s.g.InDegreeTopExcluding(n, excludeKinds...)
+}
+func (s storeGraph) Declarations(limit int, excludeKinds ...string) ([]graphstore.Symbol, error) {
+	all, err := s.g.AllSymbols()
+	if err != nil {
+		return nil, err
+	}
+	skip := map[string]bool{}
+	for _, k := range excludeKinds {
+		skip[k] = true
+	}
+	var out []graphstore.Symbol
+	for _, sym := range all {
+		if sym.File == "" || skip[sym.Kind] {
+			continue
+		}
+		out = append(out, sym)
+		if limit > 0 && len(out) >= limit {
+			break
+		}
+	}
+	return out, nil
+}
+func (s storeGraph) DB() gleann.GraphDB { return s.g.GraphDB() }
+func (s storeGraph) Close()             { s.g.Close() }
+
+// graphPool caches one open code graph per index so repeated tool calls do not
+// reopen it; evictGraph / closeGraphPool release the handles (index remove or
+// migrate must be able to delete the files on Windows).
 type graphPool struct {
 	mu  sync.Mutex
-	dbs map[string]*kgraph.DB
+	dbs map[string]analysisGraph
 	dir string
 }
 
 func newGraphPool(indexDir string) *graphPool {
 	return &graphPool{
-		dbs: make(map[string]*kgraph.DB),
+		dbs: make(map[string]analysisGraph),
 		dir: indexDir,
 	}
 }
 
-func (p *graphPool) get(name string) (*kgraph.DB, error) {
+// get returns the open graph of an index, opening it on first use. An index
+// without graph data is an error and is not cached, so a graph built later is
+// picked up by the next call.
+func (p *graphPool) get(name string) (analysisGraph, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if db, ok := p.dbs[name]; ok {
@@ -42,11 +110,14 @@ func (p *graphPool) get(name string) (*kgraph.DB, error) {
 	if err := gleann.ValidateName(name); err != nil {
 		return nil, err
 	}
-	dbPath := filepath.Join(p.dir, name+"_graph")
-	db, err := kgraph.Open(dbPath)
+	g, err := gleann.OpenGraphStore(p.dir, name)
 	if err != nil {
 		return nil, err
 	}
+	if g == nil {
+		return nil, gleann.NoCodeGraphError(p.dir, name)
+	}
+	db := storeGraph{g}
 	p.dbs[name] = db
 	return db, nil
 }
@@ -66,11 +137,10 @@ func (p *graphPool) closeAll() {
 	for _, db := range p.dbs {
 		db.Close()
 	}
-	p.dbs = make(map[string]*kgraph.DB)
+	p.dbs = make(map[string]analysisGraph)
 }
 
-// initGraphPool initializes the graph pool for community detection tools.
-// Called during NewServer if treesitter is available.
+// initGraphPool initializes the graph pool for the analysis tools.
 func (s *Server) initGraphPool() {
 	s.gPool = newGraphPool(s.config.IndexDir)
 }
@@ -89,13 +159,51 @@ func (s *Server) evictGraph(name string) {
 	}
 }
 
-// registerGraphTools registers community detection, risk analysis, and
-// repo map tools. Only available with treesitter build tag.
+// registerGraphTools registers community detection, risk analysis, repo map
+// and symbol navigation. They run on the format-2 SQLite graph in every build;
+// withdrawGraphTools removes them when no format-2 graph can exist.
 func (s *Server) registerGraphTools() {
 	s.addTool(s.buildCommunitiesTool(), s.handleCommunities)
 	s.addTool(s.buildRiskAnalysisTool(), s.handleRiskAnalysis)
 	s.addTool(s.buildRepoMapTool(), s.handleRepoMap)
 	s.addTool(s.buildNavigateSymbolTool(), s.handleNavigateSymbol)
+	s.withdrawGraphTools()
+}
+
+// withdrawGraphTools removes the graph-only tools unless a format-2 graph can
+// exist in this index directory, so the manifest does not advertise tools
+// that can only fail. Only format 2 stores a code graph (RFC 004 A3).
+// gleann_def is always kept: it falls back to vector search without a graph.
+func (s *Server) withdrawGraphTools() {
+	if sqliteGraphAvailable(s.config.IndexDir) {
+		return
+	}
+	names := make([]string, 0, len(graphOnlyTools))
+	for _, n := range graphOnlyTools {
+		if s.cleanToolNames {
+			n = strings.TrimPrefix(n, "gleann_")
+		}
+		names = append(names, n)
+	}
+	s.mcpServer.DeleteTools(names...)
+}
+
+// sqliteGraphAvailable reports whether new indexes are built in format 2
+// (GLEANN_STORE_FORMAT=2) or an existing index in indexDir is format 2.
+func sqliteGraphAvailable(indexDir string) bool {
+	if strings.TrimSpace(os.Getenv("GLEANN_STORE_FORMAT")) == "2" {
+		return true
+	}
+	entries, err := os.ReadDir(indexDir)
+	if err != nil {
+		return false
+	}
+	for _, e := range entries {
+		if e.IsDir() && gleann.StoreFormatOf(filepath.Join(indexDir, e.Name(), e.Name())) == 2 {
+			return true
+		}
+	}
+	return false
 }
 
 // ── Communities Tool ─────────────────────────────────────────────────────
@@ -128,12 +236,12 @@ func (s *Server) handleCommunities(ctx context.Context, request mcpsdk.CallToolR
 		return mcpsdk.NewToolResultError("index is required"), nil
 	}
 
-	db, err := s.gPool.get(indexName)
+	ag, err := s.gPool.get(indexName)
 	if err != nil {
 		return mcpsdk.NewToolResultError(fmt.Sprintf("Error opening graph %q: %v", indexName, err)), nil
 	}
 
-	result, err := community.FromKuzu(db, 5, 20)
+	result, err := ag.Communities(5, 20)
 	if err != nil {
 		return mcpsdk.NewToolResultError(fmt.Sprintf("Community detection failed: %v", err)), nil
 	}
@@ -222,22 +330,16 @@ func (s *Server) handleRiskAnalysis(ctx context.Context, request mcpsdk.CallTool
 
 	byFile, _ := args["by_file"].(bool)
 
-	db, err := s.gPool.get(indexName)
+	ag, err := s.gPool.get(indexName)
 	if err != nil {
 		return mcpsdk.NewToolResultError(fmt.Sprintf("Error opening graph %q: %v", indexName, err)), nil
 	}
 
-	// Check graph size to choose between in-memory PageRank and fast Cypher aggregation
-	var totalSymbols int64
-	if cntRes, err := db.Conn().Query(`MATCH (s:Symbol) RETURN count(s) AS c`); err == nil {
-		if cntRes.HasNext() {
-			row, _ := cntRes.Next()
-			m, _ := row.GetAsMap()
-			if c, ok := m["c"].(int64); ok {
-				totalSymbols = c
-			}
-		}
-		cntRes.Close()
+	// Check graph size to choose between in-memory PageRank and the fast
+	// in-degree aggregation.
+	totalSymbols, err := ag.SymbolCount()
+	if err != nil {
+		return mcpsdk.NewToolResultError(fmt.Sprintf("Query error: %v", err)), nil
 	}
 
 	if totalSymbols == 0 {
@@ -247,80 +349,54 @@ func (s *Server) handleRiskAnalysis(ctx context.Context, request mcpsdk.CallTool
 	var sb strings.Builder
 
 	if totalSymbols > 2000 {
-		// Fast path for large graphs: aggregate hub symbols directly in KùzuDB in milliseconds
+		// Fast path for large graphs: aggregate hub symbols straight from the
+		// edge table (a GROUP BY, milliseconds) instead of running PageRank.
+		riskLevel := func(callers int) string {
+			switch {
+			case callers >= 50:
+				return "CRITICAL"
+			case callers >= 20:
+				return "HIGH"
+			case callers >= 5:
+				return "MEDIUM"
+			}
+			return "LOW"
+		}
 		if byFile {
-			query := fmt.Sprintf(`
-				MATCH (caller:Symbol)-[:CALLS]->(s:Symbol)
-				WHERE s.file IS NOT NULL AND s.file <> ''
-				RETURN s.file AS file, s.name AS top_symbol, count(caller) AS callers
-				ORDER BY callers DESC
-				LIMIT %d
-			`, topN)
-			res, err := db.Conn().Query(query)
+			top, err := ag.InDegreeTop(topN)
 			if err != nil {
 				return mcpsdk.NewToolResultError(fmt.Sprintf("Query error: %v", err)), nil
 			}
-			defer res.Close()
 			sb.WriteString(fmt.Sprintf("File Risk Analysis — %s (top %d)\n\n", indexName, topN))
 			sb.WriteString(fmt.Sprintf("%-50s %-10s %-8s %s\n", "FILE", "RISK", "SCORE", "TOP SYMBOL"))
 			sb.WriteString(strings.Repeat("─", 90) + "\n")
-			for res.HasNext() {
-				row, _ := res.Next()
-				m, _ := row.GetAsMap()
-				callers := m["callers"].(int64)
-				risk := "LOW"
-				if callers >= 50 {
-					risk = "CRITICAL"
-				} else if callers >= 20 {
-					risk = "HIGH"
-				} else if callers >= 5 {
-					risk = "MEDIUM"
-				}
-				score := float64(callers) / 100.0
+			for _, d := range top {
 				sb.WriteString(fmt.Sprintf("%-50s %-10s %.4f   %s\n",
-					truncPath(fmt.Sprint(m["file"]), 48), risk, score, fmt.Sprint(m["top_symbol"])))
+					truncPath(d.File, 48), riskLevel(d.InDegree), float64(d.InDegree)/100.0, d.Name))
 			}
 		} else {
-			query := fmt.Sprintf(`
-				MATCH (caller:Symbol)-[:CALLS]->(s:Symbol)
-				WHERE s.file IS NOT NULL AND s.file <> '' AND s.kind <> 'macro'
-				RETURN s.name AS name, s.kind AS kind, s.file AS file, count(caller) AS in_degree
-				ORDER BY in_degree DESC
-				LIMIT %d
-			`, topN)
-			res, err := db.Conn().Query(query)
+			top, err := ag.InDegreeTop(topN, "macro")
 			if err != nil {
 				return mcpsdk.NewToolResultError(fmt.Sprintf("Query error: %v", err)), nil
 			}
-			defer res.Close()
 			sb.WriteString(fmt.Sprintf("Symbol Risk Analysis — %s (top %d)\n\n", indexName, topN))
 			sb.WriteString(fmt.Sprintf("%-40s %-10s %-10s %-6s %-6s %-6s %s\n",
 				"SYMBOL", "KIND", "RISK", "IN", "OUT", "BLAST", "SCORE"))
 			sb.WriteString(strings.Repeat("─", 100) + "\n")
-			for res.HasNext() {
-				row, _ := res.Next()
-				m, _ := row.GetAsMap()
-				inDeg := m["in_degree"].(int64)
-				risk := "LOW"
-				if inDeg >= 50 {
-					risk = "CRITICAL"
-				} else if inDeg >= 20 {
-					risk = "HIGH"
-				} else if inDeg >= 5 {
-					risk = "MEDIUM"
-				}
-				score := float64(inDeg) / 100.0
+			for _, d := range top {
 				sb.WriteString(fmt.Sprintf("%-40s %-10s %-10s %-6d %-6d %-6d %.4f\n",
-					truncPath(fmt.Sprint(m["name"]), 38), fmt.Sprint(m["kind"]), risk,
-					inDeg, 0, inDeg, score))
+					truncPath(d.Name, 38), d.Kind, riskLevel(d.InDegree),
+					d.InDegree, 0, d.InDegree, float64(d.InDegree)/100.0))
 			}
 		}
 		return mcpsdk.NewToolResultText(sb.String()), nil
 	}
 
 	// Small graph: full in-memory community graph analysis
-	g := community.NewGraph()
-	loadGraphFromKuzu(db, g)
+	g, err := ag.CallGraph()
+	if err != nil {
+		return mcpsdk.NewToolResultError(fmt.Sprintf("Error loading graph %q: %v", indexName, err)), nil
+	}
 	nodes, edges := g.ExportForAnalysis()
 
 	if len(nodes) == 0 {
@@ -408,7 +484,7 @@ func (s *Server) handleRepoMap(ctx context.Context, request mcpsdk.CallToolReque
 		maxTokens = int(mt)
 	}
 
-	db, err := s.gPool.get(indexName)
+	ag, err := s.gPool.get(indexName)
 	if err != nil {
 		return mcpsdk.NewToolResultError(fmt.Sprintf("Error opening graph %q: %v", indexName, err)), nil
 	}
@@ -429,7 +505,7 @@ func (s *Server) handleRepoMap(ctx context.Context, request mcpsdk.CallToolReque
 	var fallbackItems []repoMapItem
 
 	// Primary path: compute true PageRank centrality across the entire AST code graph
-	if g, err := community.LoadGraphFromKuzu(db); err == nil && g.NodeCount() > 0 {
+	if g, err := ag.FullGraph(); err == nil && g.NodeCount() > 0 {
 		nodes, edges := g.ExportForAnalysis()
 		ranks := community.PageRank(nodes, edges, 0.85, 30)
 
@@ -452,54 +528,30 @@ func (s *Server) handleRepoMap(ctx context.Context, request mcpsdk.CallToolReque
 			}
 		}
 
-		sort.Slice(cleanItems, func(i, j int) bool {
-			return cleanItems[i].Score > cleanItems[j].Score
-		})
-		sort.Slice(fallbackItems, func(i, j int) bool {
-			return fallbackItems[i].Score > fallbackItems[j].Score
-		})
+		byScore := func(items []repoMapItem) func(i, j int) bool {
+			return func(i, j int) bool {
+				if items[i].Score != items[j].Score {
+					return items[i].Score > items[j].Score
+				}
+				return items[i].FQN < items[j].FQN
+			}
+		}
+		sort.Slice(cleanItems, byScore(cleanItems))
+		sort.Slice(fallbackItems, byScore(fallbackItems))
 	}
 
-	// Secondary path: if no graph/edges loaded, fallback to Cypher caller count query
+	// Secondary path: if no graph/edges loaded, fall back to the caller counts.
 	if len(cleanItems) == 0 && len(fallbackItems) == 0 {
-		candidateLimit := topK * 10
-		if candidateLimit < 100 {
-			candidateLimit = 100
-		}
-		query := fmt.Sprintf(`
-			MATCH (caller:Symbol)-[:CALLS]->(s:Symbol)
-			WHERE s.file IS NOT NULL AND s.file <> '' AND s.kind <> 'macro'
-			RETURN s.fqn AS fqn, s.name AS name, s.kind AS kind, s.file AS file, count(caller) AS callers
-			ORDER BY callers DESC
-			LIMIT %d
-		`, candidateLimit)
-
-		res, err := db.Conn().Query(query)
+		top, err := ag.InDegreeTop(candidateLimit, "macro")
 		if err == nil {
-			for res.HasNext() {
-				row, err := res.Next()
-				if err != nil {
-					break
-				}
-				m, _ := row.GetAsMap()
-				score := 0.0
-				if sc, ok := m["callers"].(int64); ok {
-					score = float64(sc)
-				}
-				item := repoMapItem{
-					FQN:   fmt.Sprint(m["fqn"]),
-					Name:  fmt.Sprint(m["name"]),
-					Kind:  fmt.Sprint(m["kind"]),
-					File:  fmt.Sprint(m["file"]),
-					Score: score,
-				}
+			for _, d := range top {
+				item := repoMapItem{FQN: d.FQN, Name: d.Name, Kind: d.Kind, File: d.File, Score: float64(d.InDegree)}
 				if isNoisePath(item.File) || isNoiseSymbol(item.Name, item.Kind) {
 					fallbackItems = append(fallbackItems, item)
 				} else {
 					cleanItems = append(cleanItems, item)
 				}
 			}
-			res.Close()
 		}
 	}
 
@@ -517,35 +569,15 @@ func (s *Server) handleRepoMap(ctx context.Context, request mcpsdk.CallToolReque
 
 	// Fallback if no CALLS edges exist in the graph (e.g. declarations only)
 	if len(items) == 0 {
-		fallbackQuery := fmt.Sprintf(`
-			MATCH (s:Symbol)
-			WHERE s.file IS NOT NULL AND s.file <> '' AND s.kind <> 'macro'
-			RETURN s.fqn AS fqn, s.name AS name, s.kind AS kind, s.file AS file, 1 AS callers
-			LIMIT %d
-		`, candidateLimit)
-		resFallback, err := db.Conn().Query(fallbackQuery)
-		if err == nil {
-			for resFallback.HasNext() {
-				row, err := resFallback.Next()
-				if err != nil {
-					break
-				}
-				m, _ := row.GetAsMap()
-				item := repoMapItem{
-					FQN:   fmt.Sprint(m["fqn"]),
-					Name:  fmt.Sprint(m["name"]),
-					Kind:  fmt.Sprint(m["kind"]),
-					File:  fmt.Sprint(m["file"]),
-					Score: 1.0,
-				}
+		if decls, err := ag.Declarations(candidateLimit, "macro"); err == nil {
+			for _, d := range decls {
+				item := repoMapItem{FQN: d.FQN, Name: d.Name, Kind: d.Kind, File: d.File, Score: 1.0}
 				if isNoisePath(item.File) || isNoiseSymbol(item.Name, item.Kind) {
 					fallbackItems = append(fallbackItems, item)
 				} else {
 					cleanItems = append(cleanItems, item)
 				}
 			}
-			resFallback.Close()
-
 			if len(cleanItems) >= topK {
 				items = cleanItems[:topK]
 			} else {
@@ -597,7 +629,10 @@ func (s *Server) handleRepoMap(ctx context.Context, request mcpsdk.CallToolReque
 		files = append(files, fileEntry{file: f, total: total, entries: entries})
 	}
 	sort.Slice(files, func(i, j int) bool {
-		return files[i].total > files[j].total
+		if files[i].total != files[j].total {
+			return files[i].total > files[j].total
+		}
+		return files[i].file < files[j].file
 	})
 
 	var sb strings.Builder
@@ -626,33 +661,6 @@ func (s *Server) handleRepoMap(ctx context.Context, request mcpsdk.CallToolReque
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────
-
-// loadGraphFromKuzu populates a community.Graph from KuzuDB.
-func loadGraphFromKuzu(db *kgraph.DB, g *community.Graph) {
-	res, err := db.Conn().Query(`MATCH (s:Symbol) RETURN s.fqn AS fqn, s.name AS name, s.kind AS kind, s.file AS file`)
-	if err == nil {
-		for res.HasNext() {
-			row, _ := res.Next()
-			m, _ := row.GetAsMap()
-			g.AddNode(community.Node{
-				ID:   fmt.Sprint(m["fqn"]),
-				Name: fmt.Sprint(m["name"]),
-				Kind: fmt.Sprint(m["kind"]),
-				File: fmt.Sprint(m["file"]),
-			})
-		}
-		res.Close()
-	}
-	res2, err := db.Conn().Query(`MATCH (a:Symbol)-[:CALLS]->(b:Symbol) RETURN a.fqn AS from, b.fqn AS to`)
-	if err == nil {
-		for res2.HasNext() {
-			row, _ := res2.Next()
-			m, _ := row.GetAsMap()
-			g.AddEdge(fmt.Sprint(m["from"]), fmt.Sprint(m["to"]), 1.0)
-		}
-		res2.Close()
-	}
-}
 
 // truncPath truncates a string for display in tabular output.
 func truncPath(s string, maxLen int) string {
@@ -709,10 +717,11 @@ func (s *Server) handleNavigateSymbol(ctx context.Context, request mcpsdk.CallTo
 		depth = int(d)
 	}
 
-	db, err := s.gPool.get(indexName)
+	ag, err := s.gPool.get(indexName)
 	if err != nil {
 		return mcpsdk.NewToolResultError(fmt.Sprintf("Error opening graph %q: %v", indexName, err)), nil
 	}
+	db := ag.DB()
 
 	// Find matching symbols.
 	matches, err := db.SymbolSearch(symbol)

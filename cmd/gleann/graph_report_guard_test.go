@@ -1,5 +1,3 @@
-//go:build treesitter
-
 package main
 
 import (

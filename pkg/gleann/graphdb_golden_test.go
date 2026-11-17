@@ -3,7 +3,6 @@ package gleann_test
 import (
 	"context"
 	"encoding/json"
-	"flag"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -16,9 +15,8 @@ import (
 	"github.com/tevfik/gleann/pkg/gleann"
 )
 
-// Fixtures shared by the Kùzu/SQLite parity test (treesitter builds) and the
-// golden test (every build). The SQLite side of each fixture lives here so the
-// untagged golden test can build it without Kùzu.
+// Fixtures of the golden test (every build): the SQLite side of the fixtures
+// the former Kùzu/SQLite parity test used.
 
 const (
 	pfA = "mod/pkg.A"
@@ -265,15 +263,13 @@ func buildMultiSeedGraphstore(t *testing.T) gleann.GraphDB {
 // ---------------------------------------------------------------------------
 // Golden answers (RFC 004 A0)
 //
-// The answers of the Kùzu GraphDB backend for the fixtures above are frozen as
-// JSON under testdata/graph_golden/. TestGraphDBGoldenKuzu (treesitter builds)
-// regenerates them with `-update` and otherwise proves they are reproducible;
+// The answers of the former Kùzu GraphDB backend for the fixtures above are
+// frozen as JSON under testdata/graph_golden/ (Kùzu was removed in RFC 004
+// A3, so they can no longer be regenerated and there is no -update).
 // TestGraphDBGoldenSQLite (every build) checks the format-2 SQLite GraphDB
-// against the same files. Result order is engine-defined in Kùzu, so set-like
-// results are sorted before they are recorded; ShortestPath keeps its order.
+// against them. Set-like results are sorted before they are compared;
+// ShortestPath keeps its order.
 // ---------------------------------------------------------------------------
-
-var updateGraphGolden = flag.Bool("update", false, "rewrite the golden files from the Kùzu backend (treesitter build)")
 
 const graphGoldenDir = "testdata/graph_golden"
 
@@ -427,24 +423,14 @@ func marshalGolden(t *testing.T, v any) []byte {
 	return append(b, '\n')
 }
 
-// compareGraphGolden writes (with -update, Kùzu test only) or compares the
-// snapshot of one scenario.
-func compareGraphGolden(t *testing.T, scenario string, db gleann.GraphDB, write bool) {
+// compareGraphGolden compares the snapshot of one scenario with its golden.
+func compareGraphGolden(t *testing.T, scenario string, db gleann.GraphDB) {
 	t.Helper()
 	got := marshalGolden(t, graphSnapshot(t, db, scenario))
 	path := filepath.Join(graphGoldenDir, scenario+".json")
-	if write && *updateGraphGolden {
-		if err := os.MkdirAll(graphGoldenDir, 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(path, got, 0o644); err != nil {
-			t.Fatal(err)
-		}
-		return
-	}
 	want, err := os.ReadFile(path)
 	if err != nil {
-		t.Fatalf("read golden (generate with `go test -tags treesitter -run TestGraphDBGoldenKuzu ./pkg/gleann -update`): %v", err)
+		t.Fatalf("read golden: %v", err)
 	}
 	if string(want) == string(got) {
 		return
@@ -491,7 +477,7 @@ func graphstoreGoldenFixture(t *testing.T, scenario string) gleann.GraphDB {
 func TestGraphDBGoldenSQLite(t *testing.T) {
 	for _, sc := range graphGoldenScenarios {
 		t.Run(sc, func(t *testing.T) {
-			compareGraphGolden(t, sc, graphstoreGoldenFixture(t, sc), false)
+			compareGraphGolden(t, sc, graphstoreGoldenFixture(t, sc))
 		})
 	}
 }

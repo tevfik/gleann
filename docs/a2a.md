@@ -20,7 +20,7 @@ The Agent Card at `/.well-known/agent-card.json` advertises four built-in skills
 |-------|----------|-------------|
 | `semantic-search` | search, find, look up, where | Semantic search across indexed documents |
 | `ask-rag` | what, why, how, explain, summarize | RAG-based Q&A with source citations |
-| `code-analysis` | callers, callees, impact, symbol, function | AST graph queries (requires treesitter build) |
+| `code-analysis` | callers, callees, impact, symbol, function | AST graph queries (format-2 code graph, every build) |
 | `memory-management` | remember, recall, forget, memory | Store and retrieve long-term memory blocks |
 
 ## Sending Messages

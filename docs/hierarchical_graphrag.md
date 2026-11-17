@@ -1,6 +1,6 @@
 # Hierarchical GraphRAG in Gleann
 
-This document outlines Gleann's **Hierarchical GraphRAG** architecture. It explains how Gleann leverages its embedded Graph Database (KuzuDB) not just for analyzing code ASTs, but for perfectly understanding the physical and logical structure of your documents (Folders, Files, and Markdown Headings).
+This document outlines Gleann's **Hierarchical GraphRAG** architecture. It explains how Gleann leverages its embedded graph (the SQLite tables of the index database) not just for analyzing code ASTs, but for perfectly understanding the physical and logical structure of your documents (Folders, Files, and Markdown Headings).
 
 ---
 
@@ -22,7 +22,7 @@ The traditional, flawed solution is to "make chunks bigger" (e.g., 8000 tokens),
 
 ## The Solution: The Hierarchical Spatial Graph
 
-Gleann solves this by mapping the entire structural hierarchy of your workspace into KuzuDB nodes and edges during `gleann index build`.
+Gleann solves this by mapping the entire structural hierarchy of your workspace into graph nodes and edges during `gleann index build`.
 
 ### 1. The Graph Schema Structure
 
@@ -72,7 +72,7 @@ The following sequence diagram illustrates the complete RAG query pipeline, from
 sequenceDiagram
     participant U as User / MCP Client
     participant V as Vector Database
-    participant G as KuzuDB (Graph)
+    participant G as Graph (SQLite)
     participant R as Reranker
     participant L as Chat LLM
 
@@ -115,7 +115,7 @@ Gleann achieves this through native **LLM Tool Calling (Function Calling)**:
 1. **System Prompt Injection:** When Gleann sends the context blocks to the LLM, it injects a small instruction: *"You have snippets from various files. If a snippet is insufficient, you can call the `read_full_document(vpath)` / `gleann_read_full_document(index, vpath)` tool to read the entire file."*
 2. **The LLM Decides:** The LLM reads the enriched chunk: `[Location: /docs/maintenance.md] Content: Run the restart script`. It realizes it lacks the script's arguments.
 3. **Tool Execution:** The LLM outputs a structured Tool Call for `gleann_read_full_document(index="docs", vpath="/docs/maintenance.md")`.
-4. **Gleann Backend Resolution:** The Gleann backend intercepts this tool call, queries KuzuDB parameterizing the `vpath` to retrieve the `rpath` on disk (`/home/user/project/docs/maintenance.md`), falls back to assembling the text from graph `Chunk` nodes if the disk file is unreachable, and feeds it back to the LLM within the same chat turn.
+4. **Gleann Backend Resolution:** The Gleann backend intercepts this tool call, queries the document graph with the `vpath` to retrieve the `rpath` on disk (`/home/user/project/docs/maintenance.md`), falls back to assembling the text from graph `Chunk` nodes if the disk file is unreachable, and feeds it back to the LLM within the same chat turn.
 5. **Tool Calling Fails / Fallback:** If the LLM generates a malformed tool call, or if the user is using a model that doesn't support structured function calling, Gleann simply ignores the tool call and instructs the LLM: *"Tool call failed, please provide the best answer using only the provided context snippets."* The LLM then falls back seamlessly to the stitched chunks.
 
 #### The MCP (Model Context Protocol) Angle
@@ -135,7 +135,7 @@ Instead of `Folder -> Document -> Heading -> Chunk`, Gleann maps code as:
 
 **Example for Code Retrieval:**
 1. A chunk is found containing `db.Connect()`.
-2. Gleann traces the KuzuDB graph upward: `Chunk` -> `Function: Connect()` -> `Struct: Database` -> `Document: pkg/db/postgres.go` -> `Folder: pkg/db`.
+2. Gleann traces the graph upward: `Chunk` -> `Function: Connect()` -> `Struct: Database` -> `Document: pkg/db/postgres.go` -> `Folder: pkg/db`.
 3. The LLM receives the enriched chunk:
    `[Location: pkg/db/postgres.go > Database Struct > Connect()] Content: db.Connect()`
 

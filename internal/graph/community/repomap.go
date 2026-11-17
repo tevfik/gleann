@@ -1,5 +1,3 @@
-//go:build treesitter
-
 package community
 
 import (
@@ -87,7 +85,10 @@ func GenerateRepoMap(nodes []Node, edges []Edge, cfg RepoMapConfig) string {
 		files = append(files, fileEntry{file: f, total: total, entries: entries})
 	}
 	sort.Slice(files, func(i, j int) bool {
-		return files[i].total > files[j].total
+		if files[i].total != files[j].total {
+			return files[i].total > files[j].total
+		}
+		return files[i].file < files[j].file
 	})
 
 	// Build compact text representation.

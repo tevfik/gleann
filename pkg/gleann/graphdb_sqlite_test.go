@@ -45,7 +45,7 @@ func gSym(fqn, name, file string, line int64) graphstore.Symbol {
 	}
 }
 
-// seedGraphFixture mirrors internal/graph/kuzu/kuzu_test.go's setupGraph plus
+// seedGraphFixture mirrors the setupGraph of the former Kùzu tests plus
 // a test caller: file1 has A→B→C, file2 has D→B and a test caller TestB→B.
 // Declarations are applied first so cross-file edges resolve (ApplyFileDelta
 // drops edges to undeclared internal targets, AGENTS.md section 2.3).
@@ -126,7 +126,7 @@ func seedResolutionFixture(t *testing.T, st *store.Store) {
 	}
 }
 
-// seedDocFixture mirrors internal/graph/kuzu/kuzu_test.go's document fixture:
+// seedDocFixture mirrors the document fixture of the former Kùzu tests:
 // folder > document > two headings > two chunks, one chunk explaining a symbol.
 func seedDocFixture(t *testing.T, st *store.Store) {
 	t.Helper()
@@ -528,27 +528,6 @@ func TestSQLiteGraphDB_DocumentVPath(t *testing.T) {
 	}
 }
 
-// fakeOpenerDB is a minimal GraphDB returned by a test GraphDBOpener, used to
-// detect whether Load consulted the Kùzu sidecar path.
-type fakeOpenerDB struct{ dir string }
-
-func (f *fakeOpenerDB) Callees(string) ([]Callee, error)             { return nil, nil }
-func (f *fakeOpenerDB) Callers(string) ([]Callee, error)             { return nil, nil }
-func (f *fakeOpenerDB) SymbolsInFile(string) ([]Callee, error)       { return nil, nil }
-func (f *fakeOpenerDB) DocumentSymbols(string) ([]SymbolInfo, error) { return nil, nil }
-func (f *fakeOpenerDB) DocumentContext(string) (*DocumentContextData, error) {
-	return nil, nil
-}
-func (f *fakeOpenerDB) DocumentTOC(string) (*DocumentTOCInfo, error)    { return nil, nil }
-func (f *fakeOpenerDB) ListDocuments() ([]DocumentTOCInfo, error)       { return nil, nil }
-func (f *fakeOpenerDB) FullDocument(string) (string, error)             { return "", nil }
-func (f *fakeOpenerDB) Impact(string, int) (*ImpactResult, error)       { return nil, nil }
-func (f *fakeOpenerDB) Neighbors(string, int) ([]GraphEdge, error)      { return nil, nil }
-func (f *fakeOpenerDB) ShortestPath(string, string) ([]PathStep, error) { return nil, nil }
-func (f *fakeOpenerDB) SymbolSearch(string) ([]Callee, error)           { return nil, nil }
-func (f *fakeOpenerDB) Stats() (*GraphStats, error)                     { return nil, nil }
-func (f *fakeOpenerDB) Close()                                          {}
-
 // buildFormat2GraphIndex creates a format-2 index directory with graph data
 // and a meta.json recording store format 2, and returns the IndexDir.
 func buildFormat2GraphIndex(t *testing.T, name string) string {
@@ -666,34 +645,25 @@ func TestLoadFailedThenRetryReattachesGraphDB(t *testing.T) {
 	}
 }
 
-func TestLoadFormat2GraphWinsOverStaleKuzuSidecar(t *testing.T) {
+// An old <name>_graph Kùzu directory next to an index is never read (RFC 004
+// A3): a format-2 index with graph data serves its SQLite graph, and one with
+// empty graph tables has no graph at all.
+func TestLoadFormat2IgnoresOldKuzuDirectory(t *testing.T) {
 	dir := buildFormat2GraphIndex(t, "idx")
-	// A stale <name>_graph directory left behind by a format-1 migration.
 	if err := os.MkdirAll(filepath.Join(dir, "idx_graph"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	called := false
-	prev := GraphDBOpener
-	GraphDBOpener = func(dir string) (GraphDB, error) {
-		called = true
-		return &fakeOpenerDB{dir: dir}, nil
-	}
-	t.Cleanup(func() { GraphDBOpener = prev })
-
 	s := NewSearcher(Config{IndexDir: dir}, nil)
 	if err := s.Load(context.Background(), "idx"); err != nil {
 		t.Fatalf("Load: %v", err)
 	}
 	defer s.Close()
-	if called {
-		t.Fatal("Load opened the stale Kùzu sidecar; the format-2 SQLite graph must win")
-	}
 	if _, ok := s.GraphDB().(*sqliteGraphDB); !ok {
 		t.Fatalf("GraphDB() = %T, want *sqliteGraphDB", s.GraphDB())
 	}
 }
 
-func TestLoadFormat2EmptySQLiteFallsBackToKuzu(t *testing.T) {
+func TestLoadFormat2EmptySQLiteHasNoGraph(t *testing.T) {
 	dir := t.TempDir()
 	base := filepath.Join(dir, "idx", "idx")
 	if err := os.MkdirAll(filepath.Join(dir, "idx"), 0o755); err != nil {
@@ -712,24 +682,16 @@ func TestLoadFormat2EmptySQLiteFallsBackToKuzu(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(dir, "idx_graph"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	called := false
-	prev := GraphDBOpener
-	GraphDBOpener = func(dir string) (GraphDB, error) {
-		called = true
-		return &fakeOpenerDB{dir: dir}, nil
-	}
-	t.Cleanup(func() { GraphDBOpener = prev })
-
 	s := NewSearcher(Config{IndexDir: dir}, nil)
 	if err := s.Load(context.Background(), "idx"); err != nil {
 		t.Fatalf("Load: %v", err)
 	}
 	defer s.Close()
-	if !called {
-		t.Fatal("the Kùzu sidecar must be used when the format-2 SQLite tables are empty")
+	if s.GraphDB() != nil {
+		t.Fatalf("GraphDB() = %T for empty graph tables, want nil", s.GraphDB())
 	}
-	if _, ok := s.GraphDB().(*sqliteGraphDB); ok {
-		t.Fatal("GraphDB() = *sqliteGraphDB for an empty store, want the Kùzu sidecar")
+	if HasCodeGraph(dir, "idx") {
+		t.Fatal("HasCodeGraph: an old idx_graph directory must not count as a code graph")
 	}
 }
 

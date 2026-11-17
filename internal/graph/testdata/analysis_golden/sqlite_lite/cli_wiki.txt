@@ -1,0 +1,141 @@
+=== community-app.md
+# Community: app
+
+**6 symbols** | Cohesion: 0.050
+
+## Symbols
+
+| Symbol | Kind |
+|--------|------|
+| `ts.Shape` | interface |
+| `ts.Square` | class |
+| `ts.describeAll` | function |
+| `ts.main` | function |
+| `ts.totalArea` | function |
+| `app.ts` |  |
+
+---
+[← Back to Index](index.md)
+=== community-main.md
+# Community: main
+
+**5 symbols** | Cohesion: 0.060
+
+## Symbols
+
+| Symbol | Kind |
+|--------|------|
+| `rs.Counter` | struct |
+| `rs.main` | function |
+| `rs.run_all` | function |
+| `rs.util` | module |
+| `main.rs` |  |
+
+---
+[← Back to Index](index.md)
+=== community-service.md
+# Community: service
+
+**2 symbols** | Cohesion: 0.500
+
+## Symbols
+
+| Symbol | Kind |
+|--------|------|
+| `service.Service.Save` | method |
+| `service.validate` | function |
+
+## External Connections
+
+- `fixture.main` ↔ `service.Service.Save`
+- `service.Service.Save` ↔ `service.go`
+- `service.validate` ↔ `service.go`
+
+---
+[← Back to Index](index.md)
+=== community-service_test.md
+# Community: service_test
+
+**5 symbols** | Cohesion: 0.230
+
+## Symbols
+
+| Symbol | Kind |
+|--------|------|
+| `service.New` | function |
+| `service.TestReport` | function |
+| `service.TestSaveLoad` | function |
+| `store.NewMemStore` | function |
+| `service_test.go` |  |
+
+## External Connections
+
+- `fixture.main` ↔ `service.New`
+- `fixture.main` ↔ `store.NewMemStore`
+- `service.New` ↔ `service.go`
+- `store.NewMemStore` ↔ `store.go`
+
+---
+[← Back to Index](index.md)
+=== community-store.md
+# Community: store
+
+**2 symbols** | Cohesion: 0.500
+
+## Symbols
+
+| Symbol | Kind |
+|--------|------|
+| `store.MemStore.Put` | method |
+| `store.normalize` | function |
+
+## External Connections
+
+- `store.MemStore.Put` ↔ `store.go`
+- `store.normalize` ↔ `store.go`
+
+---
+[← Back to Index](index.md)
+=== community-util.md
+# Community: util
+
+**3 symbols** | Cohesion: 0.100
+
+## Symbols
+
+| Symbol | Kind |
+|--------|------|
+| `ts.pluralize` | function |
+| `ts.slug` | function |
+| `util.ts` |  |
+
+---
+[← Back to Index](index.md)
+=== index.md
+# fixture — Knowledge Wiki
+
+Auto-generated graph wiki. 13 communities, 51 symbols, modularity=0.703
+
+## Communities
+
+- [app](community-app.md) — 7 symbols, cohesion=0.043
+- [app](community-app.md) — 6 symbols, cohesion=0.050
+- [main](community-main.md) — 5 symbols, cohesion=0.230
+- [main](community-main.md) — 5 symbols, cohesion=0.060
+- [service_test](community-service_test.md) — 5 symbols, cohesion=0.230
+- [service](community-service.md) — 5 symbols, cohesion=0.060
+- [util](community-util.md) — 3 symbols, cohesion=0.100
+- [util](community-util.md) — 3 symbols, cohesion=0.100
+- [store](community-store.md) — 3 symbols, cohesion=0.100
+- [util](community-util.md) — 3 symbols, cohesion=0.100
+- [service](community-service.md) — 2 symbols, cohesion=0.500
+- [store](community-store.md) — 2 symbols, cohesion=0.400
+- [store](community-store.md) — 2 symbols, cohesion=0.500
+
+## God Nodes (Hub Symbols)
+
+- **service/service.go** [file] — degree 9
+- **store/store.go** [file] — degree 7
+- **main** [function] — degree 6
+- **py/app.py** [file] — degree 6
+- **ts/app.ts** [file] — degree 5

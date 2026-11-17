@@ -1,0 +1,39 @@
+{
+  "body": {
+    "count": 6,
+    "query_ms": 0,
+    "results": [
+      {
+        "fqn": "example.com/fixture/py.Registry",
+        "kind": "class",
+        "name": "Registry"
+      },
+      {
+        "fqn": "example.com/fixture/py.__init__",
+        "kind": "method",
+        "name": "__init__"
+      },
+      {
+        "fqn": "example.com/fixture/py.add",
+        "kind": "method",
+        "name": "add"
+      },
+      {
+        "fqn": "example.com/fixture/py.build_registry",
+        "kind": "function",
+        "name": "build_registry"
+      },
+      {
+        "fqn": "example.com/fixture/py.describe",
+        "kind": "method",
+        "name": "describe"
+      },
+      {
+        "fqn": "example.com/fixture/py.main",
+        "kind": "function",
+        "name": "main"
+      }
+    ]
+  },
+  "status": 200
+}

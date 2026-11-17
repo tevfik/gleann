@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>gleann — fixture</title>
+<script src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #1a1a2e; color: #eee; }
+#container { display: flex; height: 100vh; }
+#graph { flex: 1; background: #16213e; }
+#sidebar { width: 320px; background: #0f3460; padding: 16px; overflow-y: auto; border-left: 1px solid #333; }
+.sidebar-section { margin-bottom: 16px; }
+.sidebar-section h3 { font-size: 13px; color: #8888cc; text-transform: uppercase; margin-bottom: 8px; letter-spacing: 1px; }
+.stat { display: flex; justify-content: space-between; padding: 4px 0; font-size: 13px; }
+.stat-value { color: #64ffda; font-weight: 600; }
+.node-info { background: #1a1a3e; padding: 12px; border-radius: 8px; font-size: 12px; display: none; }
+.node-info h4 { color: #64ffda; margin-bottom: 8px; }
+.node-info p { margin: 4px 0; }
+.community-list { max-height: 200px; overflow-y: auto; }
+.community-item { padding: 6px 8px; font-size: 12px; border-radius: 4px; margin: 2px 0; background: #1a1a3e; cursor: pointer; }
+.community-item:hover { background: #2a2a4e; }
+.god-list { max-height: 200px; overflow-y: auto; }
+.god-item { padding: 6px 8px; font-size: 12px; border-radius: 4px; margin: 2px 0; background: #1a1a3e; }
+.god-item .deg { color: #ff5252; font-weight: 600; }
+#search { width: 100%; padding: 8px; background: #1a1a3e; border: 1px solid #333; color: #eee; border-radius: 4px; margin-bottom: 12px; }
+.legend { display: flex; flex-wrap: wrap; gap: 8px; }
+.legend-item { display: flex; align-items: center; gap: 4px; font-size: 11px; }
+.legend-dot { width: 10px; height: 10px; border-radius: 50%; }
+</style>
+</head>
+<body>
+<div id="container">
+  <div id="graph"></div>
+  <div id="sidebar">
+    <h2 style="margin-bottom:12px;font-size:16px;">gleann — fixture</h2>
+    <input id="search" type="text" placeholder="Search nodes...">
+    <div class="sidebar-section">
+      <h3>Statistics</h3>
+      <div class="stat"><span>Nodes</span><span class="stat-value">51</span></div>
+      <div class="stat"><span>Edges</span><span class="stat-value">55</span></div>
+      <div class="stat"><span>Communities</span><span class="stat-value">13</span></div>
+      <div class="stat"><span>Modularity</span><span class="stat-value">0.703</span></div>
+    </div>
+    <div class="sidebar-section">
+      <h3>Legend</h3>
+      <div class="legend">
+        <div class="legend-item"><div class="legend-dot" style="background:#4CAF50"></div>function</div>
+        <div class="legend-item"><div class="legend-dot" style="background:#2196F3"></div>method</div>
+        <div class="legend-item"><div class="legend-dot" style="background:#FF9800"></div>type</div>
+        <div class="legend-item"><div class="legend-dot" style="background:#9C27B0"></div>interface</div>
+        <div class="legend-item"><div class="legend-dot" style="background:#607D8B"></div>file</div>
+        <div class="legend-item"><div class="legend-dot" style="background:#F44336"></div>god node</div>
+      </div>
+    </div>
+    <div class="sidebar-section" id="nodeInfoSection">
+      <h3>Selected Node</h3>
+      <div class="node-info" id="nodeInfo">
+        <h4 id="niName"></h4>
+        <p>Kind: <span id="niKind"></span></p>
+        <p>File: <span id="niFile"></span></p>
+        <p>Degree: <span id="niDeg"></span></p>
+        <p>Community: <span id="niComm"></span></p>
+      </div>
+    </div>
+    <div class="sidebar-section">
+      <h3>Communities</h3>
+      <div class="community-list" id="commList"></div>
+    </div>
+    <div class="sidebar-section">
+      <h3>God Nodes</h3>
+      <div class="god-list" id="godList"></div>
+    </div>
+  </div>
+</div>
+<script>
+var nodesData = [{"id":"example.com/fixture.main","label":"main","title":"\u003cb\u003eexample.com/fixture.main\u003c/b\u003e\u003cbr\u003eKind: function\u003cbr\u003eFile: main.go\u003cbr\u003eDegree: 5\u003cbr\u003eCommunity: 2","group":2,"size":23,"shape":"dot","color":"#F44336"},{"id":"example.com/fixture.run","label":"run","title":"\u003cb\u003eexample.com/fixture.run\u003c/b\u003e\u003cbr\u003eKind: function\u003cbr\u003eFile: main.go\u003cbr\u003eDegree: 2\u003cbr\u003eCommunity: 2","group":2,"size":12,"shape":"dot","color":"#4CAF50"},{"id":"example.com/fixture/py.Registry","label":"Registry","title":"\u003cb\u003eexample.com/fixture/py.Registry\u003c/b\u003e\u003cbr\u003eKind: class\u003cbr\u003eFile: py/app.py\u003cbr\u003eDegree: 0\u003cbr\u003eCommunity: 0","group":0,"size":8,"shape":"triangle","color":"#9C27B0"},{"id":"example.com/fixture/py.__init__","label":"__init__","title":"\u003cb\u003eexample.com/fixture/py.__init__\u003c/b\u003e\u003cbr\u003eKind: method\u003cbr\u003eFile: py/app.py\u003cbr\u003eDegree: 0\u003cbr\u003eCommunity: 0","group":0,"size":8,"shape":"dot","color":"#2196F3"},{"id":"example.com/fixture/py.add","label":"add","title":"\u003cb\u003eexample.com/fixture/py.add\u003c/b\u003e\u003cbr\u003eKind: method\u003cbr\u003eFile: py/app.py\u003cbr\u003eDegree: 0\u003cbr\u003eCommunity: 0","group":0,"size":8,"shape":"dot","color":"#2196F3"},{"id":"example.com/fixture/py.build_registry","label":"build_registry","title":"\u003cb\u003eexample.com/fixture/py.build_registry\u003c/b\u003e\u003cbr\u003eKind: function\u003cbr\u003eFile: py/app.py\u003cbr\u003eDegree: 0\u003cbr\u003eCommunity: 0","group":0,"size":8,"shape":"dot","color":"#4CAF50"},{"id":"example.com/fixture/py.clean","label":"clean","title":"\u003cb\u003eexample.com/fixture/py.clean\u003c/b\u003e\u003cbr\u003eKind: function\u003cbr\u003eFile: py/util.py\u003cbr\u003eDegree: 0\u003cbr\u003eCommunity: 6","group":6,"size":8,"shape":"dot","color":"#4CAF50"},{"id":"example.com/fixture/py.describe","label":"describe","title":"\u003cb\u003eexample.com/fixture/py.describe\u003c/b\u003e\u003cbr\u003eKind: method\u003cbr\u003eFile: py/app.py\u003cbr\u003eDegree: 0\u003cbr\u003eCommunity: 0","group":0,"size":8,"shape":"dot","color":"#2196F3"},{"id":"example.com/fixture/py.join_words","label":"join_words","title":"\u003cb\u003eexample.com/fixture/py.join_words\u003c/b\u003e\u003cbr\u003eKind: function\u003cbr\u003eFile: py/util.py\u003cbr\u003eDegree: 0\u003cbr\u003eCommunity: 6","group":6,"size":8,"shape":"dot","color":"#4CAF50"},{"id":"example.com/fixture/py.main","label":"main","title":"\u003cb\u003eexample.com/fixture/py.main\u003c/b\u003e\u003cbr\u003eKind: function\u003cbr\u003eFile: py/app.py\u003cbr\u003eDegree: 0\u003cbr\u003eCommunity: 0","group":0,"size":8,"shape":"dot","color":"#4CAF50"},{"id":"example.com/fixture/rs.Counter","label":"Counter","title":"\u003cb\u003eexample.com/fixture/rs.Counter\u003c/b\u003e\u003cbr\u003eKind: struct\u003cbr\u003eFile: rs/main.rs\u003cbr\u003eDegree: 0\u003cbr\u003eCommunity: 3","group":3,"size":8,"shape":"diamond","color":"#FF9800"},{"id":"example.com/fixture/rs.clamp","label":"clamp","title":"\u003cb\u003eexample.com/fixture/rs.clamp\u003c/b\u003e\u003cbr\u003eKind: function\u003cbr\u003eFile: rs/util.rs\u003cbr\u003eDegree: 0\u003cbr\u003eCommunity: 7","group":7,"size":8,"shape":"dot","color":"#4CAF50"},{"id":"example.com/fixture/rs.double","label":"double","title":"\u003cb\u003eexample.com/fixture/rs.double\u003c/b\u003e\u003cbr\u003eKind: function\u003cbr\u003eFile: rs/util.rs\u003cbr\u003eDegree: 0\u003cbr\u003eCommunity: 7","group":7,"size":8,"shape":"dot","color":"#4CAF50"},{"id":"example.com/fixture/rs.main","label":"main","title":"\u003cb\u003eexample.com/fixture/rs.main\u003c/b\u003e\u003cbr\u003eKind: function\u003cbr\u003eFile: rs/main.rs\u003cbr\u003eDegree: 0\u003cbr\u003eCommunity: 3","group":3,"size":8,"shape":"dot","color":"#4CAF50"},{"id":"example.com/fixture/rs.run_all","label":"run_all","title":"\u003cb\u003eexample.com/fixture/rs.run_all\u003c/b\u003e\u003cbr\u003eKind: function\u003cbr\u003eFile: rs/main.rs\u003cbr\u003eDegree: 0\u003cbr\u003eCommunity: 3","group":3,"size":8,"shape":"dot","color":"#4CAF50"},{"id":"example.com/fixture/rs.util","label":"util","title":"\u003cb\u003eexample.com/fixture/rs.util\u003c/b\u003e\u003cbr\u003eKind: module\u003cbr\u003eFile: rs/main.rs\u003cbr\u003eDegree: 0\u003cbr\u003eCommunity: 3","group":3,"size":8,"shape":"dot","color":"#9E9E9E"},{"id":"example.com/fixture/service.New","label":"New","title":"\u003cb\u003eexample.com/fixture/service.New\u003c/b\u003e\u003cbr\u003eKind: function\u003cbr\u003eFile: service/service.go\u003cbr\u003eDegree: 3\u003cbr\u003eCommunity: 4","group":4,"size":14,"shape":"dot","color":"#4CAF50"},{"id":"example.com/fixture/service.Service","label":"Service","title":"\u003cb\u003eexample.com/fixture/service.Service\u003c/b\u003e\u003cbr\u003eKind: struct\u003cbr\u003eFile: service/service.go\u003cbr\u003eDegree: 0\u003cbr\u003eCommunity: 5","group":5,"size":8,"shape":"diamond","color":"#FF9800"},{"id":"example.com/fixture/service.Service.Load","label":"Service.Load","title":"\u003cb\u003eexample.com/fixture/service.Service.Load\u003c/b\u003e\u003cbr\u003eKind: method\u003cbr\u003eFile: service/service.go\u003cbr\u003eDegree: 2\u003cbr\u003eCommunity: 2","group":2,"size":12,"shape":"dot","color":"#2196F3"},{"id":"example.com/fixture/service.Service.Report","label":"Service.Report","title":"\u003cb\u003eexample.com/fixture/service.Service.Report\u003c/b\u003e\u003cbr\u003eKind: method\u003cbr\u003eFile: service/service.go\u003cbr\u003eDegree: 2\u003cbr\u003eCommunity: 2","group":2,"size":12,"shape":"dot","color":"#2196F3"},{"id":"example.com/fixture/service.Service.Save","label":"Service.Save","title":"\u003cb\u003eexample.com/fixture/service.Service.Save\u003c/b\u003e\u003cbr\u003eKind: method\u003cbr\u003eFile: service/service.go\u003cbr\u003eDegree: 2\u003cbr\u003eCommunity: 10","group":10,"size":12,"shape":"dot","color":"#2196F3"},{"id":"example.com/fixture/service.TestReport","label":"TestReport","title":"\u003cb\u003eexample.com/fixture/service.TestReport\u003c/b\u003e\u003cbr\u003eKind: function\u003cbr\u003eFile: service/service_test.go\u003cbr\u003eDegree: 2\u003cbr\u003eCommunity: 4","group":4,"size":12,"shape":"dot","color":"#4CAF50"},{"id":"example.com/fixture/service.TestSaveLoad","label":"TestSaveLoad","title":"\u003cb\u003eexample.com/fixture/service.TestSaveLoad\u003c/b\u003e\u003cbr\u003eKind: function\u003cbr\u003eFile: service/service_test.go\u003cbr\u003eDegree: 2\u003cbr\u003eCommunity: 4","group":4,"size":12,"shape":"dot","color":"#4CAF50"},{"id":"example.com/fixture/service.emptyError","label":"emptyError","title":"\u003cb\u003eexample.com/fixture/service.emptyError\u003c/b\u003e\u003cbr\u003eKind: struct\u003cbr\u003eFile: service/service.go\u003cbr\u003eDegree: 0\u003cbr\u003eCommunity: 5","group":5,"size":8,"shape":"diamond","color":"#FF9800"},{"id":"example.com/fixture/service.emptyError.Error","label":"emptyError.Error","title":"\u003cb\u003eexample.com/fixture/service.emptyError.Error\u003c/b\u003e\u003cbr\u003eKind: method\u003cbr\u003eFile: service/service.go\u003cbr\u003eDegree: 0\u003cbr\u003eCommunity: 5","group":5,"size":8,"shape":"dot","color":"#2196F3"},{"id":"example.com/fixture/service.errEmpty","label":"errEmpty","title":"\u003cb\u003eexample.com/fixture/service.errEmpty\u003c/b\u003e\u003cbr\u003eKind: var\u003cbr\u003eFile: service/service.go\u003cbr\u003eDegree: 0\u003cbr\u003eCommunity: 5","group":5,"size":8,"shape":"dot","color":"#795548"},{"id":"example.com/fixture/service.validate","label":"validate","title":"\u003cb\u003eexample.com/fixture/service.validate\u003c/b\u003e\u003cbr\u003eKind: function\u003cbr\u003eFile: service/service.go\u003cbr\u003eDegree: 1\u003cbr\u003eCommunity: 10","group":10,"size":10,"shape":"dot","color":"#4CAF50"},{"id":"example.com/fixture/store.MemStore","label":"MemStore","title":"\u003cb\u003eexample.com/fixture/store.MemStore\u003c/b\u003e\u003cbr\u003eKind: struct\u003cbr\u003eFile: store/store.go\u003cbr\u003eDegree: 0\u003cbr\u003eCommunity: 11","group":11,"size":8,"shape":"diamond","color":"#FF9800"},{"id":"example.com/fixture/store.MemStore.Get","label":"MemStore.Get","title":"\u003cb\u003eexample.com/fixture/store.MemStore.Get\u003c/b\u003e\u003cbr\u003eKind: method\u003cbr\u003eFile: store/store.go\u003cbr\u003eDegree: 0\u003cbr\u003eCommunity: 8","group":8,"size":8,"shape":"dot","color":"#2196F3"},{"id":"example.com/fixture/store.MemStore.Keys","label":"MemStore.Keys","title":"\u003cb\u003eexample.com/fixture/store.MemStore.Keys\u003c/b\u003e\u003cbr\u003eKind: method\u003cbr\u003eFile: store/store.go\u003cbr\u003eDegree: 0\u003cbr\u003eCommunity: 8","group":8,"size":8,"shape":"dot","color":"#2196F3"},{"id":"example.com/fixture/store.MemStore.Put","label":"MemStore.Put","title":"\u003cb\u003eexample.com/fixture/store.MemStore.Put\u003c/b\u003e\u003cbr\u003eKind: method\u003cbr\u003eFile: store/store.go\u003cbr\u003eDegree: 1\u003cbr\u003eCommunity: 12","group":12,"size":10,"shape":"dot","color":"#2196F3"},{"id":"example.com/fixture/store.NewMemStore","label":"NewMemStore","title":"\u003cb\u003eexample.com/fixture/store.NewMemStore\u003c/b\u003e\u003cbr\u003eKind: function\u003cbr\u003eFile: store/store.go\u003cbr\u003eDegree: 3\u003cbr\u003eCommunity: 4","group":4,"size":14,"shape":"dot","color":"#4CAF50"},{"id":"example.com/fixture/store.Store","label":"Store","title":"\u003cb\u003eexample.com/fixture/store.Store\u003c/b\u003e\u003cbr\u003eKind: interface\u003cbr\u003eFile: store/store.go\u003cbr\u003eDegree: 0\u003cbr\u003eCommunity: 11","group":11,"size":8,"shape":"triangle","color":"#9C27B0"},{"id":"example.com/fixture/store.normalize","label":"normalize","title":"\u003cb\u003eexample.com/fixture/store.normalize\u003c/b\u003e\u003cbr\u003eKind: function\u003cbr\u003eFile: store/store.go\u003cbr\u003eDegree: 1\u003cbr\u003eCommunity: 12","group":12,"size":10,"shape":"dot","color":"#4CAF50"},{"id":"example.com/fixture/ts.Shape","label":"Shape","title":"\u003cb\u003eexample.com/fixture/ts.Shape\u003c/b\u003e\u003cbr\u003eKind: interface\u003cbr\u003eFile: ts/app.ts\u003cbr\u003eDegree: 0\u003cbr\u003eCommunity: 1","group":1,"size":8,"shape":"triangle","color":"#9C27B0"},{"id":"example.com/fixture/ts.Square","label":"Square","title":"\u003cb\u003eexample.com/fixture/ts.Square\u003c/b\u003e\u003cbr\u003eKind: class\u003cbr\u003eFile: ts/app.ts\u003cbr\u003eDegree: 0\u003cbr\u003eCommunity: 1","group":1,"size":8,"shape":"triangle","color":"#9C27B0"},{"id":"example.com/fixture/ts.describeAll","label":"describeAll","title":"\u003cb\u003eexample.com/fixture/ts.describeAll\u003c/b\u003e\u003cbr\u003eKind: function\u003cbr\u003eFile: ts/app.ts\u003cbr\u003eDegree: 0\u003cbr\u003eCommunity: 1","group":1,"size":8,"shape":"dot","color":"#4CAF50"},{"id":"example.com/fixture/ts.main","label":"main","title":"\u003cb\u003eexample.com/fixture/ts.main\u003c/b\u003e\u003cbr\u003eKind: function\u003cbr\u003eFile: ts/app.ts\u003cbr\u003eDegree: 0\u003cbr\u003eCommunity: 1","group":1,"size":8,"shape":"dot","color":"#4CAF50"},{"id":"example.com/fixture/ts.pluralize","label":"pluralize","title":"\u003cb\u003eexample.com/fixture/ts.pluralize\u003c/b\u003e\u003cbr\u003eKind: function\u003cbr\u003eFile: ts/util.ts\u003cbr\u003eDegree: 0\u003cbr\u003eCommunity: 9","group":9,"size":8,"shape":"dot","color":"#4CAF50"},{"id":"example.com/fixture/ts.slug","label":"slug","title":"\u003cb\u003eexample.com/fixture/ts.slug\u003c/b\u003e\u003cbr\u003eKind: function\u003cbr\u003eFile: ts/util.ts\u003cbr\u003eDegree: 0\u003cbr\u003eCommunity: 9","group":9,"size":8,"shape":"dot","color":"#4CAF50"},{"id":"example.com/fixture/ts.totalArea","label":"totalArea","title":"\u003cb\u003eexample.com/fixture/ts.totalArea\u003c/b\u003e\u003cbr\u003eKind: function\u003cbr\u003eFile: ts/app.ts\u003cbr\u003eDegree: 0\u003cbr\u003eCommunity: 1","group":1,"size":8,"shape":"dot","color":"#4CAF50"}];
+var edgesData = [{"from":"example.com/fixture.main","to":"example.com/fixture.run","color":"#cccccc","width":1},{"from":"example.com/fixture.main","to":"example.com/fixture/service.New","color":"#ff5252","width":2},{"from":"example.com/fixture.main","to":"example.com/fixture/service.Service.Report","color":"#cccccc","width":1},{"from":"example.com/fixture.main","to":"example.com/fixture/service.Service.Save","color":"#ff5252","width":2},{"from":"example.com/fixture.main","to":"example.com/fixture/store.NewMemStore","color":"#ff5252","width":2},{"from":"example.com/fixture.run","to":"example.com/fixture/service.Service.Load","color":"#cccccc","width":1},{"from":"example.com/fixture/service.Service.Report","to":"example.com/fixture/service.Service.Load","color":"#cccccc","width":1},{"from":"example.com/fixture/service.Service.Save","to":"example.com/fixture/service.validate","color":"#cccccc","width":1},{"from":"example.com/fixture/service.TestReport","to":"example.com/fixture/service.New","color":"#cccccc","width":1},{"from":"example.com/fixture/service.TestReport","to":"example.com/fixture/store.NewMemStore","color":"#cccccc","width":1},{"from":"example.com/fixture/service.TestSaveLoad","to":"example.com/fixture/service.New","color":"#cccccc","width":1},{"from":"example.com/fixture/service.TestSaveLoad","to":"example.com/fixture/store.NewMemStore","color":"#cccccc","width":1},{"from":"example.com/fixture/store.MemStore.Put","to":"example.com/fixture/store.normalize","color":"#cccccc","width":1}];
+var communities = [{"id":0,"label":"app","node_count":7,"nodes":["example.com/fixture/py.Registry","example.com/fixture/py.__init__","example.com/fixture/py.add","example.com/fixture/py.build_registry","example.com/fixture/py.describe","example.com/fixture/py.main","py/app.py"],"cohesion":0.0429},{"id":1,"label":"app","node_count":6,"nodes":["example.com/fixture/ts.Shape","example.com/fixture/ts.Square","example.com/fixture/ts.describeAll","example.com/fixture/ts.main","example.com/fixture/ts.totalArea","ts/app.ts"],"cohesion":0.0500},{"id":2,"label":"main","node_count":5,"nodes":["example.com/fixture.main","example.com/fixture.run","example.com/fixture/service.Service.Load","example.com/fixture/service.Service.Report","main.go"],"cohesion":0.2300},{"id":3,"label":"main","node_count":5,"nodes":["example.com/fixture/rs.Counter","example.com/fixture/rs.main","example.com/fixture/rs.run_all","example.com/fixture/rs.util","rs/main.rs"],"cohesion":0.06},{"id":4,"label":"service_test","node_count":5,"nodes":["example.com/fixture/service.New","example.com/fixture/service.TestReport","example.com/fixture/service.TestSaveLoad","example.com/fixture/store.NewMemStore","service/service_test.go"],"cohesion":0.2300},{"id":5,"label":"service","node_count":5,"nodes":["example.com/fixture/service.Service","example.com/fixture/service.emptyError","example.com/fixture/service.emptyError.Error","example.com/fixture/service.errEmpty","service/service.go"],"cohesion":0.06},{"id":6,"label":"util","node_count":3,"nodes":["example.com/fixture/py.clean","example.com/fixture/py.join_words","py/util.py"],"cohesion":0.1000},{"id":7,"label":"util","node_count":3,"nodes":["example.com/fixture/rs.clamp","example.com/fixture/rs.double","rs/util.rs"],"cohesion":0.1000},{"id":8,"label":"store","node_count":3,"nodes":["example.com/fixture/store.MemStore.Get","example.com/fixture/store.MemStore.Keys","store/store.go"],"cohesion":0.1000},{"id":9,"label":"util","node_count":3,"nodes":["example.com/fixture/ts.pluralize","example.com/fixture/ts.slug","ts/util.ts"],"cohesion":0.1000},{"id":10,"label":"service","node_count":2,"nodes":["example.com/fixture/service.Service.Save","example.com/fixture/service.validate"],"cohesion":0.5},{"id":11,"label":"store","node_count":2,"nodes":["example.com/fixture/store.MemStore","example.com/fixture/store.Store"],"cohesion":0.4},{"id":12,"label":"store","node_count":2,"nodes":["example.com/fixture/store.MemStore.Put","example.com/fixture/store.normalize"],"cohesion":0.5}];
+var godNodes = [{"id":"service/service.go","name":"service/service.go","kind":"file","in_degree":0,"out_degree":9,"total_degree":9},{"id":"store/store.go","name":"store/store.go","kind":"file","in_degree":0,"out_degree":7,"total_degree":7},{"id":"example.com/fixture.main","name":"main","kind":"function","in_degree":1,"out_degree":5,"total_degree":6},{"id":"py/app.py","name":"py/app.py","kind":"file","in_degree":0,"out_degree":6,"total_degree":6},{"id":"ts/app.ts","name":"ts/app.ts","kind":"file","in_degree":0,"out_degree":5,"total_degree":5}];
+var physicsEnabled = true;
+
+var nodes = new vis.DataSet(nodesData);
+var edges = new vis.DataSet(edgesData);
+var container = document.getElementById('graph');
+var data = { nodes: nodes, edges: edges };
+var options = {
+  physics: { enabled: physicsEnabled, solver: 'forceAtlas2Based', forceAtlas2Based: { gravitationalConstant: -50, centralGravity: 0.005 } },
+  interaction: { hover: true, tooltipDelay: 200, multiselect: true },
+  edges: { arrows: { to: { enabled: true, scaleFactor: 0.5 } }, smooth: { type: 'continuous' } },
+  nodes: { font: { color: '#eee', size: 11 }, borderWidth: 1 }
+};
+var network = new vis.Network(container, data, options);
+
+// Node click handler.
+network.on('click', function(params) {
+  if (params.nodes.length > 0) {
+    var nodeId = params.nodes[0];
+    var node = nodesData.find(function(n){ return n.id === nodeId; });
+    if (node) {
+      document.getElementById('nodeInfo').style.display = 'block';
+      document.getElementById('niName').textContent = node.id;
+      document.getElementById('niKind').textContent = node.shape || '';
+      document.getElementById('niFile').textContent = '';
+      document.getElementById('niDeg').textContent = node.size || '';
+      document.getElementById('niComm').textContent = node.group || '';
+    }
+  } else {
+    document.getElementById('nodeInfo').style.display = 'none';
+  }
+});
+
+// Community list.
+var commList = document.getElementById('commList');
+communities.forEach(function(c) {
+  var div = document.createElement('div');
+  div.className = 'community-item';
+  div.innerHTML = '<b>' + c.label + '</b> <span style="color:#64ffda">' + c.node_count + ' nodes</span>';
+  div.onclick = function() {
+    network.selectNodes(c.nodes.filter(function(nid){ return nodes.get(nid); }));
+    network.fit({nodes: c.nodes.filter(function(nid){ return nodes.get(nid); }), animation: true});
+  };
+  commList.appendChild(div);
+});
+
+// God nodes list.
+var godList = document.getElementById('godList');
+godNodes.forEach(function(g) {
+  var div = document.createElement('div');
+  div.className = 'god-item';
+  div.innerHTML = '<b>' + g.name + '</b> <span class="deg">deg=' + g.total_degree + '</span> <span style="color:#888">' + g.kind + '</span>';
+  div.style.cursor = 'pointer';
+  div.onclick = function() {
+    if (nodes.get(g.id)) { network.selectNodes([g.id]); network.focus(g.id, {scale: 1.5, animation: true}); }
+  };
+  godList.appendChild(div);
+});
+
+// Search.
+document.getElementById('search').addEventListener('input', function(e) {
+  var q = e.target.value.toLowerCase();
+  if (!q) { nodes.update(nodesData.map(function(n){ return {id: n.id, hidden: false}; })); return; }
+  nodesData.forEach(function(n) {
+    var match = n.id.toLowerCase().includes(q) || n.label.toLowerCase().includes(q);
+    nodes.update({id: n.id, hidden: !match});
+  });
+});
+</script>
+</body>
+</html>

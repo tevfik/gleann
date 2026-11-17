@@ -1,6 +1,9 @@
 package community
 
-import "math"
+import (
+	"math"
+	"sort"
+)
 
 // PageRank computes PageRank scores for all nodes in the graph.
 // dampingFactor is typically 0.85. iterations controls convergence (20-50 typical).
@@ -68,14 +71,13 @@ func TopRanked(ranks map[string]float64, k int) []RankedNode {
 		result = append(result, RankedNode{ID: id, Score: score})
 	}
 
-	// Sort by score descending.
-	for i := 0; i < len(result); i++ {
-		for j := i + 1; j < len(result); j++ {
-			if result[j].Score > result[i].Score {
-				result[i], result[j] = result[j], result[i]
-			}
+	// Score descending; equal scores by ID so the cut-off is reproducible.
+	sort.Slice(result, func(i, j int) bool {
+		if result[i].Score != result[j].Score {
+			return result[i].Score > result[j].Score
 		}
-	}
+		return result[i].ID < result[j].ID
+	})
 
 	if k > len(result) {
 		k = len(result)
@@ -123,21 +125,28 @@ func BlastRadius(startID string, edges []Edge, ranks map[string]float64, maxDept
 	}
 
 	affected := make([]string, 0, len(visited))
-	totalScore := 0.0
 	for id := range visited {
-		if id == startID {
-			continue
+		if id != startID {
+			affected = append(affected, id)
 		}
-		affected = append(affected, id)
-		if ranks != nil {
+	}
+	sort.Strings(affected) // fixed summation order: reproducible floats
+	totalScore := 0.0
+	if ranks != nil {
+		for _, id := range affected {
 			totalScore += ranks[id]
 		}
 	}
 
 	// Normalize by total rank mass for a 0-1 score.
+	ids := make([]string, 0, len(ranks))
+	for id := range ranks {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
 	totalMass := 0.0
-	for _, s := range ranks {
-		totalMass += s
+	for _, id := range ids {
+		totalMass += ranks[id]
 	}
 	if totalMass > 0 {
 		totalScore /= totalMass

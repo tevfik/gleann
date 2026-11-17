@@ -35,7 +35,7 @@ curl -sSfL https://raw.githubusercontent.com/tevfik/gleann/main/scripts/install.
 |---|---|---|
 | `lite` (default) | pure Go; no bitllm.c, FAISS or code graph | all |
 | `eif` | + bitllm.c local embeddings (EIF runtime) | linux-amd64, linux-arm64, darwin-arm64 |
-| `full` | + bitllm.c, FAISS, tree-sitter code graph, Kuzu | linux-amd64, linux-arm64, darwin-arm64 |
+| `full` | + bitllm.c, FAISS, tree-sitter parsers | linux-amd64, linux-arm64, darwin-arm64 |
 
 Later, update gleann and its plugins from the latest GitHub release:
 
@@ -89,7 +89,7 @@ Connect Gleann directly to **Claude Code**, **Cursor**, **Windsurf**, **Cline**,
 ---
 
 ### 🧠 2. Deep Code Intelligence & Blast Radius
-Vector search alone misses function calls, callers, and dependencies. Gleann combines vector search with an AST code graph in KùzuDB.
+Vector search alone misses function calls, callers, and dependencies. Gleann combines vector search with an AST code graph stored in the index's own SQLite database (every build, including the pure-Go one).
 - **AST Chunking**: Tree-sitter partitions functions, structs, and interfaces cleanly at syntax boundaries.
 - **Call-Graph Traversal**: Discover callers and callees with `gleann graph callers <symbol>`.
 - **Blast Radius Analysis**: Trace upstream impact before making breaking changes with `gleann graph explain <symbol>`.
@@ -197,7 +197,7 @@ gleann tokens ./src            # Estimate token consumption across read modes
 - **[Cookbook & Recipes](docs/cookbook.md)** — Practical examples for real-world codebases
 - **[Architecture & Internals](docs/architecture.md)** — In-depth engine mechanics & data flow
 - **[Configuration & Models](docs/configuration.md)** — Model recommendations (Ollama, llama.cpp, Cloud)
-- **[Hierarchical GraphRAG](docs/hierarchical_graphrag.md)** — Multi-level document structure & KùzuDB
+- **[Hierarchical GraphRAG](docs/hierarchical_graphrag.md)** — Multi-level document structure & the document graph
 - **[Plugin System](docs/plugins.md)** — Custom extractors for audio, video, and documents
 - **[REST API Reference](docs/api.md)** — OpenAPI endpoints & curl examples
 - **[Troubleshooting](docs/troubleshooting.md)** — FAQ and common resolutions

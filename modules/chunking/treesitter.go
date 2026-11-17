@@ -919,3 +919,18 @@ func extractCallsDFS(node *sitter.Node, source []byte) []string {
 	walk(node)
 	return calls
 }
+
+// ChunkCodeWithTree is ChunkCode for an already-parsed tree-sitter tree: the
+// same chunks (oversized ones split, line numbers per config) without parsing
+// the file a second time. Returns nil when tree is nil; the caller falls back
+// to ChunkCode.
+func (c *ASTChunker) ChunkCodeWithTree(lang Language, filename, source string, tree *sitter.Tree, sourceBytes []byte) []CodeChunk {
+	if tree == nil {
+		return nil
+	}
+	chunks := treeSitterChunkFromTree(source, filename, lang, c.config, tree, sourceBytes)
+	if chunks == nil {
+		return nil
+	}
+	return c.postProcess(chunks)
+}

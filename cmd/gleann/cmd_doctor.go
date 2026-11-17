@@ -14,6 +14,7 @@ import (
 	"github.com/tevfik/gleann/internal/indexing"
 	"github.com/tevfik/gleann/internal/tui"
 	"github.com/tevfik/gleann/pkg/gleann"
+	"github.com/tevfik/gleann/pkg/memory"
 )
 
 // cmdDoctor runs a series of health checks and prints a diagnostic summary.
@@ -113,6 +114,7 @@ func cmdDoctor() {
 		checkIndexHealth(indexDir, indexes, warn)
 	}
 	warnPendingSyncBackups(indexDir, warn)
+	warnLegacyMemoryStores(indexDir, warn)
 
 	// ── 4. Disk space ───────────────────────────────────────────────────
 	fmt.Println()
@@ -440,5 +442,27 @@ func indexDiskSize(indexDir, name string) int64 {
 func warnPendingSyncBackups(indexDir string, warn func(string)) {
 	for _, name := range indexing.PendingSyncBackups(indexDir) {
 		warn(fmt.Sprintf("Index %q: a sync left a rollback copy (%s); if no sync is running it was interrupted. Run: gleann index sync %s", name, indexing.SyncBackupPath(indexDir, name), name))
+	}
+}
+
+// warnLegacyMemoryStores lists v1.9 <name>_memory Kùzu stores whose entities
+// were not imported into memory.sqlite yet.
+func warnLegacyMemoryStores(indexDir string, warn func(string)) {
+	if len(memory.ScanLegacyKuzuStores(indexDir)) == 0 {
+		return // nothing to import; do not open (or create) the memory database
+	}
+	store, err := memory.DefaultStore()
+	if err != nil {
+		warn(fmt.Sprintf("Memory store not checked for old Kùzu entity stores: %v", err))
+		return
+	}
+	defer store.Close()
+	legacy := store.LegacyKuzuStores(indexDir)
+	if len(legacy) == 0 {
+		return
+	}
+	for _, l := range legacy {
+		exp, imp := memory.LegacyImportCommands(l)
+		warn(fmt.Sprintf("Entities of index %q are in an old Kùzu store (%s) and not imported. Run: %s ; then: %s", l.Name, l.Path, exp, imp))
 	}
 }

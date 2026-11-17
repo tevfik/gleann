@@ -16,8 +16,9 @@ import (
 // FileGraph is the per-file extraction result shared by the graph sinks.
 // Symbols contains both declarations (File != "") and callee/type stubs
 // (File == ""); Declares only references declarations. For Go files the
-// CALLS / IMPLEMENTS / REFERENCES edges are AST-resolved; other languages
-// contribute declarations only (their call extraction needs tree-sitter).
+// CALLS / IMPLEMENTS / REFERENCES edges are AST-resolved; other tree-sitter
+// languages contribute CALLS edges in treesitter builds and declarations only
+// otherwise.
 type FileGraph struct {
 	File       gtypes.FileNode
 	Symbols    []gtypes.SymbolNode
@@ -27,9 +28,12 @@ type FileGraph struct {
 	References []gtypes.EdgeReferences
 }
 
-// ExtractFile extracts symbols and relationships from one source file using
-// only pure-Go machinery (go/ast for Go, the chunker's regex fallback for
-// other languages), so it works in every build including CGO_ENABLED=0.
+// ExtractFile extracts symbols and relationships from one source file. It works
+// in every build including CGO_ENABLED=0 (go/ast for Go, the chunker's regex
+// fallback for other languages); with -tags treesitter the other languages are
+// parsed by tree-sitter and also yield CALLS edges. A call is charged to the
+// innermost function/method/class containing it; module-level calls are
+// charged to a "<script>" symbol anchored at line 1 and spanning the file.
 //
 // module is the Go module name (see DetectGoModule), root the absolute
 // codebase root used to derive relative paths, absPath the file location and
@@ -57,7 +61,12 @@ func extractFile(module, root, absPath, source string, r *ExactResolver) FileGra
 	relPath := relPathOf(root, absPath)
 
 	chunker := chunking.NewASTChunker(chunking.DefaultASTChunkerConfig())
-	chunks := chunker.ChunkCode(source, absPath)
+	// Non-Go tree-sitter languages are parsed once for declarations and CALLS
+	// (treesitter builds); everything else uses the chunker alone.
+	chunks, tsNodes, tsEdges, tsOK := chunkWithCalls(chunker, module, relPath, absPath, source, langEnum)
+	if !tsOK {
+		chunks = chunker.ChunkCode(source, absPath)
+	}
 
 	rationaleByLine := extractRationale(source)
 
@@ -125,6 +134,16 @@ func extractFile(module, root, absPath, source string, r *ExactResolver) FileGra
 		fg.Symbols = append(fg.Symbols, extraSyms...)
 		// Method-set IMPLEMENTS (exact) in addition to the embedding edges.
 		fg.Implements = dedupeImplements(append(fg.Implements, r.ImplementsFor(relPath)...))
+	}
+
+	if tsOK {
+		for _, n := range tsNodes {
+			if n.Kind == "script" {
+				fg.Declares = append(fg.Declares, gtypes.EdgeDeclares{FilePath: relPath, SymbolFQN: n.FQN})
+			}
+		}
+		fg.Symbols = append(fg.Symbols, tsNodes...)
+		fg.Calls = append(fg.Calls, tsEdges...)
 	}
 
 	for i := range fg.Symbols {

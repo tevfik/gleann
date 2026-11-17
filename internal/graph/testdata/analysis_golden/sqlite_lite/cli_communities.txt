@@ -1,0 +1,38 @@
+🕸️  Community Detection Results
+   Nodes: 51 | Edges: 55 | Communities: 13 | Modularity: 0.7033
+
+Community 0: app (7 nodes, cohesion=0.043)
+Community 1: app (6 nodes, cohesion=0.050)
+Community 2: main (5 nodes, cohesion=0.230)
+Community 3: main (5 nodes, cohesion=0.060)
+Community 4: service_test (5 nodes, cohesion=0.230)
+Community 5: service (5 nodes, cohesion=0.060)
+Community 6: util (3 nodes, cohesion=0.100)
+Community 7: util (3 nodes, cohesion=0.100)
+Community 8: store (3 nodes, cohesion=0.100)
+Community 9: util (3 nodes, cohesion=0.100)
+Community 10: service (2 nodes, cohesion=0.500)
+Community 11: store (2 nodes, cohesion=0.400)
+Community 12: store (2 nodes, cohesion=0.500)
+
+🔴 God Nodes (high-degree hubs):
+  [file] service/service.go (in=0, out=9, total=9)
+  [file] store/store.go (in=0, out=7, total=7)
+  [function] main (in=1, out=5, total=6)
+  [file] py/app.py (in=0, out=6, total=6)
+  [file] ts/app.ts (in=0, out=5, total=5)
+
+⚡ Surprising cross-community edges:
+  example.com/fixture.main → example.com/fixture/service.New (community 2 → 4)
+  example.com/fixture.main → example.com/fixture/service.Service.Save (community 2 → 10)
+  example.com/fixture.main → example.com/fixture/store.NewMemStore (community 2 → 4)
+  example.com/fixture/service.New → service/service.go (community 4 → 5)
+  example.com/fixture/service.Service.Load → service/service.go (community 2 → 5)
+  example.com/fixture/service.Service.Report → service/service.go (community 2 → 5)
+  example.com/fixture/service.Service.Save → service/service.go (community 10 → 5)
+  example.com/fixture/service.validate → service/service.go (community 10 → 5)
+  example.com/fixture/store.MemStore → store/store.go (community 11 → 8)
+  example.com/fixture/store.MemStore.Put → store/store.go (community 12 → 8)
+  example.com/fixture/store.NewMemStore → store/store.go (community 4 → 8)
+  example.com/fixture/store.Store → store/store.go (community 11 → 8)
+  example.com/fixture/store.normalize → store/store.go (community 12 → 8)

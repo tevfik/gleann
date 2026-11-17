@@ -1,7 +1,5 @@
-//go:build treesitter
-
 // Package viz generates self-contained interactive HTML graph visualizations
-// from the KuzuDB code graph. Uses vis.js (loaded from CDN) for rendering.
+// from the code graph. Uses vis.js (loaded from CDN) for rendering.
 package viz
 
 import (

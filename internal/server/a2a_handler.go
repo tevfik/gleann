@@ -2,7 +2,6 @@ package server
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -235,10 +234,10 @@ func (s *Server) a2aMemoryHandler(ctx a2a.SkillContext) (string, error) {
 	return fmt.Sprintf("Found %d memories:\n%s", len(blocks), strings.Join(parts, "\n")), nil
 }
 
-// a2aCodeHandler provides code graph analysis using the KuzuDB graph pool.
+// a2aCodeHandler provides code graph analysis using the graph pool.
 func (s *Server) a2aCodeHandler(ctx a2a.SkillContext) (string, error) {
 	if s.graphPool == nil {
-		return "", fmt.Errorf("code graph not available (build with -tags treesitter)")
+		return "", fmt.Errorf("code graph not available")
 	}
 
 	targetIndex := ""
@@ -273,9 +272,6 @@ func (s *Server) a2aCodeHandler(ctx a2a.SkillContext) (string, error) {
 
 	db, err := s.graphPool.get(indexName)
 	if err != nil {
-		if errors.Is(err, errGraphUnsupported) {
-			return "", err
-		}
 		return "", fmt.Errorf("graph index %q not found: %v", indexName, err)
 	}
 

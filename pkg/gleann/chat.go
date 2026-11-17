@@ -237,7 +237,7 @@ func (c *LeannChat) Ask(ctx context.Context, question string, opts ...SearchOpti
 // the LLM as context, in the [1]..[n] order used in the prompt.
 func (c *LeannChat) AskWithResults(ctx context.Context, question string, opts ...SearchOption) (string, []SearchResult, error) {
 	// Step 1: Retrieve relevant context.
-	results, err := c.searcher.Search(ctx, question, opts...)
+	results, err := c.searchFresh(ctx, question, opts...)
 	if err != nil {
 		return "", nil, fmt.Errorf("search: %w", err)
 	}
@@ -304,7 +304,7 @@ type StreamCallback func(token string)
 // The full assembled answer is also appended to conversation history.
 func (c *LeannChat) AskStream(ctx context.Context, question string, callback StreamCallback, opts ...SearchOption) ([]SearchResult, error) {
 	// Step 1: Retrieve relevant context.
-	results, err := c.searcher.Search(ctx, question, opts...)
+	results, err := c.searchFresh(ctx, question, opts...)
 	if err != nil {
 		return nil, fmt.Errorf("search: %w", err)
 	}
@@ -393,7 +393,7 @@ func (c *LeannChat) AskWithMedia(ctx context.Context, question string, mediaFile
 // AskWithImages performs RAG with pre-encoded base64 image/audio data
 // attached to the user message. Use this when media data is already in memory.
 func (c *LeannChat) AskWithImages(ctx context.Context, question string, images []string, opts ...SearchOption) (string, error) {
-	results, searchErr := c.searcher.Search(ctx, question, opts...)
+	results, searchErr := c.searchFresh(ctx, question, opts...)
 	if searchErr != nil {
 		return "", fmt.Errorf("search: %w", searchErr)
 	}
@@ -465,7 +465,7 @@ func (c *LeannChat) AskStreamWithMedia(ctx context.Context, question string, med
 		return nil, err
 	}
 
-	results, searchErr := c.searcher.Search(ctx, question, opts...)
+	results, searchErr := c.searchFresh(ctx, question, opts...)
 	if searchErr != nil {
 		return nil, fmt.Errorf("search: %w", searchErr)
 	}
@@ -1536,7 +1536,7 @@ func formatResultWithOptions(r SearchResult, idx int, compress bool) string {
 
 // AskStreamWithImages performs streaming RAG with pre-encoded base64 images.
 func (c *LeannChat) AskStreamWithImages(ctx context.Context, question string, images []string, callback StreamCallback, opts ...SearchOption) ([]SearchResult, error) {
-	results, searchErr := c.searcher.Search(ctx, question, opts...)
+	results, searchErr := c.searchFresh(ctx, question, opts...)
 	if searchErr != nil {
 		return nil, fmt.Errorf("search: %w", searchErr)
 	}

@@ -1,0 +1,63 @@
+## Repository Map — fixture (by importance)
+
+### service/service.go
+- method `Service.Load`
+- function `New`
+- function `validate`
+- method `Service.Report`
+- method `Service.Save`
+- struct `Service`
+- struct `emptyError`
+- method `emptyError.Error`
+- var `errEmpty`
+
+### store/store.go
+- function `NewMemStore`
+- interface `Store`
+- function `normalize`
+- struct `MemStore`
+- method `MemStore.Get`
+- method `MemStore.Keys`
+- method `MemStore.Put`
+
+### py/app.py
+- class `Registry`
+- method `add`
+- function `build_registry`
+- method `describe`
+- method `__init__`
+- function `main`
+
+### ts/app.ts
+- interface `Shape`
+- class `Square`
+- function `describeAll`
+- function `totalArea`
+- function `main`
+
+### rs/main.rs
+- struct `Counter`
+- function `run_all`
+- module `util`
+- function `main`
+
+### main.go
+- function `run`
+- function `main`
+
+### py/util.py
+- function `clean`
+- function `join_words`
+
+### rs/util.rs
+- function `clamp`
+- function `double`
+
+### service/service_test.go
+- function `TestReport`
+- function `TestSaveLoad`
+
+### ts/util.ts
+- function `pluralize`
+- function `slug`
+

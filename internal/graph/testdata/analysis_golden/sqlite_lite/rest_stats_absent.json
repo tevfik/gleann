@@ -1,0 +1,6 @@
+{
+  "body": {
+    "error": "graph index \"absent\" not found: no code graph: index \"absent\" has no code graph yet; build it with: gleann index build absent --docs \u003cdir\u003e --graph (or POST /api/graph/absent/index)"
+  },
+  "status": 404
+}

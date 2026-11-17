@@ -287,7 +287,15 @@ func buildOne(ctx context.Context, opts BuildOptions) (*BuildResult, error) {
 		}
 	}
 
-	if opts.Graph {
+	// A format-2 build keeps the graph that is in the index database. Only a
+	// database that had to be recreated (damaged, or from an incompatible
+	// build) lost it, and then it is rebuilt from the sources even though
+	// --graph was not given.
+	graphLost := builder.DatabaseRecreated()
+	if graphLost && !opts.Graph {
+		p.Printf("⚠️  The index database was recreated, so the code graph is rebuilt from the sources.\n")
+	}
+	if opts.Graph || graphLost {
 		if err := buildGraphIndex(GraphOptions{
 			Name:              name,
 			DocsDir:           docsDir,
@@ -297,7 +305,7 @@ func buildOne(ctx context.Context, opts BuildOptions) (*BuildResult, error) {
 		}, p); err != nil {
 			return res, fmt.Errorf("%w: %v", ErrGraphUpdate, err)
 		}
-		if opts.GraphReport {
+		if opts.Graph && opts.GraphReport {
 			graphReportPath := filepath.Join(docsDir, "GRAPH_REPORT.md")
 			if err := GenerateGraphReport(name, cfg.IndexDir, docsDir, graphReportPath); err == nil {
 				res.GraphReportPath = graphReportPath

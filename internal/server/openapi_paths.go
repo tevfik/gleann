@@ -305,7 +305,7 @@ func openAPIPathsGraph() map[string]any {
 			"post": map[string]any{
 				"tags":        []string{"graph"},
 				"summary":     "Query the code graph",
-				"description": "Run predefined queries (callees, callers, symbols_in_file, impact) or raw Cypher against the KuzuDB code graph.",
+				"description": "Run predefined queries (callees, callers, symbols_in_file, impact, toc) against the code graph: the SQLite graph of a format-2 index, in every build. Raw Cypher is rejected with 400; toc of a path that is not an indexed document is 404.",
 				"operationId": "graphQuery",
 				"parameters":  []map[string]any{paramName()},
 				"requestBody": map[string]any{
@@ -334,7 +334,7 @@ func openAPIPathsGraph() map[string]any {
 			"post": map[string]any{
 				"tags":        []string{"graph"},
 				"summary":     "Trigger AST graph indexing",
-				"description": "Indexes a source directory into the KuzuDB code graph using tree-sitter AST parsing.",
+				"description": "Indexes a source directory into the code graph (the SQLite tables of a format-2 index, in every build; a format-1 index has no code graph and answers 409).",
 				"operationId": "graphIndex",
 				"parameters":  []map[string]any{paramName()},
 				"requestBody": map[string]any{
@@ -363,7 +363,8 @@ func openAPIPathsGraph() map[string]any {
 						},
 					},
 					"400": map[string]any{"description": "Invalid request"},
-					"503": map[string]any{"description": "Graph database not available (requires treesitter build tag)"},
+					"409": map[string]any{"description": "The index uses the old store format, which has no code graph; migrate it first"},
+					"503": map[string]any{"description": "Graph database not available"},
 				},
 			},
 		},

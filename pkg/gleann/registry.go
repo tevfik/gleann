@@ -9,9 +9,6 @@ import (
 var (
 	registryMu sync.RWMutex
 	registry   = make(map[string]BackendFactory)
-
-	// GraphDBOpener is injected by main if Cgo graph support is enabled.
-	GraphDBOpener func(dir string) (GraphDB, error)
 )
 
 // RegisterBackend registers a backend factory.

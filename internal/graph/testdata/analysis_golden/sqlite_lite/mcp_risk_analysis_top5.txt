@@ -1,0 +1,9 @@
+Symbol Risk Analysis — fixture (top 5)
+
+SYMBOL                                   KIND       RISK       IN     OUT    BLAST  SCORE
+────────────────────────────────────────────────────────────────────────────────────────────────────
+run                                      function   high       1      1      9      0.5431
+Service.Report                           method     high       1      1      9      0.5431
+Service.Save                             method     high       1      1      9      0.5431
+Service.Load                             method     medium     2      0      6      0.4132
+New                                      function   medium     3      0      9      0.3364

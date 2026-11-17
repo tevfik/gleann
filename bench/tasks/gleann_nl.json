@@ -68,7 +68,7 @@
     "description": "group related functions of the code graph into clusters",
     "query": "group related functions of the code graph into clusters",
     "gold_files": [
-      "internal/server/a2a_graph_cgo.go"
+      "internal/server/a2a_graph.go"
     ]
   },
   {
@@ -484,7 +484,7 @@
     "description": "skip source files whose content hash has not changed since the last index",
     "query": "skip source files whose content hash has not changed since the last index",
     "gold_files": [
-      "internal/graph/indexer/filehash.go"
+      "pkg/gleann/manifest.go"
     ]
   },
   {
@@ -598,7 +598,7 @@
     "description": "restore call edges coming from unchanged files after their targets were re-indexed",
     "query": "restore call edges coming from unchanged files after their targets were re-indexed",
     "gold_files": [
-      "internal/graph/kuzu/incremental.go"
+      "internal/graphstore/delta.go"
     ]
   },
   {
@@ -750,8 +750,8 @@
     "description": "find who calls a function and what a function calls from the graph database",
     "query": "find who calls a function and what a function calls from the graph database",
     "gold_files": [
-      "internal/graph/kuzu/query.go",
-      "internal/server/graph_cgo.go"
+      "internal/graphstore/sqlite.go",
+      "internal/server/graph_sqlite.go"
     ]
   },
   {
@@ -759,7 +759,8 @@
     "description": "persist symbols and call relationships into the embedded graph store",
     "query": "persist symbols and call relationships into the embedded graph store",
     "gold_files": [
-      "internal/graph/kuzu/writer.go"
+      "internal/graphstore/delta.go",
+      "internal/graphstore/bulk.go"
     ]
   },
   {
@@ -767,7 +768,7 @@
     "description": "keep entities and relations for the memory engine in the graph store",
     "query": "keep entities and relations for the memory engine in the graph store",
     "gold_files": [
-      "internal/graph/kuzu/memory_service.go"
+      "pkg/memory/entity_service.go"
     ]
   },
   {

@@ -60,6 +60,8 @@ func cmdMemory(args []string) {
 		cmdMemoryExport(subArgs)
 	case "import":
 		cmdMemoryImport(subArgs)
+	case "import-graph":
+		cmdMemoryImportGraph(subArgs)
 	case "failure":
 		cmdMemoryFailure(subArgs)
 	default:
@@ -96,6 +98,7 @@ Usage:
   gleann memory failure list                       List recorded failures
   gleann memory export   --dir <dir>             Export memory blocks and summaries to markdown
   gleann memory import   --dir <dir>             Import memory blocks and summaries from markdown
+  gleann memory import-graph <file.json|dir>     Import entities exported from a v1.9 Kùzu store (kuzu-memory-export)
 
 Memory Tiers:
   short    In-memory, session-scoped
@@ -1046,4 +1049,30 @@ func cmdMemoryImport(args []string) {
 		parts = append(parts, fmt.Sprintf("%d summary(ies)", stats.SummariesImported))
 	}
 	fmt.Printf("📥 Imported memory blocks from %s: %s\n", dir, strings.Join(parts, ", "))
+}
+
+// cmdMemoryImportGraph loads the export files of tools/kuzu-memory-export
+// (entities, relations and archive of a gleann v1.9 Memory Engine store).
+func cmdMemoryImportGraph(args []string) {
+	if len(args) != 1 {
+		fmt.Fprintln(os.Stderr, "usage: gleann memory import-graph <file.json|dir>")
+		exitFunc(1)
+		return
+	}
+	mgr := openMemoryManager()
+	defer mgr.Close()
+
+	results, err := mgr.Store().ImportGraphPath(args[0])
+	for _, r := range results {
+		if r.AlreadyImported {
+			fmt.Printf("= %s: already imported from this file, nothing changed\n", r.Namespace)
+			continue
+		}
+		fmt.Printf("📥 %s: %d entities, %d relations, %d archive rows added\n",
+			r.Namespace, r.Entities, r.Relations, r.Archive)
+	}
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error importing graph: %v\n", err)
+		exitFunc(1)
+	}
 }

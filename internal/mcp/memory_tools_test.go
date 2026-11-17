@@ -1,10 +1,13 @@
 package mcp
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	mcpsdk "github.com/mark3labs/mcp-go/mcp"
@@ -503,10 +506,15 @@ func TestMCPMemory_FullLifecycle(t *testing.T) {
 
 func TestMCPMemoryPool_KuzuDirectoryWarning(t *testing.T) {
 	dir := t.TempDir()
+	// go-kuzu 0.11 stores a database as a single file.
 	kuzuDir := filepath.Join(dir, "legacy_memory")
-	if err := os.MkdirAll(kuzuDir, 0o755); err != nil {
-		t.Fatalf("mkdir kuzuDir: %v", err)
+	if err := os.WriteFile(kuzuDir, []byte("kuzu"), 0o644); err != nil {
+		t.Fatalf("write legacy store: %v", err)
 	}
+	var logs bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+	defer slog.SetDefault(prev)
 
 	pool := newMCPMemoryPool(dir)
 	defer pool.closeAll()
@@ -519,12 +527,17 @@ func TestMCPMemoryPool_KuzuDirectoryWarning(t *testing.T) {
 		t.Fatal("expected non-nil service")
 	}
 
-	if !pool.warned["legacy"] {
-		t.Error("expected warned flag to be true")
+	if _, err := pool.get("legacy"); err != nil {
+		t.Fatalf("second get: %v", err)
+	}
+	out := logs.String()
+	if strings.Count(out, "level=WARN") != 1 || !strings.Contains(out, "kuzu-memory-export") ||
+		!strings.Contains(out, "gleann memory import-graph") {
+		t.Errorf("expected one notice naming both commands, got: %s", out)
 	}
 
-	// Verify legacy directory was never deleted or modified
-	if fi, err := os.Stat(kuzuDir); err != nil || !fi.IsDir() {
-		t.Error("legacy Kuzu directory must not be deleted or modified")
+	// Verify the legacy store was never deleted or modified
+	if b, err := os.ReadFile(kuzuDir); err != nil || string(b) != "kuzu" {
+		t.Error("legacy Kuzu store must not be deleted or modified")
 	}
 }

@@ -11,7 +11,7 @@
 #   GLEANN_VARIANT=...      Which build to install:
 #                             lite (default)  pure Go, no native code
 #                             eif             + bitllm.c local embeddings (EIF runtime)
-#                             full            + bitllm.c, FAISS, tree-sitter code graph, Kuzu
+#                             full            + bitllm.c, FAISS, tree-sitter parsers
 #                           eif and full exist for linux-amd64, linux-arm64, darwin-arm64.
 #   GLEANN_EIF=1            Same as GLEANN_VARIANT=eif
 #   GLEANN_FULL=1           Same as GLEANN_VARIANT=full
@@ -121,7 +121,7 @@ main() {
     case "${KIND}" in
         lite) log "Build:    lite (pure Go; bitllm.c embeddings and FAISS not included — GLEANN_VARIANT=eif or full adds them)" ;;
         eif)  log "Build:    eif (bitllm.c local embeddings)" ;;
-        full) log "Build:    full (bitllm.c, FAISS, tree-sitter, Kuzu; unpacks to ~/.gleann/runtime on first run)" ;;
+        full) log "Build:    full (bitllm.c, FAISS, tree-sitter; unpacks to ~/.gleann/runtime on first run)" ;;
     esac
 
     # Construct download URL.

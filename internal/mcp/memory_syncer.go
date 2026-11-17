@@ -1,10 +1,8 @@
-//go:build treesitter
-
 package mcp
 
 import (
 	"github.com/tevfik/gleann/internal/embedding"
-	kgraph "github.com/tevfik/gleann/internal/graph/kuzu"
+	"github.com/tevfik/gleann/internal/memsync"
 	"github.com/tevfik/gleann/pkg/gleann"
 )
 
@@ -19,6 +17,6 @@ func (srv *Server) wireMemorySyncer(cfg Config, glCfg gleann.Config, embedder *e
 		if err != nil {
 			return nil
 		}
-		return kgraph.NewLeannSyncer(builder, name+"_memory_vectors", embedder)
+		return memsync.NewLeannSyncer(builder, name+"_memory_vectors", embedder)
 	}
 }

@@ -378,16 +378,20 @@ func TestPluginResultRoundTrip(t *testing.T) {
 	}
 }
 
-func TestBuildGraphIndexWithoutTreesitter(t *testing.T) {
-	if GraphSupported {
-		t.Skip("graph supported in this build")
-	}
+// A format-1 index has no code graph (RFC 004 A3): the graph step is skipped
+// with a notice, and the report says there is no graph, in every build.
+func TestBuildGraphIndexFormat1HasNoGraph(t *testing.T) {
 	var errBuf bytes.Buffer
-	BuildGraphIndex(GraphOptions{Name: "g", DocsDir: t.TempDir(), IndexDir: t.TempDir(), Stderr: &errBuf})
-	if !strings.Contains(errBuf.String(), "requires CGo") {
-		t.Errorf("expected warning, got %q", errBuf.String())
+	indexDir := t.TempDir()
+	BuildGraphIndex(GraphOptions{Name: "g", DocsDir: t.TempDir(), IndexDir: indexDir, Stderr: &errBuf})
+	if !strings.Contains(errBuf.String(), "old store format") {
+		t.Errorf("expected the old-format notice, got %q", errBuf.String())
 	}
-	if err := GenerateGraphReport("g", t.TempDir(), t.TempDir(), filepath.Join(t.TempDir(), "r.md")); err == nil {
-		t.Error("expected error without treesitter")
+	if _, err := os.Stat(filepath.Join(indexDir, "g_graph")); !os.IsNotExist(err) {
+		t.Errorf("no g_graph directory may be created: %v", err)
+	}
+	err := GenerateGraphReport("g", indexDir, t.TempDir(), filepath.Join(t.TempDir(), "r.md"))
+	if err == nil || !strings.Contains(err.Error(), "no code graph") {
+		t.Errorf("GenerateGraphReport = %v, want a no-code-graph error", err)
 	}
 }

@@ -696,7 +696,7 @@ type EmbeddingBatch struct {
 // knowledge without coupling to gleann's internal RAG pipeline.
 
 // MemoryGraphNode is a generic, labeled property node stored in the Entity
-// table of the Memory Engine's KuzuDB schema.
+// table of the Memory Engine's SQLite schema.
 type MemoryGraphNode struct {
 	// ID is the user-supplied primary key (e.g. a UUID or stable slug).
 	ID string `json:"id"`
@@ -709,7 +709,7 @@ type MemoryGraphNode struct {
 	Content string `json:"content,omitempty"`
 
 	// Attributes holds arbitrary key-value metadata persisted as a JSON
-	// string inside KuzuDB so the schema stays generic.
+	// string in the memory database so the schema stays generic.
 	Attributes map[string]any `json:"attributes,omitempty"`
 }
 
@@ -728,7 +728,7 @@ type MemoryGraphEdge struct {
 	// Weight is an optional numeric strength for the edge (default 1.0).
 	Weight float64 `json:"weight,omitempty"`
 
-	// Attributes holds arbitrary edge metadata, persisted as JSON in KuzuDB.
+	// Attributes holds arbitrary edge metadata, persisted as JSON.
 	Attributes map[string]any `json:"attributes,omitempty"`
 }
 
@@ -740,7 +740,7 @@ type GraphInjectionPayload struct {
 }
 
 // AttributesToJSON marshals a map[string]any to a compact JSON string suitable
-// for storage in KuzuDB's STRING attributes column.
+// for storage in the memory database's attributes column.
 // An empty or nil map is serialized as "{}".
 func AttributesToJSON(attrs map[string]any) (string, error) {
 	if len(attrs) == 0 {
@@ -753,7 +753,7 @@ func AttributesToJSON(attrs map[string]any) (string, error) {
 	return string(b), nil
 }
 
-// JSONToAttributes unmarshals a JSON string retrieved from KuzuDB back into
+// JSONToAttributes unmarshals a JSON string retrieved from storage back into
 // a map[string]any. Returns nil for empty or "{}" inputs.
 func JSONToAttributes(s string) (map[string]any, error) {
 	if s == "" || s == "{}" {

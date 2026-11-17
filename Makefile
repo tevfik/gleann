@@ -231,7 +231,7 @@ build-rust-core:
 		cd ext/gleann-core-rs && cargo build --release; \
 	fi
 
-# ── Full Binary (Tree-sitter + KuzuDB CGo + EIF-Runtime) ─────────────────────
+# ── Full Binary (Tree-sitter + FAISS CGo + EIF-Runtime) ──────────────────────
 .PHONY: builder-image
 builder-image:
 	@if command -v docker >/dev/null 2>&1; then \
@@ -245,7 +245,7 @@ builder-image:
 full: $(BINARY_FULL)
 
 $(BINARY_FULL): build-eif-lib prepare-assets builder-image
-	@echo "🔧 Building $(BINARY_FULL) with FAISS + Tree-sitter + KuzuDB CGo + EIF Runtime (standalone single executable)..."
+	@echo "🔧 Building $(BINARY_FULL) with FAISS + Tree-sitter CGo + EIF Runtime (standalone single executable)..."
 	@mkdir -p $(BUILD_DIR)/stage
 	@if command -v go >/dev/null 2>&1; then \
 		CGO_ENABLED=1 \
@@ -253,10 +253,6 @@ $(BINARY_FULL): build-eif-lib prepare-assets builder-image
 		CGO_CXXFLAGS="-w -I$(FAISS_INC_DIR)" \
 		CGO_LDFLAGS="$(RPATH_FLAGS) -L$(FAISS_LIB_DIR) -lfaiss_c -lfaiss -lopenblas -lgomp -lstdc++ -lm" \
 		go build -tags "treesitter,faiss,eif" -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/stage/gleann-full-bin $(CMD) && \
-		go mod download github.com/kuzudb/go-kuzu && \
-		KUZU_DIR=$$(go list -m -f '{{.Dir}}' github.com/kuzudb/go-kuzu 2>/dev/null || true); \
-		if [ -z "$$KUZU_DIR" ]; then KUZU_DIR=$$(find $$(go env GOPATH)/pkg/mod/github.com/kuzudb/go-kuzu* -maxdepth 0 2>/dev/null | head -n 1); fi; \
-		cp "$$KUZU_DIR/lib/dynamic/linux-amd64/libkuzu.so" $(BUILD_DIR)/stage/ 2>/dev/null || true; \
 		cp -L $(FAISS_LIB_DIR)/libopenblas.so.0 $(BUILD_DIR)/stage/ 2>/dev/null || cp -L /usr/lib/x86_64-linux-gnu/libopenblas.so.0 $(BUILD_DIR)/stage/ 2>/dev/null || true; \
 		cp -L /usr/lib/x86_64-linux-gnu/libgomp.so.1 $(BUILD_DIR)/stage/ 2>/dev/null || true; \
 		cp -L $(FAISS_LIB_DIR)/libgfortran.so.5 $(BUILD_DIR)/stage/ 2>/dev/null || cp -L /usr/lib/x86_64-linux-gnu/libgfortran.so.5 $(BUILD_DIR)/stage/ 2>/dev/null || true; \
@@ -284,9 +280,6 @@ $(BINARY_FULL): build-eif-lib prepare-assets builder-image
 				CGO_CXXFLAGS='-w -I/app/deps/faiss_install/include' \
 				CGO_LDFLAGS='$(RPATH_FLAGS) -L/app/deps/faiss_install/lib -lfaiss_c -lfaiss -lopenblas -lgomp -lstdc++ -lm' \
 				go build -buildvcs=false -tags 'treesitter,faiss' -ldflags '$(LDFLAGS) -extldflags \"$(RPATH_FLAGS)\"' -o $(BUILD_DIR)/stage/gleann-full-bin $(CMD) && \
-				go mod download github.com/kuzudb/go-kuzu && \
-				KUZU_DIR=\$$(go list -m -f '{{.Dir}}' github.com/kuzudb/go-kuzu) && \
-				cp \"\$$KUZU_DIR/lib/dynamic/linux-amd64/libkuzu.so\" $(BUILD_DIR)/stage/ && \
 				cp -L /usr/lib/x86_64-linux-gnu/libopenblas.so.0 $(BUILD_DIR)/stage/ 2>/dev/null || true && \
 				cp -L /usr/lib/x86_64-linux-gnu/libgomp.so.1 $(BUILD_DIR)/stage/ 2>/dev/null || true && \
 				cp -L /usr/lib/x86_64-linux-gnu/libgfortran.so.5 $(BUILD_DIR)/stage/ 2>/dev/null || true && \
@@ -300,7 +293,7 @@ $(BINARY_FULL): build-eif-lib prepare-assets builder-image
 				rm -rf $(BUILD_DIR)/stage && \
 				chown -R $$(id -u):$$(id -g) /app/$(BUILD_DIR) cmd/gleann-full-launcher /app/internal/server/dist 2>/dev/null || true"; \
 	fi
-	@echo "✅ Built single standalone $(BINARY_FULL) with FAISS + Tree-sitter + KuzuDB"
+	@echo "✅ Built single standalone $(BINARY_FULL) with FAISS + Tree-sitter"
 
 # ── Install ─────────────────────────────────────────────────────────────────
 
@@ -310,10 +303,6 @@ install-user: $(BINARY_FULL)
 	@mkdir -p $(USER_BIN_DIR) $(USER_LIB_DIR)
 	install -m 0755 $(BINARY_FULL) $(USER_BIN_DIR)/gleann
 	@rm -f $(USER_BIN_DIR)/gleann-full 2>/dev/null || true
-	@if [ -f $(BUILD_DIR)/libkuzu.so ]; then \
-		install -m 0755 $(BUILD_DIR)/libkuzu.so $(USER_LIB_DIR)/; \
-		install -m 0755 $(BUILD_DIR)/libkuzu.so $(USER_BIN_DIR)/; \
-	fi
 	@echo "✅ Installed gleann → $(USER_BIN_DIR)/gleann"
 	@echo "   Make sure $(USER_BIN_DIR) is in your PATH."
 
@@ -328,9 +317,6 @@ install-user-lite: $(BINARY)
 .PHONY: install
 install: $(BINARY_FULL)
 	install -m 0755 $(BINARY_FULL) $(INSTALL_DIR)/gleann
-	@if [ -f $(BUILD_DIR)/libkuzu.so ]; then \
-		install -m 0755 $(BUILD_DIR)/libkuzu.so /usr/local/lib/ 2>/dev/null || true; \
-	fi
 	@echo "✅ Installed gleann → $(INSTALL_DIR)/gleann"
 
 # ── Tests ────────────────────────────────────────────────────────────────────
@@ -411,3 +397,8 @@ GRAPHDB_PIN   ?=
 .PHONY: bench-graphdb
 bench-graphdb:
 	cd bench/graphdb && $(GRAPHDB_PIN) go run $(if $(GRAPHDB_TAGS),-tags "$(GRAPHDB_TAGS)",) ./cmd/graphbench -edges $(GRAPHDB_EDGES)
+
+# Exporter of v1.9 Kùzu memory stores (own module, CGo; see docs/memory_engine.md, "Upgrading entities from v1.9").
+.PHONY: kuzu-memory-export
+kuzu-memory-export:
+	cd tools/kuzu-memory-export && CGO_ENABLED=1 go build -o ../../bin/kuzu-memory-export .

@@ -1,0 +1,23 @@
+Community Detection — fixture
+Nodes: 51 | Edges: 55 | Communities: 13 | Modularity: 0.7033
+
+Community 0: app (7 nodes, cohesion=0.043)
+Community 1: app (6 nodes, cohesion=0.050)
+Community 2: main (5 nodes, cohesion=0.230)
+Community 3: main (5 nodes, cohesion=0.060)
+Community 4: service_test (5 nodes, cohesion=0.230)
+Community 5: service (5 nodes, cohesion=0.060)
+Community 6: util (3 nodes, cohesion=0.100)
+Community 7: util (3 nodes, cohesion=0.100)
+Community 8: store (3 nodes, cohesion=0.100)
+Community 9: util (3 nodes, cohesion=0.100)
+Community 10: service (2 nodes, cohesion=0.500)
+Community 11: store (2 nodes, cohesion=0.400)
+Community 12: store (2 nodes, cohesion=0.500)
+
+God Nodes:
+  [file] service/service.go (in=0, out=9)
+  [file] store/store.go (in=0, out=7)
+  [function] main (in=1, out=5)
+  [file] py/app.py (in=0, out=6)
+  [file] ts/app.ts (in=0, out=5)

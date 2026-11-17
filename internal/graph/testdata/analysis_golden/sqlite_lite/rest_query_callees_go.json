@@ -1,0 +1,14 @@
+{
+  "body": {
+    "count": 1,
+    "query_ms": 0,
+    "results": [
+      {
+        "fqn": "example.com/fixture/service.validate",
+        "kind": "function",
+        "name": "validate"
+      }
+    ]
+  },
+  "status": 200
+}

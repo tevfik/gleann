@@ -55,22 +55,24 @@ When the server is running, interactive Swagger UI documentation is available at
 | POST | `/api/indexes/{name}/ask` | RAG-based Q&A |
 | POST | `/api/search` | Multi-index search |
 
-### Code Graph (requires treesitter build)
+### Code Graph (format-2 indexes, every build)
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/api/graph/{name}` | Graph statistics |
+| GET | `/api/graph/{name}` | Graph statistics (404 when the index has no code graph) |
 | GET | `/api/graph/{name}/toc` | Document table of contents |
 | GET | `/api/graph/{name}/documents` | List indexed documents in graph |
-| POST | `/api/graph/{name}/query` | Query the code graph |
-| POST | `/api/graph/{name}/index` | Trigger AST graph indexing |
+| POST | `/api/graph/{name}/query` | Query the code graph: `callers`, `callees`, `symbols_in_file`, `impact`, `toc`. A format-2 index answers in every build; `cypher` is gone (400 `raw Cypher was removed; use callers/callees/symbols_in_file/impact`); `toc` of a path that is not an indexed document is 404 |
+| POST | `/api/graph/{name}/index` | Trigger AST graph indexing into the index database (every build). A format-1 index has no code graph: 409 with the hint `gleann index migrate <name>`. The `module` field is accepted and ignored (the Go module is read from `go.mod`) |
 
 ### Memory Engine (Generic Knowledge Graph)
 
 The Memory Engine exposes a generic `Entity` / `RELATES_TO` graph that external
 AI agents can read from and write to without coupling to gleann's internal RAG
-pipeline.  Each `{name}` corresponds to an independent KuzuDB store under
-`<index-dir>/<name>_memory/`.
+pipeline.  Each `{name}` is a namespace of the memory database
+(`memory.sqlite`); entities of a v1.9 `<index-dir>/<name>_memory` Kùzu store are
+carried over with `kuzu-memory-export` and `gleann memory import-graph` (see
+[memory_engine.md](memory_engine.md)).
 
 | Method | Path | Description |
 |--------|------|-------------|
@@ -836,7 +838,7 @@ Common HTTP status codes:
 | 404 | Index or graph not found |
 | 429 | Rate limit exceeded (per-IP token bucket; see `GLEANN_RATE_LIMIT`) — includes `Retry-After: 1` header |
 | 500 | Internal server error |
-| 503 | Feature unavailable (e.g., graph without treesitter build tag) |
+| 503 | Feature unavailable |
 | 504 | Gateway timeout — request exceeded its deadline (see `GLEANN_TIMEOUT_*_S` env vars) |
 
 ## Allowed Paths

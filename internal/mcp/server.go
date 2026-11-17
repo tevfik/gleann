@@ -64,7 +64,7 @@ type Server struct {
 	searcherLRU     []string       // tracks access order: most recent at end
 	memPool         *mcpMemoryPool // Memory Engine: generic Entity/RELATES_TO graph
 	blockMem        *blockMemPool  // BBolt hierarchical memory blocks (pkg/memory)
-	gPool           *graphPool     // Community detection graph pool (treesitter only)
+	gPool           *graphPool     // Community detection graph pool
 	syncRunner      syncRunnerFunc
 	syncMu          sync.Mutex
 	syncTasks       map[string]*syncTask
@@ -204,7 +204,7 @@ func NewServer(cfg Config) *Server {
 		}
 	}
 
-	// Wire VectorSyncer factory (build-tag gated; no-op when !treesitter).
+	// Wire the VectorSyncer factory (every build).
 	srv.wireMemorySyncer(cfg, glCfg, embedder)
 
 	// Register tools natively with the SDK (respecting cleanToolNames)
@@ -246,7 +246,7 @@ func NewServer(cfg Config) *Server {
 	srv.addTool(srv.buildDeleteEntityTool(), srv.handleDeleteEntity)
 	srv.addTool(srv.buildTraverseKGTool(), srv.handleTraverseKG)
 
-	// Graph stats + symbols_in_file — available without treesitter.
+	// Graph stats + symbols_in_file.
 	srv.addTool(srv.buildGraphStatsTool(), srv.handleGraphStats)
 	srv.addTool(srv.buildSymbolsInFileTool(), srv.handleSymbolsInFile)
 
@@ -258,7 +258,7 @@ func NewServer(cfg Config) *Server {
 	// On-demand index synchronization tool
 	srv.addTool(srv.buildSyncTool(), srv.handleSync)
 
-	// Community detection tools — require treesitter build tag.
+	// Community detection tools (SQLite code graph, every build).
 	srv.initGraphPool()
 	srv.registerGraphTools()
 
@@ -355,7 +355,7 @@ func (s *Server) lifetime() context.Context {
 	return s.lifeCtx
 }
 
-// Close releases all resources held by the MCP server (KuzuDB handles, etc.)
+// Close releases all resources held by the MCP server (graph and memory handles, etc.)
 // and cancels in-flight background index builds.
 func (s *Server) Close() {
 	s.lifetime()
@@ -441,9 +441,18 @@ func (s *Server) getSearcher(name string) (*gleann.LeannSearcher, error) {
 	if searcher, ok := s.searchers[name]; ok {
 		s.touchLRU(name)
 		s.searcherMu.Unlock()
-		return searcher, nil
+		// Another process (a CLI sync or build) may have written to the index
+		// since this searcher loaded: one small read decides. A stale searcher
+		// is replaced by a fresh load below.
+		if stale, serr := searcher.Stale(context.Background()); !stale {
+			return searcher, nil
+		} else if serr != nil {
+			log.Printf("ℹ️  Index %q freshness check failed (%v); reloading", name, serr)
+		}
+		s.retireStale(name, searcher)
+	} else {
+		s.searcherMu.Unlock()
 	}
-	s.searcherMu.Unlock()
 
 	embedder := s.embedder
 	if meta, err := gleann.GetIndexMeta(s.config.IndexDir, name); err == nil && meta.EmbeddingModel != "" {
@@ -504,6 +513,33 @@ func (s *Server) getSearcher(name string) (*gleann.LeannSearcher, error) {
 	s.searcherLRU = append(s.searcherLRU, name)
 	s.enforceCacheBudgetLocked()
 	return searcher, nil
+}
+
+// staleSearcherGrace is how long a replaced (stale) searcher stays open. The
+// MCP server does not count borrowers, so a tool call that fetched the
+// searcher just before the replacement may still be using it; closing it
+// right away would pull the database from under that call.
+const staleSearcherGrace = 2 * time.Minute
+
+// retireStale removes sr from the cache when it is still the cached searcher
+// for name and closes it after staleSearcherGrace.
+func (s *Server) retireStale(name string, sr *gleann.LeannSearcher) {
+	s.searcherMu.Lock()
+	removed := false
+	if cur, ok := s.searchers[name]; ok && cur == sr {
+		removed = true
+		delete(s.searchers, name)
+		for i, n := range s.searcherLRU {
+			if n == name {
+				s.searcherLRU = append(s.searcherLRU[:i], s.searcherLRU[i+1:]...)
+				break
+			}
+		}
+	}
+	s.searcherMu.Unlock()
+	if removed {
+		time.AfterFunc(staleSearcherGrace, func() { sr.Close() })
+	}
 }
 
 func (s *Server) searcherBudget() int64 {

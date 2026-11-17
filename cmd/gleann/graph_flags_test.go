@@ -1,5 +1,3 @@
-//go:build treesitter
-
 package main
 
 import "testing"
@@ -10,7 +8,7 @@ func TestGraphSubcommandsRejectUnknownFlags(t *testing.T) {
 			t.Errorf("gleann graph %s %s: exit status %d, want 2", sub, bogusFlag, got)
 		}
 	}
-	for _, sub := range caseStrings(t, "graph_cgo.go", "cmdGraph") {
+	for _, sub := range caseStrings(t, "graph_shared.go", "cmdGraph") {
 		if _, ok := graphFlagSets[sub]; !ok && sub != "help" && sub != "--help" {
 			t.Errorf("gleann graph %s has no flag table", sub)
 		}

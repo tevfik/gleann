@@ -1,5 +1,5 @@
 // Package community implements graph community detection algorithms
-// on the KuzuDB code graph. It uses the Louvain method to discover
+// on the code graph. It uses the Louvain method to discover
 // tightly-connected groups of symbols (functions, types, files) and
 // identify "god nodes" (high-degree hubs) and surprising cross-community edges.
 package community
@@ -71,6 +71,13 @@ type Graph struct {
 	inDeg       map[string]int
 	outDeg      map[string]int
 	totalWeight float64
+
+	// directed holds each distinct from→to pair once, in first-insertion
+	// order, with the weights of repeated AddEdge calls summed. It makes
+	// Edges() deterministic and truthful about direction: the undirected
+	// neighbour maps carry no direction and Go randomises their iteration.
+	directed   []Edge
+	directedAt map[[2]string]int
 }
 
 // NewGraph creates an empty graph.
@@ -80,6 +87,8 @@ func NewGraph() *Graph {
 		neighbors: make(map[string]map[string]float64),
 		inDeg:     make(map[string]int),
 		outDeg:    make(map[string]int),
+
+		directedAt: make(map[[2]string]int),
 	}
 }
 
@@ -107,6 +116,14 @@ func (g *Graph) AddEdge(from, to string, weight float64) {
 
 	g.outDeg[from]++
 	g.inDeg[to]++
+
+	key := [2]string{from, to}
+	if i, ok := g.directedAt[key]; ok {
+		g.directed[i].Weight += weight
+	} else {
+		g.directedAt[key] = len(g.directed)
+		g.directed = append(g.directed, Edge{From: from, To: to, Weight: weight})
+	}
 }
 
 // NodeCount returns the number of nodes.
@@ -141,30 +158,20 @@ func (g *Graph) Degree(id string) int {
 	return g.inDeg[id] + g.outDeg[id]
 }
 
-// Edges returns all directed edges in the graph.
+// Edges returns the distinct directed edges, one per from→to pair, in the
+// order they were first added (deterministic for a deterministic loader). A
+// mutual pair (A→B and B→A) yields two edges.
 func (g *Graph) Edges() []Edge {
-	var out []Edge
-	seen := make(map[string]bool)
-	for from, nbrs := range g.neighbors {
-		for to, w := range nbrs {
-			// Only emit the from→to direction to avoid duplicates from undirected storage.
-			key := from + "|" + to
-			if seen[key] {
-				continue
-			}
-			seen[key] = true
-			seen[to+"|"+from] = true
-			out = append(out, Edge{From: from, To: to, Weight: w})
-		}
-	}
+	out := make([]Edge, len(g.directed))
+	copy(out, g.directed)
 	return out
 }
 
-// ExportForAnalysis returns all nodes and directed edges for use with PageRank, risk, etc.
+// ExportForAnalysis returns all nodes (sorted by ID) and directed edges for use with PageRank, risk, etc.
 func (g *Graph) ExportForAnalysis() ([]Node, []Edge) {
 	nodes := make([]Node, 0, len(g.nodes))
-	for _, n := range g.nodes {
-		nodes = append(nodes, *n)
+	for _, id := range g.NodeIDs() {
+		nodes = append(nodes, *g.nodes[id])
 	}
 	edges := g.Edges()
 	return nodes, edges
@@ -189,13 +196,14 @@ func Detect(g *Graph, godNodeThreshold, maxSurprising int) (*Result, error) {
 
 	// Phase 2: Build communities.
 	communityMap := make(map[int][]string)
-	for nodeID, commID := range membership {
+	for _, nodeID := range g.sortedNeighborIDs() {
+		commID := membership[nodeID]
 		communityMap[commID] = append(communityMap[commID], nodeID)
 	}
 
 	communities := make([]Community, 0, len(communityMap))
-	for id, nodes := range communityMap {
-		sort.Strings(nodes)
+	for _, id := range sortedIntKeys(communityMap) {
+		nodes := communityMap[id]
 		label := inferCommunityLabel(g, nodes)
 		cohesion := computeCohesion(g, nodes)
 		communities = append(communities, Community{
@@ -206,8 +214,13 @@ func Detect(g *Graph, godNodeThreshold, maxSurprising int) (*Result, error) {
 			Cohesion:  cohesion,
 		})
 	}
-	sort.Slice(communities, func(i, j int) bool {
-		return communities[i].NodeCount > communities[j].NodeCount
+	// Largest first; equal sizes ordered by their first (smallest) member so
+	// the numbering does not depend on the Louvain pass.
+	sort.SliceStable(communities, func(i, j int) bool {
+		if communities[i].NodeCount != communities[j].NodeCount {
+			return communities[i].NodeCount > communities[j].NodeCount
+		}
+		return communities[i].Nodes[0] < communities[j].Nodes[0]
 	})
 	// Renumber community IDs by size (0 = largest).
 	idRemap := make(map[int]int)
@@ -242,17 +255,59 @@ func Detect(g *Graph, godNodeThreshold, maxSurprising int) (*Result, error) {
 // Louvain algorithm implementation
 // ──────────────────────────────────────────────────────────────────────────────
 
-// louvain assigns each node to a community using the Louvain method.
+// sortedNeighborIDs returns every vertex ID (including edge endpoints that
+// were never added as nodes) in ascending order.
+func (g *Graph) sortedNeighborIDs() []string {
+	ids := make([]string, 0, len(g.neighbors))
+	for id := range g.neighbors {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	return ids
+}
+
+func sortedIntKeys[V any](m map[int]V) []int {
+	keys := make([]int, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Ints(keys)
+	return keys
+}
+
+type weightedNbr struct {
+	id string
+	w  float64
+}
+
+// sortedAdjacency returns the undirected adjacency of every vertex with the
+// neighbours in ascending ID order, so float sums and tie-breaks do not
+// depend on Go's randomised map iteration.
+func (g *Graph) sortedAdjacency() map[string][]weightedNbr {
+	adj := make(map[string][]weightedNbr, len(g.neighbors))
+	for id, nbrs := range g.neighbors {
+		list := make([]weightedNbr, 0, len(nbrs))
+		for nb, w := range nbrs {
+			list = append(list, weightedNbr{nb, w})
+		}
+		sort.Slice(list, func(i, j int) bool { return list[i].id < list[j].id })
+		adj[id] = list
+	}
+	return adj
+}
+
+// louvain assigns each node to a community using the Louvain method. The
+// result is deterministic for a given graph: vertices are visited in ID
+// order, neighbours are summed in ID order and ties between equally good
+// target communities go to the lowest community number.
 func louvain(g *Graph) map[string]int {
 	// Initialize: each node in its own community.
-	membership := make(map[string]int, len(g.neighbors))
-	commID := 0
-	nodeList := make([]string, 0, len(g.neighbors))
-	for id := range g.neighbors {
+	nodeList := g.sortedNeighborIDs()
+	membership := make(map[string]int, len(nodeList))
+	for commID, id := range nodeList {
 		membership[id] = commID
-		nodeList = append(nodeList, id)
-		commID++
 	}
+	adj := g.sortedAdjacency()
 
 	m2 := g.totalWeight * 2 // 2*m for undirected
 	if m2 == 0 {
@@ -260,20 +315,20 @@ func louvain(g *Graph) map[string]int {
 	}
 
 	// Precompute node strengths (weighted degree in undirected graph).
-	strength := make(map[string]float64, len(g.neighbors))
-	for id, nbrs := range g.neighbors {
+	strength := make(map[string]float64, len(nodeList))
+	for _, id := range nodeList {
 		s := 0.0
-		for _, w := range nbrs {
-			s += w
+		for _, nb := range adj[id] {
+			s += nb.w
 		}
 		strength[id] = s
 	}
 
 	// Precompute sigmaTot (total edge weight for each community).
 	// Initially, each node is in its own community, so sigmaTot[commID] = strength[nodeID].
-	sigmaTot := make(map[int]float64, len(g.neighbors))
-	for id, comm := range membership {
-		sigmaTot[comm] = strength[id]
+	sigmaTot := make(map[int]float64, len(nodeList))
+	for _, id := range nodeList {
+		sigmaTot[membership[id]] = strength[id]
 	}
 
 	// Iterate until no improvement.
@@ -285,8 +340,8 @@ func louvain(g *Graph) map[string]int {
 
 			// Compute neighbor communities and their edge weights.
 			commWeights := make(map[int]float64)
-			for nbr, w := range g.neighbors[nodeID] {
-				commWeights[membership[nbr]] += w
+			for _, nb := range adj[nodeID] {
+				commWeights[membership[nb.id]] += nb.w
 			}
 
 			bestComm := currentComm
@@ -296,10 +351,11 @@ func louvain(g *Graph) map[string]int {
 			sigmaOld := sigmaTot[currentComm] - ki
 			kiInOld := commWeights[currentComm]
 
-			for comm, kiIn := range commWeights {
+			for _, comm := range sortedIntKeys(commWeights) {
 				if comm == currentComm {
 					continue
 				}
+				kiIn := commWeights[comm]
 				// Modularity gain of moving node to comm.
 				sigmaNew := sigmaTot[comm]
 
@@ -325,17 +381,18 @@ func louvain(g *Graph) map[string]int {
 		}
 	}
 
-	// Compact community IDs to 0..N-1.
+	// Compact community IDs to 0..N-1 in order of first (smallest) member.
 	seen := make(map[int]int)
 	nextID := 0
-	for _, comm := range membership {
+	for _, id := range nodeList {
+		comm := membership[id]
 		if _, ok := seen[comm]; !ok {
 			seen[comm] = nextID
 			nextID++
 		}
 	}
-	for nodeID, comm := range membership {
-		membership[nodeID] = seen[comm]
+	for _, id := range nodeList {
+		membership[id] = seen[membership[id]]
 	}
 
 	return membership
@@ -348,21 +405,23 @@ func computeModularity(g *Graph, membership map[string]int) float64 {
 		return 0
 	}
 
-	strength := make(map[string]float64)
-	for id, nbrs := range g.neighbors {
-		for _, w := range nbrs {
-			strength[id] += w
+	adj := g.sortedAdjacency()
+	ids := g.sortedNeighborIDs()
+	strength := make(map[string]float64, len(ids))
+	for _, id := range ids {
+		for _, nb := range adj[id] {
+			strength[id] += nb.w
 		}
 	}
 
 	q := 0.0
-	for nodeA, nbrs := range g.neighbors {
-		for nodeB, w := range nbrs {
-			if membership[nodeA] != membership[nodeB] {
+	for _, nodeA := range ids {
+		for _, nb := range adj[nodeA] {
+			if membership[nodeA] != membership[nb.id] {
 				continue
 			}
-			expected := strength[nodeA] * strength[nodeB] / m2
-			q += w - expected
+			expected := strength[nodeA] * strength[nb.id] / m2
+			q += nb.w - expected
 		}
 	}
 	return q / m2
@@ -391,9 +450,15 @@ func inferCommunityLabel(g *Graph, nodeIDs []string) string {
 		return fmt.Sprintf("cluster-%d", len(nodeIDs))
 	}
 
+	dirs := make([]string, 0, len(dirCount))
+	for dir := range dirCount {
+		dirs = append(dirs, dir)
+	}
+	sort.Strings(dirs)
 	bestDir := ""
 	bestCount := 0
-	for dir, count := range dirCount {
+	for _, dir := range dirs {
+		count := dirCount[dir]
 		if count > bestCount {
 			bestCount = count
 			bestDir = dir
@@ -432,9 +497,15 @@ func computeCohesion(g *Graph, nodeIDs []string) float64 {
 
 	internalEdges := 0.0
 	for _, id := range nodeIDs {
-		for nbr, w := range g.neighbors[id] {
+		nbrs := g.neighbors[id]
+		keys := make([]string, 0, len(nbrs))
+		for nbr := range nbrs {
+			keys = append(keys, nbr)
+		}
+		sort.Strings(keys)
+		for _, nbr := range keys {
 			if nodeSet[nbr] {
-				internalEdges += w
+				internalEdges += nbrs[nbr]
 			}
 		}
 	}
@@ -450,7 +521,8 @@ func computeCohesion(g *Graph, nodeIDs []string) float64 {
 // detectGodNodes finds high-degree hubs.
 func detectGodNodes(g *Graph, threshold int) []GodNode {
 	var gods []GodNode
-	for id, n := range g.nodes {
+	for _, id := range g.NodeIDs() {
+		n := g.nodes[id]
 		in := g.inDeg[id]
 		out := g.outDeg[id]
 		total := in + out
@@ -465,7 +537,7 @@ func detectGodNodes(g *Graph, threshold int) []GodNode {
 			})
 		}
 	}
-	sort.Slice(gods, func(i, j int) bool {
+	sort.SliceStable(gods, func(i, j int) bool {
 		return gods[i].TotalDeg > gods[j].TotalDeg
 	})
 	if len(gods) > 20 {
@@ -477,17 +549,15 @@ func detectGodNodes(g *Graph, threshold int) []GodNode {
 // detectSurprisingEdges finds edges crossing community boundaries.
 func detectSurprisingEdges(g *Graph, membership map[string]int, max int) []SurprisingEdge {
 	var edges []SurprisingEdge
-	seen := make(map[string]bool)
+	adj := g.sortedAdjacency()
 
-	for from, nbrs := range g.neighbors {
-		for to, w := range nbrs {
-			key := from + "|" + to
-			rev := to + "|" + from
-			if seen[key] || seen[rev] {
+	// Each undirected pair once, from the lower to the higher ID.
+	for _, from := range g.sortedNeighborIDs() {
+		for _, nb := range adj[from] {
+			to, w := nb.id, nb.w
+			if from > to {
 				continue
 			}
-			seen[key] = true
-
 			fc := membership[from]
 			tc := membership[to]
 			if fc != tc {
@@ -503,7 +573,7 @@ func detectSurprisingEdges(g *Graph, membership map[string]int, max int) []Surpr
 	}
 
 	// Sort by weight descending (most "significant" cross-community edges first).
-	sort.Slice(edges, func(i, j int) bool {
+	sort.SliceStable(edges, func(i, j int) bool {
 		return edges[i].Weight > edges[j].Weight
 	})
 	if len(edges) > max {

@@ -76,7 +76,7 @@ Arguments:
 
 Options:
   --docs <dir>            Source directory containing files to index (required)
-  --graph                 Build AST-based code graph using tree-sitter & Kùzu
+  --graph                 Build the code graph (SQLite, in the index database)
   --signatures            Index only signatures & docstrings for code (70-80% faster embedding)
   --instant               Build instant lexical BM25 index only (skips vector embeddings)
   --lexical-only          Alias for --instant
@@ -327,7 +327,7 @@ Remove and completely rebuild an index from scratch. Supports all flags from 'in
 
 Options:
   --docs <dir>            Source directory containing files to index (required)
-  --graph                 Build AST-based code graph using tree-sitter & Kùzu
+  --graph                 Build the code graph (SQLite, in the index database)
   --mode <code|docs|all>  Index mode (code, docs, all)
   -h, --help              Show this help message`)
 			return
@@ -633,7 +633,7 @@ func collectEligibleFiles(dir string, pluginManager *gleann.PluginManager, nativ
 }
 
 // buildGraphIndex builds the AST + document graph for an index, printing
-// to stdout/stderr. No-op (with a warning) without -tags treesitter.
+// to stdout/stderr. No-op (with a notice) for a format-1 index.
 func buildGraphIndex(name, docsDir, indexDir string, pluginDocs []*PluginDoc, changedFiles []string, includeSubmodules bool) {
 	indexing.BuildGraphIndex(indexing.GraphOptions{
 		Name:              name,

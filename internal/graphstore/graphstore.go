@@ -21,9 +21,8 @@ import (
 // 3.4). It mirrors kuzu.SymbolNode plus the source anchors RFC 001 requires:
 // every symbol has a concrete declaration site, and external symbols are
 // never rows here (they live on edges as dst_external, AGENTS.md section 2).
-// The types are tag-free on purpose: RFC 003 section 5 moves them out of the
-// tagged kuzu package so the extractors can feed ApplyFileDelta in every
-// build.
+// The types are tag-free on purpose so the extractors can feed
+// ApplyFileDelta in every build.
 type Symbol struct {
 	FQN    string  // fully qualified canonical name, e.g. "github.com/foo/bar.MyFunc"
 	Kind   string  // "function" | "method" | "type" | "struct" | "interface" | "const" | "var"

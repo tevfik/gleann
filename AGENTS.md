@@ -18,12 +18,12 @@ All agents modifying this codebase must adhere strictly to the following fundame
    - Docker is permitted only as an optional deployment convenience for users, never as a build or runtime prerequisite.
 
 3. **Build Tags Discipline & Pure-Go Graceful Degradation:**
-   - **Pure Go (Default):** Must build with `CGO_ENABLED=0` without any tags. Uses pure-Go vector indexing (DiskANN), BM25, and in-memory caches.
+   - **Pure Go (Default):** Must build with `CGO_ENABLED=0` without any tags. Uses pure-Go vector indexing (DiskANN), BM25, in-memory caches, and the SQLite code graph (`internal/graphstore`, inside the index database `<name>/<name>.db`).
    - **`-tags "eif"`:** Activates embedded C-runtime (`ext/bitllm.c`) for CPU-native BERT and BitNet quantized model inference.
-   - **`-tags "treesitter"`:** Activates Tree-sitter AST parsers and embedded Kùzu graph database.
+   - **`-tags "treesitter"`:** Activates the Tree-sitter AST parsers only (symbols and CALLS edges for non-Go languages). The code graph itself is SQLite in every build.
    - **`-tags "native"`:** Activates embedded Rust core acceleration (`ext/gleann-core-rs`).
    - **`-tags "faiss"`:** Activates FAISS vector indexing (requires CGo and libfaiss).
-   - **Rule on Stubs:** Any code requiring CGo/Tree-sitter/Kùzu/FAISS **must** have a corresponding pure-Go stub file (`*_stub.go` or `*_nocgo.go`) built when the tag is omitted. Stubs must return clean, descriptive errors (e.g. `503 Service Unavailable: feature requires build with -tags treesitter`) and must never cause compiler errors or unhandled panics.
+   - **Rule on Stubs:** Any code requiring CGo/Tree-sitter/FAISS **must** have a corresponding pure-Go stub file (`*_stub.go` or `*_nocgo.go`) built when the tag is omitted. Stubs must return clean, descriptive errors (e.g. `503 Service Unavailable: feature requires build with -tags treesitter`) and must never cause compiler errors or unhandled panics.
 
 4. **Multi-Platform Support:**
    - Supported architectures: `linux/amd64`, `linux/arm64`, `darwin/amd64`, `darwin/arm64` (Apple Silicon), `windows/amd64`, `windows/arm64`.
@@ -53,12 +53,12 @@ When working on `internal/graph`, `internal/indexing`, or Tree-sitter AST extrac
 3. **Referential Integrity on Incremental Sync:**
    - When a file is updated or deleted during `gleann index sync`:
      - Its declared symbols and associated edges (`CALLS`, `IMPLEMENTS`, `REFERENCES`, `DECLARES`) must be cleanly retracted.
-     - Inbound references from unchanged files must be preserved or correctly rebound, without leaving dangling edges or causing primary key collision errors in Kùzu (`duplicated primary key`).
+     - Inbound references from unchanged files must be preserved or correctly rebound, without leaving dangling edges or primary key collisions (`graphstore.ApplyFileDelta` replaces a file's rows in one transaction).
    - Graph mutation operations must be atomic and report errors cleanly. If graph update fails, the manifest must not advance.
 
 4. **Single-Writer Concurrency:**
-   - Kùzu database operates in a single-writer / multi-reader model.
-   - Server processes must release graph write locks or coordinate internal sync safely. CLI commands attempting to write to a locked database must fail fast with a human-readable lock message.
+   - The code graph lives in the index's SQLite database (WAL mode: one writer, many readers). Builds and syncs of an index are serialised across processes by the index lock (`<name>.lock`).
+   - Server processes must release graph handles or coordinate internal sync safely. CLI commands attempting to write to a locked index must fail fast with a human-readable lock message.
 
 ---
 
@@ -141,7 +141,7 @@ Persist decisions, conventions, and architectural notes across agent sessions:
 
 ```bash
 gleann memory remember "Hexagonal architecture: adapters live in internal/adapters"
-gleann memory remember "Kuzu graph DB is single-writer; avoid concurrent CLI write" --tag "convention"
+gleann memory remember "One build or sync per index at a time (index lock)" --tag "convention"
 gleann memory search "graph"
 gleann memory list --tier long
 gleann memory stats

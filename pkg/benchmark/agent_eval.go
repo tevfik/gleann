@@ -287,7 +287,7 @@ func evaluateAgentTask(task AgentTask) AgentTaskComparison {
 			RecallRate:    1.0,
 			PrecisionRate: 1.0,
 			Latency:       6 * time.Millisecond,
-			Notes:         "gleann_impact KùzuDB AST graph query with zero false positives",
+			Notes:         "gleann_impact SQLite code graph query with zero false positives",
 		}
 
 	case TaskTypeCrossSessionRecall:
@@ -372,7 +372,7 @@ func (s *AgentEvalSummary) FormatMarkdown() string {
 
 	sb.WriteString("3. **Impact Analysis & Blast Radius (`ImpactAnalysis`):**\n")
 	sb.WriteString("   - *Without Gleann:* Grepping symbol names returns false positives from test assertions, mocks, and identically named methods across different structs.\n")
-	sb.WriteString("   - *With Gleann:* `gleann_impact` traverses the KùzuDB AST graph with exact FQN resolution, strictly isolating production callers from test callers with 100% precision.\n\n")
+	sb.WriteString("   - *With Gleann:* `gleann_impact` traverses the SQLite code graph with exact FQN resolution, strictly isolating production callers from test callers with 100% precision.\n\n")
 
 	sb.WriteString("4. **Cross-Session Memory Recall (`CrossSessionRecall`):**\n")
 	sb.WriteString("   - *Without Gleann:* Zero memory survives across sessions. The agent repeats mistakes or re-queries previously answered architectural questions.\n")

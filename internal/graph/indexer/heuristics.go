@@ -14,7 +14,7 @@
 //   - a small "importance bonus" map per language for the constructs
 //     that gate the largest fan-out (callers, callees, implementers)
 //
-// The weights are written to the Symbol.weight column in KuzuDB and
+// The weights are written to the symbols.weight column of the code graph and
 // consumed by internal/graph/community.ComputeRiskScores (PageRank
 // weighted by node weight) and the reranker in gleann/rerank.
 //

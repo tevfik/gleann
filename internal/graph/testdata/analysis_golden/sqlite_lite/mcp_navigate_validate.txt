@@ -1,0 +1,7 @@
+Symbol Navigation — "validate" in fixture
+
+── 1. example.com/fixture/service.validate (function)
+  Callers:
+    ← example.com/fixture/service.Service.Save (method) [service/service.go:21]
+  Callees: none
+

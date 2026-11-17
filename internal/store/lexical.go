@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/tevfik/gleann/internal/analysis"
@@ -312,6 +313,82 @@ func (s *Store) ScoreIDs(ctx context.Context, q LexQuery, ids []int64) (map[int6
 		}
 	}
 	return out, nil
+}
+
+// TermScore is one query term's share of a passage's lexical score.
+type TermScore struct {
+	Term  string
+	TF    int
+	Score float64
+}
+
+// ExplainTerms breaks the lexical score of passage id down by query term. Each
+// term group (a term with its folded forms) is scored on its own, which is its
+// exact contribution because FTS5's bm25 is a sum over the query's phrases;
+// TF counts the group's forms among the passage's tokens. The groups are the
+// ones Search and ScoreIDs use (after the document frequency cut). Terms that
+// do not occur in the passage come last with score 0.
+func (s *Store) ExplainTerms(ctx context.Context, q LexQuery, id int64) ([]TermScore, error) {
+	ps, err := s.GetMany(ctx, []int64{id})
+	if err != nil {
+		return nil, fmt.Errorf("explaining terms: %w", err)
+	}
+	if len(ps) == 0 {
+		return nil, nil
+	}
+	groups := q.Analyzer.QueryTokens(q.Text)
+	if q.Options.DocFreqCut > 0 {
+		groups, err = s.filterDocFreq(ctx, groups, q.Options.DocFreqCut)
+		if err != nil {
+			return nil, fmt.Errorf("explaining terms: %w", err)
+		}
+	}
+	counts := make(map[string]int)
+	for _, tok := range q.Analyzer.Tokens(ps[0].Text, analysis.Kind(ps[0].Kind)) {
+		counts[tok]++
+	}
+	var out []TermScore
+	for _, g := range groups {
+		var forms []string
+		for _, f := range g {
+			if f != "" {
+				forms = append(forms, f)
+			}
+		}
+		if len(forms) == 0 {
+			continue
+		}
+		ts := TermScore{Term: forms[0]}
+		for _, f := range forms {
+			ts.TF += counts[f]
+		}
+		scores, err := s.scoreGroup(ctx, forms, id)
+		if err != nil {
+			return nil, fmt.Errorf("explaining terms: %w", err)
+		}
+		ts.Score = float64(scores)
+		out = append(out, ts)
+	}
+	sort.SliceStable(out, func(i, j int) bool { return out[i].Score > out[j].Score })
+	return out, nil
+}
+
+// scoreGroup scores one term group (forms OR-ed) against one passage; 0 when
+// the passage does not match.
+func (s *Store) scoreGroup(ctx context.Context, forms []string, id int64) (float32, error) {
+	expr := analysis.MatchExpr([][]string{forms})
+	if expr == "" {
+		return 0, nil
+	}
+	var bm25 float64
+	err := s.reader.QueryRowContext(ctx, `SELECT bm25(lex) FROM lex WHERE lex MATCH ? AND rowid = ?`, expr, id).Scan(&bm25)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+	return float32(-bm25), nil
 }
 
 // Rebuild deletes every lex row and re-inserts tokens computed from

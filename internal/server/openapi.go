@@ -18,7 +18,7 @@ func (s *Server) openAPISpec() map[string]any {
 		"openapi": "3.0.3",
 		"info": map[string]any{
 			"title":       "Gleann API",
-			"description": "Unified vector + graph search engine. Index, search, and query code and documents with DiskANN, HNSW, FAISS, BM25, and KuzuDB graph.",
+			"description": "Unified vector + graph search engine. Index, search, and query code and documents with DiskANN, HNSW, FAISS, BM25, and a SQLite code graph.",
 			"version":     s.version,
 			"license": map[string]any{
 				"name": "MIT",
@@ -32,7 +32,7 @@ func (s *Server) openAPISpec() map[string]any {
 			{"name": "health", "description": "Health check"},
 			{"name": "indexes", "description": "Index management"},
 			{"name": "search", "description": "Semantic and hybrid search"},
-			{"name": "graph", "description": "KuzuDB code graph queries"},
+			{"name": "graph", "description": "Code graph queries (the SQLite graph of format-2 indexes, every build)"},
 			{"name": "memory", "description": "Memory Engine — generic Entity/RELATES_TO knowledge graph for external AI agents"},
 			{"name": "unified-memory", "description": "Unified Memory API — single interface orchestrating blocks, graph, and vector search"},
 			{"name": "blocks", "description": "Memory Blocks — hierarchical BBolt storage (short/medium/long tiers) providing infinite persistent memory for LLMs"},

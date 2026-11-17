@@ -7,21 +7,21 @@
   },
   {
     "id": "task-002",
-    "description": "Find KuzuDB schema initialization and table creation",
-    "query": "initialize KùzuDB graph schema create node table Symbol File CALLS",
-    "gold_files": ["internal/graph/kuzu/db.go"]
+    "description": "Find SQLite graph schema initialization and table creation",
+    "query": "initialize SQLite graph schema create table symbols edges CALLS",
+    "gold_files": ["internal/store/store.go"]
   },
   {
     "id": "task-003",
-    "description": "Find Cypher queries for symbol callers and callees",
-    "query": "query callers callees Cypher FQN resolution graph neighbors",
-    "gold_files": ["internal/graph/kuzu/query.go"]
+    "description": "Find SQL queries for symbol callers and callees",
+    "query": "query callers callees SQL FQN resolution graph neighbors",
+    "gold_files": ["internal/graphstore/sqlite.go"]
   },
   {
     "id": "task-004",
     "description": "Find AST code indexer and test symbol detection",
     "query": "AST indexer tree-sitter extract symbols test functions isTestSymbol",
-    "gold_files": ["internal/graph/indexer/indexer.go"]
+    "gold_files": ["internal/graph/indexer/extract.go", "internal/graph/indexer/symbols.go"]
   },
   {
     "id": "task-005",
@@ -70,12 +70,6 @@
     "description": "Find index build command and embedding generation pipeline",
     "query": "build index command read documents compute embeddings passages",
     "gold_files": ["cmd/gleann/cmd_build.go"]
-  },
-  {
-    "id": "task-013",
-    "description": "Find file hash tracking and index quarantine logic",
-    "query": "file content hash sha256 lock detection quarantine filehash",
-    "gold_files": ["internal/graph/indexer/filehash.go"]
   },
   {
     "id": "task-014",

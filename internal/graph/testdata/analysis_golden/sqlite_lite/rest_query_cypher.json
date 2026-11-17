@@ -1,0 +1,6 @@
+{
+  "body": {
+    "error": "raw Cypher was removed; use callers/callees/symbols_in_file/impact"
+  },
+  "status": 400
+}

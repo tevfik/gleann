@@ -1,8 +1,6 @@
 {
   "body": {
-    "available": true,
-    "db_path": "<INDEXDIR>/absent_graph",
-    "name": "absent"
+    "error": "graph index \"absent\" not found: no code graph: index \"absent\" has no code graph"
   },
-  "status": 200
+  "status": 404
 }

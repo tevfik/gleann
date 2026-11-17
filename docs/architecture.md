@@ -47,7 +47,7 @@
 ├───────────────────┴───────────────┴──────────────────────────────────┤
 │  Embedding Server  (goroutine pool + retry)                          │
 ├──────────────────────────────────────────────────────────────────────┤
-│  KuzuDB Graph Layer                                                  │
+│  Graph Layer (SQLite: index database + memory.sqlite)                │
 │  ├── Code Graph  (CodeFile, Symbol, CALLS, IMPLEMENTS …)             │
 │  ├── Document Graph  (Folder, Document, Heading, Chunk …)            │
 │  ├── Memory Engine  (Entity, RELATES_TO — external agent memory)     │
@@ -92,7 +92,7 @@
 |---------|------|
 | `cmd/gleann` | CLI front-end: flag parsing, terminal rendering (pre-flight estimate, decision gate, progress pacer), exit codes. `index build/sync/watch` are thin wrappers over `internal/indexing`. |
 | `internal/indexing` | **The index build/sync pipeline**, shared in-process by the CLI, REST server and MCP server: file walking + mode filters (`CollectEligibleFiles`), plugin / native / multimodal extraction, chunking (`ReadDocuments`), embedding (`NewEmbedder`, scoped embedded llama.cpp), `Build` (incl. dual code/docs model builds), `Sync` (Merkle manifest fast path + vault tracker fallback), `RebuildIndex` / `UpdateIncremental` (watch mode), graph hooks (`BuildGraphIndex`, `GenerateGraphReport`). Never exits, never writes to `os.Stdout`/`os.Stderr` directly: messages go to caller-supplied writers, progress to a callback, failures are returned as errors; cancellation via `context`. Builds of the same index are serialised in-process and the default vault tracker handle is shared (refcounted). |
-| `internal/indexing/graph_treesitter.go` / `graph_stub.go` | Build-tag split: KuzuDB + tree-sitter graph indexing with `-tags treesitter`; a warning-only stub otherwise (`indexing.GraphSupported`). |
+| `internal/indexing/graph_format2.go` | Code and document graph write path into the index database (`internal/graphstore`), every build; `-tags treesitter` only adds the tree-sitter parsers. A format-1 index has no code graph. |
 | `internal/server` | REST API. `POST /api/indexes/{name}/index-path` and `/upload` call `indexing.Build` in-process with the server lifetime context (Stop cancels running builds) and invalidate the searcher cache on success. |
 | `internal/mcp` | MCP server. `gleann_sync` runs `indexing.Build` / `indexing.Sync` in-process in the background (bound to the server lifetime, cancelled by `Close`), feeding progress (pct/rate/ETA) straight into the task status. `mcp.Config.BuildConfig` carries the full CLI-equivalent config (backend, chunking, ...). |
 | `pkg/gleann` | Public core API: config/types, `LeannBuilder`, `LeannSearcher`, `LeannChat`, plugins, manifest. |
@@ -113,7 +113,7 @@ the others automatically at query time:
 │     Ask questions → RAG-powered answers from your data.│
 ├────────────────────────────────────────────────────────┤
 │  2. Code Intelligence  (graph + treesitter)            │
-│     AST-level call graphs stored in KuzuDB.            │
+│     AST-level call graphs stored in SQLite.            │
 │     Trace dependencies, callers, blast-radius.         │
 │     Search results enriched with structural context.   │
 ├────────────────────────────────────────────────────────┤
@@ -178,7 +178,7 @@ External Agent (e.g. Cursor, Claude)
         │  traverse_knowledge_graph ←→   POST /api/memory/{name}/traverse
         │
         ▼
-  KuzuDB Entity / RELATES_TO schema
+  SQLite entities / relations schema (memory.sqlite)
   ├─ Node: {id, type, content, attributes}
   └─ Edge: {from, to, relation_type, weight, attributes}
         │
@@ -200,7 +200,7 @@ External Agent (e.g. Cursor, Claude)
 
 ### Hierarchical GraphRAG & Extractive Summarization
 
-- Explicitly models the structural layout of files, folders, and markdown headings in KuzuDB alongside AST code symbols.
+- Explicitly models the structural layout of files, folders, and markdown headings in the index database alongside AST code symbols.
 - Zero-config Extractive Summarizer: High-density sentences are extracted algorithmically during build time, completely bypassing slow/costly LLMs, enabling zero-latency "Smart Summaries".
 
 ### Goroutine Embedding Server (no ZMQ)
@@ -299,7 +299,7 @@ In alignment with the core mission of `gleann` as a lean, reliable agent memory 
 
 **Active Core Focus:**
 1. High-accuracy, low-token Vector & Hybrid Code Search (pure Go HNSW + CSR + Okapi BM25).
-2. AST Code Graph & Call Graph navigation with exact FQN resolution (KùzuDB + Tree-sitter).
+2. AST Code Graph & Call Graph navigation with exact FQN resolution (SQLite code graph + go/ast + Tree-sitter).
 3. Session-persistent, deduplicated, scoped Agent Memory (`pkg/memory`).
 
 ---

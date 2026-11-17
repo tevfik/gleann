@@ -1,0 +1,14 @@
+Symbol Navigation — "New" in fixture
+
+── 1. example.com/fixture/service.New (function)
+  Callers:
+    ← example.com/fixture.main (function) [main.go:10]
+    [+ 2 test caller(s)]
+  Callees: none
+
+── 2. example.com/fixture/store.NewMemStore (function)
+  Callers:
+    ← example.com/fixture.main (function) [main.go:10]
+    [+ 2 test caller(s)]
+  Callees: none
+

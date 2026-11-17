@@ -454,10 +454,7 @@ func (s *Server) recallBlocks(req UnifiedRecallRequest) []RecallBlock {
 	return results
 }
 
-// recallGraph is only available with the treesitter build tag.
-// The actual implementation is in unified_memory_graph.go (treesitter build)
-// and unified_memory_graph_stub.go (!treesitter build).
-// We use a method variable so it compiles in both modes.
+// recallGraph delegates to recallGraphImpl (unified_memory_graph.go).
 func (s *Server) recallGraph(_ context.Context, _ UnifiedRecallRequest) *RecallGraph {
 	return s.recallGraphImpl()
 }

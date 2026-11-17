@@ -446,6 +446,20 @@ func (g *SQLite) RemoveFile(ctx context.Context, file string) error {
 		return fmt.Errorf("removing graph rows of %q: beginning transaction: %w", file, err)
 	}
 	defer tx.Rollback()
+	if err := g.RemoveFileTx(ctx, tx, file); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("removing graph rows of %q: committing: %w", file, err)
+	}
+	return nil
+}
+
+// RemoveFileTx is RemoveFile inside a caller-owned transaction (from
+// store.BeginWrite), so a rebuild that drops a deleted source's passages can
+// retract the source's graph rows in the same commit.
+func (g *SQLite) RemoveFileTx(ctx context.Context, tx *sql.Tx, file string) error {
+	file = slashPath(file)
 	inbound, err := readInbound(ctx, tx, file)
 	if err != nil {
 		return fmt.Errorf("removing graph rows of %q: %w", file, err)
@@ -473,8 +487,19 @@ func (g *SQLite) RemoveFile(ctx context.Context, file string) error {
 	if _, err := tx.ExecContext(ctx, `UPDATE files SET graph_hash = NULL, graph_dirty = 0 WHERE path = ?`, file); err != nil {
 		return fmt.Errorf("removing graph rows of %q: clearing graph_hash: %w", file, err)
 	}
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("removing graph rows of %q: committing: %w", file, err)
+	return nil
+}
+
+// RetractSourceTx removes everything the graph holds for a deleted source
+// file inside the caller's transaction: its code rows (RemoveFileTx) and its
+// document nodes and EXPLAINS relations (an empty set for a source that is not
+// a document). The files row itself is the caller's.
+func (g *SQLite) RetractSourceTx(ctx context.Context, tx *sql.Tx, source string) error {
+	if err := g.RemoveFileTx(ctx, tx, source); err != nil {
+		return err
+	}
+	if err := retractDoc(ctx, tx, source); err != nil {
+		return fmt.Errorf("removing document graph rows of %q: %w", source, err)
 	}
 	return nil
 }

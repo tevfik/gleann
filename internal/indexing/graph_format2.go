@@ -9,6 +9,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"time"
@@ -19,13 +20,13 @@ import (
 	"github.com/tevfik/gleann/modules/chunking"
 	"github.com/tevfik/gleann/pkg/gleann"
 	"github.com/tevfik/gleann/pkg/walker"
+	"golang.org/x/sync/errgroup"
 )
 
 // buildGraphIndexSQLite is the format-2 graph write path (RFC 003 section 8
 // step 7): the code graph lives in the symbols/edges tables of
 // <IndexDir>/<name>/<name>.db and the document graph in doc_nodes/doc_explains,
-// so it is built and served in every build including CGO_ENABLED=0. It never
-// opens or creates a <name>_graph Kùzu directory.
+// so it is built and served in every build including CGO_ENABLED=0.
 //
 // A full build extracts every source file and replaces the graph in one
 // transaction (graphstore.ReplaceAll). An incremental sync applies one
@@ -58,6 +59,19 @@ func buildGraphIndexSQLite(opts GraphOptions, p *printer) error {
 
 	module := indexer.DetectGoModule(absDocsDir)
 	ctx := context.Background()
+
+	// C-04: a graph that does not exist yet (the index was built without
+	// --graph) is built from the whole tree; an incremental update would
+	// leave it holding only the files changed in this sync.
+	if len(opts.ChangedFiles) > 0 {
+		has, err := g.HasData()
+		if err != nil {
+			return fmt.Errorf("checking graph data: %w", err)
+		}
+		if !has {
+			opts.ChangedFiles = nil
+		}
+	}
 
 	if len(opts.ChangedFiles) > 0 {
 		p.Printf("🔄 Incremental graph update: %d changed files\n", len(opts.ChangedFiles))
@@ -126,15 +140,32 @@ func fullGraphSQLite(ctx context.Context, g *graphstore.SQLite, module, root str
 		resolver, _ = indexer.LoadExact(module, root)
 	}
 
-	graphs := make([]indexer.FileGraph, 0, len(files))
-	hashes := make([]string, 0, len(files))
-	for _, path := range files {
-		src, err := os.ReadFile(path)
+	// Extraction is CPU-bound (parsing), so it runs on a pool of NumCPU
+	// workers. Each result lands at its file's index, so everything after
+	// this block sees the sorted-path order and the first-declaration-wins
+	// dedupe stays deterministic; the reported error is the lowest index's.
+	graphs := make([]indexer.FileGraph, len(files))
+	hashes := make([]string, len(files))
+	readErrs := make([]error, len(files))
+	var eg errgroup.Group
+	eg.SetLimit(runtime.NumCPU())
+	for i, path := range files {
+		eg.Go(func() error {
+			src, err := os.ReadFile(path)
+			if err != nil {
+				readErrs[i] = fmt.Errorf("read %s: %w", path, err)
+				return nil
+			}
+			graphs[i] = indexer.ExtractFileExact(module, root, path, string(src), resolver)
+			hashes[i] = contentHash(src)
+			return nil
+		})
+	}
+	_ = eg.Wait()
+	for _, err := range readErrs {
 		if err != nil {
-			return fmt.Errorf("read %s: %w", path, err)
+			return err
 		}
-		graphs = append(graphs, indexer.ExtractFileExact(module, root, path, string(src), resolver))
-		hashes = append(hashes, contentHash(src))
 	}
 
 	// First declaration wins across files (build-tag variants declare the
@@ -152,6 +183,15 @@ func fullGraphSQLite(ctx context.Context, g *graphstore.SQLite, module, root str
 		}
 	}
 
+	members := make(memberIndex)
+	for _, fg := range graphs {
+		for _, s := range fg.Symbols {
+			if s.File != "" && owner[s.FQN] == fg.File.Path {
+				members.add(s.FQN, s.Name)
+			}
+		}
+	}
+
 	deltas := make([]graphstore.FileDelta, 0, len(graphs))
 	for i, fg := range graphs {
 		deltas = append(deltas, fileGraphToDelta(fg, hashes[i], func(fqn string) bool {
@@ -159,7 +199,7 @@ func fullGraphSQLite(ctx context.Context, g *graphstore.SQLite, module, root str
 		}, func(fqn string) bool {
 			_, ok := owner[fqn]
 			return ok
-		}))
+		}, members))
 	}
 	if err := g.ReplaceAll(ctx, deltas); err != nil {
 		return fmt.Errorf("writing code graph: %w", err)
@@ -248,7 +288,7 @@ func incrementalGraphSQLite(ctx context.Context, g *graphstore.SQLite, changedFi
 // in another file is internal, anything else (third-party, standard library)
 // is external. A declaration already owned by another file is dropped together
 // with its outgoing edges (first declaration wins, as in the full build).
-func applyFileGraph(ctx context.Context, g *graphstore.SQLite, module, root, absPath, source string, batch map[string]bool) error {
+func applyFileGraph(ctx context.Context, g *graphstore.SQLite, module, root, absPath, source string, batch map[string]string) error {
 	fg := indexer.ExtractFile(module, root, absPath, source)
 	rel := fg.File.Path
 
@@ -279,23 +319,80 @@ func applyFileGraph(ctx context.Context, g *graphstore.SQLite, module, root, abs
 		return fmt.Errorf("resolving graph targets for %s: %w", rel, err)
 	}
 
+	// Members for call resolution: this file's own declarations, the rest of
+	// the sync batch and the package's members already in the graph.
+	members := make(memberIndex)
+	for _, s := range fg.Symbols {
+		if s.File != "" {
+			members.add(s.FQN, s.Name)
+		}
+	}
+	for fqn, name := range batch {
+		members.add(fqn, name)
+	}
+	if fg.File.Lang != "go" {
+		stored, err := g.PackageMembers(indexer.PackagePrefix(module, rel))
+		if err != nil {
+			return fmt.Errorf("resolving member calls for %s: %w", rel, err)
+		}
+		for _, s := range stored {
+			if s.File != rel {
+				members.add(s.FQN, s.Name)
+			}
+		}
+	}
+
 	d := fileGraphToDelta(fg, contentHash([]byte(source)), func(fqn string) bool {
 		owner, ok := existing[fqn]
 		return !ok || owner == rel
 	}, func(fqn string) bool {
 		_, ok := existing[fqn]
-		return ok || batch[fqn]
-	})
+		_, inBatch := batch[fqn]
+		return ok || inBatch
+	}, members)
 	if err := g.ApplyFileDelta(ctx, d); err != nil {
 		return fmt.Errorf("writing graph rows of %s: %w", rel, err)
+	}
+
+	// A declaration that is new to the graph can turn an external edge of an
+	// unchanged file internal (a call to a function or method that did not
+	// exist yet). Mark those files dirty; the dirty pass of the same sync
+	// re-extracts them, so an incremental graph converges to the full build's.
+	var appeared []string
+	for _, s := range fg.Symbols {
+		if s.File == "" {
+			continue
+		}
+		if _, known := existing[s.FQN]; known {
+			continue
+		}
+		appeared = append(appeared, s.FQN)
+		if key, _, ok := memberKey(s.FQN, s.Name); ok {
+			appeared = append(appeared, key)
+		}
+	}
+	if len(appeared) > 0 {
+		files, err := g.FilesWithExternalCalls(appeared)
+		if err != nil {
+			return fmt.Errorf("finding callers of new declarations of %s: %w", rel, err)
+		}
+		for _, f := range files {
+			if f == rel {
+				continue
+			}
+			if err := g.MarkFileDirty(ctx, f); err != nil {
+				return fmt.Errorf("marking %s dirty after %s: %w", f, rel, err)
+			}
+		}
 	}
 	return nil
 }
 
 // batchDeclarations extracts the declarations of every readable file in a
-// sync batch. Unreadable or deleted files contribute nothing.
-func batchDeclarations(module, root string, files []string) map[string]bool {
-	out := make(map[string]bool)
+// sync batch (FQN to symbol name). Unreadable or deleted files contribute
+// nothing.
+func batchDeclarations(module, root string, files []string) map[string]string {
+	out := make(map[string]string)
 	for _, f := range files {
 		src, err := os.ReadFile(f)
 		if err != nil {
@@ -303,7 +400,7 @@ func batchDeclarations(module, root string, files []string) map[string]bool {
 		}
 		for _, s := range indexer.ExtractFile(module, root, f, string(src)).Symbols {
 			if s.File != "" {
-				out[s.FQN] = true
+				out[s.FQN] = s.Name
 			}
 		}
 	}
@@ -317,7 +414,11 @@ func batchDeclarations(module, root string, files []string) map[string]bool {
 // as dst_external, never as rows (AGENTS.md section 2.2). Edges whose source
 // this file does not own are dropped: the source declaration was deduped away
 // or the extractor could not anchor it, and checkSources would refuse it.
-func fileGraphToDelta(fg indexer.FileGraph, hash string, own func(string) bool, internal func(string) bool) graphstore.FileDelta {
+//
+// members (may be nil) binds a CALLS edge of a non-Go file whose bare callee
+// name is declared nowhere to the same-package method(s) of that name, see
+// memberIndex.
+func fileGraphToDelta(fg indexer.FileGraph, hash string, own func(string) bool, internal func(string) bool, members memberIndex) graphstore.FileDelta {
 	d := graphstore.FileDelta{File: fg.File.Path, GraphHash: hash}
 	kept := make(map[string]bool)
 	for _, s := range fg.Symbols {
@@ -344,7 +445,21 @@ func fileGraphToDelta(fg indexer.FileGraph, hash string, own func(string) bool, 
 			Confidence:  confidence,
 		})
 	}
+	srcName := make(map[string]string)
+	for _, s := range fg.Symbols {
+		if s.File != "" {
+			srcName[s.FQN] = s.Name
+		}
+	}
 	for _, e := range fg.Calls {
+		if members != nil && fg.File.Lang != "go" && !internal(e.CalleeFQN) {
+			if targets, conf := members.resolve(srcName[e.CallerFQN], e.CalleeFQN); len(targets) > 0 {
+				for _, t := range targets {
+					addEdge(e.CallerFQN, t, "CALLS", conf)
+				}
+				continue
+			}
+		}
 		addEdge(e.CallerFQN, e.CalleeFQN, "CALLS", e.Confidence)
 	}
 	for _, e := range fg.Implements {
@@ -540,23 +655,6 @@ func relToRoot(root, absPath string) string {
 
 func escapesRoot(rel string) bool {
 	return rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator))
-}
-
-// format2GraphHasData reports whether a format-2 index holds graph rows. It
-// is the sync-time probe that replaces the <name>_graph stat for format-2
-// indexes: their graph lives in the index database itself.
-func format2GraphHasData(indexDir, name string) bool {
-	base := filepath.Join(indexDir, name, name)
-	if gleann.StoreFormatOf(base) != 2 {
-		return false
-	}
-	st, err := store.Open(base+".db", store.Options{})
-	if err != nil {
-		return false
-	}
-	defer st.Close()
-	has, err := graphstore.New(st).HasData()
-	return err == nil && has
 }
 
 // convergeDirtyFormat2Graph re-applies the deltas of graph_dirty files when

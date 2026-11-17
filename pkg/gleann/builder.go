@@ -29,7 +29,21 @@ type LeannBuilder struct {
 	// publication (tests only; see the crash* constants in builder_format2.go).
 	// A struct field, not a package global: production builders never set it.
 	crashHook func(point string) error
+
+	// Results of the last format-2 passage build (buildPassagesFormat2):
+	// the vector generation the rebuild published, and whether the database
+	// had to be recreated (corrupt or from an incompatible build), in which
+	// case the code graph it held is gone and the caller must rebuild it.
+	passagesGeneration int
+	dbRecreated        bool
 }
+
+// DatabaseRecreated reports whether the last BuildPassages/BuildLexicalOnly of
+// a format-2 index had to delete and recreate <name>.db because it could not
+// be opened (damaged, or written by an incompatible build). A normal rebuild
+// replaces the passages inside the existing database and keeps the code graph;
+// after a recreation the graph is gone, and the indexing pipeline rebuilds it.
+func (b *LeannBuilder) DatabaseRecreated() bool { return b.dbRecreated }
 
 // NewBuilder creates a new LeannBuilder.
 func NewBuilder(config Config, embedder EmbeddingComputer) (*LeannBuilder, error) {
@@ -158,6 +172,10 @@ func (b *LeannBuilder) BuildPassages(name string, items []Item) ([]int64, error)
 
 	if format == 2 {
 		meta.StoreFormat = 2
+		// Mirror the generation the rebuild published: the passages were
+		// replaced (slotless), so a reader that holds the previous vector
+		// file must see the change.
+		meta.VectorGeneration = b.passagesGeneration
 	}
 
 	metaPath := basePath + ".meta.json"
@@ -384,8 +402,15 @@ func (b *LeannBuilder) updateIndex(ctx context.Context, name string, newItems []
 		return fmt.Errorf("no embedder configured for index update")
 	}
 	basePath := filepath.Join(b.config.IndexDir, name, name)
-	if StoreFormatOf(basePath) == 2 {
+	switch DetectStoreFormat(basePath) {
+	case StoreV2:
 		return b.updateIndexFormat2(ctx, name, basePath, newItems, removeSources, st, false)
+	case StoreNone:
+		if len(newItems) == 0 {
+			// An index that does not exist has nothing to remove.
+			return nil
+		}
+		return fmt.Errorf("updating index %q: %w", name, ErrIndexNotFound)
 	}
 	indexPath := basePath + ".index"
 	indexData, err := os.ReadFile(indexPath)

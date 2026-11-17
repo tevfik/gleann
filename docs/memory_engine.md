@@ -50,9 +50,8 @@ every row. Stores are isolated from each other, from gleann's RAG indexes and
 from the code graph. The Memory Engine works in every build, including the
 `go install` build and Windows.
 
-Older releases kept each store in a KuzuDB directory `<index-dir>/<name>_memory/`.
-gleann no longer reads it: when that directory exists and the store is empty,
-it logs a notice once and leaves the directory untouched.
+Older releases kept each store in a KuzuDB database `<index-dir>/<name>_memory`.
+gleann no longer reads it; see [Upgrading entities from v1.9](#upgrading-entities-from-v19).
 
 ## Schema
 
@@ -445,3 +444,47 @@ a command (matched after normalization, as a prefix in either direction) or
 files (matched by path or base name). The section counts against the
 injection budget and ranks like long-term memory. MCP: `memory_failure_add`
 records one; `memory_context` accepts `command` and `paths`.
+
+## Upgrading entities from v1.9
+
+gleann v1.9.x kept the entities of `inject_knowledge_graph` in a KuzuDB store
+`<index-dir>/<name>_memory`. With the Kùzu binding v1.9 uses (go-kuzu 0.11)
+that store is a single file (plus `.wal`/`.shadow` while a server runs), not a
+directory; stores created before the temporal archive existed lack the
+`Entity_Archive` table. The entities cannot be rebuilt from sources, so they
+are carried over in two steps. gleann does not read Kùzu itself.
+
+1. Export, with the separate tool (own Go module with the Kùzu binding, CGo;
+   build it with `make kuzu-memory-export`, which writes `bin/kuzu-memory-export`):
+
+   ```bash
+   kuzu-memory-export ~/.gleann/indexes/myproj_memory -o gleann-memory-export
+   kuzu-memory-export ~/.gleann/indexes -o gleann-memory-export   # every *_memory store in the folder
+   ```
+
+   The tool opens the store read-only (a store with a pending write-ahead log is
+   copied to a temporary folder first), never writes to your files, and writes
+   `<name>.kuzu-export.json` per store: `{format, version, namespace, entities,
+   relations, archive}` with every attribute and timestamp as stored.
+2. Import into `memory.sqlite`:
+
+   ```bash
+   gleann memory import-graph gleann-memory-export/myproj.kuzu-export.json   # or the folder
+   ```
+
+   One transaction per namespace, `INSERT OR IGNORE` row by row: entity ids,
+   attributes, edge timestamps and archive rows (with their `valid_to`) are kept
+   as exported, rows that already exist in SQLite win, and nothing is re-archived
+   or re-stamped. An import marker `graph_import:<name>` (file path and SHA-256)
+   is stored in `memory_meta`; importing the same file again changes nothing.
+   Archive ids are stored as `<name>/<archive_id>`, like the ones gleann creates.
+
+Until a store is imported, the server and the MCP server log once per process
+the two commands for it, and `gleann doctor` lists unimported stores. The old
+`<name>_memory` file stays where it is; delete it when you are done.
+
+`traverse_knowledge_graph` on the imported entities returns what v1.9.0 returned
+for the same store, compared as sets (v1.9.0 does not order its results). One
+v1.9.0 answer is not reproduced because it was wrong: for the stored edge
+`ghost -RELATED_TO-> unicode` v1.9.0's traverse reported `ghost -> note1 WROTE`.
+The store holds the correct edge, and the import and SQLite traverse give it.

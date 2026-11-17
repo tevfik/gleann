@@ -4,39 +4,99 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/tevfik/gleann/pkg/gleann"
 	"github.com/tevfik/gleann/pkg/memory"
 )
 
-// The graph subcommands below read through the gleann.GraphDB interface, so
-// they work with both backends: the Kùzu sidecar of a format-1 index (needs
-// -tags treesitter) and the SQLite code graph of a format-2 index, which is
-// served in every build including CGO_ENABLED=0 (RFC 003 step 7).
+// The graph subcommands below read through the gleann.GraphDB interface over
+// the SQLite code graph of a format-2 index, which is served in every build
+// including CGO_ENABLED=0 (RFC 003 step 7, RFC 004 A3).
 
-// openGraphDBForCLI opens the graph of an index for a CLI query: the format-2
-// SQLite graph first (any build), then the Kùzu sidecar via GraphDBOpener
-// (injected only in treesitter builds).
+// openGraphDBForCLI opens the code graph of an index for a CLI query.
 func openGraphDBForCLI(config gleann.Config, indexName string) (gleann.GraphDB, error) {
 	db, err := gleann.OpenGraphDB(config.IndexDir, indexName)
 	if err != nil {
 		return nil, err
 	}
-	if db != nil {
-		return db, nil
+	if db == nil {
+		return nil, gleann.NoCodeGraphError(config.IndexDir, indexName)
 	}
-	// A format-2 index keeps its graph in <name>.db; never fall back to (and
-	// thereby create) a Kùzu <name>_graph directory for it.
-	if gleann.StoreFormatOf(filepath.Join(config.IndexDir, indexName, indexName)) == 2 {
-		return nil, fmt.Errorf("index %q has no code graph yet; build it with: gleann index build %s --docs <dir> --graph", indexName, indexName)
+	return db, nil
+}
+
+// cmdGraph implements the `gleann graph <subcommand>` command.
+func cmdGraph(args []string) {
+	if len(args) < 1 {
+		printGraphUsage()
+		os.Exit(1)
 	}
-	if gleann.GraphDBOpener == nil {
-		return nil, fmt.Errorf("index %q has no format-2 graph data; graph queries on format-1 (Kùzu) indexes require a build with -tags treesitter", indexName)
+
+	subCmd := args[0]
+	if fs, ok := graphFlagSets[subCmd]; ok {
+		rejectUnknownFlags("graph "+subCmd, args[1:], fs)
 	}
-	dbPath := filepath.Join(config.IndexDir, indexName+"_graph")
-	return gleann.GraphDBOpener(dbPath)
+	config := getConfig(args)
+
+	// Subcommands that don't need a symbol argument.
+	switch subCmd {
+	case "viz":
+		cmdGraphViz(args[1:], config)
+		return
+	case "report":
+		cmdGraphReport(args[1:], config)
+		return
+	case "communities":
+		cmdGraphCommunities(args[1:], config)
+		return
+	case "export":
+		cmdGraphExport(args[1:], config)
+		return
+	case "wiki":
+		cmdGraphWiki(args[1:], config)
+		return
+	case "hook":
+		cmdGraphHook(args[1:], config)
+		return
+	case "map":
+		cmdGraphMap(args[1:], config)
+		return
+	case "risk":
+		cmdGraphRisk(args[1:], config)
+		return
+	case "toc":
+		cmdGraphTOC(args[1:], config)
+		return
+	case "build":
+		cmdGraphBuild(args[1:], config)
+		return
+	case "help", "--help":
+		printGraphUsage()
+		return
+	}
+
+	// Subcommands that need a symbol argument.
+	if len(args) < 2 {
+		printGraphUsage()
+		os.Exit(1)
+	}
+	symbol := args[1]
+
+	indexName := getFlag(args, "--index")
+	if indexName == "" {
+		fmt.Fprintln(os.Stderr, "error: --index flag required for graph queries")
+		os.Exit(1)
+	}
+
+	db, err := openGraphDBForCLI(config, indexName)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error opening graph db for index %s: %v\n", indexName, err)
+		os.Exit(1)
+	}
+	defer db.Close()
+
+	runGraphSymbolCommand(subCmd, args, symbol, db)
 }
 
 // runGraphSymbolCommand dispatches the symbol-argument subcommands against
@@ -85,8 +145,8 @@ func runGraphSymbolCommand(subCmd string, args []string, symbol string, db glean
 	}
 }
 
-// cmdGraphBuild rebuilds the graph of an existing index (format-2 SQLite in
-// every build; Kùzu only with -tags treesitter).
+// cmdGraphBuild rebuilds the code graph of an existing format-2 index (SQLite,
+// every build).
 func cmdGraphBuild(args []string, config gleann.Config) {
 	indexName := getFlag(args, "--index")
 	docsDir := getFlag(args, "--docs")
@@ -475,11 +535,11 @@ Usage:
       Risk analysis: centrality × coupling × blast radius scoring
 
 Build requirements:
-  deps/callers/explain/path/query/toc/build work in EVERY build (including
-  CGO_ENABLED=0) for format-2 indexes (GLEANN_STORE_FORMAT=2), whose graph
-  lives in the index's own SQLite database. Format-1 (Kùzu) indexes and the
-  viz/report/communities/export/wiki/hook/map/risk commands require
-  -tags treesitter.
+  Every graph subcommand works in EVERY build (including CGO_ENABLED=0) for
+  format-2 indexes (GLEANN_STORE_FORMAT=2), whose graph lives in the index's
+  own SQLite database. Format-1 indexes have no code graph: convert them with
+  gleann index migrate <name>. -tags treesitter adds the tree-sitter parsers
+  (CALLS edges for non-Go languages).
 
 Requires: gleann index build <name> --docs <dir> --graph
 

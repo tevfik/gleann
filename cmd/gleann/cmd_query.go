@@ -189,17 +189,30 @@ Options:
 	}
 
 	// Show file sizes.
-	files := []string{".index", ".passages.jsonl", ".passages.idx", ".meta.json"}
 	totalSize := int64(0)
-	for _, ext := range files {
-		path := filepath.Join(indexDir, name+ext)
-		info, err := os.Stat(path)
-		if err == nil {
-			totalSize += info.Size()
-			fmt.Printf("   %-25s %s\n", ext+":", formatSize(info.Size()))
-		}
+	for _, f := range indexFileSizes(indexDir, name) {
+		totalSize += f.size
+		fmt.Printf("   %-25s %s\n", f.ext+":", formatSize(f.size))
 	}
 	fmt.Printf("   %-25s %s\n", "Total:", formatSize(totalSize))
+}
+
+type indexFileSize struct {
+	ext  string
+	size int64
+}
+
+// indexFileSizes lists the files of an index that exist, with their sizes:
+// .passages.db is the format-1 passage store, .db (with its WAL files) the
+// format-2 store; .passages.jsonl/.idx are the older layouts.
+func indexFileSizes(indexDir, name string) []indexFileSize {
+	var out []indexFileSize
+	for _, ext := range []string{".index", ".db", ".db-wal", ".db-shm", ".passages.db", ".passages.jsonl", ".passages.idx", ".meta.json"} {
+		if info, err := os.Stat(filepath.Join(indexDir, name+ext)); err == nil {
+			out = append(out, indexFileSize{ext, info.Size()})
+		}
+	}
+	return out
 }
 
 func cmdAsk(args []string) {

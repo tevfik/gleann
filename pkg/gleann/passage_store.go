@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log"
 	"os"
 	"path/filepath"
@@ -86,28 +87,74 @@ func isGuardFile(path string) bool {
 	return err == nil && n == len(storeGuardPrefix) && string(buf) == storeGuardPrefix
 }
 
-// StoreFormatOf detects the on-disk format of the index at basePath
+// StoreFormat is the three-way result of DetectStoreFormat.
+type StoreFormat int
+
+const (
+	// StoreNone: no index exists at the path (no meta.json, no <name>.db, no
+	// <name>.passages.db, no <name>.index).
+	StoreNone StoreFormat = iota
+	// StoreV1: an existing index in the bbolt (format-1) layout.
+	StoreV1
+	// StoreV2: an existing index in the single-SQLite-file (format-2) layout.
+	StoreV2
+)
+
+// ErrIndexNotFound is returned where an operation needs an existing index and
+// there is none. It wraps fs.ErrNotExist.
+var ErrIndexNotFound = fmt.Errorf("index not found: %w", fs.ErrNotExist)
+
+// DetectStoreFormat detects the on-disk format of the index at basePath
 // (<IndexDir>/<name>/<name>) per RFC 003 section 6.3: the meta.json
 // store_format field wins; otherwise a present <name>.db with an absent or
-// guarded <name>.passages.db means format 2. Everything else is format 1.
-// Existing format-2 indexes are always read as format 2 regardless of the
-// GLEANN_STORE_FORMAT switch, which only governs NEW indexes.
-func StoreFormatOf(basePath string) int {
+// guarded <name>.passages.db means format 2; any other trace of an index is
+// format 1; no trace at all is StoreNone. Existing format-2 indexes are always
+// read as format 2 regardless of the GLEANN_STORE_FORMAT switch, which only
+// governs NEW indexes.
+func DetectStoreFormat(basePath string) StoreFormat {
+	hasMeta := false
 	if data, err := os.ReadFile(basePath + ".meta.json"); err == nil {
+		hasMeta = true
 		var m struct {
 			StoreFormat int `json:"store_format"`
 		}
 		if json.Unmarshal(data, &m) == nil && m.StoreFormat == 2 {
-			return 2
+			return StoreV2
 		}
 	}
 	if _, err := os.Stat(basePath + ".db"); err == nil {
 		if _, err := os.Stat(basePath + ".passages.db"); os.IsNotExist(err) {
-			return 2
+			return StoreV2
 		}
 		if isGuardFile(basePath + ".passages.db") {
-			return 2
+			return StoreV2
 		}
+		return StoreV1
+	}
+	if hasMeta {
+		return StoreV1
+	}
+	for _, ext := range []string{".passages.db", ".index"} {
+		if _, err := os.Stat(basePath + ext); err == nil {
+			return StoreV1
+		}
+	}
+	return StoreNone
+}
+
+// StoreFormatOf is the two-way form of DetectStoreFormat: 2 for format 2,
+// otherwise 1 - which includes an index that does not exist. Use
+// DetectStoreFormat where "missing" must not be read as format 1.
+//
+// Remaining callers (candidates for RFC 004 item B2, when format 1 goes away):
+// cmd/gleann graph_shared.go, cmd_migrate.go; pkg/gleann graphdb_open.go,
+// index_health.go, manifest_format2.go, migrate.go, builder.go (Build,
+// compactStored, the write entry points); internal/mcp tools_graph.go;
+// internal/indexing graph.go, sync.go, build.go, graph_format2.go. All of them
+// only ask "is it format 2?", for which a missing index correctly answers no.
+func StoreFormatOf(basePath string) int {
+	if DetectStoreFormat(basePath) == StoreV2 {
+		return 2
 	}
 	return 1
 }
@@ -128,8 +175,13 @@ func storeFormatSwitch() int {
 // format detected on disk. Read-only instances are used by searchers; the
 // builder opens its own writable handle for the write path.
 func OpenPassageStore(basePath string, readOnly bool) (PassageStore, error) {
-	if StoreFormatOf(basePath) == 2 {
+	switch DetectStoreFormat(basePath) {
+	case StoreV2:
 		return openStorePassages(basePath, readOnly)
+	case StoreNone:
+		// Not a format-1 index: a writable bbolt manager would create the
+		// directory and an empty store here.
+		return nil, ErrIndexNotFound
 	}
 	if readOnly {
 		return NewReadOnlyPassageManager(basePath), nil

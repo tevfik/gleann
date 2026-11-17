@@ -4,8 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -65,8 +63,7 @@ func listIndexInfo() []indexInfo {
 	}
 	out := make([]indexInfo, 0, len(metas))
 	for _, m := range metas {
-		_, gerr := os.Stat(filepath.Join(dir, m.Name+"_graph"))
-		out = append(out, indexInfo{Name: m.Name, Passages: m.NumPassages, Tags: m.Tags, Description: m.Description, Graph: gerr == nil})
+		out = append(out, indexInfo{Name: m.Name, Passages: m.NumPassages, Tags: m.Tags, Description: m.Description, Graph: gleann.HasCodeGraph(dir, m.Name)})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out

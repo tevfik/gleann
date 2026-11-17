@@ -184,10 +184,10 @@ func openAPISchemasGraph() map[string]any {
 			"type":     "object",
 			"required": []string{"query"},
 			"properties": map[string]any{
-				"query":     map[string]any{"type": "string", "enum": []string{"callees", "callers", "symbols_in_file", "impact", "cypher"}, "description": "Query type"},
+				"query":     map[string]any{"type": "string", "enum": []string{"callees", "callers", "symbols_in_file", "impact", "toc"}, "description": "Query type"},
 				"symbol":    map[string]any{"type": "string", "description": "Fully qualified symbol name (for callees/callers/impact)"},
 				"file":      map[string]any{"type": "string", "description": "File path (for symbols_in_file)"},
-				"cypher":    map[string]any{"type": "string", "description": "Raw Cypher query (for cypher type)"},
+				"cypher":    map[string]any{"type": "string", "description": "Removed: type cypher is answered with 400 \"raw Cypher was removed\""},
 				"max_depth": map[string]any{"type": "integer", "default": 5, "description": "Max traversal depth for impact analysis"},
 			},
 		},
@@ -227,7 +227,7 @@ func openAPISchemasGraph() map[string]any {
 			"required": []string{"docs_dir"},
 			"properties": map[string]any{
 				"docs_dir": map[string]any{"type": "string", "description": "Directory path to index"},
-				"module":   map[string]any{"type": "string", "description": "Go module name (auto-detected from go.mod if omitted)"},
+				"module":   map[string]any{"type": "string", "description": "Ignored (kept for compatibility): the Go module is read from go.mod in docs_dir"},
 			},
 		},
 	}
@@ -259,7 +259,7 @@ func openAPISchemasMemory() map[string]any {
 		},
 		"GraphInjectionPayload": map[string]any{
 			"type":        "object",
-			"description": "Bulk upsert payload for the Memory Engine. Nodes and edges are processed inside a single KuzuDB transaction.",
+			"description": "Bulk upsert payload for the Memory Engine. Nodes and edges are processed inside a single SQLite transaction.",
 			"properties": map[string]any{
 				"nodes": map[string]any{
 					"type":  "array",

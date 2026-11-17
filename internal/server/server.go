@@ -10,7 +10,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/tevfik/gleann/internal/auth"
 	"io"
 	"io/fs"
 	"log"
@@ -21,6 +20,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/tevfik/gleann/internal/auth"
 
 	"github.com/tevfik/gleann/internal/background"
 	"github.com/tevfik/gleann/internal/embedding"
@@ -248,7 +249,6 @@ func NewServer(config gleann.Config, addr, version string) *Server {
 
 	// Wire the VectorSyncer factory so that Memory Engine entities are
 	// automatically reflected in the HNSW+BM25 vector index.
-	// This is a no-op in !treesitter builds.
 	s.initMemorySyncer(config, embedder)
 
 	s.logBuffer = NewLogBuffer(100)
@@ -294,7 +294,7 @@ func (s *Server) buildMux() *http.ServeMux {
 	mux.HandleFunc("DELETE /api/conversations", s.handleClearConversations)
 	mux.HandleFunc("PUT /api/conversations/{id}", s.handleUpdateConversation)
 
-	// Graph API endpoints (KuzuDB-backed code graph).
+	// Graph API endpoints (SQLite code graph).
 	mux.HandleFunc("GET /api/graph/{name}", s.handleGraphStats)
 	mux.HandleFunc("GET /api/graph/{name}/toc", s.handleDocumentTOC)
 	mux.HandleFunc("GET /api/graph/{name}/documents", s.handleListDocuments)
@@ -842,6 +842,18 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	results, err := searcher.Search(r.Context(), req.Query, opts...)
+	if errors.Is(err, gleann.ErrIndexChanged) {
+		// Another process published the index while this query ran: the
+		// searcher is stale now, so take a fresh one and run the query once more.
+		release()
+		if searcher, release, err = s.acquireSearcher(r.Context(), name); err != nil {
+			serverMetrics.RecordSearch(time.Since(start), true)
+			writeError(w, http.StatusNotFound, fmt.Sprintf("index %q not found: %v", name, err))
+			return
+		}
+		defer release()
+		results, err = searcher.Search(r.Context(), req.Query, opts...)
+	}
 	if err != nil {
 		serverMetrics.RecordSearch(time.Since(start), true)
 		writeError(w, http.StatusInternalServerError, "search failed: "+err.Error())
@@ -1417,7 +1429,7 @@ func (s *Server) handleUpdateIndex(w http.ResponseWriter, r *http.Request) {
 	}
 	// This endpoint updates passages and the lexical index only. An existing
 	// code graph is not touched, so say so instead of silently drifting (N-02).
-	if _, statErr := os.Stat(filepath.Join(cfg.IndexDir, name+"_graph")); statErr == nil {
+	if gleann.HasCodeGraph(cfg.IndexDir, name) {
 		resp["graph_stale"] = true
 		resp["warning"] = "the code graph was not updated; run `gleann index sync " + name + " --graph` or rebuild the graph"
 	}

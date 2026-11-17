@@ -180,7 +180,11 @@ func (c *ASTChunker) ChunkCode(source, filename string) []CodeChunk {
 		chunks = c.chunkSlidingWindow(source, filename, lang)
 	}
 
-	// Post-process: split oversized chunks and add line numbers.
+	return c.postProcess(chunks)
+}
+
+// postProcess splits oversized chunks and adds line numbers.
+func (c *ASTChunker) postProcess(chunks []CodeChunk) []CodeChunk {
 	var result []CodeChunk
 	for _, chunk := range chunks {
 		if len(chunk.Text) > c.config.MaxChunkSize {

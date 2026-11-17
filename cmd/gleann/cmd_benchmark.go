@@ -421,10 +421,9 @@ func runTokenReductionAnalysis(config gleann.Config, indexName, docsDir string, 
 	}
 
 	// Phase 4: Graph stats if available.
-	graphDir := filepath.Join(config.IndexDir, indexName+"_graph")
-	if info, err := os.Stat(graphDir); err == nil && info.IsDir() {
+	if gleann.HasCodeGraph(config.IndexDir, indexName) {
 		fmt.Println()
-		printGraphBenchmark(graphDir)
+		printGraphBenchmark(config.IndexDir, indexName)
 	}
 }
 
@@ -487,8 +486,17 @@ func estimateRAGTokens(config gleann.Config, indexName string, topK int) int {
 	return total
 }
 
-func printGraphBenchmark(graphDir string) {
+func printGraphBenchmark(indexDir, name string) {
 	fmt.Println("Phase 4: AST Graph Stats")
+	// A format-2 graph lives in the index database: report its row counts.
+	if g, err := gleann.OpenGraphStore(indexDir, name); err == nil && g != nil {
+		defer g.Close()
+		if st, err := g.Stats(); err == nil {
+			fmt.Printf("  Graph storage: %s.db (%d symbols, %d CALLS edges)\n", name, st.Symbols, st.CallEdges)
+			return
+		}
+	}
+	graphDir := filepath.Join(indexDir, name+"_graph")
 	var totalSize int64
 	var fileCount int
 	filepath.WalkDir(graphDir, func(_ string, d fs.DirEntry, _ error) error {

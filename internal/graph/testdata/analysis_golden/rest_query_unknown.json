@@ -1,6 +1,6 @@
 {
   "body": {
-    "error": "unknown query type \"nonsense\" (use callees, callers, symbols_in_file, impact, cypher, toc)"
+    "error": "unknown query type \"nonsense\" (use callees, callers, symbols_in_file, impact, toc)"
   },
   "status": 400
 }

@@ -1,6 +1,6 @@
 // Package types holds the extractor output types shared by the code-graph
-// extractors (internal/graph/indexer) and every graph sink (Kùzu writer,
-// graphstore/SQLite). It is intentionally tag-free and dependency-free so the
+// extractors (internal/graph/indexer) and the graph sink (graphstore/SQLite).
+// It is intentionally tag-free and dependency-free so the
 // pure-Go extractors and the format-2 write path build with CGO_ENABLED=0.
 package types
 
@@ -30,7 +30,7 @@ type SymbolNode struct {
 	IsTest     bool    // true if defined in a test file or is a test function
 }
 
-// EdgeDeclares represents a DECLARES relationship matching KuzuDB schema (FROM CodeFile TO Symbol).
+// EdgeDeclares represents a DECLARES relationship (FROM file TO Symbol).
 type EdgeDeclares struct {
 	FilePath  string
 	SymbolFQN string

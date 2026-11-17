@@ -185,7 +185,7 @@ func serve(w http.ResponseWriter, r *http.Request) {
 }
 
 // Helper to check the callee stub builder still works.
-func TestKuzuSymbolHelper(t *testing.T) {
+func TestCalleeStubHelper(t *testing.T) {
 	sym := calleeStub("github.com/test/proj.MyFunc")
 	if sym.FQN != "github.com/test/proj.MyFunc" {
 		t.Errorf("unexpected FQN: %s", sym.FQN)
@@ -195,7 +195,7 @@ func TestKuzuSymbolHelper(t *testing.T) {
 	}
 }
 
-// Verify that kuzu types are properly constructed.
+// Verify that the graph edge types are properly constructed.
 func TestEdgeImplementsType(t *testing.T) {
 	e := gtypes.EdgeImplements{
 		ImplFQN:  "pkg.MyStruct",

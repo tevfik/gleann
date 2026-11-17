@@ -393,7 +393,7 @@ func readDocuments(ctx context.Context, dir string, ro ReadOptions, p *printer) 
 							})
 						}
 
-						// Also produce graph-ready PluginResult for KuzuDB.
+						// Also produce graph-ready PluginResult for the document graph.
 						sections := chunking.ParseMarkdownHeadings(text)
 						if len(sections) > 0 {
 							wordCount := len(strings.Fields(text))

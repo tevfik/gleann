@@ -16,6 +16,7 @@ package server
 import (
 	"context"
 	"fmt"
+	"log"
 	"os"
 	"sync"
 	"time"
@@ -48,6 +49,18 @@ func (s *Server) acquireSearcher(ctx context.Context, name string) (*gleann.Lean
 			s.touchSearcherLRULocked(name)
 			release := s.retainLocked(sr)
 			s.mu.Unlock()
+			// Another process (a CLI sync or build) may have written to the
+			// index since this searcher loaded: one small read decides.
+			// A stale searcher is retired, not closed under its borrowers,
+			// and the loop loads a fresh one.
+			if stale, serr := sr.Stale(ctx); stale {
+				release()
+				if serr != nil {
+					log.Printf("ℹ️  Index %q freshness check failed (%v); reloading", name, serr)
+				}
+				s.retireIfCurrent(name, sr)
+				continue
+			}
 			return sr, release, nil
 		}
 		s.mu.Unlock()
@@ -239,6 +252,23 @@ func (s *Server) invalidateSearcher(name string) {
 	s.mu.Unlock()
 	if sr != nil {
 		sr.Close()
+	}
+}
+
+// retireIfCurrent retires the cached searcher for name only if it is still
+// sr: a concurrent acquire may already have replaced it with a fresh one,
+// which must stay. Unlike invalidateSearcher it does not bump the cache
+// generation: a load that started before the change records the older state
+// and is found stale by its first acquire, so it needs no discarding.
+func (s *Server) retireIfCurrent(name string, sr *gleann.LeannSearcher) {
+	s.mu.Lock()
+	var toClose *gleann.LeannSearcher
+	if cur, ok := s.searchers[name]; ok && cur == sr {
+		toClose = s.retireLocked(name)
+	}
+	s.mu.Unlock()
+	if toClose != nil {
+		toClose.Close()
 	}
 }
 

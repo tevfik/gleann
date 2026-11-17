@@ -39,3 +39,9 @@ func ChunkCodeWithTree(lang Language, filename, source string, tree interface{},
 func treeSitterChunk(source, filename string, lang Language, config ASTChunkerConfig) []CodeChunk {
 	return nil
 }
+
+// ChunkCodeWithTree is a no-op stub: there is no tree to consume, so the
+// caller must fall back to ChunkCode.
+func (c *ASTChunker) ChunkCodeWithTree(lang Language, filename, source string, tree interface{}, sourceBytes []byte) []CodeChunk {
+	return nil
+}

@@ -12,6 +12,6 @@
 // failures are returned as errors. Cancellation is driven by the context
 // passed to Build / Sync.
 //
-// Build-tag specific behaviour lives in graph_treesitter.go (KuzuDB graph
-// indexing, `-tags treesitter`) and graph_stub.go (all other builds).
+// The code graph is written to the SQLite index database in every build
+// (graph_format2.go); `-tags treesitter` only adds the tree-sitter parsers.
 package indexing

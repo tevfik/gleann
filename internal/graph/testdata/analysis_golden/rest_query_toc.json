@@ -1,6 +1,6 @@
 {
   "body": {
-    "error": "document toc failed: no Document found with path: py/app.py"
+    "error": "no document \"py/app.py\" in graph \"fixture\": no Document found with path: py/app.py"
   },
-  "status": 500
+  "status": 404
 }

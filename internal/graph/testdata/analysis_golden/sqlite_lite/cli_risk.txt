@@ -1,0 +1,45 @@
+🔥 Symbol Risk Analysis — fixture (top 1000)
+
+SYMBOL                                   KIND       RISK       IN     OUT    BLAST  SCORE
+────────────────────────────────────────────────────────────────────────────────────────────────────
+example.com/fixture.run                  function   🟠 high       1      1      9      0.5431
+example.com/fixture/service.Service.R…   method     🟠 high       1      1      9      0.5431
+example.com/fixture/service.Service.S…   method     🟠 high       1      1      9      0.5431
+example.com/fixture/service.Service.L…   method     🟡 medium     2      0      6      0.4132
+example.com/fixture/service.New          function   🟡 medium     3      0      9      0.3364
+example.com/fixture/store.NewMemStore    function   🟡 medium     3      0      9      0.3364
+example.com/fixture/service.validate     function   🟡 medium     1      0      6      0.2967
+example.com/fixture.main                 function   🟢 low        0      5      9      0.2244
+example.com/fixture/store.normalize      function   🟢 low        1      0      1      0.2240
+example.com/fixture/service.TestReport   function   🟢 low        0      2      7      0.1876
+example.com/fixture/service.TestSaveL…   function   🟢 low        0      2      7      0.1876
+example.com/fixture/store.MemStore.Put   method     🟢 low        0      1      1      0.1308
+example.com/fixture/py.Registry          class      🟢 low        0      0      0      0.1171
+example.com/fixture/py.__init__          method     🟢 low        0      0      0      0.1171
+example.com/fixture/py.add               method     🟢 low        0      0      0      0.1171
+example.com/fixture/py.build_registry    function   🟢 low        0      0      0      0.1171
+example.com/fixture/py.clean             function   🟢 low        0      0      0      0.1171
+example.com/fixture/py.describe          method     🟢 low        0      0      0      0.1171
+example.com/fixture/py.join_words        function   🟢 low        0      0      0      0.1171
+example.com/fixture/py.main              function   🟢 low        0      0      0      0.1171
+example.com/fixture/rs.Counter           struct     🟢 low        0      0      0      0.1171
+example.com/fixture/rs.clamp             function   🟢 low        0      0      0      0.1171
+example.com/fixture/rs.double            function   🟢 low        0      0      0      0.1171
+example.com/fixture/rs.main              function   🟢 low        0      0      0      0.1171
+example.com/fixture/rs.run_all           function   🟢 low        0      0      0      0.1171
+example.com/fixture/rs.util              module     🟢 low        0      0      0      0.1171
+example.com/fixture/service.Service      struct     🟢 low        0      0      0      0.1171
+example.com/fixture/service.emptyError   struct     🟢 low        0      0      0      0.1171
+example.com/fixture/service.emptyErro…   method     🟢 low        0      0      0      0.1171
+example.com/fixture/service.errEmpty     var        🟢 low        0      0      0      0.1171
+example.com/fixture/store.MemStore       struct     🟢 low        0      0      0      0.1171
+example.com/fixture/store.MemStore.Get   method     🟢 low        0      0      0      0.1171
+example.com/fixture/store.MemStore.Ke…   method     🟢 low        0      0      0      0.1171
+example.com/fixture/store.Store          interface  🟢 low        0      0      0      0.1171
+example.com/fixture/ts.Shape             interface  🟢 low        0      0      0      0.1171
+example.com/fixture/ts.Square            class      🟢 low        0      0      0      0.1171
+example.com/fixture/ts.describeAll       function   🟢 low        0      0      0      0.1171
+example.com/fixture/ts.main              function   🟢 low        0      0      0      0.1171
+example.com/fixture/ts.pluralize         function   🟢 low        0      0      0      0.1171
+example.com/fixture/ts.slug              function   🟢 low        0      0      0      0.1171
+example.com/fixture/ts.totalArea         function   🟢 low        0      0      0      0.1171

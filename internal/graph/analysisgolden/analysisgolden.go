@@ -1,12 +1,11 @@
-//go:build treesitter && !windows
-
-// Package analysisgolden is the test support for the Kùzu-path analysis
-// goldens of RFC 004 A0 (internal/graph/testdata/analysis_golden). It builds
-// a format-1 index (the Kùzu `<name>_graph` store) of the fixture project,
-// normalises volatile parts of an output and compares or rewrites the golden
-// file. It is imported by tests only: the CLI (cmd/gleann), the MCP tools
-// (internal/mcp), the REST handlers (internal/server) and the non-Go CALLS
-// baseline (this package's own test).
+// Package analysisgolden is the test support for the analysis goldens of
+// RFC 004 (internal/graph/testdata/analysis_golden): the A0 files frozen from
+// the former Kùzu path, which the SQLite graph is still compared against, and
+// the sqlite_lite/ files of the SQLite path itself. It builds the format-2
+// code graph of the fixture project (BuildIndexFormat2), normalises volatile
+// parts of an output and compares or rewrites a golden file. It is imported
+// by tests only: the CLI (cmd/gleann), the MCP tools (internal/mcp), the REST
+// handlers (internal/server) and the indexing tests.
 package analysisgolden
 
 import (
@@ -19,15 +18,13 @@ import (
 	"strconv"
 	"strings"
 	"testing"
-
-	"github.com/tevfik/gleann/internal/indexing"
 )
 
-// IndexName is the name of the format-1 index built from the fixture.
+// IndexName is the name of the index built from the fixture.
 const IndexName = "fixture"
 
 // Update rewrites the golden files instead of comparing against them.
-var Update = flag.Bool("update", false, "rewrite the analysis golden files (treesitter build, Kùzu path)")
+var Update = flag.Bool("update", false, "rewrite the analysis golden files")
 
 func thisDir() string {
 	_, file, _, _ := runtime.Caller(0)
@@ -54,36 +51,10 @@ func GoldenDir() string {
 	return filepath.Join(thisDir(), "..", "testdata", "analysis_golden")
 }
 
-// Env is a format-1 index of the fixture in a temporary index directory.
+// Env is an index of the fixture in a temporary index directory.
 type Env struct {
-	IndexDir string // holds <IndexName>_graph (Kùzu), no meta.json: format 1
+	IndexDir string // holds <IndexName>/<IndexName>.db (format 2)
 	Fixture  string // absolute fixture path
-}
-
-// BuildIndex builds the code graph of the fixture the way `gleann index build
-// --graph` does for a format-1 index (indexing.BuildGraphIndex: no
-// <name>/<name>.meta.json, so the Kùzu path is taken). GLEANN_STORE_FORMAT is
-// unset so nothing selects format 2.
-func BuildIndex(t testing.TB) *Env {
-	t.Helper()
-	t.Setenv("GLEANN_STORE_FORMAT", "") // restored on cleanup
-	_ = os.Unsetenv("GLEANN_STORE_FORMAT")
-	env := &Env{IndexDir: t.TempDir(), Fixture: FixtureDir(t)}
-	var out strings.Builder
-	indexing.BuildGraphIndex(indexing.GraphOptions{
-		Name:     IndexName,
-		DocsDir:  env.Fixture,
-		IndexDir: env.IndexDir,
-		Stdout:   &out,
-		Stderr:   &out,
-	})
-	if _, err := os.Stat(filepath.Join(env.IndexDir, IndexName+"_graph")); err != nil {
-		t.Fatalf("graph not built: %v\n%s", err, out.String())
-	}
-	if strings.Contains(out.String(), "warning") {
-		t.Fatalf("graph build warned:\n%s", out.String())
-	}
-	return env
 }
 
 var (

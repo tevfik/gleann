@@ -1,0 +1,3 @@
+{"nodes":[{"id":"decision","type":"decision","content":"remove kuzu in favour of sqlite, accepted","attributes":{"by":"alice","status":"accepted"}},{"id":"proj","type":"project","content":"gleann code search engine v2","attributes":{"lang":"go","stars":13}}],"edges":[{"from":"proj","to":"proj","relation_type":"SELF","attributes":{"created_at":"<TS>","updated_at":"<TS>"}},{"from":"decision","to":"proj","relation_type":"AFFECTS","attributes":{"created_at":"<TS>","updated_at":"<TS>"}}],"count":2}
+
+HTTP 200

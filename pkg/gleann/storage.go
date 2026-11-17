@@ -42,8 +42,13 @@ type VectorStorage struct {
 func InspectVectorStorage(indexDir string, meta IndexMeta) VectorStorage {
 	base := filepath.Join(indexDir, meta.Name, meta.Name)
 	vs := VectorStorage{Convertible: meta.Backend != "diskann"}
-	if fi, err := os.Stat(base + ".passages.db"); err == nil {
-		vs.PassageBytes = fi.Size()
+	// Format 1 keeps the passages in <name>.passages.db; format 2 keeps them in
+	// <name>.db (with its -wal/-shm companions), which also holds the lexical
+	// rows and the graph.
+	for _, ext := range []string{".passages.db", ".db", ".db-wal"} {
+		if fi, err := os.Stat(base + ext); err == nil {
+			vs.PassageBytes += fi.Size()
+		}
 	}
 	vs.FullBytes = int64(meta.NumPassages) * int64(meta.Dimensions) * 4
 	fi, err := os.Stat(base + ".index")

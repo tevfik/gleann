@@ -305,7 +305,7 @@ export function System() {
             <div className="text-gray-400 space-y-2">
               <p><strong>Gleann</strong> {serverVersion}</p>
               <p>Repository: <a href="https://github.com/tevfik/gleann" className="text-blue-400 hover:underline" target="_blank" rel="noreferrer">tevfik/gleann</a></p>
-              <p>Memory Engine: <span className="text-blue-400">BBolt & KuzuDB</span></p>
+              <p>Memory Engine: <span className="text-blue-400">BBolt & SQLite</span></p>
             </div>
           </div>
         </div>

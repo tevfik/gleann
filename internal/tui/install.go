@@ -79,7 +79,7 @@ func InstallBinary(targetDir string) error {
 //
 // Under the gleann-full launcher the running executable is the extracted
 // gleann-full-bin inside ~/.gleann/runtime/<version>/, which only works while
-// its libraries (libgleann_core_rs, libkuzu, libopenblas, ...) sit beside it.
+// its libraries (libgleann_core_rs, libopenblas, ...) sit beside it.
 // Installing that file alone leaves a binary that dies with "error while
 // loading shared libraries". The launcher embeds all of them, so when it
 // announces itself (GLEANN_LAUNCHER) it is the file to install and nothing
@@ -712,7 +712,7 @@ _gleann() {
         'list:List all indexes'
         'remove:Remove an index'
         'info:Show index info'
-        'graph:Query AST Graph in KuzuDB'
+        'graph:Query the code graph'
         'serve:Start REST API server'
         'mcp:Start MCP server (stdio)'
         'memory:Long-term memory management'
@@ -812,7 +812,7 @@ complete -c gleann -n '__fish_use_subcommand' -a 'watch' -d 'Watch & auto-rebuil
 complete -c gleann -n '__fish_use_subcommand' -a 'list' -d 'List all indexes'
 complete -c gleann -n '__fish_use_subcommand' -a 'remove' -d 'Remove an index'
 complete -c gleann -n '__fish_use_subcommand' -a 'info' -d 'Show index info'
-complete -c gleann -n '__fish_use_subcommand' -a 'graph' -d 'Query AST Graph in KuzuDB'
+complete -c gleann -n '__fish_use_subcommand' -a 'graph' -d 'Query the code graph'
 complete -c gleann -n '__fish_use_subcommand' -a 'serve' -d 'Start REST API server'
 complete -c gleann -n '__fish_use_subcommand' -a 'mcp' -d 'Start MCP server (stdio)'
 complete -c gleann -n '__fish_use_subcommand' -a 'memory' -d 'Long-term memory management'

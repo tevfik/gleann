@@ -1,0 +1,3 @@
+{"nodes":[{"id":"alice","type":"person","content":"maintainer alice","attributes":{"role":"maintainer"}},{"id":"proj","type":"project","content":"gleann code search engine v2","attributes":{"lang":"go","stars":13}},{"id":"note1","type":"note","content":"use single writer for graph database","attributes":{"priority":1}}],"edges":[{"from":"proj","to":"proj","relation_type":"SELF","attributes":{"created_at":"<TS>","updated_at":"<TS>"}},{"from":"alice","to":"proj","relation_type":"MAINTAINS","weight":3,"attributes":{"created_at":"<TS>","updated_at":"<TS>"}},{"from":"alice","to":"note1","relation_type":"WROTE","attributes":{"created_at":"<TS>","updated_at":"<TS>"}}],"count":3}
+
+HTTP 200

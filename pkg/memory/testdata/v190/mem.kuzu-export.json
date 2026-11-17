@@ -1,0 +1,133 @@
+{
+  "format": "gleann-kuzu-memory-export",
+  "version": 1,
+  "namespace": "mem",
+  "entities": [
+    {
+      "id": "alice",
+      "type": "person",
+      "content": "maintainer alice",
+      "attributes": "{\"role\":\"maintainer\"}"
+    },
+    {
+      "id": "bob",
+      "type": "person",
+      "content": "contributor bob",
+      "attributes": "{\"role\":\"contributor\"}"
+    },
+    {
+      "id": "carol",
+      "type": "person",
+      "content": "reviewer carol",
+      "attributes": "{\"role\":\"reviewer\"}"
+    },
+    {
+      "id": "decision",
+      "type": "decision",
+      "content": "remove kuzu in favour of sqlite, accepted",
+      "attributes": "{\"by\":\"alice\",\"status\":\"accepted\"}"
+    },
+    {
+      "id": "ghost",
+      "type": "concept",
+      "content": "",
+      "attributes": "{}"
+    },
+    {
+      "id": "note1",
+      "type": "note",
+      "content": "use single writer for graph database",
+      "attributes": "{\"priority\":1}"
+    },
+    {
+      "id": "proj",
+      "type": "project",
+      "content": "gleann code search engine v2",
+      "attributes": "{\"lang\":\"go\",\"stars\":13}"
+    },
+    {
+      "id": "unicode",
+      "type": "note",
+      "content": "Türkçe karakterler: ığüşöç",
+      "attributes": "{\"emoji_free\":true}"
+    }
+  ],
+  "relations": [
+    {
+      "from": "alice",
+      "to": "note1",
+      "relation_type": "WROTE",
+      "weight": 0,
+      "attributes": "{\"created_at\":\"2026-11-17T05:09:23Z\",\"updated_at\":\"2026-11-17T05:09:23Z\"}"
+    },
+    {
+      "from": "alice",
+      "to": "proj",
+      "relation_type": "MAINTAINS",
+      "weight": 3,
+      "attributes": "{\"created_at\":\"2026-11-17T05:09:23Z\",\"updated_at\":\"2026-11-17T05:09:23Z\"}"
+    },
+    {
+      "from": "bob",
+      "to": "proj",
+      "relation_type": "CONTRIBUTES_TO",
+      "weight": 0.5,
+      "attributes": "{\"commits\":42,\"created_at\":\"2026-11-17T05:09:23Z\",\"updated_at\":\"2026-11-17T05:09:23Z\"}"
+    },
+    {
+      "from": "carol",
+      "to": "decision",
+      "relation_type": "REVIEWED",
+      "weight": 1,
+      "attributes": "{\"created_at\":\"2026-11-17T05:09:23Z\",\"updated_at\":\"2026-11-17T05:09:23Z\"}"
+    },
+    {
+      "from": "decision",
+      "to": "proj",
+      "relation_type": "AFFECTS",
+      "weight": 0,
+      "attributes": "{\"created_at\":\"2026-11-17T05:09:23Z\",\"updated_at\":\"2026-11-17T05:09:23Z\"}"
+    },
+    {
+      "from": "ghost",
+      "to": "unicode",
+      "relation_type": "RELATED_TO",
+      "weight": 0,
+      "attributes": "{\"created_at\":\"2026-11-17T05:09:23Z\",\"updated_at\":\"2026-11-17T05:09:23Z\"}"
+    },
+    {
+      "from": "note1",
+      "to": "decision",
+      "relation_type": "SUPPORTS",
+      "weight": 2,
+      "attributes": "{\"created_at\":\"2026-11-17T05:09:23Z\",\"updated_at\":\"2026-11-17T05:09:23Z\"}"
+    },
+    {
+      "from": "proj",
+      "to": "proj",
+      "relation_type": "SELF",
+      "weight": 0,
+      "attributes": "{\"created_at\":\"2026-11-17T05:09:23Z\",\"updated_at\":\"2026-11-17T05:09:23Z\"}"
+    }
+  ],
+  "archive": [
+    {
+      "archive_id": "decision_1794892163980692944",
+      "id": "decision",
+      "version_id": "1794892163980692944",
+      "type": "decision",
+      "content": "remove kuzu in favour of sqlite",
+      "attributes": "{\"status\":\"proposed\"}",
+      "valid_to": "2026-11-17T05:09:23Z"
+    },
+    {
+      "archive_id": "proj_1794892163980697019",
+      "id": "proj",
+      "version_id": "1794892163980697019",
+      "type": "project",
+      "content": "gleann code search engine",
+      "attributes": "{\"lang\":\"go\",\"stars\":12,\"tags\":[\"search\",\"rag\"]}",
+      "valid_to": "2026-11-17T05:09:23Z"
+    }
+  ]
+}

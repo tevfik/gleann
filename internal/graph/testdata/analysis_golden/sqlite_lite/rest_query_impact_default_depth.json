@@ -1,0 +1,16 @@
+{
+  "body": {
+    "affected_files": [
+      "main.go"
+    ],
+    "depth": 5,
+    "direct_callers": [
+      "example.com/fixture.main"
+    ],
+    "query_ms": 0,
+    "symbol": "example.com/fixture/store.NewMemStore",
+    "total_affected": 1,
+    "transitive_callers": []
+  },
+  "status": 200
+}

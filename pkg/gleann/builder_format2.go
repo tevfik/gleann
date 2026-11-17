@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"log"
 	"os"
 	"path/filepath"
 	"sort"
@@ -14,6 +15,7 @@ import (
 	"time"
 
 	"github.com/tevfik/gleann/internal/analysis"
+	"github.com/tevfik/gleann/internal/graphstore"
 	"github.com/tevfik/gleann/internal/store"
 )
 
@@ -38,12 +40,15 @@ func (b *LeannBuilder) SetSourceDir(dir string) { b.sourceDir = dir }
 // migrate it — RFC 003 open question 9.1). Only a NEW index follows the
 // GLEANN_STORE_FORMAT switch read at builder creation.
 func (b *LeannBuilder) buildFormat(basePath string) int {
-	if StoreFormatOf(basePath) == 2 {
+	switch DetectStoreFormat(basePath) {
+	case StoreV2:
 		return 2
-	}
-	// A real (non-guard) bbolt passage store means an existing format-1 index.
-	if _, err := os.Stat(basePath + ".passages.db"); err == nil && !isGuardFile(basePath+".passages.db") {
-		return 1
+	case StoreV1:
+		// A real (non-guard) bbolt passage store means an existing format-1
+		// index; leftovers without one are rebuilt per the switch.
+		if _, err := os.Stat(basePath + ".passages.db"); err == nil && !isGuardFile(basePath+".passages.db") {
+			return 1
+		}
 	}
 	if b.storeFormat == 2 {
 		return 2
@@ -165,28 +170,54 @@ func applyStagedSources(ctx context.Context, st *store.Store, an analysis.Analyz
 	return ids, nil
 }
 
-// buildPassagesFormat2 creates a fresh format-2 record store and writes all
-// items into it, one transaction per source. The passages are stored slotless
+// buildPassagesFormat2 writes all items into the format-2 record store of the
+// index, one transaction per source for a new index, ONE transaction for the
+// whole replacement of an existing one. The passages are stored slotless
 // (vec_slot NULL): this is the lexical-only staging, and no vector file exists
 // yet — BuildVectors assigns the slots when it publishes the first vector
-// file (RFC 003 section 3.6). The old database (and any WAL companions) is
-// removed first so the build starts from a clean schema. It returns the
-// internal passage IDs aligned to items.
+// file (RFC 003 section 3.6). It returns the internal passage IDs aligned to
+// items.
+//
+// An existing <name>.db is NOT deleted: it also holds the code graph (symbols,
+// edges, document nodes and the graph columns of the files table), which a
+// lexical-only sync or an `index build` without --graph must not lose. The
+// passages, the lexical rows and the manifest are replaced inside the
+// database (see replacePassagesInPlace); a database that cannot be opened is
+// recreated from scratch instead, and the graph is rebuilt by the caller
+// (DatabaseRecreated). No file is deleted while a reader may hold it open,
+// which Windows would refuse.
 func (b *LeannBuilder) buildPassagesFormat2(ctx context.Context, basePath, name string, items []Item, prevMeta *IndexMeta) ([]int64, error) {
-	if err := removeDBFiles(basePath + ".db"); err != nil {
-		return nil, fmt.Errorf("removing the old format-2 store (is another gleann process using index %q?): %w", name, err)
+	b.dbRecreated = false
+	sourceDir := b.sourceDir
+	if sourceDir == "" && prevMeta != nil {
+		sourceDir = prevMeta.SourceDir
 	}
+	analyzer := analysis.New("")
+
+	if _, err := os.Stat(basePath + ".db"); err == nil {
+		ids, err := b.replacePassagesInPlace(ctx, basePath, name, items, sourceDir, analyzer)
+		if err == nil {
+			return ids, nil
+		}
+		if !store.IsCorrupt(err) && !errors.Is(err, store.ErrUnsupportedFormat) {
+			return nil, err
+		}
+		// The database is damaged or comes from an incompatible build: keeping
+		// it is wrong. The passages are rebuilt from the sources anyway; the
+		// graph it held is lost with it, so say so and let the caller rebuild it.
+		log.Printf("⚠  The database of index %q cannot be reused (%v); recreating it. The code graph is rebuilt from the sources.", name, err)
+		b.dbRecreated = true
+		if err := removeDBFiles(basePath + ".db"); err != nil {
+			return nil, fmt.Errorf("removing the old format-2 store (is another gleann process using index %q?): %w", name, err)
+		}
+	}
+
 	st, err := store.Open(basePath+".db", store.Options{})
 	if err != nil {
 		return nil, fmt.Errorf("opening format-2 store: %w", err)
 	}
 	defer st.Close()
 
-	sourceDir := b.sourceDir
-	if sourceDir == "" && prevMeta != nil {
-		sourceDir = prevMeta.SourceDir
-	}
-	analyzer := analysis.New("")
 	ids, err := applyStagedSources(ctx, st, analyzer, items, sourceDir)
 	if err != nil {
 		return nil, err
@@ -199,7 +230,103 @@ func (b *LeannBuilder) buildPassagesFormat2(ctx context.Context, basePath, name 
 			return nil, fmt.Errorf("setting store meta %q: %w", kv[0], err)
 		}
 	}
+	b.passagesGeneration = currentVectorGeneration(ctx, st)
 	return ids, nil
+}
+
+// replacePassagesInPlace replaces the passages, the lexical rows and the
+// manifest of an existing format-2 database in one transaction, keeping the
+// graph (store.ReplacePassagesTx). A source file that disappeared since the
+// last build loses its passages, its manifest row and its graph rows in the
+// same commit; a source whose content changed and that has graph rows is
+// marked graph_dirty for the next graph pass. The same transaction advances
+// vector_generation: the slots all become NULL, so a searcher that still holds
+// the previous vector file must reload (it sees the new generation).
+//
+// Crash safety: an interrupted vector publication of an earlier run is
+// resolved first (recoverVectorPublication), so no pending key survives into
+// the new state; the replacement itself is one commit, so a crash leaves the
+// old index or the new one.
+func (b *LeannBuilder) replacePassagesInPlace(ctx context.Context, basePath, name string, items []Item, sourceDir string, analyzer analysis.Analyzer) ([]int64, error) {
+	st, err := store.Open(basePath+".db", store.Options{})
+	if err != nil {
+		if store.IsCorrupt(err) || errors.Is(err, store.ErrUnsupportedFormat) {
+			return nil, err
+		}
+		return nil, fmt.Errorf("opening format-2 store (is another gleann process using index %q?): %w", name, err)
+	}
+	defer st.Close()
+	if err := recoverVectorPublication(ctx, st, basePath); err != nil {
+		return nil, fmt.Errorf("recovering interrupted vector publication: %w", err)
+	}
+
+	deltas, idxs := sourceDeltas(analyzer, items, nil, sourceDir)
+	g := graphstore.New(st)
+	hooks := store.RebuildHooks{
+		Fate: func(src string) store.SourceFate { return sourceFate(src, sourceDir) },
+		Retract: func(ctx context.Context, tx *sql.Tx, src string) error {
+			if src == "" {
+				return nil
+			}
+			return g.RetractSourceTx(ctx, tx, src)
+		},
+	}
+	nextGen := currentVectorGeneration(ctx, st) + 1
+
+	tx, err := st.BeginWrite(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("beginning passage replacement: %w", err)
+	}
+	defer tx.Rollback()
+	got, err := st.ReplacePassagesTx(ctx, tx, deltas, hooks)
+	if err != nil {
+		return nil, err
+	}
+	for _, kv := range [][2]string{
+		{"analyzer", analysis.ID},
+		{"language", analyzer.Language},
+		{"vector_generation", strconv.Itoa(nextGen)},
+	} {
+		if err := st.SetMetaTx(ctx, tx, kv[0], kv[1]); err != nil {
+			return nil, fmt.Errorf("setting store meta %q: %w", kv[0], err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("committing passage replacement: %w", err)
+	}
+	b.passagesGeneration = nextGen
+
+	ids := make([]int64, len(items))
+	for di, idx := range idxs {
+		for j, id := range got[di] {
+			ids[idx[j]] = id
+		}
+	}
+	return ids, nil
+}
+
+// sourceFate says whether a source that no longer has passages was deleted
+// from the source tree (see store.SourceFate).
+func sourceFate(source, sourceDir string) store.SourceFate {
+	if source == "" {
+		return store.SourceGone
+	}
+	abs := source
+	if !filepath.IsAbs(abs) {
+		if sourceDir == "" {
+			return store.SourceUnknown
+		}
+		abs = filepath.Join(sourceDir, source)
+	}
+	_, err := os.Stat(abs)
+	switch {
+	case err == nil:
+		return store.SourceKept
+	case errors.Is(err, fs.ErrNotExist):
+		return store.SourceGone
+	default:
+		return store.SourceUnknown
+	}
 }
 
 // Crash-injection points of the vector publication protocol, for tests only
@@ -280,9 +407,18 @@ func (b *LeannBuilder) publishVectorFormat2(ctx context.Context, st *store.Store
 		return err
 	}
 	if err := os.Rename(tmpIndex, basePath+".index"); err != nil {
-		// Keep the staging file: the pending keys are committed, so recovery
-		// needs it to roll the publication forward.
-		return fmt.Errorf("publishing vector index: %w", err)
+		// A reader that opened the index between the commit and this rename
+		// runs recoverVectorPublication, which rolls the publication forward
+		// itself: the staging file is gone because it was renamed already.
+		// The finish step below is idempotent, so carry on.
+		if !errors.Is(err, fs.ErrNotExist) {
+			// Keep the staging file: the pending keys are committed, so
+			// recovery needs it to roll the publication forward.
+			return fmt.Errorf("publishing vector index: %w", err)
+		}
+		if _, statErr := os.Stat(basePath + ".index"); statErr != nil {
+			return fmt.Errorf("publishing vector index: %w", err)
+		}
 	}
 
 	if err := b.crashPoint(crashAfterRename); err != nil {
@@ -398,8 +534,14 @@ func syncPublishedMeta(ctx context.Context, st *store.Store, basePath string, ge
 	if err != nil {
 		return fmt.Errorf("counting passages after recovery: %w", err)
 	}
+	// A passage without a slot (a rebuild replaced the passages and no vector
+	// file was published for them yet) keeps the vector leg off.
 	_, statErr := os.Stat(basePath + ".index")
-	vectorReady := statErr == nil && count > 0
+	_, _, slotless, err := st.SlotSpan(ctx)
+	if err != nil {
+		return fmt.Errorf("reading slot span after recovery: %w", err)
+	}
+	vectorReady := statErr == nil && count > 0 && slotless == 0
 	if err := UpdateIndexMeta(indexDir, name, func(m *IndexMeta) {
 		m.NumPassages = count
 		m.VectorGeneration = gen
@@ -671,7 +813,14 @@ func (b *LeannBuilder) emptyFormat2(ctx context.Context, name, basePath string, 
 	if err := os.Remove(basePath + ".index"); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return fmt.Errorf("remove vector index: %w", err)
 	}
+	// Bump the generation so a searcher that still holds the removed vector
+	// file sees the change on its next freshness check.
+	nextGen := currentVectorGeneration(ctx, storeDB) + 1
+	if err := storeDB.SetMeta(ctx, "vector_generation", strconv.Itoa(nextGen)); err != nil {
+		return fmt.Errorf("setting vector generation: %w", err)
+	}
 	return UpdateIndexMeta(b.config.IndexDir, name, func(m *IndexMeta) {
+		m.VectorGeneration = nextGen
 		m.NumPassages = 0
 		m.VectorReady = false
 		m.LexicalOnly = true

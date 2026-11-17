@@ -7,14 +7,14 @@ import (
 
 // PluginDoc holds a structured extraction result for deferred graph
 // indexing. The read phase collects these while chunking; graph indexing
-// writes them to KuzuDB as Document/Section nodes.
+// writes them to the index database as document and section nodes.
 type PluginDoc struct {
 	Result     *gleann.PluginResult
 	SourcePath string
 }
 
 // PluginResultToDoc converts a PluginResult to a StructuredDocument for
-// chunking. This is a pure-Go conversion (no CGo/KuzuDB dependency) — the
+// chunking. This is a pure-Go conversion (no CGo dependency) — the
 // chunking package handles all markdown splitting while preserving section
 // hierarchy.
 func PluginResultToDoc(result *gleann.PluginResult) *chunking.StructuredDocument {

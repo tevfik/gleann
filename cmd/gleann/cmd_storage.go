@@ -117,13 +117,7 @@ func setStorageMode(config gleann.Config, name, target, progress string) error {
 		return err
 	}
 	defer os.RemoveAll(bak)
-	var saved []string
-	for _, suffix := range []string{".index", ".meta.json", ".manifest.json"} {
-		src := filepath.Join(dir, name+suffix)
-		if err := copyFile(src, filepath.Join(bak, name+suffix)); err == nil {
-			saved = append(saved, name+suffix)
-		}
-	}
+	saved := backupIndexFiles(dir, name, bak)
 
 	config.StorageMode = target
 	if err := config.ApplyStorageMode(); err != nil {
@@ -146,9 +140,7 @@ func setStorageMode(config gleann.Config, name, target, progress string) error {
 		Progress: embedProgress(progress, name),
 	})
 	if err != nil {
-		for _, f := range saved {
-			_ = copyFile(filepath.Join(bak, f), filepath.Join(dir, f))
-		}
+		restoreIndexFiles(dir, name, bak, saved)
 		return fmt.Errorf("%w (previous index files restored)", err)
 	}
 	after, _ := gleann.GetIndexMeta(config.IndexDir, name)
@@ -161,6 +153,45 @@ func setStorageMode(config gleann.Config, name, target, progress string) error {
 		}
 	}
 	return nil
+}
+
+// storageBackupSuffixes are the files a storage switch rewrites. For format 2
+// the database travels with its WAL files: a copy of <name>.db alone would miss
+// what is still in the -wal.
+func storageBackupSuffixes() []string {
+	return []string{".index", ".meta.json", ".manifest.json", ".db", ".db-wal", ".db-shm"}
+}
+
+// backupIndexFiles copies the files a storage switch rewrites into bak and
+// returns the suffixes it saved.
+func backupIndexFiles(dir, name, bak string) []string {
+	var saved []string
+	for _, suffix := range storageBackupSuffixes() {
+		if err := copyFile(filepath.Join(dir, name+suffix), filepath.Join(bak, name+suffix)); err == nil {
+			saved = append(saved, suffix)
+		}
+	}
+	return saved
+}
+
+// restoreIndexFiles puts the saved copies back. A -wal/-shm file that did not
+// exist at backup time is removed, so the restored database is not paired with
+// a log of the failed attempt.
+func restoreIndexFiles(dir, name, bak string, saved []string) {
+	have := make(map[string]bool, len(saved))
+	for _, suffix := range saved {
+		have[suffix] = true
+	}
+	if have[".db"] {
+		for _, suffix := range []string{".db-wal", ".db-shm"} {
+			if !have[suffix] {
+				_ = os.Remove(filepath.Join(dir, name+suffix))
+			}
+		}
+	}
+	for _, suffix := range saved {
+		_ = copyFile(filepath.Join(bak, name+suffix), filepath.Join(dir, name+suffix))
+	}
 }
 
 func copyFile(src, dst string) error {

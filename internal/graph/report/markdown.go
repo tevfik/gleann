@@ -1,5 +1,3 @@
-//go:build treesitter
-
 // Package report generates Markdown reports from community detection results.
 package report
 

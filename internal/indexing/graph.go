@@ -28,9 +28,9 @@ type GraphOptions struct {
 // up-to-date state, treat them as errors instead.
 //
 // Format-2 indexes (meta.StoreFormat == 2) keep the graph in the index
-// database and are built in every build, including CGO_ENABLED=0. Format-1
-// indexes use the Kùzu path, which requires -tags treesitter; other builds
-// print a one-line warning for them. See GraphSupported.
+// database and are built in every build, including CGO_ENABLED=0. A format-1
+// index has no code graph (RFC 004 A3): the graph step prints a one-line
+// notice and is skipped, so building or syncing its passages still works.
 func BuildGraphIndex(opts GraphOptions) {
 	p := newPrinter(opts.Stdout, opts.Stderr)
 	if err := buildGraphIndex(opts, p); err != nil {
@@ -38,14 +38,22 @@ func BuildGraphIndex(opts GraphOptions) {
 	}
 }
 
-// buildGraphIndex dispatches on the index's store format: format-2 writes
-// graphstore.FileDelta rows into <name>/<name>.db (RFC 003 section 8 step 7,
-// every build); format-1 keeps the Kùzu path and its behaviour unchanged.
+// BuildGraphIndexErr is BuildGraphIndex for callers that must act on a
+// failure (the REST graph index endpoint): it returns the error instead of
+// printing it as a warning.
+func BuildGraphIndexErr(opts GraphOptions) error {
+	return buildGraphIndex(opts, newPrinter(opts.Stdout, opts.Stderr))
+}
+
+// buildGraphIndex writes graphstore.FileDelta rows into <name>/<name>.db of a
+// format-2 index (RFC 003 section 8 step 7, every build). A format-1 index
+// has no code graph; the step is skipped with a notice.
 func buildGraphIndex(opts GraphOptions, p *printer) error {
 	if gleann.StoreFormatOf(filepath.Join(opts.IndexDir, opts.Name, opts.Name)) == 2 {
 		return buildGraphIndexSQLite(opts, p)
 	}
-	return buildGraphIndexKuzu(opts, p)
+	p.Warnf("⚠️  Index %q uses the old store format, which has no code graph; skipping the graph. Convert it with `gleann index migrate %s` (or build new indexes with GLEANN_STORE_FORMAT=2) and build the graph again.\n", opts.Name, opts.Name)
+	return nil
 }
 
 // ErrGraphUpdate is returned by Build and Sync when the vector index was

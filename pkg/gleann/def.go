@@ -102,7 +102,7 @@ func FindDefinitions(ctx context.Context, searcher *LeannSearcher, query string,
 
 	var results []DefinitionResult
 
-	// Path 1: High-precision AST Graph lookup (KùzuDB)
+	// Path 1: High-precision AST Graph lookup (SQLite code graph)
 	if searcher != nil && searcher.GraphDB() != nil {
 		symbols, err := searcher.GraphDB().SymbolSearch(query)
 		if err == nil && len(symbols) > 0 {

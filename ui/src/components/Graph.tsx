@@ -61,9 +61,7 @@ export function Graph() {
     setResults(null);
 
     const body: any = { query: queryType };
-    if (queryType === 'cypher') {
-      body.cypher = inputVal;
-    } else if (queryType === 'symbols_in_file') {
+    if (queryType === 'symbols_in_file') {
       body.file = inputVal;
     } else {
       body.symbol = inputVal;
@@ -117,19 +115,18 @@ export function Graph() {
               <option value="callers">Callers</option>
               <option value="impact">Impact Analysis</option>
               <option value="symbols_in_file">Symbols in File</option>
-              <option value="cypher">Raw Cypher</option>
             </select>
           </div>
 
           <div className="flex-1 w-full">
             <label className="text-xs font-semibold text-gray-500 uppercase block mb-1">
-              {queryType === 'cypher' ? 'Cypher Query' : queryType === 'symbols_in_file' ? 'File Path' : 'Symbol FQN'}
+              {queryType === 'symbols_in_file' ? 'File Path' : 'Symbol FQN'}
             </label>
             <input 
               type="text"
               value={inputVal}
               onChange={e => setInputVal(e.target.value)}
-              placeholder={queryType === 'cypher' ? "MATCH (n) RETURN n LIMIT 10" : "e.g., pkg/api.Server.Start"}
+              placeholder="e.g., pkg/api.Server.Start"
               className="w-full bg-black/30 border border-white/10 rounded-lg text-sm text-gray-300 px-3 py-2 outline-none"
             />
           </div>
@@ -193,8 +190,6 @@ export function Graph() {
                 </ul>
               </div>
             </div>
-          ) : queryType === 'cypher' ? (
-            <pre className="text-xs font-mono text-gray-400 whitespace-pre-wrap">{JSON.stringify(results.rows, null, 2)}</pre>
           ) : (
             viewMode === 'graph' && graphData ? (
               <div className="w-full h-[500px] bg-[#0b0c10] border border-white/5 rounded-xl overflow-hidden relative">
