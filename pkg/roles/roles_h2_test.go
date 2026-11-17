@@ -41,6 +41,9 @@ func TestLoadMessageRelativeRolesDirWithoutWorkingDir(t *testing.T) {
 	if err := os.Remove(dir); err != nil {
 		t.Skipf("cannot remove the working directory: %v", err)
 	}
+	if _, err := os.Getwd(); err == nil {
+		t.Skip("this OS still reports the removed working directory (darwin)")
+	}
 	_, err := LoadMessage("file://role.md")
 	if err == nil || !strings.Contains(err.Error(), "abs base") {
 		t.Fatalf("err = %v, want the abs base error", err)

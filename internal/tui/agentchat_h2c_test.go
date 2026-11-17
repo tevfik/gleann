@@ -325,7 +325,7 @@ func TestH2cListIndexInfoSources(t *testing.T) {
 		t.Fatal(err)
 	}
 	searchIndexDir = filepath.Join(blocker, "indexes")
-	if got := listIndexInfo(); got != nil {
+	if got := listIndexInfo(); len(got) != 0 {
 		t.Errorf("unreadable dir: %+v", got)
 	}
 }

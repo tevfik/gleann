@@ -43,6 +43,9 @@ func TestResolveRelativeWithoutWorkingDir(t *testing.T) {
 	if err := os.Remove(dir); err != nil {
 		t.Skipf("cannot remove the working directory: %v", err)
 	}
+	if _, err := os.Getwd(); err == nil {
+		t.Skip("this OS still reports the removed working directory (darwin)")
+	}
 	if _, err := Resolve("relative"); err == nil {
 		t.Fatal("a relative path without a working directory must fail")
 	}

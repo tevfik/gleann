@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -11,6 +12,9 @@ import (
 const goodManifest = "id: %s\nversion: \"1\"\ncontent_files: [items.yaml]\n"
 
 func TestReloadDirIsAFile(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("windows reports a path below a file as not found, which Reload treats as a missing packs dir")
+	}
 	file := filepath.Join(t.TempDir(), "packs")
 	if err := os.WriteFile(file, []byte("x"), 0o644); err != nil {
 		t.Fatal(err)

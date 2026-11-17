@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -257,6 +258,9 @@ func TestSourceFate(t *testing.T) {
 		{"not examinable", "child.md", notDir, store.SourceUnknown},
 	}
 	for _, tc := range cases {
+		if tc.name == "not examinable" && runtime.GOOS == "windows" {
+			continue // windows reports a path below a file as not found (ERROR_PATH_NOT_FOUND)
+		}
 		got := sourceFate(tc.source, tc.sourceDir)
 		if got != tc.want {
 			t.Errorf("%s: sourceFate = %v, want %v", tc.name, got, tc.want)

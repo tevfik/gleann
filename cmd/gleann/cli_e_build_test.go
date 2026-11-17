@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -161,7 +162,9 @@ func TestCLIERebuildAndSyncEdges(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	stripped := strings.ReplaceAll(string(data), e.Docs, "")
+	// meta.json holds the path JSON-escaped (backslashes doubled on Windows).
+	quoted, _ := json.Marshal(e.Docs)
+	stripped := strings.ReplaceAll(string(data), strings.Trim(string(quoted), `"`), "")
 	if stripped == string(data) {
 		t.Fatalf("source dir %q not found in %s", e.Docs, data)
 	}

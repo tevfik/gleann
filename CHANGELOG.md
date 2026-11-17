@@ -5,6 +5,7 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 
 ### Fixed
+- **Upload on Windows: a file name that reduces to nothing (`..`, `/`, `\`) gave 500 instead of 400.** `filepath.Clean("/..")` is `\` on Windows, which slipped past the check; the name is now cleaned with slash-only `path`.
 - **Code graph: split and phantom symbols (#12).** A function the chunker cut into `Name_partN` passages for search became several graph symbols (3,570 `_partN` symbols on this repository's own graph, 3,262 with tree-sitter); it is now one symbol per declaration, spanning the whole declaration, and its calls and callers attach to it. Passages for search are unchanged. Call, reference and implements targets that lie inside the indexed module but are not a declared symbol (builtins, conversions, locals, guessed names such as `cmd/gleann.len` or `graphstore.int64`) were stored as edges marked external, 8,184 edges to 1,074 in-repo phantom nodes (9,409 and 1,813 with tree-sitter); they are now dropped, so `dst_external` is set only for import-anchored standard-library and third-party targets. On the same repository: 0 `_partN` symbols, 0 in-repo phantom nodes, every edge into a declared symbol kept (callers of `filepath.Join` unchanged), and about 3,200 real edges gained because split functions now resolve. A call to a function that is declared nowhere yet is no longer remembered as an external edge, so such a call is linked only when its target exists at the time of the sync that sees the call.
 
 ## [v1.20.0] — 2026-11-17

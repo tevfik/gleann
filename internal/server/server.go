@@ -15,6 +15,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"path"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -2238,7 +2239,9 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 	defer file.Close()
 
 	// Never trust the client-supplied filename as a path.
-	fileName := filepath.Base(filepath.Clean("/" + strings.ReplaceAll(header.Filename, `\`, "/")))
+	// path (not filepath): on Windows filepath.Clean("/..") is `\`, which the
+	// checks below would let through.
+	fileName := path.Base(path.Clean("/" + strings.ReplaceAll(header.Filename, `\`, "/")))
 	if fileName == "" || fileName == "." || fileName == ".." || fileName == "/" {
 		writeError(w, http.StatusBadRequest, "invalid file name")
 		return
