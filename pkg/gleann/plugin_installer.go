@@ -16,6 +16,8 @@ import (
 	"runtime"
 	"strings"
 	"time"
+
+	"github.com/tevfik/gleann/pkg/configpath"
 )
 
 // defaultPluginOwner is the default GitHub/Gitea owner for gleann plugins.
@@ -774,11 +776,7 @@ func extractBinaryFromZip(r io.Reader, destPath, binaryName string) error {
 }
 
 func ensureDoclingModel(owner, repo string, progress chan<- string) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return
-	}
-	modelDir := filepath.Join(home, ".gleann", "models", "granite-docling")
+	modelDir := filepath.Join(configpath.ModelsDir(), "granite-docling")
 	modelPath := filepath.Join(modelDir, "granite_docling_bitnet_dense.eifm")
 	if _, err := os.Stat(modelPath); err == nil {
 		progress <- "✓ Granite Docling BitNet model already present"

@@ -1,6 +1,6 @@
 # RFC 003: Storage Engine — SQLite Record Store, Persisted Lexical Index, Code Graph in SQL
 
-* **Status:** Draft, audited 2026-11-16 (see section 10); direction approved by the maintainer 2026-11-16; needs approval of the revised text before production code
+* **Status:** Approved by the maintainer 2026-11-16, including the two post-audit choices in 9.16 (graph through SQL and recursive CTEs only, no CSR; embedding cache kept as per-vector files in R1). Audited 2026-11-16 (section 10). Implementation follows section 8; the other open questions in section 9 are settled by the measurement or step named there.
 * **Related RFCs:** [001](./001-code-graph-rebuild.md) (graph schema and extraction), [002](./002-retrieval-quality.md) (retrieval stages that sit on top of the lexical leg)
 * **Evidence:** storage decision record D4 and the spike code in `gleann-rag-test/bench/sqlbench` (`main.go`, `spike/main.go`, `drivers/main.go`). Every number below comes from those measurements; where something was not measured, the text says so.
 * **Code references** are to commit 05863e4 (v1.9.0).

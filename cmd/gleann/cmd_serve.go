@@ -20,6 +20,7 @@ import (
 )
 
 func cmdServe(args []string) {
+	rejectUnknownFlags("serve", args, serveFlags)
 	if hasFlag(args, "--help") || hasFlag(args, "-h") {
 		fmt.Println(`Usage: gleann serve [options]
 

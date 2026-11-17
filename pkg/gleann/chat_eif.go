@@ -53,6 +53,8 @@ import (
 	"strings"
 	"sync"
 	"unsafe"
+
+	"github.com/tevfik/gleann/pkg/configpath"
 )
 
 //export goEIFChatTokenCallback
@@ -88,33 +90,30 @@ func resolveEIFLLMPath(model string) (string, error) {
 		return model, nil
 	}
 
-	// 2. Check ~/.gleann/models/
-	home, err := os.UserHomeDir()
-	if err == nil {
-		modelsDir := filepath.Join(home, ".gleann", "models")
-		base := filepath.Base(model)
-		candidates := []string{
-			filepath.Join(modelsDir, model),
-			filepath.Join(modelsDir, base),
-			filepath.Join(modelsDir, model+".gguf"),
-			filepath.Join(modelsDir, base+".gguf"),
-			filepath.Join(modelsDir, "qwen2.5-coder-1.5b-instruct-q4_k_m.gguf"),
+	// 2. Check ~/.gleann/models/ (or $GLEANN_CONFIG_DIR/models)
+	modelsDir := configpath.ModelsDir()
+	base := filepath.Base(model)
+	candidates := []string{
+		filepath.Join(modelsDir, model),
+		filepath.Join(modelsDir, base),
+		filepath.Join(modelsDir, model+".gguf"),
+		filepath.Join(modelsDir, base+".gguf"),
+		filepath.Join(modelsDir, "qwen2.5-coder-1.5b-instruct-q4_k_m.gguf"),
+	}
+	for _, c := range candidates {
+		if _, err := os.Stat(c); err == nil {
+			return c, nil
 		}
-		for _, c := range candidates {
-			if _, err := os.Stat(c); err == nil {
-				return c, nil
-			}
-		}
+	}
 
-		// Look for any .gguf in ~/.gleann/models/
-		entries, _ := os.ReadDir(modelsDir)
-		for _, e := range entries {
-			if !e.IsDir() && strings.HasSuffix(strings.ToLower(e.Name()), ".gguf") {
-				name := strings.ToLower(e.Name())
-				// prefer instruct / coder models
-				if strings.Contains(name, "coder") || strings.Contains(name, "instruct") || strings.Contains(name, "qwen") {
-					return filepath.Join(modelsDir, e.Name()), nil
-				}
+	// Look for any .gguf in ~/.gleann/models/
+	entries, _ := os.ReadDir(modelsDir)
+	for _, e := range entries {
+		if !e.IsDir() && strings.HasSuffix(strings.ToLower(e.Name()), ".gguf") {
+			name := strings.ToLower(e.Name())
+			// prefer instruct / coder models
+			if strings.Contains(name, "coder") || strings.Contains(name, "instruct") || strings.Contains(name, "qwen") {
+				return filepath.Join(modelsDir, e.Name()), nil
 			}
 		}
 	}

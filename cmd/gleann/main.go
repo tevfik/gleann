@@ -50,6 +50,7 @@ func main() {
 	case "multimodal":
 		cmdMultimodal(args)
 	case "tui":
+		rejectUnknownFlags("tui", args, flagSet{})
 		cmdTUI()
 	case "agents":
 		cmdAgents(args)
@@ -68,6 +69,7 @@ func main() {
 	case "service":
 		cmdService(args)
 	case "doctor":
+		rejectUnknownFlags("doctor", args, flagSet{})
 		cmdDoctor()
 	case "models":
 		cmdModels(args)
@@ -82,6 +84,7 @@ func main() {
 	case "completion":
 		cmdCompletion(args)
 	case "version":
+		rejectUnknownFlags("version", args, flagSet{})
 		fmt.Printf("gleann %s\n", version)
 	case "update", "upgrade", "self-update":
 		cmdUpdate(args)

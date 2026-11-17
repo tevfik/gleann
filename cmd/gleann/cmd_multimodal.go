@@ -9,9 +9,21 @@ import (
 	"github.com/tevfik/gleann/internal/multimodal"
 )
 
+func printMultimodalUsage() {
+	fmt.Println(`Usage: gleann multimodal analyze <file|dir> [options]
+
+Analyze images, audio, video and PDF files with a multimodal model.
+
+Options:
+  --model <model>         Multimodal model (default: saved config, else auto-detect)
+  --host <url>            Ollama server address (default: saved config / http://localhost:11434)
+  --ollama-api-key <key>  Optional Ollama API key (env: OLLAMA_API_KEY)
+  -h, --help              Show this help message`)
+}
+
 func cmdMultimodal(args []string) {
 	if len(args) < 1 {
-		fmt.Fprintln(os.Stderr, "usage: gleann multimodal analyze <file|dir> [--model <model>] [--host <url>] [--ollama-api-key <key>]|usage: gleann multimodal analyze <file|dir> [--model <model>] [--host <url>] [--ollama-api-key <key>]")
+		printMultimodalUsage()
 		os.Exit(1)
 	}
 
@@ -19,15 +31,23 @@ func cmdMultimodal(args []string) {
 	switch sub {
 	case "analyze":
 		cmdMultimodalAnalyze(args[1:])
+	case "help", "--help", "-h":
+		printMultimodalUsage()
 	default:
-		fmt.Fprintf(os.Stderr, "unknown multimodal sub-command: %s\nusage: gleann multimodal analyze <file|dir> [--model <model>] [--host <url>] [--ollama-api-key <key>]|dir>\n", sub)
+		fmt.Fprintf(os.Stderr, "unknown multimodal sub-command: %s\n", sub)
+		printMultimodalUsage()
 		os.Exit(1)
 	}
 }
 
 func cmdMultimodalAnalyze(args []string) {
+	rejectUnknownFlags("multimodal analyze", args, configFlags)
+	if hasFlag(args, "--help") || hasFlag(args, "-h") {
+		printMultimodalUsage()
+		return
+	}
 	if len(args) < 1 {
-		fmt.Fprintln(os.Stderr, "usage: gleann multimodal analyze <file|dir> [--model <model>] [--host <url>] [--ollama-api-key <key>]|usage: gleann multimodal analyze <file|dir> [--model <model>] [--host <url>] [--ollama-api-key <key>]")
+		fmt.Fprintln(os.Stderr, "usage: gleann multimodal analyze <file|dir> [--model <model>] [--host <url>] [--ollama-api-key <key>]")
 		os.Exit(1)
 	}
 

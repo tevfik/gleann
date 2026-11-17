@@ -12,6 +12,8 @@ import (
 	"runtime"
 	"syscall"
 	"time"
+
+	"github.com/tevfik/gleann/pkg/configpath"
 )
 
 // Runner manages the lifecycle of the embedded llama-server process.
@@ -41,10 +43,8 @@ func ResolveModelPath(p string) string {
 	if _, err := os.Stat(p); err == nil {
 		return p
 	}
-	if home, err := os.UserHomeDir(); err == nil {
-		if c := filepath.Join(home, ".gleann", "models", p); fileExists(c) {
-			return c
-		}
+	if c := filepath.Join(configpath.ModelsDir(), p); fileExists(c) {
+		return c
 	}
 	return p
 }

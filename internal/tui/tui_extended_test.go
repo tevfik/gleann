@@ -48,6 +48,7 @@ func TestDefaultIndexDir(t *testing.T) {
 }
 
 func TestDefaultModelsDir(t *testing.T) {
+	t.Setenv("GLEANN_CONFIG_DIR", "")
 	dir := DefaultModelsDir()
 	if dir == "" {
 		t.Error("DefaultModelsDir should not be empty")

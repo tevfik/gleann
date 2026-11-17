@@ -50,6 +50,13 @@ jobs:
           GOTOOLCHAIN=auto go test -v $RACE_FLAG -timeout 8m $COVER_FLAG $(go list ./... | grep -v /tests/benchmarks) 2>&1 | tee test.log
         shell: bash
 
+      - name: Retrieval quality gate (no race detector)
+        # The gate skips itself under -race (too slow); Windows already ran it above without -race.
+        if: matrix.os != 'windows-latest'
+        timeout-minutes: 3
+        run: GOTOOLCHAIN=auto go test -count=1 -v -run TestRetrievalQuality ./internal/quality
+        shell: bash
+
       - name: Show failed tests
         if: failure()
         run: |

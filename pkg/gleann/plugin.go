@@ -14,6 +14,8 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/tevfik/gleann/pkg/configpath"
 )
 
 // DefaultPluginTimeout is the default HTTP timeout for plugin requests in seconds.
@@ -325,8 +327,7 @@ func (m *PluginManager) ResolveMultimodalPluginEnv() (audioURL, visionURL string
 		}
 	}
 	if os.Getenv("GLEANN_DOCLING_VLM") == "" {
-		home, _ := os.UserHomeDir()
-		doclingModel := filepath.Join(home, ".gleann", "models", "granite-docling", "granite_docling_bitnet_dense.eifm")
+		doclingModel := filepath.Join(configpath.ModelsDir(), "granite-docling", "granite_docling_bitnet_dense.eifm")
 		if _, err := os.Stat(doclingModel); err == nil {
 			_ = os.Setenv("GLEANN_DOCLING_VLM", "1")
 		}

@@ -261,6 +261,7 @@ func newBuf(r io.Reader) *bufio.Reader { return bufio.NewReader(r) }
 
 func TestDownloadAddsPooler(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
+	t.Setenv("GLEANN_CONFIG_DIR", "")
 	const dim = 4
 	gg := tinyGGUF(t, dim)
 	wt := make([]float32, dim*dim)

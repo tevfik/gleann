@@ -17,6 +17,7 @@ const gleannRepoOwner, gleannRepoName = "tevfik", "gleann"
 // cmdUpdate implements `gleann update [--check] [--force]`: it replaces the
 // running gleann with the latest GitHub release of the same build variant.
 func cmdUpdate(args []string) {
+	rejectUnknownFlags("update", args, updateFlags)
 	check, force := false, false
 	for _, a := range args {
 		switch a {

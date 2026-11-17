@@ -139,7 +139,9 @@ func (m *Manager) Forget(idOrQuery string) (int, error) {
 	}
 
 	// Search for content match and delete all matches.
-	blocks, err := m.store.Search(idOrQuery)
+	// Strict phrase match: ranked search is deliberately loose and must not
+	// drive deletion.
+	blocks, err := m.store.SearchPhrase(idOrQuery)
 	if err != nil {
 		return 0, err
 	}
@@ -245,12 +247,14 @@ func (m *Manager) SearchScoped(scope, query string) ([]Block, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	all, err := m.store.Search(query)
+	all, err := m.store.List("")
 	if err != nil {
 		return nil, err
 	}
 
-	return filterScope(all, scope), nil
+	// Rank only what the scope may see, so BM25 statistics are not skewed by
+	// blocks the caller cannot access.
+	return rankBlocks(filterScope(all, scope), query), nil
 }
 
 // List lists all blocks for a tier (empty string = all tiers).

@@ -25,6 +25,7 @@ func cmdMCP(args []string) {
 		}
 	}
 
+	rejectUnknownFlags("mcp", args, mcpFlags)
 	fs := flag.NewFlagSet("gleann mcp", flag.ExitOnError)
 	cleanNames := fs.Bool("clean-names", false, "Strip 'gleann_' prefix from tool names for clients that namespace automatically (e.g. OpenCode)")
 	llmModel := fs.String("llm-model", "", "LLM model to use for ask/batch_ask tools")
@@ -126,6 +127,7 @@ func runMCPServer(cleanNames bool, flagModel, flagProvider, toolsProfile string)
 }
 
 func cmdMCPInstall(args []string) {
+	rejectUnknownFlags("mcp install", args, mcpInstallFlags)
 	fs := flag.NewFlagSet("gleann mcp install", flag.ExitOnError)
 	target := fs.String("target", "all", "Target platform (claude-code, cursor, gemini, antigravity, vscode, all)")
 	binPath := fs.String("bin", "", "Path to gleann binary")

@@ -7,7 +7,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"hash/fnv"
 	"io"
+	"math"
 	"net"
 	"net/http"
 	"os"
@@ -15,6 +17,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode"
 
 	gleann "github.com/tevfik/gleann/pkg/gleann"
 
@@ -730,12 +733,45 @@ func isConnectionRefused(err error) bool {
 
 // --- Mock Provider ---
 
+// mockDims is the vector size of the mock provider.
+const mockDims = 16
+
+// computeMock returns a deterministic bag-of-words vector per text: each
+// lowercase word adds 1 to the dimension its FNV hash selects, and the vector
+// is normalised. Texts that share words are close, so tests that use the mock
+// provider see a real ranking instead of every distance being equal (with a
+// constant vector, vector search returned an arbitrary order and hybrid
+// search could drop a strong lexical match). A text without words gets a
+// fixed non-zero vector so cosine distance stays defined.
 func (c *Computer) computeMock(ctx context.Context, texts []string) ([][]float32, error) {
 	embeddings := make([][]float32, len(texts))
-	for i := range texts {
-		emb := make([]float32, 16)
-		emb[0] = 0.1
-		embeddings[i] = emb
+	for i, text := range texts {
+		embeddings[i] = mockVector(text)
 	}
 	return embeddings, nil
+}
+
+func mockVector(text string) []float32 {
+	emb := make([]float32, mockDims)
+	words := strings.FieldsFunc(strings.ToLower(text), func(r rune) bool {
+		return !unicode.IsLetter(r) && !unicode.IsDigit(r)
+	})
+	for _, w := range words {
+		h := fnv.New32a()
+		_, _ = h.Write([]byte(w))
+		emb[h.Sum32()%mockDims]++
+	}
+	var norm float64
+	for _, v := range emb {
+		norm += float64(v) * float64(v)
+	}
+	if norm == 0 {
+		emb[0] = 0.1
+		return emb
+	}
+	inv := float32(1 / math.Sqrt(norm))
+	for j := range emb {
+		emb[j] *= inv
+	}
+	return emb
 }

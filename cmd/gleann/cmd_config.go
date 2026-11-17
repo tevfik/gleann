@@ -20,6 +20,14 @@ func cmdConfig(args []string) {
 		sub = args[0]
 	}
 
+	if fs, ok := configSubFlagSets[sub]; ok {
+		rest := []string{}
+		if len(args) > 1 {
+			rest = args[1:]
+		}
+		rejectUnknownFlags("config "+sub, rest, fs)
+	}
+
 	switch sub {
 	case "show":
 		requireValidConfig()
@@ -226,6 +234,11 @@ func cmdConfigSet(args []string) {
 		fmt.Fprintln(os.Stderr, "  gleann config set code_model jina-code-q8_0.gguf")
 		fmt.Fprintln(os.Stderr, "  gleann config set doc_model bge-small-en-q8_0.gguf")
 		fmt.Fprintln(os.Stderr, "  gleann config set llm_model qwen2.5:7b")
+		os.Exit(1)
+	}
+	args = stripDoubleDash(args)
+	if len(args) < 2 {
+		fmt.Fprintln(os.Stderr, "usage: gleann config set <key> <value>")
 		os.Exit(1)
 	}
 	key := strings.ToLower(args[0])

@@ -213,6 +213,7 @@ func TestResolveModelPathLooksInModelsDir(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home) // os.UserHomeDir on Windows
+	t.Setenv("GLEANN_CONFIG_DIR", "")
 	dir := filepath.Join(home, ".gleann", "models")
 	_ = os.MkdirAll(dir, 0o755)
 	_ = os.WriteFile(filepath.Join(dir, "m.gguf"), []byte("x"), 0o644)

@@ -34,6 +34,9 @@ func cmdPlugin(args []string) {
 		pluginUsage()
 		os.Exit(1)
 	}
+	if fs, ok := pluginFlagSets[args[0]]; ok {
+		rejectUnknownFlags("plugin "+args[0], args[1:], fs)
+	}
 	switch args[0] {
 	case "list", "ls":
 		pluginList()

@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/tevfik/gleann/modules/settings"
+	"github.com/tevfik/gleann/pkg/configpath"
 )
 
 //go:embed models.json
@@ -89,10 +90,10 @@ func Find(name string) (Entry, bool) {
 	return Entry{}, false
 }
 
-// Dir is where models are stored: ~/.gleann/models.
+// Dir is where models are stored: <config dir>/models (~/.gleann/models by
+// default, or $GLEANN_CONFIG_DIR/models; see configpath.ModelsDir).
 func Dir() string {
-	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".gleann", "models")
+	return configpath.ModelsDir()
 }
 
 // Path is where an entry's file is stored.

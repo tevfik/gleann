@@ -28,12 +28,25 @@ Options:
 
 	config := getConfig(args)
 	applySavedConfig(&config, args)
-	// Filter out flags from args to get only index names/patterns.
+	// Collect only index names/patterns: skip flag tokens and the values of
+	// value-taking flags (the "/x" of "--index-dir /x" is not an index name),
+	// and treat everything after "--" as names.
+	known := indexFlagSets["remove"]
 	var patterns []string
-	for _, arg := range args {
-		if !strings.HasPrefix(arg, "-") {
-			patterns = append(patterns, arg)
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		if arg == "--" {
+			patterns = append(patterns, args[i+1:]...)
+			break
 		}
+		if strings.HasPrefix(arg, "-") {
+			name, _, hasEq := strings.Cut(arg, "=")
+			if takesValue, ok := known[name]; ok && takesValue && !hasEq {
+				i++ // skip the flag's value
+			}
+			continue
+		}
+		patterns = append(patterns, arg)
 	}
 
 	if len(patterns) == 0 {

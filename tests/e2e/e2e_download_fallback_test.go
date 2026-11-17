@@ -24,6 +24,7 @@ import (
 func TestE2EDownloadAndFallback(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Setenv("HOME", tmpDir)
+	t.Setenv("GLEANN_CONFIG_DIR", "")
 	modelsDir := filepath.Join(tmpDir, ".gleann", "models")
 	os.MkdirAll(modelsDir, 0755)
 

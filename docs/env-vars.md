@@ -9,7 +9,7 @@ Useful for Docker, CI/CD, and environments where editing config files is impract
 | Variable | Config Key | Default | Description |
 |----------|-----------|---------|-------------|
 | `GLEANN_INDEX_DIR` | `index_dir` | `~/.gleann/indexes` | Root directory for all index data |
-| `GLEANN_CONFIG_DIR` | — | `~/.gleann` | Directory that holds `config.json` and the other gleann state files (read by `configpath.GetConfigDir`) |
+| `GLEANN_CONFIG_DIR` | — | `~/.gleann` | Directory that holds `config.json` and the other gleann state files (read by `configpath.GetConfigDir`); downloaded models live in `<config dir>/models` |
 | `GLEANN_MEMORY_DIR` | — | `~/.gleann/memory` | Directory of the long-term memory database (`memory.db`) |
 | `GLEANN_PACKS_DIR` | — | `<index_dir>/packs` | Directory the server loads knowledge packs from at start-up |
 | `GLEANN_THEME` | — | agenttui default | Colour theme of the agent chat TUI, by name (for example `opencode`, `dracula`, `nord`, `gruvbox`, `catppuccin`, `tokyo-night`) |
@@ -106,7 +106,7 @@ Rate-limited requests receive `429 Too Many Requests` with a `Retry-After: 1` he
 | `GLEANN_TOOLS` | `core` | MCP tool profile (read only by MCP): `core` (essential 10 tools, 8 without `-tags treesitter`), `full` (all tools), or comma-separated list of tool names/aliases |
 
 | `GLEANN_INDEX` | — | Index used when none is named: by the MCP tools, `gleann agents` and `gleann install` (before they fall back to the directory name) |
-| `GLEANN_TAGS` | — | Comma-separated tags; indexes without one of them are hidden from the MCP server, the multi-index search and the server's `GET /api/indexes` (add `?all=true` there to bypass) |
+| `GLEANN_TAGS` | — | Comma-separated tags; indexes without one of them are hidden from the MCP server, the multi-index search and the server's `GET /api/indexes` (this cannot be bypassed by a client query parameter) |
 | `GLEANN_MCP_CLEAN_NAMES` | — | Set to `1` to strip the `gleann_` prefix from tool names (same as `--clean-names`) |
 | `GLEANN_MCP_STRIP_PREFIX` | — | Alias for `GLEANN_MCP_CLEAN_NAMES` (`1`) |
 

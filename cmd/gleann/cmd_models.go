@@ -15,6 +15,7 @@ import (
 // (internal/modelcatalog/models.json), the same list the web UI and
 // `gleann setup` offer.
 func cmdModels(args []string) {
+	rejectUnknownFlags("models", args, flagSet{})
 	if len(args) == 0 || args[0] == "list" {
 		fmt.Printf("Models for the llamacpp and eif providers (stored in %s):\n\n", modelcatalog.Dir())
 		kind := ""

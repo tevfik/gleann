@@ -511,3 +511,72 @@ func TestHandleSearch_TagGovernance(t *testing.T) {
 		t.Errorf("expected 403 Forbidden under GLEANN_TAGS isolation, got %d", w.Code)
 	}
 }
+
+// GLEANN_TAGS is an operator-set isolation boundary: a client must not be
+// able to widen the index list with ?all=true the way the old "admin"
+// bypass allowed. With GLEANN_TAGS unset, all=true changes nothing.
+func TestHandleListIndexesTagsEnvCannotBeBypassed(t *testing.T) {
+	dir := t.TempDir()
+	config := gleann.DefaultConfig()
+	config.IndexDir = dir
+
+	for _, item := range []struct {
+		name string
+		tags []string
+	}{
+		{"work-repo", []string{"work"}},
+		{"personal-vault", []string{"personal"}},
+	} {
+		p := filepath.Join(dir, item.name)
+		os.MkdirAll(p, 0755)
+		meta := gleann.IndexMeta{Name: item.name, Tags: item.tags}
+		d, _ := json.Marshal(meta)
+		os.WriteFile(filepath.Join(p, item.name+".meta.json"), d, 0644)
+	}
+
+	s := &Server{
+		config:    config,
+		searchers: make(map[string]*gleann.LeannSearcher),
+	}
+
+	listNames := func(query string) []string {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodGet, "/api/indexes"+query, nil)
+		w := httptest.NewRecorder()
+		s.handleListIndexes(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d", w.Code)
+		}
+		var resp struct {
+			Indexes []gleann.IndexMeta `json:"indexes"`
+		}
+		if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+			t.Fatalf("decode response: %v", err)
+		}
+		var names []string
+		for _, idx := range resp.Indexes {
+			names = append(names, idx.Name)
+		}
+		return names
+	}
+
+	t.Setenv("GLEANN_TAGS", "work")
+
+	// Plain listing: only the index carrying an allowed tag is visible.
+	if got := listNames(""); len(got) != 1 || got[0] != "work-repo" {
+		t.Errorf("GLEANN_TAGS=work: expected only work-repo, got %v", got)
+	}
+	// The regression: ?all=true must not reveal the untagged-for-env index.
+	if got := listNames("?all=true"); len(got) != 1 || got[0] != "work-repo" {
+		t.Errorf("GLEANN_TAGS=work with ?all=true: expected only work-repo, got %v", got)
+	}
+
+	// Without GLEANN_TAGS the filter is off and all=true changes nothing.
+	t.Setenv("GLEANN_TAGS", "")
+	for _, query := range []string{"", "?all=true"} {
+		got := listNames(query)
+		if len(got) != 2 {
+			t.Errorf("GLEANN_TAGS unset (query %q): expected both indexes, got %v", query, got)
+		}
+	}
+}

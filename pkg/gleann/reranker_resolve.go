@@ -1,9 +1,10 @@
 package gleann
 
 import (
-	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/tevfik/gleann/pkg/configpath"
 )
 
 // Reranker defaults. The in-process (eif) default is the model the RAG
@@ -61,11 +62,10 @@ func isLocalGGUF(model string) bool {
 	if model != "" && eifRerankModelInstalled != nil && eifRerankModelInstalled(model) {
 		return true
 	}
-	home, err := os.UserHomeDir()
-	if err != nil || model == "" || strings.ContainsAny(model, `/\`) {
+	if model == "" || strings.ContainsAny(model, `/\`) {
 		return false
 	}
-	matches, _ := filepath.Glob(filepath.Join(home, ".gleann", "models", model+"*.gguf"))
+	matches, _ := filepath.Glob(filepath.Join(configpath.ModelsDir(), model+"*.gguf"))
 	return len(matches) > 0
 }
 

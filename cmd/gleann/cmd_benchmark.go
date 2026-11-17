@@ -23,6 +23,7 @@ import (
 // 1. ContextBench / SWE-Bench retrieval quality benchmark (--suite contextbench or when --docs is omitted)
 // 2. Token reduction analysis (--docs <dir> without --suite)
 func cmdBenchmark(args []string) {
+	rejectUnknownFlags("benchmark", args, benchFlags)
 	config := getConfig(args)
 	applySavedConfig(&config, args)
 

@@ -12,6 +12,7 @@ import (
 
 func TestCatalogOptionsOfferWhatIsMissing(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
+	t.Setenv("GLEANN_CONFIG_DIR", "")
 	// One embedding model is on disk with its full size, another is listed locally.
 	e := modelcatalog.OfKind(modelcatalog.Embedding)[0]
 	_ = os.MkdirAll(modelcatalog.Dir(), 0o755)

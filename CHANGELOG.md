@@ -15,6 +15,8 @@ All notable changes to this project will be documented in this file.
 - **`go install github.com/tevfik/gleann/cmd/gleann@latest` works** (from the next release on). `modules/bm25`, `chunking`, `diskann` and `hnsw` are packages of the root module and the root `go.mod` has no `replace` directives; `modules/settings` stays a separate module because the plugins import it.
 - **A malformed `~/.gleann/config.json` is no longer ignored.** Commands stop with the file path and the line and column of the JSON error; the file is never rewritten. `version`, `help`, `config path|edit|validate`, `setup`, `doctor`, `completion` and `update` still run, and `config validate` and `doctor` report the error.
 - **`gleann search` and `gleann ask` reject unknown flags** (exit code 2, `unknown flag --x`, with a suggestion for near misses); `--` ends flag parsing. The values of `--doc-model`, `--backend` and about a dozen other flags no longer leak into the search query.
+- **Every command rejects unknown flags** (exit code 2 with a "did you mean" hint), not only `search` and `ask`; use `--` to pass text that starts with dashes to `memory remember|add|forget|search` and `config set`. `memory search --json` no longer puts `--json` into the query.
+- **`--flag=value` works like `--flag value`.** Before, it was accepted and silently ignored (`search --top-k=2` returned 10 results; `index set x --mcp=true` did nothing).
 - `gleann search --help` shows the real `--top-k` default (10), and the saved `top_k` setting now applies to CLI commands (`--top-k` still wins).
 - **`gleann mcp` in the default pure-Go build no longer advertises tools that need the code graph** (`gleann_graph_neighbors`, `gleann_impact`, `gleann_document_links`, `gleann_graph_stats`, `gleann_symbols_in_file`, `gleann_document_toc`); they could only return errors. `gleann_def` stays (it falls back to search).
 - The generated AGENTS.md and SKILL.md list only the MCP tools of the default profile and say how to enable the full set (`gleann mcp --tools full`).
@@ -24,9 +26,12 @@ All notable changes to this project will be documented in this file.
 - `gleann graph report` prints the absolute path of the report and does not overwrite a `GRAPH_REPORT.md` that belongs to another index unless `--force` is given.
 
 ### Changed
+- **Memory search is ranked.** Queries are tokenised (camelCase and snake_case aware) and scored with BM25 over label, content, tags, paths and symbols, so word order no longer matters; exact phrase matches still rank first and ties go to the newer block. `memory forget` (CLI, MCP, REST) still deletes only verbatim matches.
 - `docs/evaluation.md` and `gleann bench --agent` state that the agent suite is a simulated scenario with assumed numbers, not a measurement.
 
 ### Added
+- **Retrieval quality gate in CI** (`internal/quality`): builds an index of a pinned snapshot of the repository (one archive, 320 files) with a deterministic embedder and fails when file-level MRR or R@10 of BM25, dense or hybrid search drops more than 0.01 below the stored baseline on 141 tasks. `go test ./internal/quality -run TestRetrievalQuality -update` rewrites the baseline on purpose.
+- **Docs ↔ code check** (`internal/doccheck`): fails when a REST route, `GLEANN_*` variable, MCP tool or CLI command is missing from the docs, or documented but gone from the code.
 - `allowed_roots` setting (settings screens, web UI, `config.json`, `GLEANN_ALLOWED_ROOTS`).
 - [RFC 003](docs/plans/003-storage.md) (draft): SQLite record store, persisted lexical index and in-memory code graph.
 

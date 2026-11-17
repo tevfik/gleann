@@ -10,6 +10,7 @@ import (
 )
 
 func cmdUninstall(args []string) {
+	rejectUnknownFlags("uninstall", args, uninstallFlags)
 	if hasFlag(args, "--help") || hasFlag(args, "-h") {
 		printUninstallUsage()
 		return

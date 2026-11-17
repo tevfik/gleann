@@ -45,6 +45,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"unsafe"
+
+	"github.com/tevfik/gleann/pkg/configpath"
 )
 
 // EIFComputer executes in-process high-performance CPU embeddings using bitllm.c.
@@ -80,31 +82,28 @@ func resolveEIFModelPath(model string) (string, error) {
 		return model, nil
 	}
 
-	// 2. Check ~/.gleann/models/
-	home, err := os.UserHomeDir()
-	if err == nil {
-		modelsDir := filepath.Join(home, ".gleann", "models")
-		base := filepath.Base(model)
-		candidates := []string{
-			filepath.Join(modelsDir, model),
-			filepath.Join(modelsDir, base),
-			filepath.Join(modelsDir, model+".gguf"),
-			filepath.Join(modelsDir, base+".gguf"),
-			filepath.Join(modelsDir, model+"-q8_0.gguf"),
-			filepath.Join(modelsDir, base+"-q8_0.gguf"),
-			filepath.Join(modelsDir, model+"_q8_0.gguf"),
-			filepath.Join(modelsDir, base+"_q8_0.gguf"),
-			filepath.Join(modelsDir, model+".eifm"),
-			filepath.Join(modelsDir, base+".eifm"),
-			filepath.Join(modelsDir, model+"_bert.eifm"),
-			filepath.Join(modelsDir, base+"_bert.eifm"),
-			filepath.Join(modelsDir, "minilm_bert.eifm"),
-			filepath.Join(modelsDir, "multilingual-e5-small-q8_0.gguf"),
-		}
-		for _, c := range candidates {
-			if _, err := os.Stat(c); err == nil {
-				return c, nil
-			}
+	// 2. Check ~/.gleann/models/ (or $GLEANN_CONFIG_DIR/models)
+	modelsDir := configpath.ModelsDir()
+	base := filepath.Base(model)
+	candidates := []string{
+		filepath.Join(modelsDir, model),
+		filepath.Join(modelsDir, base),
+		filepath.Join(modelsDir, model+".gguf"),
+		filepath.Join(modelsDir, base+".gguf"),
+		filepath.Join(modelsDir, model+"-q8_0.gguf"),
+		filepath.Join(modelsDir, base+"-q8_0.gguf"),
+		filepath.Join(modelsDir, model+"_q8_0.gguf"),
+		filepath.Join(modelsDir, base+"_q8_0.gguf"),
+		filepath.Join(modelsDir, model+".eifm"),
+		filepath.Join(modelsDir, base+".eifm"),
+		filepath.Join(modelsDir, model+"_bert.eifm"),
+		filepath.Join(modelsDir, base+"_bert.eifm"),
+		filepath.Join(modelsDir, "minilm_bert.eifm"),
+		filepath.Join(modelsDir, "multilingual-e5-small-q8_0.gguf"),
+	}
+	for _, c := range candidates {
+		if _, err := os.Stat(c); err == nil {
+			return c, nil
 		}
 	}
 

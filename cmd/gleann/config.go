@@ -36,6 +36,7 @@ func stderrf(args []string, format string, a ...any) {
 
 // getConfig parses CLI flags into a gleann.Config.
 func getConfig(args []string) gleann.Config {
+	args = expandFlagValues(args, configFlags)
 	config := gleann.DefaultConfig()
 
 	if hasFlag(args, "--no-mmap") {
@@ -216,18 +217,31 @@ func getConfig(args []string) gleann.Config {
 // getFlag returns the value of a --flag in args, or "" if not found.
 func getFlag(args []string, flag string) string {
 	for i, a := range args {
+		if a == "--" {
+			break
+		}
 		if a == flag && i+1 < len(args) {
 			return args[i+1]
+		}
+		if v, ok := strings.CutPrefix(a, flag+"="); ok {
+			return v
 		}
 	}
 	return ""
 }
 
-// hasFlag returns true if flag appears in args.
+// hasFlag returns true if flag appears in args, as "--flag" or "--flag=true"
+// ("--flag=false" counts as absent). Nothing after a literal "--" is a flag.
 func hasFlag(args []string, flag string) bool {
 	for _, a := range args {
+		if a == "--" {
+			return false
+		}
 		if a == flag {
 			return true
+		}
+		if v, ok := strings.CutPrefix(a, flag+"="); ok {
+			return parseBoolFlag(v)
 		}
 	}
 	return false

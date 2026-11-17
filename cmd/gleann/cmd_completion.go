@@ -8,6 +8,7 @@ import (
 )
 
 func cmdCompletion(args []string) {
+	rejectUnknownFlags("completion", args, flagSet{})
 	if len(args) == 0 {
 		fmt.Fprintln(os.Stderr, `Usage: gleann completion <shell>
 

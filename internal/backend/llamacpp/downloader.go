@@ -6,16 +6,13 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+
+	"github.com/tevfik/gleann/pkg/configpath"
 )
 
 // DownloadModel fetches a GGUF model from Hugging Face if it doesn't already exist.
 func DownloadModel(repoID, filename string) (string, error) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", err
-	}
-
-	destDir := filepath.Join(home, ".gleann", "models")
+	destDir := configpath.ModelsDir()
 	if err := os.MkdirAll(destDir, 0755); err != nil {
 		return "", err
 	}

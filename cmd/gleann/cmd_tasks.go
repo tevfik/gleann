@@ -12,6 +12,7 @@ import (
 )
 
 func cmdTasks(args []string) {
+	rejectUnknownFlags("tasks", args, tasksFlags)
 	if len(args) > 0 && (args[0] == "help" || args[0] == "--help" || args[0] == "-h") {
 		printTasksUsage()
 		return

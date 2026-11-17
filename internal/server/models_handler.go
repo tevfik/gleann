@@ -13,6 +13,7 @@ import (
 
 	"github.com/cavaliergopher/grab/v3"
 	"github.com/tevfik/gleann/internal/background"
+	"github.com/tevfik/gleann/internal/modelcatalog"
 )
 
 type DownloadModelRequest struct {
@@ -120,7 +121,8 @@ var modelDownloadClient = &http.Client{
 	},
 }
 
-// handleDownloadModel initiates a background download of a GGUF model into ~/.gleann/models/
+// handleDownloadModel initiates a background download of a GGUF model into
+// the gleann models dir (modelcatalog.Dir, GLEANN_CONFIG_DIR aware).
 func (s *Server) handleDownloadModel(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -151,13 +153,9 @@ func (s *Server) handleDownloadModel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	home, err := os.UserHomeDir()
-	if err != nil {
-		http.Error(w, "Failed to get user home directory", http.StatusInternalServerError)
-		return
-	}
-
-	modelsDir := filepath.Join(home, ".gleann", "models")
+	// Same directory the CLI (`gleann models`) and the catalog downloader
+	// use, so a downloaded model is always found by the list endpoint.
+	modelsDir := modelcatalog.Dir()
 	if err := os.MkdirAll(modelsDir, 0755); err != nil {
 		http.Error(w, "Failed to create models directory", http.StatusInternalServerError)
 		return
@@ -226,20 +224,17 @@ func (s *Server) handleDownloadModel(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// handleListLocalModels returns a list of local GGUF models in ~/.gleann/models/
+// handleListLocalModels returns a list of local GGUF models in the gleann
+// models dir (modelcatalog.Dir, GLEANN_CONFIG_DIR aware).
 func (s *Server) handleListLocalModels(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
-	home, err := os.UserHomeDir()
-	if err != nil {
-		http.Error(w, "Failed to get user home directory", http.StatusInternalServerError)
-		return
-	}
-
-	modelsDir := filepath.Join(home, ".gleann", "models")
+	// Read the same directory the CLI and the downloader write to, so
+	// GLEANN_CONFIG_DIR moves the listing along with the downloads.
+	modelsDir := modelcatalog.Dir()
 
 	var models []string
 	entries, err := os.ReadDir(modelsDir)

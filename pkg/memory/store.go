@@ -284,23 +284,26 @@ func (s *Store) List(tier Tier) ([]Block, error) {
 	return blocks, nil
 }
 
-// Search returns blocks whose content or label contains the query (case-insensitive).
+// Search returns blocks matching the query, ranked by relevance (BM25 over
+// label, content, tags, paths and symbols; verbatim phrase matches first,
+// ties by recency). See rankBlocks.
 func (s *Store) Search(query string) ([]Block, error) {
-	q := strings.ToLower(query)
 	all, err := s.List("")
 	if err != nil {
 		return nil, err
 	}
+	return rankBlocks(all, query), nil
+}
 
-	var results []Block
-	for _, b := range all {
-		if strings.Contains(strings.ToLower(b.Content), q) ||
-			strings.Contains(strings.ToLower(b.Label), q) ||
-			containsTag(b.Tags, q) {
-			results = append(results, b)
-		}
+// SearchPhrase returns blocks containing the query verbatim in content, label
+// or a tag (case-insensitive), newest first. It is the strict matcher used by
+// destructive operations.
+func (s *Store) SearchPhrase(query string) ([]Block, error) {
+	all, err := s.List("")
+	if err != nil {
+		return nil, err
 	}
-	return results, nil
+	return phraseMatches(all, query), nil
 }
 
 // ClearTier removes all blocks for a given tier.

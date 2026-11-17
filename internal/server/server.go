@@ -605,7 +605,6 @@ func (s *Server) handleListIndexes(w http.ResponseWriter, r *http.Request) {
 	tagFilter := r.URL.Query().Get("tag")
 	exposedOnly := r.URL.Query().Get("exposed_only") == "true"
 	tagEnv := os.Getenv("GLEANN_TAGS")
-	isAdmin := r.URL.Query().Get("all") == "true"
 
 	var filtered []gleann.IndexMeta
 	for _, idx := range indexes {
@@ -618,7 +617,11 @@ func (s *Server) handleListIndexes(w http.ResponseWriter, r *http.Request) {
 		if exposedOnly && !idx.IsMCPExposed() {
 			continue
 		}
-		if tagEnv != "" && !isAdmin {
+		// GLEANN_TAGS is an operator-set isolation boundary, not a client
+		// filter: it always applies, so no query parameter (the old
+		// ?all=true "admin" bypass) can widen the list. This matches
+		// isIndexAccessibleMeta and checkIndexAccess on the other paths.
+		if tagEnv != "" {
 			matched := false
 			for _, t := range strings.Split(tagEnv, ",") {
 				t = strings.TrimSpace(t)

@@ -38,6 +38,9 @@ func cmdGraph(args []string) {
 	}
 
 	subCmd := args[0]
+	if fs, ok := graphFlagSets[subCmd]; ok {
+		rejectUnknownFlags("graph "+subCmd, args[1:], fs)
+	}
 	config := getConfig(args)
 
 	// Subcommands that don't need a symbol argument.

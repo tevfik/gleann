@@ -206,6 +206,7 @@ func cmdAsk(args []string) {
 	tui.PrintSetupHint()
 	if len(args) == 0 {
 		printCmdAskUsage()
+		os.Exit(1)
 	}
 	rejectUnknownFlags("ask", args, askFlags)
 
@@ -509,6 +510,7 @@ func cmdAsk(args []string) {
 }
 
 func cmdChat(args []string) {
+	rejectUnknownFlags("chat", args, chatFlags)
 	// Conversation management flags route to the conversation handler.
 	if hasFlag(args, "--list") || hasFlag(args, "--pick") || hasFlag(args, "--show-last") ||
 		getFlag(args, "--show") != "" || len(getDeleteArgs(args)) > 0 ||
@@ -717,7 +719,6 @@ func printCmdAskUsage() {
 	fmt.Fprintln(os.Stderr, "  --host URL           Ollama server address (default: saved config / OLLAMA_HOST)")
 	fmt.Fprintln(os.Stderr, "  --ollama-api-key KEY Optional Ollama API key (auth proxy / hosted Ollama; env: OLLAMA_API_KEY)")
 	fmt.Fprintln(os.Stderr, "  --api-key KEY        API key for the active LLM provider (overrides saved keys)")
-	os.Exit(1)
 }
 
 // createAskSearcher creates a Searcher based on the resolved index name and CLI args.

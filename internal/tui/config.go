@@ -10,6 +10,8 @@ import (
 	"reflect"
 	"runtime"
 	"strings"
+
+	"github.com/tevfik/gleann/pkg/configpath"
 )
 
 // DefaultIndexDir returns the platform-appropriate default index directory.
@@ -23,9 +25,10 @@ func DefaultIndexDir() string {
 // DefaultModelsDir returns the platform-appropriate default models directory.
 //   - Linux/Mac: /home/user/.gleann/models
 //   - Windows:   C:\Users\user\.gleann\models
+//
+// Honours GLEANN_CONFIG_DIR (see configpath.ModelsDir).
 func DefaultModelsDir() string {
-	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".gleann", "models")
+	return configpath.ModelsDir()
 }
 
 // ExpandPath expands ~ and ~/ prefixes to the user's home directory

@@ -23,6 +23,9 @@ func cmdMemory(args []string) {
 
 	sub := args[0]
 	subArgs := args[1:]
+	if fs, ok := memoryFlagSets[sub]; ok {
+		rejectUnknownFlags("memory "+sub, subArgs, fs)
+	}
 
 	switch sub {
 	case "help", "--help", "-h":
@@ -161,6 +164,10 @@ func cmdMemoryRemember(args []string) {
 	// Parse content (everything that's not a flag).
 	var contentParts []string
 	for i := 0; i < len(args); i++ {
+		if args[i] == "--" {
+			contentParts = append(contentParts, args[i+1:]...)
+			break
+		}
 		switch args[i] {
 		case "--tag":
 			if i+1 < len(args) {
@@ -223,7 +230,11 @@ func cmdMemoryForget(args []string) {
 		os.Exit(1)
 	}
 
-	query := strings.Join(args, " ")
+	query := freeText(args, memoryFlagSets["forget"])
+	if query == "" {
+		fmt.Fprintln(os.Stderr, "usage: gleann memory forget <id-or-query>")
+		os.Exit(1)
+	}
 
 	if rc := remoteMemoryClient(); rc != nil {
 		count, err := rc.Forget(query)
@@ -316,7 +327,11 @@ func cmdMemorySearch(args []string) {
 		os.Exit(1)
 	}
 
-	query := strings.Join(args, " ")
+	query := freeText(args, memoryFlagSets["search"])
+	if query == "" {
+		fmt.Fprintln(os.Stderr, "usage: gleann memory search <query>")
+		os.Exit(1)
+	}
 	asJSON := hasFlag(args, "--json")
 
 	var blocks []memory.Block
@@ -420,6 +435,10 @@ func cmdMemoryAdd(args []string) {
 
 	var contentParts []string
 	for i := 0; i < len(remaining); i++ {
+		if remaining[i] == "--" {
+			contentParts = append(contentParts, remaining[i+1:]...)
+			break
+		}
 		switch remaining[i] {
 		case "--tag":
 			if i+1 < len(remaining) {

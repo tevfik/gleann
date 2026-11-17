@@ -22,6 +22,9 @@ func cmdIndex(args []string) {
 
 	sub := args[0]
 	subArgs := args[1:]
+	if fs, ok := indexFlagSets[sub]; ok {
+		rejectUnknownFlags("index "+sub, subArgs, fs)
+	}
 
 	switch sub {
 	case "list":

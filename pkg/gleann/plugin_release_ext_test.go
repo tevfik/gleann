@@ -298,6 +298,7 @@ func TestEnsureDoclingModel_DownloadPartialAndRetry(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
+	t.Setenv("GLEANN_CONFIG_DIR", "")
 	model := bytes.Repeat([]byte("M"), 32<<10)
 	modelName := "granite_docling_bitnet_dense.eifm"
 
@@ -356,6 +357,7 @@ func TestEnsureDoclingModel_VersionedAssetAndAPIError(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
+	t.Setenv("GLEANN_CONFIG_DIR", "")
 
 	fr := &fakeRelease{apiCode: 403}
 	newFakeGitHub(t, fr)

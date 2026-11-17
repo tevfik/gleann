@@ -44,6 +44,7 @@ func TestModelsJSONIsComplete(t *testing.T) {
 
 func TestDownloadChecksSizeAndChecksum(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
+	t.Setenv("GLEANN_CONFIG_DIR", "")
 	body := []byte("pretend this is a gguf model")
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write(body) }))
 	defer srv.Close()

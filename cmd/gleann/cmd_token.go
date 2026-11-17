@@ -34,6 +34,9 @@ func cmdToken(args []string) {
 		fmt.Println(tokenUsage)
 		return
 	}
+	if fs, ok := tokenFlagSets[args[0]]; ok {
+		rejectUnknownFlags("token "+args[0], args[1:], fs)
+	}
 	store, err := auth.Open(auth.DefaultDir())
 	if err != nil {
 		fatalToken(err)

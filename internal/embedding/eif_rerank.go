@@ -77,11 +77,7 @@ func resolveRerankModelPath(model string) (string, error) {
 	if fi, err := os.Stat(model); err == nil && !fi.IsDir() {
 		return model, nil
 	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", err
-	}
-	dir := filepath.Join(home, ".gleann", "models")
+	dir := modelcatalog.Dir()
 	base := filepath.Base(model)
 	for _, c := range []string{base, base + ".gguf"} {
 		if fi, err := os.Stat(filepath.Join(dir, c)); err == nil && !fi.IsDir() {

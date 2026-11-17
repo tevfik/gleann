@@ -18,3 +18,14 @@ func GetConfigDir() (string, error) {
 	}
 	return filepath.Join(home, ".gleann"), nil
 }
+
+// ModelsDir returns the directory where gleann stores downloaded models:
+// <config dir>/models. It follows GLEANN_CONFIG_DIR like GetConfigDir; if
+// the config dir cannot be determined it falls back to .gleann/models.
+func ModelsDir() string {
+	dir, err := GetConfigDir()
+	if err != nil {
+		return filepath.Join(".gleann", "models")
+	}
+	return filepath.Join(dir, "models")
+}

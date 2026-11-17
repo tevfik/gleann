@@ -15,6 +15,9 @@ func cmdService(args []string) {
 	}
 
 	sub := args[0]
+	if fs, ok := serviceFlagSets[sub]; ok {
+		rejectUnknownFlags("service "+sub, args[1:], fs)
+	}
 	switch sub {
 	case "install":
 		addr := resolveServiceAddr(args[1:])

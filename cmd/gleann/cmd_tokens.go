@@ -14,6 +14,7 @@ import (
 )
 
 func cmdTokens(args []string) {
+	rejectUnknownFlags("tokens", args, flagSet{})
 	if len(args) < 1 {
 		printTokensUsage()
 		os.Exit(1)

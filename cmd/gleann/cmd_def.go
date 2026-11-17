@@ -33,6 +33,7 @@ Examples:
 }
 
 func cmdDef(args []string) {
+	rejectUnknownFlags("def", args, defFlags)
 	if len(args) < 1 || hasFlag(args, "--help") || hasFlag(args, "-h") {
 		printDefUsage()
 		if hasFlag(args, "--help") || hasFlag(args, "-h") {

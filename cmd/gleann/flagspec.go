@@ -74,7 +74,8 @@ var askFlags = configFlags.union(rerankExpandFlags, flagSet{
 // checkFlags returns an error for the first --flag in args that is not in
 // known. Values of value-taking flags are skipped, "--flag=value" is one
 // token, and a literal "--" ends flag parsing so queries can contain dashes.
-// "-h" is always accepted.
+// "-h" and "--help" are always accepted, and an argument whose name part
+// contains whitespace is free text, not a flag.
 func checkFlags(args []string, known flagSet) error {
 	for i := 0; i < len(args); i++ {
 		a := args[i]
@@ -85,6 +86,13 @@ func checkFlags(args []string, known flagSet) error {
 			continue
 		}
 		name, _, hasEq := strings.Cut(a, "=")
+		if name == "--help" {
+			continue
+		}
+		// Free text such as "--force is dangerous" is not a flag name.
+		if strings.ContainsAny(name, " \t\n") {
+			continue
+		}
 		takesValue, ok := known[name]
 		if !ok {
 			msg := "unknown flag " + name
@@ -143,6 +151,79 @@ func editDistance(a, b string) int {
 func rejectUnknownFlags(cmd string, args []string, known flagSet) {
 	if err := checkFlags(args, known); err != nil {
 		fmt.Fprintf(os.Stderr, "gleann %s: %v\n", cmd, err)
-		os.Exit(2)
+		exitFunc(2)
 	}
+}
+
+// stripDoubleDash returns args without the first "--" so the text after it
+// reaches code that does not know the separator.
+func stripDoubleDash(args []string) []string {
+	for i, a := range args {
+		if a == "--" {
+			out := make([]string, 0, len(args)-1)
+			out = append(out, args[:i]...)
+			return append(out, args[i+1:]...)
+		}
+	}
+	return args
+}
+
+// freeText joins the arguments that are not flags of known (the words of a
+// query or a note). Everything after "--" is text, flags included.
+func freeText(args []string, known flagSet) string {
+	var words []string
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		if a == "--" {
+			words = append(words, args[i+1:]...)
+			break
+		}
+		if strings.HasPrefix(a, "--") {
+			name, _, hasEq := strings.Cut(a, "=")
+			if takesValue, ok := known[name]; ok {
+				if takesValue && !hasEq {
+					i++
+				}
+				continue
+			}
+		}
+		words = append(words, a)
+	}
+	return strings.Join(words, " ")
+}
+
+// expandFlagValues rewrites "--flag=value" into the two tokens "--flag" and
+// "value" for the value-taking flags of known, and "--flag=true" into "--flag"
+// for its boolean flags ("--flag=false" is dropped), so code that scans for
+// "--flag value" sees both spellings. Arguments after a literal "--" and
+// unknown flags are left alone.
+func expandFlagValues(args []string, known flagSet) []string {
+	out := make([]string, 0, len(args))
+	for i, a := range args {
+		if a == "--" {
+			return append(out, args[i:]...)
+		}
+		name, value, hasEq := strings.Cut(a, "=")
+		takesValue, ok := known[name]
+		if !hasEq || !ok || !strings.HasPrefix(a, "--") {
+			out = append(out, a)
+			continue
+		}
+		switch {
+		case takesValue:
+			out = append(out, name, value)
+		case parseBoolFlag(value):
+			out = append(out, name)
+		}
+	}
+	return out
+}
+
+// parseBoolFlag reads the value of "--flag=value" for a boolean flag.
+func parseBoolFlag(v string) bool {
+	switch strings.ToLower(v) {
+	case "", "1", "t", "true", "yes", "on":
+		return true
+	}
+	return false
 }
