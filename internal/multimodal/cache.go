@@ -69,22 +69,11 @@ type cachedDescription struct {
 	Lang        string `json:"lang"`
 }
 
-// cacheStats tracks hits/misses for observability and tests.
+// cacheHits and cacheMisses count cache lookups (read by the tests).
 var (
 	cacheHits   atomic.Int64
 	cacheMisses atomic.Int64
 )
-
-// CacheStats returns observed hit/miss counters since process start.
-func CacheStats() (hits, misses int64) {
-	return cacheHits.Load(), cacheMisses.Load()
-}
-
-// ResetCacheStats is a test helper.
-func ResetCacheStats() {
-	cacheHits.Store(0)
-	cacheMisses.Store(0)
-}
 
 // loadCached returns a cached result for the fingerprint or false when miss.
 func loadCached(fp string) (cachedDescription, bool) {

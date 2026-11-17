@@ -50,7 +50,7 @@ Options:
 	indexes, err := gleann.ListIndexes(config.IndexDir)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		os.Exit(1)
+		exitFunc(1)
 	}
 
 	warnPendingSyncBackups(config.IndexDir, func(msg string) { fmt.Fprintln(os.Stderr, "⚠  "+msg) })
@@ -134,7 +134,7 @@ Options:
 			return
 		}
 		fmt.Fprintln(os.Stderr, "usage: gleann info <name>")
-		os.Exit(1)
+		exitFunc(1)
 	}
 
 	name := args[0]
@@ -147,13 +147,13 @@ Options:
 	data, err := os.ReadFile(metaPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: index %q not found\n", name)
-		os.Exit(1)
+		exitFunc(1)
 	}
 
 	var meta gleann.IndexMeta
 	if err := json.Unmarshal(data, &meta); err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		os.Exit(1)
+		exitFunc(1)
 	}
 
 	if asJSON {
@@ -222,7 +222,7 @@ func cmdAsk(args []string) {
 	tui.PrintSetupHint()
 	if len(args) == 0 {
 		printCmdAskUsage()
-		os.Exit(1)
+		exitFunc(1)
 	}
 	rejectUnknownFlags("ask", args, askFlags)
 
@@ -234,7 +234,8 @@ func cmdAsk(args []string) {
 	name, question := resolveIndexAndQuestion(positional, config)
 
 	// Stdin/pipe support: if stdin is piped, read it and prepend to question.
-	if !isatty.IsTerminal(os.Stdin.Fd()) && !isatty.IsCygwinTerminal(os.Stdin.Fd()) {
+	// Interactive mode reads its questions from stdin line by line instead.
+	if !hasFlag(args, "--interactive") && !isatty.IsTerminal(os.Stdin.Fd()) && !isatty.IsCygwinTerminal(os.Stdin.Fd()) {
 		piped, err := io.ReadAll(os.Stdin)
 		if err == nil && len(piped) > 0 {
 			pipeText := strings.TrimSpace(string(piped))
@@ -248,7 +249,7 @@ func cmdAsk(args []string) {
 
 	if question == "" && !hasFlag(args, "--interactive") && !hasFlag(args, "--continue") && !hasFlag(args, "--continue-last") {
 		fmt.Fprintln(os.Stderr, "error: no question provided")
-		os.Exit(1)
+		exitFunc(1)
 	}
 
 	// Raw mode: explicit --raw flag or auto-detect when stdout is piped.
@@ -266,7 +267,7 @@ func cmdAsk(args []string) {
 
 	if err := initLlamaCPP(context.Background(), &config); err != nil {
 		fmt.Fprintf(os.Stderr, "error initializing llamacpp: %v\n", err)
-		os.Exit(1)
+		exitFunc(1)
 	}
 
 	ctx := context.Background()
@@ -302,7 +303,7 @@ func cmdAsk(args []string) {
 		conv, err := convStore.Load(contID)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "error loading conversation: %v\n", err)
-			os.Exit(1)
+			exitFunc(1)
 		}
 		activeConv = conv
 		// Restore chat history from conversation.
@@ -314,7 +315,7 @@ func cmdAsk(args []string) {
 		conv, err := convStore.Latest()
 		if err != nil || conv == nil {
 			fmt.Fprintln(os.Stderr, "no previous conversation found")
-			os.Exit(1)
+			exitFunc(1)
 		}
 		activeConv = conv
 		for _, m := range conv.Messages {
@@ -448,7 +449,7 @@ func cmdAsk(args []string) {
 		answer, steps, err := agent.Run(ctx, question)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "agent error: %v\n", err)
-			os.Exit(1)
+			exitFunc(1)
 		}
 		for i, s := range steps {
 			fmt.Fprintf(os.Stderr, "  Step %d: Thought=%q Action=%q\n", i+1, s.Thought, s.Action)
@@ -465,7 +466,7 @@ func cmdAsk(args []string) {
 		searchAnswer, err := searchChat.Ask(ctx, question)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "search agent error: %v\n", err)
-			os.Exit(1)
+			exitFunc(1)
 		}
 		fmt.Fprintln(os.Stderr, "  [Search Agent] Context retrieved and synthesized.")
 
@@ -480,7 +481,7 @@ func cmdAsk(args []string) {
 		})
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "\ncoding agent error: %v\n", err)
-			os.Exit(1)
+			exitFunc(1)
 		}
 
 		if !rawMode {
@@ -511,7 +512,7 @@ func cmdAsk(args []string) {
 		}
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
-			os.Exit(1)
+			exitFunc(1)
 		}
 		if !rawMode {
 			wrapper.Flush()
@@ -572,7 +573,7 @@ func cmdChat(args []string) {
 	if indexName == "" {
 		if err := tui.RunChatFlow(); err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
-			os.Exit(1)
+			exitFunc(1)
 		}
 		return
 	}
@@ -580,7 +581,7 @@ func cmdChat(args []string) {
 	// Direct chat with given index (supports comma-separated multi-index).
 	if err := initLlamaCPP(context.Background(), &cfg); err != nil {
 		fmt.Fprintf(os.Stderr, "error initializing llamacpp: %v\n", err)
-		os.Exit(1)
+		exitFunc(1)
 	}
 
 	embedder := newEmbedder(cfg)
@@ -598,7 +599,7 @@ func cmdChat(args []string) {
 		fmt.Fprintf(os.Stderr, "Loading index %q...\n", indexNames[0])
 		if err := s.Load(ctx, indexNames[0]); err != nil {
 			fmt.Fprintf(os.Stderr, "error loading index %q: %v\n", indexNames[0], err)
-			os.Exit(1)
+			exitFunc(1)
 		}
 		searcher = s
 	} else {
@@ -606,7 +607,7 @@ func cmdChat(args []string) {
 		ms, err := gleann.LoadMultiSearcher(ctx, cfg, embedder, indexNames)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "error loading indexes: %v\n", err)
-			os.Exit(1)
+			exitFunc(1)
 		}
 		searcher = ms
 	}
@@ -661,13 +662,13 @@ func cmdChat(args []string) {
 		fmt.Fprintf(os.Stderr, "Loading session from %s...\n", sessionFile)
 		if err := chat.LoadSession(sessionFile); err != nil {
 			fmt.Fprintf(os.Stderr, "error loading session: %v\n", err)
-			os.Exit(1)
+			exitFunc(1)
 		}
 	}
 
 	if err := tui.RunChat(chat, displayName, chatCfg.Model); err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		os.Exit(1)
+		exitFunc(1)
 	}
 }
 
@@ -788,7 +789,7 @@ func createAskSearcher(ctx context.Context, name string, args []string, config g
 		s := gleann.NewSearcher(config, embedder)
 		if err := s.Load(ctx, indexNames[0]); err != nil {
 			fmt.Fprintf(os.Stderr, "error loading index: %v\n", err)
-			os.Exit(1)
+			exitFunc(1)
 		}
 		return s
 	}
@@ -796,7 +797,7 @@ func createAskSearcher(ctx context.Context, name string, args []string, config g
 	ms, err := gleann.LoadMultiSearcher(ctx, config, embedder, indexNames)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error loading indexes: %v\n", err)
-		os.Exit(1)
+		exitFunc(1)
 	}
 	return ms
 }
@@ -851,6 +852,11 @@ func resolveIndexAndQuestion(positional []string, config gleann.Config) (string,
 						break
 					}
 				}
+				// A pair built with --dual (<name>-code, <name>-docs) is
+				// addressed by its base name, as in search.
+				if idx.Name == candidate+"-code" || idx.Name == candidate+"-docs" {
+					isIndex = true
+				}
 			}
 		}
 
@@ -874,7 +880,7 @@ func resolveIndexName(name string, args []string, config gleann.Config, quiet bo
 		conv, err := convStore.Load(contID)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "error loading conversation: %v\n", err)
-			os.Exit(1)
+			exitFunc(1)
 		}
 		if len(conv.Indexes) > 0 {
 			return strings.Join(conv.Indexes, ",")
@@ -896,12 +902,18 @@ func resolveIndexName(name string, args []string, config gleann.Config, quiet bo
 		for i, idx := range indexes {
 			fmt.Fprintf(os.Stderr, "  %d. %s (%d passages, %s)\n", i+1, idx.Name, idx.NumPassages, idx.Backend)
 		}
+		if !isInputTTY() {
+			// Stdin is not a terminal (it may already have been read as the
+			// question), so a choice cannot be read from it.
+			fmt.Fprintln(os.Stderr, "error: several indexes exist and stdin is not a terminal; name one: gleann ask <index> <question>")
+			exitFunc(1)
+		}
 		fmt.Fprint(os.Stderr, "\nSelect index (1-", len(indexes), "): ")
 		var choice int
 		_, err := fmt.Scanf("%d", &choice)
 		if err != nil || choice < 1 || choice > len(indexes) {
 			fmt.Fprintln(os.Stderr, "error: invalid selection")
-			os.Exit(1)
+			exitFunc(1)
 		}
 		return indexes[choice-1].Name
 	}
@@ -981,7 +993,7 @@ func buildChatConfig(args []string, config gleann.Config) gleann.ChatConfig {
 			p, err := reg.SystemPrompt(roleName)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "error: %v\n", err)
-				os.Exit(1)
+				exitFunc(1)
 			}
 			prompt = p
 		}

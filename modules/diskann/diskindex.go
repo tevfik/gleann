@@ -275,15 +275,36 @@ func readDiskIndexHeaderAndTopology(r io.Reader) (*DiskIndex, error) {
 	if idx.Dims <= 0 || idx.Dims > 65536 {
 		return nil, fmt.Errorf("invalid dims: %d", idx.Dims)
 	}
+	if idx.NumNodes > 0 && (idx.Medoid < 0 || idx.Medoid >= idx.NumNodes) {
+		return nil, fmt.Errorf("invalid medoid: %d (numNodes %d)", idx.Medoid, idx.NumNodes)
+	}
+	// TrainPQ splits the vector into PQM equal sub-vectors of PQSubDim
+	// dimensions and keeps at most 256 centroids (uint8 codes). A header
+	// that breaks this would make the search index out of range.
+	if idx.PQM <= 0 || idx.PQSubDim <= 0 || idx.PQM*idx.PQSubDim != idx.Dims {
+		return nil, fmt.Errorf("invalid pq layout: m=%d subDim=%d for dims %d", idx.PQM, idx.PQSubDim, idx.Dims)
+	}
+	if idx.PQK <= 0 || idx.PQK > 256 {
+		return nil, fmt.Errorf("invalid pq centroid count: %d", idx.PQK)
+	}
 
 	n := idx.NumNodes
 
-	// Neighbor offsets: N+1 entries.
-	idx.NeighborOffsets = make([]int64, n+1)
-	for i := int64(0); i <= n; i++ {
-		if err := binary.Read(r, binary.LittleEndian, &idx.NeighborOffsets[i]); err != nil {
-			return nil, fmt.Errorf("read neighbor offset %d: %w", i, err)
+	// Neighbor offsets: N+1 entries. The counts come from the file, so every
+	// array is read in bounded chunks: a corrupt count fails on the short
+	// input instead of allocating the whole count up front.
+	offsets, err := readChunked[int64](r, n+1)
+	if err != nil {
+		return nil, fmt.Errorf("read neighbor offsets: %w", err)
+	}
+	idx.NeighborOffsets = offsets
+	for i := int64(1); i <= n; i++ {
+		if idx.NeighborOffsets[i] < idx.NeighborOffsets[i-1] {
+			return nil, fmt.Errorf("invalid neighbor offset %d: %d before %d", i, idx.NeighborOffsets[i], idx.NeighborOffsets[i-1])
 		}
+	}
+	if idx.NeighborOffsets[0] != 0 {
+		return nil, fmt.Errorf("invalid first neighbor offset: %d", idx.NeighborOffsets[0])
 	}
 
 	// Neighbors.
@@ -291,12 +312,11 @@ func readDiskIndexHeaderAndTopology(r io.Reader) (*DiskIndex, error) {
 	if totalEdges < 0 || totalEdges > n*int64(idx.R)*2 {
 		return nil, fmt.Errorf("invalid total edges: %d", totalEdges)
 	}
-	idx.Neighbors = make([]int64, totalEdges)
-	for i := int64(0); i < totalEdges; i++ {
-		if err := binary.Read(r, binary.LittleEndian, &idx.Neighbors[i]); err != nil {
-			return nil, fmt.Errorf("read neighbor %d: %w", i, err)
-		}
+	neighbors, err := readChunked[int64](r, totalEdges)
+	if err != nil {
+		return nil, fmt.Errorf("read neighbors: %w", err)
 	}
+	idx.Neighbors = neighbors
 
 	// PQ centroids.
 	idx.Codebook = &PQCodebook{
@@ -320,16 +340,39 @@ func readDiskIndexHeaderAndTopology(r io.Reader) (*DiskIndex, error) {
 	}
 
 	// PQ codes.
-	idx.PQCodes = make([][]byte, n)
+	idx.PQCodes = make([][]byte, 0, min(n, readChunk))
 	for i := int64(0); i < n; i++ {
 		code := make([]byte, idx.PQM)
 		if _, err := io.ReadFull(r, code); err != nil {
 			return nil, fmt.Errorf("read pq code %d: %w", i, err)
 		}
-		idx.PQCodes[i] = code
+		for sq, c := range code {
+			if int(c) >= idx.PQK {
+				return nil, fmt.Errorf("invalid pq code %d: centroid %d of sub-quantizer %d (only %d centroids)", i, c, sq, idx.PQK)
+			}
+		}
+		idx.PQCodes = append(idx.PQCodes, code)
 	}
 
 	return idx, nil
+}
+
+// readChunk is how many values readChunked allocates at a time.
+const readChunk = 1 << 16
+
+// readChunked reads n little-endian values in chunks of readChunk, so a
+// corrupted count fails on the short input instead of allocating the whole
+// count up front.
+func readChunked[T int64 | float32](r io.Reader, n int64) ([]T, error) {
+	out := make([]T, 0, min(n, readChunk))
+	for int64(len(out)) < n {
+		buf := make([]T, min(n-int64(len(out)), readChunk))
+		if err := binary.Read(r, binary.LittleEndian, buf); err != nil {
+			return nil, err
+		}
+		out = append(out, buf...)
+	}
+	return out, nil
 }
 
 // ReadDiskIndex deserializes a DiskIndex from a reader into RAM.
@@ -341,15 +384,13 @@ func ReadDiskIndex(r io.Reader) (*DiskIndex, error) {
 
 	// Raw embeddings into RAM.
 	n := idx.NumNodes
-	idx.Embeddings = make([][]float32, n)
+	idx.Embeddings = make([][]float32, 0, min(n, readChunk))
 	for i := int64(0); i < n; i++ {
 		vec := make([]float32, idx.Dims)
-		for d := 0; d < idx.Dims; d++ {
-			if err := binary.Read(r, binary.LittleEndian, &vec[d]); err != nil {
-				return nil, fmt.Errorf("read embedding %d: %w", i, err)
-			}
+		if err := binary.Read(r, binary.LittleEndian, vec); err != nil {
+			return nil, fmt.Errorf("read embedding %d: %w", i, err)
 		}
-		idx.Embeddings[i] = vec
+		idx.Embeddings = append(idx.Embeddings, vec)
 	}
 
 	return idx, nil

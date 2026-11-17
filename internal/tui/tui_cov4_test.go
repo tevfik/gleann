@@ -112,20 +112,6 @@ func TestCapitalizeCov4(t *testing.T) {
 
 // ── pluginOwner ───────────────────────────────────────────────
 
-func TestPluginOwnerCov4_Default(t *testing.T) {
-	t.Setenv("GLEANN_PLUGIN_OWNER", "")
-	if got := pluginOwner(); got != defaultPluginOwner {
-		t.Fatalf("expected %q, got %q", defaultPluginOwner, got)
-	}
-}
-
-func TestPluginOwnerCov4_Override(t *testing.T) {
-	t.Setenv("GLEANN_PLUGIN_OWNER", "custom-owner")
-	if got := pluginOwner(); got != "custom-owner" {
-		t.Fatalf("expected custom-owner, got %q", got)
-	}
-}
-
 // ── pluginStatus String/Badge ─────────────────────────────────
 
 func TestPluginStatusStringCov4(t *testing.T) {

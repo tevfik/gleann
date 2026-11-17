@@ -801,3 +801,12 @@ func TestSQLiteGraphDB_SelfRecursion(t *testing.T) {
 		t.Fatalf("Impact(A).TransitiveCallers = %v, want empty", impactA.TransitiveCallers)
 	}
 }
+
+// newSQLiteGraphDB wraps an already-open format-2 store's graph side. A nil
+// store yields a nil adapter so callers can guard on it uniformly.
+func newSQLiteGraphDB(st *store.Store) *sqliteGraphDB {
+	if st == nil {
+		return nil
+	}
+	return &sqliteGraphDB{g: graphstore.New(st)}
+}

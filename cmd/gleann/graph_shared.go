@@ -30,7 +30,7 @@ func openGraphDBForCLI(config gleann.Config, indexName string) (gleann.GraphDB, 
 func cmdGraph(args []string) {
 	if len(args) < 1 {
 		printGraphUsage()
-		os.Exit(1)
+		exitFunc(1)
 	}
 
 	subCmd := args[0]
@@ -79,20 +79,20 @@ func cmdGraph(args []string) {
 	// Subcommands that need a symbol argument.
 	if len(args) < 2 {
 		printGraphUsage()
-		os.Exit(1)
+		exitFunc(1)
 	}
 	symbol := args[1]
 
 	indexName := getFlag(args, "--index")
 	if indexName == "" {
 		fmt.Fprintln(os.Stderr, "error: --index flag required for graph queries")
-		os.Exit(1)
+		exitFunc(1)
 	}
 
 	db, err := openGraphDBForCLI(config, indexName)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error opening graph db for index %s: %v\n", indexName, err)
-		os.Exit(1)
+		exitFunc(1)
 	}
 	defer db.Close()
 
@@ -107,7 +107,7 @@ func runGraphSymbolCommand(subCmd string, args []string, symbol string, db glean
 		callees, err := db.Callees(symbol)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
-			os.Exit(1)
+			exitFunc(1)
 		}
 		fmt.Printf("🕸️  Dependencies for %s (%d):\n", symbol, len(callees))
 		for _, c := range callees {
@@ -117,7 +117,7 @@ func runGraphSymbolCommand(subCmd string, args []string, symbol string, db glean
 		callers, err := db.Callers(symbol)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
-			os.Exit(1)
+			exitFunc(1)
 		}
 		fmt.Printf("🕸️  Callers of %s (%d):\n", symbol, len(callers))
 		for _, c := range callers {
@@ -126,9 +126,10 @@ func runGraphSymbolCommand(subCmd string, args []string, symbol string, db glean
 	case "explain":
 		cmdGraphExplain(symbol, db)
 	case "path":
-		if len(args) < 3 {
+		// "graph path A --index x": the flag is not the target symbol.
+		if len(args) < 3 || strings.HasPrefix(args[2], "-") {
 			fmt.Fprintln(os.Stderr, "error: graph path requires two symbols: graph path <from> <to> --index <name>")
-			os.Exit(1)
+			exitFunc(1)
 		}
 		target := args[2]
 		cmdGraphPath(symbol, target, db)
@@ -141,7 +142,7 @@ func runGraphSymbolCommand(subCmd string, args []string, symbol string, db glean
 	default:
 		fmt.Fprintf(os.Stderr, "unknown graph command: %s\n", subCmd)
 		printGraphUsage()
-		os.Exit(1)
+		exitFunc(1)
 	}
 }
 
@@ -165,7 +166,7 @@ func cmdGraphBuild(args []string, config gleann.Config) {
 	}
 	if indexName == "" || docsDir == "" {
 		fmt.Fprintln(os.Stderr, "usage: gleann graph build <name> [--docs <dir>] [--include-submodules]")
-		os.Exit(1)
+		exitFunc(1)
 	}
 	includeSubmodules := hasFlag(args, "--include-submodules")
 	buildGraphIndex(indexName, docsDir, config.IndexDir, nil, nil, includeSubmodules)
@@ -181,7 +182,7 @@ func cmdGraphExplain(fqn string, db gleann.GraphDB) {
 		callers, _ := db.Callers(fqn)
 		if len(callees) == 0 && len(callers) == 0 {
 			fmt.Fprintf(os.Stderr, "Symbol %q not found. Try 'gleann graph query %q --index <name>' to search.\n", fqn, fqn)
-			os.Exit(1)
+			exitFunc(1)
 		}
 		// Print what we have
 		fmt.Printf("🔍 Explain: %s\n\n", fqn)
@@ -296,7 +297,7 @@ func cmdGraphPath(from, to string, db gleann.GraphDB) {
 	path, err := db.ShortestPath(from, to)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		os.Exit(1)
+		exitFunc(1)
 	}
 
 	fmt.Printf("🛤️  Shortest path: %s → %s (%d hops)\n\n", from, to, len(path))
@@ -314,7 +315,7 @@ func cmdGraphQuery(pattern string, depth int, db gleann.GraphDB) {
 	results, err := db.SymbolSearch(pattern)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		os.Exit(1)
+		exitFunc(1)
 	}
 
 	if len(results) == 0 {
@@ -369,7 +370,7 @@ func cmdGraphTOC(args []string, config gleann.Config) {
 	indexName := getFlag(args, "--index")
 	if indexName == "" {
 		fmt.Fprintln(os.Stderr, "error: --index flag required for graph toc")
-		os.Exit(1)
+		exitFunc(1)
 	}
 
 	jsonOutput := hasFlag(args, "--json")
@@ -379,7 +380,10 @@ func cmdGraphTOC(args []string, config gleann.Config) {
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
 		if strings.HasPrefix(arg, "-") {
-			if arg == "--index" || arg == "--config" || arg == "--output" {
+			// Skip the value of every value flag (--index, --index-dir,
+			// --host, ...), not only --index/--config/--output: the
+			// value of --index-dir was taken for the document path.
+			if graphFlagSets["toc"][arg] {
 				i++
 			}
 			continue
@@ -391,7 +395,7 @@ func cmdGraphTOC(args []string, config gleann.Config) {
 	db, err := openGraphDBForCLI(config, indexName)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error opening graph db: %v\n", err)
-		os.Exit(1)
+		exitFunc(1)
 	}
 	defer db.Close()
 
@@ -399,7 +403,7 @@ func cmdGraphTOC(args []string, config gleann.Config) {
 		toc, err := db.DocumentTOC(docPath)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "error getting document TOC: %v\n", err)
-			os.Exit(1)
+			exitFunc(1)
 		}
 
 		if jsonOutput {
@@ -432,7 +436,7 @@ func cmdGraphTOC(args []string, config gleann.Config) {
 	docs, err := db.ListDocuments()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error listing documents: %v\n", err)
-		os.Exit(1)
+		exitFunc(1)
 	}
 
 	if jsonOutput {

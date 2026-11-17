@@ -117,7 +117,7 @@ func cmdAgents(args []string) {
 		dir, err = os.Getwd()
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "error: cannot determine working directory: %v\n", err)
-			os.Exit(1)
+			exitFunc(1)
 		}
 	}
 	absDir, err := filepath.Abs(dir)
@@ -156,7 +156,7 @@ func cmdAgents(args []string) {
 	if force {
 		if err := os.WriteFile(targetPath, []byte(strings.TrimPrefix(content, "\n")), 0o644); err != nil {
 			fmt.Fprintf(os.Stderr, "error writing %s: %v\n", targetPath, err)
-			os.Exit(1)
+			exitFunc(1)
 		}
 		fmt.Printf("✅ AGENTS.md overwritten in %s\n", targetPath)
 		return
@@ -164,7 +164,7 @@ func cmdAgents(args []string) {
 
 	if err := appendOrCreateFile(targetPath, content, "gleann: Code Intelligence"); err != nil {
 		fmt.Fprintf(os.Stderr, "error updating %s: %v\n", targetPath, err)
-		os.Exit(1)
+		exitFunc(1)
 	}
 	fmt.Printf("✅ AGENTS.md generated/updated in %s\n", targetPath)
 }

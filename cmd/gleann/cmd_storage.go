@@ -56,7 +56,7 @@ func cmdStorage(args []string) {
 	}
 	if err := setStorageMode(config, name, target, getFlag(args, "--progress")); err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		os.Exit(1)
+		exitFunc(1)
 	}
 }
 
@@ -78,7 +78,7 @@ func printStorageTable(indexDir, only string) {
 	metas, err := gleann.ListIndexes(indexDir)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		os.Exit(1)
+		exitFunc(1)
 	}
 	tw := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
 	fmt.Fprintln(tw, "INDEX\tBACKEND\tPASSAGES\tDIMS\tMODE\tINDEX FILE\tIF STORED\tNOTE")

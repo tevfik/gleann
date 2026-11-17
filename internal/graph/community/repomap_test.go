@@ -63,16 +63,3 @@ func TestGenerateRepoMap_TokenLimit(t *testing.T) {
 		t.Errorf("expected result within token budget, got ~%d tokens (%d bytes)", tokens, len(result))
 	}
 }
-
-func TestGenerateRepoMapFromGraph(t *testing.T) {
-	g := NewGraph()
-	g.AddNode(Node{ID: "A", Name: "A", Kind: "function", File: "a.go"})
-	g.AddNode(Node{ID: "B", Name: "B", Kind: "function", File: "b.go"})
-	g.AddEdge("A", "B", 1.0)
-
-	cfg := DefaultRepoMapConfig()
-	result := GenerateRepoMapFromGraph(g, cfg)
-	if result == "" {
-		t.Fatal("expected non-empty map from graph")
-	}
-}

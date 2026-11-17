@@ -209,8 +209,12 @@ func MigrateIndex(indexDir, name string, opts MigrateOptions) (*MigrateResult, e
 		}
 	}
 
-	// The analyzer of a fresh build (builder_format2.go).
-	analyzer := analysis.New("")
+	// The analyzer of a fresh build (builder_format2.go), with the same
+	// corpus language guess.
+	analyzer := analysis.New(guessLanguage(len(passages), func(i int) (string, string) {
+		src, _ := passages[i].Metadata["source"].(string)
+		return src, passages[i].Text
+	}))
 
 	// Group by source, ordering each source's passages by chunk_index so
 	// chunk_no reproduces the original chunk order.

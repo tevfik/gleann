@@ -9,7 +9,18 @@ import (
 	"github.com/tevfik/gleann/pkg/gleann"
 )
 
-var globalLlamaRunner *llamacpp.Runner
+// llamaRunner is the part of *llamacpp.Runner the CLI uses.
+type llamaRunner interface {
+	SetEmbedding(bool)
+	Start(context.Context) error
+	Stop() error
+	BaseURL() string
+}
+
+var globalLlamaRunner llamaRunner
+
+// newLlamaRunner creates the embedded llama-server runner; a seam for tests.
+var newLlamaRunner = func(model string) llamaRunner { return llamacpp.NewRunner(model) }
 
 // initLlamaCPP intercepts the configuration. If llamacpp is requested, it starts
 // the embedded server and rewrites the config to use the standard "openai" provider.
@@ -23,7 +34,7 @@ func initLlamaCPP(ctx context.Context, config *gleann.Config) error {
 	}
 
 	fmt.Fprintf(os.Stderr, "🚀 Starting embedded llama.cpp server for model %s\n", config.EmbeddingModel)
-	globalLlamaRunner = llamacpp.NewRunner(config.EmbeddingModel)
+	globalLlamaRunner = newLlamaRunner(config.EmbeddingModel)
 	globalLlamaRunner.SetEmbedding(true)
 
 	if err := globalLlamaRunner.Start(ctx); err != nil {

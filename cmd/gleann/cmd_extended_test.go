@@ -29,22 +29,6 @@ func TestFormatSizeExtended(t *testing.T) {
 	}
 }
 
-func TestIsCodeExtensionExtended(t *testing.T) {
-	codeExts := []string{".go", ".py", ".js", ".ts", ".java", ".c", ".cpp", ".rs", ".rb", ".php"}
-	for _, ext := range codeExts {
-		if !isCodeExtension(ext) {
-			t.Errorf("isCodeExtension(%q) = false, want true", ext)
-		}
-	}
-
-	nonCodeExts := []string{".pdf", ".png", ".jpg", ".zip", ".tar", ".exe", ".bin"}
-	for _, ext := range nonCodeExts {
-		if isCodeExtension(ext) {
-			t.Errorf("isCodeExtension(%q) = true, want false", ext)
-		}
-	}
-}
-
 func TestTruncateExtended(t *testing.T) {
 	tests := []struct {
 		name string
@@ -421,26 +405,6 @@ func TestFormatBytes(t *testing.T) {
 				t.Errorf("formatBytes(%d) = %q, want %q", tt.bytes, got, tt.want)
 			}
 		})
-	}
-}
-
-func TestStrValExtended(t *testing.T) {
-	m := map[string]any{
-		"name":  "test",
-		"count": 42,
-	}
-
-	if got := strVal(m, "name"); got != "test" {
-		t.Errorf("strVal(name) = %q, want 'test'", got)
-	}
-	if got := strVal(m, "count"); got != "" {
-		t.Errorf("strVal(count) = %q, want '' (not a string)", got)
-	}
-	if got := strVal(m, "missing"); got != "" {
-		t.Errorf("strVal(missing) = %q, want ''", got)
-	}
-	if got := strVal(nil, "key"); got != "" {
-		t.Errorf("strVal(nil, key) = %q, want ''", got)
 	}
 }
 

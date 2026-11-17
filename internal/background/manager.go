@@ -177,19 +177,6 @@ func (m *Manager) List(statusFilter TaskStatus) []Task {
 	return result
 }
 
-// ActiveCount returns the number of queued or running tasks.
-func (m *Manager) ActiveCount() int {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	count := 0
-	for _, t := range m.tasks {
-		if t.Status == StatusQueued || t.Status == StatusRunning {
-			count++
-		}
-	}
-	return count
-}
-
 // Stop signals all workers to exit and waits briefly for cleanup.
 func (m *Manager) Stop() {
 	m.mu.Lock()

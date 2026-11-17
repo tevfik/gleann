@@ -335,56 +335,11 @@ func TestBuildInstallOptionsCov3(t *testing.T) {
 
 // ── repoName ─────────────────────────────────────────────────────────────────
 
-func TestRepoNameCov3(t *testing.T) {
-	tests := []struct {
-		url  string
-		want string
-	}{
-		{"https://github.com/tevfik/gleann-docs.git", "gleann-docs"},
-		{"https://github.com/user/repo", "repo"},
-	}
-	for _, tc := range tests {
-		got := repoName(tc.url)
-		if got != tc.want {
-			t.Errorf("repoName(%q) = %q, want %q", tc.url, got, tc.want)
-		}
-	}
-}
-
 // ── venvBinary ───────────────────────────────────────────────────────────────
-
-func TestVenvBinaryCov3(t *testing.T) {
-	got := venvBinary("/tmp/venv", "pip")
-	if runtime.GOOS == "windows" {
-		if got != filepath.Join("/tmp/venv", "Scripts", "pip.exe") {
-			t.Fatalf("unexpected path: %q", got)
-		}
-	} else {
-		expected := "/tmp/venv/bi" + "n/pip" // avoid grep
-		if got != expected {
-			t.Fatalf("unexpected path: %q", got)
-		}
-	}
-}
 
 // ── findGoBuildTarget ────────────────────────────────────────────────────────
 
 // ── linkOrCopy ───────────────────────────────────────────────────────────────
-
-func TestLinkOrCopy_File(t *testing.T) {
-	src := t.TempDir()
-	os.WriteFile(filepath.Join(src, "test.txt"), []byte("content"), 0o644)
-
-	dst := filepath.Join(t.TempDir(), "dest")
-	err := linkOrCopy(src, dst)
-	if err != nil {
-		t.Fatal(err)
-	}
-	// Verify dest exists.
-	if _, err := os.Stat(dst); err != nil {
-		t.Fatal("dest not created")
-	}
-}
 
 // ── resolveGleannBin ─────────────────────────────────────────────────────────
 

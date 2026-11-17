@@ -41,6 +41,7 @@ func incrementalLimitsFromEnv() incrementalLimits {
 	if v, err := strconv.Atoi(os.Getenv("GLEANN_DELTA_MIN")); err == nil && v >= 0 {
 		l.deltaMin = v
 	}
+	deadShareSet := false
 	for env, dst := range map[string]*float64{
 		"GLEANN_DELTA_SHARE":       &l.deltaShare,
 		"GLEANN_DEAD_SHARE":        &l.deadShare,
@@ -48,12 +49,13 @@ func incrementalLimitsFromEnv() incrementalLimits {
 	} {
 		if v, err := strconv.ParseFloat(os.Getenv(env), 64); err == nil && v >= 0 {
 			*dst = v
+			deadShareSet = deadShareSet || env != "GLEANN_DELTA_SHARE"
 		}
 	}
 	if v, err := strconv.ParseInt(os.Getenv("GLEANN_DEAD_MIN"), 10, 64); err == nil && v >= 0 {
 		l.deadMin = v
-	} else if os.Getenv("GLEANN_DEAD_SHARE") != "" || os.Getenv("GLEANN_DEAD_SHARE_PRUNED") != "" {
-		l.deadMin = 0 // an explicit share is meant literally
+	} else if deadShareSet {
+		l.deadMin = 0 // an explicit share is meant literally (an ignored value is not one)
 	}
 	return l
 }

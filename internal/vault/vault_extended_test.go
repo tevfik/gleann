@@ -88,31 +88,6 @@ func TestTrackerUpsertRecord(t *testing.T) {
 	}
 }
 
-func TestTrackerRemoveByHash(t *testing.T) {
-	tmpDir := t.TempDir()
-	dbPath := filepath.Join(tmpDir, "test.db")
-	tracker, err := NewTracker(dbPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer tracker.Close()
-
-	ctx := context.Background()
-
-	// Insert and remove
-	tracker.UpsertRecord(ctx, "deadbeef", "/tmp/file.go", 100, 200)
-	err = tracker.RemoveByHash(ctx, "deadbeef")
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	// Should be gone
-	_, err = tracker.GetPathByHash(ctx, "deadbeef")
-	if err == nil {
-		t.Error("expected error after removal")
-	}
-}
-
 func TestTrackerGetPathNotFound(t *testing.T) {
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, "test.db")

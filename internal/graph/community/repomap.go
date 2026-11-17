@@ -117,9 +117,3 @@ func GenerateRepoMap(nodes []Node, edges []Edge, cfg RepoMapConfig) string {
 
 	return sb.String()
 }
-
-// GenerateRepoMapFromGraph is a convenience that takes a Graph and returns a repo map string.
-func GenerateRepoMapFromGraph(g *Graph, cfg RepoMapConfig) string {
-	nodes, edges := g.ExportForAnalysis()
-	return GenerateRepoMap(nodes, edges, cfg)
-}

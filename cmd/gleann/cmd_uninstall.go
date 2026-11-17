@@ -9,6 +9,9 @@ import (
 	"github.com/tevfik/gleann/internal/tui"
 )
 
+// runUninstall removes the installed binary and data; a seam for tests.
+var runUninstall = tui.RunUninstall
+
 func cmdUninstall(args []string) {
 	rejectUnknownFlags("uninstall", args, uninstallFlags)
 	if hasFlag(args, "--help") || hasFlag(args, "-h") {
@@ -37,7 +40,7 @@ func cmdUninstall(args []string) {
 		}
 	}
 
-	tui.RunUninstall(removeAll)
+	runUninstall(removeAll)
 }
 
 func printUninstallUsage() {

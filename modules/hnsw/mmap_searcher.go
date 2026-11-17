@@ -55,6 +55,9 @@ func (s *MmapSearcher) VectorDistances(ctx context.Context, query []float32, ids
 	if s.mmapGraph == nil {
 		return nil, fmt.Errorf("no index loaded")
 	}
+	if len(query) != s.mmapGraph.Dimensions {
+		return nil, fmt.Errorf("query has %d dimensions, index has %d", len(query), s.mmapGraph.Dimensions)
+	}
 	metric := s.config.HNSWConfig.DistanceMetric
 	out := make([]float32, len(ids))
 	for i, id := range ids {
@@ -119,8 +122,11 @@ func (s *MmapSearcher) SearchWithRecompute(ctx context.Context, query []float32,
 }
 
 func (s *MmapSearcher) searchZeroCopy(query []float32, topK, ef int, distFunc DistanceFunc, recompute func([]int64) [][]float32) []Candidate {
-	epIdx := s.mmapGraph.EntryPoint
+	epIdx := s.mmapGraph.internalIndex(s.mmapGraph.EntryPoint)
 	maxLevel := s.mmapGraph.MaxLevel
+	if epIdx < 0 {
+		return nil
+	}
 
 	embeddingCache := make(map[int64][]float32)
 	getEmbedding := func(idx int64) []float32 {

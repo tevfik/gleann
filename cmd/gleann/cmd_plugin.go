@@ -32,7 +32,7 @@ import (
 func cmdPlugin(args []string) {
 	if len(args) == 0 {
 		pluginUsage()
-		os.Exit(1)
+		exitFunc(1)
 	}
 	if fs, ok := pluginFlagSets[args[0]]; ok {
 		rejectUnknownFlags("plugin "+args[0], args[1:], fs)
@@ -43,7 +43,7 @@ func cmdPlugin(args []string) {
 	case "install", "add":
 		if len(args) < 2 {
 			fmt.Fprintln(os.Stderr, "usage: gleann plugin install <name>")
-			os.Exit(1)
+			exitFunc(1)
 		}
 		pluginInstall(args[1:])
 	case "update", "upgrade":
@@ -51,13 +51,13 @@ func cmdPlugin(args []string) {
 	case "info":
 		if len(args) < 2 {
 			fmt.Fprintln(os.Stderr, "usage: gleann plugin info <name>")
-			os.Exit(1)
+			exitFunc(1)
 		}
 		pluginInfo(args[1])
 	case "models":
 		if len(args) < 2 {
 			fmt.Fprintln(os.Stderr, "usage: gleann plugin models <name> [list|download|verify] [flags...]")
-			os.Exit(1)
+			exitFunc(1)
 		}
 		pluginModels(args[1], args[2:])
 	case "help", "-h", "--help":
@@ -65,7 +65,7 @@ func cmdPlugin(args []string) {
 	default:
 		fmt.Fprintf(os.Stderr, "unknown plugin subcommand: %s\n\n", args[0])
 		pluginUsage()
-		os.Exit(1)
+		exitFunc(1)
 	}
 }
 
@@ -88,7 +88,7 @@ func pluginList() {
 	mgr, err := gleann.NewPluginManager()
 	if err != nil || mgr == nil {
 		fmt.Fprintf(os.Stderr, "could not load plugins: %v\n", err)
-		os.Exit(1)
+		exitFunc(1)
 	}
 	defer mgr.Close()
 	if len(mgr.Registry.Plugins) == 0 {
@@ -136,7 +136,7 @@ func pluginInfo(name string) {
 	mgr, err := gleann.NewPluginManager()
 	if err != nil || mgr == nil {
 		fmt.Fprintf(os.Stderr, "could not load plugins: %v\n", err)
-		os.Exit(1)
+		exitFunc(1)
 	}
 	defer mgr.Close()
 	var target *gleann.Plugin
@@ -148,13 +148,13 @@ func pluginInfo(name string) {
 	}
 	if target == nil {
 		fmt.Fprintf(os.Stderr, "plugin %q not registered\n", name)
-		os.Exit(1)
+		exitFunc(1)
 	}
 	info, err := mgr.FetchPluginInfo(target)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "could not reach %s: %v\n", name, err)
 		fmt.Fprintln(os.Stderr, "(start it manually or run `gleann build` once to auto-start)")
-		os.Exit(1)
+		exitFunc(1)
 	}
 	fmt.Printf("Name           %s\n", info.Name)
 	fmt.Printf("Version        %s\n", info.Version)
@@ -186,14 +186,14 @@ func pluginUpdate(args []string) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
+		exitFunc(1)
 	}
 	reposDir := filepath.Join(home, ".gleann", "plugins", "_repos")
 	entries, err := os.ReadDir(reposDir)
 	if err != nil {
 		if len(handled) == 0 {
 			fmt.Fprintf(os.Stderr, "no plugin repos found under %s\n", reposDir)
-			os.Exit(1)
+			exitFunc(1)
 		}
 		return
 	}
@@ -272,14 +272,14 @@ func pluginInstall(names []string) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
+		exitFunc(1)
 	}
 	reposDir := filepath.Join(home, ".gleann", "plugins", "_repos")
 	os.MkdirAll(reposDir, 0755)
 
 	knownRepos := knownPluginRepos
 
-	catalog := gleann.FetchPluginCatalog()
+	catalog := pluginCatalog()
 	for _, name := range names {
 		fullName := name
 		if !strings.HasPrefix(fullName, "gleann-plugin-") {
@@ -386,7 +386,7 @@ func installCatalogPlugin(meta gleann.PluginMeta) {
 		}
 		close(done)
 	}()
-	out, err := gleann.InstallPlugin(meta, progress)
+	out, err := installPlugin(meta, progress)
 	close(progress)
 	<-done
 	if err != nil {
@@ -401,7 +401,7 @@ func pluginModels(name string, subArgs []string) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
+		exitFunc(1)
 	}
 
 	fullName := name
@@ -445,7 +445,7 @@ func pluginModels(name string, subArgs []string) {
 
 	if binaryPath == "" || !fileExists(binaryPath) {
 		fmt.Fprintf(os.Stderr, "plugin binary for %q not found. Install it first with `gleann plugin install %s`.\n", name, name)
-		os.Exit(1)
+		exitFunc(1)
 	}
 
 	args := append([]string{"models"}, subArgs...)
@@ -459,10 +459,10 @@ func pluginModels(name string, subArgs []string) {
 	cmd.Stdin = os.Stdin
 	if err := cmd.Run(); err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok {
-			os.Exit(exitErr.ExitCode())
+			exitFunc(exitErr.ExitCode())
 		}
 		fmt.Fprintf(os.Stderr, "failed to run %s models: %v\n", filepath.Base(binaryPath), err)
-		os.Exit(1)
+		exitFunc(1)
 	}
 }
 

@@ -86,14 +86,3 @@ func triggerForA2ATarget(target TaskState) (string, error) {
 		return "", fmt.Errorf("no trigger for target state %q", target)
 	}
 }
-
-// TaskFSMResume fires the resume trigger to move from INPUT_REQUIRED → WORKING.
-func TaskFSMResume(sm *stateless.StateMachine) error {
-	return sm.Fire(triggerResume)
-}
-
-// TaskFSMGraph returns a DOT graph representation for debugging.
-func TaskFSMGraph() string {
-	sm := NewTaskFSM(TaskStateSubmitted)
-	return sm.ToGraph()
-}

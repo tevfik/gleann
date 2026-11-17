@@ -62,7 +62,7 @@ func cmdBenchmark(args []string) {
 	// Mode 2: Legacy Token Reduction Analysis (requires --index and --docs).
 	if indexName == "" || docsDir == "" {
 		printBenchmarkUsage()
-		os.Exit(1)
+		exitFunc(1)
 	}
 
 	runTokenReductionAnalysis(config, indexName, docsDir, topK)
@@ -72,7 +72,7 @@ func cmdBenchmark(args []string) {
 func runContextBenchmark(config gleann.Config, indexName, tasksFile string, topK int, asJSON bool, outputFile string) {
 	if indexName == "" {
 		fmt.Fprintln(os.Stderr, "error: --index <name> is required for benchmark suite")
-		os.Exit(1)
+		exitFunc(1)
 	}
 
 	ctx := context.Background()
@@ -88,7 +88,7 @@ func runContextBenchmark(config gleann.Config, indexName, tasksFile string, topK
 
 	if err := searcher.Load(ctx, indexName); err != nil {
 		fmt.Fprintf(os.Stderr, "error loading index %q: %v\n", indexName, err)
-		os.Exit(1)
+		exitFunc(1)
 	}
 	defer searcher.Close()
 
@@ -107,23 +107,23 @@ func runContextBenchmark(config gleann.Config, indexName, tasksFile string, topK
 
 	if tasksFile == "" {
 		fmt.Fprintln(os.Stderr, "error: --tasks <file.json> is required. See bench/tasks/gleann.json for example.")
-		os.Exit(1)
+		exitFunc(1)
 	}
 
 	var tasks []benchmark.Task
 	data, err := os.ReadFile(tasksFile)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error reading tasks file %s: %v\n", tasksFile, err)
-		os.Exit(1)
+		exitFunc(1)
 	}
 	if err := json.Unmarshal(data, &tasks); err != nil {
 		fmt.Fprintf(os.Stderr, "error parsing tasks json: %v\n", err)
-		os.Exit(1)
+		exitFunc(1)
 	}
 
 	if len(tasks) == 0 {
 		fmt.Fprintln(os.Stderr, "error: no benchmark tasks found in tasks file")
-		os.Exit(1)
+		exitFunc(1)
 	}
 
 	if !asJSON {
@@ -265,7 +265,7 @@ func runContextBenchmark(config gleann.Config, indexName, tasksFile string, topK
 	summaries, err := runner.Run(ctx, topK)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "benchmark run error: %v\n", err)
-		os.Exit(1)
+		exitFunc(1)
 	}
 
 	if asJSON {
@@ -294,11 +294,11 @@ func runGenTasks(dir, kind, count, outputFile string) {
 	tasks, err := benchmark.GenerateGoTasks(dir, benchmark.GenOptions{Count: n, Kind: kind})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		os.Exit(1)
+		exitFunc(1)
 	}
 	if len(tasks) == 0 {
 		fmt.Fprintln(os.Stderr, "error: no tasks could be generated (needs exported, documented Go declarations)")
-		os.Exit(1)
+		exitFunc(1)
 	}
 	data, _ := json.MarshalIndent(tasks, "", "  ")
 	if outputFile == "" {
@@ -307,7 +307,7 @@ func runGenTasks(dir, kind, count, outputFile string) {
 	}
 	if err := os.WriteFile(outputFile, append(data, '\n'), 0o644); err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		os.Exit(1)
+		exitFunc(1)
 	}
 	fmt.Printf("wrote %d tasks to %s\n", len(tasks), outputFile)
 }
@@ -544,13 +544,13 @@ func runAgentBenchmark(asJSON bool, outputFile string) {
 	summary, err := benchmark.RunAgentEvaluation(ctx, nil)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error running agent benchmark: %v\n", err)
-		os.Exit(1)
+		exitFunc(1)
 	}
 
 	if outputFile != "" {
 		if err := summary.WriteReport(outputFile, asJSON); err != nil {
 			fmt.Fprintf(os.Stderr, "error writing report to %s: %v\n", outputFile, err)
-			os.Exit(1)
+			exitFunc(1)
 		}
 		fmt.Printf("Report saved to %s\n", outputFile)
 	}

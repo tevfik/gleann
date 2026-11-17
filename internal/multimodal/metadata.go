@@ -94,8 +94,13 @@ func extractExifWithTool(path string) map[string]string {
 				flat[k] = s
 			}
 		case float64:
-			flat[k] = strings.TrimRight(strings.TrimRight(
-				stringFromFloat(tv), "0"), ".")
+			// Only a fractional part may lose trailing zeros: "4000" must
+			// stay "4000" (ImageWidth/Height are whole numbers).
+			s := stringFromFloat(tv)
+			if strings.Contains(s, ".") && !strings.ContainsAny(s, "eE") {
+				s = strings.TrimRight(strings.TrimRight(s, "0"), ".")
+			}
+			flat[k] = s
 		default:
 			data, _ := json.Marshal(v)
 			flat[k] = string(data)

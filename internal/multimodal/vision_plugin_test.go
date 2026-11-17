@@ -65,21 +65,6 @@ func TestCallVisionPlugin_ParsesSchemaV2(t *testing.T) {
 	}
 }
 
-// TestVisionPluginHealthy_OK + missing endpoint paths.
-func TestVisionPluginHealthy(t *testing.T) {
-	srv := stubVisionPlugin(t)
-	defer srv.Close()
-	if !VisionPluginHealthy(srv.URL) {
-		t.Error("expected healthy")
-	}
-	if VisionPluginHealthy("") {
-		t.Error("empty url should be unhealthy")
-	}
-	if VisionPluginHealthy("http://127.0.0.1:1") {
-		t.Error("unreachable url should be unhealthy")
-	}
-}
-
 // TestProcessDirectory_EnrichesWithVisionPlugin verifies that with the
 // vision plugin URL configured, ProcessDirectory's worker pool populates
 // the new IndexableItem fields (CLIP, OCR, entities) and appends the

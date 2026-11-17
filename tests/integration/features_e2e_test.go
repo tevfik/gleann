@@ -6,17 +6,14 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/tevfik/gleann/internal/embedding"
 	"github.com/tevfik/gleann/modules/chunking"
 	_ "github.com/tevfik/gleann/pkg/backends"
 	"github.com/tevfik/gleann/pkg/gleann"
 )
 
-// TestE2E_FullLifecycle simulates a complete indexing lifecycle:
+// TestE2E_FullLifecycle simulates an indexing lifecycle:
 // 1. Build initial index with provenance
-// 2. Modify a file → incremental rebuild with memoization
-// 3. Delete a file → reconcile stale passages
-// 4. Switch embedding model → cache invalidation
+// 2. Delete a file → reconcile stale passages
 func TestE2E_FullLifecycle(t *testing.T) {
 	dir := t.TempDir()
 	docsRoot := filepath.Join(dir, "docs")
@@ -92,62 +89,7 @@ func add(a, b int) int {
 	}
 	t.Log("Step 3: Index built successfully")
 
-	// ── Step 4: Record chunks in memo store.
-	memo := embedding.NewChunkMemoStore(dir, indexName)
-	for _, item := range allItems {
-		src, _ := item.Metadata["source"].(string)
-		memo.RecordBatch([]string{item.Text}, embedder.ModelName(), src)
-	}
-	memo.Save()
-	initialMemoSize := memo.Len()
-	t.Logf("Step 4: Memo store has %d entries", initialMemoSize)
-
-	// ── Step 5: Simulate file modification — change helper.go.
-	writeFile(t, filepath.Join(docsRoot, "helper.go"), `package main
-
-func helper() int {
-	return 99  // CHANGED
-}
-
-func newFunc() string {
-	return "new"
-}
-`)
-
-	// Re-chunk helper.go.
-	newContent, _ := os.ReadFile(filepath.Join(docsRoot, "helper.go"))
-	newChunks := chunker.ChunkWithProvenance(string(newContent), map[string]any{
-		"source":   "helper.go",
-		"language": "go",
-	})
-	newTexts := make([]string, len(newChunks))
-	for i, c := range newChunks {
-		newTexts[i] = c.Text
-	}
-
-	// Check which chunks need re-embedding.
-	uncached := memo.FilterUncached(newTexts, embedder.ModelName())
-	t.Logf("Step 5: %d/%d chunks need re-embedding after helper.go change", len(uncached), len(newTexts))
-	if len(uncached) == 0 && len(newTexts) > 0 {
-		t.Error("modified file should have at least some uncached chunks")
-	}
-
-	// Remove old helper.go fingerprints and record new ones.
-	memo.RemoveBySource([]string{"helper.go"})
-	memo.RecordBatch(newTexts, embedder.ModelName(), "helper.go")
-
-	// main.go and utils.go chunks should still be cached.
-	for _, name := range []string{"main.go", "utils.go"} {
-		content, _ := os.ReadFile(filepath.Join(docsRoot, name))
-		fileChunks := chunker.Chunk(string(content))
-		uc := memo.FilterUncached(fileChunks, embedder.ModelName())
-		if len(uc) != 0 {
-			t.Errorf("%s: expected 0 uncached (unchanged file), got %d", name, len(uc))
-		}
-	}
-	t.Log("Step 5: Unchanged files still fully cached ✓")
-
-	// ── Step 6: Delete utils.go → reconcile.
+	// ── Step 4: Delete utils.go → reconcile.
 	os.Remove(filepath.Join(docsRoot, "utils.go"))
 
 	basePath := filepath.Join(dir, indexName, indexName)
@@ -159,38 +101,9 @@ func newFunc() string {
 	orphans, totalPassages := gleann.ReconcilePassageManager(pm, docsRoot)
 	pm.Close()
 
-	t.Logf("Step 6: Found %d orphan sources out of %d passages", len(orphans), totalPassages)
+	t.Logf("Step 4: Found %d orphan sources out of %d passages", len(orphans), totalPassages)
 	if len(orphans) != 1 || orphans[0] != "utils.go" {
 		t.Errorf("expected [utils.go] as orphan, got %v", orphans)
-	}
-
-	// Also clean up memo for deleted file.
-	removed := memo.RemoveBySource([]string{"utils.go"})
-	if removed == 0 {
-		t.Error("should have removed memo entries for utils.go")
-	}
-	t.Logf("Step 6: Removed %d memo entries for deleted file", removed)
-
-	// ── Step 7: Switch embedding model → invalidate.
-	cacheDir := filepath.Join(dir, "cache")
-	os.MkdirAll(cacheDir, 0755)
-	for i := 0; i < 3; i++ {
-		name := embedding.HashText("cache"+string(rune('0'+i))) + ".bin"
-		os.WriteFile(filepath.Join(cacheDir, name), []byte("fake"), 0644)
-	}
-
-	result, err := embedding.InvalidateOnModelChange("mock", "new-bge-m3", cacheDir, memo)
-	if err != nil {
-		t.Fatalf("invalidation: %v", err)
-	}
-	if !result.Changed {
-		t.Error("model change should be detected")
-	}
-	t.Logf("Step 7: Invalidated %d L2 cache files, %d memo entries", result.InvalidatedL2, result.InvalidatedMemo)
-
-	// After invalidation, memo should be empty (all entries were for "mock" model).
-	if memo.Len() != 0 {
-		t.Errorf("memo should be empty after model switch, got %d", memo.Len())
 	}
 
 	t.Log("E2E lifecycle complete ✓")

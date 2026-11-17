@@ -33,6 +33,20 @@ type MmapGraph struct {
 	// Index of stored embeddings: external ID -> byte offset in mg.data of vector start
 	storedOffsets map[int64]int64
 
+	// numIDs is the length of the ID map (and of the node levels array).
+	numIDs int64
+
+	// levelPos[l] (l >= 1) maps an internal index to its position among the
+	// nodes of level l: a CSR level lists only the nodes that reach it, in ID
+	// map order, so its NodeOffsets are indexed by that position. Level 0
+	// holds every node and needs no map.
+	levelPos []map[int64]int64
+
+	// extToInt maps external IDs (the values of the neighbor lists and of
+	// the entry point) to internal indices. It is nil when the ID map is the
+	// identity (IDs 0..n-1, the usual case), where both coincide.
+	extToInt map[int64]int64
+
 	// Caches to avoid repeated slice arithmetic
 	levels []mmapLevel
 }
@@ -120,16 +134,21 @@ func (mg *MmapGraph) parseHeaders() error {
 
 	mg.NumNodes = int64(binary.LittleEndian.Uint64(mg.data[offset:]))
 	offset += 8
-	mg.Dimensions = int(binary.LittleEndian.Uint32(mg.data[offset:]))
+	// Dimensions, MaxLevel and M are written as int32 (an empty graph has
+	// MaxLevel -1).
+	mg.Dimensions = int(int32(binary.LittleEndian.Uint32(mg.data[offset:])))
 	offset += 4
-	mg.MaxLevel = int(binary.LittleEndian.Uint32(mg.data[offset:]))
+	mg.MaxLevel = int(int32(binary.LittleEndian.Uint32(mg.data[offset:])))
 	offset += 4
 	mg.EntryPoint = int64(binary.LittleEndian.Uint64(mg.data[offset:]))
 	offset += 8
-	mg.M = int(binary.LittleEndian.Uint32(mg.data[offset:]))
+	mg.M = int(int32(binary.LittleEndian.Uint32(mg.data[offset:])))
 	offset += 4
 	mg.NumStored = int64(binary.LittleEndian.Uint64(mg.data[offset:]))
 	offset += 8
+	if mg.Dimensions < 0 {
+		return fmt.Errorf("invalid dimensions: %d", mg.Dimensions)
+	}
 
 	if version >= CSRVersion2 {
 		if offset+4 > dataLen {
@@ -152,15 +171,16 @@ func (mg *MmapGraph) parseHeaders() error {
 	}
 	numIDs := int64(binary.LittleEndian.Uint64(mg.data[offset:]))
 	offset += 8
-	if numIDs < 0 || offset+numIDs*8 > dataLen {
+	if numIDs < 0 || numIDs > (dataLen-offset)/8 {
 		return fmt.Errorf("invalid numIDs: %d (would exceed file size)", numIDs)
 	}
 	mg.offsetIDMap = offset
+	mg.numIDs = numIDs
 	offset += numIDs * 8
 
 	// === Node Levels ===
 	mg.offsetNodeLevels = offset
-	if offset+numIDs*4 > dataLen {
+	if numIDs > (dataLen-offset)/4 {
 		return fmt.Errorf("truncated: NodeLevels section exceeds file size")
 	}
 	offset += numIDs * 4
@@ -174,6 +194,10 @@ func (mg *MmapGraph) parseHeaders() error {
 	if numLevels < 0 || numLevels > 256 {
 		return fmt.Errorf("invalid numLevels: %d", numLevels)
 	}
+	// The search descends from MaxLevel: it must name a stored level.
+	if mg.MaxLevel != numLevels-1 {
+		return fmt.Errorf("max level %d does not match %d stored levels", mg.MaxLevel, numLevels)
+	}
 
 	mg.offsetLevels = offset
 	mg.levels = make([]mmapLevel, numLevels)
@@ -184,7 +208,7 @@ func (mg *MmapGraph) parseHeaders() error {
 		}
 		nn := int64(binary.LittleEndian.Uint64(mg.data[offset:]))
 		offset += 8
-		if nn < 0 {
+		if nn < 0 || nn > numIDs {
 			return fmt.Errorf("invalid numNodes at level %d: %d", l, nn)
 		}
 
@@ -194,18 +218,17 @@ func (mg *MmapGraph) parseHeaders() error {
 		}
 
 		// Skip NodeOffsets array: (nn + 1) * 8 bytes
-		skip := (nn + 1) * 8
-		if offset+skip > dataLen {
+		if nn+1 > (dataLen-offset)/8 {
 			return fmt.Errorf("truncated at level %d: NodeOffsets overflow", l)
 		}
-		offset += skip
+		offset += (nn + 1) * 8
 
 		if offset+8 > dataLen {
 			return fmt.Errorf("truncated at level %d: cannot read numNeighbors", l)
 		}
 		numNeighbors := int64(binary.LittleEndian.Uint64(mg.data[offset:]))
 		offset += 8
-		if numNeighbors < 0 {
+		if numNeighbors < 0 || numNeighbors > (dataLen-offset)/8 {
 			return fmt.Errorf("invalid numNeighbors at level %d: %d", l, numNeighbors)
 		}
 
@@ -213,19 +236,24 @@ func (mg *MmapGraph) parseHeaders() error {
 		levelInfo.numNeighbors = numNeighbors
 
 		// Skip Neighbors array: numNeighbors * 8 bytes
-		skip = numNeighbors * 8
-		if offset+skip > dataLen {
-			return fmt.Errorf("truncated at level %d: Neighbors overflow", l)
-		}
-		offset += skip
+		offset += numNeighbors * 8
 
 		mg.levels[l] = levelInfo
 	}
 
+	mg.indexLevels()
+
 	// === Stored Embeddings ===
 	mg.offsetEmbeddings = offset
-	mg.storedOffsets = make(map[int64]int64, mg.NumStored)
 	vecBytes := int64(mg.Dimensions * mg.bytesPerElement())
+	// NumStored comes from the file. The reader tolerates a cut in the
+	// stored embeddings (it indexes the complete ones), so a count above
+	// what the file holds is not an error, but it must not size the map:
+	// one flipped high byte would allocate tens of gigabytes.
+	if mg.NumStored < 0 {
+		return fmt.Errorf("invalid numStored: %d", mg.NumStored)
+	}
+	mg.storedOffsets = make(map[int64]int64, min(mg.NumStored, (dataLen-offset)/(8+vecBytes)))
 	cur := offset
 	for i := int64(0); i < mg.NumStored; i++ {
 		if cur+8+vecBytes > dataLen {
@@ -237,6 +265,48 @@ func (mg *MmapGraph) parseHeaders() error {
 	}
 
 	return nil
+}
+
+// indexLevels builds levelPos and, when the ID map is not the identity,
+// extToInt. Only the nodes of the upper levels (about 1/M of them) get a
+// levelPos entry.
+func (mg *MmapGraph) indexLevels() {
+	numLevels := len(mg.levels)
+	mg.levelPos = make([]map[int64]int64, numLevels)
+	next := make([]int64, numLevels)
+	for l := 1; l < numLevels; l++ {
+		mg.levelPos[l] = make(map[int64]int64, mg.levels[l].numNodes)
+	}
+	for i := int64(0); i < mg.numIDs; i++ {
+		lvl := int(int32(binary.LittleEndian.Uint32(mg.data[mg.offsetNodeLevels+i*4:])))
+		for l := 1; l <= lvl && l < numLevels; l++ {
+			if next[l] < mg.levels[l].numNodes {
+				mg.levelPos[l][i] = next[l]
+				next[l]++
+			}
+		}
+		if mg.extToInt == nil && int64(binary.LittleEndian.Uint64(mg.data[mg.offsetIDMap+i*8:])) != i {
+			mg.extToInt = make(map[int64]int64, mg.numIDs)
+			for j := int64(0); j < mg.numIDs; j++ {
+				mg.extToInt[int64(binary.LittleEndian.Uint64(mg.data[mg.offsetIDMap+j*8:]))] = j
+			}
+		}
+	}
+}
+
+// internalIndex returns the internal index of an external ID, or -1 when the
+// ID is not in the graph.
+func (mg *MmapGraph) internalIndex(externalID int64) int64 {
+	if mg.extToInt != nil {
+		if idx, ok := mg.extToInt[externalID]; ok {
+			return idx
+		}
+		return -1
+	}
+	if externalID < 0 || externalID >= mg.numIDs {
+		return -1
+	}
+	return externalID
 }
 
 // Close unmaps the memory and closes the file.
@@ -258,7 +328,7 @@ func (mg *MmapGraph) Close() error {
 
 // GetExternalID returns the external node ID for a given internal index.
 func (mg *MmapGraph) GetExternalID(internalIdx int64) int64 {
-	if internalIdx < 0 || internalIdx >= mg.NumNodes {
+	if internalIdx < 0 || internalIdx >= mg.NumNodes || internalIdx >= mg.numIDs {
 		return -1
 	}
 	start := mg.offsetIDMap + (internalIdx * 8)
@@ -270,7 +340,7 @@ func (mg *MmapGraph) GetExternalID(internalIdx int64) int64 {
 
 // GetNodeLevel returns the maximum HNSW level for a given internal index.
 func (mg *MmapGraph) GetNodeLevel(internalIdx int64) int {
-	if internalIdx < 0 || internalIdx >= mg.NumNodes {
+	if internalIdx < 0 || internalIdx >= mg.NumNodes || internalIdx >= mg.numIDs {
 		return -1
 	}
 	start := mg.offsetNodeLevels + (internalIdx * 4)
@@ -281,19 +351,29 @@ func (mg *MmapGraph) GetNodeLevel(internalIdx int64) int {
 }
 
 // GetNeighbors returns the internal neighbor indices for a node at a specific level.
-// This is the core operation of graph traversal, completely GC-free.
+// This is the core operation of graph traversal; it allocates only the result.
 func (mg *MmapGraph) GetNeighbors(internalIdx int64, level int) []int64 {
-	if level >= len(mg.levels) {
+	if level < 0 || level >= len(mg.levels) || internalIdx < 0 {
 		return nil
 	}
 
 	lvl := &mg.levels[level]
-	if internalIdx >= lvl.numNodes {
+	// Level 0 lists every node in ID map order; an upper level lists only
+	// the nodes that reach it.
+	pos := internalIdx
+	if level > 0 {
+		p, ok := mg.levelPos[level][internalIdx]
+		if !ok {
+			return nil
+		}
+		pos = p
+	}
+	if pos >= lvl.numNodes {
 		return nil
 	}
 
 	// 1. Read start and end offsets from NodeOffsets array
-	offsetsStart := lvl.offsetNodes + (internalIdx * 8)
+	offsetsStart := lvl.offsetNodes + (pos * 8)
 	if offsetsStart+16 > int64(len(mg.data)) {
 		return nil
 	}
@@ -313,12 +393,18 @@ func (mg *MmapGraph) GetNeighbors(internalIdx int64, level int) []int64 {
 		return nil
 	}
 
+	// The lists hold external IDs; translate them to internal indices and
+	// drop any that are not in the graph.
+	n := 0
 	for i := int64(0); i < count; i++ {
 		bStart := edgesByteStart + (i * 8)
-		neighbors[i] = int64(binary.LittleEndian.Uint64(mg.data[bStart : bStart+8]))
+		if idx := mg.internalIndex(int64(binary.LittleEndian.Uint64(mg.data[bStart : bStart+8]))); idx >= 0 {
+			neighbors[n] = idx
+			n++
+		}
 	}
 
-	return neighbors
+	return neighbors[:n]
 }
 
 // GetStoredEmbedding tries to retrieve a stored embedding for an external ID.
@@ -362,7 +448,7 @@ func (mg *MmapGraph) DistanceToStoredEmbedding(query []float32, externalID int64
 		return 0, false
 	}
 	vecBytes := int64(mg.Dimensions * mg.bytesPerElement())
-	if offset+vecBytes > int64(len(mg.data)) {
+	if offset+vecBytes > int64(len(mg.data)) || len(query) != mg.Dimensions {
 		return 0, false
 	}
 

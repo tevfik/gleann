@@ -62,7 +62,7 @@ Gleann is designed as a **local-first** tool. Key security notes:
 ## Supply Chain
 
 - **SBOM**: A CycloneDX 1.5 SBOM is committed under
-  [`security/sbom.cdx.json`](security/sbom.cdx.json) (~85 KB, ~100
+  [`security/sbom.cdx.json`](security/sbom.cdx.json) (~95 KB, ~80
   modules with license metadata). Regenerate with:
   ```bash
   cyclonedx-gomod mod -licenses -json -output security/sbom.cdx.json .

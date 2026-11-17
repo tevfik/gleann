@@ -242,3 +242,9 @@ func (e *Engine) Run() error {
 		t.Errorf("expected full body when compress=false")
 	}
 }
+
+// formatResult formats a single SearchResult for the LLM context without
+// context compression.
+func formatResult(r SearchResult, idx int) string {
+	return formatResultWithOptions(r, idx, false)
+}

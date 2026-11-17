@@ -383,18 +383,6 @@ func (s *Server) Close() {
 	s.closeGraphPool()
 }
 
-// getSearcher returns the cached searcher without keeping it borrowed: the
-// caller must not hold it across a freshness replacement. Tool handlers use
-// acquireSearcher and release the searcher when done.
-func (s *Server) getSearcher(name string) (*gleann.LeannSearcher, error) {
-	sr, release, err := s.acquireSearcher(name)
-	if err != nil {
-		return nil, err
-	}
-	release()
-	return sr, nil
-}
-
 // acquireSearcher returns the cached searcher for name (loading it when
 // needed) and a release func the caller must call exactly once when done. A
 // searcher replaced or evicted while borrowed stays open until its last
@@ -2310,36 +2298,6 @@ func (s *Server) handleSync(ctx context.Context, request mcp.CallToolRequest) (*
 		resBytes, _ := json.MarshalIndent(res, "", "  ")
 		return mcp.NewToolResultText(string(resBytes)), nil
 	}
-}
-
-// parseProgressLine parses a machine-readable "gleann-progress k=v ..." line
-// as emitted by gleann.Pacer (plain surface), e.g. by `gleann index build`
-// running as a separate process.
-func parseProgressLine(line string) (phase string, pct float64, done, total int, rate, etaSec float64, ok bool) {
-	idx := strings.Index(line, "gleann-progress ")
-	if idx < 0 {
-		return "", 0, 0, 0, 0, 0, false
-	}
-	parts := strings.Fields(line[idx+len("gleann-progress "):])
-	for _, part := range parts {
-		kv := strings.SplitN(part, "=", 2)
-		if len(kv) != 2 {
-			continue
-		}
-		switch kv[0] {
-		case "phase":
-			phase = kv[1]
-		case "pct":
-			fmt.Sscanf(kv[1], "%f", &pct)
-		case "items":
-			fmt.Sscanf(kv[1], "%d/%d", &done, &total)
-		case "rate":
-			fmt.Sscanf(kv[1], "%f", &rate)
-		case "eta_s":
-			fmt.Sscanf(kv[1], "%f", &etaSec)
-		}
-	}
-	return phase, pct, done, total, rate, etaSec, true
 }
 
 // defaultSyncRunner builds (new index) or syncs (existing index) in-process

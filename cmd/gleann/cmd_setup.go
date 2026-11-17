@@ -31,9 +31,9 @@ func cmdSetup(args []string) {
 	// ── Backward compatibility checks ──────────────────────────────────
 	if hasFlag(args, "--check") {
 		if tui.CheckSetup() {
-			os.Exit(0)
+			exitFunc(0)
 		}
-		os.Exit(1)
+		exitFunc(1)
 	}
 
 	if hasFlag(args, "--bootstrap") {
@@ -51,7 +51,7 @@ func cmdSetup(args []string) {
 		}
 		if _, err := tui.BootstrapWithAPIKey(host, getFlag(args, "--ollama-api-key"), codeModel, docModel); err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
-			os.Exit(1)
+			exitFunc(1)
 		}
 		return
 	}
@@ -61,7 +61,7 @@ func cmdSetup(args []string) {
 		result, openPlugins, err := tui.RunOnboardWithPlugins()
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
-			os.Exit(1)
+			exitFunc(1)
 		}
 		if result == nil {
 			fmt.Println("Setup cancelled.")
@@ -125,7 +125,7 @@ func runAutoSetup(args []string) {
 		fmt.Println("   Then retry: gleann setup --auto")
 		fmt.Println()
 		fmt.Println("   Don't have Ollama? Install: https://ollama.com/download")
-		os.Exit(1)
+		exitFunc(1)
 	}
 
 	// ── Step 2: Show detected config and ask for confirmation ──────────
@@ -141,19 +141,19 @@ func runAutoSetup(args []string) {
 		switch input {
 		case "e", "a":
 			fmt.Println("Run 'gleann setup' for the full advanced wizard.")
-			os.Exit(0)
+			exitFunc(0)
 		case "", "y", "yes":
 			// Continue
 		default:
 			fmt.Println("Cancelled.")
-			os.Exit(0)
+			exitFunc(0)
 		}
 	}
 
 	// ── Step 3: Save configuration ─────────────────────────────────────
 	if err := autosetup.ApplyDetectedConfig(dc); err != nil {
 		fmt.Fprintf(os.Stderr, "error saving config: %v\n", err)
-		os.Exit(1)
+		exitFunc(1)
 	}
 	fmt.Println("✓ Configuration saved")
 
@@ -163,7 +163,7 @@ func runAutoSetup(args []string) {
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		fmt.Println("You can manually install models with: ollama pull <model-name>")
-		os.Exit(1)
+		exitFunc(1)
 	}
 	if len(pulled) > 0 {
 		fmt.Printf("✓ Pulled %d model(s)\n", len(pulled))
@@ -177,7 +177,7 @@ func runAutoSetup(args []string) {
 		cwd, err := os.Getwd()
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
-			os.Exit(1)
+			exitFunc(1)
 		}
 		docsDir = cwd
 	}
@@ -185,7 +185,7 @@ func runAutoSetup(args []string) {
 	absDir, err := filepath.Abs(docsDir)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		os.Exit(1)
+		exitFunc(1)
 	}
 
 	indexName := getFlag(args, "--name")
@@ -228,11 +228,11 @@ func runAutoSetup(args []string) {
 	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error reading documents: %v\n", err)
-		os.Exit(1)
+		exitFunc(1)
 	}
 	if len(items) == 0 {
 		fmt.Fprintln(os.Stderr, "error: no documents found in "+absDir)
-		os.Exit(1)
+		exitFunc(1)
 	}
 
 	embedder := newEmbedder(config)
@@ -241,14 +241,14 @@ func runAutoSetup(args []string) {
 	builder, err := gleann.NewBuilder(config, cachedEmbedder)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		os.Exit(1)
+		exitFunc(1)
 	}
 
 	start := time.Now()
 	ctx := context.Background()
 	if err := builder.Build(ctx, indexName, items); err != nil {
 		fmt.Fprintf(os.Stderr, "error building index: %v\n", err)
-		os.Exit(1)
+		exitFunc(1)
 	}
 	elapsed := time.Since(start)
 	fmt.Printf("  ✅ Done — %d passages indexed in %s\n", len(items), elapsed.Round(time.Millisecond))

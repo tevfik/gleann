@@ -2,9 +2,13 @@ package vault
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
+
+	"go.etcd.io/bbolt"
 )
 
 func TestTracker(t *testing.T) {
@@ -79,16 +83,6 @@ func TestTracker(t *testing.T) {
 	}
 	if path != newFile {
 		t.Fatalf("Expected moved path %s, got %s", newFile, path)
-	}
-
-	// 6. Delete
-	if err := tracker.RemoveByHash(ctx, hash); err != nil {
-		t.Fatal(err)
-	}
-
-	_, err = tracker.GetPathByHash(ctx, hash)
-	if err == nil {
-		t.Fatal("Expected error finding removed hash")
 	}
 }
 
@@ -211,4 +205,38 @@ func TestTracker_LockDoesNotDeleteDB(t *testing.T) {
 	if infoAfter.Size() != infoBefore.Size() {
 		t.Fatalf("db file size changed unexpectedly: before=%d, after=%d", infoBefore.Size(), infoAfter.Size())
 	}
+}
+
+// GetPathByHash finds the path the file with the given hash was last seen at.
+func (t *Tracker) GetPathByHash(ctx context.Context, hash string) (string, error) {
+	var path string
+	err := t.db.View(func(tx *bbolt.Tx) error {
+		b := tx.Bucket(bucketFiles)
+		val := b.Get([]byte(hash))
+		if val == nil {
+			return fmt.Errorf("hash not found: %s", hash)
+		}
+		var record FileRecord
+		if err := json.Unmarshal(val, &record); err != nil {
+			return err
+		}
+		path = record.Path
+		return nil
+	})
+	return path, err
+}
+
+// GetHashByPath finds the hash mapped to a path (if tracking).
+func (t *Tracker) GetHashByPath(ctx context.Context, path string) (string, error) {
+	var hash string
+	err := t.db.View(func(tx *bbolt.Tx) error {
+		b := tx.Bucket(bucketPaths)
+		val := b.Get([]byte(path))
+		if val == nil {
+			return fmt.Errorf("path not found: %s", path)
+		}
+		hash = string(val)
+		return nil
+	})
+	return hash, err
 }

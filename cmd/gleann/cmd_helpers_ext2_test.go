@@ -8,9 +8,7 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
-	"github.com/tevfik/gleann/modules/chunking"
 	"github.com/tevfik/gleann/pkg/conversations"
-	"github.com/tevfik/gleann/pkg/gleann"
 )
 
 // ── formatSize ─────────────────────────────────────────────────
@@ -35,61 +33,6 @@ func TestFormatSizeMB(t *testing.T) {
 
 func TestFormatSizeGB(t *testing.T) {
 	if got := formatSize(3 * 1024 * 1024 * 1024); got != "3.0 GB" {
-		t.Errorf("got %q", got)
-	}
-}
-
-// ── isCodeExtension ────────────────────────────────────────────
-
-func TestIsCodeExtensionGo(t *testing.T) {
-	if !isCodeExtension(".go") {
-		t.Error("expected .go to be code")
-	}
-}
-
-func TestIsCodeExtensionPy(t *testing.T) {
-	if !isCodeExtension(".py") {
-		t.Error("expected .py to be code")
-	}
-}
-
-func TestIsCodeExtensionTxt(t *testing.T) {
-	if isCodeExtension(".txt") {
-		t.Error("expected .txt to NOT be code")
-	}
-}
-
-func TestIsCodeExtensionUpperCase(t *testing.T) {
-	if !isCodeExtension(".GO") {
-		t.Error("expected .GO to be code (case-insensitive)")
-	}
-}
-
-func TestIsCodeExtensionEmpty(t *testing.T) {
-	if isCodeExtension("") {
-		t.Error("expected empty to NOT be code")
-	}
-}
-
-// ── strVal ─────────────────────────────────────────────────────
-
-func TestStrValPresent(t *testing.T) {
-	m := map[string]any{"key": "value"}
-	if got := strVal(m, "key"); got != "value" {
-		t.Errorf("got %q", got)
-	}
-}
-
-func TestStrValMissing(t *testing.T) {
-	m := map[string]any{"other": "value"}
-	if got := strVal(m, "key"); got != "" {
-		t.Errorf("got %q", got)
-	}
-}
-
-func TestStrValNonString(t *testing.T) {
-	m := map[string]any{"key": 42}
-	if got := strVal(m, "key"); got != "" {
 		t.Errorf("got %q", got)
 	}
 }
@@ -254,92 +197,6 @@ func TestGetDeleteArgsExt2Trailing(t *testing.T) {
 	got := getDeleteArgs(args)
 	if len(got) != 0 {
 		t.Errorf("got %v", got)
-	}
-}
-
-// ── pluginResultToDoc ──────────────────────────────────────────
-
-func TestPluginResultToDocEmpty(t *testing.T) {
-	result := &gleann.PluginResult{}
-	doc := pluginResultToDoc(result)
-	if doc == nil {
-		t.Fatal("should return doc")
-	}
-	if len(doc.Sections) != 0 {
-		t.Errorf("sections = %d, want 0", len(doc.Sections))
-	}
-}
-
-func TestPluginResultToDocWithSections(t *testing.T) {
-	result := &gleann.PluginResult{
-		Nodes: []gleann.PluginNode{
-			{Type: "Document", Data: map[string]any{"title": "My Doc", "format": "pdf", "summary": "a doc", "word_count": float64(100)}},
-			{Type: "Section", Data: map[string]any{"id": "s1", "heading": "Intro", "level": float64(1), "content": "Hello world"}},
-			{Type: "Section", Data: map[string]any{"id": "s2", "heading": "Details", "level": float64(2), "content": "More details"}},
-		},
-		Edges: []gleann.PluginEdge{
-			{Type: "HAS_SUBSECTION", From: "s1", To: "s2"},
-		},
-	}
-	doc := pluginResultToDoc(result)
-	if doc.Document.Title != "My Doc" {
-		t.Errorf("title = %q", doc.Document.Title)
-	}
-	if doc.Document.Format != "pdf" {
-		t.Errorf("format = %q", doc.Document.Format)
-	}
-	if len(doc.Sections) != 2 {
-		t.Fatalf("sections = %d, want 2", len(doc.Sections))
-	}
-	// s2 should have ParentID = s1.
-	if doc.Sections[1].ParentID != "s1" {
-		t.Errorf("parent = %q, want s1", doc.Sections[1].ParentID)
-	}
-}
-
-// ── markdownToPluginResult ─────────────────────────────────────
-
-func TestMarkdownToPluginResultBasic(t *testing.T) {
-	sections := []chunking.MarkdownSection{
-		{ID: "h1", Heading: "Title", Level: 1, Content: "Some content"},
-		{ID: "h2", Heading: "Sub", Level: 2, Content: "Sub content", ParentID: "h1"},
-	}
-	result := markdownToPluginResult(sections, "test.md", 100, "# Title\nSome content\n## Sub\nSub content")
-	if result == nil {
-		t.Fatal("nil result")
-	}
-
-	// Should have Document + 2 Section nodes.
-	if len(result.Nodes) != 3 {
-		t.Fatalf("nodes = %d, want 3", len(result.Nodes))
-	}
-	if result.Nodes[0].Type != "Document" {
-		t.Errorf("first node type = %s", result.Nodes[0].Type)
-	}
-
-	// Should have edges: HAS_SECTION for h1, HAS_SUBSECTION for h2.
-	if len(result.Edges) != 2 {
-		t.Fatalf("edges = %d, want 2", len(result.Edges))
-	}
-	if result.Edges[0].Type != "HAS_SECTION" {
-		t.Errorf("edge[0].Type = %s", result.Edges[0].Type)
-	}
-	if result.Edges[1].Type != "HAS_SUBSECTION" {
-		t.Errorf("edge[1].Type = %s", result.Edges[1].Type)
-	}
-}
-
-func TestMarkdownToPluginResultEmpty(t *testing.T) {
-	result := markdownToPluginResult(nil, "empty.md", 0, "")
-	if result == nil {
-		t.Fatal("nil result")
-	}
-	// Should still have Document node.
-	if len(result.Nodes) != 1 {
-		t.Fatalf("nodes = %d, want 1", len(result.Nodes))
-	}
-	if result.Nodes[0].Type != "Document" {
-		t.Errorf("type = %s", result.Nodes[0].Type)
 	}
 }
 

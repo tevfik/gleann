@@ -8,30 +8,10 @@ import (
 	"strings"
 
 	"github.com/tevfik/gleann/internal/indexing"
-	"github.com/tevfik/gleann/modules/chunking"
-	"github.com/tevfik/gleann/pkg/gleann"
 )
 
 // PluginDoc holds a plugin result for deferred graph indexing.
 type PluginDoc = indexing.PluginDoc
-
-// pluginResultToDoc converts a PluginResult to a StructuredDocument for chunking.
-func pluginResultToDoc(result *gleann.PluginResult) *chunking.StructuredDocument {
-	return indexing.PluginResultToDoc(result)
-}
-
-// strVal extracts a string value from a map with a zero-value fallback.
-func strVal(m map[string]any, key string) string {
-	if v, ok := m[key].(string); ok {
-		return v
-	}
-	return ""
-}
-
-// markdownToPluginResult converts parsed MarkdownSections into a graph-ready PluginResult.
-func markdownToPluginResult(sections []chunking.MarkdownSection, sourcePath string, wordCount int, rawMarkdown string) *gleann.PluginResult {
-	return indexing.MarkdownSectionsToPluginResult(sections, sourcePath, wordCount, rawMarkdown)
-}
 
 // formatSize formats a byte count as a human-readable string.
 func formatSize(bytes int64) string {
@@ -51,9 +31,6 @@ func formatSize(bytes int64) string {
 		return fmt.Sprintf("%d B", bytes)
 	}
 }
-
-// isCodeExtension returns true if the file extension is a recognized source code format.
-func isCodeExtension(ext string) bool { return indexing.IsCodeExtension(ext) }
 
 // resolveInstalledGleannBin returns a persistent, reliable binary path for gleann,
 // explicitly avoiding ephemeral extraction paths like ~/.gleann/runtime or /tmp.

@@ -9,21 +9,16 @@ import (
 	"github.com/tevfik/gleann/pkg/gleann"
 )
 
-// Bootstrap creates a default configuration without launching the interactive TUI.
-// It auto-detects Ollama at localhost:11434 and picks sensible defaults.
+// BootstrapWithAPIKey creates a default configuration without launching the
+// interactive TUI. It auto-detects Ollama at localhost:11434 and picks
+// sensible defaults, and stores an optional Ollama API key (sent as a Bearer
+// token for Ollama behind an auth proxy).
 //
 // Usage from CLI:
 //
 //	gleann setup --bootstrap              # apply defaults, detect Ollama
 //	gleann setup --bootstrap --host URL   # use specific Ollama host
 //	gleann setup --bootstrap --code-model M1 --doc-model M2
-func Bootstrap(ollamaHost string, dualModels ...string) (*OnboardResult, error) {
-	return BootstrapWithAPIKey(ollamaHost, "", dualModels...)
-}
-
-// BootstrapWithAPIKey is like Bootstrap but also stores an optional Ollama
-// API key (sent as a Bearer token for Ollama behind an auth proxy).
-//
 //	gleann setup --bootstrap --host URL --ollama-api-key KEY
 func BootstrapWithAPIKey(ollamaHost, ollamaAPIKey string, dualModels ...string) (*OnboardResult, error) {
 	if ollamaHost == "" {

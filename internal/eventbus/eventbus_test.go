@@ -2,6 +2,7 @@ package eventbus
 
 import (
 	"context"
+	"encoding/json"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -226,4 +227,19 @@ func TestBus_BroadcastStress(t *testing.T) {
 			t.Errorf("subscriber %d: expected %d, got %d", i, numMessages, received[i])
 		}
 	}
+}
+
+// Subscribe returns a channel of Watermill messages for the given topic.
+// Only the tests subscribe: nothing in gleann consumes the events yet.
+func (b *Bus) Subscribe(ctx context.Context, topic string) (<-chan *message.Message, error) {
+	return b.pubSub.Subscribe(ctx, topic)
+}
+
+// DecodePayload unmarshals a Watermill message body into a map.
+func DecodePayload(msg *message.Message) (map[string]any, error) {
+	var payload map[string]any
+	if err := json.Unmarshal(msg.Payload, &payload); err != nil {
+		return nil, err
+	}
+	return payload, nil
 }

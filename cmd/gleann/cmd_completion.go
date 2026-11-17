@@ -28,7 +28,7 @@ Examples:
 
   # Fish: save to completions dir
   gleann completion fish > ~/.config/fish/completions/gleann.fish`)
-		os.Exit(1)
+		exitFunc(1)
 	}
 
 	switch args[0] {
@@ -40,6 +40,6 @@ Examples:
 		fmt.Print(tui.FishCompletion())
 	default:
 		fmt.Fprintf(os.Stderr, "unsupported shell: %s (use bash, zsh, or fish)\n", args[0])
-		os.Exit(1)
+		exitFunc(1)
 	}
 }

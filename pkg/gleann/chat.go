@@ -1465,11 +1465,6 @@ func (c *LeannChat) formatResult(r SearchResult, idx int) string {
 	return formatResultWithOptions(r, idx, c.config.CompressContext)
 }
 
-// formatResult formats a single SearchResult into a text string for the LLM context.
-func formatResult(r SearchResult, idx int) string {
-	return formatResultWithOptions(r, idx, false)
-}
-
 // formatResultWithOptions formats a single SearchResult with optional AST context compression.
 func formatResultWithOptions(r SearchResult, idx int, compress bool) string {
 	var sb strings.Builder

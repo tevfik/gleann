@@ -2122,7 +2122,7 @@ func (m ChatModel) askLLMStreamWithMedia(question string, images []string) tea.C
 			defer close(tokenChan)
 			var err error
 			if len(images) > 0 {
-				_, err = chat.AskStreamWithMedia(context.Background(), question, images,
+				_, err = chat.AskStreamWithImages(context.Background(), question, images,
 					func(token string) {
 						tokenChan <- token
 					},

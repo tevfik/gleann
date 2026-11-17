@@ -426,20 +426,10 @@ type proxyHit struct {
 	result gleann.SearchResult
 }
 
-// mergeProxyHits ranks the results of several indexes together: by their raw relevance when they carry it
+// rankProxyHits ranks the results of several indexes together: by their raw relevance when they carry it
 // (gleann.CrossIndexScores: each index's own Score puts its best passages on top whatever their relevance, alpha
-// weighs vector against BM25), else by score (highest first; equal scores keep the
-// order of names, then each index's own order) and keeps the best k overall, so a query over many indexes gets the
-// same number of passages as a query over one, and the best ones whichever index they are in.
-func mergeProxyHits(perIndex map[string][]gleann.SearchResult, names []string, k int, alpha float32) []proxyHit {
-	hits := rankProxyHits(perIndex, names, alpha)
-	if k > 0 && len(hits) > k {
-		hits = hits[:k]
-	}
-	return hits
-}
-
-// rankProxyHits is mergeProxyHits without the cut to k: every hit of every index, best first.
+// weighs vector against BM25), else by score (highest first; equal scores keep the order of names, then each
+// index's own order). It returns every hit of every index, best first.
 func rankProxyHits(perIndex map[string][]gleann.SearchResult, names []string, alpha float32) []proxyHit {
 	var hits []proxyHit
 	indexes := 0

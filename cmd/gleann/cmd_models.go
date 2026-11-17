@@ -14,6 +14,9 @@ import (
 // cmdModels lists and downloads the local GGUF models of the catalog
 // (internal/modelcatalog/models.json), the same list the web UI and
 // `gleann setup` offer.
+// downloadModel fetches a catalog model; a seam for tests.
+var downloadModel = modelcatalog.Download
+
 func cmdModels(args []string) {
 	rejectUnknownFlags("models", args, flagSet{})
 	if len(args) == 0 || args[0] == "list" {
@@ -35,7 +38,7 @@ func cmdModels(args []string) {
 	}
 	if args[0] != "download" || len(args) < 2 {
 		fmt.Fprintln(os.Stderr, "usage: gleann models [list | download <id>...]")
-		os.Exit(2)
+		exitFunc(2)
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
@@ -52,7 +55,7 @@ func cmdModels(args []string) {
 			continue
 		}
 		fmt.Printf("⬇  %s (%s)\n", e.Name, settings.HumanSize(e.Bytes))
-		err := modelcatalog.Download(ctx, e, func(done, total int64) {
+		err := downloadModel(ctx, e, func(done, total int64) {
 			if total > 0 {
 				fmt.Printf("\r   %3d%%  %d / %d MB   ", done*100/total, done>>20, total>>20)
 			}
@@ -66,6 +69,6 @@ func cmdModels(args []string) {
 		fmt.Printf("✓ %s\n", e.Path())
 	}
 	if failed {
-		os.Exit(1)
+		exitFunc(1)
 	}
 }

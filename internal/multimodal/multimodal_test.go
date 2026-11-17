@@ -190,3 +190,8 @@ func TestProcessFile_NoModel(t *testing.T) {
 		t.Error("expected error when no model configured")
 	}
 }
+
+// descriptionPrompt is the English prompt of Processor.descriptionPrompt.
+func descriptionPrompt(mt MediaType, filename string) string {
+	return (&Processor{Lang: "en"}).descriptionPrompt(mt, filename)
+}

@@ -36,13 +36,13 @@ func cmdTasks(args []string) {
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: cannot reach gleann server at %s: %v\n", serverAddr, err)
 		fmt.Fprintln(os.Stderr, "hint: is 'gleann serve' running?")
-		os.Exit(1)
+		exitFunc(1)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		fmt.Fprintf(os.Stderr, "error: server returned %d\n", resp.StatusCode)
-		os.Exit(1)
+		exitFunc(1)
 	}
 
 	var result struct {
@@ -50,7 +50,7 @@ func cmdTasks(args []string) {
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		fmt.Fprintf(os.Stderr, "error: invalid response: %v\n", err)
-		os.Exit(1)
+		exitFunc(1)
 	}
 
 	if asJSON {

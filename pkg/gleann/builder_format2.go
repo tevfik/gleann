@@ -179,7 +179,7 @@ func (b *LeannBuilder) buildPassagesFormat2(ctx context.Context, basePath, name 
 	if sourceDir == "" && prevMeta != nil {
 		sourceDir = prevMeta.SourceDir
 	}
-	analyzer := analysis.New("")
+	analyzer := analysis.New(itemsLanguage(items))
 
 	if _, err := os.Stat(basePath + ".db"); err == nil {
 		ids, err := b.replacePassagesInPlace(ctx, basePath, name, items, sourceDir, analyzer)

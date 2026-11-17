@@ -47,7 +47,7 @@ Examples:
 			return
 		}
 		fmt.Fprintln(os.Stderr, "usage: gleann search <name[,name2,...]|--all> <query>")
-		os.Exit(1)
+		exitFunc(1)
 	}
 
 	rejectUnknownFlags("search", args, searchFlags)
@@ -64,7 +64,7 @@ Examples:
 
 	if err := initLlamaCPP(context.Background(), &config); err != nil {
 		fmt.Fprintf(os.Stderr, "error initializing llamacpp: %v\n", err)
-		os.Exit(1)
+		exitFunc(1)
 	}
 
 	embedder := newEmbedder(config)
@@ -154,7 +154,7 @@ Examples:
 		multiResults, err := gleann.SearchMultiple(ctx, config, embedder, indexNames, query, searchOpts...)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "error in multi-search: %v\n", err)
-			os.Exit(1)
+			exitFunc(1)
 		}
 		elapsed := time.Since(start)
 
@@ -179,7 +179,7 @@ Examples:
 	// Single-index search.
 	if err := searcher.Load(ctx, name); err != nil {
 		fmt.Fprintf(os.Stderr, "error loading index: %v\n", err)
-		os.Exit(1)
+		exitFunc(1)
 	}
 	defer searcher.Close()
 
@@ -187,7 +187,7 @@ Examples:
 	results, err := searcher.Search(ctx, query, searchOpts...)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error searching: %v\n", err)
-		os.Exit(1)
+		exitFunc(1)
 	}
 	elapsed := time.Since(start)
 

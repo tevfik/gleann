@@ -118,6 +118,9 @@ func (s *Searcher) Search(ctx context.Context, query []float32, topK int) ([]int
 	if s.idx == nil {
 		return nil, nil, fmt.Errorf("index not loaded")
 	}
+	if len(query) != s.idx.Dims {
+		return nil, nil, fmt.Errorf("query has %d dimensions, index has %d", len(query), s.idx.Dims)
+	}
 
 	cfg := s.config.DiskANNConfig
 	distFunc := GetDistanceFunc(string(cfg.DistanceMetric))
@@ -144,6 +147,9 @@ func (s *Searcher) SearchWithRecompute(ctx context.Context, query []float32, top
 
 	if s.idx == nil {
 		return nil, nil, fmt.Errorf("index not loaded")
+	}
+	if len(query) != s.idx.Dims {
+		return nil, nil, fmt.Errorf("query has %d dimensions, index has %d", len(query), s.idx.Dims)
 	}
 
 	cfg := s.config.DiskANNConfig

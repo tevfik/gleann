@@ -38,14 +38,49 @@ func NoticeRemovedEnv(w io.Writer) {
 }
 
 // passageKind selects the analyzer kind from the source file type: prose for
-// documents, code for everything else (RFC 003 section 4.1 item 3).
+// documents (including those a plugin converts to text), code for everything
+// else (RFC 003 section 4.1 item 3).
 func passageKind(source string) string {
 	switch strings.ToLower(filepath.Ext(source)) {
-	case ".md", ".mdx", ".txt", ".rst", ".adoc", ".org":
+	case ".md", ".mdx", ".txt", ".rst", ".adoc", ".org",
+		".pdf", ".docx", ".doc", ".odt", ".rtf", ".html", ".htm", ".epub", ".pptx":
 		return "prose"
 	default:
 		return "code"
 	}
+}
+
+// guessLanguage infers the analyzer language of an index from its corpus: when
+// at least a fifth of the prose passages contain letters that only Turkish
+// uses (ı, İ, ş, ğ), the index is Turkish ("tr") and its prose gets the
+// Turkish rules (dotted and dotless I, ASCII-folded variants); otherwise the
+// default rules apply (RFC 003 section 6.4 step 2). n passages are read
+// through at, which returns a passage's source path and text. Every full
+// build decides it again; incremental updates keep the stored language.
+func guessLanguage(n int, at func(i int) (source, text string)) string {
+	prose, tr := 0, 0
+	for i := 0; i < n; i++ {
+		src, text := at(i)
+		if passageKind(src) != "prose" {
+			continue
+		}
+		prose++
+		if strings.ContainsAny(text, "ıİşğŞĞ") {
+			tr++
+		}
+	}
+	if prose > 0 && tr*5 >= prose {
+		return "tr"
+	}
+	return ""
+}
+
+// itemsLanguage is guessLanguage over the items of a build.
+func itemsLanguage(items []Item) string {
+	return guessLanguage(len(items), func(i int) (string, string) {
+		src, _ := splitItemMeta(items[i].Metadata)
+		return src, items[i].Text
+	})
 }
 
 // removeDBFiles removes a SQLite database and its WAL companions and reports

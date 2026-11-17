@@ -85,30 +85,6 @@ func TestList(t *testing.T) {
 	}
 }
 
-func TestActiveCount(t *testing.T) {
-	m := NewManager(2)
-	defer m.Stop()
-
-	block := make(chan struct{})
-	m.Submit(TaskTypeCustom, func(progress func(float64, string)) error {
-		<-block
-		return nil
-	})
-
-	time.Sleep(50 * time.Millisecond)
-
-	if m.ActiveCount() != 1 {
-		t.Errorf("expected 1 active, got %d", m.ActiveCount())
-	}
-
-	close(block)
-	time.Sleep(100 * time.Millisecond)
-
-	if m.ActiveCount() != 0 {
-		t.Errorf("expected 0 active, got %d", m.ActiveCount())
-	}
-}
-
 func TestCleanup(t *testing.T) {
 	m := NewManager(2)
 	defer m.Stop()

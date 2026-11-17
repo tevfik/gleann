@@ -160,35 +160,6 @@ func TestEnsureConfig_PreservesConfigWithoutCompletedFlag(t *testing.T) {
 	}
 }
 
-// ── ModelTier / EmbeddingTiers tests ──────────────────────────────────────
-
-func TestEmbeddingTiers(t *testing.T) {
-	tiers := EmbeddingTiers()
-	if len(tiers) == 0 {
-		t.Fatal("expected non-empty embedding tiers")
-	}
-
-	// Tier 1 should exist.
-	var hasTier1 bool
-	for _, tier := range tiers {
-		if tier.Tier == 1 {
-			hasTier1 = true
-			break
-		}
-	}
-	if !hasTier1 {
-		t.Error("expected at least one tier-1 model")
-	}
-
-	// First entry should be nomic-embed-text (quick start).
-	if tiers[0].Name != "nomic-embed-text" {
-		t.Errorf("expected first tier to be nomic-embed-text, got %s", tiers[0].Name)
-	}
-	if tiers[0].Tier != 1 {
-		t.Errorf("expected first tier to be 1, got %d", tiers[0].Tier)
-	}
-}
-
 func TestQuickStartEmbeddingModel(t *testing.T) {
 	m := QuickStartEmbeddingModel()
 	if m != "nomic-embed-text" {

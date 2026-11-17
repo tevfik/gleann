@@ -14,6 +14,16 @@ import (
 
 const gleannRepoOwner, gleannRepoName = "tevfik", "gleann"
 
+// Network seams, replaced by tests: the GitHub release lookup and the plugin
+// catalog, check, update and install calls.
+var (
+	fetchLatestRelease = gleann.FetchLatestRelease
+	pluginCatalog      = gleann.FetchPluginCatalog
+	checkPluginUpdate  = gleann.CheckPluginUpdate
+	updatePlugin       = gleann.UpdatePlugin
+	installPlugin      = gleann.InstallPlugin
+)
+
 // cmdUpdate implements `gleann update [--check] [--force]`: it replaces the
 // running gleann with the latest GitHub release of the same build variant.
 func cmdUpdate(args []string) {
@@ -36,16 +46,16 @@ Installed plugins are updated with: gleann plugin update`)
 			return
 		default:
 			fmt.Fprintf(os.Stderr, "unknown flag %q\n", a)
-			os.Exit(2)
+			exitFunc(2)
 		}
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
 	defer cancel()
-	rel, err := gleann.FetchLatestRelease(ctx, gleannRepoOwner, gleannRepoName)
+	rel, err := fetchLatestRelease(ctx, gleannRepoOwner, gleannRepoName)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "cannot check for updates: %v\n", err)
-		os.Exit(1)
+		exitFunc(1)
 	}
 	newer, comparable := gleann.IsNewer(version, rel.Tag)
 	fmt.Printf("installed %s, latest %s\n", version, rel.Tag)
@@ -64,7 +74,7 @@ Installed plugins are updated with: gleann plugin update`)
 	dest, variant, err := updateTarget()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "cannot update: %v\n", err)
-		os.Exit(1)
+		exitFunc(1)
 	}
 	names := make([]string, len(rel.Assets))
 	for i, a := range rel.Assets {
@@ -73,18 +83,18 @@ Installed plugins are updated with: gleann plugin update`)
 	idx, err := gleann.SelectGleannAsset(names, variant, rel.Tag, runtime.GOOS, runtime.GOARCH)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "cannot update: %v\n", err)
-		os.Exit(1)
+		exitFunc(1)
 	}
 	fmt.Printf("Downloading %s...\n", rel.Assets[idx].Name)
 	newPath, verified, err := gleann.DownloadReleaseBinary(ctx, rel, idx, variant, dest)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "update failed: %v\n", err)
-		os.Exit(1)
+		exitFunc(1)
 	}
 	if err := gleann.ReplaceBinary(dest, newPath); err != nil {
 		_ = os.Remove(newPath)
 		fmt.Fprintf(os.Stderr, "update failed: %v\n", err)
-		os.Exit(1)
+		exitFunc(1)
 	}
 	if verified {
 		fmt.Println("Checksum verified.")
@@ -120,7 +130,7 @@ func updateTarget() (dest, variant string, err error) {
 // the repository directory names it took care of.
 func updateReleasePlugins(names []string, check, force bool) map[string]bool {
 	handled := map[string]bool{}
-	catalog := gleann.FetchPluginCatalog()
+	catalog := pluginCatalog()
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Minute)
 	defer cancel()
 	for _, meta := range catalog {
@@ -136,7 +146,7 @@ func updateReleasePlugins(names []string, check, force bool) map[string]bool {
 			}
 		}
 		if check {
-			res, _, err := gleann.CheckPluginUpdate(ctx, meta)
+			res, _, err := checkPluginUpdate(ctx, meta)
 			if err != nil {
 				if !strings.Contains(err.Error(), "not installed") {
 					fmt.Printf("[check]  %s: %v\n", meta.Name, err)
@@ -159,7 +169,7 @@ func updateReleasePlugins(names []string, check, force bool) map[string]bool {
 			}
 			close(done)
 		}()
-		res, err := gleann.UpdatePlugin(ctx, meta, force, progress)
+		res, err := updatePlugin(ctx, meta, force, progress)
 		close(progress)
 		<-done
 		if err != nil {

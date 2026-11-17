@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/tevfik/gleann/internal/indexing"
 	_ "github.com/tevfik/gleann/pkg/backends"
 	"github.com/tevfik/gleann/pkg/gleann"
 )
@@ -58,18 +59,18 @@ func TestE2E_ContentSnifferIndexingAndSearch(t *testing.T) {
 	}
 
 	// Collect eligible files using our sniffer
-	files, err := collectEligibleFiles(docsDir, nil, nil, nil, IndexModeCode, false)
+	files, err := indexing.CollectEligibleFiles(context.Background(), docsDir, indexing.CollectOptions{Mode: IndexModeCode})
 	if err != nil {
-		t.Fatalf("collectEligibleFiles failed: %v", err)
+		t.Fatalf("CollectEligibleFiles failed: %v", err)
 	}
 
 	var items []gleann.Item
 	for _, f := range files {
-		data, rErr := os.ReadFile(f.path)
+		data, rErr := os.ReadFile(f.Path)
 		if rErr != nil {
 			continue
 		}
-		relPath, _ := filepath.Rel(docsDir, f.path)
+		relPath, _ := filepath.Rel(docsDir, f.Path)
 		items = append(items, gleann.Item{
 			Text: string(data),
 			Metadata: map[string]any{

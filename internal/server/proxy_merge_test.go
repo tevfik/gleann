@@ -62,3 +62,13 @@ func TestProxyTopK(t *testing.T) {
 		t.Errorf("WithTopK(4): %d", k)
 	}
 }
+
+// mergeProxyHits ranks the results of several indexes together (rankProxyHits) and keeps the best k overall
+// (all of them when k <= 0).
+func mergeProxyHits(perIndex map[string][]gleann.SearchResult, names []string, k int, alpha float32) []proxyHit {
+	hits := rankProxyHits(perIndex, names, alpha)
+	if k > 0 && len(hits) > k {
+		hits = hits[:k]
+	}
+	return hits
+}

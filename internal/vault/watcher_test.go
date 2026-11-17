@@ -210,34 +210,6 @@ func TestTrackerUpsertAndRetrieve(t *testing.T) {
 	}
 }
 
-func TestTrackerRemoveAndVerify(t *testing.T) {
-	dbPath := filepath.Join(t.TempDir(), "vault.db")
-	tracker, err := NewTracker(dbPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer tracker.Close()
-
-	ctx := context.Background()
-
-	dir := t.TempDir()
-	testFile := filepath.Join(dir, "test.txt")
-	os.WriteFile(testFile, []byte("content"), 0o644)
-
-	hash, _ := tracker.UpsertFile(ctx, testFile)
-
-	// Remove
-	if err := tracker.RemoveByHash(ctx, hash); err != nil {
-		t.Fatal(err)
-	}
-
-	// Should not find it anymore
-	_, err = tracker.GetPathByHash(ctx, hash)
-	if err == nil {
-		t.Error("expected not found after removal")
-	}
-}
-
 func TestTrackerComputeHashConsistency(t *testing.T) {
 	dir := t.TempDir()
 	testFile := filepath.Join(dir, "test.txt")

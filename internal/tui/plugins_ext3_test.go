@@ -282,23 +282,6 @@ func TestPluginViewResult(t *testing.T) {
 
 // ── Helper functions ───────────────────────────────────────────
 
-func TestRepoNameExt3(t *testing.T) {
-	tests := []struct {
-		url  string
-		want string
-	}{
-		{"https://github.com/tevfik/gleann-plugin-docs", "gleann-plugin-docs"},
-		{"https://github.com/tevfik/gleann-plugin-docs.git", "gleann-plugin-docs"},
-		{"https://example.com/repo", "repo"},
-	}
-	for _, tt := range tests {
-		got := repoName(tt.url)
-		if got != tt.want {
-			t.Errorf("repoName(%q) = %q, want %q", tt.url, got, tt.want)
-		}
-	}
-}
-
 func TestCheckPluginStatusNotInstalledExt3(t *testing.T) {
 	m := newTestPluginModel()
 	if len(m.plugins) == 0 {

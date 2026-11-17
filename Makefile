@@ -349,6 +349,12 @@ test-e2e:
 		docker run --rm --network host -v $$(pwd):/app -w /app golang:1.25-alpine sh -c "go test -v -timeout 5m ./tests/e2e/..."; \
 	fi
 
+# Total coverage of the root module as Codecov computes it (default-tag
+# profile merged with the treesitter profiles, codecov.yml ignores applied).
+.PHONY: coverage
+coverage:
+	@scripts/coverage.sh --packages
+
 .PHONY: test-eif
 test-eif: build-eif-lib
 	@if command -v go >/dev/null 2>&1; then \
@@ -358,7 +364,7 @@ test-eif: build-eif-lib
 # ── Clean ────────────────────────────────────────────────────────────────────
 .PHONY: clean
 clean:
-	rm -rf $(BUILD_DIR) dist/ gleann-test gleann-test-faiss coverage.out coverage-ts.out
+	rm -rf $(BUILD_DIR) dist/ gleann-test gleann-test-faiss coverage.out coverage-ts.out coverage-chunking.out
 	@echo "🧹 Cleaned"
 
 .PHONY: vet

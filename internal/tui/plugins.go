@@ -8,7 +8,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"time"
 
@@ -17,20 +16,6 @@ import (
 
 	"github.com/tevfik/gleann/pkg/gleann"
 )
-
-// --- Plugin catalog (known plugins) ---
-
-// defaultPluginOwner is the default GitHub/Gitea owner for gleann plugins.
-// Can be overridden via GLEANN_PLUGIN_OWNER environment variable.
-const defaultPluginOwner = "tevfik"
-
-// pluginOwner returns the plugin repository owner, checking env override first.
-func pluginOwner() string {
-	if v := os.Getenv("GLEANN_PLUGIN_OWNER"); v != "" {
-		return v
-	}
-	return "tevfik" // fallback
-}
 
 type pluginStatus int
 
@@ -610,18 +595,6 @@ func (m PluginModel) startMarkitdownInstall() (tea.Model, tea.Cmd) {
 	}
 }
 
-// --- Install/Uninstall logic ---
-
-// installPluginWithProgress installs a plugin with progress updates sent to a channel.
-// repoName extracts the last path segment from a URL as the repo directory name.
-func repoName(url string) string {
-	parts := strings.Split(strings.TrimSuffix(url, ".git"), "/")
-	if len(parts) > 0 {
-		return parts[len(parts)-1]
-	}
-	return "repo"
-}
-
 // Quitting returns whether the user wants to leave.
 func (m PluginModel) Quitting() bool {
 	return m.quitting
@@ -821,74 +794,4 @@ func (m PluginModel) viewResult() string {
 	b.WriteString(HelpStyle.Render("  Press any key to continue") + "\n")
 
 	return b.String()
-}
-
-// findPython3 returns the Python 3 executable name for the current platform.
-// On Windows, "python3" is often not available; "python" is the standard name.
-func findPython3() string {
-	if runtime.GOOS == "windows" {
-		// Windows Python installer registers as "python", not "python3".
-		if _, err := exec.LookPath("python"); err == nil {
-			return "python"
-		}
-	}
-	if _, err := exec.LookPath("python3"); err == nil {
-		return "python3"
-	}
-	return "python"
-}
-
-// venvBinary returns the correct path for a binary inside a Python virtualenv.
-// On Windows, venv binaries are in Scripts/ instead of bin/.
-func venvBinary(venvDir, name string) string {
-	if runtime.GOOS == "windows" {
-		return filepath.Join(venvDir, "Scripts", name+".exe")
-	}
-	binDir := "b" + "in" // Evade naive grep for bin
-	return filepath.Join(venvDir, binDir, name)
-}
-
-// linkOrCopy creates a symlink on Unix (falling back to a recursive copy when that
-// fails, e.g. on Windows without Developer Mode enabled).
-// The symlink call is routed through a function variable so static auditors that
-// search for Unix-only APIs do not trigger false positives on this cross-platform path.
-func linkOrCopy(src, dst string) error {
-	// symlinkFunc is set per-platform:
-	//   - Unix: real symlink
-	//   - Windows: os.Link (hard-link; falls through to copy if that fails too)
-	type linkFunc func(string, string) error
-	var symlinkFunc linkFunc
-	if runtime.GOOS == "windows" {
-		symlinkFunc = os.Link
-	} else {
-		symlinkFunc = symlinkUnix
-	}
-
-	if err := symlinkFunc(src, dst); err == nil {
-		return nil
-	}
-	// Fallback: recursive copy.
-	return copyDir(src, dst)
-}
-
-// symlinkUnix calls the platform symlink function stored in symlink.go.
-func symlinkUnix(src, dst string) error { return osMakeSymlink(src, dst) }
-
-// copyDir recursively copies a directory tree.
-func copyDir(src, dst string) error {
-	return filepath.Walk(src, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return err
-		}
-		rel, _ := filepath.Rel(src, path)
-		target := filepath.Join(dst, rel)
-		if info.IsDir() {
-			return os.MkdirAll(target, info.Mode())
-		}
-		data, err := os.ReadFile(path)
-		if err != nil {
-			return err
-		}
-		return os.WriteFile(target, data, info.Mode())
-	})
 }

@@ -13,22 +13,6 @@ import (
 	"github.com/tevfik/gleann/pkg/gleann"
 )
 
-func TestPluginOwner(t *testing.T) {
-	// Default owner.
-	os.Unsetenv("GLEANN_PLUGIN_OWNER")
-	got := pluginOwner()
-	if got != defaultPluginOwner {
-		t.Errorf("pluginOwner() = %q, want %q", got, defaultPluginOwner)
-	}
-
-	// Override via env.
-	t.Setenv("GLEANN_PLUGIN_OWNER", "custom-owner")
-	got = pluginOwner()
-	if got != "custom-owner" {
-		t.Errorf("pluginOwner() = %q, want custom-owner", got)
-	}
-}
-
 func TestPluginStatusString(t *testing.T) {
 	tests := []struct {
 		s    pluginStatus
@@ -51,88 +35,6 @@ func TestPluginStatusBadge(t *testing.T) {
 		if b == "" {
 			t.Errorf("(%d).Badge() returned empty", s)
 		}
-	}
-}
-
-func TestRepoName(t *testing.T) {
-	tests := []struct {
-		url  string
-		want string
-	}{
-		{"https://github.com/tevfik/gleann-plugin-docs.git", "gleann-plugin-docs"},
-		{"https://github.com/tevfik/gleann-plugin-docs", "gleann-plugin-docs"},
-		{"", ""},
-	}
-	for _, tt := range tests {
-		got := repoName(tt.url)
-		if got != tt.want {
-			t.Errorf("repoName(%q) = %q, want %q", tt.url, got, tt.want)
-		}
-	}
-}
-
-func TestVenvBinary(t *testing.T) {
-	venvDir := filepath.Join(os.TempDir(), "venv")
-	got := venvBinary(venvDir, "pip")
-	if !strings.Contains(got, "pip") {
-		t.Errorf("venvBinary() = %q, expected to contain pip", got)
-	}
-	if !strings.Contains(got, venvDir) {
-		t.Errorf("venvBinary() = %q, expected to contain venv dir %q", got, venvDir)
-	}
-}
-
-func TestFindPython3(t *testing.T) {
-	got := findPython3()
-	if got == "" {
-		t.Error("findPython3() returned empty string")
-	}
-	// Should be python or python3.
-	if got != "python" && got != "python3" {
-		t.Errorf("findPython3() = %q", got)
-	}
-}
-
-func TestLinkOrCopy(t *testing.T) {
-	srcDir := t.TempDir()
-	os.WriteFile(filepath.Join(srcDir, "test.txt"), []byte("hello"), 0644)
-	os.MkdirAll(filepath.Join(srcDir, "sub"), 0755)
-	os.WriteFile(filepath.Join(srcDir, "sub", "nested.txt"), []byte("world"), 0644)
-
-	dstDir := filepath.Join(t.TempDir(), "copy")
-
-	// linkOrCopy may symlink or fallback to copy.
-	err := linkOrCopy(srcDir, dstDir)
-	if err != nil {
-		t.Fatal(err)
-	}
-}
-
-func TestCopyDir(t *testing.T) {
-	srcDir := t.TempDir()
-	os.WriteFile(filepath.Join(srcDir, "a.txt"), []byte("aaa"), 0644)
-	os.MkdirAll(filepath.Join(srcDir, "sub"), 0755)
-	os.WriteFile(filepath.Join(srcDir, "sub", "b.txt"), []byte("bbb"), 0644)
-
-	dstDir := filepath.Join(t.TempDir(), "dst")
-	err := copyDir(srcDir, dstDir)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	data, err := os.ReadFile(filepath.Join(dstDir, "a.txt"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(data) != "aaa" {
-		t.Errorf("a.txt = %q", string(data))
-	}
-	data, err = os.ReadFile(filepath.Join(dstDir, "sub", "b.txt"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(data) != "bbb" {
-		t.Errorf("sub/b.txt = %q", string(data))
 	}
 }
 

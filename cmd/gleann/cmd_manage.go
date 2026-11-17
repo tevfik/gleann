@@ -23,7 +23,7 @@ Options:
 			return
 		}
 		fmt.Fprintln(os.Stderr, "usage: gleann remove <name1> [name2] ... or gleann remove \"prefix*\"")
-		os.Exit(1)
+		exitFunc(1)
 	}
 
 	config := getConfig(args)
@@ -51,14 +51,14 @@ Options:
 
 	if len(patterns) == 0 {
 		fmt.Fprintln(os.Stderr, "error: no index name or pattern provided")
-		os.Exit(1)
+		exitFunc(1)
 	}
 
 	// Get all existing indexes to match against patterns.
 	allIndexes, err := gleann.ListIndexes(config.IndexDir)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error listing indexes: %v\n", err)
-		os.Exit(1)
+		exitFunc(1)
 	}
 
 	// Identify indexes to remove.
@@ -120,11 +120,11 @@ func cmdTUI() {
 		fmt.Fprintln(os.Stderr, "  gleann setup --auto              # zero-prompt setup")
 		fmt.Fprintln(os.Stderr, "  gleann ask <index> \"question\"   # one-shot Q&A")
 		fmt.Fprintln(os.Stderr, "  gleann serve                     # REST API + Swagger UI")
-		os.Exit(1)
+		exitFunc(1)
 	}
 	if err := tui.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		os.Exit(1)
+		exitFunc(1)
 	}
 }
 
@@ -135,7 +135,7 @@ func cmdTag(args []string) {
 		if hasFlag(args, "--help") || hasFlag(args, "-h") {
 			return
 		}
-		os.Exit(1)
+		exitFunc(1)
 	}
 
 	name := args[0]
@@ -151,7 +151,7 @@ func cmdTag(args []string) {
 		meta, err := gleann.GetIndexMeta(config.IndexDir, name)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
-			os.Exit(1)
+			exitFunc(1)
 		}
 		if len(meta.Tags) == 0 {
 			fmt.Printf("Index %q has no tags.\n", name)
@@ -171,7 +171,7 @@ func cmdTag(args []string) {
 			var newTags []string
 			seen := make(map[string]bool)
 			for _, t := range strings.Split(setTagsStr, ",") {
-				t = strings.TrimSpace(strings.TrimPrefix(t, "@"))
+				t = strings.TrimPrefix(strings.TrimSpace(t), "@")
 				if t != "" && !seen[strings.ToLower(t)] {
 					seen[strings.ToLower(t)] = true
 					newTags = append(newTags, t)
@@ -189,7 +189,7 @@ func cmdTag(args []string) {
 
 		if addTagsStr != "" {
 			for _, t := range strings.Split(addTagsStr, ",") {
-				t = strings.TrimSpace(strings.TrimPrefix(t, "@"))
+				t = strings.TrimPrefix(strings.TrimSpace(t), "@")
 				if t != "" {
 					tagSet[strings.ToLower(t)] = true
 				}
@@ -198,7 +198,7 @@ func cmdTag(args []string) {
 
 		if remTagsStr != "" {
 			for _, t := range strings.Split(remTagsStr, ",") {
-				t = strings.TrimSpace(strings.TrimPrefix(t, "@"))
+				t = strings.TrimPrefix(strings.TrimSpace(t), "@")
 				delete(tagSet, strings.ToLower(t))
 			}
 		}
@@ -213,7 +213,7 @@ func cmdTag(args []string) {
 
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error updating tags for %q: %v\n", name, err)
-		os.Exit(1)
+		exitFunc(1)
 	}
 
 	meta, _ := gleann.GetIndexMeta(config.IndexDir, name)
@@ -231,7 +231,7 @@ func cmdSet(args []string) {
 		if hasFlag(args, "--help") || hasFlag(args, "-h") {
 			return
 		}
-		os.Exit(1)
+		exitFunc(1)
 	}
 
 	name := args[0]
@@ -245,7 +245,7 @@ func cmdSet(args []string) {
 
 	if !isPublic && !isPrivate && mcpStr == "" && descStr == "" {
 		fmt.Fprintln(os.Stderr, "usage: gleann index set <name> [--public | --private] [--mcp=true|false] [--desc <text>]")
-		os.Exit(1)
+		exitFunc(1)
 	}
 
 	err := gleann.UpdateIndexMeta(config.IndexDir, name, func(m *gleann.IndexMeta) {
@@ -266,7 +266,7 @@ func cmdSet(args []string) {
 
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error updating index %q: %v\n", name, err)
-		os.Exit(1)
+		exitFunc(1)
 	}
 
 	meta, _ := gleann.GetIndexMeta(config.IndexDir, name)

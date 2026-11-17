@@ -39,7 +39,7 @@ func cmdDef(args []string) {
 		if hasFlag(args, "--help") || hasFlag(args, "-h") {
 			return
 		}
-		os.Exit(1)
+		exitFunc(1)
 	}
 
 	var symbol string
@@ -66,7 +66,7 @@ func cmdDef(args []string) {
 	if symbol == "" {
 		fmt.Fprintln(os.Stderr, "error: symbol argument is required")
 		printDefUsage()
-		os.Exit(1)
+		exitFunc(1)
 	}
 
 	config := getConfig(args)
@@ -79,7 +79,7 @@ func cmdDef(args []string) {
 			indexName = indexes[0].Name
 		} else {
 			fmt.Fprintln(os.Stderr, "error: no index found. Build an index first with: gleann index build <name> --docs <dir>")
-			os.Exit(1)
+			exitFunc(1)
 		}
 	}
 
@@ -89,7 +89,7 @@ func cmdDef(args []string) {
 
 	if err := searcher.Load(ctx, indexName); err != nil {
 		fmt.Fprintf(os.Stderr, "error loading index %q: %v\n", indexName, err)
-		os.Exit(1)
+		exitFunc(1)
 	}
 	defer searcher.Close()
 
@@ -102,7 +102,7 @@ func cmdDef(args []string) {
 	defs, err := gleann.FindDefinitions(ctx, searcher, symbol, opts)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error finding definitions: %v\n", err)
-		os.Exit(1)
+		exitFunc(1)
 	}
 
 	if asJSON {

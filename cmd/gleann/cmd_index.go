@@ -20,7 +20,7 @@ import (
 func cmdIndex(args []string) {
 	if len(args) < 1 {
 		printIndexUsage()
-		os.Exit(1)
+		exitFunc(1)
 	}
 
 	sub := args[0]
@@ -60,7 +60,7 @@ func cmdIndex(args []string) {
 	default:
 		fmt.Fprintf(os.Stderr, "unknown index subcommand: %s\n", sub)
 		printIndexUsage()
-		os.Exit(1)
+		exitFunc(1)
 	}
 }
 

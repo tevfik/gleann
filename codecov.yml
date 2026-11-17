@@ -1,0 +1,40 @@
+# Codecov configuration for the root module (github.com/tevfik/gleann).
+#
+# CI uploads three Go profiles from the ubuntu job (.github/workflows/ci.yml):
+# coverage.out (default tags, every package), coverage-ts.out and
+# coverage-chunking.out (the packages with tree-sitter code, built with
+# -tags treesitter). Codecov merges them; scripts/coverage.sh (`make
+# coverage`) reproduces the same merge and the ignores below locally.
+
+coverage:
+  status:
+    project:
+      default:
+        target: 80%
+        # Allow small run-to-run noise (timing-dependent branches) without
+        # turning the status red.
+        threshold: 0.5%
+    patch:
+      default:
+        target: 80%
+
+# Only code that never ships is ignored. Everything that is built into a
+# released binary stays in the denominator, including cmd/gleann and
+# cmd/gleann-full-launcher (the self-extracting launcher of the gleann-full
+# release binary, see `make full`: it is product code, not a dev tool).
+ignore:
+  # End-to-end and integration test harnesses, their fixture programs
+  # (tests/e2e/fixtures/code is a sample project the e2e tests index,
+  # tests/e2e/cmd/gen_fixtures generates those fixtures) and benchmarks.
+  - "tests/**"
+  # Test support for the RFC 004 analysis goldens; imported only by
+  # _test.go files (cmd/gleann, internal/mcp, internal/server,
+  # internal/indexing), never by product code.
+  - "internal/graph/analysisgolden/**"
+  # Test helpers (internal/testutil/format1 writes legacy format-1 indexes for
+  # migration tests); imported only by _test.go files.
+  - "internal/testutil/**"
+
+comment:
+  layout: "reach, diff, flags, files"
+  require_changes: false

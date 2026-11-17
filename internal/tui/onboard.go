@@ -902,7 +902,10 @@ func (m OnboardModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case phaseServer:
 		return m.handleServerKeys(key)
 	case phaseServerAddr:
-		return m.handleServerAddrKeys(key)
+		if key == "enter" {
+			return m.handleServerAddrKeys(key)
+		}
+		// Anything else is typed into the address input (falls to the end).
 
 	// ── Summary ──
 	case phaseSummary:
@@ -1142,7 +1145,7 @@ func (m *OnboardModel) updateActiveInput(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case phaseIndexDir:
 		m.indexDirInput, cmd = m.indexDirInput.Update(msg)
 	}
-	return m, cmd
+	return *m, cmd // a value: tui.go asserts the final model is an OnboardModel
 }
 
 func (m *OnboardModel) focusActiveInput() {

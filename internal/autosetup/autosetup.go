@@ -225,25 +225,6 @@ func EnsureConfig(ollamaHost string, quiet bool) (bool, error) {
 
 // ── Model Tier System ─────────────────────────────────────────────────────
 
-// ModelTier defines embedding model priority tiers.
-type ModelTier struct {
-	Name string // e.g., "nomic-embed-text"
-	Size string // human-readable, e.g., "270 MB"
-	Tier int    // 1 = quick start, 2 = recommended, 3 = expert
-}
-
-// EmbeddingTiers returns the tiered list of embedding models.
-// Tier 1: small/fast for first-run. Tier 2: recommended quality. Tier 3: expert.
-func EmbeddingTiers() []ModelTier {
-	return []ModelTier{
-		{Name: "nomic-embed-text", Size: "270 MB", Tier: 1},
-		{Name: "bge-m3", Size: "1.2 GB", Tier: 2},
-		{Name: "snowflake-arctic-embed", Size: "670 MB", Tier: 2},
-		{Name: "mxbai-embed-large", Size: "670 MB", Tier: 3},
-		{Name: "jina/jina-embeddings-v3", Size: "1.2 GB", Tier: 3},
-	}
-}
-
 // QuickStartEmbeddingModel returns the smallest embedding model for fast onboarding.
 func QuickStartEmbeddingModel() string {
 	return "nomic-embed-text"

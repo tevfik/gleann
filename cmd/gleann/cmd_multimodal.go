@@ -24,7 +24,7 @@ Options:
 func cmdMultimodal(args []string) {
 	if len(args) < 1 {
 		printMultimodalUsage()
-		os.Exit(1)
+		exitFunc(1)
 	}
 
 	sub := args[0]
@@ -36,7 +36,7 @@ func cmdMultimodal(args []string) {
 	default:
 		fmt.Fprintf(os.Stderr, "unknown multimodal sub-command: %s\n", sub)
 		printMultimodalUsage()
-		os.Exit(1)
+		exitFunc(1)
 	}
 }
 
@@ -48,10 +48,13 @@ func cmdMultimodalAnalyze(args []string) {
 	}
 	if len(args) < 1 {
 		fmt.Fprintln(os.Stderr, "usage: gleann multimodal analyze <file|dir> [--model <model>] [--host <url>] [--ollama-api-key <key>]")
-		os.Exit(1)
+		exitFunc(1)
 	}
 
 	config := getConfig(args)
+	// The saved config (and OLLAMA_HOST) supply the host and model, as the
+	// usage text says; without this they were ignored.
+	applySavedConfig(&config, args)
 
 	target := args[0]
 	model := getFlag(args, "--model")
@@ -72,7 +75,7 @@ func cmdMultimodalAnalyze(args []string) {
 	}
 	if model == "" {
 		fmt.Fprintln(os.Stderr, "error: no multimodal model found. Install one: ollama pull gemma4")
-		os.Exit(1)
+		exitFunc(1)
 	}
 
 	proc := multimodal.NewProcessor(host, model)
@@ -83,7 +86,7 @@ func cmdMultimodalAnalyze(args []string) {
 	info, err := os.Stat(target)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		os.Exit(1)
+		exitFunc(1)
 	}
 
 	if info.IsDir() {
@@ -93,7 +96,7 @@ func cmdMultimodalAnalyze(args []string) {
 		})
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
-			os.Exit(1)
+			exitFunc(1)
 		}
 		fmt.Printf("\n✅ Processed %d multimodal files\n", len(items))
 		for _, item := range items {
@@ -112,7 +115,7 @@ func cmdMultimodalAnalyze(args []string) {
 			analysis, err := proc.AnalyzePDF(target, multimodal.DefaultPDFConfig())
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "error: %v\n", err)
-				os.Exit(1)
+				exitFunc(1)
 			}
 			fmt.Printf("📄 PDF: %s (%d pages)\n\n", target, analysis.TotalPages)
 			for _, page := range analysis.Pages {
@@ -134,7 +137,7 @@ func cmdMultimodalAnalyze(args []string) {
 			result := proc.ProcessFile(target)
 			if result.Error != nil {
 				fmt.Fprintf(os.Stderr, "error: %v\n", result.Error)
-				os.Exit(1)
+				exitFunc(1)
 			}
 			fmt.Printf("[%v] %s\n\n%s\n", result.MediaType, target, result.Description)
 		}

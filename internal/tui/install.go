@@ -384,11 +384,17 @@ func isWritable(dir string) bool {
 
 // RunUninstall removes the gleann binary, shell completions, and optionally all data.
 func RunUninstall(removeData bool) {
+	runUninstallFrom(installDirs(), removeData)
+}
+
+// runUninstallFrom is RunUninstall with the install locations injected, so
+// tests can exercise it without touching the real /usr/local/bin.
+func runUninstallFrom(dirs []string, removeData bool) {
 	fmt.Println()
 
 	// Remove binary from known install locations.
 	removed := false
-	for _, dir := range installDirs() {
+	for _, dir := range dirs {
 		p := filepath.Join(ExpandPath(dir), "gleann")
 		if runtime.GOOS == "windows" {
 			p += ".exe"

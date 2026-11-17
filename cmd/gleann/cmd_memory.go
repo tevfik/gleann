@@ -69,7 +69,7 @@ func cmdMemory(args []string) {
 	default:
 		fmt.Fprintf(os.Stderr, "unknown memory subcommand: %s\n", sub)
 		printMemoryUsage()
-		os.Exit(1)
+		exitFunc(1)
 	}
 }
 
@@ -179,7 +179,7 @@ func openMemoryManager() *memory.Manager {
 			fmt.Fprintln(os.Stderr, "      (override the discovery URL with GLEANN_REMOTE_ADDR=<url>, or set")
 			fmt.Fprintln(os.Stderr, "      GLEANN_REMOTE_ADDR=off to force direct bbolt access).")
 		}
-		os.Exit(1)
+		exitFunc(1)
 	}
 	return mgr
 }
@@ -187,7 +187,7 @@ func openMemoryManager() *memory.Manager {
 func cmdMemoryRemember(args []string) {
 	if len(args) == 0 {
 		fmt.Fprintln(os.Stderr, "usage: gleann memory remember <text> [--tag <tags>] [--label <label>]")
-		os.Exit(1)
+		exitFunc(1)
 	}
 
 	var tags []string
@@ -219,7 +219,7 @@ func cmdMemoryRemember(args []string) {
 	content := strings.Join(contentParts, " ")
 	if content == "" {
 		fmt.Fprintln(os.Stderr, "error: no content provided")
-		os.Exit(1)
+		exitFunc(1)
 	}
 
 	// Prefer running server (avoids bbolt lock collision with `gleann serve`).
@@ -241,7 +241,7 @@ func cmdMemoryRemember(args []string) {
 	block, err := mgr.Remember(content, tags...)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		os.Exit(1)
+		exitFunc(1)
 	}
 
 	if label != "" {
@@ -260,13 +260,13 @@ func cmdMemoryRemember(args []string) {
 func cmdMemoryForget(args []string) {
 	if len(args) == 0 {
 		fmt.Fprintln(os.Stderr, "usage: gleann memory forget <id-or-query>")
-		os.Exit(1)
+		exitFunc(1)
 	}
 
 	query := freeText(args, memoryFlagSets["forget"])
 	if query == "" {
 		fmt.Fprintln(os.Stderr, "usage: gleann memory forget <id-or-query>")
-		os.Exit(1)
+		exitFunc(1)
 	}
 
 	if rc := remoteMemoryClient(); rc != nil {
@@ -284,7 +284,7 @@ func cmdMemoryForget(args []string) {
 	count, err := mgr.Forget(query)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		os.Exit(1)
+		exitFunc(1)
 	}
 
 	fmt.Printf("🗑  Forgot %d memory block(s) matching %q\n", count, query)
@@ -298,7 +298,7 @@ func cmdMemoryList(args []string) {
 		t, err := memory.ParseTier(tierStr)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
-			os.Exit(1)
+			exitFunc(1)
 		}
 		tier = t
 	}
@@ -319,7 +319,7 @@ func cmdMemoryList(args []string) {
 	}
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		os.Exit(1)
+		exitFunc(1)
 	}
 
 	if asJSON {
@@ -357,13 +357,13 @@ func cmdMemoryList(args []string) {
 func cmdMemorySearch(args []string) {
 	if len(args) == 0 {
 		fmt.Fprintln(os.Stderr, "usage: gleann memory search <query>")
-		os.Exit(1)
+		exitFunc(1)
 	}
 
 	query := freeText(args, memoryFlagSets["search"])
 	if query == "" {
 		fmt.Fprintln(os.Stderr, "usage: gleann memory search <query>")
-		os.Exit(1)
+		exitFunc(1)
 	}
 	asJSON := hasFlag(args, "--json")
 
@@ -383,7 +383,7 @@ func cmdMemorySearch(args []string) {
 	}
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		os.Exit(1)
+		exitFunc(1)
 	}
 
 	if asJSON {
@@ -412,7 +412,7 @@ func cmdMemoryClear(args []string) {
 		t, err := memory.ParseTier(tierStr)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
-			os.Exit(1)
+			exitFunc(1)
 		}
 		tier = t
 	}
@@ -437,14 +437,14 @@ func cmdMemoryClear(args []string) {
 		count, err := mgr.Clear(tier)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
-			os.Exit(1)
+			exitFunc(1)
 		}
 		fmt.Printf("🗑  Cleared %d memory block(s) from tier %q\n", count, tier)
 	} else {
 		count, err := mgr.ClearAll()
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
-			os.Exit(1)
+			exitFunc(1)
 		}
 		fmt.Printf("🗑  Cleared %d memory block(s) from all tiers\n", count)
 	}
@@ -453,13 +453,13 @@ func cmdMemoryClear(args []string) {
 func cmdMemoryAdd(args []string) {
 	if len(args) < 2 {
 		fmt.Fprintln(os.Stderr, "usage: gleann memory add <tier> <text> [--tag <tags>] [--label <label>]")
-		os.Exit(1)
+		exitFunc(1)
 	}
 
 	tier, err := memory.ParseTier(args[0])
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		os.Exit(1)
+		exitFunc(1)
 	}
 
 	remaining := args[1:]
@@ -491,7 +491,7 @@ func cmdMemoryAdd(args []string) {
 	content := strings.Join(contentParts, " ")
 	if content == "" {
 		fmt.Fprintln(os.Stderr, "error: no content provided")
-		os.Exit(1)
+		exitFunc(1)
 	}
 
 	if rc := remoteMemoryClient(); rc != nil {
@@ -509,7 +509,7 @@ func cmdMemoryAdd(args []string) {
 	block, err := mgr.AddNote(tier, label, content, tags...)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		os.Exit(1)
+		exitFunc(1)
 	}
 
 	fmt.Printf("✅ Added to %s [%s]: %s\n", tier, block.ID[:8], truncateStr(content, 80))
@@ -536,7 +536,7 @@ func cmdMemoryStats() {
 	stats, err := mgr.Stats()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		os.Exit(1)
+		exitFunc(1)
 	}
 
 	fmt.Println("🧠 Memory Statistics:")
@@ -565,17 +565,17 @@ func cmdMemorySummarize(args []string) {
 		conv, err = convStore.Latest()
 		if err != nil || conv == nil {
 			fmt.Fprintln(os.Stderr, "no saved conversations")
-			os.Exit(1)
+			exitFunc(1)
 		}
 	} else if id := getFlag(args, "--id"); id != "" {
 		conv, err = convStore.Load(id)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "error loading conversation: %v\n", err)
-			os.Exit(1)
+			exitFunc(1)
 		}
 	} else {
 		fmt.Fprintln(os.Stderr, "usage: gleann memory summarize [--last | --id <ID>]")
-		os.Exit(1)
+		exitFunc(1)
 	}
 
 	// Build summarizer config from saved config.
@@ -589,7 +589,7 @@ func cmdMemorySummarize(args []string) {
 	summary, err := summarizer.SummarizeConversation(ctx, conv)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		os.Exit(1)
+		exitFunc(1)
 	}
 
 	mgr := openMemoryManager()
@@ -597,7 +597,7 @@ func cmdMemorySummarize(args []string) {
 
 	if err := mgr.Store().SaveSummary(summary); err != nil {
 		fmt.Fprintf(os.Stderr, "error saving summary: %v\n", err)
-		os.Exit(1)
+		exitFunc(1)
 	}
 
 	fmt.Printf("✅ Summary saved for %q:\n   %s\n", summary.Title, summary.Content)
@@ -746,7 +746,7 @@ func cmdMemoryPrune(args []string) {
 		d2, err2 := time.ParseDuration(ageStr)
 		if err2 != nil {
 			fmt.Fprintf(os.Stderr, "error: invalid duration %q\n", ageStr)
-			os.Exit(1)
+			exitFunc(1)
 		}
 		d = d2
 	}
@@ -807,7 +807,7 @@ func cmdMemoryContext(args []string) {
 	}
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		os.Exit(1)
+		exitFunc(1)
 	}
 
 	if hasFlag(args, "--json") {
@@ -832,7 +832,7 @@ func cmdMemoryContext(args []string) {
 func cmdMemoryFailure(args []string) {
 	if len(args) == 0 {
 		fmt.Fprintln(os.Stderr, "usage: gleann memory failure add|list ...")
-		os.Exit(1)
+		exitFunc(1)
 	}
 	switch args[0] {
 	case "add":
@@ -841,7 +841,7 @@ func cmdMemoryFailure(args []string) {
 		cmdMemoryFailureList(args[1:])
 	default:
 		fmt.Fprintf(os.Stderr, "unknown memory failure subcommand: %s\n", args[0])
-		os.Exit(1)
+		exitFunc(1)
 	}
 }
 
@@ -854,7 +854,7 @@ func cmdMemoryFailureAdd(args []string) {
 
 	if command == "" || errText == "" {
 		fmt.Fprintln(os.Stderr, "usage: gleann memory failure add --command <c> --error <text> --fix <text> [--path <p>]... [--symbol <s>]...")
-		os.Exit(1)
+		exitFunc(1)
 	}
 
 	mgr := openMemoryManager()
@@ -869,7 +869,7 @@ func cmdMemoryFailureAdd(args []string) {
 	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		os.Exit(1)
+		exitFunc(1)
 	}
 
 	if block.Confirms > 1 {
@@ -888,7 +888,7 @@ func cmdMemoryFailureList(args []string) {
 	failures, err := mgr.ListFailures()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		os.Exit(1)
+		exitFunc(1)
 	}
 
 	if asJSON {
@@ -922,7 +922,7 @@ func cmdMemoryMaintain() {
 	fmt.Println("Running memory maintenance...")
 	if err := mgr.RunMaintenance(); err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		os.Exit(1)
+		exitFunc(1)
 	}
 	fmt.Println("✅ Maintenance complete.")
 }
@@ -978,7 +978,7 @@ func cmdMemoryCompact(args []string) {
 		pruned, err := rc.Compact(minVal)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "error (remote): %v\n", err)
-			os.Exit(1)
+			exitFunc(1)
 		}
 		fmt.Printf("🧹 Memory compacted: %d stale/unreliable block(s) pruned (min validity: %.2f) (via running server)\n", pruned, minVal)
 		return
@@ -990,7 +990,7 @@ func cmdMemoryCompact(args []string) {
 	pruned, err := mgr.Compact(minVal)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		os.Exit(1)
+		exitFunc(1)
 	}
 
 	fmt.Printf("🧹 Memory compacted: %d stale/unreliable block(s) pruned (min validity: %.2f)\n", pruned, minVal)

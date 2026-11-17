@@ -159,7 +159,7 @@ func getConfig(args []string) gleann.Config {
 				config.StorageMode = args[i+1]
 				if err := config.ApplyStorageMode(); err != nil {
 					fmt.Fprintf(os.Stderr, "error: --storage: %v\n", err)
-					os.Exit(1)
+					exitFunc(1)
 				}
 				i++
 			}

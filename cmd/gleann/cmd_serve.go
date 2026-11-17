@@ -87,12 +87,12 @@ Options:
 	_, portStr, err := net.SplitHostPort(addr)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: invalid address %q: %v\n", addr, err)
-		os.Exit(1)
+		exitFunc(1)
 	}
 	port, err := strconv.Atoi(portStr)
 	if err != nil || port < 1 || port > 65535 {
 		fmt.Fprintf(os.Stderr, "error: invalid port number %q\n", portStr)
-		os.Exit(1)
+		exitFunc(1)
 	}
 	if port < 1024 {
 		fmt.Fprintf(os.Stderr, "warning: port %d requires root privileges (did you mean :%d?)\n", port, port+8000)
@@ -134,7 +134,7 @@ Options:
 
 	// Graceful shutdown.
 	stop := make(chan os.Signal, 1)
-	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
+	serveNotify(stop)
 
 	stopped := make(chan struct{})
 	go func() {
@@ -150,7 +150,7 @@ Options:
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		cleanupLlamaCPP()
-		os.Exit(1)
+		exitFunc(1)
 	}
 	if !bindIsLoopbackAddr(addr) {
 		fmt.Fprintf(os.Stderr, "⚠️  server listens on %s (not loopback): reachable from the network; every request needs a token\n", addr)
@@ -221,8 +221,14 @@ Options:
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "server error: %v\n", err)
 		cleanupLlamaCPP()
-		os.Exit(1)
+		exitFunc(1)
 	}
+}
+
+// serveNotify routes the shutdown signals to stop. Tests replace it to keep
+// the channel and stop the server without sending a process signal.
+var serveNotify = func(stop chan<- os.Signal) {
+	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
 }
 
 func bindIsLoopbackAddr(addr string) bool {

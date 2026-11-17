@@ -127,14 +127,8 @@ func (t *Tracker) UpsertRecord(ctx context.Context, hash, path string, modTime, 
 		filesBucket := tx.Bucket(bucketFiles)
 		pathsBucket := tx.Bucket(bucketPaths)
 
-		// Check if a path existed before with a different hash, to clean up old paths index
-		oldHash := pathsBucket.Get([]byte(path))
-		if oldHash != nil && string(oldHash) != hash {
-			// Actually the old record hash is different, so we should allow overwrite,
-			// but removing the file record for the old hash is tricky without full tracking.
-			// Re-indexing handles overwrites though.
-		}
-
+		// A path that held another hash is simply re-pointed; the old hash's
+		// record stays until re-indexing overwrites it.
 		if err := filesBucket.Put([]byte(hash), data); err != nil {
 			return err
 		}
@@ -194,58 +188,6 @@ func SortFilesByNewest(paths []string) {
 	for i, item := range items {
 		paths[i] = item.path
 	}
-}
-
-// GetPathByHash finds the current actual path of a file, enabling robust recomputations.
-func (t *Tracker) GetPathByHash(ctx context.Context, hash string) (string, error) {
-	var path string
-	err := t.db.View(func(tx *bbolt.Tx) error {
-		b := tx.Bucket(bucketFiles)
-		val := b.Get([]byte(hash))
-		if val == nil {
-			return fmt.Errorf("hash not found: %s", hash)
-		}
-		var record FileRecord
-		if err := json.Unmarshal(val, &record); err != nil {
-			return err
-		}
-		path = record.Path
-		return nil
-	})
-	return path, err
-}
-
-// GetHashByPath finds the hash mapped to a path (if tracking).
-func (t *Tracker) GetHashByPath(ctx context.Context, path string) (string, error) {
-	var hash string
-	err := t.db.View(func(tx *bbolt.Tx) error {
-		b := tx.Bucket(bucketPaths)
-		val := b.Get([]byte(path))
-		if val == nil {
-			return fmt.Errorf("path not found: %s", path)
-		}
-		hash = string(val)
-		return nil
-	})
-	return hash, err
-}
-
-// RemoveByHash removes a hash from tracking.
-func (t *Tracker) RemoveByHash(ctx context.Context, hash string) error {
-	return t.db.Update(func(tx *bbolt.Tx) error {
-		filesBucket := tx.Bucket(bucketFiles)
-		pathsBucket := tx.Bucket(bucketPaths)
-
-		val := filesBucket.Get([]byte(hash))
-		if val != nil {
-			var record FileRecord
-			if err := json.Unmarshal(val, &record); err == nil {
-				pathsBucket.Delete([]byte(record.Path))
-			}
-		}
-
-		return filesBucket.Delete([]byte(hash))
-	})
 }
 
 // GetRecordByPath returns the FileRecord for path, or nil if not tracked.

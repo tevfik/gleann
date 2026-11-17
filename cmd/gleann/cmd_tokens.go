@@ -17,20 +17,20 @@ func cmdTokens(args []string) {
 	rejectUnknownFlags("tokens", args, flagSet{})
 	if len(args) < 1 {
 		printTokensUsage()
-		os.Exit(1)
+		exitFunc(1)
 	}
 
 	path := args[0]
 	absPath, err := filepath.Abs(path)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error resolving path: %v\n", err)
-		os.Exit(1)
+		exitFunc(1)
 	}
 
 	_, err = os.Stat(absPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
+		exitFunc(1)
 	}
 
 	fmt.Printf("📊 Token Estimation for: %s\n", path)
@@ -90,7 +90,7 @@ func cmdTokens(args []string) {
 
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error walking directory: %v\n", err)
-		os.Exit(1)
+		exitFunc(1)
 	}
 
 	if fileCount == 0 {

@@ -401,3 +401,20 @@ func TestBuildGraphIndexOldFormatRefused(t *testing.T) {
 		t.Errorf("GenerateGraphReport = %v, want the migration refusal", err)
 	}
 }
+
+// UpdateIncremental re-chunks only changedFiles (existing files are
+// re-added, missing ones removed) and applies the delta to the index, the
+// step Sync runs for its changed files. Only the tests call it directly.
+func UpdateIncremental(ctx context.Context, name, docsDir string, changedFiles []string, opts Options) ([]*PluginDoc, error) {
+	unlock, err := lockIndex(ctx, opts.Config.IndexDir, name)
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
+	env, cleanup, err := newPipelineEnv(ctx, &opts, true)
+	if err != nil {
+		return nil, err
+	}
+	defer cleanup()
+	return env.incremental(ctx, name, docsDir, changedFiles)
+}

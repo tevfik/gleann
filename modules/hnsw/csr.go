@@ -471,6 +471,9 @@ func ReadCSR(r io.Reader) (*CSRGraph, error) {
 	if err := read(&dims); err != nil {
 		return nil, fmt.Errorf("read dimensions: %w", err)
 	}
+	if dims < 0 {
+		return nil, fmt.Errorf("invalid dimensions: %d", dims)
+	}
 	csr.Dimensions = int(dims)
 
 	var maxLevel int32
@@ -493,6 +496,9 @@ func ReadCSR(r io.Reader) (*CSRGraph, error) {
 	if err := read(&numStored); err != nil {
 		return nil, fmt.Errorf("read numStored: %w", err)
 	}
+	if numStored < 0 {
+		return nil, fmt.Errorf("invalid numStored: %d", numStored)
+	}
 
 	if version >= CSRVersion2 {
 		var dtypeCode uint32
@@ -511,19 +517,31 @@ func ReadCSR(r io.Reader) (*CSRGraph, error) {
 	if err := read(&numIDs); err != nil {
 		return nil, fmt.Errorf("read numIDs: %w", err)
 	}
-	csr.IDMap = make([]int64, numIDs)
-	for i := range csr.IDMap {
-		if err := read(&csr.IDMap[i]); err != nil {
-			return nil, fmt.Errorf("read id[%d]: %w", i, err)
-		}
+	if numIDs < 0 {
+		return nil, fmt.Errorf("invalid numIDs: %d", numIDs)
+	}
+	ids, err := readSlice[int64](r, numIDs)
+	if err != nil {
+		return nil, fmt.Errorf("read ids: %w", err)
+	}
+	csr.IDMap = ids
+	known := make(map[int64]bool, len(ids))
+	for _, id := range ids {
+		known[id] = true
+	}
+	if numIDs > 0 && !known[csr.EntryPoint] {
+		return nil, fmt.Errorf("entry point %d is not a node", csr.EntryPoint)
 	}
 
 	// === Node Levels ===
+	levels, err := readSlice[int32](r, numIDs)
+	if err != nil {
+		return nil, fmt.Errorf("read node levels: %w", err)
+	}
 	csr.NodeLevels = make([]int, numIDs)
-	for i := range csr.NodeLevels {
-		var lvl int32
-		if err := read(&lvl); err != nil {
-			return nil, fmt.Errorf("read nodeLevel[%d]: %w", i, err)
+	for i, lvl := range levels {
+		if lvl < 0 || lvl > maxCSRLevel {
+			return nil, fmt.Errorf("invalid level %d of node %d", lvl, csr.IDMap[i])
 		}
 		csr.NodeLevels[i] = int(lvl)
 	}
@@ -533,6 +551,13 @@ func ReadCSR(r io.Reader) (*CSRGraph, error) {
 	if err := read(&numLevels); err != nil {
 		return nil, fmt.Errorf("read numLevels: %w", err)
 	}
+	if numLevels < 0 || numLevels > maxCSRLevel+1 {
+		return nil, fmt.Errorf("invalid numLevels: %d", numLevels)
+	}
+	// A search descends from MaxLevel: it must name the top stored level.
+	if csr.MaxLevel != int(numLevels)-1 {
+		return nil, fmt.Errorf("max level %d does not match %d stored levels", csr.MaxLevel, numLevels)
+	}
 	csr.Levels = make([]CSRLevel, numLevels)
 
 	for l := int32(0); l < numLevels; l++ {
@@ -540,31 +565,38 @@ func ReadCSR(r io.Reader) (*CSRGraph, error) {
 		if err := read(&nn); err != nil {
 			return nil, fmt.Errorf("read level[%d] numNodes: %w", l, err)
 		}
-
-		level := CSRLevel{
-			NumNodes:    int(nn),
-			NodeOffsets: make([]int64, nn+1),
+		if nn < 0 || nn > numIDs {
+			return nil, fmt.Errorf("invalid level[%d] numNodes: %d", l, nn)
 		}
 
-		for i := int64(0); i <= nn; i++ {
-			if err := read(&level.NodeOffsets[i]); err != nil {
-				return nil, fmt.Errorf("read level[%d] nodeOffset[%d]: %w", l, i, err)
-			}
+		offsets, err := readSlice[int64](r, nn+1)
+		if err != nil {
+			return nil, fmt.Errorf("read level[%d] node offsets: %w", l, err)
 		}
 
 		var numNeighbors int64
 		if err := read(&numNeighbors); err != nil {
 			return nil, fmt.Errorf("read level[%d] numNeighbors: %w", l, err)
 		}
-
-		level.Neighbors = make([]int64, numNeighbors)
-		for i := int64(0); i < numNeighbors; i++ {
-			if err := read(&level.Neighbors[i]); err != nil {
-				return nil, fmt.Errorf("read level[%d] neighbor[%d]: %w", l, i, err)
+		if numNeighbors < 0 {
+			return nil, fmt.Errorf("invalid level[%d] numNeighbors: %d", l, numNeighbors)
+		}
+		// ToGraph slices Neighbors[offsets[i]:offsets[i+1]].
+		if offsets[0] != 0 || offsets[nn] > numNeighbors {
+			return nil, fmt.Errorf("invalid level[%d] node offsets", l)
+		}
+		for i := int64(1); i <= nn; i++ {
+			if offsets[i] < offsets[i-1] {
+				return nil, fmt.Errorf("invalid level[%d] node offsets", l)
 			}
 		}
 
-		csr.Levels[l] = level
+		neighbors, err := readSlice[int64](r, numNeighbors)
+		if err != nil {
+			return nil, fmt.Errorf("read level[%d] neighbors: %w", l, err)
+		}
+
+		csr.Levels[l] = CSRLevel{NumNodes: int(nn), NodeOffsets: offsets, Neighbors: neighbors}
 	}
 
 	// === Stored Embeddings ===
@@ -574,11 +606,9 @@ func ReadCSR(r io.Reader) (*CSRGraph, error) {
 			if err := read(&id); err != nil {
 				return nil, fmt.Errorf("read embedding id[%d]: %w", i, err)
 			}
-			vec := make([]uint16, csr.Dimensions)
-			for j := range vec {
-				if err := read(&vec[j]); err != nil {
-					return nil, fmt.Errorf("read embedding[%d][%d]: %w", i, j, err)
-				}
+			vec, err := readSlice[uint16](r, int64(csr.Dimensions))
+			if err != nil {
+				return nil, fmt.Errorf("read embedding[%d]: %w", i, err)
 			}
 			csr.StoredEmbeddingsF16[id] = vec
 		}
@@ -588,17 +618,34 @@ func ReadCSR(r io.Reader) (*CSRGraph, error) {
 			if err := read(&id); err != nil {
 				return nil, fmt.Errorf("read embedding id[%d]: %w", i, err)
 			}
-			vec := make([]float32, csr.Dimensions)
-			for j := range vec {
-				if err := read(&vec[j]); err != nil {
-					return nil, fmt.Errorf("read embedding[%d][%d]: %w", i, j, err)
-				}
+			vec, err := readSlice[float32](r, int64(csr.Dimensions))
+			if err != nil {
+				return nil, fmt.Errorf("read embedding[%d]: %w", i, err)
 			}
 			csr.StoredEmbeddings[id] = vec
 		}
 	}
 
 	return csr, nil
+}
+
+// maxCSRLevel bounds the node levels ReadCSR accepts. A node's level is
+// floor(-ln(u)/ln(M)) for a uniform u >= 2^-53, so even M=2 stays below 54.
+const maxCSRLevel = 255
+
+// readSlice reads n little-endian values in chunks, so a corrupted count
+// fails on the short input instead of allocating the whole count up front.
+func readSlice[T int64 | int32 | uint16 | float32](r io.Reader, n int64) ([]T, error) {
+	const chunk = 1 << 16
+	out := make([]T, 0, min(n, chunk))
+	for int64(len(out)) < n {
+		buf := make([]T, min(n-int64(len(out)), chunk))
+		if err := binary.Read(r, binary.LittleEndian, buf); err != nil {
+			return nil, err
+		}
+		out = append(out, buf...)
+	}
+	return out, nil
 }
 
 // ToGraph reconstructs an HNSW Graph from a CSR representation.

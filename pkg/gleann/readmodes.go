@@ -707,11 +707,6 @@ func extractAggressive(content string) string {
 			continue
 		}
 
-		// Skip doc comments
-		if strings.HasPrefix(trimmed, "///") || strings.HasPrefix(trimmed, "/**") {
-			continue
-		}
-
 		// Skip package declarations (Go-specific boilerplate)
 		if strings.HasPrefix(trimmed, "package ") {
 			continue

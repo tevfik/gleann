@@ -761,18 +761,7 @@ func TestHandleSearch_AutoResolveEmptyIndex(t *testing.T) {
 
 func TestHandleSync_ProgressReporting(t *testing.T) {
 	t.Setenv("GLEANN_ALLOWED_ROOTS", os.TempDir())
-	// 1. Verify parseProgressLine
-	line := "gleann-progress phase=vector_index pct=62.5 items=625/1000 bytes=12500/20000 rate=25.0 eta_s=15.0"
-	phase, pct, done, total, rate, etaSec, ok := parseProgressLine(line)
-	if !ok {
-		t.Fatalf("expected parseProgressLine to succeed")
-	}
-	if phase != "vector_index" || pct != 62.5 || done != 625 || total != 1000 || rate != 25.0 || etaSec != 15.0 {
-		t.Errorf("unexpected parsed values: phase=%s, pct=%.1f, done=%d, total=%d, rate=%.1f, eta=%.1f",
-			phase, pct, done, total, rate, etaSec)
-	}
-
-	// 2. Verify handleSync returns live progress when sync is in progress
+	// handleSync returns live progress when sync is in progress
 	tmpDir := t.TempDir()
 	srv := NewServer(Config{IndexDir: tmpDir})
 	defer srv.Close()
@@ -870,4 +859,16 @@ func TestHandleSync_DocsDirAndFilesContained(t *testing.T) {
 	if res := call(map[string]interface{}{"index": "src", "files": []interface{}{filepath.Join(src, "ok.go")}}); res.IsError {
 		t.Errorf("file inside the source directory refused: %v", res.Content)
 	}
+}
+
+// getSearcher returns the cached searcher without keeping it borrowed: the
+// caller must not hold it across a freshness replacement. Tool handlers use
+// acquireSearcher and release the searcher when done.
+func (s *Server) getSearcher(name string) (*gleann.LeannSearcher, error) {
+	sr, release, err := s.acquireSearcher(name)
+	if err != nil {
+		return nil, err
+	}
+	release()
+	return sr, nil
 }

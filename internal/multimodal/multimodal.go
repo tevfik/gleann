@@ -363,13 +363,6 @@ func (p *Processor) CanProcess(path string) bool {
 	return IsMultimodal(path)
 }
 
-// descriptionPrompt is a back-compat wrapper used by older tests and any
-// external callers. Defaults to English; new code should prefer the
-// method on *Processor which honours the configured locale.
-func descriptionPrompt(mt MediaType, filename string) string {
-	return (&Processor{Lang: "en"}).descriptionPrompt(mt, filename)
-}
-
 // descriptionPrompt returns an appropriate prompt for the media type.
 // Bug #10: respect Processor.Lang to issue Turkish prompts when requested.
 func (p *Processor) descriptionPrompt(mt MediaType, filename string) string {

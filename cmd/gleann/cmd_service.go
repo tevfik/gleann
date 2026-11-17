@@ -8,10 +8,17 @@ import (
 	"github.com/tevfik/gleann/internal/service"
 )
 
+// Seams for tests: these change the system (service unit, background process).
+var (
+	serviceInstall   = service.Install
+	serviceUninstall = service.Uninstall
+	serviceStart     = service.Start
+)
+
 func cmdService(args []string) {
 	if len(args) < 1 {
 		printServiceUsage()
-		os.Exit(1)
+		exitFunc(1)
 	}
 
 	sub := args[0]
@@ -22,26 +29,26 @@ func cmdService(args []string) {
 	case "install":
 		addr := resolveServiceAddr(args[1:])
 		bin := getFlag(args[1:], "--bin")
-		if err := service.Install(bin, addr); err != nil {
+		if err := serviceInstall(bin, addr); err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
-			os.Exit(1)
+			exitFunc(1)
 		}
 		fmt.Println("✅ gleann service installed (auto-start on login)")
 		fmt.Println("   Start now with: gleann service start")
 
 	case "uninstall":
-		if err := service.Uninstall(); err != nil {
+		if err := serviceUninstall(); err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
-			os.Exit(1)
+			exitFunc(1)
 		}
 		fmt.Println("✅ gleann service uninstalled")
 
 	case "start":
 		addr := resolveServiceAddr(args[1:])
 		bin := getFlag(args[1:], "--bin")
-		if err := service.Start(bin, addr); err != nil {
+		if err := serviceStart(bin, addr); err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
-			os.Exit(1)
+			exitFunc(1)
 		}
 		st := service.GetStatus()
 		fmt.Printf("✅ gleann server started (PID %d, %s)\n", st.PID, st.Addr)
@@ -49,7 +56,7 @@ func cmdService(args []string) {
 	case "stop":
 		if err := service.Stop(); err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
-			os.Exit(1)
+			exitFunc(1)
 		}
 		fmt.Println("✅ gleann server stopped")
 
@@ -57,9 +64,9 @@ func cmdService(args []string) {
 		service.Stop() // ignore error if not running
 		addr := resolveServiceAddr(args[1:])
 		bin := getFlag(args[1:], "--bin")
-		if err := service.Start(bin, addr); err != nil {
+		if err := serviceStart(bin, addr); err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
-			os.Exit(1)
+			exitFunc(1)
 		}
 		st := service.GetStatus()
 		fmt.Printf("✅ gleann server restarted (PID %d, %s)\n", st.PID, st.Addr)
@@ -76,14 +83,14 @@ func cmdService(args []string) {
 		logs, err := service.Logs(n)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
-			os.Exit(1)
+			exitFunc(1)
 		}
 		fmt.Print(logs)
 
 	default:
 		fmt.Fprintf(os.Stderr, "unknown service command: %s\n", sub)
 		printServiceUsage()
-		os.Exit(1)
+		exitFunc(1)
 	}
 }
 

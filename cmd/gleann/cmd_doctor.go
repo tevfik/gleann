@@ -132,7 +132,7 @@ func cmdDoctor() {
 	if failed > 0 {
 		fmt.Println()
 		fmt.Println("Run 'gleann setup --bootstrap' to fix common issues automatically.")
-		os.Exit(1)
+		exitFunc(1)
 	}
 }
 

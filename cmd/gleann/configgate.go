@@ -22,6 +22,6 @@ var configExemptCommands = map[string]bool{
 func requireValidConfig() {
 	if _, err := tui.LoadSavedConfigChecked(); err != nil {
 		fmt.Fprintf(os.Stderr, "error: config: %v\n", err)
-		os.Exit(1)
+		exitFunc(1)
 	}
 }

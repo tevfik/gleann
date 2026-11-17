@@ -296,13 +296,13 @@ func cmdInstall(args []string) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: cannot determine home directory: %v\n", err)
-		os.Exit(1)
+		exitFunc(1)
 	}
 
 	targetDir, err := resolveTargetDirectory(dirFlag, indexFlag)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: cannot determine target directory: %v\n", err)
-		os.Exit(1)
+		exitFunc(1)
 	}
 	dir := targetDir
 
@@ -349,7 +349,7 @@ func cmdInstall(args []string) {
 		if p == nil {
 			fmt.Fprintf(os.Stderr, "error: unknown platform %q\n", platformName)
 			fmt.Fprintln(os.Stderr, "Run `gleann install --list` to see supported platforms.")
-			os.Exit(1)
+			exitFunc(1)
 		}
 		targets = []*Platform{p}
 	} else {

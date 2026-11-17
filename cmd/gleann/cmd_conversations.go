@@ -101,7 +101,7 @@ func pickConversation(store *conversations.Store, args []string) {
 	convs, err := store.List()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		os.Exit(1)
+		exitFunc(1)
 	}
 	if len(convs) == 0 {
 		fmt.Println("No saved conversations.")
@@ -113,7 +113,7 @@ func pickConversation(store *conversations.Store, args []string) {
 	finalModel, err := p.Run()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		os.Exit(1)
+		exitFunc(1)
 	}
 
 	// Build filtered args (--pick removed) for reuse below.
@@ -144,7 +144,7 @@ func listConversations(store *conversations.Store) {
 	convs, err := store.List()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		os.Exit(1)
+		exitFunc(1)
 	}
 	if len(convs) == 0 {
 		fmt.Println("No saved conversations.")
@@ -168,7 +168,7 @@ func showConversation(store *conversations.Store, idOrTitle string) {
 	conv, err := store.Load(idOrTitle)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		os.Exit(1)
+		exitFunc(1)
 	}
 	printConversation(conv)
 }
@@ -177,7 +177,7 @@ func showLastConversation(store *conversations.Store) {
 	conv, err := store.Latest()
 	if err != nil || conv == nil {
 		fmt.Fprintln(os.Stderr, "no saved conversations")
-		os.Exit(1)
+		exitFunc(1)
 	}
 	printConversation(conv)
 }
@@ -220,13 +220,13 @@ func deleteOlderThan(store *conversations.Store, durationStr string) {
 		d, err = parseFriendlyDuration(durationStr)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "error: invalid duration %q (examples: 24h, 7d, 30d)\n", durationStr)
-			os.Exit(1)
+			exitFunc(1)
 		}
 	}
 	count, err := store.DeleteOlderThan(d)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		os.Exit(1)
+		exitFunc(1)
 	}
 	fmt.Printf("🗑  Deleted %d conversation(s) older than %s\n", count, durationStr)
 }

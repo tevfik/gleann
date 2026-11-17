@@ -374,64 +374,6 @@ func TestEnsureSourceLineCreatesFile(t *testing.T) {
 	}
 }
 
-func TestSanitizeConfig(t *testing.T) {
-	// Case 1: EIF + Ollama (OllamaHost preserved, OpenAI/Anthropic wiped)
-	cfg := &OnboardResult{
-		EmbeddingProvider: "eif",
-		LLMProvider:       "ollama",
-		OllamaHost:        "http://localhost:11434",
-		OllamaAPIKey:      "ollama-secret",
-		OpenAIBaseURL:     "https://api.openai.com",
-		OpenAIKey:         "sk-test",
-		AnthropicKey:      "ant-test",
-	}
-	SanitizeConfig(cfg)
-	if cfg.OllamaHost != "http://localhost:11434" {
-		t.Errorf("OllamaHost should be preserved, got %q", cfg.OllamaHost)
-	}
-	if cfg.OllamaAPIKey != "ollama-secret" {
-		t.Errorf("OllamaAPIKey should be preserved, got %q", cfg.OllamaAPIKey)
-	}
-	if cfg.OpenAIBaseURL != "" {
-		t.Errorf("OpenAIBaseURL should be stripped for EIF+Ollama, got %q", cfg.OpenAIBaseURL)
-	}
-	if cfg.OpenAIKey != "" {
-		t.Errorf("OpenAIKey should be stripped for EIF+Ollama, got %q", cfg.OpenAIKey)
-	}
-	if cfg.AnthropicKey != "" {
-		t.Errorf("AnthropicKey should be stripped for EIF+Ollama, got %q", cfg.AnthropicKey)
-	}
-
-	// Case 2: EIF + Llamacpp / local (all remote hosts and keys wiped)
-	cfg2 := &OnboardResult{
-		EmbeddingProvider: "eif",
-		LLMProvider:       "llamacpp",
-		OllamaHost:        "http://localhost:11434",
-		OpenAIBaseURL:     "https://api.openai.com",
-		AnthropicKey:      "ant-test",
-	}
-	SanitizeConfig(cfg2)
-	if cfg2.OllamaHost != "" || cfg2.OpenAIBaseURL != "" || cfg2.AnthropicKey != "" {
-		t.Errorf("all remote endpoints/keys should be stripped for EIF+Llamacpp, got %+v", cfg2)
-	}
-
-	// Case 3: OpenAI provider (OpenAI credentials preserved)
-	cfg3 := &OnboardResult{
-		EmbeddingProvider: "openai",
-		LLMProvider:       "openai",
-		OpenAIBaseURL:     "https://api.openai.com",
-		OpenAIKey:         "sk-valid",
-		OllamaHost:        "http://localhost:11434",
-	}
-	SanitizeConfig(cfg3)
-	if cfg3.OpenAIBaseURL != "https://api.openai.com" || cfg3.OpenAIKey != "sk-valid" {
-		t.Errorf("OpenAI settings should be preserved, got %+v", cfg3)
-	}
-	if cfg3.OllamaHost != "" {
-		t.Errorf("OllamaHost should be stripped when only OpenAI is used, got %q", cfg3.OllamaHost)
-	}
-}
-
 func TestSaveConfig_DeepMergePreservesExistingFields(t *testing.T) {
 	tempHome := t.TempDir()
 	t.Setenv("HOME", tempHome)

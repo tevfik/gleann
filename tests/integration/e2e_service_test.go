@@ -529,36 +529,6 @@ func TestE2E_Autosetup_FormatDetectedConfigBox(t *testing.T) {
 	}
 }
 
-func TestE2E_Autosetup_TiersAreSorted(t *testing.T) {
-	tiers := autosetup.EmbeddingTiers()
-	if len(tiers) < 3 {
-		t.Fatalf("expected at least 3 tiers, got %d", len(tiers))
-	}
-
-	// Tiers should be in ascending order.
-	lastTier := 0
-	for _, tier := range tiers {
-		if tier.Tier < lastTier {
-			t.Errorf("tiers not in ascending order: tier %d after tier %d (%s)",
-				tier.Tier, lastTier, tier.Name)
-		}
-		lastTier = tier.Tier
-	}
-
-	// Each tier should have non-empty fields.
-	for _, tier := range tiers {
-		if tier.Name == "" {
-			t.Error("tier has empty Name")
-		}
-		if tier.Size == "" {
-			t.Error("tier has empty Size")
-		}
-		if tier.Tier < 1 || tier.Tier > 3 {
-			t.Errorf("tier %s has invalid tier number: %d", tier.Name, tier.Tier)
-		}
-	}
-}
-
 func TestE2E_Autosetup_EnsureConfigIdempotent(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Setenv("HOME", tmpDir)

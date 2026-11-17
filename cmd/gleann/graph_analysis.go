@@ -59,7 +59,7 @@ func openAnalysisOrExit(config gleann.Config, indexName string) analysisSource {
 	src, err := openAnalysis(config, indexName)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error opening graph db: %v\n", err)
-		os.Exit(1)
+		exitFunc(1)
 	}
 	return src
 }
@@ -68,7 +68,7 @@ func callGraphOrExit(src analysisSource) *community.Graph {
 	g, err := src.CallGraph()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error loading graph: %v\n", err)
-		os.Exit(1)
+		exitFunc(1)
 	}
 	return g
 }
@@ -78,7 +78,7 @@ func cmdGraphViz(args []string, config gleann.Config) {
 	indexName := getFlag(args, "--index")
 	if indexName == "" {
 		fmt.Fprintln(os.Stderr, "error: --index flag required")
-		os.Exit(1)
+		exitFunc(1)
 	}
 
 	output := getFlag(args, "--output")
@@ -94,7 +94,7 @@ func cmdGraphViz(args []string, config gleann.Config) {
 	result, err := src.Communities(5, 20)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		os.Exit(1)
+		exitFunc(1)
 	}
 	fmt.Printf("   %d communities, %d god nodes, modularity=%.3f (%s)\n",
 		len(result.Communities), len(result.GodNodes), result.Modularity,
@@ -106,7 +106,7 @@ func cmdGraphViz(args []string, config gleann.Config) {
 	f, err := os.Create(output)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error creating file: %v\n", err)
-		os.Exit(1)
+		exitFunc(1)
 	}
 	defer f.Close()
 
@@ -114,7 +114,7 @@ func cmdGraphViz(args []string, config gleann.Config) {
 	opts.Title = fmt.Sprintf("gleann — %s", indexName)
 	if err := viz.RenderHTML(f, g, result, opts); err != nil {
 		fmt.Fprintf(os.Stderr, "error rendering HTML: %v\n", err)
-		os.Exit(1)
+		exitFunc(1)
 	}
 
 	fmt.Printf("✅ Graph visualization saved to %s\n", output)
@@ -125,7 +125,7 @@ func cmdGraphReport(args []string, config gleann.Config) {
 	indexName := getFlag(args, "--index")
 	if indexName == "" {
 		fmt.Fprintln(os.Stderr, "error: --index flag required")
-		os.Exit(1)
+		exitFunc(1)
 	}
 
 	output := getFlag(args, "--output")
@@ -138,13 +138,13 @@ func cmdGraphReport(args []string, config gleann.Config) {
 	if other := existingReportIndex(output); other != "" && other != indexName && !hasFlag(args, "--force") {
 		fmt.Fprintf(os.Stderr, "error: %s already holds the graph report of index %q; refusing to overwrite it with index %q.\n"+
 			"       Use --output <file.md> to write elsewhere or --force to overwrite.\n", absPath(output), other, indexName)
-		os.Exit(1)
+		exitFunc(1)
 	}
 
 	fmt.Println("📊 Running community detection for report...")
 	if err := generateGraphReportFile(indexName, config.IndexDir, getFlag(args, "--docs"), output); err != nil {
 		fmt.Fprintf(os.Stderr, "error generating graph report: %v\n", err)
-		os.Exit(1)
+		exitFunc(1)
 	}
 
 	fmt.Printf("✅ Graph report saved to %s\n", absPath(output))
@@ -182,7 +182,7 @@ func cmdGraphCommunities(args []string, config gleann.Config) {
 	indexName := getFlag(args, "--index")
 	if indexName == "" {
 		fmt.Fprintln(os.Stderr, "error: --index flag required")
-		os.Exit(1)
+		exitFunc(1)
 	}
 
 	src := openAnalysisOrExit(config, indexName)
@@ -191,7 +191,7 @@ func cmdGraphCommunities(args []string, config gleann.Config) {
 	result, err := src.Communities(5, 20)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		os.Exit(1)
+		exitFunc(1)
 	}
 
 	fmt.Printf("🕸️  Community Detection Results\n")
@@ -222,12 +222,12 @@ func cmdGraphExport(args []string, config gleann.Config) {
 	indexName := getFlag(args, "--index")
 	if indexName == "" {
 		fmt.Fprintln(os.Stderr, "error: --index flag required")
-		os.Exit(1)
+		exitFunc(1)
 	}
 	format := getFlag(args, "--format")
 	if format == "" {
 		fmt.Fprintln(os.Stderr, "error: --format flag required (graphml or cypher)")
-		os.Exit(1)
+		exitFunc(1)
 	}
 
 	output := getFlag(args, "--output")
@@ -245,7 +245,7 @@ func cmdGraphExport(args []string, config gleann.Config) {
 		f, err := os.Create(output)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
-			os.Exit(1)
+			exitFunc(1)
 		}
 		defer f.Close()
 		exportGraphML(f, g)
@@ -258,7 +258,7 @@ func cmdGraphExport(args []string, config gleann.Config) {
 		f, err := os.Create(output)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
-			os.Exit(1)
+			exitFunc(1)
 		}
 		defer f.Close()
 		exportCypher(f, g)
@@ -266,7 +266,7 @@ func cmdGraphExport(args []string, config gleann.Config) {
 
 	default:
 		fmt.Fprintf(os.Stderr, "error: unsupported format %q (use graphml or cypher)\n", format)
-		os.Exit(1)
+		exitFunc(1)
 	}
 }
 
@@ -344,7 +344,7 @@ func cmdGraphWiki(args []string, config gleann.Config) {
 	indexName := getFlag(args, "--index")
 	if indexName == "" {
 		fmt.Fprintln(os.Stderr, "error: --index flag required")
-		os.Exit(1)
+		exitFunc(1)
 	}
 
 	output := getFlag(args, "--output")
@@ -359,7 +359,7 @@ func cmdGraphWiki(args []string, config gleann.Config) {
 	result, err := src.Communities(5, 20)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		os.Exit(1)
+		exitFunc(1)
 	}
 
 	// The CALLS-only graph the articles list symbols from.
@@ -367,14 +367,14 @@ func cmdGraphWiki(args []string, config gleann.Config) {
 
 	if err := os.MkdirAll(output, 0o755); err != nil {
 		fmt.Fprintf(os.Stderr, "error creating wiki dir: %v\n", err)
-		os.Exit(1)
+		exitFunc(1)
 	}
 
 	// Generate index.md
 	indexFile, err := os.Create(filepath.Join(output, "index.md"))
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		os.Exit(1)
+		exitFunc(1)
 	}
 	fmt.Fprintf(indexFile, "# %s — Knowledge Wiki\n\n", indexName)
 	fmt.Fprintf(indexFile, "Auto-generated graph wiki. %d communities, %d symbols, modularity=%.3f\n\n",
@@ -446,14 +446,14 @@ func cmdGraphWiki(args []string, config gleann.Config) {
 func cmdGraphHook(args []string, config gleann.Config) {
 	if len(args) < 1 {
 		fmt.Fprintln(os.Stderr, "Usage: gleann graph hook <install|uninstall|status>")
-		os.Exit(1)
+		exitFunc(1)
 	}
 
 	// Find git root
 	gitDir := ".git/hooks"
 	if _, err := os.Stat(".git"); os.IsNotExist(err) {
 		fmt.Fprintln(os.Stderr, "error: not in a git repository")
-		os.Exit(1)
+		exitFunc(1)
 	}
 
 	hookPath := filepath.Join(gitDir, "post-commit")
@@ -462,7 +462,7 @@ func cmdGraphHook(args []string, config gleann.Config) {
 	case "install":
 		if err := os.MkdirAll(gitDir, 0o755); err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
-			os.Exit(1)
+			exitFunc(1)
 		}
 
 		hookScript := `#!/bin/sh
@@ -515,7 +515,7 @@ fi
 
 		if err := os.WriteFile(hookPath, []byte(hookScript), 0o755); err != nil {
 			fmt.Fprintf(os.Stderr, "error writing hook: %v\n", err)
-			os.Exit(1)
+			exitFunc(1)
 		}
 		fmt.Println("✅ Git post-commit hook installed")
 		fmt.Println("   Set GLEANN_GRAPH_INDEX=<name> to specify the index to rebuild")
@@ -534,7 +534,7 @@ fi
 		// Remove our section
 		if err := os.Remove(hookPath); err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
-			os.Exit(1)
+			exitFunc(1)
 		}
 		fmt.Println("✅ Git post-commit hook removed")
 
@@ -547,7 +547,7 @@ fi
 
 	default:
 		fmt.Fprintln(os.Stderr, "Usage: gleann graph hook <install|uninstall|status>")
-		os.Exit(1)
+		exitFunc(1)
 	}
 }
 
@@ -556,7 +556,7 @@ func cmdGraphMap(args []string, config gleann.Config) {
 	indexName := getFlag(args, "--index")
 	if indexName == "" {
 		fmt.Fprintln(os.Stderr, "error: --index flag required")
-		os.Exit(1)
+		exitFunc(1)
 	}
 
 	topN := 20
@@ -672,7 +672,7 @@ func cmdGraphRisk(args []string, config gleann.Config) {
 	indexName := getFlag(args, "--index")
 	if indexName == "" {
 		fmt.Fprintln(os.Stderr, "error: --index flag required")
-		os.Exit(1)
+		exitFunc(1)
 	}
 
 	topN := 20

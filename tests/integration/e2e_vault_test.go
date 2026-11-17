@@ -108,16 +108,15 @@ func TestE2EVaultFileTracking(t *testing.T) {
 		case <-ticker.C:
 			// Check rename (Wait until the hash1 correctly registers its new location)
 			if !renamedFound {
-				currentActualPath, _ = tracker.GetPathByHash(ctx, hash1)
-				if currentActualPath == renamedPath {
-					renamedFound = true
+				if rec, _ := tracker.GetRecordByPath(ctx, renamedPath); rec != nil {
+					currentActualPath = rec.Path
+					renamedFound = rec.Hash == hash1
 				}
 			}
 
 			// Check new file
 			if !newFileFound {
-				hash2, _ := tracker.GetHashByPath(ctx, doc2Path)
-				if hash2 != "" {
+				if rec, _ := tracker.GetRecordByPath(ctx, doc2Path); rec != nil && rec.Hash != "" {
 					newFileFound = true
 				}
 			}

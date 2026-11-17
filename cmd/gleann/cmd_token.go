@@ -93,5 +93,5 @@ func cmdToken(args []string) {
 
 func fatalToken(err error) {
 	fmt.Fprintf(os.Stderr, "error: %v\n", err)
-	os.Exit(1)
+	exitFunc(1)
 }

@@ -104,3 +104,14 @@ func TestNewProcessor_LangFromEnv(t *testing.T) {
 		t.Fatalf("unknown lang must fall back to en, got %q", p.Lang)
 	}
 }
+
+// CacheStats returns observed hit/miss counters since process start.
+func CacheStats() (hits, misses int64) {
+	return cacheHits.Load(), cacheMisses.Load()
+}
+
+// ResetCacheStats zeroes the hit/miss counters.
+func ResetCacheStats() {
+	cacheHits.Store(0)
+	cacheMisses.Store(0)
+}

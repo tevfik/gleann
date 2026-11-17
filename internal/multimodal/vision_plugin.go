@@ -103,19 +103,3 @@ func CallVisionPlugin(pluginURL, path string) (*VisionResult, error) {
 	}
 	return &vr, nil
 }
-
-// VisionPluginHealthy reports whether the vision plugin /health endpoint
-// returns 200 within a small timeout. Useful for the TUI status panel
-// and ProcessDirectory pre-checks.
-func VisionPluginHealthy(pluginURL string) bool {
-	if pluginURL == "" {
-		return false
-	}
-	client := &http.Client{Timeout: 500 * time.Millisecond}
-	resp, err := client.Get(strings.TrimRight(pluginURL, "/") + "/health")
-	if err != nil {
-		return false
-	}
-	defer resp.Body.Close()
-	return resp.StatusCode == http.StatusOK
-}

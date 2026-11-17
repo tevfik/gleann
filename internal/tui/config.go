@@ -63,37 +63,6 @@ func configPath() string {
 	return filepath.Join(home, ".gleann", "config.json")
 }
 
-// SanitizeConfig strips provider-specific credentials/endpoints when that provider is not selected.
-func SanitizeConfig(r *OnboardResult) {
-	if r == nil {
-		return
-	}
-	embIsOllama := strings.EqualFold(r.EmbeddingProvider, "ollama")
-	llmIsOllama := strings.EqualFold(r.LLMProvider, "ollama")
-	if r.EmbeddingProvider != "" || r.LLMProvider != "" {
-		if !embIsOllama && !llmIsOllama {
-			r.OllamaHost = ""
-			r.OllamaAPIKey = ""
-		}
-	}
-
-	embIsOpenAI := strings.EqualFold(r.EmbeddingProvider, "openai")
-	llmIsOpenAI := strings.EqualFold(r.LLMProvider, "openai")
-	if r.EmbeddingProvider != "" || r.LLMProvider != "" {
-		if !embIsOpenAI && !llmIsOpenAI {
-			r.OpenAIKey = ""
-			r.OpenAIBaseURL = ""
-		}
-	}
-
-	llmIsAnthropic := strings.EqualFold(r.LLMProvider, "anthropic")
-	if r.LLMProvider != "" {
-		if !llmIsAnthropic {
-			r.AnthropicKey = ""
-		}
-	}
-}
-
 // mergeConfig overlays non-empty incoming values on top of existing configuration.
 func mergeConfig(existing, incoming *OnboardResult) OnboardResult {
 	if existing == nil {
@@ -361,9 +330,6 @@ func newConfigError(path string, data []byte, err error) *ConfigError {
 	ce.Column = pos - bytes.LastIndexByte(data[:pos], '\n')
 	return ce
 }
-
-// ConfigFilePath returns the path of the saved config file.
-func ConfigFilePath() string { return configPath() }
 
 // LoadSavedConfigChecked reads the saved config like LoadSavedConfig but
 // reports a config.json that cannot be parsed (a *ConfigError) instead of

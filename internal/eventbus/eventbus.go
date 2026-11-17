@@ -5,7 +5,6 @@
 package eventbus
 
 import (
-	"context"
 	"encoding/json"
 	"log/slog"
 	"sync"
@@ -97,24 +96,10 @@ func (b *Bus) Publish(topic string, payload map[string]any) error {
 	return b.pubSub.Publish(topic, msg)
 }
 
-// Subscribe returns a channel of Watermill messages for the given topic.
-func (b *Bus) Subscribe(ctx context.Context, topic string) (<-chan *message.Message, error) {
-	return b.pubSub.Subscribe(ctx, topic)
-}
-
 // Close shuts down the event bus and all subscriptions.
 func (b *Bus) Close() error {
 	b.mu.Lock()
 	b.closed = true
 	b.mu.Unlock()
 	return b.pubSub.Close()
-}
-
-// DecodePayload unmarshals a Watermill message body into a map.
-func DecodePayload(msg *message.Message) (map[string]any, error) {
-	var payload map[string]any
-	if err := json.Unmarshal(msg.Payload, &payload); err != nil {
-		return nil, err
-	}
-	return payload, nil
 }

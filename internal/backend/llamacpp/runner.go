@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io/fs"
 	"net"
 	"net/http"
 	"os"
@@ -19,8 +20,9 @@ import (
 // Runner manages the lifecycle of the embedded llama-server process.
 type Runner struct {
 	cmd       *exec.Cmd
-	exited    chan struct{} // closed when cmd has exited
-	waitErr   error         // cmd.Wait result, valid after exited is closed
+	extract   func(mainBinName string) (string, error) // test seam; nil = extractAllBinaries
+	exited    chan struct{}                            // closed when cmd has exited
+	waitErr   error                                    // cmd.Wait result, valid after exited is closed
 	port      int
 	modelPath string
 	embedding bool
@@ -72,7 +74,11 @@ func (r *Runner) Start(ctx context.Context) error {
 	}
 
 	// 2. Extract binaries and libraries
-	exePath, err := extractAllBinaries(binName)
+	extract := r.extract
+	if extract == nil {
+		extract = extractAllBinaries
+	}
+	exePath, err := extract(binName)
 	if err != nil {
 		return fmt.Errorf("failed to extract embedded runner and libraries: %w", err)
 	}
@@ -123,6 +129,9 @@ func (r *Runner) Start(ctx context.Context) error {
 	return nil
 }
 
+// stopGrace is how long Stop waits after SIGTERM before killing the server.
+var stopGrace = 5 * time.Second
+
 // Stop gracefully shuts down the server process.
 func (r *Runner) Stop() error {
 	if r.cmd == nil || r.cmd.Process == nil || r.exited == nil {
@@ -133,12 +142,13 @@ func (r *Runner) Stop() error {
 		return nil
 	default:
 	}
-	// Send SIGTERM for graceful shutdown; force-kill if still running after 5s.
+	// Send SIGTERM for graceful shutdown; force-kill if still running after
+	// stopGrace.
 	_ = r.cmd.Process.Signal(syscall.SIGTERM)
 	select {
 	case <-r.exited:
 		return nil
-	case <-time.After(5 * time.Second):
+	case <-time.After(stopGrace):
 		return r.cmd.Process.Kill()
 	}
 }
@@ -183,12 +193,17 @@ func extractAllBinaries(mainBinName string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	destDir := filepath.Join(home, ".gleann", "bin")
+	return extractFS(embeddedBinaries, embeddedDir, filepath.Join(home, ".gleann", "bin"), mainBinName)
+}
+
+// extractFS writes every file under srcDir of fsys into destDir (created when
+// missing) and returns the path of mainBinName inside it.
+func extractFS(fsys fs.FS, srcDir, destDir, mainBinName string) (string, error) {
 	if err := os.MkdirAll(destDir, 0755); err != nil {
 		return "", err
 	}
 
-	entries, err := embeddedBinaries.ReadDir(embeddedDir)
+	entries, err := fs.ReadDir(fsys, srcDir)
 	if err != nil || len(entries) == 0 {
 		return "", fmt.Errorf("no embedded llama-server for %s/%s: use an external server (--rerank-url / openai_base_url) instead", runtime.GOOS, runtime.GOARCH)
 	}
@@ -201,7 +216,7 @@ func extractAllBinaries(mainBinName string) (string, error) {
 		if entry.IsDir() {
 			continue
 		}
-		data, err := embeddedBinaries.ReadFile(embeddedDir + "/" + entry.Name())
+		data, err := fs.ReadFile(fsys, srcDir+"/"+entry.Name())
 		if err != nil {
 			return "", fmt.Errorf("failed to read embedded asset %s: %w", entry.Name(), err)
 		}

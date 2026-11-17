@@ -381,13 +381,6 @@ func TestRelayoutSmallWindow(t *testing.T) {
 
 // ── PluginModel ────────────────────────────────────────────────
 
-func TestPluginOwnerDefaultExt3(t *testing.T) {
-	owner := pluginOwner()
-	if owner == "" {
-		t.Error("should have a default owner")
-	}
-}
-
 func TestPluginStatusStringExt3(t *testing.T) {
 	tests := []struct {
 		s    pluginStatus

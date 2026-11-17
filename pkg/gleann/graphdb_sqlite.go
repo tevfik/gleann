@@ -4,7 +4,6 @@ import (
 	"sort"
 
 	"github.com/tevfik/gleann/internal/graphstore"
-	"github.com/tevfik/gleann/internal/store"
 )
 
 // sqliteGraphDB adapts the format-2 code graph (internal/graphstore, RFC 003
@@ -19,15 +18,6 @@ type sqliteGraphDB struct {
 }
 
 var _ GraphDB = (*sqliteGraphDB)(nil)
-
-// newSQLiteGraphDB wraps an already-open format-2 store's graph side. A nil
-// store yields a nil adapter so callers can guard on it uniformly.
-func newSQLiteGraphDB(st *store.Store) *sqliteGraphDB {
-	if st == nil {
-		return nil
-	}
-	return &sqliteGraphDB{g: graphstore.New(st)}
-}
 
 // hopToCallee maps a traversal hop to the Callee consumers see. The kuzu
 // Callee carries no depth, so the hop's Depth is dropped.

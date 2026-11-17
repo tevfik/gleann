@@ -142,7 +142,7 @@ func cmdMCPInstall(args []string) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error determining user home directory: %v\n", err)
-		os.Exit(1)
+		exitFunc(1)
 	}
 
 	t := strings.ToLower(strings.TrimSpace(*target))

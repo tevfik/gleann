@@ -91,9 +91,6 @@ func New(dir string) *Registry {
 	return &Registry{dir: dir, packs: map[string]*Pack{}}
 }
 
-// Dir is the on-disk root the registry scans.
-func (r *Registry) Dir() string { return r.dir }
-
 // Reload re-scans the packs directory and replaces the in-memory registry.
 // Failures on individual packs are recorded in the returned error joined via
 // errors.Join; valid packs are still loaded.

@@ -211,28 +211,6 @@ func setupGoPluginWithProgress(pluginDir, name string, progress chan<- string) (
 		return fmt.Sprintf("Installed %s (Go binary)", name), nil
 	}
 
-	if fi, err := os.Stat(pluginDir); err == nil && !fi.IsDir() {
-		progress <- "🔍 Detected pre-built binary in repository root..."
-		realPath, _ := filepath.EvalSymlinks(pluginDir)
-		repoRoot := filepath.Dir(realPath)
-		candidate := filepath.Join(repoRoot, name)
-		if _, err := os.Stat(candidate); err == nil {
-			progress <- "✓ Binary found in repository root"
-			registerCmd := exec.Command(candidate, "--install")
-			registerCmd.Dir = repoRoot
-			if _, err := registerCmd.CombinedOutput(); err == nil {
-				progress <- "✓ Plugin registered in plugins.json"
-			}
-			if strings.Contains(name, "docs") {
-				prepareDocsOCR(candidate, progress)
-				ensureDoclingModel(owner, repo, progress)
-			} else if strings.Contains(name, "sound") {
-				prepareSoundModels(candidate, progress)
-			}
-			return fmt.Sprintf("Installed %s (Go binary)", name), nil
-		}
-	}
-
 	progress <- "📥 Downloading binary from GitHub releases..."
 
 	binaryInstalled := false

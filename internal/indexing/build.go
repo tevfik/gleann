@@ -386,24 +386,6 @@ func RebuildIndex(ctx context.Context, name, docsDir string, opts Options) ([]*P
 	return pDocs, nil
 }
 
-// UpdateIncremental re-chunks only changedFiles (existing files are
-// re-added, missing ones removed) and applies the delta to the index. It
-// returns an error when the backend cannot apply deltas, in which case the
-// caller should fall back to RebuildIndex.
-func UpdateIncremental(ctx context.Context, name, docsDir string, changedFiles []string, opts Options) ([]*PluginDoc, error) {
-	unlock, err := lockIndex(ctx, opts.Config.IndexDir, name)
-	if err != nil {
-		return nil, err
-	}
-	defer unlock()
-	env, cleanup, err := newPipelineEnv(ctx, &opts, true)
-	if err != nil {
-		return nil, err
-	}
-	defer cleanup()
-	return env.incremental(ctx, name, docsDir, changedFiles)
-}
-
 func newPipelineEnv(ctx context.Context, opts *Options, needEmbedder bool) (*pipelineEnv, func(), error) {
 	p := opts.printer()
 	env := &pipelineEnv{cfg: opts.Config, opts: opts, p: p}

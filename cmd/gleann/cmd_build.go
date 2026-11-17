@@ -22,7 +22,6 @@ import (
 
 	"github.com/fsnotify/fsnotify"
 	"github.com/tevfik/gleann/internal/indexing"
-	"github.com/tevfik/gleann/internal/multimodal"
 	"github.com/tevfik/gleann/internal/vault"
 	"github.com/tevfik/gleann/pkg/gleann"
 )
@@ -341,13 +340,13 @@ Options:
 			return
 		}
 		fmt.Fprintln(os.Stderr, "usage: gleann index rebuild <name> [--docs <dir>]")
-		os.Exit(1)
+		exitFunc(1)
 	}
 
 	name := args[0]
 	if strings.HasPrefix(name, "-") {
 		fmt.Fprintf(os.Stderr, "error: index name %q looks like a flag\nusage: gleann index rebuild <name> [--docs <dir>]\n", name)
-		os.Exit(1)
+		exitFunc(1)
 	}
 
 	config := getConfig(args)
@@ -355,7 +354,7 @@ Options:
 	args = rebuildArgs(args, config.IndexDir, name)
 	if getFlag(args, "--docs") == "" {
 		fmt.Fprintf(os.Stderr, "error: index %q records no source directory; pass --docs <dir>\n", name)
-		os.Exit(1)
+		exitFunc(1)
 	}
 
 	// Step 1: Remove existing index (ignore error if it doesn't exist)
@@ -420,18 +419,18 @@ Options:
 			return
 		}
 		fmt.Fprintln(os.Stderr, "usage: gleann index watch <name> --docs <dir> [--graph] [--interval 5]")
-		os.Exit(1)
+		exitFunc(1)
 	}
 
 	name := args[0]
 	if strings.HasPrefix(name, "-") {
 		fmt.Fprintf(os.Stderr, "error: index name %q looks like a flag\nusage: gleann index watch <name> --docs <dir>\n", name)
-		os.Exit(1)
+		exitFunc(1)
 	}
 	docsDir := getFlag(args, "--docs")
 	if docsDir == "" {
 		fmt.Fprintln(os.Stderr, "error: --docs flag required")
-		os.Exit(1)
+		exitFunc(1)
 	}
 
 	buildGraph := hasFlag(args, "--graph")
@@ -453,7 +452,7 @@ Options:
 
 	if err := initLlamaCPP(context.Background(), &config); err != nil {
 		fmt.Fprintf(os.Stderr, "error initializing llamacpp: %v\n", err)
-		os.Exit(1)
+		exitFunc(1)
 	}
 
 	fmt.Printf("👁️  Watching %s for changes via fsnotify (debounce: %s)\n", docsDir, interval)
@@ -462,20 +461,20 @@ Options:
 
 	// Graceful shutdown.
 	stop := make(chan os.Signal, 1)
-	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
+	watchNotify(stop)
 
 	// Initialize Vault Tracker & Watcher
 	tracker, err := vault.NewTracker(vault.DefaultDBPath())
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error initializing vault tracker: %v\n", err)
-		os.Exit(1)
+		exitFunc(1)
 	}
 	defer tracker.Close()
 
 	watcher, err := vault.NewWatcher(tracker)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error initializing vault watcher: %v\n", err)
-		os.Exit(1)
+		exitFunc(1)
 	}
 	defer watcher.Close()
 
@@ -530,7 +529,7 @@ Options:
 
 	if err := watcher.AddDirectory(docsDir); err != nil {
 		fmt.Fprintf(os.Stderr, "error adding watch dir: %v\n", err)
-		os.Exit(1)
+		exitFunc(1)
 	}
 
 	watcher.Start(ctx)
@@ -583,6 +582,12 @@ Options:
 			}
 		}
 	}
+}
+
+// watchNotify routes the shutdown signals to the stop channel of `index
+// watch`. Tests replace it to stop the watcher without a process signal.
+var watchNotify = func(stop chan<- os.Signal) {
+	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
 }
 
 // cmdSync performs an on-demand incremental synchronization of an index.
@@ -649,29 +654,6 @@ func cmdSync(args []string) {
 }
 
 // ── Thin wrappers kept for the rest of package main and its tests ─────
-
-// fileEntry represents a file path and its info for indexing.
-type fileEntry struct {
-	path string
-	info os.FileInfo
-}
-
-// collectEligibleFiles walks dir and returns files eligible for indexing.
-// See indexing.CollectEligibleFiles.
-func collectEligibleFiles(dir string, pluginManager *gleann.PluginManager, nativeExtractor *gleann.NativeExtractor, mmProcessor *multimodal.Processor, mode IndexMode, includeSubmodules bool) ([]fileEntry, error) {
-	entries, err := indexing.CollectEligibleFiles(context.Background(), dir, indexing.CollectOptions{
-		Mode:              mode,
-		IncludeSubmodules: includeSubmodules,
-		PluginManager:     pluginManager,
-		NativeExtractor:   nativeExtractor,
-		Multimodal:        mmProcessor,
-	})
-	out := make([]fileEntry, len(entries))
-	for i, e := range entries {
-		out[i] = fileEntry{path: e.Path, info: e.Info}
-	}
-	return out, err
-}
 
 // buildGraphIndex builds the AST + document graph for an index, printing
 // to stdout/stderr. An index in the old store format is refused with a warning.

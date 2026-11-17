@@ -44,7 +44,7 @@ func cmdConfig(args []string) {
 	default:
 		fmt.Fprintf(os.Stderr, "unknown config subcommand: %s\n", sub)
 		fmt.Fprintln(os.Stderr, "usage: gleann config <show|path|edit|validate|set>")
-		os.Exit(1)
+		exitFunc(1)
 	}
 }
 
@@ -58,7 +58,7 @@ func cmdConfigShow() {
 	data, err := json.MarshalIndent(maskConfigSecrets(*cfg), "", "  ")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error serializing config: %v\n", err)
-		os.Exit(1)
+		exitFunc(1)
 	}
 	fmt.Println(string(data))
 }
@@ -97,7 +97,7 @@ func cmdConfigEdit() {
 	}
 	if editor == "" {
 		fmt.Fprintln(os.Stderr, "error: no editor found. Set $EDITOR environment variable.")
-		os.Exit(1)
+		exitFunc(1)
 	}
 
 	// Ensure config file exists.
@@ -105,11 +105,11 @@ func cmdConfigEdit() {
 		fmt.Printf("Config file does not exist. Creating default at %s\n", p)
 		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
-			os.Exit(1)
+			exitFunc(1)
 		}
 		if err := os.WriteFile(p, []byte("{}\n"), 0o644); err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
-			os.Exit(1)
+			exitFunc(1)
 		}
 	}
 
@@ -119,7 +119,7 @@ func cmdConfigEdit() {
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "error running editor: %v\n", err)
-		os.Exit(1)
+		exitFunc(1)
 	}
 }
 
@@ -135,18 +135,18 @@ func cmdConfigValidate() {
 			return
 		}
 		fmt.Fprintf(os.Stderr, "error reading config: %v\n", err)
-		os.Exit(1)
+		exitFunc(1)
 	}
 
 	// Parse as OnboardResult; a syntax or type error names line and column.
 	cfg, err := tui.LoadSavedConfigChecked()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "❌ Invalid config: %v\n", err)
-		os.Exit(1)
+		exitFunc(1)
 	}
 	if cfg == nil {
 		fmt.Fprintf(os.Stderr, "❌ Config file %s is empty.\n", p)
-		os.Exit(1)
+		exitFunc(1)
 	}
 
 	fmt.Println("✅ Config is valid.")
@@ -234,12 +234,12 @@ func cmdConfigSet(args []string) {
 		fmt.Fprintln(os.Stderr, "  gleann config set code_model jina-code-q8_0.gguf")
 		fmt.Fprintln(os.Stderr, "  gleann config set doc_model bge-small-en-q8_0.gguf")
 		fmt.Fprintln(os.Stderr, "  gleann config set llm_model qwen2.5:7b")
-		os.Exit(1)
+		exitFunc(1)
 	}
 	args = stripDoubleDash(args)
 	if len(args) < 2 {
 		fmt.Fprintln(os.Stderr, "usage: gleann config set <key> <value>")
-		os.Exit(1)
+		exitFunc(1)
 	}
 	key := strings.ToLower(args[0])
 	val := args[1]
@@ -251,11 +251,11 @@ func cmdConfigSet(args []string) {
 	display, err := applyConfigSet(cfg, key, val)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "%v\n", err)
-		os.Exit(1)
+		exitFunc(1)
 	}
 	if err := tui.SaveConfig(*cfg); err != nil {
 		fmt.Fprintf(os.Stderr, "error updating config: %v\n", err)
-		os.Exit(1)
+		exitFunc(1)
 	}
 	fmt.Printf("✅ Updated %s = %s\n", key, display)
 }

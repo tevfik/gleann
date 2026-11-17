@@ -1,9 +1,12 @@
 package main
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/tevfik/gleann/internal/indexing"
 )
 
 func TestIntegration_CollectEligibleFiles_Sniffer(t *testing.T) {
@@ -31,14 +34,14 @@ func TestIntegration_CollectEligibleFiles_Sniffer(t *testing.T) {
 	_ = os.WriteFile(filepath.Join(tmpDir, "README.md"), []byte("# Project\nThis is docs.\n"), 0644)
 
 	t.Run("IndexModeCode_IncludesExtensionless_ExcludesBinariesAndMinified", func(t *testing.T) {
-		files, err := collectEligibleFiles(tmpDir, nil, nil, nil, IndexModeCode, false)
+		files, err := indexing.CollectEligibleFiles(context.Background(), tmpDir, indexing.CollectOptions{Mode: IndexModeCode})
 		if err != nil {
-			t.Fatalf("collectEligibleFiles failed: %v", err)
+			t.Fatalf("CollectEligibleFiles failed: %v", err)
 		}
 
 		fileMap := make(map[string]bool)
 		for _, f := range files {
-			fileMap[filepath.Base(f.path)] = true
+			fileMap[filepath.Base(f.Path)] = true
 		}
 
 		// Expected included
@@ -68,14 +71,14 @@ func TestIntegration_CollectEligibleFiles_Sniffer(t *testing.T) {
 	})
 
 	t.Run("IndexModeAll_IncludesShebangAndDocs_ExcludesBinaries", func(t *testing.T) {
-		files, err := collectEligibleFiles(tmpDir, nil, nil, nil, IndexModeAll, false)
+		files, err := indexing.CollectEligibleFiles(context.Background(), tmpDir, indexing.CollectOptions{Mode: IndexModeAll})
 		if err != nil {
-			t.Fatalf("collectEligibleFiles failed: %v", err)
+			t.Fatalf("CollectEligibleFiles failed: %v", err)
 		}
 
 		fileMap := make(map[string]bool)
 		for _, f := range files {
-			fileMap[filepath.Base(f.path)] = true
+			fileMap[filepath.Base(f.Path)] = true
 		}
 
 		if !fileMap["deploy_script"] {

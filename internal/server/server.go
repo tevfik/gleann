@@ -200,15 +200,6 @@ func (s *Server) publish(topic string, payload map[string]any) {
 	_ = s.bus.Publish(topic, payload)
 }
 
-// Bus returns the server's event bus (nil if not initialized).
-// Callers may Subscribe to receive lifecycle events.
-func (s *Server) Bus() *eventbus.Bus {
-	if s == nil {
-		return nil
-	}
-	return s.bus
-}
-
 // NewServer creates a new REST API server.
 // version is the build-time version string (injected via -ldflags).
 func NewServer(config gleann.Config, addr, version string) *Server {

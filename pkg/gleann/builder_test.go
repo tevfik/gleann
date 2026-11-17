@@ -3,19 +3,22 @@ package gleann
 import (
 	"context"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 
 	"github.com/tevfik/gleann/modules/hnsw"
 )
 
-// testEmbedder is a deterministic embedding computer for tests.
+// testEmbedder is a deterministic embedding computer for tests. Like a real
+// embedder it is safe for concurrent use (SearchMultiple embeds the query of
+// every index in parallel).
 type testEmbedder struct {
 	dim   int
-	calls int
+	calls atomic.Int64
 }
 
 func (e *testEmbedder) Compute(ctx context.Context, texts []string) ([][]float32, error) {
-	e.calls++
+	e.calls.Add(1)
 	result := make([][]float32, len(texts))
 	for i, text := range texts {
 		vec := make([]float32, e.dim)
