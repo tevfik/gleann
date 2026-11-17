@@ -51,6 +51,19 @@ func readOptionsFor(cfg gleann.Config, opts *Options, tracker *vault.Tracker, mm
 	}
 }
 
+// sourceRel returns path relative to dir as a passage source: always with
+// forward slashes, the form the files table (the manifest, keyed by
+// gleann.manifestRelPath) and the code graph use. A source with backslashes
+// on Windows never matched its manifest row, so every sync re-read the file
+// and the removal of its old passages missed them.
+func sourceRel(dir, path string) string {
+	rel, err := filepath.Rel(dir, path)
+	if err != nil || rel == "" {
+		rel = filepath.Base(path)
+	}
+	return filepath.ToSlash(rel)
+}
+
 func makeFileRecord(path string, info os.FileInfo, data []byte) *vault.FileRecord {
 	if info == nil {
 		return nil
@@ -207,7 +220,7 @@ func readDocuments(ctx context.Context, dir string, ro ReadOptions, p *printer) 
 						} else {
 							pluginSucceeded = true
 
-							relPath, _ := filepath.Rel(dir, fe.Path)
+							relPath := sourceRel(dir, fe.Path)
 
 							// Convert plugin result → StructuredDocument → context-aware chunks.
 							doc := PluginResultToDoc(pResult)
@@ -243,7 +256,7 @@ func readDocuments(ctx context.Context, dir string, ro ReadOptions, p *printer) 
 					pdfCfg := multimodal.DefaultPDFConfig()
 					analysis, perr := mmProcessor.AnalyzePDF(fe.Path, pdfCfg)
 					if perr == nil && analysis != nil {
-						relPath, _ := filepath.Rel(dir, fe.Path)
+						relPath := sourceRel(dir, fe.Path)
 						items, fullMd := visionPDFItems(analysis, relPath, mdChunker)
 
 						pResult := gleann.MarkdownToPluginResult(fullMd, relPath)
@@ -272,7 +285,7 @@ func readDocuments(ctx context.Context, dir string, ro ReadOptions, p *printer) 
 						continue
 					}
 
-					relPath, _ := filepath.Rel(dir, fe.Path)
+					relPath := sourceRel(dir, fe.Path)
 					mdChunks := mdChunker.ChunkMarkdown(md, relPath)
 
 					var items []gleann.Item
@@ -328,7 +341,7 @@ func readDocuments(ctx context.Context, dir string, ro ReadOptions, p *printer) 
 						continue
 					}
 					if desc := strings.TrimSpace(mr.Description); desc != "" {
-						relPath, _ := filepath.Rel(dir, fe.Path)
+						relPath := sourceRel(dir, fe.Path)
 						items := []gleann.Item{{
 							Text: desc,
 							Metadata: map[string]any{
@@ -365,11 +378,7 @@ func readDocuments(ctx context.Context, dir string, ro ReadOptions, p *printer) 
 					continue
 				}
 
-				relPath, rerr := filepath.Rel(dir, fe.Path)
-				if rerr != nil || relPath == "" {
-					relPath = filepath.Base(fe.Path)
-				}
-				relPath = filepath.ToSlash(relPath)
+				relPath := sourceRel(dir, fe.Path)
 				metadata := map[string]any{
 					"source":    relPath,
 					"file":      relPath,

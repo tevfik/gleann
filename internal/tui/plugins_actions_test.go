@@ -3,6 +3,7 @@ package tui
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -173,8 +174,14 @@ func TestPluginStartConfigure(t *testing.T) {
 func TestResolveBinaryLayouts(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home) // os.UserHomeDir on Windows
 	t.Setenv("PATH", t.TempDir())
 	info := gleann.PluginMeta{Name: "plug-a", SettingsCmd: []string{"plug-tool", "tui"}}
+	// Executables carry .exe on Windows; exec.LookPath and resolveBinary add it.
+	exe := ""
+	if runtime.GOOS == "windows" {
+		exe = ".exe"
+	}
 
 	if got := resolveBinary(info, nil); got != "" {
 		t.Errorf("nothing installed: %q", got)
@@ -182,7 +189,7 @@ func TestResolveBinaryLayouts(t *testing.T) {
 
 	// PATH wins over the plugin directory.
 	pathDir := t.TempDir()
-	onPath := filepath.Join(pathDir, "plug-tool")
+	onPath := filepath.Join(pathDir, "plug-tool"+exe)
 	if err := os.WriteFile(onPath, []byte("#!/bin/sh\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -204,7 +211,7 @@ func TestResolveBinaryLayouts(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(repo, "plug-a"), []byte("x"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(repo, "plug-tool"), []byte("x"), 0o755); err != nil {
+	if err := os.WriteFile(filepath.Join(repo, "plug-tool"+exe), []byte("x"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	plugins := filepath.Join(home, ".gleann", "plugins")
@@ -214,7 +221,13 @@ func TestResolveBinaryLayouts(t *testing.T) {
 	if err := os.Symlink(filepath.Join(repo, "plug-a"), filepath.Join(plugins, "plug-a")); err != nil {
 		t.Skipf("symlinks unavailable: %v", err)
 	}
-	if got := resolveBinary(info, nil); got != filepath.Join(repo, "plug-tool") {
+	// resolveBinary follows the symlink, so compare with the resolved repo
+	// directory (macOS: /var is a symlink to /private/var).
+	realRepo, err := filepath.EvalSymlinks(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := resolveBinary(info, nil); got != filepath.Join(realRepo, "plug-tool"+exe) {
 		t.Errorf("repo-root layout: %q", got)
 	}
 }
@@ -237,6 +250,7 @@ func TestRegisteredHonoursAliases(t *testing.T) {
 func TestPluginCheckStatusByDirectory(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home) // os.UserHomeDir on Windows
 	m := &PluginModel{registry: &gleann.PluginRegistry{}}
 	info := gleann.PluginMeta{Name: "gleann-plugin-vision"}
 	if got := m.checkPluginStatus(info); got != statusNotInstalled {

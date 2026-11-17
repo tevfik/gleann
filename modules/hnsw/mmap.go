@@ -9,7 +9,10 @@ import (
 
 // MmapGraph is a zero-copy, memory-mapped representation of the CSRGraph.
 // It bypasses the Go Garbage Collector by keeping all node and edge data
-// off-heap in a flat `[]byte` slice backed directly by a file on disk.
+// off-heap in a flat `[]byte` slice backed directly by a file on disk. On
+// Windows the slice is a heap copy of the file instead and the file is closed
+// after loading, so a new generation can be renamed over it (see
+// releaseFileAfterLoad in mmap_windows.go).
 type MmapGraph struct {
 	data     []byte
 	file     *os.File
@@ -72,11 +75,18 @@ func OpenMmapGraph(path string) (*MmapGraph, error) {
 	}
 	size := info.Size()
 
-	// Memory map the file (Read Only)
-	data, err := mmapFile(f.Fd(), size)
+	// Memory map the file (Read Only); on Windows, load a copy and close it
+	// (see releaseFileAfterLoad).
+	data, err := mmapFile(f, size)
 	if err != nil {
 		f.Close()
 		return nil, err
+	}
+	if releaseFileAfterLoad {
+		if err := f.Close(); err != nil {
+			return nil, fmt.Errorf("closing index file: %w", err)
+		}
+		f = nil
 	}
 
 	mg := &MmapGraph{
@@ -314,8 +324,8 @@ func (mg *MmapGraph) Close() error {
 	var err1, err2 error
 	if mg.data != nil && mg.file != nil {
 		err1 = munmapFile(mg.data)
-		mg.data = nil
 	}
+	mg.data = nil
 	if mg.file != nil {
 		err2 = mg.file.Close()
 		mg.file = nil

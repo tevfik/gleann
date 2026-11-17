@@ -398,7 +398,8 @@ func ReadDiskIndex(r io.Reader) (*DiskIndex, error) {
 
 // OpenDiskIndexMmap memory-maps the disk index at path. The graph topology,
 // codebook, and PQ codes are loaded into RAM, while raw embeddings are
-// mapped directly from the file without heap allocation.
+// mapped directly from the file without heap allocation (on Windows they are
+// read into a heap copy and the file is closed; see mmap_windows.go).
 func OpenDiskIndexMmap(path string) (*DiskIndex, error) {
 	f, err := os.Open(path)
 	if err != nil {
@@ -412,17 +413,25 @@ func OpenDiskIndexMmap(path string) (*DiskIndex, error) {
 	}
 	size := fi.Size()
 
-	data, err := mmapFile(f.Fd(), size)
+	data, err := mmapFile(f, size)
 	if err != nil {
 		_ = f.Close()
 		return nil, err
+	}
+	if releaseFileAfterLoad {
+		// Windows: data is a heap copy; close the file so a publication can
+		// rename the next generation over it (see mmap_windows.go).
+		if err := f.Close(); err != nil {
+			return nil, fmt.Errorf("closing index file: %w", err)
+		}
+		f = nil
 	}
 
 	cr := &countingReader{r: bytes.NewReader(data)}
 	idx, err := readDiskIndexHeaderAndTopology(cr)
 	if err != nil {
 		_ = munmapFile(data)
-		_ = f.Close()
+		closeIfOpen(f)
 		return nil, err
 	}
 
@@ -430,7 +439,7 @@ func OpenDiskIndexMmap(path string) (*DiskIndex, error) {
 	expectedTotal := offsetEmbeddings + idx.NumNodes*int64(idx.Dims)*4
 	if size < expectedTotal {
 		_ = munmapFile(data)
-		_ = f.Close()
+		closeIfOpen(f)
 		return nil, fmt.Errorf("file size %d too small for %d embeddings (%d bytes expected)", size, idx.NumNodes, expectedTotal)
 	}
 
@@ -439,6 +448,13 @@ func OpenDiskIndexMmap(path string) (*DiskIndex, error) {
 	idx.offsetEmbeddings = offsetEmbeddings
 	idx.Embeddings = nil
 	return idx, nil
+}
+
+// closeIfOpen closes f unless releaseFileAfterLoad already closed it.
+func closeIfOpen(f *os.File) {
+	if f != nil {
+		_ = f.Close()
+	}
 }
 
 // GetVector returns the embedding for node id, either from in-memory slice or mmap'd bytes.

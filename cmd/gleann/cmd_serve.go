@@ -146,9 +146,20 @@ Options:
 		close(stopped)
 	}()
 
+	// releaseServer closes what NewServer and Start opened (the memory
+	// database, the searcher cache, the event bus) before an error exit, so
+	// nothing is left open when serve runs in-process (tests; on Windows an
+	// open file cannot be deleted).
+	releaseServer := func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = srv.Stop(ctx)
+	}
+
 	adminToken, err := srv.PrepareAuth()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		releaseServer()
 		cleanupLlamaCPP()
 		exitFunc(1)
 	}
@@ -220,6 +231,7 @@ Options:
 	}
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "server error: %v\n", err)
+		releaseServer()
 		cleanupLlamaCPP()
 		exitFunc(1)
 	}

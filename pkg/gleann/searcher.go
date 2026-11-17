@@ -151,6 +151,13 @@ func (s *LeannSearcher) Load(ctx context.Context, name string) (retErr error) {
 		_ = fts.Close()
 		s.scorer = nil
 	}
+	// And the passage store of a previous Load: replacing it without a close
+	// leaked the database handle (on Windows the index files then cannot be
+	// removed or replaced until the process exits).
+	if s.passages != nil {
+		_ = s.passages.Close()
+		s.passages = nil
+	}
 	indexDir := filepath.Join(s.config.IndexDir, name)
 	basePath := filepath.Join(indexDir, name)
 
@@ -221,6 +228,22 @@ func (s *LeannSearcher) Load(ctx context.Context, name string) (retErr error) {
 	}
 	s.passages = ps
 	s.storeFormat = 2
+	// Every later failure of this Load releases the store again.
+	defer func() {
+		if retErr != nil {
+			if s.passages != nil {
+				_ = s.passages.Close()
+				s.passages = nil
+			}
+			// The format-2 graph adapter shares the passage store's handle,
+			// which the close above just released; clear it so a retry
+			// reattaches instead of querying the closed store.
+			if s.graphDB != nil {
+				s.graphDB.Close()
+				s.graphDB = nil
+			}
+		}
+	}()
 	// The format-2 opener may have rolled an interrupted vector publication
 	// forward and synced meta.json (recoverVectorPublication). Re-read the
 	// metadata so this Load sees the published state — VectorReady, the
@@ -240,28 +263,11 @@ func (s *LeannSearcher) Load(ctx context.Context, name string) (retErr error) {
 	// Record the published state before anything is read from it, so a
 	// change that lands during this Load is seen as stale afterwards.
 	if err := s.recordFreshness(ctx); err != nil {
-		_ = s.passages.Close()
-		s.passages = nil
 		return err
 	}
 	if err := s.passages.Load(); err != nil {
 		return fmt.Errorf("load passages: %w", err)
 	}
-	defer func() {
-		if retErr != nil {
-			if s.passages != nil {
-				_ = s.passages.Close()
-				s.passages = nil
-			}
-			// The format-2 graph adapter shares the passage store's handle,
-			// which the close above just released; clear it so a retry
-			// reattaches instead of querying the closed store.
-			if s.graphDB != nil {
-				s.graphDB.Close()
-				s.graphDB = nil
-			}
-		}
-	}()
 
 	s.warnings = nil
 	s.checkHealth(name)
@@ -999,6 +1005,12 @@ func ListIndexes(indexDir string) ([]IndexMeta, error) {
 	entries, err := os.ReadDir(indexDir)
 	if err != nil {
 		if os.IsNotExist(err) {
+			// Windows reports reading a regular file as a directory as "path
+			// not found", which IsNotExist accepts: tell that apart from an
+			// index directory that does not exist yet.
+			if fi, statErr := os.Stat(indexDir); statErr == nil && !fi.IsDir() {
+				return nil, fmt.Errorf("read index directory: %s is not a directory", indexDir)
+			}
 			return nil, nil
 		}
 		return nil, fmt.Errorf("read index directory: %w", err)

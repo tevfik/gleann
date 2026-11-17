@@ -4,36 +4,36 @@ package diskann
 
 import (
 	"fmt"
-	"unsafe"
-
-	"golang.org/x/sys/windows"
+	"io"
+	"os"
 )
 
-func mmapFile(fd uintptr, size int64) ([]byte, error) {
+// releaseFileAfterLoad is true on Windows: the reader loads a private heap
+// copy of the index file and closes it at once, instead of mapping it.
+//
+// Windows refuses to replace or delete a file while a process holds it open
+// without FILE_SHARE_DELETE (os.Open does not set it) or while a view of it is
+// mapped (ERROR_USER_MAPPED_FILE). A publication renames <name>.index.tmp over
+// <name>.index (pkg/gleann publishVectorFormat2) while a long-lived reader,
+// such as the server's searcher cache, may still be serving the previous
+// generation, so a mapped or open main file would make every incremental
+// update and merge fail there. The trade-off: on Windows each open index costs
+// its file size in process memory and is read in full at open, where Unix
+// maps it lazily and shares the pages with the page cache.
+const releaseFileAfterLoad = true
+
+// mmapFile returns a heap copy of the first size bytes of f; see
+// releaseFileAfterLoad.
+func mmapFile(f *os.File, size int64) ([]byte, error) {
 	if size == 0 {
-		return nil, nil // Cannot map 0 bytes on Windows
+		return nil, nil
 	}
-
-	hMap, err := windows.CreateFileMapping(windows.Handle(fd), nil, windows.PAGE_READONLY, 0, 0, nil)
-	if err != nil {
-		return nil, fmt.Errorf("CreateFileMapping failed: %w", err)
+	data := make([]byte, size)
+	if _, err := io.ReadFull(io.NewSectionReader(f, 0, size), data); err != nil {
+		return nil, fmt.Errorf("reading index file: %w", err)
 	}
-	defer windows.CloseHandle(hMap)
-
-	addr, err := windows.MapViewOfFile(hMap, windows.FILE_MAP_READ, 0, 0, uintptr(size))
-	if err != nil {
-		return nil, fmt.Errorf("MapViewOfFile failed: %w", err)
-	}
-
-	// See modules/hnsw/mmap_windows.go: read the uintptr back through a
-	// pointer to the variable, the conversion go vet accepts.
-	ptr := *(*unsafe.Pointer)(unsafe.Pointer(&addr))
-	return unsafe.Slice((*byte)(ptr), size), nil
+	return data, nil
 }
 
-func munmapFile(data []byte) error {
-	if len(data) == 0 {
-		return nil
-	}
-	return windows.UnmapViewOfFile(uintptr(unsafe.Pointer(&data[0])))
-}
+// munmapFile is a no-op: the data is ordinary Go memory (see mmapFile).
+func munmapFile([]byte) error { return nil }

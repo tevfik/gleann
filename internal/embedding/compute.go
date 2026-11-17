@@ -19,6 +19,7 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/tevfik/gleann/internal/netutil"
 	gleann "github.com/tevfik/gleann/pkg/gleann"
 
 	"github.com/tevfik/gleann/pkg/retry"
@@ -721,14 +722,10 @@ func (c *Computer) computeGemini(ctx context.Context, texts []string) ([][]float
 	return embeddings, nil
 }
 
-// isConnectionRefused checks if an error is a "connection refused" network error.
+// isConnectionRefused checks if an error is a "connection refused" network
+// error, on every platform (see netutil.IsConnectionRefused).
 func isConnectionRefused(err error) bool {
-	if opErr, ok := err.(*net.OpError); ok {
-		if sysErr, ok := opErr.Err.(*os.SyscallError); ok {
-			return strings.Contains(sysErr.Err.Error(), "connection refused")
-		}
-	}
-	return strings.Contains(err.Error(), "connection refused")
+	return netutil.IsConnectionRefused(err)
 }
 
 // --- Mock Provider ---

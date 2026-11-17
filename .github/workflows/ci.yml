@@ -14,7 +14,7 @@ jobs:
   test:
     name: Test (${{ matrix.os }} / Go ${{ matrix.go-version }})
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 15
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
@@ -38,7 +38,8 @@ jobs:
         run: go vet ./...
 
       - name: Test (unit + integration, default tags)
-        timeout-minutes: 10
+        # pkg/gleann alone takes about 8 minutes under -race on a hosted runner.
+        timeout-minutes: 30
         run: |
           set -o pipefail
           COVER_FLAG="-coverprofile=coverage.out"
@@ -47,7 +48,7 @@ jobs:
             COVER_FLAG=""
             RACE_FLAG=""
           fi
-          GOTOOLCHAIN=auto go test -v $RACE_FLAG -timeout 8m $COVER_FLAG $(go list ./... | grep -v /tests/benchmarks) 2>&1 | tee test.log
+          GOTOOLCHAIN=auto go test -v $RACE_FLAG -timeout 20m $COVER_FLAG $(go list ./... | grep -v /tests/benchmarks) 2>&1 | tee test.log
         shell: bash
 
       - name: Retrieval quality gate (no race detector)
@@ -143,8 +144,7 @@ jobs:
   # ── pkg/gleann with the tree-sitter parsers (RFC 004 F) ──
   # The public API's graph paths (GraphDB, the format-2 graph goldens) with
   # tree-sitter CALLS for non-Go languages. Own job: about 95 s without -race
-  # on 8 cores, several times that with it, which the test job's 15 minutes
-  # cannot absorb.
+  # on 8 cores, several times that with it, which the test job cannot absorb.
   test-treesitter-pkg:
     name: Test pkg/gleann (treesitter)
     runs-on: ubuntu-latest

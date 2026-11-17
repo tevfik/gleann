@@ -121,6 +121,7 @@ func TestBootstrap_Defaults(t *testing.T) {
 func TestBootstrap_SaveFailure(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home) // os.UserHomeDir on Windows
 	// A regular file where ~/.gleann should be makes SaveConfig fail.
 	if err := os.WriteFile(filepath.Join(home, ".gleann"), []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
@@ -133,7 +134,9 @@ func TestBootstrap_SaveFailure(t *testing.T) {
 }
 
 func TestCheckSetupAndHint(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home) // os.UserHomeDir on Windows
 	var ok bool
 	out := captureStdout(t, func() { ok = CheckSetup() })
 	if ok || !strings.Contains(out, "not configured") {

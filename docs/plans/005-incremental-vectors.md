@@ -73,6 +73,7 @@ Not goals: changing the embedding model (still a rebuild); compacting the lexica
 
 ## 5. Readers
 - The main file is untouched by per-sync publications, so the mmap searcher stays valid; it re-maps only when `vector_main_generation` changes. The delta is a separate small read.
+- Windows: a publication renames `<name>.index.tmp` over `<name>.index` while a reader (the server's searcher cache) may still hold the old generation. Windows refuses to replace a file that is open without `FILE_SHARE_DELETE` or mapped, so the "mmap" readers there (`modules/hnsw` `OpenMmapGraph`, `modules/diskann` `OpenDiskIndexMmap`) read a private heap copy and close the file at once (`releaseFileAfterLoad` in `mmap_windows.go`). Cost: the file size in process memory per open index and a full read at open; Unix keeps the lazy shared mapping.
 - f16: the delta uses the same dtype; a merge keeps f16 vectors losslessly; tested with `VectorDType=f16`.
 - Freshness (RFC 004 B0 item 1): the searcher records `(vector_generation, vector_main_generation)` when it loads and re-reads them after opening its files (load-then-verify, closing the race with a rename). On acquire, a change of only `vector_generation` reloads the delta and the dead count; a change of `vector_main_generation` reloads fully. Watch and the TUI use the same check.
 

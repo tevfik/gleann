@@ -1,0 +1,30 @@
+# Text files are checked out with LF on every platform. The tests compare
+# command output with golden files and parse fixtures byte for byte; with
+# Git's Windows default (core.autocrlf=true) those files would get CRLF in a
+# Windows checkout and every comparison would fail.
+* text=auto eol=lf
+
+# Binary files: never touch line endings, never diff as text.
+*.a      binary
+*.so     binary
+*.so.*   binary
+*.dll    binary
+*.dylib  binary
+*.exe    binary
+*.gz     binary
+*.tgz    binary
+*.zip    binary
+*.png    binary
+*.jpg    binary
+*.jpeg   binary
+*.gif    binary
+*.ico    binary
+*.mp4    binary
+*.pdf    binary
+*.docx   binary
+*.xlsx   binary
+*.pptx   binary
+*.epub   binary
+*.db     binary
+*.onnx   binary
+*.gguf   binary

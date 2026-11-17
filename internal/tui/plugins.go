@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -472,9 +473,11 @@ func resolveBinary(info gleann.PluginMeta, reg *gleann.Plugin) string {
 	pluginDir := filepath.Join(home, ".gleann", "plugins", info.Name)
 
 	// 2. Standard directory layout: ~/.gleann/plugins/<name>/<binary>.
-	candidate := filepath.Join(pluginDir, binary)
-	if fi, err := os.Stat(candidate); err == nil && !fi.IsDir() {
-		return candidate
+	for _, name := range executableNames(binary) {
+		candidate := filepath.Join(pluginDir, name)
+		if fi, err := os.Stat(candidate); err == nil && !fi.IsDir() {
+			return candidate
+		}
 	}
 
 	// 3. Binary-in-repo-root layout: pluginDir is a symlink to the binary file
@@ -485,7 +488,7 @@ func resolveBinary(info gleann.PluginMeta, reg *gleann.Plugin) string {
 			// realPath may itself be the binary; check parent directory.
 			repoRoot := filepath.Dir(realPath)
 			// Try the exact SettingsCmd binary name first.
-			for _, name := range []string{binary, info.Name} {
+			for _, name := range append(executableNames(binary), executableNames(info.Name)...) {
 				c := filepath.Join(repoRoot, name)
 				if fi2, err := os.Stat(c); err == nil && !fi2.IsDir() {
 					return c
@@ -495,6 +498,16 @@ func resolveBinary(info gleann.PluginMeta, reg *gleann.Plugin) string {
 	}
 
 	return ""
+}
+
+// executableNames returns the file names a plugin binary called name may have:
+// name itself and, on Windows, name with ".exe" (exec.LookPath adds the
+// extension for PATH, a direct stat does not).
+func executableNames(name string) []string {
+	if runtime.GOOS == "windows" && !strings.EqualFold(filepath.Ext(name), ".exe") {
+		return []string{name, name + ".exe"}
+	}
+	return []string{name}
 }
 
 // fetchSettingsSummary reads a running plugin's settings from its GET

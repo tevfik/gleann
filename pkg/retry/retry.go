@@ -13,6 +13,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/tevfik/gleann/internal/netutil"
 )
 
 // Policy defines retry behaviour.
@@ -105,7 +107,11 @@ func IsRetryable(err error) bool {
 
 	msg := strings.ToLower(err.Error())
 
-	// Network-level transient errors.
+	// Network-level transient errors. A refused connection (provider
+	// restarting) is matched by errno, so Windows' wording counts too.
+	if netutil.IsConnectionRefused(err) {
+		return true
+	}
 	var netErr net.Error
 	if errors.As(err, &netErr) {
 		if netErr.Timeout() {

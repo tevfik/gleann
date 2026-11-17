@@ -157,6 +157,11 @@ func assertMigratedStore(t *testing.T, s *Store, legacyPath string, blocks []Blo
 	}
 	for _, want := range summaries {
 		got, ok := byTitle[want.Title]
+		// The same instant may come back in another *time.Location (time.Local
+		// is "UTC" on a UTC machine, not time.UTC), which DeepEqual tells apart.
+		if ok && got.CreatedAt.Equal(want.CreatedAt) {
+			got.CreatedAt = want.CreatedAt
+		}
 		if !ok || !reflect.DeepEqual(got, want) {
 			t.Fatalf("summary %q changed by migration:\n got  %+v\n want %+v", want.Title, got, want)
 		}

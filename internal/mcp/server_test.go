@@ -583,10 +583,16 @@ func TestHandleSync(t *testing.T) {
 	}
 
 	// 3. Non-existent index WITH explicit docs_dir (auto-builds with mode=code)
+	// Under the allowed root (the temp directory); "/tmp/new-repo" is outside
+	// it on macOS (TMPDIR is under /var/folders) and Windows.
+	newRepo := filepath.Join(tmpDir, "new-repo")
+	if err := os.MkdirAll(newRepo, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	reqAutoBuild := mcp.CallToolRequest{}
 	reqAutoBuild.Params.Arguments = map[string]interface{}{
 		"index":    "new-auto-idx",
-		"docs_dir": "/tmp/new-repo",
+		"docs_dir": newRepo,
 	}
 	res, err = srv.handleSync(context.Background(), reqAutoBuild)
 	if err != nil {

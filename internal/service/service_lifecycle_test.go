@@ -102,7 +102,8 @@ func TestStart_LogFileUnopenable(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(home, ".gleann", "server.log"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	err := Start("/bin/true", ":1")
+	// A script, not /bin/true: macOS has only /usr/bin/true.
+	err := Start(fakeBin(t, t.TempDir(), "gleann", "exit 0"), ":1")
 	if err == nil || !strings.Contains(err.Error(), "cannot open log file") {
 		t.Fatalf("want 'cannot open log file', got %v", err)
 	}
@@ -114,7 +115,8 @@ func TestStart_PidFileWriteFailureReported(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(home, ".gleann", "server.pid"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	err := Start("/bin/true", ":1")
+	// A script, not /bin/true: macOS has only /usr/bin/true.
+	err := Start(fakeBin(t, t.TempDir(), "gleann", "exit 0"), ":1")
 	if err == nil || !strings.Contains(err.Error(), "PID file write failed") {
 		t.Fatalf("want PID file warning error, got %v", err)
 	}

@@ -52,7 +52,9 @@ func TestRetrievalQualityGrownIncrementally(t *testing.T) {
 			if err := filepath.WalkDir(full, func(p string, d os.DirEntry, err error) error {
 				if err == nil && !d.IsDir() {
 					rel, _ := filepath.Rel(full, p)
-					files = append(files, rel)
+					// Slash form: the same sort order, hence the same split
+					// into halves, on every platform.
+					files = append(files, filepath.ToSlash(rel))
 				}
 				return err
 			}); err != nil {

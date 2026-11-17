@@ -122,6 +122,12 @@ func (s *Store) List() ([]Conversation, error) {
 	entries, err := os.ReadDir(s.dir)
 	if err != nil {
 		if os.IsNotExist(err) {
+			// Windows reports reading a regular file as a directory as "path
+			// not found", which IsNotExist accepts: tell that apart from a
+			// store that was never created.
+			if fi, statErr := os.Stat(s.dir); statErr == nil && !fi.IsDir() {
+				return nil, fmt.Errorf("conversation store %s is not a directory", s.dir)
+			}
 			return nil, nil
 		}
 		return nil, err

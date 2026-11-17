@@ -57,6 +57,27 @@ type Env struct {
 	Fixture  string // absolute fixture path
 }
 
+// placeholderPathRe matches a placeholder and the path components after it,
+// separated by "/", "\\" or a JSON-escaped "\\\\" (Windows paths).
+var placeholderPathRe = regexp.MustCompile(`<(?:FIXTURE|INDEXDIR)>(?:(?:/|\\\\|\\)[A-Za-z0-9._-]+)+`)
+
+// replaceDir replaces dir by placeholder in s, in the forms an output may
+// carry it on Windows too (backslashes, forward slashes, JSON-escaped
+// backslashes), and writes the path components after it with "/", so one
+// golden file serves every platform.
+func replaceDir(s, dir, placeholder string) string {
+	if dir == "" {
+		return s
+	}
+	for _, form := range []string{strings.ReplaceAll(dir, `\`, `\\`), dir, strings.ReplaceAll(dir, `\`, "/")} {
+		s = strings.ReplaceAll(s, form, placeholder)
+	}
+	return placeholderPathRe.ReplaceAllStringFunc(s, func(m string) string {
+		m = strings.ReplaceAll(m, `\\`, "/")
+		return strings.ReplaceAll(m, `\`, "/")
+	})
+}
+
 var (
 	floatRe    = regexp.MustCompile(`-?\d+\.\d{5,}`)
 	durationRe = regexp.MustCompile(`\((?:\d+(?:\.\d+)?(?:ns|µs|us|ms|s|m))+\)`)
@@ -68,8 +89,8 @@ var (
 // directories, timestamps, durations, query timings and floating-point noise
 // (numbers with five or more decimals are rounded to four).
 func (e *Env) Normalize(s string) string {
-	s = strings.ReplaceAll(s, e.Fixture, "<FIXTURE>")
-	s = strings.ReplaceAll(s, e.IndexDir, "<INDEXDIR>")
+	s = replaceDir(s, e.Fixture, "<FIXTURE>")
+	s = replaceDir(s, e.IndexDir, "<INDEXDIR>")
 	s = stampRe.ReplaceAllString(s, "<TIMESTAMP>")
 	s = durationRe.ReplaceAllString(s, "(<DURATION>)")
 	s = queryMsRe.ReplaceAllString(s, `"query_ms": 0`)

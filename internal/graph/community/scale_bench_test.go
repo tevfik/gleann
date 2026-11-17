@@ -59,6 +59,12 @@ func TestScaleBenchmarkReport(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping scale benchmark report in short mode")
 	}
+	if raceEnabled {
+		// A timing report without assertions: the race detector makes it take
+		// minutes (220 s on a CI runner) and measures nothing meaningful.
+		// The algorithms' own tests run under -race.
+		t.Skip("skipping scale benchmark report under -race")
+	}
 	sizes := []struct {
 		nodes    int
 		clusters int

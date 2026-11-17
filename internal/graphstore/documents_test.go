@@ -24,7 +24,7 @@ func insertDocNodes(t *testing.T, g *SQLite, nodes []DocNode) {
 			name = n.Name
 		}
 		if n.RPath != "" {
-			rpath = n.RPath
+			rpath = slashPath(n.RPath) // as the writer stores it (docwrite.go)
 		}
 		if n.Hash != "" {
 			hash = n.Hash

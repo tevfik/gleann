@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/tevfik/gleann/internal/netutil"
 	"github.com/tevfik/gleann/pkg/retry"
 )
 
@@ -779,7 +780,7 @@ func (c *LeannChat) chatOllama(ctx context.Context, messages []ChatMessage) (str
 
 	resp, err := c.client.Do(req)
 	if err != nil {
-		if strings.Contains(err.Error(), "connection refused") {
+		if netutil.IsConnectionRefused(err) {
 			return "", fmt.Errorf("cannot connect to Ollama at %s — is it running?\n  Fix: ollama serve   (or: systemctl start ollama)\n  Check: gleann doctor", c.config.BaseURL)
 		}
 		return "", fmt.Errorf("POST %s: %w", url, err)
@@ -1170,7 +1171,7 @@ func (c *LeannChat) chatOllamaStream(ctx context.Context, messages []ChatMessage
 	// Use the shared stream client (no timeout; context handles cancellation).
 	resp, err := c.getStreamClient().Do(req)
 	if err != nil {
-		if strings.Contains(err.Error(), "connection refused") {
+		if netutil.IsConnectionRefused(err) {
 			return fmt.Errorf("cannot connect to Ollama at %s — is it running?\n  Fix: ollama serve   (or: systemctl start ollama)\n  Check: gleann doctor", c.config.BaseURL)
 		}
 		return fmt.Errorf("POST %s: %w", url, err)

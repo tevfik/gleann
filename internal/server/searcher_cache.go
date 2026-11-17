@@ -89,8 +89,13 @@ func (s *Server) acquireSearcher(ctx context.Context, name string) (*gleann.Lean
 			}
 		}
 	}
-	return nil, nil, fmt.Errorf("index %q was invalidated repeatedly while loading; retry", name)
+	return nil, nil, fmt.Errorf("index %q was invalidated repeatedly while loading: %w", name, errSearcherBusy)
 }
+
+// errSearcherBusy: every load attempt of a searcher was invalidated by a
+// concurrent change (config updates, index writes). The index exists; the
+// request can be retried.
+var errSearcherBusy = errors.New("the index changed during every load attempt; retry")
 
 // loadSearcher loads the index and, unless the cache was invalidated while
 // loading, inserts it into s.searchers. Called via singleflight.
@@ -309,10 +314,17 @@ func (s *Server) cachedSearcherCount() int {
 
 // writeSearcherError answers a failed acquireSearcher: an index in the old
 // store format is a conflict the caller can resolve with `gleann index
-// migrate` (409 with that hint); anything else is reported as not found.
+// migrate` (409 with that hint), a load that kept being invalidated is 503
+// with Retry-After; anything else is reported as not found.
 func writeSearcherError(w http.ResponseWriter, name string, err error) {
 	if errors.Is(err, gleann.ErrOldStoreFormat) {
 		writeError(w, http.StatusConflict, err.Error())
+		return
+	}
+	if errors.Is(err, errSearcherBusy) {
+		// Transient, not "not found": the client should retry.
+		w.Header().Set("Retry-After", "1")
+		writeError(w, http.StatusServiceUnavailable, err.Error())
 		return
 	}
 	writeError(w, http.StatusNotFound, fmt.Sprintf("index %q not found: %v", name, err))

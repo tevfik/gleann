@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [v1.20.0] — 2026-11-17
+
+See [docs/releases/v1.20.0.md](docs/releases/v1.20.0.md).
+
 ### Breaking changes
 See [docs/releases/v1.20.0.md](docs/releases/v1.20.0.md) for the upgrade steps and [docs/decisions/kuzu-to-sqlite.md](docs/decisions/kuzu-to-sqlite.md) for why Kùzu was removed.
 
@@ -15,6 +19,16 @@ See [docs/releases/v1.20.0.md](docs/releases/v1.20.0.md) for the upgrade steps a
 - **Memory moves to SQLite** (`~/.gleann/memory/memory.sqlite`, details under Storage engine). **After the first open, older gleann binaries on the same machine get an error on memory commands: update every installation together.**
 - **`gleann index rebuild <name>` no longer needs `--docs`**: it takes the source directory recorded in the index and keeps its tags, description, MCP exposure, embedding model, backend and code graph unless a flag overrides them.
 - **The REST server indexes or reads directories on a client's request only inside `allowed_roots`** (default: your home directory); see Security. Servers that index directories outside the home directory through the API need `allowed_roots` set.
+
+### Fixed (Windows, macOS and CI)
+- **Windows: incremental updates and merges failed while `serve` (or any reader) had the index open.** A publication renames `<name>.index.tmp` over `<name>.index`, which Windows refuses while the file is mapped or open. The memory-mapped HNSW and DiskANN readers now load a private copy on Windows and close the file at once (an open index costs its file size in RAM there; Unix keeps the shared mapping).
+- **Windows: every sync re-read files in subdirectories, and their old passages were not removed.** Passage sources were stored with backslashes on some extraction paths, so they never matched the slash-separated manifest. Sources are stored with forward slashes on every path; a sync also removes the backslash form an older index may hold.
+- **Windows: "connection refused" from Ollama was not recognised** (Windows words it "actively refused it"): embedding, chat and the retry policy now classify the error by errno, so the "is it running?" hint and the retry work there too.
+- **Windows: a conversation store or index directory that is a regular file was reported as empty** instead of an error.
+- **Windows: the plugin settings binary was not found in the plugin directory** without its `.exe` suffix.
+- **A searcher loaded twice leaked the first passage store handle**, and a failed Load could leave it open.
+- **`serve` left the memory database and other server resources open when it failed to start** (port in use, refused bind).
+- **REST: a search whose index load was invalidated on every attempt (config updates in a row) answered 404 "not found"**; it is now 503 with `Retry-After: 1`.
 
 ### Security
 - **The REST server no longer indexes or reads arbitrary directories on a client's request.** `index-path`, `update` (`docs_root`, `sources`), `watch` (`dir`), graph `docs_dir` and the A2A multimodal file path must lie inside `allowed_roots` (new setting, or `GLEANN_ALLOWED_ROOTS`; default: your home directory), otherwise the server answers 403. Paths are resolved through symlinks before the check. The command line is not restricted. Servers that index directories outside the home directory through the API need `allowed_roots` set.

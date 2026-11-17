@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -465,11 +466,13 @@ func newIndexedServer(t *testing.T) (*Server, http.Handler, gleann.Config) {
 	return s, h, cfg
 }
 
-func doSearch(h http.Handler) int {
+func doSearch(h http.Handler) int { return doSearchBody(h).Code }
+
+func doSearchBody(h http.Handler) *httptest.ResponseRecorder {
 	w := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/api/indexes/idx/search", strings.NewReader(`{"query":"alpha","top_k":3}`))
 	h.ServeHTTP(w, req)
-	return w.Code
+	return w
 }
 
 func TestRace_UpdateConfigDuringSearch(t *testing.T) {
@@ -478,43 +481,69 @@ func TestRace_UpdateConfigDuringSearch(t *testing.T) {
 		t.Fatalf("initial search: %d", code)
 	}
 
-	var wg sync.WaitGroup
+	// Four goroutines search while the config is updated (each update drops
+	// the cached searchers, so searches race reloads against invalidations).
+	// The updater waits for a search to complete after each update, so the
+	// test never depends on a reload winning a race against a fixed timer
+	// (the old version stopped after ten updates 5 ms apart and failed
+	// whenever no reload under -race had finished by then) and progress is
+	// guaranteed: no search completing within the deadline is a livelock.
+	// A search may answer 503 (every load attempt was invalidated, retry),
+	// never anything else; at least ten updates overlap the searches.
+	const searchers, updatesWanted = 4, 10
 	stop := make(chan struct{})
-	var ok atomic.Int32
-	for i := 0; i < 4; i++ {
-		wg.Add(1)
+	completed := make(chan struct{}, 1)
+	var searchWG sync.WaitGroup
+	var ok, busy atomic.Int32
+	for i := 0; i < searchers; i++ {
+		searchWG.Add(1)
 		go func() {
-			defer wg.Done()
+			defer searchWG.Done()
 			for {
 				select {
 				case <-stop:
 					return
 				default:
 				}
-				if doSearch(h) == http.StatusOK {
+				switch w := doSearchBody(h); w.Code {
+				case http.StatusOK:
 					ok.Add(1)
+					select {
+					case completed <- struct{}{}:
+					default:
+					}
+				case http.StatusServiceUnavailable:
+					busy.Add(1)
+				default:
+					t.Errorf("search during config updates: %d %s", w.Code, w.Body.String())
 				}
 			}
 		}()
 	}
-	for i := 0; i < 10; i++ {
+	updates := 0
+	for ; updates < updatesWanted; updates++ {
 		c := cfg
-		c.LLMModel = "m" + string(rune('a'+i))
+		c.LLMModel = fmt.Sprintf("m%d", updates)
 		b, _ := json.Marshal(c)
 		w := httptest.NewRecorder()
 		h.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/api/config", bytes.NewReader(b)))
 		if w.Code != http.StatusOK {
+			close(stop)
+			searchWG.Wait()
 			t.Fatalf("update config: %d %s", w.Code, w.Body.String())
 		}
-		time.Sleep(5 * time.Millisecond)
+		select {
+		case <-completed:
+		case <-time.After(30 * time.Second):
+			close(stop)
+			searchWG.Wait()
+			t.Fatalf("no search completed within 30 s after config update %d (%d ok, %d busy so far)", updates, ok.Load(), busy.Load())
+		}
 	}
 	close(stop)
-	wg.Wait()
-
-	if ok.Load() == 0 {
-		t.Fatal("no search succeeded")
-	}
-	if got := s.cfg().LLMModel; got != "mj" {
+	searchWG.Wait()
+	t.Logf("%d config updates, %d searches ok, %d busy (503)", updates, ok.Load(), busy.Load())
+	if got, want := s.cfg().LLMModel, fmt.Sprintf("m%d", updates-1); got != want {
 		t.Errorf("final config not applied: %q", got)
 	}
 	// Config change must have dropped stale searchers; a new search reloads.

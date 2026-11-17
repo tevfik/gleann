@@ -356,6 +356,11 @@ func TestIndexF16Recall_2K(t *testing.T) {
 	}
 
 	numVecs := 2000
+	if raceEnabled {
+		// Two M=32/efConstruction=200 builds take minutes under the race
+		// detector on a CI runner; half the vectors exercise the same code.
+		numVecs = 1000
+	}
 	dims := 64
 	rng := rand.New(rand.NewSource(42))
 

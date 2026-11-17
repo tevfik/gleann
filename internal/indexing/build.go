@@ -464,7 +464,7 @@ func (e *pipelineEnv) incremental(ctx context.Context, name, docsDir string, cha
 	var existingFiles []string
 	var removeSources []string
 	for _, f := range changedFiles {
-		relPath, _ := filepath.Rel(docsDir, f)
+		relPath := sourceRel(docsDir, f)
 		if _, err := os.Stat(f); err != nil {
 			removeSources = append(removeSources, relPath)
 		} else if !fileInMode(e.opts.Mode, f) {
@@ -476,6 +476,11 @@ func (e *pipelineEnv) incremental(ctx context.Context, name, docsDir string, cha
 			// File exists (new or modified) — remove old passages, then re-add.
 			existingFiles = append(existingFiles, f)
 			removeSources = append(removeSources, relPath)
+		}
+		// An index written before sources were normalised (Windows) may hold
+		// the source with backslashes: remove that form too.
+		if native, err := filepath.Rel(docsDir, f); err == nil && native != relPath {
+			removeSources = append(removeSources, native)
 		}
 	}
 
