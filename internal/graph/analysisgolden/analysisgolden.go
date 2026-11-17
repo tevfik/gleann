@@ -1,0 +1,203 @@
+//go:build treesitter && !windows
+
+// Package analysisgolden is the test support for the Kùzu-path analysis
+// goldens of RFC 004 A0 (internal/graph/testdata/analysis_golden). It builds
+// a format-1 index (the Kùzu `<name>_graph` store) of the fixture project,
+// normalises volatile parts of an output and compares or rewrites the golden
+// file. It is imported by tests only: the CLI (cmd/gleann), the MCP tools
+// (internal/mcp), the REST handlers (internal/server) and the non-Go CALLS
+// baseline (this package's own test).
+package analysisgolden
+
+import (
+	"encoding/json"
+	"flag"
+	"os"
+	"path/filepath"
+	"regexp"
+	"runtime"
+	"strconv"
+	"strings"
+	"testing"
+
+	"github.com/tevfik/gleann/internal/indexing"
+)
+
+// IndexName is the name of the format-1 index built from the fixture.
+const IndexName = "fixture"
+
+// Update rewrites the golden files instead of comparing against them.
+var Update = flag.Bool("update", false, "rewrite the analysis golden files (treesitter build, Kùzu path)")
+
+func thisDir() string {
+	_, file, _, _ := runtime.Caller(0)
+	return filepath.Dir(file)
+}
+
+// FixtureDir returns the real path of the fixture project.
+func FixtureDir(t testing.TB) string {
+	t.Helper()
+	dir := filepath.Join(thisDir(), "..", "testdata", "analysis_fixture")
+	real, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		t.Fatalf("fixture dir: %v", err)
+	}
+	abs, err := filepath.Abs(real)
+	if err != nil {
+		t.Fatalf("fixture dir: %v", err)
+	}
+	return abs
+}
+
+// GoldenDir returns the directory holding the golden files.
+func GoldenDir() string {
+	return filepath.Join(thisDir(), "..", "testdata", "analysis_golden")
+}
+
+// Env is a format-1 index of the fixture in a temporary index directory.
+type Env struct {
+	IndexDir string // holds <IndexName>_graph (Kùzu), no meta.json: format 1
+	Fixture  string // absolute fixture path
+}
+
+// BuildIndex builds the code graph of the fixture the way `gleann index build
+// --graph` does for a format-1 index (indexing.BuildGraphIndex: no
+// <name>/<name>.meta.json, so the Kùzu path is taken). GLEANN_STORE_FORMAT is
+// unset so nothing selects format 2.
+func BuildIndex(t testing.TB) *Env {
+	t.Helper()
+	t.Setenv("GLEANN_STORE_FORMAT", "") // restored on cleanup
+	_ = os.Unsetenv("GLEANN_STORE_FORMAT")
+	env := &Env{IndexDir: t.TempDir(), Fixture: FixtureDir(t)}
+	var out strings.Builder
+	indexing.BuildGraphIndex(indexing.GraphOptions{
+		Name:     IndexName,
+		DocsDir:  env.Fixture,
+		IndexDir: env.IndexDir,
+		Stdout:   &out,
+		Stderr:   &out,
+	})
+	if _, err := os.Stat(filepath.Join(env.IndexDir, IndexName+"_graph")); err != nil {
+		t.Fatalf("graph not built: %v\n%s", err, out.String())
+	}
+	if strings.Contains(out.String(), "warning") {
+		t.Fatalf("graph build warned:\n%s", out.String())
+	}
+	return env
+}
+
+var (
+	floatRe    = regexp.MustCompile(`-?\d+\.\d{5,}`)
+	durationRe = regexp.MustCompile(`\((?:\d+(?:\.\d+)?(?:ns|µs|us|ms|s|m))+\)`)
+	stampRe    = regexp.MustCompile(`\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}`)
+	queryMsRe  = regexp.MustCompile(`"query_ms": ?\d+`)
+)
+
+// Normalize replaces the volatile parts of an output: the fixture and index
+// directories, timestamps, durations, query timings and floating-point noise
+// (numbers with five or more decimals are rounded to four).
+func (e *Env) Normalize(s string) string {
+	s = strings.ReplaceAll(s, e.Fixture, "<FIXTURE>")
+	s = strings.ReplaceAll(s, e.IndexDir, "<INDEXDIR>")
+	s = stampRe.ReplaceAllString(s, "<TIMESTAMP>")
+	s = durationRe.ReplaceAllString(s, "(<DURATION>)")
+	s = queryMsRe.ReplaceAllString(s, `"query_ms": 0`)
+	s = floatRe.ReplaceAllStringFunc(s, func(m string) string {
+		f, err := strconv.ParseFloat(m, 64)
+		if err != nil {
+			return m
+		}
+		out := strconv.FormatFloat(f, 'f', 4, 64)
+		if out == "-0.0000" {
+			out = "0.0000"
+		}
+		return out
+	})
+	return s
+}
+
+// CanonicalJSON re-encodes a JSON document with sorted keys and indentation
+// after normalising it. Arrays keep their order.
+func (e *Env) CanonicalJSON(t testing.TB, raw string) string {
+	t.Helper()
+	var v any
+	if err := json.Unmarshal([]byte(raw), &v); err != nil {
+		t.Fatalf("canonical JSON: %v\n%s", err, raw)
+	}
+	b, err := json.MarshalIndent(v, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return e.Normalize(string(b)) + "\n"
+}
+
+// Check compares got with the golden file name (or rewrites it with -update).
+func Check(t testing.TB, name, got string) {
+	t.Helper()
+	path := filepath.Join(GoldenDir(), name)
+	if *Update {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(got), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return
+	}
+	want, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read golden %s (generate with -update): %v", name, err)
+	}
+	if string(want) == got {
+		return
+	}
+	wl, gl := strings.Split(string(want), "\n"), strings.Split(got, "\n")
+	for i := 0; i < len(wl) || i < len(gl); i++ {
+		var w, g string
+		if i < len(wl) {
+			w = wl[i]
+		}
+		if i < len(gl) {
+			g = gl[i]
+		}
+		if w != g {
+			t.Errorf("%s differs from the golden at line %d\n golden: %q\n    got: %q\n(%d vs %d lines; rewrite with -update only if the change is intended)",
+				name, i+1, w, g, len(wl), len(gl))
+			return
+		}
+	}
+}
+
+// Capture runs fn with os.Stdout redirected and returns what it printed.
+func Capture(t testing.TB, fn func()) string {
+	t.Helper()
+	old := os.Stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stdout = w
+	done := make(chan string)
+	go func() {
+		var sb strings.Builder
+		buf := make([]byte, 32*1024)
+		for {
+			n, err := r.Read(buf)
+			sb.Write(buf[:n])
+			if err != nil {
+				break
+			}
+		}
+		done <- sb.String()
+	}()
+	func() {
+		defer func() {
+			os.Stdout = old
+			_ = w.Close()
+		}()
+		fn()
+	}()
+	out := <-done
+	_ = r.Close()
+	return out
+}

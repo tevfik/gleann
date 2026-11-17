@@ -400,3 +400,14 @@ lint:
 	@echo "── go mod tidy -diff ──"
 	go mod tidy -diff
 	@echo "✅ lint passed"
+
+# ── Graph database benchmark (nested module, see bench/graphdb/README.md) ──
+# SQLite reference only by default. Candidates that need CGo are compiled in
+# with their build tag: make bench-graphdb GRAPHDB_TAGS=kuzu
+# Pin the CPUs for comparable numbers: GRAPHDB_PIN="taskset -c 0-3".
+GRAPHDB_EDGES ?= 10000
+GRAPHDB_TAGS  ?=
+GRAPHDB_PIN   ?=
+.PHONY: bench-graphdb
+bench-graphdb:
+	cd bench/graphdb && $(GRAPHDB_PIN) go run $(if $(GRAPHDB_TAGS),-tags "$(GRAPHDB_TAGS)",) ./cmd/graphbench -edges $(GRAPHDB_EDGES)

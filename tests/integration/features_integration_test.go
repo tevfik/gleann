@@ -159,6 +159,7 @@ func helper() int {
 // ── Feature #6: Reconciliation Integration ──
 
 func TestReconciliation_EndToEnd(t *testing.T) {
+	pinFormat1(t)
 	dir := t.TempDir()
 	docsRoot := filepath.Join(dir, "docs")
 	os.MkdirAll(docsRoot, 0755)

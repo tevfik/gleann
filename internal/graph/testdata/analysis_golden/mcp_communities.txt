@@ -1,0 +1,13 @@
+nodes=85 edges=94 god_nodes=12
+god example.com/fixture.main kind=function in=1 out=4 total=5
+god example.com/fixture/py.Registry kind=class in=2 out=3 total=5
+god example.com/fixture/py.build_registry kind=function in=2 out=3 total=5
+god example.com/fixture/py.clean kind=function in=3 out=2 total=5
+god example.com/fixture/py.main kind=function in=2 out=3 total=5
+god example.com/fixture/store.MemStore.Keys kind=method in=1 out=4 total=5
+god example.com/fixture/ts.slug kind=function in=2 out=3 total=5
+god py/app.py kind=file in=0 out=7 total=7
+god rs/main.rs kind=file in=0 out=7 total=7
+god service/service.go kind=file in=0 out=9 total=9
+god store/store.go kind=file in=0 out=7 total=7
+god ts/app.ts kind=file in=0 out=9 total=9

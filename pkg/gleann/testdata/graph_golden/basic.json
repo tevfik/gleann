@@ -1,0 +1,326 @@
+{
+  "Callees(mod/pkg.A)": [
+    {
+      "fqn": "mod/pkg.B",
+      "name": "B",
+      "kind": "function",
+      "file": "pkg/file1.go",
+      "line": 20
+    }
+  ],
+  "Callees(mod/pkg.B)": [
+    {
+      "fqn": "mod/pkg.C",
+      "name": "C",
+      "kind": "function",
+      "file": "pkg/file1.go",
+      "line": 30
+    }
+  ],
+  "Callees(mod/pkg.C)": [],
+  "Callees(mod/pkg.D)": [
+    {
+      "fqn": "mod/pkg.B",
+      "name": "B",
+      "kind": "function",
+      "file": "pkg/file1.go",
+      "line": 20
+    }
+  ],
+  "Callers(mod/pkg.A)": [],
+  "Callers(mod/pkg.B)": [
+    {
+      "fqn": "mod/pkg.A",
+      "name": "A",
+      "kind": "function",
+      "file": "pkg/file1.go",
+      "line": 10
+    },
+    {
+      "fqn": "mod/pkg.D",
+      "name": "D",
+      "kind": "function",
+      "file": "pkg/file2.go",
+      "line": 10
+    }
+  ],
+  "Callers(mod/pkg.C)": [
+    {
+      "fqn": "mod/pkg.B",
+      "name": "B",
+      "kind": "function",
+      "file": "pkg/file1.go",
+      "line": 20
+    }
+  ],
+  "Callers(mod/pkg.D)": [],
+  "Impact(mod/pkg.A,3)": {
+    "symbol": "mod/pkg.A",
+    "direct_callers": [],
+    "transitive_callers": [],
+    "affected_files": [],
+    "depth": 3
+  },
+  "Impact(mod/pkg.B,5)": {
+    "symbol": "mod/pkg.B",
+    "direct_callers": [
+      "mod/pkg.A",
+      "mod/pkg.D"
+    ],
+    "transitive_callers": [],
+    "affected_files": [
+      "pkg/file1.go",
+      "pkg/file2.go"
+    ],
+    "depth": 5
+  },
+  "Impact(mod/pkg.C,1)": {
+    "symbol": "mod/pkg.C",
+    "direct_callers": [
+      "mod/pkg.B"
+    ],
+    "transitive_callers": [],
+    "affected_files": [
+      "pkg/file1.go"
+    ],
+    "depth": 1
+  },
+  "Impact(mod/pkg.C,5)": {
+    "symbol": "mod/pkg.C",
+    "direct_callers": [
+      "mod/pkg.B"
+    ],
+    "transitive_callers": [
+      "mod/pkg.A",
+      "mod/pkg.D"
+    ],
+    "affected_files": [
+      "pkg/file1.go",
+      "pkg/file2.go"
+    ],
+    "depth": 5
+  },
+  "Neighbors(mod/pkg.A,2)": [
+    {
+      "from": "mod/pkg.A",
+      "to": "mod/pkg.B",
+      "relation": "CALLS",
+      "target_kind": "function",
+      "confidence": "extracted"
+    },
+    {
+      "from": "mod/pkg.A",
+      "to": "mod/pkg.B",
+      "relation": "CALLS",
+      "target_kind": "function",
+      "confidence": "extracted"
+    },
+    {
+      "from": "mod/pkg.B",
+      "to": "mod/pkg.C",
+      "relation": "CALLS",
+      "target_kind": "function",
+      "confidence": "extracted"
+    },
+    {
+      "from": "mod/pkg.D",
+      "to": "mod/pkg.B",
+      "relation": "CALLS",
+      "target_kind": "function",
+      "confidence": "extracted"
+    }
+  ],
+  "Neighbors(mod/pkg.B,1)": [
+    {
+      "from": "mod/pkg.A",
+      "to": "mod/pkg.B",
+      "relation": "CALLS",
+      "target_kind": "function",
+      "confidence": "extracted"
+    },
+    {
+      "from": "mod/pkg.B",
+      "to": "mod/pkg.C",
+      "relation": "CALLS",
+      "target_kind": "function",
+      "confidence": "extracted"
+    },
+    {
+      "from": "mod/pkg.D",
+      "to": "mod/pkg.B",
+      "relation": "CALLS",
+      "target_kind": "function",
+      "confidence": "extracted"
+    }
+  ],
+  "Neighbors(mod/pkg.B,2)": [
+    {
+      "from": "mod/pkg.A",
+      "to": "mod/pkg.B",
+      "relation": "CALLS",
+      "target_kind": "function",
+      "confidence": "extracted"
+    },
+    {
+      "from": "mod/pkg.A",
+      "to": "mod/pkg.B",
+      "relation": "CALLS",
+      "target_kind": "function",
+      "confidence": "extracted"
+    },
+    {
+      "from": "mod/pkg.B",
+      "to": "mod/pkg.C",
+      "relation": "CALLS",
+      "target_kind": "function",
+      "confidence": "extracted"
+    },
+    {
+      "from": "mod/pkg.B",
+      "to": "mod/pkg.C",
+      "relation": "CALLS",
+      "target_kind": "function",
+      "confidence": "extracted"
+    },
+    {
+      "from": "mod/pkg.D",
+      "to": "mod/pkg.B",
+      "relation": "CALLS",
+      "target_kind": "function",
+      "confidence": "extracted"
+    },
+    {
+      "from": "mod/pkg.D",
+      "to": "mod/pkg.B",
+      "relation": "CALLS",
+      "target_kind": "function",
+      "confidence": "extracted"
+    }
+  ],
+  "Neighbors(mod/pkg.C,1)": [
+    {
+      "from": "mod/pkg.B",
+      "to": "mod/pkg.C",
+      "relation": "CALLS",
+      "target_kind": "function",
+      "confidence": "extracted"
+    }
+  ],
+  "ShortestPath(mod/pkg.A,mod/pkg.A)": [],
+  "ShortestPath(mod/pkg.A,mod/pkg.C)": [
+    {
+      "from": "mod/pkg.A",
+      "to": "mod/pkg.B",
+      "relation": "CALLS"
+    },
+    {
+      "from": "mod/pkg.B",
+      "to": "mod/pkg.C",
+      "relation": "CALLS"
+    }
+  ],
+  "ShortestPath(mod/pkg.C,mod/pkg.A)": [
+    {
+      "from": "mod/pkg.C",
+      "to": "mod/pkg.B",
+      "relation": "CALLED_BY"
+    },
+    {
+      "from": "mod/pkg.B",
+      "to": "mod/pkg.A",
+      "relation": "CALLED_BY"
+    }
+  ],
+  "ShortestPath(mod/pkg.D,mod/pkg.C)": [
+    {
+      "from": "mod/pkg.D",
+      "to": "mod/pkg.B",
+      "relation": "CALLS"
+    },
+    {
+      "from": "mod/pkg.B",
+      "to": "mod/pkg.C",
+      "relation": "CALLS"
+    }
+  ],
+  "Stats()": {
+    "files": 2,
+    "symbols": 4,
+    "call_edges": 3,
+    "declare_edges": 4,
+    "implements_edges": 0
+  },
+  "SymbolSearch(B)": [
+    {
+      "fqn": "mod/pkg.B",
+      "name": "B",
+      "kind": "function",
+      "file": "pkg/file1.go",
+      "line": 20
+    }
+  ],
+  "SymbolSearch(mod/pkg)": [
+    {
+      "fqn": "mod/pkg.A",
+      "name": "A",
+      "kind": "function",
+      "file": "pkg/file1.go",
+      "line": 10
+    },
+    {
+      "fqn": "mod/pkg.B",
+      "name": "B",
+      "kind": "function",
+      "file": "pkg/file1.go",
+      "line": 20
+    },
+    {
+      "fqn": "mod/pkg.C",
+      "name": "C",
+      "kind": "function",
+      "file": "pkg/file1.go",
+      "line": 30
+    },
+    {
+      "fqn": "mod/pkg.D",
+      "name": "D",
+      "kind": "function",
+      "file": "pkg/file2.go",
+      "line": 10
+    }
+  ],
+  "SymbolSearch(nomatch)": [],
+  "SymbolsInFile(pkg/file1.go)": [
+    {
+      "fqn": "mod/pkg.A",
+      "name": "A",
+      "kind": "function",
+      "file": "pkg/file1.go",
+      "line": 10
+    },
+    {
+      "fqn": "mod/pkg.B",
+      "name": "B",
+      "kind": "function",
+      "file": "pkg/file1.go",
+      "line": 20
+    },
+    {
+      "fqn": "mod/pkg.C",
+      "name": "C",
+      "kind": "function",
+      "file": "pkg/file1.go",
+      "line": 30
+    }
+  ],
+  "SymbolsInFile(pkg/file2.go)": [
+    {
+      "fqn": "mod/pkg.D",
+      "name": "D",
+      "kind": "function",
+      "file": "pkg/file2.go",
+      "line": 10
+    }
+  ],
+  "SymbolsInFile(pkg/none.go)": []
+}

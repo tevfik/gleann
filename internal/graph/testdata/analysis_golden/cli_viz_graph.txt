@@ -1,0 +1,133 @@
+nodes=75 edges=45 god_nodes=12 physics=true
+node example.com/fixture.main label=main shape=dot size=21 color=#F44336
+node example.com/fixture.run label=run shape=dot size=12 color=#4CAF50
+node example.com/fixture/py.<script> label=<script> shape=dot size=10 color=#9E9E9E
+node example.com/fixture/py.Registry label=Registry shape=triangle size=21 color=#F44336
+node example.com/fixture/py.Registry::__init__ label=Registry::__init__ shape=dot size=8 color=#4CAF50
+node example.com/fixture/py.Registry::add label=Registry::add shape=dot size=8 color=#4CAF50
+node example.com/fixture/py.Registry::describe label=Registry::describe shape=dot size=8 color=#4CAF50
+node example.com/fixture/py.add label=add shape=dot size=10 color=#4CAF50
+node example.com/fixture/py.build_registry label=build_registry shape=dot size=21 color=#F44336
+node example.com/fixture/py.clean label=clean shape=dot size=21 color=#F44336
+node example.com/fixture/py.describe label=describe shape=dot size=10 color=#4CAF50
+node example.com/fixture/py.join label=join shape=dot size=10 color=#4CAF50
+node example.com/fixture/py.join_words label=join_words shape=dot size=14 color=#4CAF50
+node example.com/fixture/py.keys label=keys shape=dot size=10 color=#4CAF50
+node example.com/fixture/py.len label=len shape=dot size=10 color=#4CAF50
+node example.com/fixture/py.lower label=lower shape=dot size=10 color=#4CAF50
+node example.com/fixture/py.main label=main shape=dot size=21 color=#F44336
+node example.com/fixture/py.print label=print shape=dot size=10 color=#4CAF50
+node example.com/fixture/py.strip label=strip shape=dot size=10 color=#4CAF50
+node example.com/fixture/py.trailing label=trailing shape=dot size=8 color=#9E9E9E
+node example.com/fixture/rs.Counter label=Counter shape=diamond size=8 color=#FF9800
+node example.com/fixture/rs.Counter::bump label=Counter::bump shape=dot size=12 color=#4CAF50
+node example.com/fixture/rs.Counter::new label=Counter::new shape=dot size=8 color=#4CAF50
+node example.com/fixture/rs.bump label=bump shape=dot size=10 color=#4CAF50
+node example.com/fixture/rs.clamp label=clamp shape=dot size=10 color=#4CAF50
+node example.com/fixture/rs.double label=double shape=dot size=10 color=#4CAF50
+node example.com/fixture/rs.gap_1 label=gap_1 shape=dot size=8 color=#9E9E9E
+node example.com/fixture/rs.main label=main shape=dot size=8 color=#4CAF50
+node example.com/fixture/rs.new label=new shape=dot size=10 color=#4CAF50
+node example.com/fixture/rs.run_all label=run_all shape=dot size=12 color=#4CAF50
+node example.com/fixture/rs.util label=util shape=dot size=8 color=#9E9E9E
+node example.com/fixture/service.New label=New shape=dot size=14 color=#4CAF50
+node example.com/fixture/service.Service label=Service shape=diamond size=8 color=#FF9800
+node example.com/fixture/service.Service.Load label=Service.Load shape=dot size=8 color=#2196F3
+node example.com/fixture/service.Service.Report label=Service.Report shape=dot size=8 color=#2196F3
+node example.com/fixture/service.Service.Save label=Service.Save shape=dot size=10 color=#2196F3
+node example.com/fixture/service.TestReport label=TestReport shape=dot size=12 color=#4CAF50
+node example.com/fixture/service.TestSaveLoad label=TestSaveLoad shape=dot size=12 color=#4CAF50
+node example.com/fixture/service.emptyError label=emptyError shape=diamond size=8 color=#FF9800
+node example.com/fixture/service.emptyError.Error label=emptyError.Error shape=dot size=8 color=#2196F3
+node example.com/fixture/service.errEmpty label=errEmpty shape=dot size=8 color=#795548
+node example.com/fixture/service.validate label=validate shape=dot size=10 color=#4CAF50
+node example.com/fixture/store.MemStore label=MemStore shape=diamond size=8 color=#FF9800
+node example.com/fixture/store.MemStore.Get label=MemStore.Get shape=dot size=8 color=#2196F3
+node example.com/fixture/store.MemStore.Keys label=MemStore.Keys shape=dot size=21 color=#F44336
+node example.com/fixture/store.MemStore.Put label=MemStore.Put shape=dot size=10 color=#2196F3
+node example.com/fixture/store.NewMemStore label=NewMemStore shape=dot size=14 color=#4CAF50
+node example.com/fixture/store.Store label=Store shape=triangle size=8 color=#9C27B0
+node example.com/fixture/store.append label=append shape=dot size=10 color=#4CAF50
+node example.com/fixture/store.len label=len shape=dot size=10 color=#4CAF50
+node example.com/fixture/store.make label=make shape=dot size=10 color=#4CAF50
+node example.com/fixture/store.normalize label=normalize shape=dot size=10 color=#4CAF50
+node example.com/fixture/ts.Shape label=Shape shape=triangle size=8 color=#9C27B0
+node example.com/fixture/ts.Square label=Square shape=triangle size=12 color=#9C27B0
+node example.com/fixture/ts.Square::Square label=Square::Square shape=triangle size=8 color=#9C27B0
+node example.com/fixture/ts.Square::Square::area label=Square::Square::area shape=dot size=8 color=#2196F3
+node example.com/fixture/ts.Square::Square::constructor label=Square::Square::constructor shape=dot size=8 color=#2196F3
+node example.com/fixture/ts.Square::Square::label label=Square::Square::label shape=dot size=8 color=#2196F3
+node example.com/fixture/ts.area label=area shape=dot size=10 color=#4CAF50
+node example.com/fixture/ts.describeAll label=describeAll shape=dot size=14 color=#4CAF50
+node example.com/fixture/ts.label label=label shape=dot size=10 color=#4CAF50
+node example.com/fixture/ts.log label=log shape=dot size=10 color=#4CAF50
+node example.com/fixture/ts.main label=main shape=dot size=14 color=#4CAF50
+node example.com/fixture/ts.map label=map shape=dot size=10 color=#4CAF50
+node example.com/fixture/ts.pluralize label=pluralize shape=dot size=10 color=#4CAF50
+node example.com/fixture/ts.reduce label=reduce shape=dot size=10 color=#4CAF50
+node example.com/fixture/ts.replace label=replace shape=dot size=10 color=#4CAF50
+node example.com/fixture/ts.slug label=slug shape=dot size=21 color=#F44336
+node example.com/fixture/ts.toLowerCase label=toLowerCase shape=dot size=10 color=#4CAF50
+node example.com/fixture/ts.totalArea label=totalArea shape=dot size=14 color=#4CAF50
+node example.com/fixture/ts.trim label=trim shape=dot size=10 color=#4CAF50
+node fmt.Print label=Print shape=dot size=10 color=#4CAF50
+node fmt.Println label=Println shape=dot size=10 color=#4CAF50
+node sort.Strings label=Strings shape=dot size=10 color=#4CAF50
+node testing.T label=T shape=dot size=8 color=#4CAF50
+edge example.com/fixture.main -- example.com/fixture.run
+edge example.com/fixture.main -- example.com/fixture/service.New
+edge example.com/fixture.main -- example.com/fixture/store.NewMemStore
+edge example.com/fixture.main -- fmt.Print
+edge example.com/fixture.run -- fmt.Println
+edge example.com/fixture/py.<script> -- example.com/fixture/py.main
+edge example.com/fixture/py.Registry -- example.com/fixture/py.build_registry
+edge example.com/fixture/py.Registry -- example.com/fixture/py.clean
+edge example.com/fixture/py.Registry -- example.com/fixture/py.join_words
+edge example.com/fixture/py.Registry -- example.com/fixture/py.keys
+edge example.com/fixture/py.add -- example.com/fixture/py.build_registry
+edge example.com/fixture/py.build_registry -- example.com/fixture/py.len
+edge example.com/fixture/py.build_registry -- example.com/fixture/py.main
+edge example.com/fixture/py.clean -- example.com/fixture/py.join_words
+edge example.com/fixture/py.clean -- example.com/fixture/py.lower
+edge example.com/fixture/py.clean -- example.com/fixture/py.strip
+edge example.com/fixture/py.describe -- example.com/fixture/py.main
+edge example.com/fixture/py.join -- example.com/fixture/py.join_words
+edge example.com/fixture/py.main -- example.com/fixture/py.print
+edge example.com/fixture/rs.Counter::bump -- example.com/fixture/rs.clamp
+edge example.com/fixture/rs.Counter::bump -- example.com/fixture/rs.double
+edge example.com/fixture/rs.bump -- example.com/fixture/rs.run_all
+edge example.com/fixture/rs.new -- example.com/fixture/rs.run_all
+edge example.com/fixture/service.New -- example.com/fixture/service.TestReport
+edge example.com/fixture/service.New -- example.com/fixture/service.TestSaveLoad
+edge example.com/fixture/service.Service.Save -- example.com/fixture/service.validate
+edge example.com/fixture/service.TestReport -- example.com/fixture/store.NewMemStore
+edge example.com/fixture/service.TestSaveLoad -- example.com/fixture/store.NewMemStore
+edge example.com/fixture/store.MemStore.Keys -- example.com/fixture/store.append
+edge example.com/fixture/store.MemStore.Keys -- example.com/fixture/store.len
+edge example.com/fixture/store.MemStore.Keys -- example.com/fixture/store.make
+edge example.com/fixture/store.MemStore.Keys -- sort.Strings
+edge example.com/fixture/store.MemStore.Put -- example.com/fixture/store.normalize
+edge example.com/fixture/ts.Square -- example.com/fixture/ts.pluralize
+edge example.com/fixture/ts.Square -- example.com/fixture/ts.slug
+edge example.com/fixture/ts.area -- example.com/fixture/ts.totalArea
+edge example.com/fixture/ts.describeAll -- example.com/fixture/ts.label
+edge example.com/fixture/ts.describeAll -- example.com/fixture/ts.main
+edge example.com/fixture/ts.describeAll -- example.com/fixture/ts.map
+edge example.com/fixture/ts.log -- example.com/fixture/ts.main
+edge example.com/fixture/ts.main -- example.com/fixture/ts.totalArea
+edge example.com/fixture/ts.reduce -- example.com/fixture/ts.totalArea
+edge example.com/fixture/ts.replace -- example.com/fixture/ts.slug
+edge example.com/fixture/ts.slug -- example.com/fixture/ts.toLowerCase
+edge example.com/fixture/ts.slug -- example.com/fixture/ts.trim
+god example.com/fixture.main kind=function in=1 out=4 total=5
+god example.com/fixture/py.Registry kind=class in=2 out=3 total=5
+god example.com/fixture/py.build_registry kind=function in=2 out=3 total=5
+god example.com/fixture/py.clean kind=function in=3 out=2 total=5
+god example.com/fixture/py.main kind=function in=2 out=3 total=5
+god example.com/fixture/store.MemStore.Keys kind=method in=1 out=4 total=5
+god example.com/fixture/ts.slug kind=function in=2 out=3 total=5
+god py/app.py kind=file in=0 out=7 total=7
+god rs/main.rs kind=file in=0 out=7 total=7
+god service/service.go kind=file in=0 out=9 total=9
+god store/store.go kind=file in=0 out=7 total=7
+god ts/app.ts kind=file in=0 out=9 total=9

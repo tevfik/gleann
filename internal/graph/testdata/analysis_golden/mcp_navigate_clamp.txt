@@ -1,0 +1,6 @@
+Symbol Navigation — "clamp" in fixture
+
+── 1. example.com/fixture/rs.clamp (function)
+  Callers:
+    ← example.com/fixture/rs.Counter::bump (function) [rs/main.rs:14]
+  Callees: none

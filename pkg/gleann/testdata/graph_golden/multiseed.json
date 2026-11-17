@@ -1,0 +1,54 @@
+{
+  "Callers(Target)": [
+    {
+      "fqn": "mod/pkg.C",
+      "name": "C",
+      "kind": "function",
+      "file": "pkg/a.go",
+      "line": 30
+    },
+    {
+      "fqn": "mod/pkg.X",
+      "name": "X",
+      "kind": "function",
+      "file": "pkg/a.go",
+      "line": 40
+    }
+  ],
+  "Impact(Target,3)": {
+    "symbol": "Target",
+    "direct_callers": [
+      "mod/pkg.C",
+      "mod/pkg.X"
+    ],
+    "transitive_callers": [],
+    "affected_files": [
+      "pkg/a.go"
+    ],
+    "depth": 3
+  },
+  "Impact(mod/pkg.SeedA,3)": {
+    "symbol": "mod/pkg.SeedA",
+    "direct_callers": [
+      "mod/pkg.X"
+    ],
+    "transitive_callers": [
+      "mod/pkg.C"
+    ],
+    "affected_files": [
+      "pkg/a.go"
+    ],
+    "depth": 3
+  },
+  "Impact(mod/pkg.SeedB,3)": {
+    "symbol": "mod/pkg.SeedB",
+    "direct_callers": [
+      "mod/pkg.C"
+    ],
+    "transitive_callers": [],
+    "affected_files": [
+      "pkg/a.go"
+    ],
+    "depth": 3
+  }
+}

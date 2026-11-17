@@ -1,0 +1,175 @@
+{
+  "Callees(Close)": [],
+  "Callees(NoSuchSymbol)": [],
+  "Callees(Run)": [
+    {
+      "fqn": "pkg/a.StoreA.Close",
+      "name": "Close",
+      "kind": "method",
+      "file": "pkg/a/store.go",
+      "line": 1
+    },
+    {
+      "fqn": "pkg/b.StoreB.Close",
+      "name": "Close",
+      "kind": "method",
+      "file": "pkg/b/store.go",
+      "line": 2
+    }
+  ],
+  "Callees(Search)": [],
+  "Callees(StoreA.Close)": [],
+  "Callees(WorkerA.Run)": [
+    {
+      "fqn": "pkg/a.StoreA.Close",
+      "name": "Close",
+      "kind": "method",
+      "file": "pkg/a/store.go",
+      "line": 1
+    }
+  ],
+  "Callees(a.StoreA.Close)": [],
+  "Callees(mod::Thing)": [],
+  "Callers(Close)": [
+    {
+      "fqn": "pkg/a.WorkerA.Run",
+      "name": "Run",
+      "kind": "method",
+      "file": "pkg/a/worker.go",
+      "line": 4
+    },
+    {
+      "fqn": "pkg/b.WorkerB.Run",
+      "name": "Run",
+      "kind": "method",
+      "file": "pkg/b/worker.go",
+      "line": 5
+    },
+    {
+      "fqn": "pkg/extra.Extra",
+      "name": "Extra",
+      "kind": "function",
+      "file": "pkg/extra.go",
+      "line": 6
+    }
+  ],
+  "Callers(NoSuchSymbol)": [],
+  "Callers(Run)": [],
+  "Callers(Search)": [
+    {
+      "fqn": "mod/pkg.Lookup",
+      "name": "Lookup",
+      "kind": "function",
+      "file": "mod/pkg/lookup.go",
+      "line": 8
+    }
+  ],
+  "Callers(StoreA.Close)": [
+    {
+      "fqn": "pkg/extra.Extra",
+      "name": "Extra",
+      "kind": "function",
+      "file": "pkg/extra.go",
+      "line": 6
+    }
+  ],
+  "Callers(WorkerA.Run)": [],
+  "Callers(a.StoreA.Close)": [
+    {
+      "fqn": "pkg/a.WorkerA.Run",
+      "name": "Run",
+      "kind": "method",
+      "file": "pkg/a/worker.go",
+      "line": 4
+    }
+  ],
+  "Callers(mod::Thing)": [
+    {
+      "fqn": "crate::mod::Caller",
+      "name": "Caller",
+      "kind": "function",
+      "file": "crate/mod.rs",
+      "line": 10
+    }
+  ],
+  "Impact(Close,3)": {
+    "symbol": "Close",
+    "direct_callers": [
+      "pkg/a.WorkerA.Run",
+      "pkg/b.WorkerB.Run",
+      "pkg/extra.Extra"
+    ],
+    "transitive_callers": [],
+    "affected_files": [
+      "pkg/a/worker.go",
+      "pkg/b/worker.go",
+      "pkg/extra.go"
+    ],
+    "depth": 3
+  },
+  "Impact(NoSuchSymbol,3)": {
+    "symbol": "NoSuchSymbol",
+    "direct_callers": [],
+    "transitive_callers": [],
+    "affected_files": [],
+    "depth": 3
+  },
+  "Impact(Run,3)": {
+    "symbol": "Run",
+    "direct_callers": [],
+    "transitive_callers": [],
+    "affected_files": [],
+    "depth": 3
+  },
+  "Impact(Search,3)": {
+    "symbol": "Search",
+    "direct_callers": [
+      "mod/pkg.Lookup"
+    ],
+    "transitive_callers": [],
+    "affected_files": [
+      "mod/pkg/lookup.go"
+    ],
+    "depth": 3
+  },
+  "Impact(StoreA.Close,3)": {
+    "symbol": "StoreA.Close",
+    "direct_callers": [
+      "pkg/extra.Extra"
+    ],
+    "transitive_callers": [],
+    "affected_files": [
+      "pkg/extra.go"
+    ],
+    "depth": 3
+  },
+  "Impact(WorkerA.Run,3)": {
+    "symbol": "WorkerA.Run",
+    "direct_callers": [],
+    "transitive_callers": [],
+    "affected_files": [],
+    "depth": 3
+  },
+  "Impact(a.StoreA.Close,3)": {
+    "symbol": "a.StoreA.Close",
+    "direct_callers": [
+      "pkg/a.WorkerA.Run"
+    ],
+    "transitive_callers": [],
+    "affected_files": [
+      "pkg/a/worker.go"
+    ],
+    "depth": 3
+  },
+  "Impact(mod::Thing,3)": {
+    "symbol": "mod::Thing",
+    "direct_callers": [
+      "crate::mod::Caller"
+    ],
+    "transitive_callers": [],
+    "affected_files": [
+      "crate/mod.rs"
+    ],
+    "depth": 3
+  }
+}

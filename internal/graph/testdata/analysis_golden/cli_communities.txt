@@ -1,0 +1,14 @@
+Nodes: 85 | Edges: 94
+god nodes:
+  [class] Registry (in=2, out=3, total=5)
+  [file] py/app.py (in=0, out=7, total=7)
+  [file] rs/main.rs (in=0, out=7, total=7)
+  [file] service/service.go (in=0, out=9, total=9)
+  [file] store/store.go (in=0, out=7, total=7)
+  [file] ts/app.ts (in=0, out=9, total=9)
+  [function] build_registry (in=2, out=3, total=5)
+  [function] clean (in=3, out=2, total=5)
+  [function] main (in=1, out=4, total=5)
+  [function] main (in=2, out=3, total=5)
+  [function] slug (in=2, out=3, total=5)
+  [method] MemStore.Keys (in=1, out=4, total=5)

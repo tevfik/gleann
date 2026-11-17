@@ -1,0 +1,44 @@
+{
+  "body": {
+    "count": 7,
+    "query_ms": 0,
+    "results": [
+      {
+        "fqn": "example.com/fixture/py.Registry",
+        "kind": "class",
+        "name": "Registry"
+      },
+      {
+        "fqn": "example.com/fixture/py.Registry::__init__",
+        "kind": "function",
+        "name": "Registry::__init__"
+      },
+      {
+        "fqn": "example.com/fixture/py.Registry::add",
+        "kind": "function",
+        "name": "Registry::add"
+      },
+      {
+        "fqn": "example.com/fixture/py.Registry::describe",
+        "kind": "function",
+        "name": "Registry::describe"
+      },
+      {
+        "fqn": "example.com/fixture/py.build_registry",
+        "kind": "function",
+        "name": "build_registry"
+      },
+      {
+        "fqn": "example.com/fixture/py.main",
+        "kind": "function",
+        "name": "main"
+      },
+      {
+        "fqn": "example.com/fixture/py.trailing",
+        "kind": "block",
+        "name": "trailing"
+      }
+    ]
+  },
+  "status": 200
+}

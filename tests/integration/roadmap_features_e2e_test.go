@@ -95,6 +95,7 @@ func TestE2E_MultimodalIndexingAndSearch(t *testing.T) {
 // pipeline that powers `gleann index watch`. It confirms that modifying one file updates its
 // chunks in the vector index while leaving untouched files and their embeddings preserved.
 func TestE2E_IncrementalWatch_RebuildPipeline(t *testing.T) {
+	pinFormat1(t)
 	dir := t.TempDir()
 	indexName := "e2e-watch-incremental"
 

@@ -1,0 +1,8 @@
+{
+  "body": {
+    "available": true,
+    "db_path": "<INDEXDIR>/absent_graph",
+    "name": "absent"
+  },
+  "status": 200
+}

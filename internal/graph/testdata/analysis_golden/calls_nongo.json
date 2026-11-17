@@ -1,0 +1,903 @@
+{
+  "example.com/fixture/py.\u003cscript\u003e": {
+    "callees": [
+      {
+        "file": "py/app.py",
+        "fqn": "example.com/fixture/py.main",
+        "kind": "function",
+        "line": 24,
+        "name": "main"
+      }
+    ],
+    "callers": [],
+    "file": "py/app.py",
+    "kind": "script",
+    "line": 0
+  },
+  "example.com/fixture/py.Registry": {
+    "callees": [
+      {
+        "file": "py/util.py",
+        "fqn": "example.com/fixture/py.clean",
+        "kind": "function",
+        "line": 4,
+        "name": "clean"
+      },
+      {
+        "file": "py/util.py",
+        "fqn": "example.com/fixture/py.join_words",
+        "kind": "function",
+        "line": 8,
+        "name": "join_words"
+      },
+      {
+        "fqn": "example.com/fixture/py.keys",
+        "kind": "function",
+        "name": "keys"
+      }
+    ],
+    "callers": [
+      {
+        "file": "py/app.py",
+        "fqn": "example.com/fixture/py.build_registry",
+        "kind": "function",
+        "line": 17,
+        "name": "build_registry"
+      }
+    ],
+    "file": "py/app.py",
+    "kind": "class",
+    "line": 6
+  },
+  "example.com/fixture/py.Registry::__init__": {
+    "callees": [],
+    "callers": [],
+    "file": "py/app.py",
+    "kind": "function",
+    "line": 7
+  },
+  "example.com/fixture/py.Registry::add": {
+    "callees": [],
+    "callers": [
+      {
+        "file": "py/app.py",
+        "fqn": "example.com/fixture/py.build_registry",
+        "kind": "function",
+        "line": 17,
+        "name": "build_registry"
+      }
+    ],
+    "file": "py/app.py",
+    "kind": "function",
+    "line": 10
+  },
+  "example.com/fixture/py.Registry::describe": {
+    "callees": [],
+    "callers": [
+      {
+        "file": "py/app.py",
+        "fqn": "example.com/fixture/py.main",
+        "kind": "function",
+        "line": 24,
+        "name": "main"
+      }
+    ],
+    "file": "py/app.py",
+    "kind": "function",
+    "line": 13
+  },
+  "example.com/fixture/py.add": {
+    "callees": [],
+    "callers": [
+      {
+        "file": "py/app.py",
+        "fqn": "example.com/fixture/py.build_registry",
+        "kind": "function",
+        "line": 17,
+        "name": "build_registry"
+      }
+    ],
+    "file": "",
+    "kind": "function",
+    "line": 0
+  },
+  "example.com/fixture/py.build_registry": {
+    "callees": [
+      {
+        "file": "py/app.py",
+        "fqn": "example.com/fixture/py.Registry",
+        "kind": "class",
+        "line": 6,
+        "name": "Registry"
+      },
+      {
+        "fqn": "example.com/fixture/py.add",
+        "kind": "function",
+        "name": "add"
+      },
+      {
+        "fqn": "example.com/fixture/py.len",
+        "kind": "function",
+        "name": "len"
+      }
+    ],
+    "callers": [
+      {
+        "file": "py/app.py",
+        "fqn": "example.com/fixture/py.main",
+        "kind": "function",
+        "line": 24,
+        "name": "main"
+      }
+    ],
+    "file": "py/app.py",
+    "kind": "function",
+    "line": 17
+  },
+  "example.com/fixture/py.clean": {
+    "callees": [
+      {
+        "fqn": "example.com/fixture/py.lower",
+        "kind": "function",
+        "name": "lower"
+      },
+      {
+        "fqn": "example.com/fixture/py.strip",
+        "kind": "function",
+        "name": "strip"
+      }
+    ],
+    "callers": [
+      {
+        "file": "py/app.py",
+        "fqn": "example.com/fixture/py.Registry",
+        "kind": "class",
+        "line": 6,
+        "name": "Registry"
+      },
+      {
+        "file": "py/util.py",
+        "fqn": "example.com/fixture/py.join_words",
+        "kind": "function",
+        "line": 8,
+        "name": "join_words"
+      }
+    ],
+    "file": "py/util.py",
+    "kind": "function",
+    "line": 4
+  },
+  "example.com/fixture/py.describe": {
+    "callees": [],
+    "callers": [
+      {
+        "file": "py/app.py",
+        "fqn": "example.com/fixture/py.main",
+        "kind": "function",
+        "line": 24,
+        "name": "main"
+      }
+    ],
+    "file": "",
+    "kind": "function",
+    "line": 0
+  },
+  "example.com/fixture/py.join": {
+    "callees": [],
+    "callers": [
+      {
+        "file": "py/util.py",
+        "fqn": "example.com/fixture/py.join_words",
+        "kind": "function",
+        "line": 8,
+        "name": "join_words"
+      }
+    ],
+    "file": "",
+    "kind": "function",
+    "line": 0
+  },
+  "example.com/fixture/py.join_words": {
+    "callees": [
+      {
+        "file": "py/util.py",
+        "fqn": "example.com/fixture/py.clean",
+        "kind": "function",
+        "line": 4,
+        "name": "clean"
+      },
+      {
+        "fqn": "example.com/fixture/py.join",
+        "kind": "function",
+        "name": "join"
+      }
+    ],
+    "callers": [
+      {
+        "file": "py/app.py",
+        "fqn": "example.com/fixture/py.Registry",
+        "kind": "class",
+        "line": 6,
+        "name": "Registry"
+      }
+    ],
+    "file": "py/util.py",
+    "kind": "function",
+    "line": 8
+  },
+  "example.com/fixture/py.keys": {
+    "callees": [],
+    "callers": [
+      {
+        "file": "py/app.py",
+        "fqn": "example.com/fixture/py.Registry",
+        "kind": "class",
+        "line": 6,
+        "name": "Registry"
+      }
+    ],
+    "file": "",
+    "kind": "function",
+    "line": 0
+  },
+  "example.com/fixture/py.len": {
+    "callees": [],
+    "callers": [
+      {
+        "file": "py/app.py",
+        "fqn": "example.com/fixture/py.build_registry",
+        "kind": "function",
+        "line": 17,
+        "name": "build_registry"
+      }
+    ],
+    "file": "",
+    "kind": "function",
+    "line": 0
+  },
+  "example.com/fixture/py.lower": {
+    "callees": [],
+    "callers": [
+      {
+        "file": "py/util.py",
+        "fqn": "example.com/fixture/py.clean",
+        "kind": "function",
+        "line": 4,
+        "name": "clean"
+      }
+    ],
+    "file": "",
+    "kind": "function",
+    "line": 0
+  },
+  "example.com/fixture/py.main": {
+    "callees": [
+      {
+        "file": "py/app.py",
+        "fqn": "example.com/fixture/py.build_registry",
+        "kind": "function",
+        "line": 17,
+        "name": "build_registry"
+      },
+      {
+        "fqn": "example.com/fixture/py.describe",
+        "kind": "function",
+        "name": "describe"
+      },
+      {
+        "fqn": "example.com/fixture/py.print",
+        "kind": "function",
+        "name": "print"
+      }
+    ],
+    "callers": [
+      {
+        "file": "py/app.py",
+        "fqn": "example.com/fixture/py.\u003cscript\u003e",
+        "kind": "script",
+        "name": "\u003cscript\u003e"
+      }
+    ],
+    "file": "py/app.py",
+    "kind": "function",
+    "line": 24
+  },
+  "example.com/fixture/py.print": {
+    "callees": [],
+    "callers": [
+      {
+        "file": "py/app.py",
+        "fqn": "example.com/fixture/py.main",
+        "kind": "function",
+        "line": 24,
+        "name": "main"
+      }
+    ],
+    "file": "",
+    "kind": "function",
+    "line": 0
+  },
+  "example.com/fixture/py.strip": {
+    "callees": [],
+    "callers": [
+      {
+        "file": "py/util.py",
+        "fqn": "example.com/fixture/py.clean",
+        "kind": "function",
+        "line": 4,
+        "name": "clean"
+      }
+    ],
+    "file": "",
+    "kind": "function",
+    "line": 0
+  },
+  "example.com/fixture/py.trailing": {
+    "callees": [],
+    "callers": [],
+    "file": "py/app.py",
+    "kind": "block",
+    "line": 27
+  },
+  "example.com/fixture/rs.Counter": {
+    "callees": [],
+    "callers": [],
+    "file": "rs/main.rs",
+    "kind": "struct",
+    "line": 5
+  },
+  "example.com/fixture/rs.Counter::bump": {
+    "callees": [
+      {
+        "file": "rs/util.rs",
+        "fqn": "example.com/fixture/rs.clamp",
+        "kind": "function",
+        "line": 1,
+        "name": "clamp"
+      },
+      {
+        "file": "rs/util.rs",
+        "fqn": "example.com/fixture/rs.double",
+        "kind": "function",
+        "line": 11,
+        "name": "double"
+      }
+    ],
+    "callers": [
+      {
+        "file": "rs/main.rs",
+        "fqn": "example.com/fixture/rs.run_all",
+        "kind": "function",
+        "line": 19,
+        "name": "run_all"
+      }
+    ],
+    "file": "rs/main.rs",
+    "kind": "function",
+    "line": 14
+  },
+  "example.com/fixture/rs.Counter::new": {
+    "callees": [],
+    "callers": [
+      {
+        "file": "rs/main.rs",
+        "fqn": "example.com/fixture/rs.run_all",
+        "kind": "function",
+        "line": 19,
+        "name": "run_all"
+      }
+    ],
+    "file": "rs/main.rs",
+    "kind": "function",
+    "line": 10
+  },
+  "example.com/fixture/rs.bump": {
+    "callees": [],
+    "callers": [
+      {
+        "file": "rs/main.rs",
+        "fqn": "example.com/fixture/rs.run_all",
+        "kind": "function",
+        "line": 19,
+        "name": "run_all"
+      }
+    ],
+    "file": "",
+    "kind": "function",
+    "line": 0
+  },
+  "example.com/fixture/rs.clamp": {
+    "callees": [],
+    "callers": [
+      {
+        "file": "rs/main.rs",
+        "fqn": "example.com/fixture/rs.Counter::bump",
+        "kind": "function",
+        "line": 14,
+        "name": "Counter::bump"
+      }
+    ],
+    "file": "rs/util.rs",
+    "kind": "function",
+    "line": 1
+  },
+  "example.com/fixture/rs.double": {
+    "callees": [],
+    "callers": [
+      {
+        "file": "rs/main.rs",
+        "fqn": "example.com/fixture/rs.Counter::bump",
+        "kind": "function",
+        "line": 14,
+        "name": "Counter::bump"
+      }
+    ],
+    "file": "rs/util.rs",
+    "kind": "function",
+    "line": 11
+  },
+  "example.com/fixture/rs.gap_1": {
+    "callees": [],
+    "callers": [],
+    "file": "rs/main.rs",
+    "kind": "block",
+    "line": 2
+  },
+  "example.com/fixture/rs.main": {
+    "callees": [
+      {
+        "file": "main.go",
+        "fqn": "example.com/fixture.run",
+        "kind": "function",
+        "line": 17,
+        "name": "run"
+      },
+      {
+        "file": "py/app.py",
+        "fqn": "example.com/fixture/py.build_registry",
+        "kind": "function",
+        "line": 17,
+        "name": "build_registry"
+      },
+      {
+        "fqn": "example.com/fixture/py.describe",
+        "kind": "function",
+        "name": "describe"
+      },
+      {
+        "fqn": "example.com/fixture/py.print",
+        "kind": "function",
+        "name": "print"
+      },
+      {
+        "file": "service/service.go",
+        "fqn": "example.com/fixture/service.New",
+        "kind": "function",
+        "line": 15,
+        "name": "New"
+      },
+      {
+        "file": "store/store.go",
+        "fqn": "example.com/fixture/store.NewMemStore",
+        "kind": "function",
+        "line": 18,
+        "name": "NewMemStore"
+      },
+      {
+        "file": "ts/app.ts",
+        "fqn": "example.com/fixture/ts.describeAll",
+        "kind": "function",
+        "line": 19,
+        "name": "describeAll"
+      },
+      {
+        "fqn": "example.com/fixture/ts.log",
+        "kind": "function",
+        "name": "log"
+      },
+      {
+        "file": "ts/app.ts",
+        "fqn": "example.com/fixture/ts.totalArea",
+        "kind": "function",
+        "line": 23,
+        "name": "totalArea"
+      },
+      {
+        "fqn": "fmt.Print",
+        "kind": "function",
+        "name": "Print"
+      }
+    ],
+    "callers": [
+      {
+        "file": "py/app.py",
+        "fqn": "example.com/fixture/py.\u003cscript\u003e",
+        "kind": "script",
+        "name": "\u003cscript\u003e"
+      }
+    ],
+    "file": "rs/main.rs",
+    "kind": "function",
+    "line": 27
+  },
+  "example.com/fixture/rs.new": {
+    "callees": [],
+    "callers": [
+      {
+        "file": "rs/main.rs",
+        "fqn": "example.com/fixture/rs.run_all",
+        "kind": "function",
+        "line": 19,
+        "name": "run_all"
+      }
+    ],
+    "file": "",
+    "kind": "function",
+    "line": 0
+  },
+  "example.com/fixture/rs.run_all": {
+    "callees": [
+      {
+        "fqn": "example.com/fixture/rs.bump",
+        "kind": "function",
+        "name": "bump"
+      },
+      {
+        "fqn": "example.com/fixture/rs.new",
+        "kind": "function",
+        "name": "new"
+      }
+    ],
+    "callers": [],
+    "file": "rs/main.rs",
+    "kind": "function",
+    "line": 19
+  },
+  "example.com/fixture/rs.util": {
+    "callees": [],
+    "callers": [],
+    "file": "rs/main.rs",
+    "kind": "module",
+    "line": 1
+  },
+  "example.com/fixture/ts.Shape": {
+    "callees": [],
+    "callers": [],
+    "file": "ts/app.ts",
+    "kind": "interface",
+    "line": 3
+  },
+  "example.com/fixture/ts.Square": {
+    "callees": [
+      {
+        "file": "ts/util.ts",
+        "fqn": "example.com/fixture/ts.pluralize",
+        "kind": "function",
+        "line": 5,
+        "name": "pluralize"
+      },
+      {
+        "file": "ts/util.ts",
+        "fqn": "example.com/fixture/ts.slug",
+        "kind": "function",
+        "line": 1,
+        "name": "slug"
+      }
+    ],
+    "callers": [],
+    "file": "ts/app.ts",
+    "kind": "class",
+    "line": 7
+  },
+  "example.com/fixture/ts.Square::Square": {
+    "callees": [
+      {
+        "file": "ts/util.ts",
+        "fqn": "example.com/fixture/ts.pluralize",
+        "kind": "function",
+        "line": 5,
+        "name": "pluralize"
+      },
+      {
+        "file": "ts/util.ts",
+        "fqn": "example.com/fixture/ts.slug",
+        "kind": "function",
+        "line": 1,
+        "name": "slug"
+      }
+    ],
+    "callers": [],
+    "file": "ts/app.ts",
+    "kind": "class",
+    "line": 7
+  },
+  "example.com/fixture/ts.Square::Square::area": {
+    "callees": [],
+    "callers": [
+      {
+        "file": "ts/app.ts",
+        "fqn": "example.com/fixture/ts.totalArea",
+        "kind": "function",
+        "line": 23,
+        "name": "totalArea"
+      }
+    ],
+    "file": "ts/app.ts",
+    "kind": "method",
+    "line": 10
+  },
+  "example.com/fixture/ts.Square::Square::constructor": {
+    "callees": [],
+    "callers": [],
+    "file": "ts/app.ts",
+    "kind": "method",
+    "line": 8
+  },
+  "example.com/fixture/ts.Square::Square::label": {
+    "callees": [],
+    "callers": [
+      {
+        "file": "ts/app.ts",
+        "fqn": "example.com/fixture/ts.describeAll",
+        "kind": "function",
+        "line": 19,
+        "name": "describeAll"
+      }
+    ],
+    "file": "ts/app.ts",
+    "kind": "method",
+    "line": 14
+  },
+  "example.com/fixture/ts.area": {
+    "callees": [],
+    "callers": [
+      {
+        "file": "ts/app.ts",
+        "fqn": "example.com/fixture/ts.totalArea",
+        "kind": "function",
+        "line": 23,
+        "name": "totalArea"
+      }
+    ],
+    "file": "",
+    "kind": "function",
+    "line": 0
+  },
+  "example.com/fixture/ts.describeAll": {
+    "callees": [
+      {
+        "fqn": "example.com/fixture/ts.label",
+        "kind": "function",
+        "name": "label"
+      },
+      {
+        "fqn": "example.com/fixture/ts.map",
+        "kind": "function",
+        "name": "map"
+      }
+    ],
+    "callers": [
+      {
+        "file": "ts/app.ts",
+        "fqn": "example.com/fixture/ts.main",
+        "kind": "function",
+        "line": 27,
+        "name": "main"
+      }
+    ],
+    "file": "ts/app.ts",
+    "kind": "function",
+    "line": 19
+  },
+  "example.com/fixture/ts.label": {
+    "callees": [],
+    "callers": [
+      {
+        "file": "ts/app.ts",
+        "fqn": "example.com/fixture/ts.describeAll",
+        "kind": "function",
+        "line": 19,
+        "name": "describeAll"
+      }
+    ],
+    "file": "",
+    "kind": "function",
+    "line": 0
+  },
+  "example.com/fixture/ts.log": {
+    "callees": [],
+    "callers": [
+      {
+        "file": "ts/app.ts",
+        "fqn": "example.com/fixture/ts.main",
+        "kind": "function",
+        "line": 27,
+        "name": "main"
+      }
+    ],
+    "file": "",
+    "kind": "function",
+    "line": 0
+  },
+  "example.com/fixture/ts.main": {
+    "callees": [
+      {
+        "file": "ts/app.ts",
+        "fqn": "example.com/fixture/ts.describeAll",
+        "kind": "function",
+        "line": 19,
+        "name": "describeAll"
+      },
+      {
+        "fqn": "example.com/fixture/ts.log",
+        "kind": "function",
+        "name": "log"
+      },
+      {
+        "file": "ts/app.ts",
+        "fqn": "example.com/fixture/ts.totalArea",
+        "kind": "function",
+        "line": 23,
+        "name": "totalArea"
+      }
+    ],
+    "callers": [
+      {
+        "file": "py/app.py",
+        "fqn": "example.com/fixture/py.\u003cscript\u003e",
+        "kind": "script",
+        "name": "\u003cscript\u003e"
+      }
+    ],
+    "file": "ts/app.ts",
+    "kind": "function",
+    "line": 27
+  },
+  "example.com/fixture/ts.map": {
+    "callees": [],
+    "callers": [
+      {
+        "file": "ts/app.ts",
+        "fqn": "example.com/fixture/ts.describeAll",
+        "kind": "function",
+        "line": 19,
+        "name": "describeAll"
+      }
+    ],
+    "file": "",
+    "kind": "function",
+    "line": 0
+  },
+  "example.com/fixture/ts.pluralize": {
+    "callees": [],
+    "callers": [
+      {
+        "file": "ts/app.ts",
+        "fqn": "example.com/fixture/ts.Square",
+        "kind": "class",
+        "line": 7,
+        "name": "Square"
+      }
+    ],
+    "file": "ts/util.ts",
+    "kind": "function",
+    "line": 5
+  },
+  "example.com/fixture/ts.reduce": {
+    "callees": [],
+    "callers": [
+      {
+        "file": "ts/app.ts",
+        "fqn": "example.com/fixture/ts.totalArea",
+        "kind": "function",
+        "line": 23,
+        "name": "totalArea"
+      }
+    ],
+    "file": "",
+    "kind": "function",
+    "line": 0
+  },
+  "example.com/fixture/ts.replace": {
+    "callees": [],
+    "callers": [
+      {
+        "file": "ts/util.ts",
+        "fqn": "example.com/fixture/ts.slug",
+        "kind": "function",
+        "line": 1,
+        "name": "slug"
+      }
+    ],
+    "file": "",
+    "kind": "function",
+    "line": 0
+  },
+  "example.com/fixture/ts.slug": {
+    "callees": [
+      {
+        "fqn": "example.com/fixture/ts.replace",
+        "kind": "function",
+        "name": "replace"
+      },
+      {
+        "fqn": "example.com/fixture/ts.toLowerCase",
+        "kind": "function",
+        "name": "toLowerCase"
+      },
+      {
+        "fqn": "example.com/fixture/ts.trim",
+        "kind": "function",
+        "name": "trim"
+      }
+    ],
+    "callers": [
+      {
+        "file": "ts/app.ts",
+        "fqn": "example.com/fixture/ts.Square",
+        "kind": "class",
+        "line": 7,
+        "name": "Square"
+      }
+    ],
+    "file": "ts/util.ts",
+    "kind": "function",
+    "line": 1
+  },
+  "example.com/fixture/ts.toLowerCase": {
+    "callees": [],
+    "callers": [
+      {
+        "file": "ts/util.ts",
+        "fqn": "example.com/fixture/ts.slug",
+        "kind": "function",
+        "line": 1,
+        "name": "slug"
+      }
+    ],
+    "file": "",
+    "kind": "function",
+    "line": 0
+  },
+  "example.com/fixture/ts.totalArea": {
+    "callees": [
+      {
+        "fqn": "example.com/fixture/ts.area",
+        "kind": "function",
+        "name": "area"
+      },
+      {
+        "fqn": "example.com/fixture/ts.reduce",
+        "kind": "function",
+        "name": "reduce"
+      }
+    ],
+    "callers": [
+      {
+        "file": "ts/app.ts",
+        "fqn": "example.com/fixture/ts.main",
+        "kind": "function",
+        "line": 27,
+        "name": "main"
+      }
+    ],
+    "file": "ts/app.ts",
+    "kind": "function",
+    "line": 23
+  },
+  "example.com/fixture/ts.trim": {
+    "callees": [],
+    "callers": [
+      {
+        "file": "ts/util.ts",
+        "fqn": "example.com/fixture/ts.slug",
+        "kind": "function",
+        "line": 1,
+        "name": "slug"
+      }
+    ],
+    "file": "",
+    "kind": "function",
+    "line": 0
+  }
+}

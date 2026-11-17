@@ -3,17 +3,11 @@
 package gleann_test
 
 import (
-	"context"
-	"encoding/json"
-	"os"
-	"path/filepath"
 	"reflect"
 	"sort"
 	"testing"
 
 	"github.com/tevfik/gleann/internal/graph/kuzu"
-	"github.com/tevfik/gleann/internal/graphstore"
-	"github.com/tevfik/gleann/internal/store"
 	"github.com/tevfik/gleann/pkg/gleann"
 )
 
@@ -22,13 +16,6 @@ import (
 // returns the same answer. Kùzu's result order is engine-defined where the
 // SQLite store is deterministic, so comparisons are order-insensitive. The
 // build tag skips this cleanly when the Kùzu backend is not compiled.
-
-const (
-	pfA = "mod/pkg.A"
-	pfB = "mod/pkg.B"
-	pfC = "mod/pkg.C"
-	pfD = "mod/pkg.D"
-)
 
 func buildKuzuFixture(t *testing.T) gleann.GraphDB {
 	t.Helper()
@@ -66,57 +53,6 @@ func buildKuzuFixture(t *testing.T) gleann.GraphDB {
 		}
 	}
 	return db
-}
-
-func buildGraphstoreFixture(t *testing.T) gleann.GraphDB {
-	t.Helper()
-	dir := t.TempDir()
-	base := filepath.Join(dir, "idx", "idx")
-	if err := os.MkdirAll(filepath.Join(dir, "idx"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	st, err := store.Open(base+".db", store.Options{})
-	if err != nil {
-		t.Fatalf("store.Open: %v", err)
-	}
-	gs := graphstore.New(st)
-	sym := func(fqn, name, file string, line int64) graphstore.Symbol {
-		return graphstore.Symbol{
-			FQN: fqn, Name: name, Kind: "function", File: file,
-			StartLine: line, EndLine: line + 5, StartCol: 1, ByteOffset: line * 40,
-		}
-	}
-	must := func(d graphstore.FileDelta) {
-		if err := gs.ApplyFileDelta(context.Background(), d); err != nil {
-			t.Fatalf("ApplyFileDelta(%s): %v", d.File, err)
-		}
-	}
-	// Declarations first (cross-file edges resolve), then the full deltas.
-	must(graphstore.FileDelta{File: "pkg/file1.go", Symbols: []graphstore.Symbol{
-		sym(pfA, "A", "pkg/file1.go", 10), sym(pfB, "B", "pkg/file1.go", 20), sym(pfC, "C", "pkg/file1.go", 30),
-	}})
-	must(graphstore.FileDelta{File: "pkg/file2.go", Symbols: []graphstore.Symbol{
-		sym(pfD, "D", "pkg/file2.go", 10),
-	}})
-	must(graphstore.FileDelta{File: "pkg/file1.go", Symbols: []graphstore.Symbol{
-		sym(pfA, "A", "pkg/file1.go", 10), sym(pfB, "B", "pkg/file1.go", 20), sym(pfC, "C", "pkg/file1.go", 30),
-	}, Edges: []graphstore.Edge{{Src: pfA, Dst: pfB}, {Src: pfB, Dst: pfC}}})
-	must(graphstore.FileDelta{File: "pkg/file2.go", Symbols: []graphstore.Symbol{
-		sym(pfD, "D", "pkg/file2.go", 10),
-	}, Edges: []graphstore.Edge{{Src: pfD, Dst: pfB}}})
-	st.Close()
-
-	meta := gleann.IndexMeta{Name: "idx", Backend: "hnsw", LexicalOnly: true, StoreFormat: 2, Version: "1.0.0"}
-	data, _ := json.Marshal(meta)
-	if err := os.WriteFile(base+".meta.json", data, 0o644); err != nil {
-		t.Fatal(err)
-	}
-	s := gleann.NewSearcher(gleann.Config{IndexDir: dir}, nil)
-	if err := s.Load(context.Background(), "idx"); err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	t.Cleanup(func() { s.Close() })
-	return s.GraphDB()
 }
 
 func calleeFQNs(in []gleann.Callee) []string {
@@ -251,33 +187,6 @@ func TestGraphDBParity(t *testing.T) {
 	}
 }
 
-// resolutionSyms and resolutionCalls are the fixture shared by the name-
-// resolution parity test: Go-style FQNs ('.' and '/' qualifiers), one
-// Rust-style '::' FQN, two symbols sharing the base name "Close", and one
-// symbol whose FQN is exactly "StoreA.Close" (so exact-vs-suffix preference is
-// observable). The call graph gives every seed an edge, so each step of the
-// three-step lookup is exercised.
-var resolutionSyms = []struct{ fqn, name, file, kind string }{
-	{"pkg/a.StoreA.Close", "Close", "pkg/a/store.go", "method"},
-	{"pkg/b.StoreB.Close", "Close", "pkg/b/store.go", "method"},
-	{"StoreA.Close", "Close", "pkg/extra.go", "method"},
-	{"pkg/a.WorkerA.Run", "Run", "pkg/a/worker.go", "method"},
-	{"pkg/b.WorkerB.Run", "Run", "pkg/b/worker.go", "method"},
-	{"pkg/extra.Extra", "Extra", "pkg/extra.go", "function"},
-	{"mod/util.Search", "Search", "mod/util/search.go", "function"},
-	{"mod/pkg.Lookup", "Lookup", "mod/pkg/lookup.go", "function"},
-	{"crate::mod::Thing", "Thing", "crate/mod.rs", "method"},
-	{"crate::mod::Caller", "Caller", "crate/mod.rs", "function"},
-}
-
-var resolutionCalls = [][2]string{
-	{"pkg/a.WorkerA.Run", "pkg/a.StoreA.Close"},
-	{"pkg/b.WorkerB.Run", "pkg/b.StoreB.Close"},
-	{"pkg/extra.Extra", "StoreA.Close"},
-	{"mod/pkg.Lookup", "mod/util.Search"},
-	{"crate::mod::Caller", "crate::mod::Thing"},
-}
-
 func buildKuzuResolutionFixture(t *testing.T) gleann.GraphDB {
 	t.Helper()
 	db, err := kuzu.Open("")
@@ -286,8 +195,14 @@ func buildKuzuResolutionFixture(t *testing.T) gleann.GraphDB {
 	}
 	t.Cleanup(func() { db.Close() })
 	for i, s := range resolutionSyms {
+		if err := db.UpsertFile(s.file, "go"); err != nil {
+			t.Fatalf("UpsertFile(%s): %v", s.file, err)
+		}
 		if err := db.UpsertSymbol(kuzu.SymbolNode{FQN: s.fqn, Kind: s.kind, File: s.file, Line: int64(i + 1), Name: s.name}); err != nil {
 			t.Fatalf("UpsertSymbol(%s): %v", s.fqn, err)
+		}
+		if err := db.AddDeclares(s.file, s.fqn); err != nil {
+			t.Fatalf("AddDeclares(%s): %v", s.fqn, err)
 		}
 	}
 	for _, pair := range resolutionCalls {
@@ -296,66 +211,6 @@ func buildKuzuResolutionFixture(t *testing.T) gleann.GraphDB {
 		}
 	}
 	return db
-}
-
-func buildGraphstoreResolutionFixture(t *testing.T) gleann.GraphDB {
-	t.Helper()
-	dir := t.TempDir()
-	base := filepath.Join(dir, "idx", "idx")
-	if err := os.MkdirAll(filepath.Join(dir, "idx"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	st, err := store.Open(base+".db", store.Options{})
-	if err != nil {
-		t.Fatalf("store.Open: %v", err)
-	}
-	gs := graphstore.New(st)
-	byFile := make(map[string][]graphstore.Symbol)
-	edgesByFile := make(map[string][]graphstore.Edge)
-	for i, s := range resolutionSyms {
-		byFile[s.file] = append(byFile[s.file], graphstore.Symbol{
-			FQN: s.fqn, Name: s.name, Kind: s.kind, File: s.file,
-			StartLine: int64(i + 1), EndLine: int64(i + 2), StartCol: 1, ByteOffset: int64(i + 1),
-		})
-	}
-	for _, pair := range resolutionCalls {
-		file := ""
-		for _, s := range resolutionSyms {
-			if s.fqn == pair[0] {
-				file = s.file
-			}
-		}
-		edgesByFile[file] = append(edgesByFile[file], graphstore.Edge{Src: pair[0], Dst: pair[1]})
-	}
-	var files []string
-	for f := range byFile {
-		files = append(files, f)
-	}
-	sort.Strings(files)
-	must := func(d graphstore.FileDelta) {
-		if err := gs.ApplyFileDelta(context.Background(), d); err != nil {
-			t.Fatalf("ApplyFileDelta(%s): %v", d.File, err)
-		}
-	}
-	for _, f := range files {
-		must(graphstore.FileDelta{File: f, Symbols: byFile[f]})
-	}
-	for _, f := range files {
-		must(graphstore.FileDelta{File: f, Symbols: byFile[f], Edges: edgesByFile[f]})
-	}
-	st.Close()
-
-	meta := gleann.IndexMeta{Name: "idx", Backend: "hnsw", LexicalOnly: true, StoreFormat: 2, Version: "1.0.0"}
-	data, _ := json.Marshal(meta)
-	if err := os.WriteFile(base+".meta.json", data, 0o644); err != nil {
-		t.Fatal(err)
-	}
-	s := gleann.NewSearcher(gleann.Config{IndexDir: dir}, nil)
-	if err := s.Load(context.Background(), "idx"); err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	t.Cleanup(func() { s.Close() })
-	return s.GraphDB()
 }
 
 // TestGraphDBNameResolutionParity checks that both backends resolve a user
@@ -447,55 +302,6 @@ func buildSelfRecursionKuzu(t *testing.T) gleann.GraphDB {
 		}
 	}
 	return db
-}
-
-// buildSelfRecursionGraphstore writes the same graph into a format-2 SQLite
-// store and returns the GraphDB served through a Loaded searcher.
-func buildSelfRecursionGraphstore(t *testing.T) gleann.GraphDB {
-	t.Helper()
-	dir := t.TempDir()
-	base := filepath.Join(dir, "idx", "idx")
-	if err := os.MkdirAll(filepath.Join(dir, "idx"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	st, err := store.Open(base+".db", store.Options{})
-	if err != nil {
-		t.Fatalf("store.Open: %v", err)
-	}
-	gs := graphstore.New(st)
-	sym := func(fqn, name, file string, line int64) graphstore.Symbol {
-		return graphstore.Symbol{FQN: fqn, Name: name, Kind: "function", File: file,
-			StartLine: line, EndLine: line + 5, StartCol: 1, ByteOffset: line * 40}
-	}
-	syms := []graphstore.Symbol{
-		sym("mod/pkg.Rec", "Rec", "pkg/a.go", 10),
-		sym("mod/pkg.A", "A", "pkg/a.go", 20),
-		sym("mod/pkg.B", "B", "pkg/a.go", 30),
-	}
-	must := func(d graphstore.FileDelta) {
-		if err := gs.ApplyFileDelta(context.Background(), d); err != nil {
-			t.Fatalf("ApplyFileDelta(%s): %v", d.File, err)
-		}
-	}
-	must(graphstore.FileDelta{File: "pkg/a.go", Symbols: syms})
-	must(graphstore.FileDelta{File: "pkg/a.go", Symbols: syms, Edges: []graphstore.Edge{
-		{Src: "mod/pkg.Rec", Dst: "mod/pkg.Rec"},
-		{Src: "mod/pkg.A", Dst: "mod/pkg.B"},
-		{Src: "mod/pkg.B", Dst: "mod/pkg.A"},
-	}})
-	st.Close()
-
-	meta := gleann.IndexMeta{Name: "idx", Backend: "hnsw", LexicalOnly: true, StoreFormat: 2, Version: "1.0.0"}
-	data, _ := json.Marshal(meta)
-	if err := os.WriteFile(base+".meta.json", data, 0o644); err != nil {
-		t.Fatal(err)
-	}
-	s := gleann.NewSearcher(gleann.Config{IndexDir: dir}, nil)
-	if err := s.Load(context.Background(), "idx"); err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	t.Cleanup(func() { s.Close() })
-	return s.GraphDB()
 }
 
 // TestGraphDBParitySelfRecursion checks that the SQLite backend matches Kùzu
@@ -613,50 +419,28 @@ func buildMultiSeedKuzu(t *testing.T) gleann.GraphDB {
 	return db
 }
 
-func buildMultiSeedGraphstore(t *testing.T) gleann.GraphDB {
-	t.Helper()
-	dir := t.TempDir()
-	base := filepath.Join(dir, "idx", "idx")
-	if err := os.MkdirAll(filepath.Join(dir, "idx"), 0o755); err != nil {
-		t.Fatal(err)
+// kuzuGoldenFixture builds the Kùzu side of a golden scenario.
+func kuzuGoldenFixture(t *testing.T, scenario string) gleann.GraphDB {
+	switch scenario {
+	case "basic":
+		return buildKuzuFixture(t)
+	case "resolution":
+		return buildKuzuResolutionFixture(t)
+	case "selfrecursion":
+		return buildSelfRecursionKuzu(t)
+	case "multiseed":
+		return buildMultiSeedKuzu(t)
 	}
-	st, err := store.Open(base+".db", store.Options{})
-	if err != nil {
-		t.Fatalf("store.Open: %v", err)
-	}
-	gs := graphstore.New(st)
-	sym := func(fqn, name, file string, line int64) graphstore.Symbol {
-		return graphstore.Symbol{FQN: fqn, Name: name, Kind: "function", File: file,
-			StartLine: line, EndLine: line + 5, StartCol: 1, ByteOffset: line * 40}
-	}
-	syms := []graphstore.Symbol{
-		sym("mod/pkg.SeedA", "Target", "pkg/a.go", 10),
-		sym("mod/pkg.SeedB", "Target", "pkg/a.go", 20),
-		sym("mod/pkg.C", "C", "pkg/a.go", 30),
-		sym("mod/pkg.X", "X", "pkg/a.go", 40),
-	}
-	must := func(d graphstore.FileDelta) {
-		if err := gs.ApplyFileDelta(context.Background(), d); err != nil {
-			t.Fatalf("ApplyFileDelta(%s): %v", d.File, err)
-		}
-	}
-	must(graphstore.FileDelta{File: "pkg/a.go", Symbols: syms})
-	must(graphstore.FileDelta{File: "pkg/a.go", Symbols: syms, Edges: []graphstore.Edge{
-		{Src: "mod/pkg.C", Dst: "mod/pkg.X"},
-		{Src: "mod/pkg.X", Dst: "mod/pkg.SeedA"},
-		{Src: "mod/pkg.C", Dst: "mod/pkg.SeedB"},
-	}})
-	st.Close()
+	t.Fatalf("unknown golden scenario %q", scenario)
+	return nil
+}
 
-	meta := gleann.IndexMeta{Name: "idx", Backend: "hnsw", LexicalOnly: true, StoreFormat: 2, Version: "1.0.0"}
-	data, _ := json.Marshal(meta)
-	if err := os.WriteFile(base+".meta.json", data, 0o644); err != nil {
-		t.Fatal(err)
+// TestGraphDBGoldenKuzu regenerates the golden answers (with -update) or
+// proves the committed files are what Kùzu answers today.
+func TestGraphDBGoldenKuzu(t *testing.T) {
+	for _, sc := range graphGoldenScenarios {
+		t.Run(sc, func(t *testing.T) {
+			compareGraphGolden(t, sc, kuzuGoldenFixture(t, sc), true)
+		})
 	}
-	s := gleann.NewSearcher(gleann.Config{IndexDir: dir}, nil)
-	if err := s.Load(context.Background(), "idx"); err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	t.Cleanup(func() { s.Close() })
-	return s.GraphDB()
 }

@@ -111,6 +111,16 @@ jobs:
           GOTOOLCHAIN=auto go test -race -timeout 4m ./...
         shell: bash
 
+      - name: Test (bench/graphdb, SQLite reference only)
+        # The graph database benchmark harness is a nested module; its Kùzu
+        # adapter needs CGo and the `kuzu` tag and is not built here.
+        if: matrix.os != 'windows-latest'
+        timeout-minutes: 5
+        run: |
+          cd bench/graphdb
+          GOTOOLCHAIN=auto CGO_ENABLED=0 go test -timeout 4m ./...
+        shell: bash
+
       - name: Upload coverage to Codecov
         if: matrix.os == 'ubuntu-latest'
         uses: codecov/codecov-action@v4

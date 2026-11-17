@@ -78,3 +78,6 @@ deps/faiss_install/lib/libgfortran*
 
 # Local agent tool worktrees
 .kilo/
+# Graph benchmark reports (bench/graphdb/results/): keep only the README
+bench/graphdb/results/*
+!bench/graphdb/results/README.md

@@ -1,0 +1,19 @@
+{
+  "body": {
+    "count": 2,
+    "query_ms": 0,
+    "results": [
+      {
+        "fqn": "example.com/fixture/rs.clamp",
+        "kind": "function",
+        "name": "clamp"
+      },
+      {
+        "fqn": "example.com/fixture/rs.double",
+        "kind": "function",
+        "name": "double"
+      }
+    ]
+  },
+  "status": 200
+}

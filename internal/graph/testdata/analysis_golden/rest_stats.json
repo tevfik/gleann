@@ -1,0 +1,12 @@
+{
+  "body": {
+    "available": true,
+    "calls_count": 45,
+    "db_path": "<INDEXDIR>/fixture_graph",
+    "declares_count": 49,
+    "file_count": 10,
+    "name": "fixture",
+    "symbol_count": 75
+  },
+  "status": 200
+}

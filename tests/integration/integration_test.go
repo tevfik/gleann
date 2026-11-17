@@ -68,6 +68,7 @@ func hashString(s string) int {
 }
 
 func TestBuildAndSearch(t *testing.T) {
+	pinFormat1(t)
 	dir := t.TempDir()
 
 	config := gleann.DefaultConfig()

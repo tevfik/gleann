@@ -1,0 +1,16 @@
+File Risk Analysis — fixture (top 11)
+
+FILE                                               RISK       SCORE    TOP SYMBOL
+──────────────────────────────────────────────────────────────────────────────────────────
+
+<nil>
+main.go
+py/app.py
+py/util.py
+rs/main.rs
+rs/util.rs
+service/service.go
+service/service_test.go
+store/store.go
+ts/app.ts
+ts/util.ts

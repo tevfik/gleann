@@ -14,3 +14,20 @@
 
 - 🚀 **1.1x Higher Recall**: GraphRAG achieved 80.0% Recall@5 vs BM25's 70.0%.
 - 💰 **12.2% Token Savings**: Agents navigate directly to relevant definitions, saving context tokens.
+
+## Graph database benchmark (`bench/graphdb`)
+
+A pluggable harness compares any graph database against gleann's SQLite code
+graph (`internal/graphstore`) on the same synthetic graph: bulk load, p50/p95
+latency of callers/callees/impact (depth 1 and 3), symbol search, shortest
+path, one-file update, disk, memory, and result parity. It is a separate Go
+module (`bench/graphdb`), so candidate databases and CGo never reach the root
+`go.mod`. Kùzu, removed from gleann, is the first candidate.
+
+```bash
+make bench-graphdb                                    # SQLite reference only, 10K edges
+make bench-graphdb GRAPHDB_TAGS=kuzu GRAPHDB_EDGES=100000,1000000   # with Kùzu (CGo)
+```
+
+See [`bench/graphdb/README.md`](../bench/graphdb/README.md) for how to add a
+candidate and the last known numbers.

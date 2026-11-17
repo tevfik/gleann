@@ -74,6 +74,7 @@ func TestE2E_HybridSearch_CLIWiring(t *testing.T) {
 }
 
 func TestE2E_HybridSearch_BM25IndexedCount(t *testing.T) {
+	pinFormat1(t)
 	dir := t.TempDir()
 	config := gleann.DefaultConfig()
 	config.IndexDir = dir

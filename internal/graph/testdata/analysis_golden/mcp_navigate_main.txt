@@ -1,0 +1,41 @@
+Symbol Navigation — "main" in fixture
+
+── 1. example.com/fixture.main (function)
+  Callers:
+    ← example.com/fixture/py.<script> (script) [py/app.py]
+  Callees:
+    → example.com/fixture.run (function) [main.go:17]
+    → example.com/fixture/service.New (function) [service/service.go:15]
+    → example.com/fixture/store.NewMemStore (function) [store/store.go:18]
+    → fmt.Print (function)
+
+── 2. example.com/fixture/py.main (function)
+  Callers:
+    ← example.com/fixture/py.<script> (script) [py/app.py]
+  Callees:
+    → example.com/fixture/py.build_registry (function) [py/app.py:17]
+    → example.com/fixture/py.describe (function)
+    → example.com/fixture/py.print (function)
+
+── 3. example.com/fixture/rs.main (function)
+  Callers:
+    ← example.com/fixture/py.<script> (script) [py/app.py]
+  Callees:
+    → example.com/fixture.run (function) [main.go:17]
+    → example.com/fixture/py.build_registry (function) [py/app.py:17]
+    → example.com/fixture/py.describe (function)
+    → example.com/fixture/py.print (function)
+    → example.com/fixture/service.New (function) [service/service.go:15]
+    → example.com/fixture/store.NewMemStore (function) [store/store.go:18]
+    → example.com/fixture/ts.describeAll (function) [ts/app.ts:19]
+    → example.com/fixture/ts.log (function)
+    → example.com/fixture/ts.totalArea (function) [ts/app.ts:23]
+    → fmt.Print (function)
+
+── 4. example.com/fixture/ts.main (function)
+  Callers:
+    ← example.com/fixture/py.<script> (script) [py/app.py]
+  Callees:
+    → example.com/fixture/ts.describeAll (function) [ts/app.ts:19]
+    → example.com/fixture/ts.log (function)
+    → example.com/fixture/ts.totalArea (function) [ts/app.ts:23]

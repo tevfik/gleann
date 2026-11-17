@@ -1,0 +1,366 @@
+{
+  "example.com/fixture.main": {
+    "callees": [
+      {
+        "file": "main.go",
+        "fqn": "example.com/fixture.run",
+        "kind": "function",
+        "line": 17,
+        "name": "run"
+      },
+      {
+        "file": "service/service.go",
+        "fqn": "example.com/fixture/service.New",
+        "kind": "function",
+        "line": 15,
+        "name": "New"
+      },
+      {
+        "file": "store/store.go",
+        "fqn": "example.com/fixture/store.NewMemStore",
+        "kind": "function",
+        "line": 18,
+        "name": "NewMemStore"
+      },
+      {
+        "fqn": "fmt.Print",
+        "kind": "function",
+        "name": "Print"
+      }
+    ],
+    "callers": [
+      {
+        "file": "py/app.py",
+        "fqn": "example.com/fixture/py.\u003cscript\u003e",
+        "kind": "script",
+        "name": "\u003cscript\u003e"
+      }
+    ],
+    "file": "main.go",
+    "kind": "function",
+    "line": 10
+  },
+  "example.com/fixture.run": {
+    "callees": [
+      {
+        "fqn": "fmt.Println",
+        "kind": "function",
+        "name": "Println"
+      }
+    ],
+    "callers": [
+      {
+        "file": "main.go",
+        "fqn": "example.com/fixture.main",
+        "kind": "function",
+        "line": 10,
+        "name": "main"
+      }
+    ],
+    "file": "main.go",
+    "kind": "function",
+    "line": 17
+  },
+  "example.com/fixture/service.New": {
+    "callees": [],
+    "callers": [
+      {
+        "file": "main.go",
+        "fqn": "example.com/fixture.main",
+        "kind": "function",
+        "line": 10,
+        "name": "main"
+      },
+      {
+        "file": "service/service_test.go",
+        "fqn": "example.com/fixture/service.TestReport",
+        "is_test": true,
+        "kind": "function",
+        "line": 19,
+        "name": "TestReport"
+      },
+      {
+        "file": "service/service_test.go",
+        "fqn": "example.com/fixture/service.TestSaveLoad",
+        "is_test": true,
+        "kind": "function",
+        "line": 9,
+        "name": "TestSaveLoad"
+      }
+    ],
+    "file": "service/service.go",
+    "kind": "function",
+    "line": 15
+  },
+  "example.com/fixture/service.Service": {
+    "callees": [],
+    "callers": [],
+    "file": "service/service.go",
+    "kind": "struct",
+    "line": 10
+  },
+  "example.com/fixture/service.Service.Load": {
+    "callees": [],
+    "callers": [],
+    "file": "service/service.go",
+    "kind": "method",
+    "line": 29
+  },
+  "example.com/fixture/service.Service.Report": {
+    "callees": [],
+    "callers": [],
+    "file": "service/service.go",
+    "kind": "method",
+    "line": 35
+  },
+  "example.com/fixture/service.Service.Save": {
+    "callees": [
+      {
+        "file": "service/service.go",
+        "fqn": "example.com/fixture/service.validate",
+        "kind": "function",
+        "line": 44,
+        "name": "validate"
+      }
+    ],
+    "callers": [],
+    "file": "service/service.go",
+    "kind": "method",
+    "line": 20
+  },
+  "example.com/fixture/service.TestReport": {
+    "callees": [
+      {
+        "file": "service/service.go",
+        "fqn": "example.com/fixture/service.New",
+        "kind": "function",
+        "line": 15,
+        "name": "New"
+      },
+      {
+        "file": "store/store.go",
+        "fqn": "example.com/fixture/store.NewMemStore",
+        "kind": "function",
+        "line": 18,
+        "name": "NewMemStore"
+      }
+    ],
+    "callers": [],
+    "file": "service/service_test.go",
+    "kind": "function",
+    "line": 19
+  },
+  "example.com/fixture/service.TestSaveLoad": {
+    "callees": [
+      {
+        "file": "service/service.go",
+        "fqn": "example.com/fixture/service.New",
+        "kind": "function",
+        "line": 15,
+        "name": "New"
+      },
+      {
+        "file": "store/store.go",
+        "fqn": "example.com/fixture/store.NewMemStore",
+        "kind": "function",
+        "line": 18,
+        "name": "NewMemStore"
+      }
+    ],
+    "callers": [],
+    "file": "service/service_test.go",
+    "kind": "function",
+    "line": 9
+  },
+  "example.com/fixture/service.emptyError": {
+    "callees": [],
+    "callers": [],
+    "file": "service/service.go",
+    "kind": "struct",
+    "line": 51
+  },
+  "example.com/fixture/service.emptyError.Error": {
+    "callees": [],
+    "callers": [],
+    "file": "service/service.go",
+    "kind": "method",
+    "line": 53
+  },
+  "example.com/fixture/service.errEmpty": {
+    "callees": [],
+    "callers": [],
+    "file": "service/service.go",
+    "kind": "var",
+    "line": 55
+  },
+  "example.com/fixture/service.validate": {
+    "callees": [],
+    "callers": [
+      {
+        "file": "service/service.go",
+        "fqn": "example.com/fixture/service.Service.Save",
+        "kind": "method",
+        "line": 20,
+        "name": "Service.Save"
+      }
+    ],
+    "file": "service/service.go",
+    "kind": "function",
+    "line": 44
+  },
+  "example.com/fixture/store.MemStore": {
+    "callees": [],
+    "callers": [],
+    "file": "store/store.go",
+    "kind": "struct",
+    "line": 13
+  },
+  "example.com/fixture/store.MemStore.Get": {
+    "callees": [],
+    "callers": [],
+    "file": "store/store.go",
+    "kind": "method",
+    "line": 23
+  },
+  "example.com/fixture/store.MemStore.Keys": {
+    "callees": [
+      {
+        "fqn": "example.com/fixture/store.append",
+        "kind": "function",
+        "name": "append"
+      },
+      {
+        "fqn": "example.com/fixture/store.len",
+        "kind": "function",
+        "name": "len"
+      },
+      {
+        "fqn": "example.com/fixture/store.make",
+        "kind": "function",
+        "name": "make"
+      },
+      {
+        "fqn": "sort.Strings",
+        "kind": "function",
+        "name": "Strings"
+      }
+    ],
+    "callers": [],
+    "file": "store/store.go",
+    "kind": "method",
+    "line": 34
+  },
+  "example.com/fixture/store.MemStore.Put": {
+    "callees": [
+      {
+        "file": "store/store.go",
+        "fqn": "example.com/fixture/store.normalize",
+        "kind": "function",
+        "line": 44,
+        "name": "normalize"
+      }
+    ],
+    "callers": [],
+    "file": "store/store.go",
+    "kind": "method",
+    "line": 29
+  },
+  "example.com/fixture/store.NewMemStore": {
+    "callees": [],
+    "callers": [
+      {
+        "file": "main.go",
+        "fqn": "example.com/fixture.main",
+        "kind": "function",
+        "line": 10,
+        "name": "main"
+      },
+      {
+        "file": "service/service_test.go",
+        "fqn": "example.com/fixture/service.TestReport",
+        "is_test": true,
+        "kind": "function",
+        "line": 19,
+        "name": "TestReport"
+      },
+      {
+        "file": "service/service_test.go",
+        "fqn": "example.com/fixture/service.TestSaveLoad",
+        "is_test": true,
+        "kind": "function",
+        "line": 9,
+        "name": "TestSaveLoad"
+      }
+    ],
+    "file": "store/store.go",
+    "kind": "function",
+    "line": 18
+  },
+  "example.com/fixture/store.Store": {
+    "callees": [],
+    "callers": [],
+    "file": "store/store.go",
+    "kind": "interface",
+    "line": 6
+  },
+  "example.com/fixture/store.append": {
+    "callees": [],
+    "callers": [
+      {
+        "file": "store/store.go",
+        "fqn": "example.com/fixture/store.MemStore.Keys",
+        "kind": "method",
+        "line": 34,
+        "name": "MemStore.Keys"
+      }
+    ],
+    "file": "",
+    "kind": "function",
+    "line": 0
+  },
+  "example.com/fixture/store.len": {
+    "callees": [],
+    "callers": [
+      {
+        "file": "store/store.go",
+        "fqn": "example.com/fixture/store.MemStore.Keys",
+        "kind": "method",
+        "line": 34,
+        "name": "MemStore.Keys"
+      }
+    ],
+    "file": "",
+    "kind": "function",
+    "line": 0
+  },
+  "example.com/fixture/store.make": {
+    "callees": [],
+    "callers": [
+      {
+        "file": "store/store.go",
+        "fqn": "example.com/fixture/store.MemStore.Keys",
+        "kind": "method",
+        "line": 34,
+        "name": "MemStore.Keys"
+      }
+    ],
+    "file": "",
+    "kind": "function",
+    "line": 0
+  },
+  "example.com/fixture/store.normalize": {
+    "callees": [],
+    "callers": [
+      {
+        "file": "store/store.go",
+        "fqn": "example.com/fixture/store.MemStore.Put",
+        "kind": "method",
+        "line": 29,
+        "name": "MemStore.Put"
+      }
+    ],
+    "file": "store/store.go",
+    "kind": "function",
+    "line": 44
+  }
+}

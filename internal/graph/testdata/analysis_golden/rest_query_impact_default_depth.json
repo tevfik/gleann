@@ -1,0 +1,22 @@
+{
+  "body": {
+    "affected_files": [
+      "py/app.py",
+      "py/util.py"
+    ],
+    "depth": 5,
+    "direct_callers": [
+      "example.com/fixture/py.Registry",
+      "example.com/fixture/py.join_words"
+    ],
+    "query_ms": 0,
+    "symbol": "example.com/fixture/py.clean",
+    "total_affected": 5,
+    "transitive_callers": [
+      "example.com/fixture/py.\u003cscript\u003e",
+      "example.com/fixture/py.build_registry",
+      "example.com/fixture/py.main"
+    ]
+  },
+  "status": 200
+}

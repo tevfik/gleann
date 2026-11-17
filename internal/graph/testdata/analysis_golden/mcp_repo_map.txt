@@ -1,0 +1,62 @@
+## Repository Map — fixture (by importance)
+
+### main.go
+- function `main`
+- function `run`
+### py/app.py
+- block `trailing`
+- class `Registry`
+- function `Registry::__init__`
+- function `Registry::add`
+- function `Registry::describe`
+- function `build_registry`
+- function `main`
+- script `<script>`
+### py/util.py
+- function `clean`
+- function `join_words`
+### rs/main.rs
+- block `gap_1`
+- function `Counter::bump`
+- function `Counter::new`
+- function `main`
+- function `run_all`
+- module `util`
+- struct `Counter`
+### rs/util.rs
+- function `clamp`
+- function `double`
+### service/service.go
+- function `New`
+- function `validate`
+- method `Service.Load`
+- method `Service.Report`
+- method `Service.Save`
+- method `emptyError.Error`
+- struct `Service`
+- struct `emptyError`
+- var `errEmpty`
+### service/service_test.go
+- function `TestReport`
+- function `TestSaveLoad`
+### store/store.go
+- function `NewMemStore`
+- function `normalize`
+- interface `Store`
+- method `MemStore.Get`
+- method `MemStore.Keys`
+- method `MemStore.Put`
+- struct `MemStore`
+### ts/app.ts
+- class `Square::Square`
+- class `Square`
+- function `describeAll`
+- function `main`
+- function `totalArea`
+- interface `Shape`
+- method `Square::Square::area`
+- method `Square::Square::constructor`
+- method `Square::Square::label`
+### ts/util.ts
+- function `pluralize`
+- function `slug`

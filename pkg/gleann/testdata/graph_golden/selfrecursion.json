@@ -1,0 +1,89 @@
+{
+  "Callees(mod/pkg.A)": [
+    {
+      "fqn": "mod/pkg.B",
+      "name": "B",
+      "kind": "function",
+      "file": "pkg/a.go",
+      "line": 30
+    }
+  ],
+  "Callees(mod/pkg.B)": [
+    {
+      "fqn": "mod/pkg.A",
+      "name": "A",
+      "kind": "function",
+      "file": "pkg/a.go",
+      "line": 20
+    }
+  ],
+  "Callees(mod/pkg.Rec)": [
+    {
+      "fqn": "mod/pkg.Rec",
+      "name": "Rec",
+      "kind": "function",
+      "file": "pkg/a.go",
+      "line": 10
+    }
+  ],
+  "Callers(mod/pkg.A)": [
+    {
+      "fqn": "mod/pkg.B",
+      "name": "B",
+      "kind": "function",
+      "file": "pkg/a.go",
+      "line": 30
+    }
+  ],
+  "Callers(mod/pkg.B)": [
+    {
+      "fqn": "mod/pkg.A",
+      "name": "A",
+      "kind": "function",
+      "file": "pkg/a.go",
+      "line": 20
+    }
+  ],
+  "Callers(mod/pkg.Rec)": [
+    {
+      "fqn": "mod/pkg.Rec",
+      "name": "Rec",
+      "kind": "function",
+      "file": "pkg/a.go",
+      "line": 10
+    }
+  ],
+  "Impact(mod/pkg.A,5)": {
+    "symbol": "mod/pkg.A",
+    "direct_callers": [
+      "mod/pkg.B"
+    ],
+    "transitive_callers": [],
+    "affected_files": [
+      "pkg/a.go"
+    ],
+    "depth": 5
+  },
+  "Impact(mod/pkg.B,5)": {
+    "symbol": "mod/pkg.B",
+    "direct_callers": [
+      "mod/pkg.A"
+    ],
+    "transitive_callers": [],
+    "affected_files": [
+      "pkg/a.go"
+    ],
+    "depth": 5
+  },
+  "Impact(mod/pkg.Rec,5)": {
+    "symbol": "mod/pkg.Rec",
+    "direct_callers": [
+      "mod/pkg.Rec"
+    ],
+    "transitive_callers": [],
+    "affected_files": [
+      "pkg/a.go"
+    ],
+    "depth": 5
+  }
+}
