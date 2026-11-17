@@ -68,6 +68,10 @@ func extractFile(module, root, absPath, source string, r *ExactResolver) FileGra
 		chunks = chunker.ChunkCode(source, absPath)
 	}
 
+	// One declaration is one symbol: the pieces of an oversized declaration
+	// the chunker split for search become a single logical chunk here.
+	chunks = mergeSplitChunks(chunks)
+
 	rationaleByLine := extractRationale(source)
 
 	var anchors map[string]goAnchor
@@ -101,7 +105,7 @@ func extractFile(module, root, absPath, source string, r *ExactResolver) FileGra
 			Weight:  weight,
 			IsTest:  isTestSymbol(relPath, ch.Name),
 		}
-		if a, ok := lookupAnchor(anchors, ch.Name); ok {
+		if a, ok := anchors[ch.Name]; ok {
 			sym.Line = a.line
 			sym.EndLine = a.endLine
 			sym.StartCol = a.col
@@ -230,16 +234,34 @@ func anchorRecvName(expr ast.Expr) string {
 	}
 }
 
-// lookupAnchor resolves a chunk name to its declaration anchor, falling back
-// to the original declaration for chunker-split parts ("Foo_part2" → "Foo").
-func lookupAnchor(anchors map[string]goAnchor, name string) (goAnchor, bool) {
-	if a, ok := anchors[name]; ok {
-		return a, true
-	}
-	if i := strings.LastIndex(name, "_part"); i > 0 {
-		if a, ok := anchors[name[:i]]; ok {
-			return a, true
+// mergeSplitChunks collapses the pieces of every chunker-split declaration
+// into one chunk named after the declaration (CodeChunk.LogicalName), spanning
+// the pieces' lines, at the position of its first piece. Chunks that are not
+// pieces pass through unchanged, so a declaration that is genuinely named
+// "foo_part2" is never mistaken for a piece.
+func mergeSplitChunks(chunks []chunking.CodeChunk) []chunking.CodeChunk {
+	type key struct{ name, nodeType string }
+	first := make(map[key]int)
+	out := make([]chunking.CodeChunk, 0, len(chunks))
+	for _, ch := range chunks {
+		if ch.LogicalName == "" {
+			out = append(out, ch)
+			continue
 		}
+		k := key{ch.LogicalName, ch.NodeType}
+		if i, ok := first[k]; ok {
+			if ch.StartLine < out[i].StartLine {
+				out[i].StartLine = ch.StartLine
+			}
+			if ch.EndLine > out[i].EndLine {
+				out[i].EndLine = ch.EndLine
+			}
+			continue
+		}
+		first[k] = len(out)
+		ch.Name = ch.LogicalName
+		ch.LogicalName = ""
+		out = append(out, ch)
 	}
-	return goAnchor{}, false
+	return out
 }

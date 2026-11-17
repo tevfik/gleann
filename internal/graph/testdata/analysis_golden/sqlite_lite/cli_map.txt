@@ -1,55 +1,55 @@
 🗺️  Repo Map — fixture (top 1000 symbols by PageRank)
 
 📄 service/service.go
-   ██████████ example.com/fixture/service.Service.Load 0.0631
-   ██████ example.com/fixture/service.New          0.0426
-   ██████ example.com/fixture/service.validate     0.0421
-   ███ example.com/fixture/service.Service.Report 0.0247
-   ███ example.com/fixture/service.Service.Save 0.0247
-   ███ example.com/fixture/service.Service      0.0211
-   ███ example.com/fixture/service.emptyError   0.0211
-   ███ example.com/fixture/service.emptyError.Error 0.0211
-   ███ example.com/fixture/service.errEmpty     0.0211
+   ██████ example.com/fixture/service.Service.Load 0.0503
+   ████ example.com/fixture/service.New          0.0408
+   ███ example.com/fixture/service.validate     0.0302
+   ██ example.com/fixture/service.Service.Report 0.0236
+   ██ example.com/fixture/service.Service.Save 0.0236
+   ██ example.com/fixture/service.Service      0.0202
+   ██ example.com/fixture/service.emptyError   0.0202
+   ██ example.com/fixture/service.emptyError.Error 0.0202
+   ██ example.com/fixture/service.errEmpty     0.0202
 📄 store/store.go
-   ██████ example.com/fixture/store.NewMemStore    0.0426
-   ██████ example.com/fixture/store.normalize      0.0390
-   ███ example.com/fixture/store.MemStore       0.0211
-   ███ example.com/fixture/store.MemStore.Get   0.0211
-   ███ example.com/fixture/store.MemStore.Keys  0.0211
-   ███ example.com/fixture/store.MemStore.Put   0.0211
-   ███ example.com/fixture/store.Store          0.0211
+   ██████████ example.com/fixture/store.Store          0.0831
+   ████ example.com/fixture/store.NewMemStore    0.0408
+   ████ example.com/fixture/store.normalize      0.0374
+   ██ example.com/fixture/store.MemStore       0.0202
+   ██ example.com/fixture/store.MemStore.Get   0.0202
+   ██ example.com/fixture/store.MemStore.Keys  0.0202
+   ██ example.com/fixture/store.MemStore.Put   0.0202
 📄 py/app.py
-   ███ example.com/fixture/py.Registry          0.0211
-   ███ example.com/fixture/py.__init__          0.0211
-   ███ example.com/fixture/py.add               0.0211
-   ███ example.com/fixture/py.build_registry    0.0211
-   ███ example.com/fixture/py.describe          0.0211
-   ███ example.com/fixture/py.main              0.0211
+   ██ example.com/fixture/py.Registry          0.0202
+   ██ example.com/fixture/py.__init__          0.0202
+   ██ example.com/fixture/py.add               0.0202
+   ██ example.com/fixture/py.build_registry    0.0202
+   ██ example.com/fixture/py.describe          0.0202
+   ██ example.com/fixture/py.main              0.0202
 📄 ts/app.ts
-   ███ example.com/fixture/ts.Shape             0.0211
-   ███ example.com/fixture/ts.Square            0.0211
-   ███ example.com/fixture/ts.describeAll       0.0211
-   ███ example.com/fixture/ts.main              0.0211
-   ███ example.com/fixture/ts.totalArea         0.0211
+   ██ example.com/fixture/ts.Shape             0.0202
+   ██ example.com/fixture/ts.Square            0.0202
+   ██ example.com/fixture/ts.describeAll       0.0202
+   ██ example.com/fixture/ts.main              0.0202
+   ██ example.com/fixture/ts.totalArea         0.0202
 📄 rs/main.rs
-   ███ example.com/fixture/rs.Counter           0.0211
-   ███ example.com/fixture/rs.main              0.0211
-   ███ example.com/fixture/rs.run_all           0.0211
-   ███ example.com/fixture/rs.util              0.0211
+   ██ example.com/fixture/rs.Counter           0.0202
+   ██ example.com/fixture/rs.main              0.0202
+   ██ example.com/fixture/rs.run_all           0.0202
+   ██ example.com/fixture/rs.util              0.0202
 📄 main.go
-   ███ example.com/fixture.run                  0.0247
-   ███ example.com/fixture.main                 0.0211
+   ██ example.com/fixture.run                  0.0236
+   ██ example.com/fixture.main                 0.0202
 📄 py/util.py
-   ███ example.com/fixture/py.clean             0.0211
-   ███ example.com/fixture/py.join_words        0.0211
+   ██ example.com/fixture/py.clean             0.0202
+   ██ example.com/fixture/py.join_words        0.0202
 📄 rs/util.rs
-   ███ example.com/fixture/rs.clamp             0.0211
-   ███ example.com/fixture/rs.double            0.0211
+   ██ example.com/fixture/rs.clamp             0.0202
+   ██ example.com/fixture/rs.double            0.0202
 📄 service/service_test.go
-   ███ example.com/fixture/service.TestReport   0.0211
-   ███ example.com/fixture/service.TestSaveLoad 0.0211
+   ██ example.com/fixture/service.TestReport   0.0202
+   ██ example.com/fixture/service.TestSaveLoad 0.0202
 📄 ts/util.ts
-   ███ example.com/fixture/ts.pluralize         0.0211
-   ███ example.com/fixture/ts.slug              0.0211
+   ██ example.com/fixture/ts.pluralize         0.0202
+   ██ example.com/fixture/ts.slug              0.0202
 
-📊 Total: 41 nodes, 13 edges
+📊 Total: 41 nodes, 16 edges

@@ -172,21 +172,6 @@ type (
 	}
 }
 
-func TestLookupAnchorFollowsChunkerSplitParts(t *testing.T) {
-	anchors := map[string]goAnchor{"Big": {line: 10}, "X": {line: 1}}
-	for name, want := range map[string]int64{"Big": 10, "Big_part1": 10, "Big_part12": 10, "X_part2": 1} {
-		a, ok := lookupAnchor(anchors, name)
-		if !ok || a.line != want {
-			t.Errorf("lookupAnchor(%q) = %+v, %v; want line %d", name, a, ok, want)
-		}
-	}
-	for _, name := range []string{"Missing", "_part1", "Missing_part1"} {
-		if _, ok := lookupAnchor(anchors, name); ok {
-			t.Errorf("lookupAnchor(%q) should miss", name)
-		}
-	}
-}
-
 func parseExpr(t *testing.T, s string) ast.Expr {
 	t.Helper()
 	e, err := parser.ParseExpr(s)

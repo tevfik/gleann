@@ -323,7 +323,7 @@ func TestFileGraphToDeltaRules(t *testing.T) {
 		Implements: []gtypes.EdgeImplements{{ImplFQN: "p.A", IfaceFQN: "p.B"}, {ImplFQN: "p.B", IfaceFQN: "ext.Iface", Confidence: "exact"}},
 		References: []gtypes.EdgeReferences{{RefererFQN: "p.Other", RefereeFQN: "p.A"}},
 	}
-	d := fileGraphToDelta(fg, "h", func(fqn string) bool { return fqn != "p.Other" }, func(fqn string) bool { return strings.HasPrefix(fqn, "p.") }, nil)
+	d := fileGraphToDelta(fg, "", "h", func(fqn string) bool { return fqn != "p.Other" }, func(fqn string) bool { return strings.HasPrefix(fqn, "p.") }, nil)
 	if len(d.Symbols) != 2 {
 		t.Fatalf("symbols = %+v, want A and B once each", d.Symbols)
 	}

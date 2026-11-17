@@ -1,12 +1,17 @@
 {
   "body": {
-    "count": 1,
+    "count": 2,
     "query_ms": 0,
     "results": [
       {
         "fqn": "example.com/fixture/service.validate",
         "kind": "function",
         "name": "validate"
+      },
+      {
+        "fqn": "example.com/fixture/store.Store",
+        "kind": "interface",
+        "name": "Store"
       }
     ]
   },

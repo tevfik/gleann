@@ -92,6 +92,12 @@ type CodeChunk struct {
 	NodeType      string         `json:"node_type"` // "function", "class", "method", "block", etc.
 	Name          string         `json:"name"`      // e.g. function/class name
 	OutboundCalls []string       `json:"outbound_calls,omitempty"`
+	// LogicalName is set on the pieces of an oversized declaration that
+	// splitOversizedChunk cut up ("Foo_part1", "Foo_part2" ...) and holds the
+	// declaration's own name ("Foo"). Passages keep the piece names for
+	// retrieval; the code graph uses LogicalName so one declaration stays one
+	// symbol. Empty for every chunk that is not a piece of a split declaration.
+	LogicalName string `json:"logical_name,omitempty"`
 }
 
 // ASTChunkerConfig holds configuration for the AST chunker.
@@ -740,12 +746,13 @@ func (c *ASTChunker) splitOversizedChunk(chunk CodeChunk) []CodeChunk {
 		if strings.TrimSpace(text) != "" {
 			partNum := len(result) + 1
 			result = append(result, CodeChunk{
-				Text:      text,
-				StartLine: chunk.StartLine + start,
-				EndLine:   chunk.StartLine + end - 1,
-				NodeType:  chunk.NodeType,
-				Name:      fmt.Sprintf("%s_part%d", chunk.Name, partNum),
-				Metadata:  copyMetadata(chunk.Metadata),
+				Text:        text,
+				StartLine:   chunk.StartLine + start,
+				EndLine:     chunk.StartLine + end - 1,
+				NodeType:    chunk.NodeType,
+				Name:        fmt.Sprintf("%s_part%d", chunk.Name, partNum),
+				LogicalName: chunk.Name,
+				Metadata:    copyMetadata(chunk.Metadata),
 			})
 		}
 

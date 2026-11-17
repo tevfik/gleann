@@ -230,25 +230,34 @@
     <edge id="e5" source="example.com/fixture.run" target="example.com/fixture/service.Service.Load">
       <data key="d3">CALLS</data>
     </edge>
-    <edge id="e6" source="example.com/fixture/service.Service.Report" target="example.com/fixture/service.Service.Load">
+    <edge id="e6" source="example.com/fixture/service.Service.Load" target="example.com/fixture/store.Store">
       <data key="d3">CALLS</data>
     </edge>
-    <edge id="e7" source="example.com/fixture/service.Service.Save" target="example.com/fixture/service.validate">
+    <edge id="e7" source="example.com/fixture/service.Service.Report" target="example.com/fixture/service.Service.Load">
       <data key="d3">CALLS</data>
     </edge>
-    <edge id="e8" source="example.com/fixture/service.TestReport" target="example.com/fixture/service.New">
+    <edge id="e8" source="example.com/fixture/service.Service.Report" target="example.com/fixture/store.Store">
       <data key="d3">CALLS</data>
     </edge>
-    <edge id="e9" source="example.com/fixture/service.TestReport" target="example.com/fixture/store.NewMemStore">
+    <edge id="e9" source="example.com/fixture/service.Service.Save" target="example.com/fixture/service.validate">
       <data key="d3">CALLS</data>
     </edge>
-    <edge id="e10" source="example.com/fixture/service.TestSaveLoad" target="example.com/fixture/service.New">
+    <edge id="e10" source="example.com/fixture/service.Service.Save" target="example.com/fixture/store.Store">
       <data key="d3">CALLS</data>
     </edge>
-    <edge id="e11" source="example.com/fixture/service.TestSaveLoad" target="example.com/fixture/store.NewMemStore">
+    <edge id="e11" source="example.com/fixture/service.TestReport" target="example.com/fixture/service.New">
       <data key="d3">CALLS</data>
     </edge>
-    <edge id="e12" source="example.com/fixture/store.MemStore.Put" target="example.com/fixture/store.normalize">
+    <edge id="e12" source="example.com/fixture/service.TestReport" target="example.com/fixture/store.NewMemStore">
+      <data key="d3">CALLS</data>
+    </edge>
+    <edge id="e13" source="example.com/fixture/service.TestSaveLoad" target="example.com/fixture/service.New">
+      <data key="d3">CALLS</data>
+    </edge>
+    <edge id="e14" source="example.com/fixture/service.TestSaveLoad" target="example.com/fixture/store.NewMemStore">
+      <data key="d3">CALLS</data>
+    </edge>
+    <edge id="e15" source="example.com/fixture/store.MemStore.Put" target="example.com/fixture/store.normalize">
       <data key="d3">CALLS</data>
     </edge>
   </graph>

@@ -1,18 +1,18 @@
 Community Detection — fixture
-Nodes: 51 | Edges: 55 | Communities: 13 | Modularity: 0.7033
+Nodes: 51 | Edges: 58 | Communities: 13 | Modularity: 0.6253
 
 Community 0: app (7 nodes, cohesion=0.043)
 Community 1: app (6 nodes, cohesion=0.050)
-Community 2: main (5 nodes, cohesion=0.230)
-Community 3: main (5 nodes, cohesion=0.060)
-Community 4: service_test (5 nodes, cohesion=0.230)
-Community 5: service (5 nodes, cohesion=0.060)
-Community 6: util (3 nodes, cohesion=0.100)
+Community 2: main (5 nodes, cohesion=0.060)
+Community 3: service_test (5 nodes, cohesion=0.230)
+Community 4: service (5 nodes, cohesion=0.060)
+Community 5: service (4 nodes, cohesion=0.317)
+Community 6: main (3 nodes, cohesion=0.267)
 Community 7: util (3 nodes, cohesion=0.100)
-Community 8: store (3 nodes, cohesion=0.100)
-Community 9: util (3 nodes, cohesion=0.100)
-Community 10: service (2 nodes, cohesion=0.500)
-Community 11: store (2 nodes, cohesion=0.400)
+Community 8: util (3 nodes, cohesion=0.100)
+Community 9: store (3 nodes, cohesion=0.100)
+Community 10: util (3 nodes, cohesion=0.100)
+Community 11: service (2 nodes, cohesion=0.500)
 Community 12: store (2 nodes, cohesion=0.500)
 
 God Nodes (high-degree hubs):
@@ -20,22 +20,26 @@ God Nodes (high-degree hubs):
   [file] store/store.go (in=0, out=7)
   [function] main (in=1, out=5)
   [file] py/app.py (in=0, out=6)
+  [interface] Store (in=5, out=0)
   [file] ts/app.ts (in=0, out=5)
 
 Surprising edges:
-  example.com/fixture.main → example.com/fixture/service.New (community 2 → 4)
-  example.com/fixture.main → example.com/fixture/service.Service.Save (community 2 → 10)
-  example.com/fixture.main → example.com/fixture/store.NewMemStore (community 2 → 4)
-  example.com/fixture/service.New → service/service.go (community 4 → 5)
-  example.com/fixture/service.Service.Load → service/service.go (community 2 → 5)
-  example.com/fixture/service.Service.Report → service/service.go (community 2 → 5)
-  example.com/fixture/service.Service.Save → service/service.go (community 10 → 5)
-  example.com/fixture/service.validate → service/service.go (community 10 → 5)
-  example.com/fixture/store.MemStore → store/store.go (community 11 → 8)
-  example.com/fixture/store.MemStore.Put → store/store.go (community 12 → 8)
-  example.com/fixture/store.NewMemStore → store/store.go (community 4 → 8)
-  example.com/fixture/store.Store → store/store.go (community 11 → 8)
-  example.com/fixture/store.normalize → store/store.go (community 12 → 8)
+  example.com/fixture.main → example.com/fixture/service.New (community 6 → 3)
+  example.com/fixture.main → example.com/fixture/service.Service.Report (community 6 → 5)
+  example.com/fixture.main → example.com/fixture/service.Service.Save (community 6 → 11)
+  example.com/fixture.main → example.com/fixture/store.NewMemStore (community 6 → 3)
+  example.com/fixture.run → example.com/fixture/service.Service.Load (community 6 → 5)
+  example.com/fixture/service.Service.Save → example.com/fixture/store.Store (community 11 → 5)
+  example.com/fixture/service.New → service/service.go (community 3 → 4)
+  example.com/fixture/service.Service.Load → service/service.go (community 5 → 4)
+  example.com/fixture/service.Service.Report → service/service.go (community 5 → 4)
+  example.com/fixture/service.Service.Save → service/service.go (community 11 → 4)
+  example.com/fixture/service.validate → service/service.go (community 11 → 4)
+  example.com/fixture/store.MemStore → store/store.go (community 5 → 9)
+  example.com/fixture/store.MemStore.Put → store/store.go (community 12 → 9)
+  example.com/fixture/store.NewMemStore → store/store.go (community 3 → 9)
+  example.com/fixture/store.Store → store/store.go (community 5 → 9)
+  example.com/fixture/store.normalize → store/store.go (community 12 → 9)
 
 --- Raw JSON ---
-{"communities":[{"id":0,"label":"app","node_count":7,"nodes":["example.com/fixture/py.Registry","example.com/fixture/py.__init__","example.com/fixture/py.add","example.com/fixture/py.build_registry","example.com/fixture/py.describe","example.com/fixture/py.main","py/app.py"],"cohesion":0.0429},{"id":1,"label":"app","node_count":6,"nodes":["example.com/fixture/ts.Shape","example.com/fixture/ts.Square","example.com/fixture/ts.describeAll","example.com/fixture/ts.main","example.com/fixture/ts.totalArea","ts/app.ts"],"cohesion":0.0500},{"id":2,"label":"main","node_count":5,"nodes":["example.com/fixture.main","example.com/fixture.run","example.com/fixture/service.Service.Load","example.com/fixture/service.Service.Report","main.go"],"cohesion":0.2300},{"id":3,"label":"main","node_count":5,"nodes":["example.com/fixture/rs.Counter","example.com/fixture/rs.main","example.com/fixture/rs.run_all","example.com/fixture/rs.util","rs/main.rs"],"cohesion":0.06},{"id":4,"label":"service_test","node_count":5,"nodes":["example.com/fixture/service.New","example.com/fixture/service.TestReport","example.com/fixture/service.TestSaveLoad","example.com/fixture/store.NewMemStore","service/service_test.go"],"cohesion":0.2300},{"id":5,"label":"service","node_count":5,"nodes":["example.com/fixture/service.Service","example.com/fixture/service.emptyError","example.com/fixture/service.emptyError.Error","example.com/fixture/service.errEmpty","service/service.go"],"cohesion":0.06},{"id":6,"label":"util","node_count":3,"nodes":["example.com/fixture/py.clean","example.com/fixture/py.join_words","py/util.py"],"cohesion":0.1000},{"id":7,"label":"util","node_count":3,"nodes":["example.com/fixture/rs.clamp","example.com/fixture/rs.double","rs/util.rs"],"cohesion":0.1000},{"id":8,"label":"store","node_count":3,"nodes":["example.com/fixture/store.MemStore.Get","example.com/fixture/store.MemStore.Keys","store/store.go"],"cohesion":0.1000},{"id":9,"label":"util","node_count":3,"nodes":["example.com/fixture/ts.pluralize","example.com/fixture/ts.slug","ts/util.ts"],"cohesion":0.1000},{"id":10,"label":"service","node_count":2,"nodes":["example.com/fixture/service.Service.Save","example.com/fixture/service.validate"],"cohesion":0.5},{"id":11,"label":"store","node_count":2,"nodes":["example.com/fixture/store.MemStore","example.com/fixture/store.Store"],"cohesion":0.4},{"id":12,"label":"store","node_count":2,"nodes":["example.com/fixture/store.MemStore.Put","example.com/fixture/store.normalize"],"cohesion":0.5}],"god_nodes":[{"id":"service/service.go","name":"service/service.go","kind":"file","in_degree":0,"out_degree":9,"total_degree":9},{"id":"store/store.go","name":"store/store.go","kind":"file","in_degree":0,"out_degree":7,"total_degree":7},{"id":"example.com/fixture.main","name":"main","kind":"function","in_degree":1,"out_degree":5,"total_degree":6},{"id":"py/app.py","name":"py/app.py","kind":"file","in_degree":0,"out_degree":6,"total_degree":6},{"id":"ts/app.ts","name":"ts/app.ts","kind":"file","in_degree":0,"out_degree":5,"total_degree":5}],"surprising_edges":[{"from":"example.com/fixture.main","to":"example.com/fixture/service.New","from_community":2,"to_community":4,"weight":1},{"from":"example.com/fixture.main","to":"example.com/fixture/service.Service.Save","from_community":2,"to_community":10,"weight":1},{"from":"example.com/fixture.main","to":"example.com/fixture/store.NewMemStore","from_community":2,"to_community":4,"weight":1},{"from":"example.com/fixture/service.New","to":"service/service.go","from_community":4,"to_community":5,"weight":0.3},{"from":"example.com/fixture/service.Service.Load","to":"service/service.go","from_community":2,"to_community":5,"weight":0.3},{"from":"example.com/fixture/service.Service.Report","to":"service/service.go","from_community":2,"to_community":5,"weight":0.3},{"from":"example.com/fixture/service.Service.Save","to":"service/service.go","from_community":10,"to_community":5,"weight":0.3},{"from":"example.com/fixture/service.validate","to":"service/service.go","from_community":10,"to_community":5,"weight":0.3},{"from":"example.com/fixture/store.MemStore","to":"store/store.go","from_community":11,"to_community":8,"weight":0.3},{"from":"example.com/fixture/store.MemStore.Put","to":"store/store.go","from_community":12,"to_community":8,"weight":0.3},{"from":"example.com/fixture/store.NewMemStore","to":"store/store.go","from_community":4,"to_community":8,"weight":0.3},{"from":"example.com/fixture/store.Store","to":"store/store.go","from_community":11,"to_community":8,"weight":0.3},{"from":"example.com/fixture/store.normalize","to":"store/store.go","from_community":12,"to_community":8,"weight":0.3}],"modularity":0.7033,"node_count":51,"edge_count":55}
+{"communities":[{"id":0,"label":"app","node_count":7,"nodes":["example.com/fixture/py.Registry","example.com/fixture/py.__init__","example.com/fixture/py.add","example.com/fixture/py.build_registry","example.com/fixture/py.describe","example.com/fixture/py.main","py/app.py"],"cohesion":0.0429},{"id":1,"label":"app","node_count":6,"nodes":["example.com/fixture/ts.Shape","example.com/fixture/ts.Square","example.com/fixture/ts.describeAll","example.com/fixture/ts.main","example.com/fixture/ts.totalArea","ts/app.ts"],"cohesion":0.0500},{"id":2,"label":"main","node_count":5,"nodes":["example.com/fixture/rs.Counter","example.com/fixture/rs.main","example.com/fixture/rs.run_all","example.com/fixture/rs.util","rs/main.rs"],"cohesion":0.06},{"id":3,"label":"service_test","node_count":5,"nodes":["example.com/fixture/service.New","example.com/fixture/service.TestReport","example.com/fixture/service.TestSaveLoad","example.com/fixture/store.NewMemStore","service/service_test.go"],"cohesion":0.2300},{"id":4,"label":"service","node_count":5,"nodes":["example.com/fixture/service.Service","example.com/fixture/service.emptyError","example.com/fixture/service.emptyError.Error","example.com/fixture/service.errEmpty","service/service.go"],"cohesion":0.06},{"id":5,"label":"service","node_count":4,"nodes":["example.com/fixture/service.Service.Load","example.com/fixture/service.Service.Report","example.com/fixture/store.MemStore","example.com/fixture/store.Store"],"cohesion":0.3167},{"id":6,"label":"main","node_count":3,"nodes":["example.com/fixture.main","example.com/fixture.run","main.go"],"cohesion":0.2667},{"id":7,"label":"util","node_count":3,"nodes":["example.com/fixture/py.clean","example.com/fixture/py.join_words","py/util.py"],"cohesion":0.1000},{"id":8,"label":"util","node_count":3,"nodes":["example.com/fixture/rs.clamp","example.com/fixture/rs.double","rs/util.rs"],"cohesion":0.1000},{"id":9,"label":"store","node_count":3,"nodes":["example.com/fixture/store.MemStore.Get","example.com/fixture/store.MemStore.Keys","store/store.go"],"cohesion":0.1000},{"id":10,"label":"util","node_count":3,"nodes":["example.com/fixture/ts.pluralize","example.com/fixture/ts.slug","ts/util.ts"],"cohesion":0.1000},{"id":11,"label":"service","node_count":2,"nodes":["example.com/fixture/service.Service.Save","example.com/fixture/service.validate"],"cohesion":0.5},{"id":12,"label":"store","node_count":2,"nodes":["example.com/fixture/store.MemStore.Put","example.com/fixture/store.normalize"],"cohesion":0.5}],"god_nodes":[{"id":"service/service.go","name":"service/service.go","kind":"file","in_degree":0,"out_degree":9,"total_degree":9},{"id":"store/store.go","name":"store/store.go","kind":"file","in_degree":0,"out_degree":7,"total_degree":7},{"id":"example.com/fixture.main","name":"main","kind":"function","in_degree":1,"out_degree":5,"total_degree":6},{"id":"py/app.py","name":"py/app.py","kind":"file","in_degree":0,"out_degree":6,"total_degree":6},{"id":"example.com/fixture/store.Store","name":"Store","kind":"interface","in_degree":5,"out_degree":0,"total_degree":5},{"id":"ts/app.ts","name":"ts/app.ts","kind":"file","in_degree":0,"out_degree":5,"total_degree":5}],"surprising_edges":[{"from":"example.com/fixture.main","to":"example.com/fixture/service.New","from_community":6,"to_community":3,"weight":1},{"from":"example.com/fixture.main","to":"example.com/fixture/service.Service.Report","from_community":6,"to_community":5,"weight":1},{"from":"example.com/fixture.main","to":"example.com/fixture/service.Service.Save","from_community":6,"to_community":11,"weight":1},{"from":"example.com/fixture.main","to":"example.com/fixture/store.NewMemStore","from_community":6,"to_community":3,"weight":1},{"from":"example.com/fixture.run","to":"example.com/fixture/service.Service.Load","from_community":6,"to_community":5,"weight":1},{"from":"example.com/fixture/service.Service.Save","to":"example.com/fixture/store.Store","from_community":11,"to_community":5,"weight":1},{"from":"example.com/fixture/service.New","to":"service/service.go","from_community":3,"to_community":4,"weight":0.3},{"from":"example.com/fixture/service.Service.Load","to":"service/service.go","from_community":5,"to_community":4,"weight":0.3},{"from":"example.com/fixture/service.Service.Report","to":"service/service.go","from_community":5,"to_community":4,"weight":0.3},{"from":"example.com/fixture/service.Service.Save","to":"service/service.go","from_community":11,"to_community":4,"weight":0.3},{"from":"example.com/fixture/service.validate","to":"service/service.go","from_community":11,"to_community":4,"weight":0.3},{"from":"example.com/fixture/store.MemStore","to":"store/store.go","from_community":5,"to_community":9,"weight":0.3},{"from":"example.com/fixture/store.MemStore.Put","to":"store/store.go","from_community":12,"to_community":9,"weight":0.3},{"from":"example.com/fixture/store.NewMemStore","to":"store/store.go","from_community":3,"to_community":9,"weight":0.3},{"from":"example.com/fixture/store.Store","to":"store/store.go","from_community":5,"to_community":9,"weight":0.3},{"from":"example.com/fixture/store.normalize","to":"store/store.go","from_community":12,"to_community":9,"weight":0.3}],"modularity":0.6253,"node_count":51,"edge_count":58}

@@ -2,13 +2,13 @@
 
 FILE                                               RISK       SCORE    TOP SYMBOL
 ──────────────────────────────────────────────────────────────────────────────────────────
-main.go                                            🟠 high       0.5431   run
-service/service.go                                 🟠 high       0.5431   Service.Report
-store/store.go                                     🟡 medium     0.3364   NewMemStore
-service/service_test.go                            🟢 low        0.1876   TestReport
-py/app.py                                          🟢 low        0.1171   Registry
-py/util.py                                         🟢 low        0.1171   clean
-rs/main.rs                                         🟢 low        0.1171   Counter
-rs/util.rs                                         🟢 low        0.1171   clamp
-ts/app.ts                                          🟢 low        0.1171   Shape
-ts/util.ts                                         🟢 low        0.1171   pluralize
+service/service.go                                 🟠 high       0.6122   Service.Load
+store/store.go                                     🟡 medium     0.4387   Store
+main.go                                            🟡 medium     0.3732   run
+service/service_test.go                            🟢 low        0.1526   TestReport
+py/app.py                                          🟢 low        0.0851   Registry
+py/util.py                                         🟢 low        0.0851   clean
+rs/main.rs                                         🟢 low        0.0851   Counter
+rs/util.rs                                         🟢 low        0.0851   clamp
+ts/app.ts                                          🟢 low        0.0851   Shape
+ts/util.ts                                         🟢 low        0.0851   pluralize

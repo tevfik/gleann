@@ -60,3 +60,38 @@ WHERE e.dst IN (SELECT id FROM symbols WHERE fqn IN (`+ph+`) UNION ALL SELECT id
 	sort.Strings(out)
 	return out, nil
 }
+
+// FilesInDir lists the files (sorted) with at least one declaration directly in
+// dir, a slash-separated path relative to the indexed root ("." or "" is the
+// root). A call whose target was not declared when its file was extracted
+// leaves no row (the graph holds no unanchored targets), so when a declaration
+// appears the sibling files of its package are the ones to re-extract.
+func (g *SQLite) FilesInDir(dir string) ([]string, error) {
+	dir = strings.Trim(slashPath(dir), "/")
+	if dir == "." {
+		dir = ""
+	}
+	prefix := ""
+	if dir != "" {
+		prefix = dir + "/"
+	}
+	rows, err := g.reader.QueryContext(readCtx(), `SELECT DISTINCT file FROM symbols
+WHERE file <> '' AND substr(file, 1, length(?)) = ? AND instr(substr(file, length(?) + 1), '/') = 0
+ORDER BY file`, prefix, prefix, prefix)
+	if err != nil {
+		return nil, fmt.Errorf("listing files in %q: %w", dir, err)
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var f string
+		if err := rows.Scan(&f); err != nil {
+			return nil, fmt.Errorf("listing files in %q: %w", dir, err)
+		}
+		out = append(out, f)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("listing files in %q: %w", dir, err)
+	}
+	return out, nil
+}

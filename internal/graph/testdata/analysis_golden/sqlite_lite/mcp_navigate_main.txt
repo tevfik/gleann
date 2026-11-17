@@ -10,6 +10,7 @@ Symbol Navigation — "main" in fixture
     → example.com/fixture/store.NewMemStore (function) [store/store.go:19]
   2nd-level callees:
     example.com/fixture.run → example.com/fixture/service.Service.Load (method)
+    example.com/fixture/service.Service.Report → example.com/fixture/store.Store (interface)
     example.com/fixture/service.Service.Save → example.com/fixture/service.validate (function)
   3rd-level callees:
 
@@ -23,6 +24,7 @@ Symbol Navigation — "main" in fixture
     → example.com/fixture/store.NewMemStore (function) [store/store.go:19]
   2nd-level callees:
     example.com/fixture.run → example.com/fixture/service.Service.Load (method)
+    example.com/fixture/service.Service.Report → example.com/fixture/store.Store (interface)
     example.com/fixture/service.Service.Save → example.com/fixture/service.validate (function)
   3rd-level callees:
 
@@ -36,6 +38,7 @@ Symbol Navigation — "main" in fixture
     → example.com/fixture/store.NewMemStore (function) [store/store.go:19]
   2nd-level callees:
     example.com/fixture.run → example.com/fixture/service.Service.Load (method)
+    example.com/fixture/service.Service.Report → example.com/fixture/store.Store (interface)
     example.com/fixture/service.Service.Save → example.com/fixture/service.validate (function)
   3rd-level callees:
 
@@ -49,6 +52,7 @@ Symbol Navigation — "main" in fixture
     → example.com/fixture/store.NewMemStore (function) [store/store.go:19]
   2nd-level callees:
     example.com/fixture.run → example.com/fixture/service.Service.Load (method)
+    example.com/fixture/service.Service.Report → example.com/fixture/store.Store (interface)
     example.com/fixture/service.Service.Save → example.com/fixture/service.validate (function)
   3rd-level callees:
 

@@ -71,6 +71,17 @@ func TestFormat2NonGoCallsMatchKuzuGolden(t *testing.T) {
 	// Expected edges. Symbols named "main" are skipped as sources: Kùzu's
 	// base-name union gives the main of one language the callees of the
 	// mains of the others (golden README, "Observed behaviours").
+	//
+	// Kùzu also stored a phantom symbol for every callee declared nowhere
+	// (len, strip, map, keys ...). The SQLite graph keeps no such target
+	// (issue #12), so only callees whose bare name is a declaration of the
+	// fixture are compared.
+	declaredBase := map[string]bool{}
+	for fqn, g := range golden {
+		if g.File != "" {
+			declaredBase[nonGoCalleeBase(fqn)] = true
+		}
+	}
 	want := map[nonGoEdge]bool{}
 	for fqn, g := range golden {
 		if g.File == "" {
@@ -82,6 +93,9 @@ func TestFormat2NonGoCallsMatchKuzuGolden(t *testing.T) {
 		}
 		caller := strings.SplitN(name, "::", 2)[0]
 		for _, c := range g.Callees {
+			if !declaredBase[nonGoCalleeBase(c.FQN)] {
+				continue // Kùzu phantom: a builtin or library call
+			}
 			want[nonGoEdge{g.File, caller, nonGoCalleeBase(c.FQN)}] = true
 		}
 	}

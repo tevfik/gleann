@@ -21,7 +21,7 @@ func collectGoCallQueries(module, relPath, source string, chunks []chunking.Code
 		return nil, nil, fmt.Errorf("parse: %w", err)
 	}
 
-	localFQN, splitFQN, pkgPrefix := buildGoFQNMaps(module, relPath, chunks)
+	localFQN, pkgPrefix := buildGoFQNMaps(module, relPath, chunks)
 
 	importMap := make(map[string]string)
 	for _, imp := range file.Imports {
@@ -46,7 +46,7 @@ func collectGoCallQueries(module, relPath, source string, chunks []chunking.Code
 			continue
 		}
 
-		callerFQN := goCallerFQN(funcDecl, localFQN, splitFQN, pkgPrefix)
+		callerFQN := goCallerFQN(funcDecl, localFQN, pkgPrefix)
 
 		ast.Inspect(funcDecl.Body, func(n ast.Node) bool {
 			call, ok := n.(*ast.CallExpr)
@@ -134,25 +134,15 @@ func calleeStub(fqn string) gtypes.SymbolNode {
 	return gtypes.SymbolNode{FQN: fqn, Kind: "function", Name: name}
 }
 
-// buildGoFQNMaps builds the name → FQN lookup maps shared by the syntactic and
+// buildGoFQNMaps builds the name → FQN lookup map shared by the syntactic and
 // the exact (go/types) call collectors so both attribute edges to the same
-// caller symbols. localFQN maps chunk symbol names to their FQN; splitFQN maps
-// the original name of a chunker-split function to its _part1 FQN (the AST sees
-// the unsplit declaration name); pkgPrefix is the package FQN prefix.
-func buildGoFQNMaps(module, relPath string, chunks []chunking.CodeChunk) (localFQN, splitFQN map[string]string, pkgPrefix string) {
+// caller symbols. localFQN maps (logical, already merged) chunk symbol names to
+// their FQN; pkgPrefix is the package FQN prefix.
+func buildGoFQNMaps(module, relPath string, chunks []chunking.CodeChunk) (localFQN map[string]string, pkgPrefix string) {
 	localFQN = make(map[string]string)
 	for _, ch := range chunks {
 		if ch.Name != "" {
 			localFQN[ch.Name] = buildFQNOf(module, relPath, ch.Name)
-		}
-	}
-	splitFQN = make(map[string]string)
-	for name, fqn := range localFQN {
-		if strings.HasSuffix(name, "_part1") {
-			origName := strings.TrimSuffix(name, "_part1")
-			if _, exists := localFQN[origName]; !exists {
-				splitFQN[origName] = fqn
-			}
 		}
 	}
 	pkgDir := filepath.Dir(relPath)
@@ -161,21 +151,19 @@ func buildGoFQNMaps(module, relPath string, chunks []chunking.CodeChunk) (localF
 	if pkgDir != "." {
 		pkgPrefix = module + "/" + pkgDir
 	}
-	return localFQN, splitFQN, pkgPrefix
+	return localFQN, pkgPrefix
 }
 
-// goCallerFQN resolves the FQN of the function declaring a call site: prefer
-// localFQN (exact match), then splitFQN (chunker-split _part1), then pkgPrefix.
-func goCallerFQN(funcDecl *ast.FuncDecl, localFQN, splitFQN map[string]string, pkgPrefix string) string {
+// goCallerFQN resolves the FQN of the function declaring a call site: the
+// declared symbol when the file has one, else the package-qualified guess
+// (an edge from an undeclared caller is dropped by the sink).
+func goCallerFQN(funcDecl *ast.FuncDecl, localFQN map[string]string, pkgPrefix string) string {
 	callerName := funcDecl.Name.Name
 	if funcDecl.Recv != nil && len(funcDecl.Recv.List) > 0 {
 		recvType := exprTypeName(funcDecl.Recv.List[0].Type)
 		callerName = recvType + "." + callerName
 	}
 	if fqn, ok := localFQN[callerName]; ok {
-		return fqn
-	}
-	if fqn, ok := splitFQN[callerName]; ok {
 		return fqn
 	}
 	return pkgPrefix + "." + callerName

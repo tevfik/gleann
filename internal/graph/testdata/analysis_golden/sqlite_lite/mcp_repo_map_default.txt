@@ -1,18 +1,18 @@
 ## Repository Map — fixture (by importance)
 
+### store/store.go
+- interface `Store`
+- function `NewMemStore`
+- function `normalize`
+- struct `MemStore`
+- method `MemStore.Get`
+
 ### service/service.go
 - method `Service.Load`
 - function `New`
 - function `validate`
 - method `Service.Report`
 - method `Service.Save`
-
-### store/store.go
-- function `NewMemStore`
-- interface `Store`
-- function `normalize`
-- struct `MemStore`
-- method `MemStore.Get`
 
 ### ts/app.ts
 - interface `Shape`

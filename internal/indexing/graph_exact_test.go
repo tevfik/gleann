@@ -124,9 +124,10 @@ func TestFormat2ExactGoResolution(t *testing.T) {
 
 	const pkg = "example.com/exact"
 
-	// Interface dispatch resolves to the interface method.
-	if conf, _ := callEdge(t, env, pkg+".RunDoer", pkg+".Doer.Do"); conf != "exact" {
-		t.Errorf("interface call RunDoer -> Doer.Do confidence = %q, want exact", conf)
+	// Interface dispatch resolves to the interface method; an interface method
+	// is not a declared symbol, so the edge is bound to the declared interface.
+	if conf, ext := callEdge(t, env, pkg+".RunDoer", pkg+".Doer"); conf != "exact" || ext != 0 {
+		t.Errorf("interface call RunDoer -> Doer = (%q, external=%d), want (exact, internal)", conf, ext)
 	}
 	// Promoted method resolves to the declaring type (Base), not Wrapper.
 	if conf, ext := callEdge(t, env, pkg+".UseWrapper", pkg+".Base.Hello"); conf != "exact" || ext != 0 {

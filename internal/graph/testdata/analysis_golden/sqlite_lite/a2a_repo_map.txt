@@ -11,6 +11,11 @@
 - method `example.com/fixture/service.emptyError.Error`
 - var `example.com/fixture/service.errEmpty`
 
+### store/store.go
+- interface `example.com/fixture/store.Store`
+- function `example.com/fixture/store.NewMemStore`
+- function `example.com/fixture/store.normalize`
+
 ### py/app.py
 - class `example.com/fixture/py.Registry`
 - method `example.com/fixture/py.__init__`
@@ -18,11 +23,6 @@
 - function `example.com/fixture/py.build_registry`
 - method `example.com/fixture/py.describe`
 - function `example.com/fixture/py.main`
-
-### store/store.go
-- function `example.com/fixture/store.NewMemStore`
-- function `example.com/fixture/store.normalize`
-- struct `example.com/fixture/store.MemStore`
 
 ### rs/main.rs
 - struct `example.com/fixture/rs.Counter`

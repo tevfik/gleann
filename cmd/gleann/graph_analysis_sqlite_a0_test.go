@@ -88,6 +88,11 @@ func TestGraphAnalysisSQLiteMatchesKuzuGolden(t *testing.T) {
 		"example.com/fixture.main -- example.com/fixture/service.Service.Save",
 		"example.com/fixture.run -- example.com/fixture/service.Service.Load",
 		"example.com/fixture/service.Service.Load -- example.com/fixture/service.Service.Report",
+		// Calls through the store.Store interface (s.st.Get/Put/Keys) are
+		// bound to the interface (#12); the Kùzu graph had no edge for them.
+		"example.com/fixture/service.Service.Load -- example.com/fixture/store.Store",
+		"example.com/fixture/service.Service.Report -- example.com/fixture/store.Store",
+		"example.com/fixture/service.Service.Save -- example.com/fixture/store.Store",
 	}
 	if strings.Join(extra, "\n") != strings.Join(wantExtra, "\n") {
 		t.Errorf("SQLite-only Go edges:\n%s\nwant:\n%s", strings.Join(extra, "\n"), strings.Join(wantExtra, "\n"))

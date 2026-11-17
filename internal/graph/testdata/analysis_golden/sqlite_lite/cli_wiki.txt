@@ -19,17 +19,23 @@
 === community-main.md
 # Community: main
 
-**5 symbols** | Cohesion: 0.060
+**3 symbols** | Cohesion: 0.267
 
 ## Symbols
 
 | Symbol | Kind |
 |--------|------|
-| `rs.Counter` | struct |
-| `rs.main` | function |
-| `rs.run_all` | function |
-| `rs.util` | module |
-| `main.rs` |  |
+| `fixture.main` | function |
+| `fixture.run` | function |
+| `main.go` |  |
+
+## External Connections
+
+- `fixture.main` ↔ `service.New`
+- `fixture.main` ↔ `service.Service.Report`
+- `fixture.main` ↔ `service.Service.Save`
+- `fixture.main` ↔ `store.NewMemStore`
+- `fixture.run` ↔ `service.Service.Load`
 
 ---
 [← Back to Index](index.md)
@@ -48,6 +54,7 @@
 ## External Connections
 
 - `fixture.main` ↔ `service.Service.Save`
+- `service.Service.Save` ↔ `store.Store`
 - `service.Service.Save` ↔ `service.go`
 - `service.validate` ↔ `service.go`
 
@@ -114,22 +121,22 @@
 === index.md
 # fixture — Knowledge Wiki
 
-Auto-generated graph wiki. 13 communities, 51 symbols, modularity=0.703
+Auto-generated graph wiki. 13 communities, 51 symbols, modularity=0.625
 
 ## Communities
 
 - [app](community-app.md) — 7 symbols, cohesion=0.043
 - [app](community-app.md) — 6 symbols, cohesion=0.050
-- [main](community-main.md) — 5 symbols, cohesion=0.230
 - [main](community-main.md) — 5 symbols, cohesion=0.060
 - [service_test](community-service_test.md) — 5 symbols, cohesion=0.230
 - [service](community-service.md) — 5 symbols, cohesion=0.060
+- [service](community-service.md) — 4 symbols, cohesion=0.317
+- [main](community-main.md) — 3 symbols, cohesion=0.267
 - [util](community-util.md) — 3 symbols, cohesion=0.100
 - [util](community-util.md) — 3 symbols, cohesion=0.100
 - [store](community-store.md) — 3 symbols, cohesion=0.100
 - [util](community-util.md) — 3 symbols, cohesion=0.100
 - [service](community-service.md) — 2 symbols, cohesion=0.500
-- [store](community-store.md) — 2 symbols, cohesion=0.400
 - [store](community-store.md) — 2 symbols, cohesion=0.500
 
 ## God Nodes (Hub Symbols)
@@ -138,4 +145,5 @@ Auto-generated graph wiki. 13 communities, 51 symbols, modularity=0.703
 - **store/store.go** [file] — degree 7
 - **main** [function] — degree 6
 - **py/app.py** [file] — degree 6
+- **Store** [interface] — degree 5
 - **ts/app.ts** [file] — degree 5

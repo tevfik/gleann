@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"path"
 	"path/filepath"
 	"runtime"
 	"sort"
@@ -194,7 +195,7 @@ func fullGraphSQLite(ctx context.Context, g *graphstore.SQLite, module, root str
 
 	deltas := make([]graphstore.FileDelta, 0, len(graphs))
 	for i, fg := range graphs {
-		deltas = append(deltas, fileGraphToDelta(fg, hashes[i], func(fqn string) bool {
+		deltas = append(deltas, fileGraphToDelta(fg, module, hashes[i], func(fqn string) bool {
 			return owner[fqn] == fg.File.Path
 		}, func(fqn string) bool {
 			_, ok := owner[fqn]
@@ -342,7 +343,7 @@ func applyFileGraph(ctx context.Context, g *graphstore.SQLite, module, root, abs
 		}
 	}
 
-	d := fileGraphToDelta(fg, contentHash([]byte(source)), func(fqn string) bool {
+	d := fileGraphToDelta(fg, module, contentHash([]byte(source)), func(fqn string) bool {
 		owner, ok := existing[fqn]
 		return !ok || owner == rel
 	}, func(fqn string) bool {
@@ -376,6 +377,14 @@ func applyFileGraph(ctx context.Context, g *graphstore.SQLite, module, root, abs
 		if err != nil {
 			return fmt.Errorf("finding callers of new declarations of %s: %w", rel, err)
 		}
+		// A call to a name declared nowhere was dropped, not stored, so the
+		// callers of a new declaration are found among the files of its
+		// package (its directory).
+		siblings, err := g.FilesInDir(path.Dir(rel))
+		if err != nil {
+			return fmt.Errorf("finding files of the package of %s: %w", rel, err)
+		}
+		files = append(files, siblings...)
 		for _, f := range files {
 			if f == rel {
 				continue
@@ -415,10 +424,19 @@ func batchDeclarations(module, root string, files []string) map[string]string {
 // this file does not own are dropped: the source declaration was deduped away
 // or the extractor could not anchor it, and checkSources would refuse it.
 //
+// A target that is not declared anywhere in the graph is stored as an
+// external edge only when it lies outside the indexed module (an import-
+// anchored standard-library or third-party symbol). One inside the module is a
+// guess the extractor could not anchor (a builtin, a conversion, a local
+// variable, a name declared nowhere) and the edge is dropped, so the graph
+// holds neither phantom symbols nor in-repo targets mislabelled external. The
+// exception is a call to a method of a declared type that has no symbol of its
+// own (an interface method): it is bound to the type.
+//
 // members (may be nil) binds a CALLS edge of a non-Go file whose bare callee
 // name is declared nowhere to the same-package method(s) of that name, see
 // memberIndex.
-func fileGraphToDelta(fg indexer.FileGraph, hash string, own func(string) bool, internal func(string) bool, members memberIndex) graphstore.FileDelta {
+func fileGraphToDelta(fg indexer.FileGraph, module, hash string, own func(string) bool, internal func(string) bool, members memberIndex) graphstore.FileDelta {
 	d := graphstore.FileDelta{File: fg.File.Path, GraphHash: hash}
 	kept := make(map[string]bool)
 	for _, s := range fg.Symbols {
@@ -438,6 +456,17 @@ func fileGraphToDelta(fg indexer.FileGraph, hash string, own func(string) bool, 
 	addEdge := func(src, dst, kind, confidence string) {
 		if !kept[src] {
 			return
+		}
+		if !internal(dst) && inModule(module, dst) {
+			// An interface method is not a declared symbol, but its
+			// interface is: a call through it is bound to the interface, so
+			// dispatch stays visible in callers and blast radius.
+			owner := dst[:max(strings.LastIndex(dst, "."), 0)]
+			if kind == "CALLS" && internal(owner) && owner != src {
+				dst = owner
+			} else {
+				return // unanchored in-repo guess, not a third-party symbol
+			}
 		}
 		d.Edges = append(d.Edges, graphstore.Edge{
 			Src: src, Dst: dst, Kind: kind,
@@ -685,4 +714,13 @@ func convergeDirtyFormat2Graph(indexDir, name, absDocsDir string, opts GraphOpti
 	opts.ChangedFiles = changed
 	opts.PluginDocs = nil
 	return buildGraphIndex(opts, p)
+}
+
+// inModule reports whether an FQN lies inside the indexed module: FQNs are
+// "<module>/<dir>.<Name>" or "<module>.<Name>" for the root directory.
+func inModule(module, fqn string) bool {
+	if module == "" {
+		return false
+	}
+	return strings.HasPrefix(fqn, module+"/") || strings.HasPrefix(fqn, module+".")
 }

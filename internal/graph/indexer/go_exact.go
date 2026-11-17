@@ -231,16 +231,16 @@ func (ef *exactFile) calleeOfExpr(fun ast.Expr) string {
 // It walks the type-checked AST and resolves every call (and method value) to
 // the callee's FQN, labelling edges "exact". Caller FQNs are computed with the
 // same chunk-based maps as the syntactic collector so edges attach to the same
-// declared symbols (including chunker-split _part1 functions).
+// declared symbols (a chunker-split function is one logical symbol).
 func collectGoCallQueriesExact(module, relPath, source string, chunks []chunking.CodeChunk, ef *exactFile) (nodes []gtypes.SymbolNode, edges []gtypes.EdgeCalls) {
-	localFQN, splitFQN, pkgPrefix := buildGoFQNMaps(module, relPath, chunks)
+	localFQN, pkgPrefix := buildGoFQNMaps(module, relPath, chunks)
 	seen := make(map[string]bool)
 	for _, decl := range ef.file.Decls {
 		funcDecl, ok := decl.(*ast.FuncDecl)
 		if !ok || funcDecl.Body == nil {
 			continue
 		}
-		callerFQN := goCallerFQN(funcDecl, localFQN, splitFQN, pkgPrefix)
+		callerFQN := goCallerFQN(funcDecl, localFQN, pkgPrefix)
 		ast.Inspect(funcDecl.Body, func(n ast.Node) bool {
 			var calleeFQN string
 			switch e := n.(type) {
