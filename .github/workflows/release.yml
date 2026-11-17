@@ -402,7 +402,7 @@ jobs:
             suffix: linux-arm64
             lib: libkuzu.so
             rpath: "$ORIGIN"
-          - os: macos-14
+          - os: macos-latest
             suffix: darwin-arm64
             lib: libkuzu.dylib
             rpath: "@loader_path"
