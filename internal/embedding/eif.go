@@ -58,14 +58,26 @@ import (
 // waits for the slowest E-core on hybrid CPUs); one passage per thread keeps
 // every core busy. The model file is mapped read-only, so extra instances only
 // add their activation scratch.
+//
+// Short calls (queryLaneMax texts or fewer, typically one search query) do not
+// queue behind a build's batch: they run on a separate instance, the query lane,
+// loaded on first use and guarded by its own lock (qmu). Close frees both.
 type EIFComputer struct {
 	modelPath string
 	bert      *C.eif_bert_t // C memory, see growWorkers
 	extra     []*C.eif_bert_t
 	dim       int
-	mu        sync.Mutex
+	mu        sync.Mutex // the batch path: bert, extra, closed
 	closed    bool
+
+	qmu         sync.Mutex    // the query lane: query, queryFailed
+	query       *C.eif_bert_t // C memory; nil until the first short call
+	queryFailed bool          // loading the lane failed once: short calls use the batch path
+	qclosed     atomic.Bool   // set by Close; read by the query lane under qmu
 }
+
+// queryLaneMax is the largest call (in texts) served by the query lane.
+const queryLaneMax = 4
 
 var (
 	eifCacheMu   sync.Mutex
@@ -163,6 +175,16 @@ func GetOrLoadEIF(model string) (*EIFComputer, error) {
 }
 
 func (e *EIFComputer) Close() {
+	// The query lane first: it waits for a short call in flight, and a later one sees qclosed.
+	e.qmu.Lock()
+	e.qclosed.Store(true)
+	if e.query != nil {
+		C.eif_bert_free(e.query)
+		C.free(unsafe.Pointer(e.query))
+		e.query = nil
+	}
+	e.qmu.Unlock()
+
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	if !e.closed {
@@ -215,12 +237,65 @@ func (e *EIFComputer) Dim() int {
 	return e.dim
 }
 
-// Compute computes embeddings for an array of input texts.
+// Compute computes embeddings for an array of input texts. A short call (queryLaneMax texts or fewer) runs on
+// the query lane, so it does not wait for a batch in progress; if that lane cannot be loaded the call takes the
+// batch path.
 func (e *EIFComputer) Compute(ctx context.Context, texts []string) ([][]float32, error) {
 	if len(texts) == 0 {
 		return nil, nil
 	}
+	if len(texts) <= queryLaneMax {
+		if res, ok, err := e.computeQuery(ctx, texts); ok {
+			return res, err
+		}
+	}
+	return e.computeBatch(ctx, texts)
+}
 
+// computeQuery embeds texts on the query lane. ok is false when the lane is not available (it failed to load,
+// or the engine is closed) and the caller should use the batch path.
+func (e *EIFComputer) computeQuery(ctx context.Context, texts []string) (res [][]float32, ok bool, err error) {
+	e.qmu.Lock()
+	defer e.qmu.Unlock()
+	if e.qclosed.Load() || e.queryFailed {
+		return nil, false, nil
+	}
+	if e.query == nil {
+		b, lerr := e.loadInstance()
+		if lerr != nil {
+			e.queryFailed = true
+			return nil, false, nil
+		}
+		e.query = b
+	}
+	res = make([][]float32, len(texts))
+	for i, txt := range texts {
+		if cerr := ctx.Err(); cerr != nil {
+			return nil, true, cerr
+		}
+		vec, rc := embedOne(e.query, txt, e.dim)
+		if rc != 0 {
+			return nil, true, fmt.Errorf("eif_bert_embed failed on text %d with code %d", i, int(rc))
+		}
+		res[i] = vec
+	}
+	return res, true, nil
+}
+
+// loadInstance loads one more model instance (C memory, the caller owns it).
+func (e *EIFComputer) loadInstance() (*C.eif_bert_t, error) {
+	cPath := C.CString(e.modelPath)
+	defer C.free(unsafe.Pointer(cPath))
+	b := (*C.eif_bert_t)(C.calloc(1, C.sizeof_eif_bert_t))
+	if rc := C.eif_bert_load(b, cPath); rc != 0 {
+		C.free(unsafe.Pointer(b))
+		return nil, fmt.Errorf("failed to load EIF model %q (code %d)", e.modelPath, int(rc))
+	}
+	return b, nil
+}
+
+// computeBatch spreads texts over the worker instances (the batch path).
+func (e *EIFComputer) computeBatch(ctx context.Context, texts []string) ([][]float32, error) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 

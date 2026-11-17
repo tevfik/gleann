@@ -52,6 +52,9 @@ func openAPIPathsIndexes() map[string]any {
 										"bytes":            map[string]any{"type": "integer"},
 										"disk_total_bytes": map[string]any{"type": "integer"},
 										"disk_free_bytes":  map[string]any{"type": "integer"},
+										"data_dir":         map[string]any{"type": "string", "description": "The gleann data folder (GLEANN_CONFIG_DIR, default ~/.gleann)"},
+										"data_bytes":       map[string]any{"type": "integer", "description": "Bytes of all regular files under data_dir (measurement cached for 60 s)"},
+										"data_folders":     map[string]any{"type": "object", "additionalProperties": map[string]any{"type": "integer"}, "description": "Bytes per top-level entry of data_dir"},
 									},
 								},
 							},
@@ -903,7 +906,7 @@ func openAPIPathsProxy() map[string]any {
 			"post": map[string]any{
 				"tags":        []string{"proxy"},
 				"summary":     "OpenAI-compatible RAG chat completions",
-				"description": "Drop-in for OpenAI chat completions. Set model to gleann/<index> to enable RAG. Multi-index: gleann/a,b. Pure LLM: gleann/.\n\nOptional override headers:\n- X-Gleann-Top-K: number of RAG results (default: config top_k)\n- X-Gleann-Min-Score: minimum similarity score",
+				"description": "Drop-in for OpenAI chat completions. Set model to gleann/<index> to enable RAG. Multi-index: gleann/a,b. Pure LLM: gleann/.\n\nOptional override headers:\n- X-Gleann-Top-K: number of RAG results (default: config top_k)\n- X-Gleann-Min-Score: minimum similarity score\n- X-Gleann-Hybrid-Alpha: vector vs lexical weight, 0 to 1 (0 = lexical only; invalid values are ignored)\n- X-Gleann-Cover: true (pass-through mode, several indexes) keeps the best passage of every index whose best passage is close to the overall best; X-Gleann-Cover-Margin / -Share / -Floor set what close means",
 				"operationId": "chatCompletions",
 				"requestBody": map[string]any{
 					"required": true,

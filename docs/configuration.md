@@ -105,6 +105,11 @@ Location: `~/.gleann/config.json`
 | `rerank_model` | built-in: `ms-marco-minilm-l6` for mostly-code results when downloaded, else `mmarco-mMiniLMv2-L12-H384-v1-Q8_0.gguf`; server: `bge-reranker-v2-m3` | Reranker model: a catalog id, a GGUF in `~/.gleann/models` or a path for the built-in engine, a model name for a server |
 | `expand` / `expand_model` | `false` / chat model | HyDE query expansion by default (see Query expansion); `--no-expand` turns it off for one command |
 | `storage_mode` | `store` | Vector storage of new indexes: `store` or `recompute` (see below) |
+| `proxy_cover` | `false` | Pass-through answers over several indexes: an index whose best passage is close to the overall best keeps it in the context (`X-Gleann-Cover` per request). See [REST API](api.md) |
+| `proxy_cover_margin` | `0.1` (0 = default) | Cover: largest vector distance gap to the overall best that still counts as close. A starting point, tune it for your embedding model (`X-Gleann-Cover-Margin`) |
+| `proxy_cover_share` | `0.6` (0 = default) | Cover: smallest fraction (0-1) of the overall best BM25 score that counts as close (`X-Gleann-Cover-Share`) |
+| `proxy_cover_floor` | `1.0` (0 = default) | Cover: smallest BM25 score that counts as close at all (`X-Gleann-Cover-Floor`) |
+| `proxy_context_intro` | — | The sentence that opens the retrieved context in pass-through mode (default: "Use the following context, retrieved from the user's documents, to answer. If it does not contain the answer, say so."). gleann always appends "Answer in the language of the user's question." to it, so the intro can be in any language or name your documents. `GLEANN_PROXY_CONTEXT_INTRO` overrides it. See [REST API](api.md) |
 | `proxy_mode` | — | `passthrough` makes `POST /v1/chat/completions` forward the client's request unchanged (plus the retrieved context) and stream the LLM server's reply back byte for byte; empty uses gleann's chat client. `GLEANN_PROXY_MODE` overrides it. See [REST API](api.md) |
 | `auth` | `on` | REST API authentication: `on` (token required) or `off` (accepted only on a loopback address). `GLEANN_AUTH` overrides it |
 | `cors_origins` | — | Origins whose web pages may call the API, e.g. `["https://app.example.com"]`. `GLEANN_CORS_ORIGINS` adds more |

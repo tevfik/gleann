@@ -137,7 +137,7 @@ func securityMiddleware(sc *securityConfig, h http.Handler) http.Handler {
 			w.Header().Set("Access-Control-Allow-Origin", o)
 			w.Header().Add("Vary", "Origin")
 			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
-			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Gleann-Target, X-Gleann-Index, X-Gleann-Top-K, X-Gleann-Min-Score")
+			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Gleann-Target, X-Gleann-Index, X-Gleann-Top-K, X-Gleann-Min-Score, X-Gleann-Hybrid-Alpha, X-Gleann-Cover, X-Gleann-Cover-Margin, X-Gleann-Cover-Share, X-Gleann-Cover-Floor")
 		}
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)

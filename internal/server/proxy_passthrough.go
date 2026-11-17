@@ -28,19 +28,42 @@ import (
 // at the start. The model name is replaced by llm_model when it named indexes. X-Gleann-Top-K and
 // X-Gleann-Min-Score work as in the default mode; with several indexes the passages are ranked together by score
 // and the best top-k kept. The reply carries X-Gleann-Sources, the passages in order as a percent-encoded JSON list
-// of {"index", "source", "score"}. Optional headers:
+// of {"index", "source", "score"}. The passages follow an intro sentence (proxy_context_intro, default English)
+// that always ends with the instruction to answer in the language of the question. Optional headers:
 //   - X-Gleann-Context: user puts the passages into the last user message (before its text) instead of the first
 //     system message, so the conversation before it stays the same from turn to turn and the LLM server can reuse
 //     its prompt cache for it;
 //   - X-Gleann-Max-Context-Chars: N keeps the best passages up to N characters (at least one);
+//   - X-Gleann-Hybrid-Alpha: A (0 to 1) weighs vector against lexical search for this request, 0 = lexical only;
+//   - X-Gleann-Cover: true (several indexes) keeps the best passage of every index whose best passage is close to
+//     the overall best, replacing the lowest-ranked extra passages of the others (proxy_cover, X-Gleann-Cover-Margin,
+//     -Share and -Floor set what "close" means; see proxy_cover.go);
 //   - X-Gleann-Rerank: true (the configured reranker) or a reranker model, X-Gleann-Rerank-Pool: N candidates.
 //
 // Example: X-Gleann-Index: project-docs,project-code; X-Gleann-Top-K: 8; X-Gleann-Context: user;
 // X-Gleann-Max-Context-Chars: 8000.
 
-// passthroughContextIntro opens the context the proxy adds to the system message.
-const passthroughContextIntro = "Use the following context, retrieved from the user's documents, to answer. " +
-	"If it does not contain the answer, say so.\n\nContext:\n"
+// defaultPassthroughIntro opens the context the proxy adds to the conversation (proxy_context_intro or
+// GLEANN_PROXY_CONTEXT_INTRO replace it).
+const defaultPassthroughIntro = "Use the following context, retrieved from the user's documents, to answer. " +
+	"If it does not contain the answer, say so."
+
+// passthroughLanguageRule ends every intro, whatever its text: the answer follows the question's language, so no
+// language needs to be detected or written into the intro.
+const passthroughLanguageRule = "Answer in the language of the user's question."
+
+// passthroughIntro returns the full text that precedes the retrieved passages: the intro (the environment
+// variable, else the config, else the default), the language rule, and the "Context:" label.
+func (s *Server) passthroughIntro() string {
+	intro := strings.TrimSpace(os.Getenv("GLEANN_PROXY_CONTEXT_INTRO"))
+	if intro == "" {
+		intro = strings.TrimSpace(s.cfg().ProxyContextIntro)
+	}
+	if intro == "" {
+		intro = defaultPassthroughIntro
+	}
+	return intro + " " + passthroughLanguageRule + "\n\nContext:\n"
+}
 
 // maxPassthroughBody bounds a proxied request body.
 const maxPassthroughBody = 64 << 20
@@ -105,6 +128,9 @@ func (s *Server) passthroughChatCompletions(w http.ResponseWriter, r *http.Reque
 				searchOpts = append(searchOpts, gleann.WithMinScore(float32(f)))
 			}
 		}
+		if o, ok := hybridAlphaOption(r); ok {
+			searchOpts = append(searchOpts, o)
+		}
 		if v := strings.TrimSpace(r.Header.Get("X-Gleann-Rerank")); v != "" && !strings.EqualFold(v, "false") && v != "0" {
 			model := ""
 			if !strings.EqualFold(v, "true") && v != "1" {
@@ -116,16 +142,18 @@ func (s *Server) passthroughChatCompletions(w http.ResponseWriter, r *http.Reque
 			}
 		}
 		maxChars, _ := strconv.Atoi(r.Header.Get("X-Gleann-Max-Context-Chars"))
-		block, sources, err := s.retrieveProxyContextLimited(r.Context(), lastUserText(messages), indexNames, searchOpts, maxChars)
+		block, sources, err := s.retrieveProxyContextLimited(r.Context(), lastUserText(messages), indexNames, searchOpts, maxChars,
+			coverFromRequest(s.cfg(), r))
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "RAG retrieval failed: "+err.Error())
 			return
 		}
 		if block != "" {
+			intro := s.passthroughIntro()
 			if strings.EqualFold(strings.TrimSpace(r.Header.Get("X-Gleann-Context")), "user") {
-				messages = injectContextUser(messages, passthroughContextIntro+block)
+				messages = injectContextUser(messages, intro+block)
 			} else {
-				messages = injectContext(messages, passthroughContextIntro+block)
+				messages = injectContext(messages, intro+block)
 			}
 			raw, _ := json.Marshal(messages)
 			req["messages"] = raw

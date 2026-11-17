@@ -56,6 +56,17 @@ func newTimeoutConfig() timeoutConfig {
 	return tc
 }
 
+// httpWriteTimeout is the net/http write timeout for the listener. A handler that
+// builds an index writes its response only when the build is done, so the write
+// timeout must outlast the build limit: max(30 min, build limit + 5 min).
+func (tc timeoutConfig) httpWriteTimeout() time.Duration {
+	const floor = 30 * time.Minute
+	if d := tc.build + 5*time.Minute; d > floor {
+		return d
+	}
+	return floor
+}
+
 func envSeconds(key string) int {
 	v := os.Getenv(key)
 	if v == "" {

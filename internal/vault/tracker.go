@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"time"
@@ -328,6 +329,93 @@ func (t *Tracker) RemovePath(ctx context.Context, path string) error {
 		}
 		return nil
 	})
+}
+
+// normPath cleans p for prefix comparison; on Windows paths compare
+// case-insensitively and with a single separator style.
+func normPath(p string) string {
+	p = filepath.Clean(p)
+	if runtime.GOOS == "windows" {
+		p = strings.ToLower(filepath.ToSlash(p))
+	}
+	return p
+}
+
+// prefixForms returns the normalised forms a stored path may take for prefix:
+// as given, and with the directory part resolved through symlinks (a temp dir
+// such as /var/folders on macOS is stored either way).
+func prefixForms(prefix string) []string {
+	forms := []string{normPath(prefix)}
+	dir, base := filepath.Split(prefix)
+	if dir != "" {
+		if rd, err := filepath.EvalSymlinks(dir); err == nil {
+			if f := normPath(filepath.Join(rd, base)); f != forms[0] {
+				forms = append(forms, f)
+			}
+		}
+	}
+	return forms
+}
+
+// RemovePathsWithPrefix removes every tracked path that starts with prefix (a
+// path prefix, not a directory: "/tmp/gleann_upload_" matches
+// "/tmp/gleann_upload_123/a.pdf") and returns how many path entries it removed.
+// A file record (hash) goes only when its own path also matches, so a document
+// that exists under a real path as well keeps its record. The prefix is
+// compared after normalisation: symlinks of its directory are resolved and, on
+// Windows, case is ignored.
+func (t *Tracker) RemovePathsWithPrefix(ctx context.Context, prefix string) (int, error) {
+	if strings.TrimSpace(prefix) == "" {
+		return 0, errors.New("empty path prefix")
+	}
+	forms := prefixForms(prefix)
+	match := func(p string) bool {
+		np := normPath(p)
+		for _, f := range forms {
+			if strings.HasPrefix(np, f) {
+				return true
+			}
+		}
+		return false
+	}
+	removed := 0
+	err := t.db.Update(func(tx *bbolt.Tx) error {
+		paths := tx.Bucket(bucketPaths)
+		files := tx.Bucket(bucketFiles)
+		if paths == nil || files == nil {
+			return nil
+		}
+		type victim struct{ path, hash []byte }
+		var victims []victim
+		err := paths.ForEach(func(k, v []byte) error {
+			if match(string(k)) {
+				victims = append(victims, victim{append([]byte(nil), k...), append([]byte(nil), v...)})
+			}
+			return nil
+		})
+		if err != nil {
+			return err
+		}
+		for _, v := range victims {
+			if err := paths.Delete(v.path); err != nil {
+				return err
+			}
+			removed++
+			if raw := files.Get(v.hash); raw != nil {
+				var rec FileRecord
+				if json.Unmarshal(raw, &rec) == nil && match(rec.Path) {
+					if err := files.Delete(v.hash); err != nil {
+						return err
+					}
+				}
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return 0, fmt.Errorf("removing paths with prefix: %w", err)
+	}
+	return removed, nil
 }
 
 // DetectChangedFiles compares the given currentFiles (all eligible files currently on disk in dir)

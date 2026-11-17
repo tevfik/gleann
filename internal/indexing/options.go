@@ -67,6 +67,11 @@ type Options struct {
 	Tracker   *vault.Tracker
 	NoTracker bool
 
+	// NoEmbeddingDiskCache keeps the embedding cache in memory: nothing is
+	// read from or written to ~/.gleann/cache/embeddings. For builds whose
+	// content must leave no trace outside the index (REST uploads).
+	NoEmbeddingDiskCache bool
+
 	// Stdout / Stderr receive human-readable status and warning messages
 	// (the same lines the CLI prints). Nil writers discard output.
 	Stdout io.Writer

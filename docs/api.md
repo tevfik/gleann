@@ -36,14 +36,14 @@ When the server is running, interactive Swagger UI documentation is available at
 |--------|------|-------------|
 | GET | `/api/indexes` | List all indexes |
 | GET | `/api/indexes/{name}` | Get index metadata |
-| GET | `/api/storage` | Disk space of the index directory: `index_dir`, `indexes`, `passages`, `bytes` (every file under it) and the file system's `disk_total_bytes` / `disk_free_bytes` (0 where the platform does not report it) |
+| GET | `/api/storage` | Disk space of the index directory: `index_dir`, `indexes`, `passages`, `bytes` (every file under it) and the file system's `disk_total_bytes` / `disk_free_bytes` (0 where the platform does not report it); also the whole gleann data folder (`GLEANN_CONFIG_DIR`, default `~/.gleann`): `data_dir`, `data_bytes` and `data_folders` (bytes per top-level entry, e.g. `models`). The data-folder walk is cached for 60 s |
 | POST | `/api/indexes/{name}/storage` | Convert the index between `store` and `recompute` vector storage (body `{"mode":"store"\|"recompute"}`); `202 {"task_id"}` while it re-indexes in the background (see Background Tasks), `200 {"unchanged":true}` when it already uses that mode, `409` when the index cannot be switched, `501` when the server was started without the converter |
 | PATCH | `/api/indexes/{name}` | Update index governance (`tags`, `description`, `mcp_exposed`) |
 | POST | `/api/indexes/{name}/build` | Build index from texts/items |
 | POST | `/api/indexes/{name}/update` | Remove the passages of some sources and/or add items |
 | POST | `/api/indexes/{name}/index-path` | Index a directory on the server (must be inside `allowed_roots`, default: home) |
 | POST | `/api/indexes/{name}/watch` | Watch and auto-rebuild index on changes |
-| POST | `/api/indexes/{name}/upload` | Upload documents to index |
+| POST | `/api/indexes/{name}/upload` | Upload a document into a new index. The build runs without the vault tracker and with a memory-only embedding cache, so the document lives only in its index (deleting the index removes it); at start the server removes vault records that older versions left for upload temp folders |
 | DELETE | `/api/indexes/{name}` | Delete an index |
 
 
@@ -130,13 +130,15 @@ Use gleann indexes as if they were OpenAI models. Compatible with any tool that 
 
 **Model naming**: `"gleann/<index-name>"` for RAG-augmented answers, `"gleann/"` for pure LLM pass-through.
 
-**Custom headers**: `X-Gleann-Top-K` (RAG result count), `X-Gleann-Min-Score` (score threshold).
+**Custom headers**: `X-Gleann-Top-K` (RAG result count), `X-Gleann-Min-Score` (score threshold), `X-Gleann-Hybrid-Alpha` (vector against lexical weight, a number from 0 to 1; `0` = lexical (BM25) search only, no query embedding; a value outside the range or not a number is ignored, like the other two; works in both proxy modes and, with several indexes, in the cross-index ranking).
 
 **Pass-through mode** (`proxy_mode: "passthrough"` in the config, or `GLEANN_PROXY_MODE=passthrough`): the request
 goes to the configured OpenAI-compatible server unchanged (every field, e.g. `chat_template_kwargs`), and its reply
 comes back byte for byte with its status code, so clients keep whatever their LLM server streams (reasoning,
 timing metrics, errors). The only change is the retrieved context, which is appended to the first system message
-(or added as one), and the model name, which becomes `llm_model` when it named indexes. Indexes can also be given
+(or added as one), and the model name, which becomes `llm_model` when it named indexes. The passages follow an intro
+sentence that is configurable (`proxy_context_intro` / `GLEANN_PROXY_CONTEXT_INTRO`, English by default) and always
+ends with the instruction to answer in the language of the user's question. Indexes can also be given
 in an `X-Gleann-Index` header (`docs,code`, `@tag`). The reply carries `X-Gleann-Sources`, the passages' sources in
 order as a percent-encoded JSON list of `{index, source, score}`. `POST /stop` is forwarded to the LLM server in
 this mode. Optional headers in this mode:
@@ -145,6 +147,9 @@ this mode. Optional headers in this mode:
 |---|---|
 | `X-Gleann-Context: user` | Put the passages into the last user message (before its text) instead of the first system message. The conversation before it then stays the same from turn to turn, so the LLM server can reuse its prompt cache. |
 | `X-Gleann-Max-Context-Chars: N` | Keep the best passages up to N characters (at least one passage). |
+| `X-Gleann-Hybrid-Alpha: A` | Vector/lexical weight for this request (0 to 1, `0` = lexical only); see the custom headers above. |
+| `X-Gleann-Cover: true` | Several indexes: an index whose best passage is close to the overall best keeps that passage in the context, replacing the lowest-ranked extra passage of another index. The context keeps its top-k and `X-Gleann-Max-Context-Chars` size, no index loses its only passage, and the order of the others stays. "Close" means a vector distance at most the overall best plus a margin, or a BM25 score at least a share of the overall best and above a floor (vector test only when the search weighs vectors, lexical only when it weighs BM25). Config `proxy_cover` turns it on by default; `false` turns it off for a request. |
+| `X-Gleann-Cover-Margin: M`, `-Share: S`, `-Floor: F` | Thresholds of "close" for this request: vector distance margin (default 0.1), BM25 share 0 to 1 (default 0.6) and BM25 floor (default 1.0). Defaults are starting points, not calibrated to a model: distance and BM25 scales depend on your embedding model and corpus. Config: `proxy_cover_margin`, `proxy_cover_share`, `proxy_cover_floor`. Invalid values are ignored. |
 | `X-Gleann-Rerank: true` or a model | Rerank this request with the configured reranker, or with the named model. |
 | `X-Gleann-Rerank-Pool: N` | Candidates sent to the reranker. |
 

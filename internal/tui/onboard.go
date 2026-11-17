@@ -132,6 +132,13 @@ type OnboardResult struct {
 	RateBurst    int      `json:"rate_burst,omitempty"` // burst per client IP (default 120)
 	// ProxyMode: "" (gleann's chat client) or "passthrough" for POST /v1/chat/completions.
 	ProxyMode string `json:"proxy_mode,omitempty"`
+	// ProxyContextIntro replaces the sentence that opens the retrieved context in pass-through mode.
+	ProxyContextIntro string `json:"proxy_context_intro,omitempty"`
+	// ProxyCover* configure cover for multi-index pass-through answers (see gleann.Config).
+	ProxyCover       bool    `json:"proxy_cover,omitempty"`
+	ProxyCoverMargin float64 `json:"proxy_cover_margin,omitempty"`
+	ProxyCoverShare  float64 `json:"proxy_cover_share,omitempty"`
+	ProxyCoverFloor  float64 `json:"proxy_cover_floor,omitempty"`
 	// corsText is cors_origins as the settings screens edit it (comma-separated).
 	corsText string
 	// rootsText is allowed_roots as the settings screens edit it (comma-separated).

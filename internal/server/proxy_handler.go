@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"net/url"
 	"sort"
@@ -170,6 +171,9 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		if f, err := strconv.ParseFloat(v, 32); err == nil {
 			searchOpts = append(searchOpts, gleann.WithMinScore(float32(f)))
 		}
+	}
+	if o, ok := hybridAlphaOption(r); ok {
+		searchOpts = append(searchOpts, o)
 	}
 
 	// Build LLM chat config from server config.
@@ -428,6 +432,15 @@ type proxyHit struct {
 // order of names, then each index's own order) and keeps the best k overall, so a query over many indexes gets the
 // same number of passages as a query over one, and the best ones whichever index they are in.
 func mergeProxyHits(perIndex map[string][]gleann.SearchResult, names []string, k int, alpha float32) []proxyHit {
+	hits := rankProxyHits(perIndex, names, alpha)
+	if k > 0 && len(hits) > k {
+		hits = hits[:k]
+	}
+	return hits
+}
+
+// rankProxyHits is mergeProxyHits without the cut to k: every hit of every index, best first.
+func rankProxyHits(perIndex map[string][]gleann.SearchResult, names []string, alpha float32) []proxyHit {
 	var hits []proxyHit
 	indexes := 0
 	for _, name := range names {
@@ -448,10 +461,22 @@ func mergeProxyHits(perIndex map[string][]gleann.SearchResult, names []string, k
 		}
 	}
 	sort.SliceStable(hits, func(i, j int) bool { return hits[i].result.Score > hits[j].result.Score })
-	if k > 0 && len(hits) > k {
-		hits = hits[:k]
-	}
 	return hits
+}
+
+// hybridAlphaOption reads X-Gleann-Hybrid-Alpha: the weight of the vector leg against the lexical (BM25) leg, a
+// number in [0, 1]; 0 searches lexically only (no query embedding), 1 by vectors only. Like the other
+// X-Gleann-* search headers, a value that is not a number in that range is ignored (the configured weight stays).
+func hybridAlphaOption(r *http.Request) (gleann.SearchOption, bool) {
+	v := strings.TrimSpace(r.Header.Get("X-Gleann-Hybrid-Alpha"))
+	if v == "" {
+		return nil, false
+	}
+	f, err := strconv.ParseFloat(v, 32)
+	if err != nil || math.IsNaN(f) || f < 0 || f > 1 {
+		return nil, false
+	}
+	return gleann.WithHybridAlpha(float32(f)), true
 }
 
 // proxyAlpha is the vector/BM25 weight of a search with searchOpts over base (the server's search settings).
@@ -483,17 +508,19 @@ func (s *Server) retrieveProxyContext(
 	indexNames []string,
 	searchOpts []gleann.SearchOption,
 ) (string, []proxySource, error) {
-	return s.retrieveProxyContextLimited(ctx, query, indexNames, searchOpts, 0)
+	return s.retrieveProxyContextLimited(ctx, query, indexNames, searchOpts, 0, nil)
 }
 
 // retrieveProxyContextLimited is retrieveProxyContext keeping the best passages up to maxChars characters of
-// passage text (at least one passage; 0 = no limit).
+// passage text (at least one passage; 0 = no limit). With cover set, an index whose best passage is close to the
+// overall best keeps it among several indexes' passages (selectProxyHits).
 func (s *Server) retrieveProxyContextLimited(
 	ctx context.Context,
 	query string,
 	indexNames []string,
 	searchOpts []gleann.SearchOption,
 	maxChars int,
+	cover *coverConfig,
 ) (string, []proxySource, error) {
 	if query == "" || len(indexNames) == 0 {
 		return "", nil, nil
@@ -542,12 +569,11 @@ func (s *Server) retrieveProxyContextLimited(
 	if !single {
 		k = proxyTopK(searchOpts)
 	}
-	used := 0
-	for i, h := range mergeProxyHits(perIndex, resolvedNames, k, proxyAlpha(s.cfg().SearchConfig, searchOpts)) {
-		if maxChars > 0 && i > 0 && used+len(h.result.Text) > maxChars {
-			break
-		}
-		used += len(h.result.Text)
+	alpha := proxyAlpha(s.cfg().SearchConfig, searchOpts)
+	if single {
+		cover = nil
+	}
+	for i, h := range selectProxyHits(rankProxyHits(perIndex, resolvedNames, alpha), k, maxChars, cover, alpha) {
 		source := ""
 		if v, ok := h.result.Metadata["source"]; ok {
 			source = fmt.Sprint(v)

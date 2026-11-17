@@ -21,14 +21,15 @@ import (
 // L1: otter in-memory cache (hot, zero I/O)
 // L2: disk-based SHA-256 keyed files (cold, persists across restarts)
 type CachedComputer struct {
-	inner     gleann.EmbeddingComputer
-	dir       string // cache directory
-	batchSize int    // uncached texts computed and persisted per inner call
-	mu        sync.RWMutex
-	dim       int // vector size seen in this process; guarded by mu
-	hits      int
-	total     int
-	l1        *otter.Cache[string, []float32] // hot in-memory cache
+	inner      gleann.EmbeddingComputer
+	dir        string // cache directory; "" when memoryOnly
+	memoryOnly bool
+	batchSize  int // uncached texts computed and persisted per inner call
+	mu         sync.RWMutex
+	dim        int // vector size seen in this process; guarded by mu
+	hits       int
+	total      int
+	l1         *otter.Cache[string, []float32] // hot in-memory cache
 }
 
 // CacheOptions configures the embedding cache.
@@ -44,17 +45,25 @@ type CacheOptions struct {
 	// parallel wave of requests), or 64 when the inner computer is not a
 	// *Computer.
 	BatchSize int
+	// MemoryOnly keeps the cache in memory: no directory is created or read,
+	// nothing is written to disk, and ClearCache only empties the L1 cache.
+	// Used for builds that must leave no trace outside their index.
+	MemoryOnly bool
 }
 
 // NewCachedComputer wraps an existing EmbeddingComputer with 2-tier caching.
 func NewCachedComputer(inner gleann.EmbeddingComputer, opts CacheOptions) *CachedComputer {
 	dir := opts.Dir
-	if dir == "" {
-		home, _ := os.UserHomeDir()
-		dir = filepath.Join(home, ".gleann", "cache", "embeddings")
+	if opts.MemoryOnly {
+		dir = ""
+	} else {
+		if dir == "" {
+			home, _ := os.UserHomeDir()
+			dir = filepath.Join(home, ".gleann", "cache", "embeddings")
+		}
+		_ = os.MkdirAll(dir, 0o755)
+		removeStaleTemps(dir)
 	}
-	_ = os.MkdirAll(dir, 0o755)
-	removeStaleTemps(dir)
 
 	memSize := opts.MemoryCacheSize
 	if memSize <= 0 {
@@ -84,10 +93,11 @@ func NewCachedComputer(inner gleann.EmbeddingComputer, opts CacheOptions) *Cache
 	}
 
 	return &CachedComputer{
-		inner:     inner,
-		dir:       dir,
-		batchSize: batchSize,
-		l1:        l1,
+		inner:      inner,
+		dir:        dir,
+		memoryOnly: opts.MemoryOnly,
+		batchSize:  batchSize,
+		l1:         l1,
 	}
 }
 
@@ -255,6 +265,9 @@ func (c *CachedComputer) ClearCache() error {
 	if c.l1 != nil {
 		c.l1.InvalidateAll()
 	}
+	if c.memoryOnly {
+		return nil
+	}
 	return os.RemoveAll(c.dir)
 }
 
@@ -273,6 +286,9 @@ func cacheKey(model, text string) string {
 // go to a temp file that is renamed into place, so a killed process never
 // leaves a truncated .bin that a later run would load as a wrong vector.
 func (c *CachedComputer) saveToDisk(key string, vec []float32) error {
+	if c.memoryOnly {
+		return nil
+	}
 	if len(vec) == 0 {
 		// Refuse to persist empty vectors — they would poison the cache
 		// and cause cryptic zero-dim panics on the next run.
@@ -307,6 +323,9 @@ func (c *CachedComputer) saveToDisk(key string, vec []float32) error {
 
 // loadFromDisk reads a float32 vector from a cache file.
 func (c *CachedComputer) loadFromDisk(key string) ([]float32, error) {
+	if c.memoryOnly {
+		return nil, os.ErrNotExist
+	}
 	path := filepath.Join(c.dir, key+".bin")
 	data, err := os.ReadFile(path)
 	if err != nil {

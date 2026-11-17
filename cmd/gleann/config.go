@@ -403,6 +403,21 @@ func applySavedConfig(config *gleann.Config, args []string) {
 	if savedCfg.ProxyMode != "" {
 		config.ProxyMode = savedCfg.ProxyMode
 	}
+	if savedCfg.ProxyContextIntro != "" {
+		config.ProxyContextIntro = savedCfg.ProxyContextIntro
+	}
+	if savedCfg.ProxyCover {
+		config.ProxyCover = true
+	}
+	if savedCfg.ProxyCoverMargin > 0 {
+		config.ProxyCoverMargin = float32(savedCfg.ProxyCoverMargin)
+	}
+	if savedCfg.ProxyCoverShare > 0 {
+		config.ProxyCoverShare = float32(savedCfg.ProxyCoverShare)
+	}
+	if savedCfg.ProxyCoverFloor > 0 {
+		config.ProxyCoverFloor = float32(savedCfg.ProxyCoverFloor)
+	}
 }
 
 // applySavedReranker copies the saved reranker settings into config. A

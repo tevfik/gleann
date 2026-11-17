@@ -98,7 +98,7 @@ func resolveEmbedder(ctx context.Context, opts *Options, cfg *gleann.Config, p *
 		cleanup = stop
 		base = NewEmbedder(*cfg)
 	}
-	return embedding.NewCachedComputer(base, embedding.CacheOptions{}), cleanup, nil
+	return embedding.NewCachedComputer(base, embedding.CacheOptions{MemoryOnly: opts.NoEmbeddingDiskCache}), cleanup, nil
 }
 
 // NewMultimodalProcessor creates a multimodal processor only when a model
@@ -187,6 +187,17 @@ var openDefaultTracker = func() (*vault.Tracker, func(), error) {
 			}
 		})
 	}, nil
+}
+
+// PruneTrackedPaths removes the records of the default vault whose path starts
+// with prefix and returns how many path entries it removed.
+func PruneTrackedPaths(ctx context.Context, prefix string) (int, error) {
+	t, release, err := openDefaultTracker()
+	if err != nil {
+		return 0, fmt.Errorf("opening the vault: %w", err)
+	}
+	defer release()
+	return t.RemovePathsWithPrefix(ctx, prefix)
 }
 
 // acquireTracker resolves the tracker for opts. It returns nil (with a

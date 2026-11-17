@@ -56,6 +56,8 @@ type Server struct {
 	settingsHandler http.Handler
 	// storageSwitcher converts an index's vector storage (SetStorageSwitcher).
 	storageSwitcher StorageSwitcher
+	// dataUsage caches the measurement of the gleann data folder (GET /api/storage).
+	dataUsage dataUsageCache
 
 	logBuffer *LogBuffer
 
@@ -435,7 +437,7 @@ func (s *Server) Start() error {
 		Addr:         s.addr,
 		Handler:      securityMiddleware(s.sec, withMiddleware(mux)),
 		ReadTimeout:  30 * time.Minute,
-		WriteTimeout: 30 * time.Minute,
+		WriteTimeout: globalTimeouts.httpWriteTimeout(),
 		IdleTimeout:  60 * time.Second,
 	}
 
@@ -448,6 +450,17 @@ func (s *Server) Start() error {
 
 	// Start auto-indexer for watched directories (env: GLEANN_AUTO_INDEX_DIRS).
 	s.startAutoIndexer()
+
+	// Older versions recorded the temporary folder of each upload in the vault
+	// (the folder is deleted right after the build); drop those records.
+	go func() {
+		prefix := filepath.Join(os.TempDir(), uploadTempPrefix)
+		if n, err := indexing.PruneTrackedPaths(context.Background(), prefix); err != nil {
+			log.Printf("vault: pruning upload records: %v", err)
+		} else if n > 0 {
+			log.Printf("vault: removed %d records of past upload folders", n)
+		}
+	}()
 
 	log.Printf("gleann server starting on %s", s.addr)
 	return s.server.ListenAndServe()
@@ -566,17 +579,6 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 		"version": s.version,
 		"engine":  "gleann-go",
 	})
-}
-
-// handleStorage reports the disk space of the index directory: every index's files, how many indexes and
-// passages there are, and the space of the file system that holds them.
-func (s *Server) handleStorage(w http.ResponseWriter, r *http.Request) {
-	usage, err := gleann.MeasureIndexUsage(s.cfg().IndexDir)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	writeJSON(w, http.StatusOK, usage)
 }
 
 func (s *Server) handleListIndexes(w http.ResponseWriter, r *http.Request) {
@@ -2206,6 +2208,9 @@ func lastLines(s string, n int) string {
 	return strings.Join(lines, "\n")
 }
 
+// uploadTempPrefix names the temporary folder of each upload build.
+const uploadTempPrefix = "gleann_upload_"
+
 // handleUpload handles binary and text file uploads via multipart form data.
 func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
@@ -2236,7 +2241,7 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tmpDir, err := os.MkdirTemp("", "gleann_upload_*")
+	tmpDir, err := os.MkdirTemp("", uploadTempPrefix+"*")
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to create temp dir")
 		return
@@ -2261,8 +2266,13 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Build in-process, bound to the server lifetime (Stop cancels it).
-	if errBuild := s.runBuild(s.lifetime(), s.buildOptions(name, tmpDir)); errBuild != nil {
+	// Build in-process, bound to the server lifetime (Stop cancels it). The
+	// document then lives only in its index: no vault record of the temporary
+	// folder and no embedding cache files, so deleting the index removes it all.
+	opts := s.buildOptions(name, tmpDir)
+	opts.NoTracker = true
+	opts.NoEmbeddingDiskCache = true
+	if errBuild := s.runBuild(s.lifetime(), opts); errBuild != nil {
 		log.Printf("handleUpload index build failed: %v", errBuild)
 		writeError(w, http.StatusInternalServerError, "failed to index file: "+errBuild.Error())
 		return

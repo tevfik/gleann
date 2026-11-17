@@ -69,11 +69,12 @@ These variables configure the REST API server (`gleann serve`).
 | `GLEANN_RATE_BURST` | `120` | Maximum burst capacity per IP |
 | `GLEANN_TIMEOUT_ASK_S` | `300` | Timeout in seconds for `/ask` and `/v1/chat/completions` endpoints |
 | `GLEANN_TIMEOUT_SEARCH_S` | `30` | Timeout in seconds for `/search` endpoints |
-| `GLEANN_TIMEOUT_BUILD_S` | `600` | Timeout in seconds for `/build` endpoints |
+| `GLEANN_TIMEOUT_BUILD_S` | `600` | Timeout in seconds for `/build` endpoints; the HTTP write timeout follows it (`max(30 min, value + 5 min)`) |
 | `GLEANN_TIMEOUT_DEFAULT_S` | `60` | Default timeout in seconds for all other endpoints |
 | `GLEANN_MAX_BODY_BYTES` | `16777216` | Maximum POST/PUT/PATCH body size in bytes (16 MiB default; `0` disables the cap) |
 | `GLEANN_WEBHOOK_ALLOW_PRIVATE` | _(unset)_ | Set to `1` to allow webhook URLs whose hostname resolves to loopback / link-local / private addresses (off by default to block SSRF) |
 
+| `GLEANN_PROXY_CONTEXT_INTRO` | config `proxy_context_intro` | Replaces the sentence that opens the retrieved context in pass-through proxy mode; gleann always appends the instruction to answer in the language of the user's question |
 | `GLEANN_PROXY_MODE` | config `proxy_mode` | `passthrough` forwards `/v1/chat/completions` and `POST /stop` to the LLM server unchanged (see the API reference); any other non-empty value turns it off, overriding the config |
 | `GLEANN_MODEL_DOWNLOAD_ALLOW_PRIVATE` | _(unset)_ | Set to `1` to let `POST /api/models/download` fetch from private, loopback or link-local addresses (off by default to block SSRF) |
 

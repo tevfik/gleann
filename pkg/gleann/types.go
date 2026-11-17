@@ -232,6 +232,22 @@ type Config struct {
 	// GLEANN_PROXY_MODE overrides it.
 	ProxyMode string `json:"proxy_mode,omitempty"`
 
+	// ProxyContextIntro replaces the sentence that opens the retrieved context in pass-through proxy mode
+	// ("Use the following context, retrieved from the user's documents, to answer. ..."), for example to
+	// write it in the users' language or to name the documents. gleann always appends an instruction to
+	// answer in the language of the user's question. GLEANN_PROXY_CONTEXT_INTRO overrides it.
+	ProxyContextIntro string `json:"proxy_context_intro,omitempty"`
+
+	// ProxyCover turns on "cover" for multi-index pass-through answers by default (X-Gleann-Cover per request
+	// overrides it): an index whose best passage is close to the overall best keeps that passage in the
+	// context. The thresholds (0 = built-in default): ProxyCoverMargin is the largest vector distance gap to
+	// the overall best, ProxyCoverShare the smallest fraction of the best BM25 score (0-1), ProxyCoverFloor the
+	// smallest BM25 score.
+	ProxyCover       bool    `json:"proxy_cover,omitempty"`
+	ProxyCoverMargin float32 `json:"proxy_cover_margin,omitempty"`
+	ProxyCoverShare  float32 `json:"proxy_cover_share,omitempty"`
+	ProxyCoverFloor  float32 `json:"proxy_cover_floor,omitempty"`
+
 	// CORSOrigins lists browser origins allowed to call the API cross-origin.
 	// Empty (default) means same-origin only.
 	CORSOrigins []string `json:"cors_origins,omitempty"`
