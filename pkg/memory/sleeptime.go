@@ -65,6 +65,9 @@ type SleepTimeEngine struct {
 	convStore  *conversations.Store
 	config     SleepTimeConfig
 	lastRun    time.Time // Track last processed timestamp.
+
+	// initialDelay is how long Start waits before the first cycle; tests shorten it.
+	initialDelay time.Duration
 }
 
 // ChangeSet records the diff of a reflection cycle.
@@ -86,6 +89,8 @@ func NewSleepTimeEngine(mgr *Manager, cfg SleepTimeConfig) *SleepTimeEngine {
 		summarizer: NewSummarizer(cfg.SummarizerCfg),
 		convStore:  cfg.ConvStore,
 		config:     cfg,
+
+		initialDelay: 2 * time.Minute,
 	}
 	if mgr != nil && mgr.Store() != nil {
 		if raw, err := mgr.Store().Meta(metaKeySleepTimeLastRun); err == nil && raw != "" {
@@ -128,11 +133,11 @@ func (e *SleepTimeEngine) Start(stopCh <-chan struct{}) {
 	log.Printf("sleep-time engine started (interval: %v, max_convs: %d)", e.config.Interval, e.config.MaxConvs)
 
 	go func() {
-		// Initial delay: wait 2 minutes before first run.
+		// Initial delay: wait before the first run (2 minutes by default).
 		select {
 		case <-stopCh:
 			return
-		case <-time.After(2 * time.Minute):
+		case <-time.After(e.initialDelay):
 		}
 
 		e.runCycle()

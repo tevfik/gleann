@@ -288,8 +288,8 @@ func (ac *agentChat) setScope(ctx context.Context, names []string) (string, erro
 }
 
 // confirm asks a yes/no question; the default answer is No.
-func confirm(ctx context.Context, a *agenttui.App, text string) bool {
-	ans, err := a.Ask(ctx, agenttui.Question{Text: text, Options: []string{"Yes", "No"}, Default: "No"})
+func confirm(ctx context.Context, p prompter, text string) bool {
+	ans, err := p.Ask(ctx, agenttui.Question{Text: text, Options: []string{"Yes", "No"}, Default: "No"})
 	return err == nil && ans == "Yes"
 }
 
@@ -335,7 +335,7 @@ func (ac *agentChat) editScope(ctx context.Context, a *agenttui.App) (string, bo
 		}
 		fields = append(fields, agenttui.Field{Label: in.Name, Kind: agenttui.FieldBool, Value: onoff(activeSet[in.Name]), Hint: hint})
 	}
-	vals, err := a.Form(ctx, agenttui.Form{
+	vals, err := ac.prompter(a).Form(ctx, agenttui.Form{
 		Title:  "Retrieval scope",
 		Fields: fields,
 		Note:   "Tick one or more indexes. Ticking a #tag also selects every index that carries it.",

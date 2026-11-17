@@ -141,12 +141,16 @@ type IndexMeta struct {
 // CurrentVersion is optionally set by the entrypoint (e.g. cmd/gleann/main.go).
 var CurrentVersion = "dev"
 
+// readBuildInfo is debug.ReadBuildInfo; tests replace it to exercise the
+// module-version and VCS-revision fallbacks of GetGleannVersion.
+var readBuildInfo = debug.ReadBuildInfo
+
 // GetGleannVersion returns CurrentVersion or reads VCS build info.
 func GetGleannVersion() string {
 	if CurrentVersion != "" && CurrentVersion != "dev" {
 		return CurrentVersion
 	}
-	if info, ok := debug.ReadBuildInfo(); ok {
+	if info, ok := readBuildInfo(); ok {
 		if info.Main.Version != "" && info.Main.Version != "(devel)" {
 			return info.Main.Version
 		}

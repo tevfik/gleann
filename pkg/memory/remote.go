@@ -34,6 +34,10 @@ type RemoteClient struct {
 	client *http.Client
 }
 
+// spawnDaemon builds the command that starts the daemon; tests replace it so
+// that no real server is launched.
+var spawnDaemon = spawnDaemonCmd
+
 var (
 	remoteMu      sync.RWMutex
 	remoteVal     *RemoteClient
@@ -228,7 +232,7 @@ func EnsureDaemon(addr string) (*RemoteClient, error) {
 		serveAddr = strings.TrimPrefix(serveAddr, "https://")
 	}
 
-	cmd := spawnDaemonCmd(binPath, serveAddr)
+	cmd := spawnDaemon(binPath, serveAddr)
 	if err := cmd.Start(); err != nil {
 		return nil, fmt.Errorf("auto-spawn daemon: %w", err)
 	}

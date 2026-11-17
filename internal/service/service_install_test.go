@@ -17,6 +17,7 @@ func TestInstallSystemd_WritesUnit(t *testing.T) {
 	}
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)
+	fakeServiceTools(t) // never touch the real user service manager
 
 	if err := installSystemd("/usr/local/bin/gleann", ":7777"); err != nil {
 		t.Fatalf("installSystemd: %v", err)
@@ -84,6 +85,7 @@ func TestInstall_DispatchesByOS(t *testing.T) {
 	}
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)
+	fakeServiceTools(t) // never touch the real user service manager
 
 	if err := Install("/tmp/fake-gleann", ":8181"); err != nil {
 		t.Fatalf("Install: %v", err)
@@ -113,6 +115,7 @@ func TestInstall_DefaultsBinaryAndAddr(t *testing.T) {
 	}
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)
+	fakeServiceTools(t) // never touch the real user service manager
 
 	if err := Install("", ""); err != nil {
 		t.Fatalf("Install with empty args: %v", err)

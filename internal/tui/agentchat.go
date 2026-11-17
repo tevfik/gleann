@@ -32,6 +32,24 @@ type agentChat struct {
 	lastHeader string
 	lastWide   string
 	lastRows   [][2]string
+
+	// prompt answers the questions and forms of slash commands; nil means
+	// the running app. Tests set it to answer without a terminal.
+	prompt prompter
+}
+
+// prompter is the part of *agenttui.App that asks the user something.
+type prompter interface {
+	Ask(ctx context.Context, q agenttui.Question) (string, error)
+	Form(ctx context.Context, f agenttui.Form) ([]string, error)
+}
+
+// prompter returns who answers questions: the test double or the app.
+func (ac *agentChat) prompter(a *agenttui.App) prompter {
+	if ac.prompt != nil {
+		return ac.prompt
+	}
+	return a
 }
 
 // RunAgentChat runs the chat on the agenttui engine (streaming with
@@ -432,7 +450,7 @@ func (ac *agentChat) commands() []agenttui.SlashCommand {
 				}); msg != "" {
 					return msg, true, nil
 				}
-				if !confirm(ctx, a, fmt.Sprintf("Permanently forget every memory matching %q?", arg)) {
+				if !confirm(ctx, ac.prompter(a), fmt.Sprintf("Permanently forget every memory matching %q?", arg)) {
 					return "Nothing forgotten.", true, nil
 				}
 				return ac.withState(func(cm *ChatModel) string {
@@ -499,7 +517,7 @@ func (ac *agentChat) resumeConversation(ctx context.Context, a *agenttui.App) (s
 	for i, c := range items {
 		labels[i] = fmt.Sprintf("%s · %s · %d msgs", truncStr(c.Title, 50), c.UpdatedAt.Format("2006-01-02 15:04"), len(c.Messages))
 	}
-	picked, err := a.Ask(ctx, agenttui.Question{Text: "Resume which conversation?", Options: labels})
+	picked, err := ac.prompter(a).Ask(ctx, agenttui.Question{Text: "Resume which conversation?", Options: labels})
 	if errors.Is(err, agenttui.ErrAskCancelled) {
 		return "Cancelled.", true, nil
 	}
@@ -611,7 +629,7 @@ func (ac *agentChat) editSettings(ctx context.Context, a *agenttui.App) (string,
 	note := fmt.Sprintf("Index: %s · Embedding: %s (changing it requires an index rebuild)", cm.indexName, emb)
 	ac.mu.Unlock()
 
-	vals, err := a.Form(ctx, agenttui.Form{Title: "Chat settings", Fields: fields, Note: note})
+	vals, err := ac.prompter(a).Form(ctx, agenttui.Form{Title: "Chat settings", Fields: fields, Note: note})
 	if errors.Is(err, agenttui.ErrAskCancelled) {
 		return "Settings unchanged.", true, nil
 	}

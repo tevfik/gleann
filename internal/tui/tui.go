@@ -20,14 +20,18 @@ import (
 	_ "github.com/tevfik/gleann/pkg/backends"
 )
 
+// runProgram runs one screen to completion and returns its final model.
+// Tests replace it to drive the screen sequence without a terminal.
+var runProgram = func(m tea.Model) (tea.Model, error) {
+	return tea.NewProgram(m).Run()
+}
+
 // Run starts the interactive TUI application loop.
 // It shows the home screen and routes to sub-screens.
 func Run() error {
 	for {
 		// ── Home screen ──
-		home := NewHomeModel()
-		p := tea.NewProgram(home)
-		result, err := p.Run()
+		result, err := runProgram(NewHomeModel())
 		if err != nil {
 			return fmt.Errorf("home screen: %w", err)
 		}
@@ -84,8 +88,7 @@ func RunOnboardWithPlugins() (*OnboardResult, bool, error) {
 	} else {
 		m = NewOnboardModel()
 	}
-	p := tea.NewProgram(m)
-	result, err := p.Run()
+	result, err := runProgram(m)
 	if err != nil {
 		return nil, false, fmt.Errorf("onboard: %w", err)
 	}
@@ -111,9 +114,7 @@ func RunChat(chat *gleann.LeannChat, indexName, modelName string) error {
 	if !UseClassicUI && os.Getenv("GLEANN_CHAT_UI") != "classic" {
 		return RunAgentChat(chat, indexName, modelName)
 	}
-	m := NewChatModel(chat, indexName, modelName)
-	p := tea.NewProgram(m)
-	_, err := p.Run()
+	_, err := runProgram(NewChatModel(chat, indexName, modelName))
 
 	// End memory session (promote short-term → medium-term).
 	if memMgr, memErr := memory.DefaultManager(); memErr == nil {
@@ -142,8 +143,7 @@ func runOnboard() error {
 	} else {
 		m = NewOnboardModel()
 	}
-	p := tea.NewProgram(m)
-	result, err := p.Run()
+	result, err := runProgram(m)
 	if err != nil {
 		return fmt.Errorf("onboard: %w", err)
 	}
@@ -207,9 +207,7 @@ func RunChatFlow() error {
 
 func runIndexManage() error {
 	cfg := loadConfig()
-	m := NewIndexManageModel(cfg.IndexDir)
-	p := tea.NewProgram(m)
-	_, err := p.Run()
+	_, err := runProgram(NewIndexManageModel(cfg.IndexDir))
 	if err != nil {
 		return fmt.Errorf("index manager: %w", err)
 	}
@@ -217,9 +215,7 @@ func runIndexManage() error {
 }
 
 func runPlugins() error {
-	m := NewPluginModel()
-	p := tea.NewProgram(m)
-	_, err := p.Run()
+	_, err := runProgram(NewPluginModel())
 	if err != nil {
 		return fmt.Errorf("plugins: %w", err)
 	}
@@ -231,9 +227,7 @@ func runChatFlow() error {
 	cfg := loadConfig()
 
 	// Pick an index.
-	idxModel := NewIndexListModel(cfg.IndexDir)
-	p := tea.NewProgram(idxModel)
-	result, err := p.Run()
+	result, err := runProgram(NewIndexListModel(cfg.IndexDir))
 	if err != nil {
 		return fmt.Errorf("index list: %w", err)
 	}
@@ -361,6 +355,9 @@ func loadConfig() gleann.Config {
 		if saved.OpenAIKey != "" {
 			cfg.OpenAIAPIKey = saved.OpenAIKey
 		}
+		if saved.OpenAIBaseURL != "" {
+			cfg.OpenAIBaseURL = saved.OpenAIBaseURL
+		}
 		if saved.OllamaAPIKey != "" {
 			cfg.OllamaAPIKey = saved.OllamaAPIKey
 		}
@@ -374,7 +371,7 @@ func loadConfig() gleann.Config {
 // RunSettings runs the full settings screen (the fields of Settings(), the
 // same the web UI's System → Settings form shows).
 func RunSettings() error {
-	_, err := tea.NewProgram(NewSettingsModel()).Run()
+	_, err := runProgram(NewSettingsModel())
 	if err != nil {
 		return fmt.Errorf("settings: %w", err)
 	}

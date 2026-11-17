@@ -27,12 +27,21 @@ var (
 )
 
 func main() {
+	os.Exit(run(payloadBytes, version, os.Args[1:], runtime.GOOS, syscall.Exec, os.Stdin, os.Stdout, os.Stderr))
+}
+
+// run extracts payload (built as ver) unless already extracted, starts the
+// real binary with args and returns the launcher's exit code. main passes the
+// embedded payload and syscall.Exec; tests pass their own.
+func run(payload []byte, ver string, args []string, goos string,
+	replaceProcess func(argv0 string, argv, envv []string) error,
+	stdin io.Reader, stdout, stderr io.Writer) int {
 	homeDir, _ := os.UserHomeDir()
-	runtimeDir := runtimeDirFor(payloadBytes, version, runtime.GOARCH, homeDir, os.TempDir(), os.Getuid())
-	binPath, err := ensureExtracted(payloadBytes, runtimeDir, runtime.GOOS)
+	runtimeDir := runtimeDirFor(payload, ver, runtime.GOARCH, homeDir, os.TempDir(), os.Getuid())
+	binPath, err := ensureExtracted(payload, runtimeDir, goos)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "gleann-full: %v\n", err)
-		os.Exit(1)
+		fmt.Fprintf(stderr, "gleann-full: %v\n", err)
+		return 1
 	}
 
 	// Tell the real binary which self-contained launcher started it, so that
@@ -46,9 +55,9 @@ func main() {
 			self = resolved
 		}
 	}
-	newEnv := launchEnv(os.Environ(), runtimeDir, runtime.GOOS, self)
+	newEnv := launchEnv(os.Environ(), runtimeDir, goos, self)
 
-	os.Exit(launch(binPath, os.Args[1:], newEnv, runtime.GOOS, syscall.Exec, os.Stdin, os.Stdout, os.Stderr))
+	return launch(binPath, args, newEnv, goos, replaceProcess, stdin, stdout, stderr)
 }
 
 // launch runs the real binary and returns the launcher's exit code. On Unix

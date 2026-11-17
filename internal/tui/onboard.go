@@ -1101,12 +1101,10 @@ func (m OnboardModel) handleLLMProviderKeys(key string) (tea.Model, tea.Cmd) {
 			return m, m.fetchLLMModels()
 		}
 		if prov == "ollama" {
+			// The embedder is not Ollama (prov == embProv returned above), so
+			// its host field has no Ollama address to reuse.
 			if m.llmHostInput.Value() == "" {
-				if m.embHostInput.Value() != "" && m.embProviders[m.embProviderIdx] == "ollama" {
-					m.llmHostInput.SetValue(m.embHostInput.Value())
-				} else {
-					m.llmHostInput.SetValue(gleann.DefaultOllamaHost)
-				}
+				m.llmHostInput.SetValue(gleann.DefaultOllamaHost)
 			}
 			m.llmHostInput.Focus()
 			m.phase = phaseLLMHost
@@ -1332,10 +1330,10 @@ func (m *OnboardModel) buildResult() {
 			ollamaHost = m.llmHostInput.Value()
 		}
 	} else if llmIsOllama {
+		// The embedding host field is not consulted: the embedder is not
+		// Ollama here, so it holds the OpenAI URL or a model directory.
 		if m.llmHostInput.Value() != "" && m.llmHostInput.Value() != gleann.DefaultOllamaHost {
 			ollamaHost = m.llmHostInput.Value()
-		} else if m.embHostInput.Value() != "" && m.embHostInput.Value() != gleann.DefaultOllamaHost {
-			ollamaHost = m.embHostInput.Value()
 		} else if m.existingCfg != nil && m.existingCfg.OllamaHost != "" {
 			ollamaHost = m.existingCfg.OllamaHost
 		} else if m.embProviders[m.embProviderIdx] == "llamacpp" {
@@ -1404,8 +1402,6 @@ func (m *OnboardModel) buildResult() {
 	if !embIsOllama && !llmIsOllama {
 		m.result.OllamaHost = ""
 		m.result.OllamaAPIKey = ""
-	} else if m.result.OllamaHost == gleann.DefaultOllamaHost && !embIsOllama && !llmIsOllama {
-		m.result.OllamaHost = ""
 	}
 
 	// Clean up fields if neither embedding nor LLM uses OpenAI

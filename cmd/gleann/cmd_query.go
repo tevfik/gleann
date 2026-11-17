@@ -22,6 +22,14 @@ import (
 	"github.com/tevfik/gleann/pkg/wordwrap"
 )
 
+// askOutputIsTTY and askInputIsTTY report whether `gleann ask` talks to a
+// terminal; tests replace them to exercise the rendered-markdown output and
+// the index picker without a pseudo-terminal.
+var (
+	askOutputIsTTY = isOutputTTY
+	askInputIsTTY  = isInputTTY
+)
+
 func cmdList(args []string) {
 	if hasFlag(args, "--help") || hasFlag(args, "-h") {
 		fmt.Println(`Usage: gleann index list [options]
@@ -253,7 +261,7 @@ func cmdAsk(args []string) {
 	}
 
 	// Raw mode: explicit --raw flag or auto-detect when stdout is piped.
-	rawMode := hasFlag(args, "--raw") || !isOutputTTY()
+	rawMode := hasFlag(args, "--raw") || !askOutputIsTTY()
 	quiet := hasFlag(args, "--quiet") || rawMode
 	noCache := hasFlag(args, "--no-cache")
 	noLimit := hasFlag(args, "--no-limit")
@@ -555,13 +563,14 @@ func cmdChat(args []string) {
 	// Load saved TUI config for LLM settings.
 	savedCfg := tui.LoadSavedConfig()
 	if savedCfg != nil {
-		if savedCfg.EmbeddingProvider != "" {
+		// Command-line flags win over the saved configuration.
+		if savedCfg.EmbeddingProvider != "" && getFlag(args, "--provider") == "" {
 			cfg.EmbeddingProvider = savedCfg.EmbeddingProvider
 		}
-		if savedCfg.EmbeddingModel != "" {
+		if savedCfg.EmbeddingModel != "" && getFlag(args, "--model") == "" {
 			cfg.EmbeddingModel = savedCfg.EmbeddingModel
 		}
-		if savedCfg.OllamaHost != "" {
+		if savedCfg.OllamaHost != "" && getFlag(args, "--host") == "" {
 			cfg.OllamaHost = savedCfg.OllamaHost
 		}
 		if savedCfg.OllamaAPIKey != "" && cfg.OllamaAPIKey == "" {
@@ -902,7 +911,7 @@ func resolveIndexName(name string, args []string, config gleann.Config, quiet bo
 		for i, idx := range indexes {
 			fmt.Fprintf(os.Stderr, "  %d. %s (%d passages, %s)\n", i+1, idx.Name, idx.NumPassages, idx.Backend)
 		}
-		if !isInputTTY() {
+		if !askInputIsTTY() {
 			// Stdin is not a terminal (it may already have been read as the
 			// question), so a choice cannot be read from it.
 			fmt.Fprintln(os.Stderr, "error: several indexes exist and stdin is not a terminal; name one: gleann ask <index> <question>")

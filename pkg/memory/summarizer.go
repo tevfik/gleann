@@ -150,7 +150,7 @@ func (s *Summarizer) ExtractMemories(ctx context.Context, conv *conversations.Co
 				Label:   label,
 				Content: content,
 				Source:  "auto_extract",
-				Tags:    []string{"auto", "conversation:" + conv.ID[:8]},
+				Tags:    []string{"auto", "conversation:" + conversations.ShortID(conv.ID)},
 			})
 		}
 	}
