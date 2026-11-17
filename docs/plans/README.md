@@ -33,4 +33,7 @@ This directory serves as the shared collaboration ground for both human engineer
 
 - [001-code-graph-rebuild.md](./001-code-graph-rebuild.md) — Code graph: phantom symbol prevention, qualified identifiers, and unified multi-language AST extraction.
 - [002-retrieval-quality.md](./002-retrieval-quality.md) — Retrieval quality: rerank stage and identifier gate, MiniLM-L6 pooler patch, HyDE query expansion, explanations, post-hoc citations.
-- [003-storage.md](./003-storage.md) — Storage engine: SQLite record store, persisted FTS5 lexical index, code graph in SQL tables (draft, audited; awaiting approval).
+- [003-storage.md](./003-storage.md) — Storage engine: SQLite record store, persisted FTS5 lexical index, code graph in SQL tables (implemented in v1.20.0).
+- [004-v1.20-sqlite-only.md](./004-v1.20-sqlite-only.md) — v1.20.0: one SQLite store per index, Kùzu removed, format 2 only, memory entities carried over (implemented).
+- [005-incremental-vectors.md](./005-incremental-vectors.md) — Incremental vector updates: delta file, stable slots, merge and compaction (implemented).
+- [006-vector-db-benchmark.md](./006-vector-db-benchmark.md) — Vector database benchmark (bench/vectordb): gleann's HNSW/DiskANN against Qdrant, Chroma, LanceDB and sqlite-vec on recall-matched latency, updates and churn (approved).
