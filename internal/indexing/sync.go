@@ -130,6 +130,9 @@ func Sync(ctx context.Context, opts SyncOptions) (*SyncResult, error) {
 		// directory (older ones); either means a graph exists.
 		if _, err := os.Stat(filepath.Join(cfg.IndexDir, name+"_graph")); err == nil {
 			buildGraph = true
+		} else if format2GraphHasData(cfg.IndexDir, name) {
+			// A format-2 index keeps its graph in the index database.
+			buildGraph = true
 		}
 	}
 
@@ -184,12 +187,20 @@ func Sync(ctx context.Context, opts SyncOptions) (*SyncResult, error) {
 			eligiblePaths[i] = e.Path
 		}
 
-		existingManifest, _ := gleann.LoadManifest(mPath)
+		existingManifest, _ := gleann.LoadIndexManifest(cfg.IndexDir, name)
 		if existingManifest != nil {
 			diff, nm, dErr := gleann.QuickDiffDirectory(existingManifest, absDocsDir, eligiblePaths)
 			if dErr == nil {
 				newManifest = nm
 				if diff.IsEmpty() {
+					if buildGraph {
+						// A format-2 graph can hold dirty files even when no
+						// passage changed; converge them before "up to date".
+						gOpts := GraphOptions{Name: name, DocsDir: absDocsDir, IndexDir: cfg.IndexDir, IncludeSubmodules: opts.IncludeSubmodules}
+						if gErr := convergeDirtyFormat2Graph(cfg.IndexDir, name, absDocsDir, gOpts, p); gErr != nil {
+							return finish(), fmt.Errorf("%w: %v", ErrGraphUpdate, gErr)
+						}
+					}
 					rootShort := existingManifest.RootHash
 					if len(rootShort) > 12 {
 						rootShort = rootShort[:12]
@@ -257,6 +268,15 @@ func Sync(ctx context.Context, opts SyncOptions) (*SyncResult, error) {
 	allChanged = append(allChanged, changedFiles...)
 	allChanged = append(allChanged, deletedFiles...)
 	if len(allChanged) == 0 {
+		if buildGraph {
+			// A format-2 graph can hold dirty files even when no passage
+			// changed (a failed graph write); converge them before
+			// reporting the index up to date (RFC 003 section 6.5).
+			gOpts := GraphOptions{Name: name, DocsDir: absDocsDir, IndexDir: cfg.IndexDir, IncludeSubmodules: opts.IncludeSubmodules}
+			if gErr := convergeDirtyFormat2Graph(cfg.IndexDir, name, absDocsDir, gOpts, p); gErr != nil {
+				return finish(), fmt.Errorf("%w: %v", ErrGraphUpdate, gErr)
+			}
+		}
 		p.Printf("⚡ Index %q is already up to date. No changes detected in %s.\n", name, time.Since(start).Round(time.Millisecond))
 		res.UpToDate = true
 		return finish(), nil
@@ -284,6 +304,7 @@ func Sync(ctx context.Context, opts SyncOptions) (*SyncResult, error) {
 		if err != nil {
 			return nil, fmt.Errorf("creating builder: %w", err)
 		}
+		builder.SetSourceDir(absDocsDir)
 		ro := readOptionsFor(cfg, &opts.Options, tracker, nil)
 		items, pDocs, err := readDocuments(ctx, absDocsDir, ro, p)
 		if err != nil {
@@ -361,11 +382,15 @@ func Sync(ctx context.Context, opts SyncOptions) (*SyncResult, error) {
 		return finish(), fmt.Errorf("%w: %v", ErrGraphUpdate, graphErr)
 	}
 
-	if newManifest != nil {
-		_ = gleann.SaveManifest(mPath, newManifest)
-	} else if len(eligiblePaths) > 0 {
-		if mf, mErr := gleann.BuildManifest(name, absDocsDir, eligiblePaths); mErr == nil {
-			_ = gleann.SaveManifest(mPath, mf)
+	// A format-2 index keeps its manifest in the files table (committed with
+	// the passages by ApplySource), so there is no manifest file to save.
+	if gleann.StoreFormatOf(filepath.Join(cfg.IndexDir, name, name)) != 2 {
+		if newManifest != nil {
+			_ = gleann.SaveManifest(mPath, newManifest)
+		} else if len(eligiblePaths) > 0 {
+			if mf, mErr := gleann.BuildManifest(name, absDocsDir, eligiblePaths); mErr == nil {
+				_ = gleann.SaveManifest(mPath, mf)
+			}
 		}
 	}
 
@@ -380,19 +405,18 @@ func Sync(ctx context.Context, opts SyncOptions) (*SyncResult, error) {
 func bootstrapTrackerFromIndex(ctx context.Context, tracker *vault.Tracker, docsDir, basePath string, eligiblePaths []string, indexTime time.Time, p *printer) {
 	sources := make(map[string]bool)
 
-	// Step 1: Collect sources from passages.db if present.
-	passagesPath := basePath + ".passages.db"
-	if _, err := os.Stat(passagesPath); err == nil {
-		pm := gleann.NewReadOnlyPassageManager(basePath)
-		if err := pm.Load(); err == nil {
-			_ = pm.ForEachPassage(func(p gleann.Passage) error {
+	// Step 1: Collect sources from the passage store (bbolt for format 1, the
+	// SQLite record store for format 2).
+	if ps, err := gleann.OpenPassageStore(basePath, true); err == nil {
+		if err := ps.Load(); err == nil {
+			_ = ps.ForEachPassage(func(p gleann.Passage) error {
 				if src, ok := p.Metadata["source"].(string); ok && src != "" {
 					sources[src] = true
 				}
 				return nil
 			})
-			pm.Close()
 		}
+		ps.Close()
 	}
 
 	// Step 2: Identify missing files that were already present when the index was built.

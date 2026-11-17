@@ -2,6 +2,7 @@ package indexing
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -11,6 +12,7 @@ import (
 	"github.com/tevfik/gleann/internal/backend/llamacpp"
 	"github.com/tevfik/gleann/internal/embedding"
 	"github.com/tevfik/gleann/internal/multimodal"
+	"github.com/tevfik/gleann/internal/store"
 	"github.com/tevfik/gleann/internal/vault"
 	"github.com/tevfik/gleann/pkg/gleann"
 )
@@ -211,17 +213,40 @@ func acquireTracker(opts *Options, p *printer, warnFormat string) (*vault.Tracke
 
 var indexLocks sync.Map // key: cleaned index dir + name → chan struct{} (cap 1)
 
+// ErrIndexLocked reports that another gleann process holds the index's
+// exclusive build/sync lock (<IndexDir>/<name>.lock, RFC 003 section 3.6).
+// Watch loops use it to skip a change batch and retry later instead of
+// treating the contention as a fatal error.
+var ErrIndexLocked = errors.New("index is locked by another gleann process")
+
 // lockIndex serialises builds/syncs of the same index within this process
-// so concurrent server/MCP requests cannot interleave writes to one index.
-// Waiting for the lock honours ctx.
+// (the channel semaphore) AND across processes (the exclusive OS lock on
+// <IndexDir>/<name>.lock, the same file migrate/rollback/cleanup take). The
+// in-process lock alone cannot stop a CLI `index sync` and the server's
+// watcher from rewriting one index concurrently: format-1 bbolt's own flock
+// on passages.db used to cover that, but format 2 (SQLite WAL) has no such
+// guard. Waiting for the in-process lock honours ctx; the OS lock fails fast.
+//
+// The returned release func frees the OS lock first, then the semaphore, so
+// the next in-process waiter never races a still-held OS lock. No caller may
+// invoke lockIndex again while holding it (flock is per open file description,
+// so a second acquisition in the same process would fail).
 func lockIndex(ctx context.Context, indexDir, name string) (func(), error) {
 	key := filepath.Join(filepath.Clean(indexDir), name)
 	v, _ := indexLocks.LoadOrStore(key, make(chan struct{}, 1))
 	sem := v.(chan struct{})
 	select {
 	case sem <- struct{}{}:
-		return func() { <-sem }, nil
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	}
+	lock, err := store.AcquireLock(filepath.Join(indexDir, name+".lock"))
+	if err != nil {
+		<-sem
+		return nil, fmt.Errorf("%w: %v", ErrIndexLocked, err)
+	}
+	return func() {
+		_ = lock.Release()
+		<-sem
+	}, nil
 }

@@ -14,7 +14,7 @@ func (srv *Server) wireMemorySyncer(cfg Config, glCfg gleann.Config, embedder *e
 	if cfg.EmbeddingModel == "" || srv.memPool == nil {
 		return
 	}
-	srv.memPool.syncerFactory = func(name string) kgraph.VectorSyncer {
+	srv.memPool.syncerFactory = func(name string) gleann.VectorSyncer {
 		builder, err := gleann.NewBuilder(glCfg, embedder)
 		if err != nil {
 			return nil

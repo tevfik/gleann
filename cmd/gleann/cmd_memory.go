@@ -51,9 +51,17 @@ func cmdMemory(args []string) {
 	case "compact":
 		cmdMemoryCompact(subArgs)
 	case "context":
-		cmdMemoryContext()
+		cmdMemoryContext(subArgs)
 	case "maintain":
 		cmdMemoryMaintain()
+	case "reflect":
+		cmdMemoryReflect(subArgs)
+	case "export":
+		cmdMemoryExport(subArgs)
+	case "import":
+		cmdMemoryImport(subArgs)
+	case "failure":
+		cmdMemoryFailure(subArgs)
 	default:
 		fmt.Fprintf(os.Stderr, "unknown memory subcommand: %s\n", sub)
 		printMemoryUsage()
@@ -78,9 +86,16 @@ Usage:
   gleann memory summarize --last                 Summarize last conversation → memory
   gleann memory summarize --id <conv-id>          Summarize specific conversation
   gleann memory summarize --last --extract        Also extract individual facts
+  gleann memory reflect  [--dry-run]              Run sleep-time reflection cycle
+  gleann memory reflect  --revert <run-id>        Revert a reflection run change set
   gleann memory prune    [--age <duration>]       Remove old entries
   gleann memory maintain                          Full maintenance pass
   gleann memory context                           Show compiled context sent to LLM
+  gleann memory context --path <p> --command <c>  Show context + failures matching files/command
+  gleann memory failure add --command <c> --error <text> --fix <text> [--path <p>]... [--symbol <s>]...
+  gleann memory failure list                       List recorded failures
+  gleann memory export   --dir <dir>             Export memory blocks and summaries to markdown
+  gleann memory import   --dir <dir>             Import memory blocks and summaries from markdown
 
 Memory Tiers:
   short    In-memory, session-scoped
@@ -91,12 +106,22 @@ Memory Tiers:
            → never automatically deleted
 
 Options:
+  --dir <dir>             Directory path for memory export/import
   --tier <tier>           Filter by tier: short | medium | long
   --tag <tags>            Comma-separated tags (e.g. "preference,project")
   --label <label>         Semantic label (default: "note" or "user_memory")
   --age <duration>        Duration for prune (e.g. 30d, 90d, 2w, 24h)
-  --json                  Output as JSON
+  --json                  Output as JSON (memory context includes the budget report)
+  --verbose               Print the injection budget report to stderr (memory context)
   --extract               Also extract individual facts (with summarize)
+  --dry-run               Preview reflection change set without writing
+  --revert <run-id>       Revert reflection run by ID
+
+Injection budget:
+  Injected memory is capped at 4000 tokens by default. GLEANN_MEMORY_MAX_TOKENS
+  changes the cap (0 = unlimited). Over budget, short-term blocks are dropped
+  first, then medium, then long; within a tier the older and less-accessed
+  block goes first. Blocks are never cut in half.
 
 Chat Slash Commands (inside 'gleann chat'):
   /remember <text>        Store fact to long-term memory
@@ -127,6 +152,8 @@ Examples:
   gleann memory stats
   gleann memory context
   gleann memory maintain
+  gleann memory export --dir ./backup
+  gleann memory import --dir ./backup
 
 Related Commands:
   gleann chat --list                  Browse conversation history
@@ -218,6 +245,7 @@ func cmdMemoryRemember(args []string) {
 		if b != nil {
 			b.Label = label
 			b.UpdatedAt = time.Now()
+			_ = mgr.Store().Update(b)
 		}
 	}
 
@@ -546,31 +574,7 @@ func cmdMemorySummarize(args []string) {
 	}
 
 	// Build summarizer config from saved config.
-	savedCfg := tui.LoadSavedConfig()
-	sumCfg := memory.SummarizerConfig{
-		Provider: "ollama",
-		Model:    DefaultLLMModel,
-		BaseURL:  "http://localhost:11434",
-	}
-	if savedCfg != nil {
-		if savedCfg.LLMProvider != "" {
-			sumCfg.Provider = savedCfg.LLMProvider
-		}
-		if savedCfg.LLMModel != "" {
-			sumCfg.Model = savedCfg.LLMModel
-		}
-		if savedCfg.OllamaHost != "" {
-			sumCfg.BaseURL = savedCfg.OllamaHost
-		}
-		if sumCfg.Provider == "ollama" {
-			sumCfg.APIKey = gleann.ResolveOllamaAPIKey(savedCfg.OllamaAPIKey)
-		} else if savedCfg.OpenAIKey != "" {
-			sumCfg.APIKey = savedCfg.OpenAIKey
-		}
-		if savedCfg.AnthropicKey != "" && savedCfg.LLMProvider == "anthropic" {
-			sumCfg.APIKey = savedCfg.AnthropicKey
-		}
-	}
+	sumCfg := defaultSummarizerConfig()
 
 	summarizer := memory.NewSummarizer(sumCfg)
 
@@ -609,6 +613,119 @@ func cmdMemorySummarize(args []string) {
 			if err := mgr.Store().Add(&b); err == nil {
 				fmt.Printf("   📝 [%s] %s\n", b.Label, truncateStr(b.Content, 70))
 			}
+		}
+	}
+}
+
+func defaultSummarizerConfig() memory.SummarizerConfig {
+	savedCfg := tui.LoadSavedConfig()
+	sumCfg := memory.SummarizerConfig{
+		Provider: "ollama",
+		Model:    DefaultLLMModel,
+		BaseURL:  "http://localhost:11434",
+	}
+	if envHost := os.Getenv("OLLAMA_HOST"); envHost != "" {
+		sumCfg.BaseURL = envHost
+	}
+	if savedCfg != nil {
+		if savedCfg.LLMProvider != "" {
+			sumCfg.Provider = savedCfg.LLMProvider
+		}
+		if savedCfg.LLMModel != "" {
+			sumCfg.Model = savedCfg.LLMModel
+		}
+		if savedCfg.OllamaHost != "" && os.Getenv("OLLAMA_HOST") == "" {
+			sumCfg.BaseURL = savedCfg.OllamaHost
+		}
+		if sumCfg.Provider == "ollama" {
+			sumCfg.APIKey = gleann.ResolveOllamaAPIKey(savedCfg.OllamaAPIKey)
+		} else if savedCfg.OpenAIKey != "" {
+			sumCfg.APIKey = savedCfg.OpenAIKey
+		}
+		if savedCfg.AnthropicKey != "" && savedCfg.LLMProvider == "anthropic" {
+			sumCfg.APIKey = savedCfg.AnthropicKey
+		}
+	}
+	return sumCfg
+}
+
+func cmdMemoryReflect(args []string) {
+	dryRun := hasFlag(args, "--dry-run")
+	revertID := getFlag(args, "--revert")
+
+	if dryRun && revertID != "" {
+		fmt.Fprintln(os.Stderr, "error: cannot use --dry-run and --revert together")
+		exitFunc(1)
+	}
+
+	mgr := openMemoryManager()
+	defer mgr.Close()
+
+	if revertID != "" {
+		cs, err := mgr.RevertReflection(revertID)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			exitFunc(1)
+		}
+		fmt.Printf("Reverted reflection run %s (removed %d blocks)\n", revertID, len(cs.BlocksAdded))
+		return
+	}
+
+	convStore := conversations.DefaultStore()
+	sumCfg := defaultSummarizerConfig()
+
+	cfg := memory.SleepTimeConfig{
+		Enabled:       true,
+		MaxConvs:      5,
+		ConvStore:     convStore,
+		SummarizerCfg: sumCfg,
+	}
+
+	engine := memory.NewSleepTimeEngine(mgr, cfg)
+	ctx := context.Background()
+	cs, err := engine.Reflect(ctx, dryRun)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		exitFunc(1)
+	}
+
+	if dryRun {
+		fmt.Printf("Reflection change set (run id: %s):\n", cs.RunID)
+		fmt.Printf("  Timestamp: %s\n", cs.Timestamp.Format("2006-01-02 15:04:05"))
+		if len(cs.BlocksAdded) == 0 && len(cs.BlocksSuperseded) == 0 {
+			fmt.Println("  No changes to apply.")
+			return
+		}
+		if len(cs.BlocksAdded) > 0 {
+			fmt.Printf("  Blocks to add (%d):\n", len(cs.BlocksAdded))
+			for _, b := range cs.AddedDetails {
+				fmt.Printf("    + [%s] %s (ID: %s)\n", b.Label, truncateStr(b.Content, 70), b.ID)
+			}
+		}
+		if len(cs.BlocksSuperseded) > 0 {
+			fmt.Printf("  Blocks to supersede (%d):\n", len(cs.BlocksSuperseded))
+			for _, b := range cs.SupersededDetails {
+				fmt.Printf("    ~ [%s] %s (ID: %s)\n", b.Label, truncateStr(b.Content, 70), b.ID)
+			}
+		}
+		return
+	}
+
+	if len(cs.BlocksAdded) == 0 && len(cs.BlocksSuperseded) == 0 {
+		fmt.Printf("Reflection run %s completed: no new memories found.\n", cs.RunID)
+		return
+	}
+	fmt.Printf("Reflection run %s applied:\n", cs.RunID)
+	if len(cs.BlocksAdded) > 0 {
+		fmt.Printf("  Blocks added (%d):\n", len(cs.BlocksAdded))
+		for _, b := range cs.AddedDetails {
+			fmt.Printf("    + [%s] %s (ID: %s)\n", b.Label, truncateStr(b.Content, 70), b.ID)
+		}
+	}
+	if len(cs.BlocksSuperseded) > 0 {
+		fmt.Printf("  Blocks superseded (%d):\n", len(cs.BlocksSuperseded))
+		for _, b := range cs.SupersededDetails {
+			fmt.Printf("    ~ [%s] %s (ID: %s)\n", b.Label, truncateStr(b.Content, 70), b.ID)
 		}
 	}
 }
@@ -653,8 +770,11 @@ func cmdMemoryPrune(args []string) {
 	fmt.Printf("🗑  Pruned %d item(s) older than %s\n", total, ageStr)
 }
 
-func cmdMemoryContext() {
-	if rc := remoteMemoryClient(); rc != nil {
+func cmdMemoryContext(args []string) {
+	verbose := hasFlag(args, "--verbose")
+	command := getFlag(args, "--command")
+	paths := getAllFlags(args, "--path")
+	if rc := remoteMemoryClient(); rc != nil && command == "" && len(paths) == 0 {
 		rendered, err := rc.Context("")
 		if err == nil {
 			if rendered == "" {
@@ -662,6 +782,9 @@ func cmdMemoryContext() {
 				return
 			}
 			fmt.Println(rendered)
+			if verbose {
+				fmt.Fprintln(os.Stderr, "memory budget: not reported by a running server")
+			}
 			return
 		}
 		// Fallback to local store if remote call failed
@@ -670,24 +793,121 @@ func cmdMemoryContext() {
 	mgr := openMemoryManager()
 	defer mgr.Close()
 
-	cw, err := mgr.BuildContext()
+	var cw *memory.ContextWindow
+	var err error
+	if command != "" || len(paths) > 0 {
+		cw, err = mgr.BuildTaskContext("", command, paths)
+	} else {
+		cw, err = mgr.BuildContext()
+	}
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
 	}
 
-	if hasFlag(os.Args, "--json") {
+	if hasFlag(args, "--json") {
 		data, _ := json.MarshalIndent(cw, "", "  ")
 		fmt.Println(string(data))
 		return
 	}
 
 	rendered := cw.Render()
+	if verbose {
+		if cw.Budget != nil {
+			fmt.Fprintln(os.Stderr, cw.Budget.Summary())
+		}
+	}
 	if rendered == "" {
 		fmt.Println("(empty memory context)")
 		return
 	}
 	fmt.Println(rendered)
+}
+
+func cmdMemoryFailure(args []string) {
+	if len(args) == 0 {
+		fmt.Fprintln(os.Stderr, "usage: gleann memory failure add|list ...")
+		os.Exit(1)
+	}
+	switch args[0] {
+	case "add":
+		cmdMemoryFailureAdd(args[1:])
+	case "list":
+		cmdMemoryFailureList(args[1:])
+	default:
+		fmt.Fprintf(os.Stderr, "unknown memory failure subcommand: %s\n", args[0])
+		os.Exit(1)
+	}
+}
+
+func cmdMemoryFailureAdd(args []string) {
+	command := getFlag(args, "--command")
+	errText := getFlag(args, "--error")
+	fix := getFlag(args, "--fix")
+	paths := getAllFlags(args, "--path")
+	symbols := getAllFlags(args, "--symbol")
+
+	if command == "" || errText == "" {
+		fmt.Fprintln(os.Stderr, "usage: gleann memory failure add --command <c> --error <text> --fix <text> [--path <p>]... [--symbol <s>]...")
+		os.Exit(1)
+	}
+
+	mgr := openMemoryManager()
+	defer mgr.Close()
+
+	block, err := mgr.RecordFailure(memory.Failure{
+		Command: command,
+		Error:   errText,
+		Fix:     fix,
+		Paths:   paths,
+		Symbols: symbols,
+	})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(1)
+	}
+
+	if block.Confirms > 1 {
+		fmt.Printf("⚠️  Failure confirmed (%d×) for %q: %s\n", block.Confirms, command, truncateStr(block.Content, 80))
+	} else {
+		fmt.Printf("⚠️  Recorded failure [%s] for %q: %s\n", block.ID[:8], command, truncateStr(block.Content, 80))
+	}
+}
+
+func cmdMemoryFailureList(args []string) {
+	asJSON := hasFlag(args, "--json")
+
+	mgr := openMemoryManager()
+	defer mgr.Close()
+
+	failures, err := mgr.ListFailures()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(1)
+	}
+
+	if asJSON {
+		data, _ := json.MarshalIndent(failures, "", "  ")
+		fmt.Println(string(data))
+		return
+	}
+
+	if len(failures) == 0 {
+		fmt.Println("No failures recorded.")
+		return
+	}
+
+	fmt.Printf("⚠️  Recorded failures (%d):\n\n", len(failures))
+	for i, b := range failures {
+		fmt.Printf("  %d. [%s] command: %s\n", i+1, b.ID[:8], b.Metadata[memory.FailureMetaCommand])
+		fmt.Printf("     error: %s\n", truncateStr(b.Content, 100))
+		if fix := b.Metadata[memory.FailureMetaFix]; fix != "" {
+			fmt.Printf("     fix: %s\n", truncateStr(fix, 100))
+		}
+		if len(b.Paths) > 0 {
+			fmt.Printf("     files: %s\n", strings.Join(b.Paths, ", "))
+		}
+	}
 }
 
 func cmdMemoryMaintain() {
@@ -769,4 +989,61 @@ func cmdMemoryCompact(args []string) {
 	}
 
 	fmt.Printf("🧹 Memory compacted: %d stale/unreliable block(s) pruned (min validity: %.2f)\n", pruned, minVal)
+}
+
+func cmdMemoryExport(args []string) {
+	dir := getFlag(args, "--dir")
+	if dir == "" {
+		fmt.Fprintln(os.Stderr, "usage: gleann memory export --dir <dir>")
+		exitFunc(1)
+		return
+	}
+
+	mgr := openMemoryManager()
+	defer mgr.Close()
+
+	stats, err := mgr.Export(dir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error exporting memory: %v\n", err)
+		exitFunc(1)
+		return
+	}
+
+	fmt.Printf("📦 Exported %d memory block(s) and %d summary(ies) to %s\n",
+		stats.Blocks, stats.Summaries, dir)
+}
+
+func cmdMemoryImport(args []string) {
+	dir := getFlag(args, "--dir")
+	if dir == "" {
+		fmt.Fprintln(os.Stderr, "usage: gleann memory import --dir <dir>")
+		exitFunc(1)
+		return
+	}
+
+	mgr := openMemoryManager()
+	defer mgr.Close()
+
+	stats, err := mgr.Import(dir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error importing memory: %v\n", err)
+		exitFunc(1)
+		return
+	}
+
+	var parts []string
+	parts = append(parts, fmt.Sprintf("%d imported", stats.BlocksImported))
+	if stats.BlocksUpdated > 0 {
+		parts = append(parts, fmt.Sprintf("%d updated", stats.BlocksUpdated))
+	}
+	if stats.BlocksUnchanged > 0 {
+		parts = append(parts, fmt.Sprintf("%d unchanged", stats.BlocksUnchanged))
+	}
+	if stats.Conflicts > 0 {
+		parts = append(parts, fmt.Sprintf("%d conflict(s) resolved", stats.Conflicts))
+	}
+	if stats.SummariesImported > 0 {
+		parts = append(parts, fmt.Sprintf("%d summary(ies)", stats.SummariesImported))
+	}
+	fmt.Printf("📥 Imported memory blocks from %s: %s\n", dir, strings.Join(parts, ", "))
 }

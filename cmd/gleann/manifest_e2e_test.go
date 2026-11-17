@@ -62,7 +62,6 @@ func TestE2E_Manifest_SyncFastPath(t *testing.T) {
 	_ = os.WriteFile(f1, []byte("package service\n// Service implementation\nfunc RunService() string { return \"running\" }\n"), 0644)
 
 	indexName := "manifest_e2e_idx"
-	manifestPath := filepath.Join(indexDir, indexName, indexName+".manifest.json")
 
 	// Set test environment config
 	t.Setenv("GLEANN_INDEX_DIR", indexDir)
@@ -84,10 +83,12 @@ func TestE2E_Manifest_SyncFastPath(t *testing.T) {
 		t.Fatalf("expected build success, got: %s", outBuild)
 	}
 
-	// Verify manifest was automatically generated and saved by cmdBuild
-	m1, err := gleann.LoadManifest(manifestPath)
+	// Verify manifest was automatically generated and saved by cmdBuild.
+	// Read through the format-dispatching accessor: format 1 keeps the
+	// manifest in <name>.manifest.json, format 2 in the store's files table.
+	m1, err := gleann.LoadIndexManifest(indexDir, indexName)
 	if err != nil {
-		t.Fatalf("manifest was not generated at %s: %v", manifestPath, err)
+		t.Fatalf("manifest was not generated for %s: %v", indexName, err)
 	}
 	if m1.RootHash == "" {
 		t.Fatalf("expected non-empty RootHash in generated manifest")
@@ -130,7 +131,7 @@ func TestE2E_Manifest_SyncFastPath(t *testing.T) {
 	}
 
 	// Verify manifest root hash was updated
-	m2, err := gleann.LoadManifest(manifestPath)
+	m2, err := gleann.LoadIndexManifest(indexDir, indexName)
 	if err != nil {
 		t.Fatalf("failed to reload manifest: %v", err)
 	}

@@ -12,6 +12,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/tevfik/gleann/modules/hnsw"
 	"github.com/tevfik/gleann/pkg/gleann"
@@ -61,6 +62,11 @@ func (b *HybridBuilder) Build(ctx context.Context, embeddings [][]float32) ([]by
 
 	// ── 4. Convert to CSR with embedding pruning. ──
 	csr := hnsw.ConvertToCSR(graph)
+	dtype := strings.ToLower(strings.TrimSpace(b.config.HNSWConfig.VectorDType))
+	if dtype == "" {
+		dtype = hnsw.VectorDTypeF32
+	}
+	csr.VectorDType = dtype
 	if b.config.HNSWConfig.PruneEmbeddings {
 		hnsw.PruneEmbeddings(graph, csr, b.config.HNSWConfig.PruneKeepFraction)
 	} else {

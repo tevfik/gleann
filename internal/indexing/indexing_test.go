@@ -175,7 +175,7 @@ func TestBuildThenSync(t *testing.T) {
 		t.Errorf("MCPExposed not recorded: %v", meta.MCPExposed)
 	}
 
-	mf, err := gleann.LoadManifest(manifestPath(env.cfg.IndexDir, "proj"))
+	mf, err := gleann.LoadIndexManifest(env.cfg.IndexDir, "proj")
 	if err != nil {
 		t.Fatalf("manifest missing: %v", err)
 	}

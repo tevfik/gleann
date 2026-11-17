@@ -50,15 +50,22 @@ type Graph struct {
 	// dimensions of vectors.
 	dimensions int
 
+	// vectorDType indicates whether stored vectors are float32 ("f32") or float16 ("f16").
+	vectorDType string
+
+	// distMetricName stores the metric name ("l2", "cosine", "ip").
+	distMetricName string
+
 	// nodeCount tracks the number of nodes.
 	nodeCount int64
 }
 
 // Node represents a single node in the HNSW graph.
 type Node struct {
-	ID     int64
-	Vector []float32
-	Level  int
+	ID        int64
+	Vector    []float32
+	VectorF16 []uint16
+	Level     int
 	// Neighbors at each level. neighbors[level] = list of neighbor IDs.
 	Neighbors [][]int64
 }
@@ -102,10 +109,49 @@ func NewGraphWithOptions(m, efConstruction, dimensions int, distFunc DistanceFun
 		efConstruction: efConstruction,
 		ml:             1.0 / math.Log(float64(m)),
 		distFunc:       distFunc,
+		distMetricName: detectMetric(distFunc),
 		useHeuristic:   useHeuristic,
 		rng:            rand.New(rand.NewSource(42)),
 		dimensions:     dimensions,
+		vectorDType:    "f32",
 	}
+}
+
+// detectMetric infers distance metric name from distance function.
+func detectMetric(f DistanceFunc) string {
+	if f == nil {
+		return "l2"
+	}
+	a := []float32{1, 0}
+	b := []float32{0, 1}
+	d := f(a, b)
+	if math.Abs(float64(d-1.0)) < 1e-5 {
+		return "cosine"
+	}
+	if math.Abs(float64(d)) < 1e-5 {
+		return "ip"
+	}
+	return "l2"
+}
+
+func (g *Graph) vectorNodeDist(vec []float32, node *Node) float32 {
+	if len(node.VectorF16) > 0 {
+		return GetDistanceFuncF16(g.distMetricName)(vec, node.VectorF16)
+	}
+	return g.distFunc(vec, node.Vector)
+}
+
+func (g *Graph) nodeNodeDist(nodeA, nodeB *Node) float32 {
+	if len(nodeA.VectorF16) > 0 && len(nodeB.VectorF16) > 0 {
+		return GetDistanceFuncF16F16(g.distMetricName)(nodeA.VectorF16, nodeB.VectorF16)
+	}
+	if len(nodeA.VectorF16) > 0 {
+		return GetDistanceFuncF16(g.distMetricName)(nodeB.Vector, nodeA.VectorF16)
+	}
+	if len(nodeB.VectorF16) > 0 {
+		return GetDistanceFuncF16(g.distMetricName)(nodeA.Vector, nodeB.VectorF16)
+	}
+	return g.distFunc(nodeA.Vector, nodeB.Vector)
 }
 
 // Insert adds a vector to the graph with the given ID.
@@ -153,7 +199,7 @@ func (g *Graph) Insert(id int64, vector []float32) {
 					if !ok {
 						continue
 					}
-					if g.distFunc(vector, neighbor.Vector) < g.distFunc(vector, epNode.Vector) {
+					if g.vectorNodeDist(vector, neighbor) < g.vectorNodeDist(vector, epNode) {
 						ep = neighborID
 						epNode = neighbor
 						changed = true
@@ -243,7 +289,7 @@ func (g *Graph) Search(query []float32, topK, ef int) []Candidate {
 					if !ok {
 						continue
 					}
-					if g.distFunc(query, neighbor.Vector) < g.distFunc(query, epNode.Vector) {
+					if g.vectorNodeDist(query, neighbor) < g.vectorNodeDist(query, epNode) {
 						ep = neighborID
 						epNode = neighbor
 						changed = true
@@ -390,6 +436,7 @@ func (g *Graph) RemoveVector(id int64) {
 	defer g.mu.Unlock()
 	if node, ok := g.nodes[id]; ok {
 		node.Vector = nil
+		node.VectorF16 = nil
 	}
 }
 
@@ -399,7 +446,7 @@ func (g *Graph) searchLevel(query []float32, entryID int64, ef, level int) []Can
 	visited[entryID] = true
 
 	entryNode := g.nodes[entryID]
-	entryDist := g.distFunc(query, entryNode.Vector)
+	entryDist := g.vectorNodeDist(query, entryNode)
 
 	// candidates is a min-heap of candidates (ordered by distance, ascending).
 	candidates := &candidateHeap{
@@ -439,7 +486,7 @@ func (g *Graph) searchLevel(query []float32, entryID int64, ef, level int) []Can
 				continue
 			}
 
-			dist := g.distFunc(query, neighbor.Vector)
+			dist := g.vectorNodeDist(query, neighbor)
 
 			if results.Len() < ef || dist < results.Peek().Distance {
 				candidates.Push(Candidate{ID: neighborID, Distance: dist})
@@ -563,7 +610,7 @@ func (g *Graph) selectNeighborsHeuristic(candidates []Candidate, m int) []Candid
 					if !ok2 {
 						continue
 					}
-					interDist := g.distFunc(bestNode.Vector, selNode.Vector)
+					interDist := g.nodeNodeDist(bestNode, selNode)
 					if interDist < best.Distance {
 						good = false
 						break
@@ -617,7 +664,7 @@ func (g *Graph) pruneConnections(node *Node, level, mMax int) {
 		if !ok {
 			continue
 		}
-		dist := g.distFunc(node.Vector, n.Vector)
+		dist := g.nodeNodeDist(node, n)
 		scored = append(scored, neighbor{id: nID, dist: dist})
 	}
 

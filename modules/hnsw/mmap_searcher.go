@@ -18,19 +18,12 @@ func (s *MmapSearcher) Load(ctx context.Context, indexData []byte, meta IndexMet
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	// In the BackendSearcher paradigm, Load gets `indexData []byte`.
-	// For zero-copy, we ideally want to bypass loading bytes into RAM.
-	// But to conform with `Load([]byte)`, if we are passed bytes, we must write them to index.csr and then mmap it,
-	// or provide a new LoadFromFile function in the interface.
-
-	// Assuming the index file is located at s.config.IndexDir + "/index.csr"
-	// For this prototype, we'll try to mmap the underlying file directly if we know it.
-	// We'll write a small logic down here that mmaps the standard path.
-
-	// (Note: To perfectly fit gleann's BackendSearcher API which passes []byte, a real production
-	// version might alter the API to allow `LoadFromFile(path string)`. Here we'll simulate mapping.)
-
-	return fmt.Errorf("MmapSearcher requires LoadFromFile to mmap")
+	mg, err := OpenMmapGraphFromData(indexData)
+	if err != nil {
+		return err
+	}
+	s.mmapGraph = mg
+	return nil
 }
 
 // LoadFromFile allows mmapping the index directly bypassing bytes parameter.
@@ -47,9 +40,31 @@ func (s *MmapSearcher) LoadFromFile(ctx context.Context, path string) error {
 }
 
 func (s *MmapSearcher) Search(ctx context.Context, query []float32, topK int) ([]int64, []float32, error) {
-	// Not supporting `Search` without recompute if it's strictly a pruned graph,
-	// unless we stored all embeddings (keep_fraction=1.0).
-	return nil, nil, fmt.Errorf("MmapSearcher is optimized for SearchWithRecompute")
+	// Search using stored embeddings (when stored, e.g. keepFraction=1.0 or unpruned).
+	return s.SearchWithRecompute(ctx, query, topK, func(ctx context.Context, ids []int64) ([][]float32, error) {
+		return make([][]float32, len(ids)), nil
+	})
+}
+
+// VectorDistances computes the distance from the query vector to each of the
+// given passage IDs using the memory-mapped stored embeddings on the fly.
+func (s *MmapSearcher) VectorDistances(ctx context.Context, query []float32, ids []int64) ([]float32, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	if s.mmapGraph == nil {
+		return nil, fmt.Errorf("no index loaded")
+	}
+	metric := s.config.HNSWConfig.DistanceMetric
+	out := make([]float32, len(ids))
+	for i, id := range ids {
+		dist, ok := s.mmapGraph.DistanceToStoredEmbedding(query, id, metric)
+		if !ok {
+			return nil, fmt.Errorf("hnsw: passage %d has pruned embeddings", id)
+		}
+		out[i] = dist
+	}
+	return out, nil
 }
 
 func (s *MmapSearcher) SearchWithRecompute(ctx context.Context, query []float32, topK int, recompute EmbeddingRecomputer) ([]int64, []float32, error) {

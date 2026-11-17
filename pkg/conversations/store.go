@@ -51,6 +51,9 @@ func NewStore(dir string) *Store {
 
 // DefaultStore returns a store at ~/.gleann/conversations/.
 func DefaultStore() *Store {
+	if env := os.Getenv("GLEANN_CONVERSATIONS_DIR"); env != "" {
+		return NewStore(env)
+	}
 	home, _ := os.UserHomeDir()
 	return NewStore(filepath.Join(home, ".gleann", "conversations"))
 }

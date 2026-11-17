@@ -96,6 +96,8 @@ Location: `~/.gleann/config.json`
 | `openai_base_url` | — | Custom OpenAI-compatible API base URL |
 | `index_dir` | `~/.gleann/indexes` | Root directory for all index data. Each named index `<name>` creates `<name>/` (RAG), `<name>_graph/` (code graph), and `<name>_memory/` (Memory Engine) sub-directories here |
 | `backend` | `diskann` | Vector search backend: `diskann`, `hnsw`, `faiss`, `faiss-hybrid` |
+| `use_mmap` | unset | `true`: memory-map the vector index for every backend; `false`: load it into RAM. Unset: the per-backend keys decide; both default to memory-mapped. The old keys `hnsw_config.use_mmap` and `diskann_config.use_mmap` are still read when `use_mmap` is unset. CLI flag: `--no-mmap`, env: `GLEANN_MMAP` |
+| `searcher_cache_budget` | `0` (unlimited) | Memory budget for cached index searchers in `gleann serve` and the MCP server (e.g. `500MB`, `1GB`, `100MiB`, or bytes as an integer). Evicts least-recently-used searchers when total estimated resident size exceeds the budget. Env: `GLEANN_SEARCHER_CACHE_BUDGET` |
 | `llm_provider` | `ollama` | Provider for ask/chat: `ollama`, `openai`, `anthropic` |
 | `llm_model` | `nemotron-3-nano:4b` | LLM model for ask/chat commands |
 | `rerank_enabled` | `false` | Rerank search results (CLI `search`/`ask`, REST, MCP, chat). `--rerank` turns it on for one command, `--no-rerank` off |
@@ -362,6 +364,29 @@ DiskANN parameters can be tuned in the config file under `diskann_config`:
 | `pq_train_size` | `10000` | Vectors sampled for PQ codebook training |
 | `l_search` | `100` | Candidate list size during search (higher = better recall, slower) |
 
+### HNSW Configuration
+
+HNSW parameters can be tuned in the config file under `hnsw_config`:
+
+```json
+{
+  "backend": "hnsw",
+  "hnsw_config": {
+    "m": 32,
+    "ef_construction": 200,
+    "ef_search": 128,
+    "vector_dtype": "f32"
+  }
+}
+```
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `m` | `32` | Max connections per node at non-zero levels |
+| `ef_construction` | `200` | Candidate list size during construction |
+| `ef_search` | `128` | Candidate list size during search |
+| `vector_dtype` | `f32` | Storage format of stored vectors: `f32` (float32, default) or `f16` (IEEE 754 half-precision float16). Halves index file size and resident memory with on-the-fly distance computation. Override with `GLEANN_HNSW_DTYPE` |
+
 ## Recommended Models
 
 ### Embeddings
@@ -426,7 +451,7 @@ When enabled, a background "sleep-time" agent periodically reflects on recent co
 | `GLEANN_SLEEPTIME_INTERVAL` | `30m` | Go duration between reflection cycles |
 | `GLEANN_SLEEPTIME_MAX_CONVS` | `5` | Max recent conversations per cycle |
 
-The engine uses the server's configured LLM (model/provider) to summarize conversations and extract memories tagged with `sleep_time` source.
+The engine uses the server's configured LLM (model/provider) to summarize conversations and extract memories tagged with `sleep_time` source. The conversation cursor persists across restarts in `memory_meta`, and changes can be previewed or reverted using `gleann memory reflect [--dry-run] [--revert <run-id>]`.
 
 ### Memory Block Limits & Scoping
 
@@ -435,6 +460,9 @@ Blocks can have a per-block character limit (`char_limit`) and a scope for isola
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `GLEANN_BLOCK_CHAR_LIMIT` | `0` (unlimited) | Default char limit applied to new blocks |
+| `GLEANN_MEMORY_MAX_TOKENS` | `4000` | Cap on the memory injected into prompts and compiled context windows, in estimated tokens. `0` disables the cap |
+
+**Injection budget:** the manager setting `MaxContextTokens` (default `4000`, overridable with `GLEANN_MEMORY_MAX_TOKENS`) caps the `<memory_context>` window. Tokens are estimated with the same ~4 chars/token heuristic as search results. Over budget, whole blocks are dropped, never truncated: short-term blocks first, then medium-term, then long-term; within a tier the older block goes first, and at equal recency the less-accessed one. Conversation summaries (the last five) are kept as fixed overhead, so they are counted but not dropped. The outcome is reported per block (`injected`/`dropped` with token estimates) in `gleann memory context --json`, REST `GET /api/blocks/context`, MCP `memory_context` with `verbose`, and `gleann memory context --verbose` (a one-line summary on stderr). Nothing is written to the log, so the TUI screen stays intact.
 
 **Scopes:** Blocks can be isolated to a specific context (e.g. conversation ID) by setting the `scope` field. When querying with `?scope=xxx`, only global blocks (scope="") and blocks matching the requested scope are returned. This enables conversation-level memory isolation similar to Letta's conversation model.
 

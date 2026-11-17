@@ -37,9 +37,14 @@ func (b *LeannBuilder) Reconcile(ctx context.Context, name, docsRoot string) (*R
 	indexDir := filepath.Join(b.config.IndexDir, name)
 	basePath := filepath.Join(indexDir, name)
 
-	// Load passages.
-	pm := NewPassageManager(basePath)
-	if err := pm.Load(); err != nil {
+	// Load passages through the format-dispatching opener: bbolt for a
+	// format-1 index, the SQLite record store for format 2.
+	ps, err := OpenPassageStore(basePath, false)
+	if err != nil {
+		return nil, fmt.Errorf("load passages: %w", err)
+	}
+	if err := ps.Load(); err != nil {
+		ps.Close()
 		return nil, fmt.Errorf("load passages: %w", err)
 	}
 
@@ -47,7 +52,7 @@ func (b *LeannBuilder) Reconcile(ctx context.Context, name, docsRoot string) (*R
 
 	// Scan all passages and find unique sources.
 	sourcePassageIDs := make(map[string][]int64) // source → passage IDs
-	pm.ForEachPassage(func(p Passage) error {
+	ps.ForEachPassage(func(p Passage) error {
 		result.ScannedPassages++
 		src, ok := p.Metadata["source"].(string)
 		if !ok || src == "" {
@@ -57,8 +62,9 @@ func (b *LeannBuilder) Reconcile(ctx context.Context, name, docsRoot string) (*R
 		return nil
 	})
 
-	// Close the passage manager before calling UpdateIndex, which opens its own PM.
-	pm.Close()
+	// Close the passage store before calling UpdateIndex, which opens its own
+	// handle (a format-2 compaction renames files, which needs no open handles).
+	ps.Close()
 
 	// Check which sources still exist on disk.
 	var orphanSources []string
@@ -82,7 +88,7 @@ func (b *LeannBuilder) Reconcile(ctx context.Context, name, docsRoot string) (*R
 	result.RemovedVectors = result.RemovedPassages
 
 	// Remove orphaned passages and their vectors via UpdateIndex.
-	err := b.UpdateIndex(ctx, name, nil, orphanSources)
+	err = b.UpdateIndex(ctx, name, nil, orphanSources)
 	if err != nil {
 		return result, fmt.Errorf("remove orphan passages: %w", err)
 	}

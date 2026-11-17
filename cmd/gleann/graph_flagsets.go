@@ -1,5 +1,3 @@
-//go:build treesitter
-
 package main
 
 // graphFlagSets maps each `gleann graph` subcommand to its flags. Every

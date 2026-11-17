@@ -392,6 +392,7 @@ func (s *Server) handleBlockContext(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"context":  cw,
 		"rendered": cw.Render(),
+		"budget":   cw.Budget,
 	})
 }
 

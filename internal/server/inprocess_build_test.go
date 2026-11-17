@@ -40,6 +40,10 @@ func newBuildServer(t *testing.T) (*Server, http.Handler, gleann.Config) {
 	// Registered after the TempDirs above, so it runs before they are removed:
 	// Windows cannot delete index files a cached searcher still holds open.
 	t.Cleanup(s.invalidateAllSearchers)
+	// Background builds started by a request (index-path) write into
+	// IndexDir; wait for them before the TempDirs are removed, or the
+	// removal races their writes ("directory not empty").
+	t.Cleanup(s.bgWG.Wait)
 	return s, s.buildMux(), cfg
 }
 

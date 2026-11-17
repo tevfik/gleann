@@ -15,7 +15,7 @@ func (s *Server) initMemorySyncer(config gleann.Config, embedder *embedding.Comp
 	if embedder == nil || config.EmbeddingModel == "" || s.memoryPool == nil {
 		return
 	}
-	s.memoryPool.syncerFactory = func(name string) kgraph.VectorSyncer {
+	s.memoryPool.syncerFactory = func(name string) gleann.VectorSyncer {
 		builder, err := gleann.NewBuilder(config, embedder)
 		if err != nil {
 			return nil

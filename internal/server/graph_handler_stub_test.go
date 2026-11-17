@@ -34,47 +34,7 @@ func TestGraphDBPool_Get_StubReturnsError(t *testing.T) {
 	}
 }
 
-// ── memory stub handlers ─────────────────────────────────────────────────
-
-func TestMemoryStub_HandleMemoryInject(t *testing.T) {
-	s := &Server{config: gleann.Config{}, searchers: make(map[string]*gleann.LeannSearcher)}
-	req := httptest.NewRequest("POST", "/api/memory/test/inject", nil)
-	w := httptest.NewRecorder()
-	s.handleMemoryInject(w, req)
-	if w.Code != http.StatusNotImplemented {
-		t.Errorf("expected 501, got %d", w.Code)
-	}
-}
-
-func TestMemoryStub_HandleMemoryDeleteNode(t *testing.T) {
-	s := &Server{config: gleann.Config{}, searchers: make(map[string]*gleann.LeannSearcher)}
-	req := httptest.NewRequest("DELETE", "/api/memory/test/nodes/abc", nil)
-	w := httptest.NewRecorder()
-	s.handleMemoryDeleteNode(w, req)
-	if w.Code != http.StatusNotImplemented {
-		t.Errorf("expected 501, got %d", w.Code)
-	}
-}
-
-func TestMemoryStub_HandleMemoryDeleteEdge(t *testing.T) {
-	s := &Server{config: gleann.Config{}, searchers: make(map[string]*gleann.LeannSearcher)}
-	req := httptest.NewRequest("DELETE", "/api/memory/test/edges", nil)
-	w := httptest.NewRecorder()
-	s.handleMemoryDeleteEdge(w, req)
-	if w.Code != http.StatusNotImplemented {
-		t.Errorf("expected 501, got %d", w.Code)
-	}
-}
-
-func TestMemoryStub_HandleMemoryTraverse(t *testing.T) {
-	s := &Server{config: gleann.Config{}, searchers: make(map[string]*gleann.LeannSearcher)}
-	req := httptest.NewRequest("POST", "/api/memory/test/traverse", nil)
-	w := httptest.NewRecorder()
-	s.handleMemoryTraverse(w, req)
-	if w.Code != http.StatusNotImplemented {
-		t.Errorf("expected 501, got %d", w.Code)
-	}
-}
+// ── memory pool lifecycle ─────────────────────────────────────────────────
 
 func TestMemoryStub_StopMemoryPool(t *testing.T) {
 	s := &Server{config: gleann.Config{}, searchers: make(map[string]*gleann.LeannSearcher)}

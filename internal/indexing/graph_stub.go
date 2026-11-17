@@ -4,11 +4,12 @@ package indexing
 
 import "fmt"
 
-// GraphSupported reports whether this binary was built with graph
-// indexing support (-tags treesitter).
+// GraphSupported reports whether this binary supports the Kùzu graph path
+// for format-1 indexes (-tags treesitter). Format-2 indexes build and serve
+// their graph from SQLite in every build, regardless of this constant.
 const GraphSupported = false
 
-func buildGraphIndex(_ GraphOptions, p *printer) error {
+func buildGraphIndexKuzu(_ GraphOptions, p *printer) error {
 	p.Warnf("⚠️  Graph indexing requires CGo (build with -tags treesitter).\n")
 	return nil
 }

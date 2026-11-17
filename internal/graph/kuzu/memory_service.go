@@ -20,18 +20,11 @@ import (
 )
 
 // VectorSyncer abstracts vector-index write operations for the Memory Engine.
-// Implementations bridge KuzuDB graph writes to the HNSW+BM25 vector store.
+// It is an alias for gleann.VectorSyncer.
 // Pass nil to [NewMemoryService] to skip vector synchronisation entirely.
-type VectorSyncer interface {
-	// AddContent indexes node content in the vector store.
-	// nodeID is stored as passage metadata so the vector ID can be mapped
-	// back to the Entity primary key during retrieval.
-	AddContent(ctx context.Context, nodeID, content string, attrs map[string]any) error
+type VectorSyncer = gleann.VectorSyncer
 
-	// DeleteContent removes the passage associated with nodeID from the
-	// vector store (soft-delete / tombstone as appropriate for the backend).
-	DeleteContent(ctx context.Context, nodeID string) error
-}
+var _ gleann.MemoryService = (*MemoryService)(nil)
 
 // MemoryService orchestrates transactional Entity / RELATES_TO operations on
 // KuzuDB with optional synchronisation to the HNSW+BM25 vector index.

@@ -11,11 +11,14 @@ Useful for Docker, CI/CD, and environments where editing config files is impract
 | `GLEANN_INDEX_DIR` | `index_dir` | `~/.gleann/indexes` | Root directory for all index data |
 | `GLEANN_CONFIG_DIR` | — | `~/.gleann` | Directory that holds `config.json` and the other gleann state files (read by `configpath.GetConfigDir`); downloaded models live in `<config dir>/models` |
 | `GLEANN_MEMORY_DIR` | — | `~/.gleann/memory` | Directory of the long-term memory database (`memory.db`) |
+| `GLEANN_CONVERSATIONS_DIR` | — | `~/.gleann/conversations` | Directory of saved conversations |
 | `GLEANN_PACKS_DIR` | — | `<index_dir>/packs` | Directory the server loads knowledge packs from at start-up |
 | `GLEANN_THEME` | — | agenttui default | Colour theme of the agent chat TUI, by name (for example `opencode`, `dracula`, `nord`, `gruvbox`, `catppuccin`, `tokyo-night`) |
 | `GLEANN_CHAT_UI` | — | agent chat | Set to `classic` to use the original chat interface (same as `--classic`) |
 | `OLLAMA_HOST` | `ollama_host` | `http://localhost:11434` | Ollama server URL |
 | `OLLAMA_API_KEY` | `ollama_api_key` | — | Optional Ollama API key, sent as `Authorization: Bearer <key>` (Ollama behind an auth proxy / hosted Ollama). Used only when `ollama_api_key` is not set |
+| `GLEANN_MMAP` | `use_mmap` | unset | `1`/`true`: memory-map the vector index for every backend; `0`/`false`: load it into RAM. Unset: the per-backend keys decide (both default to memory-mapped) |
+| `GLEANN_HNSW_DTYPE` | `hnsw_config.vector_dtype` | `f32` | Stored vector encoding for HNSW indexes: `f32` (32-bit float, default) or `f16` (16-bit half-precision float). Halves index file size and resident memory with distance evaluated on the fly |
 
 ## Authentication & Network
 
@@ -76,6 +79,12 @@ These variables configure the REST API server (`gleann serve`).
 
 Rate-limited requests receive `429 Too Many Requests` with a `Retry-After: 1` header. Timed-out requests receive `504 Gateway Timeout`. The `/health` and `/metrics` endpoints bypass rate limiting. SSE streaming endpoints bypass the timeout middleware.
 
+## Searcher Cache & Memory Profile (Server & MCP)
+
+| Variable | Config Key | Default | Description |
+|----------|-----------|---------|-------------|
+| `GLEANN_SEARCHER_CACHE_BUDGET` | `searcher_cache_budget` | `0` (unlimited) | Memory budget for cached index searchers in `gleann serve` and the MCP server (e.g. `500MB`, `1GB`, `100MiB`, or bytes as an integer). When total resident size exceeds the budget, least-recently-used searchers are evicted |
+
 ## Background Tasks & Maintenance (Server Mode)
 
 | Variable | Default | Description |
@@ -98,6 +107,7 @@ Rate-limited requests receive `429 Too Many Requests` with a `Retry-After: 1` he
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `GLEANN_BLOCK_CHAR_LIMIT` | `0` (unlimited) | Default character limit for memory blocks. When set, new blocks are auto-truncated if they exceed this limit |
+| `GLEANN_MEMORY_MAX_TOKENS` | `4000` | Cap on the memory injected into prompts and compiled context windows, in estimated tokens (~4 chars/token). `0` disables the cap. Over budget, whole blocks drop lowest-priority first (short, then medium, then long; older and less-accessed first). Also settable as `MaxContextTokens` on `memory.Manager` |
 
 ## MCP Server Settings
 
@@ -179,11 +189,26 @@ When the auto-probe succeeds, affected commands print a `(via running server)` t
 |----------|---------|-------------|
 | `GLEANN_KUZU_AUTOREPAIR` | `1` (enabled) | When KuzuDB fails to open an existing on-disk database, automatically rename the corrupt directory to `<path>.corrupted-<unix-ts>` and recreate a fresh database. Set to `0` to disable auto-quarantine and surface the original open error instead. **Note**: quarantined data is retained on disk for manual recovery; nothing is deleted |
 
+## Lexical Search
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `GLEANN_LEXICAL` | `memory` | Selects the lexical (BM25) leg of search. Unset or `memory` keeps today's in-RAM BM25 index. `fts5` uses the persisted FTS5 lexical index stored in a sidecar database `<index_dir>/<name>/<name>.lex.db`, so loading an index skips the in-RAM BM25 build (RFC 003, hidden gate switch). The sidecar is built at index build/sync time and rebuilt automatically when missing or stale. Only the default BM25 scorer is replaced; a custom scorer is left untouched |
+| `GLEANN_LEXICAL_OPTS` | `""` | Comma-separated options for the persisted FTS5 lexical leg (`GLEANN_LEXICAL=fts5`), used for benchmarking and quality gates. Supported options: `and` or `and-first` (runs term groups AND-ed first, fills with OR), and `df=<fraction>` (drops terms with document frequency above fraction of N, e.g. `df=0.05`, `df=0.1`, `df=0.2`) |
+
+
+## Passage Store Format
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `GLEANN_STORE_FORMAT` | `1` | Selects the passage-store format for NEW indexes (RFC 003). Unset or `1` keeps the bbolt store (`<name>.passages.db`); `2` uses the SQLite record store (`<name>.db`) with stable passage IDs, per-file transactions and the persisted FTS5 lexical leg built in. Any other value falls back to the default. Existing indexes keep their on-disk format regardless of this switch: a format-1 index is converted explicitly with `gleann index migrate <name>` (and restored with `--rollback`), never implicitly by a write |
+
 ## LLM Context Window
 
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `GLEANN_OLLAMA_NUM_CTX` | `32768` (only when `--no-limit` / `max_tokens=0`) | Force the `num_ctx` value sent to Ollama. When the user requests unbounded generation (`--no-limit`), Gleann widens the context window to avoid silent truncation of large RAG payloads. Set to a smaller value to cap VRAM usage; setting it in budgeted mode (`max_tokens>0`) also overrides the model default |
+| `GLEANN_GRAPH_EXACT` | — | on | `0`/`false`/`off`/`no` turns off exact `go/types` call resolution in format-2 full graph builds (syntactic `go/ast` only) |
 
 ## Docker Example
 

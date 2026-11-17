@@ -44,6 +44,16 @@ type MmapBackendSearcher interface {
 	LoadFromFile(ctx context.Context, path string) error
 }
 
+// VectorIDScorer is an optional interface for backends that can compute the
+// distance from a query vector to explicit passage IDs (vector slots) without a
+// top-k retrieval. Filtered search uses it to score a SQL pre-selected set
+// directly when the widen-until-k loop cannot fill k (WP-2.5). Backends that
+// prune embeddings or memory-map them cannot answer it and return an error, so
+// the caller falls back to lexical scoring.
+type VectorIDScorer interface {
+	VectorDistances(ctx context.Context, query []float32, ids []int64) ([]float32, error)
+}
+
 // EmbeddingRecomputer is a function that recomputes embeddings for given passage IDs.
 // This is the core of LEANN's storage optimization — embeddings are not stored
 // but recomputed on-demand during search.
@@ -128,6 +138,15 @@ type Scorer interface {
 type TopKScorer interface {
 	Scorer
 	TopK(query string, k int) ([]int64, []float32)
+}
+
+// PersistedScorer is a scorer whose index lives on disk rather than in RAM.
+// Searcher.Load skips the passage scan and AddDocuments build for it (the
+// index is already persisted), and MaxBM25Passages does not apply. This is the
+// seam the persisted FTS5 lexical leg uses (RFC 003 sections 3.1 and 8 step 3).
+type PersistedScorer interface {
+	Scorer
+	Persisted() bool
 }
 
 // Reranker re-scores search results using a cross-encoder or similar model
@@ -229,4 +248,19 @@ type GraphDB interface {
 	SymbolSearch(pattern string) ([]Callee, error)
 	Stats() (*GraphStats, error)
 	Close()
+}
+
+// MemoryService provides the core operations of gleann's generic Knowledge Graph API:
+// bulk injection (upsert), entity deletion, edge deletion, and sub-graph traversal.
+type MemoryService interface {
+	InjectEntities(ctx context.Context, payload GraphInjectionPayload) error
+	DeleteEntity(ctx context.Context, id string) error
+	DeleteEdge(ctx context.Context, fromID, toID, relationType string) error
+	Traverse(ctx context.Context, startID string, depth int) ([]MemoryGraphNode, []MemoryGraphEdge, error)
+}
+
+// VectorSyncer abstracts vector-index write operations for the Memory Engine.
+type VectorSyncer interface {
+	AddContent(ctx context.Context, nodeID, content string, attrs map[string]any) error
+	DeleteContent(ctx context.Context, nodeID string) error
 }

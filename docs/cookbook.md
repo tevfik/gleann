@@ -261,6 +261,10 @@ gleann memory context   # show exactly what the LLM receives
 gleann memory summarize --last
 gleann memory summarize --last --extract   # also extract individual facts
 
+# Export and import memory as markdown files
+gleann memory export --dir ./memory-backup
+gleann memory import --dir ./memory-backup
+
 # Inside 'gleann chat':
 # /remember Project is moving to microservices in Q3
 # /forget  "hexagonal architecture"

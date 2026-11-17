@@ -173,7 +173,9 @@ Add to `claude_desktop_config.json`:
 The tools that read the code graph (`gleann_graph_neighbors`, `gleann_impact`, `gleann_document_links`,
 `gleann_graph_stats`, `gleann_symbols_in_file`, `gleann_document_toc`, and the four graph-analysis tools `gleann_communities`,
 `gleann_risk_analysis`, `gleann_repo_map`, `gleann_navigate_symbol`) need a build with `-tags treesitter`. A
-pure-Go build does not advertise them. `gleann_def` stays and falls back to vector search when there is no graph.
+pure-Go build does not advertise them, except that the first six are advertised when an index in the index directory is
+format 2 or `GLEANN_STORE_FORMAT=2` is set: a format-2 index serves them from its SQLite graph in every build.
+`gleann_def` stays and falls back to vector search when there is no graph.
 
 ### Progressive Disclosure Tools
 
@@ -211,7 +213,7 @@ relationships.
 | `delete_graph_entity` | Remove an entity and all its incident edges |
 | `traverse_knowledge_graph` | Walk the graph N hops from a start node |
 
-Without `-tags treesitter` these three are still listed but every call returns a "Memory Engine not available in this build" error.
+These three work in every build; the entities are kept in the memory database (`memory.sqlite`).
 
 ### Long-term Memory (Blocks) Tools
 
@@ -226,6 +228,8 @@ gives agents persistent knowledge across sessions.
 | `memory_search` | Full-text search across all memory tiers |
 | `memory_list` | List memory blocks (optional tier filter) |
 | `memory_context` | Show compiled memory context the LLM currently receives |
+| `memory_failure_add` | Record a command failure and the fix that resolved it |
+| `memory_failure_list` | List recorded command failures |
 
 ### Index Synchronization Tool
 
@@ -244,7 +248,7 @@ gives agents persistent knowledge across sessions.
 Gleann supports scoping the MCP surface to prevent token bloat in client context windows:
 
 ```bash
-# Core profile (default, 10 essential tools for fast coding agent loops; 8 without -tags treesitter)
+# Core profile (default, 11 essential tools for fast coding agent loops; 9 without -tags treesitter)
 gleann mcp --tools core
 
 # Full profile (all tools registered)
@@ -254,9 +258,9 @@ gleann mcp --tools full
 gleann mcp --tools "search,read,symbol,recall,sync"
 ```
 
-The `core` profile exposes: `gleann_search`, `gleann_read`, `gleann_def`, `gleann_graph_neighbors`, `gleann_impact`, `gleann_sync`, `memory_remember`, `memory_context`, `memory_search`, `memory_forget`.
+The `core` profile exposes: `gleann_search`, `gleann_read`, `gleann_def`, `gleann_graph_neighbors`, `gleann_impact`, `gleann_sync`, `memory_remember`, `memory_failure_add`, `memory_context`, `memory_search`, `memory_forget`.
 
-That is the list of a build with `-tags treesitter`. In the pure-Go build there is no code graph, so `gleann_graph_neighbors` and `gleann_impact` are not advertised and `core` is the other eight tools (`gleann_search`, `gleann_read`, `gleann_def`, `gleann_sync` and the four `memory_*` tools).
+That is the list of a build with `-tags treesitter`. In the pure-Go build without format-2 indexes there is no code graph, so `gleann_graph_neighbors` and `gleann_impact` are not advertised and `core` is the other nine tools (`gleann_search`, `gleann_read`, `gleann_def`, `gleann_sync` and the five `memory_*` tools).
 
 You can also set the default profile using the `GLEANN_TOOLS` environment variable. Passing `--clean-names` strips the `gleann_` prefix (e.g. `search`, `read`, `impact`).
 
@@ -297,6 +301,12 @@ Search an index with optional filters and graph context:
   ]
 }
 ```
+
+`filters` (with `filter_logic`: `and`, the default, or `or`) are applied
+during retrieval: a selective filter still returns `top_k` results when that
+many passages match. The candidate pool widens until k pass (capped at 4096);
+only if it stops at the cap short does a format-2 index pre-select the matching
+IDs in SQL and score just those. A filter nothing matches returns 0.
 
 ### Index Governance, Scoping & Federated Search
 
@@ -670,26 +680,25 @@ The MCP server also exposes resources:
 
 ## Searcher Cache
 
-The MCP server caches loaded searchers (up to 16) using LRU eviction. Frequently accessed indexes stay warm in memory for fast responses.
+The MCP server caches loaded searchers (up to 16) using LRU eviction. Frequently accessed indexes stay warm in memory for fast responses. In addition to the count cap, an optional memory budget can be set via `searcher_cache_budget` in `config.json` or the `GLEANN_SEARCHER_CACHE_BUDGET` environment variable (e.g. `500MB`, `1GB`, `100MiB`). When total estimated resident size exceeds the budget, least-recently-used searchers are retired until cache usage fits.
 
 ## Memory Engine Lifecycle
 
-Each Memory Engine store is a separate KuzuDB database under `<index-dir>/<name>_memory/`.
-The first request to an index opens the database; it stays open until the MCP server shuts down.
+Each Memory Engine store is a namespace in the memory database (`~/.gleann/memory/memory.sqlite`).
+The first request opens the database; it stays open until the MCP server shuts down.
 
 ```
-Agent                       gleann MCP server            KuzuDB
+Agent                       gleann MCP server            memory.sqlite
   |                               |                          |
   |── inject_knowledge_graph ─────>|                          |
-  |   {nodes: [...], edges: [...]} |── BEGIN TRANSACTION ─────>|
-  |                               |── MERGE Entity "req-001" ─>|
-  |                               |── MERGE Entity "feat-jwt" ─>|
-  |                               |── MERGE RELATES_TO ────── >|
-  |                               |── COMMIT ─────────────── >|
+  |   {nodes: [...], edges: [...]} |── BEGIN IMMEDIATE ──────>|
+  |                               |── upsert entities ──────>|
+  |                               |── upsert relations ─────>|
+  |                               |── COMMIT ───────────────>|
   |<── "OK — injected 2 nodes..." |                          |
   |                               |                          |
   |── traverse_knowledge_graph ──>|                          |
-  |   {start_id: "req-001", depth:2}── Cypher MATCH ─────── >|
-  |                               |<── nodes + edges ──────── |
+  |   {start_id: "req-001", depth:2}── recursive SELECT ────>|
+  |                               |<── nodes + edges ────────|
   |<── formatted text result ─────|                          |
 ```

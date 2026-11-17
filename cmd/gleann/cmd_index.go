@@ -13,6 +13,7 @@ import (
 //	gleann index rebuild <name> --docs <dir>
 //	gleann index info <name>
 //	gleann index repair <name>|--all [--check]
+//	gleann index migrate <name>|--all [--rollback] [--cleanup] [--language <l>]
 //	gleann index watch <name> --docs <dir>
 func cmdIndex(args []string) {
 	if len(args) < 1 {
@@ -43,6 +44,8 @@ func cmdIndex(args []string) {
 		cmdSync(subArgs)
 	case "repair":
 		cmdRepair(subArgs)
+	case "migrate":
+		cmdMigrate(subArgs)
 	case "storage":
 		cmdStorage(subArgs)
 	case "tag":
@@ -67,6 +70,7 @@ Usage:
   gleann index sync   <name> [--docs <dir>] Sync index incrementally with workspace changes
   gleann index remove <name>                Remove an index
   gleann index repair <name>|--all [--check] [--force]  Check an index for damage and rebuild its vectors from stored passages
+  gleann index migrate <name>|--all [--rollback] [--cleanup]  Convert an index to the SQLite passage store (format 2)
   gleann index rebuild <name> --docs <dir>  Remove & rebuild index from scratch
   gleann index info   <name>                Show index metadata
   gleann index watch  <name> --docs <dir>   Watch & auto-rebuild on changes

@@ -2,23 +2,33 @@ package gleann
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
+	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
 // LeannBuilder builds and manages indexes.
 // This mirrors Python LEANN's LeannBuilder.
 type LeannBuilder struct {
-	config     Config
-	backend    BackendBuilder
-	embedder   EmbeddingComputer
-	chunker    Chunker
-	progressCb func(phase string, done, total int)
+	config      Config
+	backend     BackendBuilder
+	embedder    EmbeddingComputer
+	chunker     Chunker
+	progressCb  func(phase string, done, total int)
+	lexicalMode string // GLEANN_LEXICAL, read once at creation: "memory" (default) or "fts5"
+	storeFormat int    // GLEANN_STORE_FORMAT, read once at creation: format for NEW indexes (1 bbolt, 2 SQLite)
+	sourceDir   string // documents directory, for the files-table content hashes (SetSourceDir)
+	// crashHook injects a failure at a named boundary of the format-2 vector
+	// publication (tests only; see the crash* constants in builder_format2.go).
+	// A struct field, not a package global: production builders never set it.
+	crashHook func(point string) error
 }
 
 // NewBuilder creates a new LeannBuilder.
@@ -27,12 +37,43 @@ func NewBuilder(config Config, embedder EmbeddingComputer) (*LeannBuilder, error
 	if err != nil {
 		return nil, fmt.Errorf("get backend: %w", err)
 	}
+	dtype, err := hnswDTypeSwitch(config.HNSWConfig.VectorDType)
+	if err != nil {
+		return nil, err
+	}
+	config.HNSWConfig.VectorDType = dtype
 
 	return &LeannBuilder{
-		config:   config,
-		backend:  factory.NewBuilder(config),
-		embedder: embedder,
+		config:      config,
+		backend:     factory.NewBuilder(config),
+		embedder:    embedder,
+		lexicalMode: lexicalLegMode(),
+		storeFormat: storeFormatSwitch(),
 	}, nil
+}
+
+// maybeBuildSidecar rebuilds the persisted lexical sidecar after the passages
+// have been written, but only when GLEANN_LEXICAL=fts5. A full rebuild after
+// every build or sync is acceptable in this step (RFC 003 section 8 step 3);
+// incremental lexical maintenance arrives with the format-2 store in step 4.
+// Building it here means a normal search never pays the build cost.
+//
+// A failure never fails the build or sync: the sidecar records a stamp of the
+// passage file, so a missed rebuild is seen as stale at the next load, which
+// rebuilds it or falls back to in-memory BM25.
+func (b *LeannBuilder) maybeBuildSidecar(ctx context.Context, name string) error {
+	if b.lexicalMode != "fts5" {
+		return nil
+	}
+	// A format-2 index keeps its lexical rows in <name>.db itself; the
+	// format-1 sidecar must not be built for it.
+	if StoreFormatOf(filepath.Join(b.config.IndexDir, name, name)) == 2 {
+		return nil
+	}
+	if err := buildLexicalSidecar(ctx, b.config.IndexDir, name); err != nil {
+		log.Printf("ℹ️  Persisted lexical index for %q not rebuilt (%v); the next search rebuilds it", name, err)
+	}
+	return nil
 }
 
 // SetProgressCallback registers a callback invoked as indexing phases make progress.
@@ -65,13 +106,22 @@ func (b *LeannBuilder) BuildPassages(name string, items []Item) ([]int64, error)
 	// Rebuilding must not forget what the user attached to the index.
 	prevMeta, _ := GetIndexMeta(b.config.IndexDir, name)
 
-	// Clean up any old passages database to ensure we start from ID 0.
-	os.Remove(basePath + ".passages.db")
+	// The format of this build: an existing index keeps its format, a new one
+	// follows the switch (GLEANN_STORE_FORMAT) read at builder creation.
+	format := b.buildFormat(basePath)
+	var ids []int64
+	var err error
+	if format == 2 {
+		ids, err = b.buildPassagesFormat2(context.Background(), basePath, name, items, prevMeta)
+	} else {
+		// Clean up any old passages database to ensure we start from ID 0.
+		os.Remove(basePath + ".passages.db")
 
-	// Initialize passage manager and store passages.
-	pm := NewPassageManager(basePath)
-	ids, err := pm.Add(items)
-	_ = pm.Close()
+		// Initialize passage manager and store passages.
+		pm := NewPassageManager(basePath)
+		ids, err = pm.Add(items)
+		_ = pm.Close()
+	}
 	if err != nil {
 		return nil, fmt.Errorf("add passages: %w", err)
 	}
@@ -106,6 +156,10 @@ func (b *LeannBuilder) BuildPassages(name string, items []Item) ([]int64, error)
 		}
 	}
 
+	if format == 2 {
+		meta.StoreFormat = 2
+	}
+
 	metaPath := basePath + ".meta.json"
 	metaData, err := json.MarshalIndent(meta, "", "  ")
 	if err != nil {
@@ -113,6 +167,12 @@ func (b *LeannBuilder) BuildPassages(name string, items []Item) ([]int64, error)
 	}
 	if err := os.WriteFile(metaPath, metaData, 0o644); err != nil {
 		return nil, fmt.Errorf("write metadata: %w", err)
+	}
+
+	// The passages are final; build the persisted lexical sidecar so the first
+	// search does not have to (GLEANN_LEXICAL=fts5 only).
+	if err := b.maybeBuildSidecar(context.Background(), name); err != nil {
+		return nil, err
 	}
 
 	return ids, nil
@@ -172,8 +232,46 @@ func (b *LeannBuilder) BuildVectors(ctx context.Context, name string, items []It
 		return fmt.Errorf("build index: %w", err)
 	}
 
-	// Write index file.
+	// Write index file. A format-2 index publishes crash-safely (RFC 003
+	// section 3.4): the staged passages are slotless until this step, and
+	// their slots are assigned in the SAME transaction as the pending
+	// publication keys, before the staged vector file is renamed into place.
+	// The ids BuildPassages returned are the internal rowids, aligned to
+	// items, so slot i belongs to item i.
 	indexPath := basePath + ".index"
+	if StoreFormatOf(basePath) == 2 {
+		st, err := openFormat2Store(basePath)
+		if err != nil {
+			return err
+		}
+		defer st.Close()
+		if err := recoverVectorPublication(ctx, st, basePath); err != nil {
+			return fmt.Errorf("recovering interrupted vector publication: %w", err)
+		}
+		idToSlot := make(map[int64]int64, len(ids))
+		for i, id := range ids {
+			idToSlot[id] = int64(i)
+		}
+		nextGen := currentVectorGeneration(ctx, st) + 1
+		if err := b.publishVectorFormat2(ctx, st, basePath, indexData, nextGen, func(tx *sql.Tx) error {
+			return st.AssignSlotsTx(ctx, tx, idToSlot)
+		}); err != nil {
+			return err
+		}
+		return UpdateIndexMeta(b.config.IndexDir, name, func(m *IndexMeta) {
+			m.EmbeddingModel = b.embedder.ModelName()
+			m.Dimensions = expectedDim
+			m.PassagePrefix, m.QueryPrefix = passagePrefix, queryPrefix
+			m.VectorReady = true
+			m.LexicalOnly = false
+			m.SignaturesOnly = b.config.ChunkConfig.SignaturesOnly
+			m.VectorGeneration = nextGen
+			if b.config.Backend == "hnsw" && b.config.HNSWConfig.VectorDType != "" {
+				m.VectorDType = b.config.HNSWConfig.VectorDType
+			}
+			m.UpdatedAt = time.Now()
+		})
+	}
 	if err := os.WriteFile(indexPath, indexData, 0o644); err != nil {
 		return fmt.Errorf("write index: %w", err)
 	}
@@ -186,6 +284,9 @@ func (b *LeannBuilder) BuildVectors(ctx context.Context, name string, items []It
 		m.VectorReady = true
 		m.LexicalOnly = false
 		m.SignaturesOnly = b.config.ChunkConfig.SignaturesOnly
+		if b.config.Backend == "hnsw" && b.config.HNSWConfig.VectorDType != "" {
+			m.VectorDType = b.config.HNSWConfig.VectorDType
+		}
 		m.UpdatedAt = time.Now()
 	})
 
@@ -267,6 +368,11 @@ func (b *LeannBuilder) UpdateIndexWithStats(ctx context.Context, name string, ne
 	st := UpdateStats{Mode: UpdateNoop}
 	err := b.updateIndex(ctx, name, newItems, removeSources, &st)
 	st.Elapsed = time.Since(start)
+	// updateIndex closed the passage store; rebuild the sidecar to match the
+	// new passage set (a noop changed nothing, so skip it).
+	if err == nil && st.Mode != UpdateNoop {
+		err = b.maybeBuildSidecar(ctx, name)
+	}
 	return st, err
 }
 
@@ -278,6 +384,9 @@ func (b *LeannBuilder) updateIndex(ctx context.Context, name string, newItems []
 		return fmt.Errorf("no embedder configured for index update")
 	}
 	basePath := filepath.Join(b.config.IndexDir, name, name)
+	if StoreFormatOf(basePath) == 2 {
+		return b.updateIndexFormat2(ctx, name, basePath, newItems, removeSources, st, false)
+	}
 	indexPath := basePath + ".index"
 	indexData, err := os.ReadFile(indexPath)
 	if err != nil {
@@ -335,6 +444,10 @@ func (b *LeannBuilder) Compact(ctx context.Context, name string) (UpdateStats, e
 	st := UpdateStats{Mode: UpdateCompact}
 	err := b.compactStored(ctx, name, &st)
 	st.Elapsed = time.Since(start)
+	// compactStored closed the passage store; rebuild the sidecar to match.
+	if err == nil {
+		err = b.maybeBuildSidecar(ctx, name)
+	}
 	return st, err
 }
 
@@ -364,6 +477,21 @@ func (b *LeannBuilder) compactStored(ctx context.Context, name string, st *Updat
 		return fmt.Errorf("no embedder configured for index repair")
 	}
 	basePath := filepath.Join(b.config.IndexDir, name, name)
+	if StoreFormatOf(basePath) == 2 {
+		st2, err := openFormat2Store(basePath)
+		if err != nil {
+			return err
+		}
+		cnt, err := st2.Count(ctx)
+		_ = st2.Close()
+		if err != nil {
+			return fmt.Errorf("counting passages: %w", err)
+		}
+		if cnt == 0 {
+			return fmt.Errorf("index %q has no passages to rebuild from", name)
+		}
+		return b.updateIndexFormat2(ctx, name, basePath, nil, nil, st, true)
+	}
 	pm := NewPassageManager(basePath)
 	if err := pm.Load(); err != nil {
 		return fmt.Errorf("load passages: %w", err)
@@ -594,4 +722,23 @@ func (b *LeannBuilder) addVectorsSafe(ctx context.Context, indexData []byte, emb
 		}
 	}()
 	return b.backend.AddVectors(ctx, indexData, embeddings, startID)
+}
+
+// hnswDTypeSwitch resolves the storage type of the HNSW vectors for NEW
+// writes, once where a builder is created (as storeFormatSwitch does):
+// GLEANN_HNSW_DTYPE=f16|f32 overrides the configured value; an unknown
+// environment value is ignored so a typo cannot change the on-disk format,
+// an unknown configured value is an error. "" keeps the default (float32,
+// or the dtype an existing file already has on an incremental add).
+func hnswDTypeSwitch(configured string) (string, error) {
+	switch env := strings.ToLower(strings.TrimSpace(os.Getenv("GLEANN_HNSW_DTYPE"))); env {
+	case "f16", "f32":
+		return env, nil
+	}
+	switch v := strings.ToLower(strings.TrimSpace(configured)); v {
+	case "", "f16", "f32":
+		return v, nil
+	default:
+		return "", fmt.Errorf("hnsw_config.vector_dtype %q: want f32 or f16", configured)
+	}
 }

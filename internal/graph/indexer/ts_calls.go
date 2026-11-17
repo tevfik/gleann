@@ -203,7 +203,7 @@ func collectTSCallQueries(idx *Indexer, lang chunking.Language, relPath string, 
 		}
 		seen[edgeKey] = true
 
-		nodes = append(nodes, kuzu_symbol(calleeFQN))
+		nodes = append(nodes, calleeStub(calleeFQN))
 		edges = append(edges, kuzu.EdgeCalls{CallerFQN: callerFQN, CalleeFQN: calleeFQN, Confidence: "extracted"})
 	}
 

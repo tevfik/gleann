@@ -463,7 +463,10 @@ func estimateRAGTokens(config gleann.Config, indexName string, topK int) int {
 	indexDir := filepath.Join(config.IndexDir, indexName)
 	basePath := filepath.Join(indexDir, indexName)
 
-	pm := gleann.NewPassageManager(basePath)
+	pm, err := gleann.OpenPassageStore(basePath, true)
+	if err != nil {
+		return 0
+	}
 	defer pm.Close()
 
 	total := 0

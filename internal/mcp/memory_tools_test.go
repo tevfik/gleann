@@ -1,10 +1,10 @@
-//go:build treesitter
-
 package mcp
 
 import (
 	"context"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"testing"
 
 	mcpsdk "github.com/mark3labs/mcp-go/mcp"
@@ -499,4 +499,32 @@ func TestMCPMemory_FullLifecycle(t *testing.T) {
 	// The text output uses node IDs — impl-jwt should not appear as a visited node.
 	// (It may appear in the header "nodes" count but not be traversed from feat-auth.)
 	_ = content // output verified visually; structural test above is sufficient
+}
+
+func TestMCPMemoryPool_KuzuDirectoryWarning(t *testing.T) {
+	dir := t.TempDir()
+	kuzuDir := filepath.Join(dir, "legacy_memory")
+	if err := os.MkdirAll(kuzuDir, 0o755); err != nil {
+		t.Fatalf("mkdir kuzuDir: %v", err)
+	}
+
+	pool := newMCPMemoryPool(dir)
+	defer pool.closeAll()
+
+	svc, err := pool.get("legacy")
+	if err != nil {
+		t.Fatalf("get legacy: %v", err)
+	}
+	if svc == nil {
+		t.Fatal("expected non-nil service")
+	}
+
+	if !pool.warned["legacy"] {
+		t.Error("expected warned flag to be true")
+	}
+
+	// Verify legacy directory was never deleted or modified
+	if fi, err := os.Stat(kuzuDir); err != nil || !fi.IsDir() {
+		t.Error("legacy Kuzu directory must not be deleted or modified")
+	}
 }

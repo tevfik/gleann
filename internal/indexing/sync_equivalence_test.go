@@ -140,15 +140,20 @@ var equivalenceQueries = []string{
 func exactSearch(backend string) bool { return backend == "hnsw" }
 
 // passageSet returns the index's passages as sorted "source|text" strings.
+// It reads through the format-dispatching store API so the equivalence holds
+// for both the bbolt and the SQLite record store.
 func passageSet(t *testing.T, cfg gleann.Config, name string) []string {
 	t.Helper()
-	pm := gleann.NewReadOnlyPassageManager(filepath.Join(cfg.IndexDir, name, name))
-	if err := pm.Load(); err != nil {
+	ps, err := gleann.OpenPassageStore(filepath.Join(cfg.IndexDir, name, name), true)
+	if err != nil {
 		t.Fatal(err)
 	}
-	defer pm.Close()
+	if err := ps.Load(); err != nil {
+		t.Fatal(err)
+	}
+	defer ps.Close()
 	var out []string
-	for _, p := range pm.All() {
+	for _, p := range ps.All() {
 		out = append(out, fmt.Sprintf("%v|%s", p.Metadata["source"], p.Text))
 	}
 	sort.Strings(out)
@@ -320,8 +325,8 @@ func runEquivalence(t *testing.T, backend string, prune bool, mutate func(*testi
 	if mi.Backend != backend {
 		t.Errorf("meta backend=%q want %q", mi.Backend, backend)
 	}
-	manI, err1 := gleann.LoadManifest(manifestPath(cfg.IndexDir, "inc"))
-	manF, err2 := gleann.LoadManifest(manifestPath(cfg.IndexDir, "fresh"))
+	manI, err1 := gleann.LoadIndexManifest(cfg.IndexDir, "inc")
+	manF, err2 := gleann.LoadIndexManifest(cfg.IndexDir, "fresh")
 	if err1 != nil || err2 != nil {
 		t.Fatalf("manifests: %v %v", err1, err2)
 	}
@@ -383,12 +388,15 @@ func TestSyncSelfRetrieval(t *testing.T) {
 			if _, err := Sync(ctx, SyncOptions{Options: opts, Name: "inc"}); err != nil {
 				t.Fatal(err)
 			}
-			pm := gleann.NewReadOnlyPassageManager(filepath.Join(cfg.IndexDir, "inc", "inc"))
-			if err := pm.Load(); err != nil {
+			ps, err := gleann.OpenPassageStore(filepath.Join(cfg.IndexDir, "inc", "inc"), true)
+			if err != nil {
 				t.Fatal(err)
 			}
-			all := pm.All()
-			_ = pm.Close()
+			if err := ps.Load(); err != nil {
+				t.Fatal(err)
+			}
+			all := ps.All()
+			_ = ps.Close()
 			if len(all) == 0 {
 				t.Fatal("no passages")
 			}
@@ -427,19 +435,30 @@ func TestSyncSelfRetrieval(t *testing.T) {
 }
 
 // Sync says how it applied the change: a modified file compacts, a new file is
-// appended in place, nothing to do reports nothing.
+// appended in place (format 1) or compacts too (format 2 has no in-place
+// append), nothing to do reports nothing.
 func TestSyncReportsHowTheVectorIndexWasUpdated(t *testing.T) {
 	ctx := context.Background()
-	opts, _ := equivEnv(t, "hnsw", false)
+	opts, cfg := equivEnv(t, "hnsw", false)
 	docs := equivFixture(t)
 	if _, err := Build(ctx, BuildOptions{Options: opts, Name: "s", DocsDir: docs}); err != nil {
 		t.Fatal(err)
 	}
+	format2 := gleann.StoreFormatOf(filepath.Join(cfg.IndexDir, "s", "s")) == 2
 
 	writeFile(t, filepath.Join(docs, "extra.md"), "# Extra\n\nA brand new document about caching.\n")
 	res, err := Sync(ctx, SyncOptions{Options: opts, Name: "s"})
-	if err != nil || res.Update == nil || res.Update.Mode != gleann.UpdateInPlace || res.Update.Added == 0 || res.Update.Removed != 0 {
-		t.Fatalf("adding a file should append in place: %+v (%v)", res.Update, err)
+	if err != nil || res.Update == nil || res.Update.Added == 0 || res.Update.Removed != 0 {
+		t.Fatalf("adding a file should add passages: %+v (%v)", res.Update, err)
+	}
+	if format2 {
+		// The format-2 write path always compacts, so an add re-embeds every
+		// passage, not just the new one.
+		if res.Update.Mode != gleann.UpdateCompact || res.Update.Embedded != res.Update.Passages {
+			t.Fatalf("format-2 add should compact and re-embed every passage: %+v", res.Update)
+		}
+	} else if res.Update.Mode != gleann.UpdateInPlace {
+		t.Fatalf("adding a file should append in place: %+v", res.Update)
 	}
 
 	writeFile(t, filepath.Join(docs, "main.go"), "package main\n\n// Mul multiplies values.\nfunc Mul(a, b int) int { return a * b }\n")

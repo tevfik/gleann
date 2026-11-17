@@ -40,7 +40,28 @@ func getConfig(args []string) gleann.Config {
 	config := gleann.DefaultConfig()
 
 	if hasFlag(args, "--no-mmap") {
+		f := false
+		config.UseMmap = &f
 		config.HNSWConfig.UseMmap = false
+		config.DiskANNConfig.UseMmap = false
+	}
+	if env := os.Getenv("GLEANN_MMAP"); env != "" {
+		if strings.EqualFold(env, "0") || strings.EqualFold(env, "false") || strings.EqualFold(env, "off") || strings.EqualFold(env, "no") {
+			f := false
+			config.UseMmap = &f
+			config.HNSWConfig.UseMmap = false
+			config.DiskANNConfig.UseMmap = false
+		} else if strings.EqualFold(env, "1") || strings.EqualFold(env, "true") || strings.EqualFold(env, "on") || strings.EqualFold(env, "yes") {
+			t := true
+			config.UseMmap = &t
+			config.HNSWConfig.UseMmap = true
+			config.DiskANNConfig.UseMmap = true
+		}
+	}
+	if env := os.Getenv("GLEANN_SEARCHER_CACHE_BUDGET"); env != "" {
+		if b, err := gleann.ParseByteSize(env); err == nil {
+			config.SearcherCacheBudget = b
+		}
 	}
 
 	config.IndexDir = tui.DefaultIndexDir()
@@ -245,6 +266,27 @@ func hasFlag(args []string, flag string) bool {
 		}
 	}
 	return false
+}
+
+// getAllFlags returns every value of a repeatable --flag in args, in order.
+// Nothing after a literal "--" is a flag.
+func getAllFlags(args []string, flag string) []string {
+	var out []string
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		if a == "--" {
+			break
+		}
+		if a == flag && i+1 < len(args) {
+			out = append(out, args[i+1])
+			i++
+			continue
+		}
+		if v, ok := strings.CutPrefix(a, flag+"="); ok && v != "" {
+			out = append(out, v)
+		}
+	}
+	return out
 }
 
 // applySavedConfig merges saved TUI config into a gleann.Config.

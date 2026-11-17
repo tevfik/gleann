@@ -339,6 +339,22 @@ carries `warnings`, a list of messages that name the problem and the fix
 (`gleann index repair <name>`); results from such an index may be wrong or
 incomplete. The field is absent for a healthy index.
 
+`metadata_filters` narrows results to passages whose metadata matches the
+conditions (`filter_logic`: `and`, the default, or `or`). Each condition is
+`{"field": ..., "operator": ..., "value": ...}`; operators are `eq`, `ne`,
+`gt`, `gte`, `lt`, `lte`, `in`, `nin`, `contains`, `startswith`, `endswith`,
+`exists`. Fields understand the `type`/`kind` and `source`/`file` aliases and
+derive `ext` from the file path. Filters are applied during retrieval, not
+after it: a selective filter still returns `top_k` results when that many
+passages match — the candidate pool widens until k pass (sized from the
+observed pass rate), capped at 4096 candidates. Only when the loop stops at that cap with fewer than k
+results does a format-2 index (`GLEANN_STORE_FORMAT=2`) fall back to an exact
+SQL pre-selection of the matching IDs (reading `id`/`vec_slot`/`source`/`kind`/
+`meta`, never passage text, capped at 50,000 rows) and score just those. A
+filter nothing matches returns 0. A passage's score is the same with and
+without a filter that keeps it, and the pre-selected fallback applies the same
+`min_score`, `kind` and ranking boosts as the main path.
+
 ### Ask (RAG)
 
 ```bash

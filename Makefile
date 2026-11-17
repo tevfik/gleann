@@ -386,8 +386,12 @@ vet:
 
 # ── Lint / Vulnerability Scan ──────────────────────────────────────────────
 .PHONY: lint
+# staticcheck is pinned (STATICCHECK_VERSION, the same release CI uses); its
+# module needs go >= 1.26 to compile, so the install may fetch that toolchain.
+# It still analyses this go 1.25 module.
+STATICCHECK_VERSION ?= v0.8.1
 lint:
-	@command -v staticcheck >/dev/null 2>&1 || { echo "installing staticcheck..."; go install honnef.co/go/tools/cmd/staticcheck@latest; }
+	@command -v staticcheck >/dev/null 2>&1 || { echo "installing staticcheck $(STATICCHECK_VERSION)..."; GOTOOLCHAIN=go1.26.0+auto go install honnef.co/go/tools/cmd/staticcheck@$(STATICCHECK_VERSION); }
 	@command -v govulncheck >/dev/null 2>&1 || { echo "installing govulncheck..."; go install golang.org/x/vuln/cmd/govulncheck@latest; }
 	@echo "── staticcheck ──"
 	staticcheck ./...

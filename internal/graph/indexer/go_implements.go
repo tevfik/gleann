@@ -1,5 +1,3 @@
-//go:build treesitter
-
 package indexer
 
 import (
@@ -8,7 +6,7 @@ import (
 	"go/token"
 	"strings"
 
-	"github.com/tevfik/gleann/internal/graph/kuzu"
+	gtypes "github.com/tevfik/gleann/internal/graph/types"
 	"github.com/tevfik/gleann/modules/chunking"
 )
 
@@ -21,8 +19,8 @@ import (
 //   - Function parameter types referencing imported/local types
 //   - Function return types referencing imported/local types
 //   - Struct field types referencing imported/local types
-func collectGoImplementsEdges(idx *Indexer, relPath, source string, chunks []chunking.CodeChunk) (
-	impls []kuzu.EdgeImplements, refs []kuzu.EdgeReferences, extraSyms []kuzu.SymbolNode,
+func collectGoImplementsEdges(module, relPath, source string, chunks []chunking.CodeChunk) (
+	impls []gtypes.EdgeImplements, refs []gtypes.EdgeReferences, extraSyms []gtypes.SymbolNode,
 ) {
 	fset := token.NewFileSet()
 	file, parseErr := parser.ParseFile(fset, relPath, source, 0)
@@ -34,7 +32,7 @@ func collectGoImplementsEdges(idx *Indexer, relPath, source string, chunks []chu
 	localFQN := make(map[string]string)
 	for _, ch := range chunks {
 		if ch.Name != "" {
-			localFQN[ch.Name] = idx.buildFQN(relPath, ch.Name)
+			localFQN[ch.Name] = buildFQNOf(module, relPath, ch.Name)
 		}
 	}
 
@@ -75,7 +73,7 @@ func collectGoImplementsEdges(idx *Indexer, relPath, source string, chunks []chu
 	seenImpl := make(map[string]bool)
 	seenRef := make(map[string]bool)
 
-	pkgPrefix := idx.buildPkgPrefix(relPath)
+	pkgPrefix := buildPkgPrefixOf(module, relPath)
 
 	for _, decl := range file.Decls {
 		genDecl, ok := decl.(*ast.GenDecl)
@@ -102,7 +100,7 @@ func collectGoImplementsEdges(idx *Indexer, relPath, source string, chunks []chu
 								key := typeFQN + "→" + embeddedFQN
 								if !seenImpl[key] {
 									seenImpl[key] = true
-									impls = append(impls, kuzu.EdgeImplements{
+									impls = append(impls, gtypes.EdgeImplements{
 										ImplFQN:  typeFQN,
 										IfaceFQN: embeddedFQN,
 									})
@@ -112,8 +110,8 @@ func collectGoImplementsEdges(idx *Indexer, relPath, source string, chunks []chu
 								key := typeFQN + "→" + embeddedFQN
 								if !seenRef[key] {
 									seenRef[key] = true
-									extraSyms = append(extraSyms, kuzu_symbol(embeddedFQN))
-									refs = append(refs, kuzu.EdgeReferences{
+									extraSyms = append(extraSyms, calleeStub(embeddedFQN))
+									refs = append(refs, gtypes.EdgeReferences{
 										RefererFQN: typeFQN,
 										RefereeFQN: embeddedFQN,
 										Confidence: "extracted",
@@ -127,8 +125,8 @@ func collectGoImplementsEdges(idx *Indexer, relPath, source string, chunks []chu
 								key := typeFQN + "→" + refFQN
 								if !seenRef[key] {
 									seenRef[key] = true
-									extraSyms = append(extraSyms, kuzu_symbol(refFQN))
-									refs = append(refs, kuzu.EdgeReferences{
+									extraSyms = append(extraSyms, calleeStub(refFQN))
+									refs = append(refs, gtypes.EdgeReferences{
 										RefererFQN: typeFQN,
 										RefereeFQN: refFQN,
 										Confidence: "extracted",
@@ -149,8 +147,8 @@ func collectGoImplementsEdges(idx *Indexer, relPath, source string, chunks []chu
 								key := typeFQN + "→" + embFQN
 								if !seenImpl[key] {
 									seenImpl[key] = true
-									extraSyms = append(extraSyms, kuzu_symbol(embFQN))
-									impls = append(impls, kuzu.EdgeImplements{
+									extraSyms = append(extraSyms, calleeStub(embFQN))
+									impls = append(impls, gtypes.EdgeImplements{
 										ImplFQN:  typeFQN,
 										IfaceFQN: embFQN,
 									})
@@ -184,8 +182,8 @@ func collectGoImplementsEdges(idx *Indexer, relPath, source string, chunks []chu
 					key := funcFQN + "→" + refFQN
 					if !seenRef[key] {
 						seenRef[key] = true
-						extraSyms = append(extraSyms, kuzu_symbol(refFQN))
-						refs = append(refs, kuzu.EdgeReferences{
+						extraSyms = append(extraSyms, calleeStub(refFQN))
+						refs = append(refs, gtypes.EdgeReferences{
 							RefererFQN: funcFQN,
 							RefereeFQN: refFQN,
 							Confidence: "extracted",
@@ -202,8 +200,8 @@ func collectGoImplementsEdges(idx *Indexer, relPath, source string, chunks []chu
 					key := funcFQN + "→" + refFQN
 					if !seenRef[key] {
 						seenRef[key] = true
-						extraSyms = append(extraSyms, kuzu_symbol(refFQN))
-						refs = append(refs, kuzu.EdgeReferences{
+						extraSyms = append(extraSyms, calleeStub(refFQN))
+						refs = append(refs, gtypes.EdgeReferences{
 							RefererFQN: funcFQN,
 							RefereeFQN: refFQN,
 							Confidence: "extracted",
@@ -280,20 +278,6 @@ func resolveFQN(name string, local map[string]string, pkgPrefix string) string {
 		return fqn
 	}
 	return pkgPrefix + "." + name
-}
-
-// buildPkgPrefix derives the FQN prefix for the package containing relPath.
-func (idx *Indexer) buildPkgPrefix(relPath string) string {
-	dir := strings.ReplaceAll(strings.TrimSuffix(relPath, "/"+lastComponent(relPath)), "\\", "/")
-	if dir == "" || dir == "." {
-		return idx.module
-	}
-	return idx.module + "/" + dir
-}
-
-func lastComponent(path string) string {
-	parts := strings.Split(path, "/")
-	return parts[len(parts)-1]
 }
 
 // isBuiltinType returns true for Go builtin types that should not generate edges.

@@ -1,18 +1,16 @@
-//go:build treesitter
-
 package indexer
 
 import (
 	"testing"
 
-	"github.com/tevfik/gleann/internal/graph/kuzu"
+	gtypes "github.com/tevfik/gleann/internal/graph/types"
 )
 
 // C-03: a callee stub must not shadow the real declaration, in either order.
 func TestDedupeSymbolsPrefersDeclaration(t *testing.T) {
-	stub := kuzu.SymbolNode{FQN: "p.Helper", Kind: "function", Name: "Helper"}
-	decl := kuzu.SymbolNode{FQN: "p.Helper", Kind: "function", Name: "Helper", File: "m.go", Line: 3}
-	for name, in := range map[string][]kuzu.SymbolNode{
+	stub := gtypes.SymbolNode{FQN: "p.Helper", Kind: "function", Name: "Helper"}
+	decl := gtypes.SymbolNode{FQN: "p.Helper", Kind: "function", Name: "Helper", File: "m.go", Line: 3}
+	for name, in := range map[string][]gtypes.SymbolNode{
 		"stub first": {stub, decl},
 		"decl first": {decl, stub},
 	} {
@@ -21,7 +19,7 @@ func TestDedupeSymbolsPrefersDeclaration(t *testing.T) {
 			t.Errorf("%s: got %+v", name, out)
 		}
 	}
-	if got := dedupeSymbols([]kuzu.SymbolNode{{FQN: ""}, stub}); len(got) != 1 {
+	if got := dedupeSymbols([]gtypes.SymbolNode{{FQN: ""}, stub}); len(got) != 1 {
 		t.Errorf("empty FQN kept: %+v", got)
 	}
 }

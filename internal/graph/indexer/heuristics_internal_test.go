@@ -1,4 +1,4 @@
-//go:build treesitter && !windows
+//go:build !windows
 
 // Internal-package tests for heuristics.go. External tests in
 // heuristics_test.go exercise the same code via the public indexer

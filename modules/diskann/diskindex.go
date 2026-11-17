@@ -1,10 +1,12 @@
 package diskann
 
 import (
+	"bytes"
 	"encoding/binary"
 	"fmt"
 	"io"
 	"math"
+	"os"
 )
 
 // DiskIndex is the serialized on-disk format for a DiskANN index.
@@ -38,6 +40,11 @@ type DiskIndex struct {
 
 	// Raw embeddings (all in-memory for Build; mmap'd for search).
 	Embeddings [][]float32
+
+	// mmap fields
+	mmapData         []byte
+	mmapFile         *os.File
+	offsetEmbeddings int64
 }
 
 // DiskANNMagic identifies a gleann DiskANN index file.
@@ -203,8 +210,18 @@ func (idx *DiskIndex) WriteTo(w io.Writer) (int64, error) {
 	return written, nil
 }
 
-// ReadDiskIndex deserializes a DiskIndex from a reader.
-func ReadDiskIndex(r io.Reader) (*DiskIndex, error) {
+type countingReader struct {
+	r    io.Reader
+	read int64
+}
+
+func (c *countingReader) Read(p []byte) (int, error) {
+	n, err := c.r.Read(p)
+	c.read += int64(n)
+	return n, err
+}
+
+func readDiskIndexHeaderAndTopology(r io.Reader) (*DiskIndex, error) {
 	var magic, version uint32
 	if err := binary.Read(r, binary.LittleEndian, &magic); err != nil {
 		return nil, fmt.Errorf("read magic: %w", err)
@@ -312,7 +329,18 @@ func ReadDiskIndex(r io.Reader) (*DiskIndex, error) {
 		idx.PQCodes[i] = code
 	}
 
-	// Raw embeddings.
+	return idx, nil
+}
+
+// ReadDiskIndex deserializes a DiskIndex from a reader into RAM.
+func ReadDiskIndex(r io.Reader) (*DiskIndex, error) {
+	idx, err := readDiskIndexHeaderAndTopology(r)
+	if err != nil {
+		return nil, err
+	}
+
+	// Raw embeddings into RAM.
+	n := idx.NumNodes
 	idx.Embeddings = make([][]float32, n)
 	for i := int64(0); i < n; i++ {
 		vec := make([]float32, idx.Dims)
@@ -325,6 +353,97 @@ func ReadDiskIndex(r io.Reader) (*DiskIndex, error) {
 	}
 
 	return idx, nil
+}
+
+// OpenDiskIndexMmap memory-maps the disk index at path. The graph topology,
+// codebook, and PQ codes are loaded into RAM, while raw embeddings are
+// mapped directly from the file without heap allocation.
+func OpenDiskIndexMmap(path string) (*DiskIndex, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+
+	fi, err := f.Stat()
+	if err != nil {
+		_ = f.Close()
+		return nil, err
+	}
+	size := fi.Size()
+
+	data, err := mmapFile(f.Fd(), size)
+	if err != nil {
+		_ = f.Close()
+		return nil, err
+	}
+
+	cr := &countingReader{r: bytes.NewReader(data)}
+	idx, err := readDiskIndexHeaderAndTopology(cr)
+	if err != nil {
+		_ = munmapFile(data)
+		_ = f.Close()
+		return nil, err
+	}
+
+	offsetEmbeddings := cr.read
+	expectedTotal := offsetEmbeddings + idx.NumNodes*int64(idx.Dims)*4
+	if size < expectedTotal {
+		_ = munmapFile(data)
+		_ = f.Close()
+		return nil, fmt.Errorf("file size %d too small for %d embeddings (%d bytes expected)", size, idx.NumNodes, expectedTotal)
+	}
+
+	idx.mmapData = data
+	idx.mmapFile = f
+	idx.offsetEmbeddings = offsetEmbeddings
+	idx.Embeddings = nil
+	return idx, nil
+}
+
+// GetVector returns the embedding for node id, either from in-memory slice or mmap'd bytes.
+func (idx *DiskIndex) GetVector(id int64) []float32 {
+	if idx == nil || id < 0 || id >= idx.NumNodes {
+		return nil
+	}
+	if idx.Embeddings != nil && int(id) < len(idx.Embeddings) && idx.Embeddings[id] != nil {
+		return idx.Embeddings[id]
+	}
+	if idx.mmapData != nil {
+		start := idx.offsetEmbeddings + id*int64(idx.Dims)*4
+		end := start + int64(idx.Dims)*4
+		if start < 0 || end > int64(len(idx.mmapData)) {
+			return nil
+		}
+		raw := idx.mmapData[start:end]
+		vec := make([]float32, idx.Dims)
+		for d := 0; d < idx.Dims; d++ {
+			bits := binary.LittleEndian.Uint32(raw[d*4 : (d+1)*4])
+			vec[d] = math.Float32frombits(bits)
+		}
+		return vec
+	}
+	return nil
+}
+
+// Close releases any memory mappings and closes open file descriptors.
+func (idx *DiskIndex) Close() error {
+	if idx == nil {
+		return nil
+	}
+	var firstErr error
+	if idx.mmapData != nil {
+		if err := munmapFile(idx.mmapData); err != nil && firstErr == nil {
+			firstErr = err
+		}
+		idx.mmapData = nil
+	}
+	if idx.mmapFile != nil {
+		if err := idx.mmapFile.Close(); err != nil && firstErr == nil {
+			firstErr = err
+		}
+		idx.mmapFile = nil
+	}
+	return firstErr
 }
 
 // GetNeighbors returns the neighbors of node i from the flat arrays.

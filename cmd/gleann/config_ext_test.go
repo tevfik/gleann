@@ -248,3 +248,46 @@ func TestGetConfigSignaturesOnly(t *testing.T) {
 		t.Errorf("expected SignaturesOnly false by default")
 	}
 }
+
+func TestGetConfigMmapAndBudget(t *testing.T) {
+	// 1. Defaults
+	cfg := getConfig(nil)
+	if cfg.UseMmap != nil || !cfg.MmapEnabled() {
+		t.Errorf("expected UseMmap unset and mmap enabled by default, got %v / %v", cfg.UseMmap, cfg.MmapEnabled())
+	}
+	if !cfg.DiskANNConfig.UseMmap {
+		t.Error("expected DiskANNConfig.UseMmap true by default")
+	}
+	if !cfg.HNSWConfig.UseMmap {
+		t.Error("expected HNSWConfig.UseMmap true by default")
+	}
+
+	// 2. --no-mmap disables all mmap settings
+	cfgNoMmap := getConfig([]string{"--no-mmap"})
+	if cfgNoMmap.UseMmap == nil || *cfgNoMmap.UseMmap {
+		t.Errorf("expected UseMmap false with --no-mmap, got %v", cfgNoMmap.UseMmap)
+	}
+	if cfgNoMmap.DiskANNConfig.UseMmap {
+		t.Error("expected DiskANNConfig.UseMmap false with --no-mmap")
+	}
+	if cfgNoMmap.HNSWConfig.UseMmap {
+		t.Error("expected HNSWConfig.UseMmap false with --no-mmap")
+	}
+
+	// 3. GLEANN_MMAP=false env var
+	t.Setenv("GLEANN_MMAP", "false")
+	cfgEnvNo := getConfig(nil)
+	if cfgEnvNo.UseMmap == nil || *cfgEnvNo.UseMmap {
+		t.Errorf("expected UseMmap false with GLEANN_MMAP=false, got %v", cfgEnvNo.UseMmap)
+	}
+	if cfgEnvNo.DiskANNConfig.UseMmap {
+		t.Error("expected DiskANNConfig.UseMmap false with GLEANN_MMAP=false")
+	}
+
+	// 4. GLEANN_SEARCHER_CACHE_BUDGET env var
+	t.Setenv("GLEANN_SEARCHER_CACHE_BUDGET", "512MB")
+	cfgBudget := getConfig(nil)
+	if cfgBudget.SearcherCacheBudget != 512*1024*1024 {
+		t.Errorf("expected SearcherCacheBudget 512MB, got %d", cfgBudget.SearcherCacheBudget)
+	}
+}

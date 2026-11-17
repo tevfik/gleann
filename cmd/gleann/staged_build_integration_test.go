@@ -182,19 +182,20 @@ func TestIntegration_BuildSignaturesOnly_ChunkReduction(t *testing.T) {
 			metaSig.NumPassages, metaFull.NumPassages)
 	}
 
-	// Check that passages in sig_idx have function bodies omitted
+	// Check that passages in sig_idx have function bodies omitted. Read
+	// through the format-dispatching store API so the check holds for both
+	// the bbolt and the SQLite record store.
 	basePath := filepath.Join(indexDir2, "sig_idx", "sig_idx")
-	pm := gleann.NewReadOnlyPassageManager(basePath)
-	if err := pm.Load(); err != nil {
-		t.Fatalf("load pm: %v", err)
+	ps, err := gleann.OpenPassageStore(basePath, true)
+	if err != nil {
+		t.Fatalf("open passage store: %v", err)
 	}
-	defer pm.Close()
+	if err := ps.Load(); err != nil {
+		t.Fatalf("load passage store: %v", err)
+	}
+	defer ps.Close()
 	foundFuncSig := false
-	for i := 0; i < pm.Count(); i++ {
-		p, err := pm.Get(int64(i))
-		if err != nil {
-			continue
-		}
+	for i, p := range ps.All() {
 		// Implementation body lines must not be present in signature-only chunks
 		if strings.Contains(p.Text, "step49") || strings.Contains(p.Text, "step0 :=") {
 			t.Errorf("passage %d contained function body implementation:\n%s", i, p.Text)

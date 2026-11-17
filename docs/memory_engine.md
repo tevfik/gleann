@@ -9,14 +9,14 @@ internal RAG pipeline.
 
 ### Entity Node
 
-A labeled property node stored in KuzuDB.
+A labeled property node stored in the memory database (`memory.sqlite`).
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `id` | string | ✅ | Globally unique, stable key (UUID or slug) |
 | `type` | string | ✅ | Semantic category (e.g. `requirement`, `concept`, `code_symbol`) |
 | `content` | string | optional | Natural-language text → triggers HNSW vector embedding |
-| `attributes` | object | optional | Arbitrary JSON metadata (serialised as a JSON string in KuzuDB) |
+| `attributes` | object | optional | Arbitrary JSON metadata (stored as a JSON string) |
 
 ### RELATES_TO Edge
 
@@ -38,37 +38,37 @@ A directed, labeled, weighted relationship between two Entity nodes.
 
 ### Storage Layout
 
-Each Memory Engine store is an **independent KuzuDB database** stored at:
+All Memory Engine stores live in the memory database, beside the long-term
+memory blocks:
 
 ```
-<index-dir>/<store-name>_memory/
+~/.gleann/memory/memory.sqlite      (or $GLEANN_MEMORY_DIR/memory.sqlite)
 ```
 
-This means the Memory Engine is fully **isolated** from gleann's RAG indexes
-and from the AST/document code graph (`<store-name>_graph/`).
+Each store is a namespace in that database: its name is the `ns` column of
+every row. Stores are isolated from each other, from gleann's RAG indexes and
+from the code graph. The Memory Engine works in every build, including the
+`go install` build and Windows.
 
-## KuzuDB Schema
+Older releases kept each store in a KuzuDB directory `<index-dir>/<name>_memory/`.
+gleann no longer reads it: when that directory exists and the store is empty,
+it logs a notice once and leaves the directory untouched.
 
-```cypher
-CREATE NODE TABLE IF NOT EXISTS Entity (
-    id         STRING,
-    type       STRING,
-    content    STRING,
-    attributes STRING,   -- compact JSON, e.g. {"priority":"high"}
-    PRIMARY KEY (id)
-)
+## Schema
 
-CREATE REL TABLE IF NOT EXISTS RELATES_TO (
-    FROM Entity TO Entity,
-    relation_type STRING,
-    weight        DOUBLE,
-    attributes    STRING   -- compact JSON
-)
+```sql
+CREATE TABLE entities (ns TEXT NOT NULL, id TEXT NOT NULL, type TEXT NOT NULL, content TEXT NOT NULL,
+  attributes TEXT NOT NULL DEFAULT '{}', PRIMARY KEY (ns, id)) WITHOUT ROWID;
+CREATE TABLE relations (ns TEXT NOT NULL, src TEXT NOT NULL, dst TEXT NOT NULL, relation_type TEXT NOT NULL,
+  weight REAL NOT NULL DEFAULT 1.0, attributes TEXT NOT NULL DEFAULT '{}',
+  PRIMARY KEY (ns, src, dst, relation_type)) WITHOUT ROWID;
+CREATE INDEX relations_dst ON relations(ns, dst);
+CREATE TABLE entity_archive (archive_id TEXT PRIMARY KEY, ns TEXT NOT NULL, id TEXT NOT NULL,
+  version_id TEXT NOT NULL, type TEXT, content TEXT, attributes TEXT, valid_to TEXT) WITHOUT ROWID;
 ```
 
-The schema is created lazily on first access via `kgraph.Open()`.  Because
-`IF NOT EXISTS` is used, the schema init is re-entrant and safe to call on
-an already-initialized database.
+The tables are added by a named schema step the first time the memory
+database is opened.
 
 ## REST API
 
@@ -76,7 +76,7 @@ Start the server with `gleann serve`, then use the four Memory Engine endpoints:
 
 ### POST `/api/memory/{name}/inject`
 
-Atomically upsert a batch of nodes and edges. Uses Cypher `MERGE` so the
+Atomically upsert a batch of nodes and edges. Every row is an upsert, so the
 operation is **idempotent** — re-submitting the same payload is safe.
 
 **Request body — `GraphInjectionPayload`:**
@@ -217,7 +217,7 @@ Traversal from "req-001" (depth 3) — 3 nodes, 2 edges
 ## Vector Synchronisation
 
 When an Entity node has a non-empty `content` field, gleann calls an optional
-`VectorSyncer` after the KuzuDB transaction commits. This keeps the entity
+`VectorSyncer` after the database transaction commits. This keeps the entity
 searchable via `gleann_search` in addition to graph traversal.
 
 **Interface:**
@@ -234,40 +234,35 @@ default; a future release will wire in a `LeannBuilder`-backed syncer.
 
 ## Transaction Safety
 
-`InjectEntities` wraps all node and edge upserts in a single manual KuzuDB
-transaction:
+`InjectEntities` writes every node, archived version and edge in one SQLite
+transaction (`BEGIN IMMEDIATE`). If any statement fails, nothing is committed.
+An edge whose endpoints do not exist is skipped, not an error. Before a node is
+updated, its previous version is copied to `entity_archive`.
 
-```
-BEGIN TRANSACTION
-  MERGE (e:Entity {id: "req-001"}) SET ...
-  MERGE (e:Entity {id: "feat-jwt"}) SET ...
-  MERGE (a)-[r:RELATES_TO {relation_type: "IMPLEMENTED_BY"}]->(b) SET ...
-COMMIT          ← on success
-ROLLBACK        ← on any error (automatic via ExecTxOn)
-```
-
-If the transaction is interrupted mid-way, no partial data is committed.
 Vector sync runs **after** the commit, so a sync failure leaves the graph
 durable while the vector store may be temporarily out of sync — retry the
 injection to reconcile.
 
 ## Concurrency
 
-`MemoryService` embeds a `sync.Mutex` that serialises all write operations.
-KuzuDB supports only one write transaction at a time on a database; the mutex
-prevents concurrent callers from racing into a transaction.
+SQLite lets several processes (the MCP server, `gleann serve`) write the same
+memory database; their transactions are serialised by the database. Within one
+process each store holds a mutex across a write and its vector sync, so the
+vector index sees updates of one entity in commit order. Reads (`Traverse`) do
+not take the mutex.
 
-Read operations (Traverse) open an independent connection via `db.NewConn()`,
-so reads proceed concurrently with each other but are blocked by in-progress
-writes from the mutex.
+`Traverse` is a recursive SQL query that follows edges in their direction up to
+the requested depth (at most 10). It visits each entity at most once per depth,
+so cycles and densely linked entities stay cheap.
 
 ## Code Map
 
 | File | Role |
 |------|------|
 | `pkg/gleann/types.go` | `MemoryGraphNode`, `MemoryGraphEdge`, `GraphInjectionPayload`, `AttributesToJSON`, `JSONToAttributes` |
-| `internal/graph/kuzu/db.go` | `Entity` and `RELATES_TO` DDL added to `initSchema()` |
-| `internal/graph/kuzu/memory_service.go` | `VectorSyncer`, `MemoryService`, `InjectEntities`, `DeleteEntity`, `DeleteEdge`, `Traverse` |
+| `pkg/memory/sqlite.go` | `entities`, `relations`, `entity_archive` tables (schema step `entity_graph`) |
+| `pkg/memory/entity_service.go` | `EntityService`: `InjectEntities`, `DeleteEntity`, `DeleteEdge`, `Traverse` |
+| `pkg/gleann/interfaces.go` | `MemoryService` and `VectorSyncer` interfaces |
 | `internal/server/memory_handler.go` | HTTP handlers + `memoryPool`, routes registered in `server.go` |
 | `internal/server/openapi.go` | OpenAPI 3.0 schemas and path specs for the four endpoints |
 | `internal/mcp/memory_tools.go` | `inject_knowledge_graph`, `delete_graph_entity`, `traverse_knowledge_graph` MCP tools + `mcpMemoryPool` |
@@ -373,3 +368,80 @@ gleann memory compact --min-validity 0.35
 ```
 
 The operation works seamlessly through the active `gleann serve` REST endpoint (`POST /api/blocks/compact`) to prevent database lock collisions.
+
+---
+
+## Memory Files: Markdown Export & Import (`gleann memory export`, `gleann memory import`)
+
+Memory blocks and conversation digests can be exported to and imported from individual Markdown files with YAML front matter:
+
+```bash
+# Export all memory blocks and summaries to a directory
+gleann memory export --dir ./memory-backup
+
+# Import memory blocks and summaries from a directory
+gleann memory import --dir ./memory-backup
+```
+
+### File Structure & Front Matter
+
+- **Memory Blocks**: Each memory block is saved as an individual `.md` file in `--dir` with a deterministic, Windows-safe filename (`<id>-<hash>.md`: the readable ID, sanitized and shortened to 64 characters, plus 8 hex characters of a hash of the exact ID, so IDs that differ only in case or in characters Windows forbids never share a file). The YAML front matter carries every Block field (`id`, `tier`, `label`, `source`, `tags`, `metadata`, `created_at`, `updated_at`, `expires_at`, `char_limit`, `scope`, `repo`, `paths`, `symbols`, `commit_hash`, `suspect`, `stale_reason`, `confirms`, `conflicts`, `access_count`, `last_accessed_at`), while the markdown body holds the block content.
+- **Conversation Summaries**: Stored in a `summaries/` subdirectory within `--dir` (`summaries/<timestamp>_<conv_id>-<hash>.md`), with summary metadata in YAML front matter and the summary text as body.
+- **Lossless & Idempotent**: Re-importing unchanged files changes nothing. When an existing block with the same ID conflicts, the version with the newer `updated_at` timestamp is kept, and the conflict count is reported.
+
+---
+
+## Sleep-Time Compute & Memory Reflection (`gleann memory reflect`)
+
+The sleep-time compute engine periodically reflects on recent conversations, summarizes discussions, extracts reusable knowledge, and updates long-term memory without blocking interactive flows.
+
+### Reflection as Diff & Change Sets
+
+Reflection writes memories through the standard manager path (`RememberBlock`), applying deduplication, character limits, validity scoring, and contradiction checks. Original memory blocks are never deleted or overwritten during reflection. Each cycle records a change set in SQLite:
+- **Run ID**: Unique identifier for the reflection run (e.g. `reflect-<timestamp>`).
+- **Timestamp**: Time of execution.
+- **Blocks Added**: IDs of newly created memory blocks.
+- **Blocks Superseded**: IDs of existing memory blocks contradicted by new information.
+
+The cursor tracking processed conversations (`sleeptime_last_run`) is persisted in `memory_meta` across server restarts.
+
+### Commands
+
+```bash
+# Run one reflection cycle immediately
+gleann memory reflect
+
+# Preview changes without modifying the database (dry-run)
+gleann memory reflect --dry-run
+
+# Revert a reflection run by ID (removes added blocks, leaves originals untouched)
+gleann memory reflect --revert <run-id>
+```
+
+## Failure Memory
+
+Agents tend to repeat a failure in the next session after they found the fix.
+A failure memory records the command, the error and the fix, with the files
+and symbols involved:
+
+```bash
+gleann memory failure add --command "go test ./pkg/x" \
+  --error "pkg/x/a_test.go:12: undefined: helper" \
+  --fix "build with -tags integration" --path pkg/x/a_test.go
+gleann memory failure list
+gleann memory context --command "go test ./pkg/x" --path pkg/x/a_test.go
+```
+
+A failure is a long-term block with label `failure`; the command, the
+normalized error signature and the fix are in its metadata. The signature
+drops file paths, line and column numbers, hex addresses and timestamps, and
+the block ID is a hash of the normalized command and the signature, so the
+same failure recorded again confirms the existing block (`confirms` goes up,
+paths and symbols are merged) instead of adding a second one.
+
+Failures are not part of the regular memory tiers in the context window. They
+are added in their own `failure_memory` section when the caller names the work:
+a command (matched after normalization, as a prefix in either direction) or
+files (matched by path or base name). The section counts against the
+injection budget and ranks like long-term memory. MCP: `memory_failure_add`
+records one; `memory_context` accepts `command` and `paths`.

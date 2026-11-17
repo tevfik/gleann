@@ -24,12 +24,13 @@ func toHNSWConfig(config gleann.Config) hnsw.Config {
 			M:                 config.HNSWConfig.M,
 			EfConstruction:    config.HNSWConfig.EfConstruction,
 			EfSearch:          config.HNSWConfig.EfSearch,
-			UseMmap:           config.HNSWConfig.UseMmap,
+			UseMmap:           config.MmapEnabled(),
 			MaxLevel:          config.HNSWConfig.MaxLevel,
 			DistanceMetric:    hnsw.DistanceMetric(config.HNSWConfig.DistanceMetric),
 			UseHeuristic:      config.HNSWConfig.UseHeuristic,
 			PruneEmbeddings:   config.HNSWConfig.PruneEmbeddings,
 			PruneKeepFraction: config.HNSWConfig.PruneKeepFraction,
+			VectorDType:       config.HNSWConfig.VectorDType,
 		},
 	}
 }
@@ -42,7 +43,7 @@ func (f *hnswFactoryAdapter) NewBuilder(config gleann.Config) gleann.BackendBuil
 func (f *hnswFactoryAdapter) NewSearcher(config gleann.Config) gleann.BackendSearcher {
 	factory := &hnsw.Factory{}
 	inner := factory.NewSearcher(toHNSWConfig(config))
-	if config.HNSWConfig.UseMmap {
+	if config.MmapEnabled() {
 		// Return the mmap-capable adapter so MmapBackendSearcher type assertion succeeds.
 		return &mmapSearcherAdapter{searcherAdapter{inner: inner}}
 	}
@@ -65,6 +66,7 @@ func (s *searcherAdapter) Load(ctx context.Context, indexData []byte, meta glean
 		CreatedAt:      meta.CreatedAt,
 		UpdatedAt:      meta.UpdatedAt,
 		Version:        meta.Version,
+		VectorDType:    meta.VectorDType,
 	}
 	return s.inner.Load(ctx, indexData, hnswMeta)
 }
@@ -78,6 +80,19 @@ func (s *searcherAdapter) SearchWithRecompute(ctx context.Context, query []float
 		return recompute(ctx, ids)
 	}
 	return s.inner.SearchWithRecompute(ctx, query, topK, hnswRecompute)
+}
+
+// VectorDistances forwards to the inner searcher when it supports scoring
+// explicit IDs (the RAM HNSW searcher does; the mmap searcher does not). The
+// optional gleann.VectorIDScorer interface lets filtered search score a
+// pre-selected set directly; backends without it fall back to lexical scoring.
+func (s *searcherAdapter) VectorDistances(ctx context.Context, query []float32, ids []int64) ([]float32, error) {
+	if vd, ok := s.inner.(interface {
+		VectorDistances(ctx context.Context, query []float32, ids []int64) ([]float32, error)
+	}); ok {
+		return vd.VectorDistances(ctx, query, ids)
+	}
+	return nil, fmt.Errorf("hnsw backend does not support VectorDistances")
 }
 
 func (s *searcherAdapter) Close() error {

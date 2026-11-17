@@ -84,8 +84,10 @@ func getAgentsMDContent(indexName string) string {
 	sb.WriteString("- `memory_remember` — store fact with tier/label/tags/scope\n")
 	sb.WriteString("- `memory_forget` — remove block by ID or content match\n")
 	sb.WriteString("- `memory_search` — full-text search across all tiers\n")
+	sb.WriteString("- `memory_failure_add` — record a command that failed and the fix that worked, with the files involved\n")
 	sb.WriteString("- `memory_context` — returns the compiled `<memory_context>` window that gleann\n")
-	sb.WriteString("  injects into LLM system prompts — call this at session start to recall everything\n\n")
+	sb.WriteString("  injects into LLM system prompts — call this at session start to recall everything;\n")
+	sb.WriteString("  pass `command`/`paths` to also get the recorded failures for that work\n\n")
 	sb.WriteString("**Workflow:** call `memory_context` at the start of every session, use `gleann_sync` after modifying files so code intelligence tools immediately reflect changes, then call `memory_remember` whenever you learn something important about the codebase.\n")
 
 	return sb.String()

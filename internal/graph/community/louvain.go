@@ -1,5 +1,3 @@
-//go:build treesitter
-
 // Package community implements graph community detection algorithms
 // on the KuzuDB code graph. It uses the Louvain method to discover
 // tightly-connected groups of symbols (functions, types, files) and

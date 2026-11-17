@@ -84,7 +84,26 @@ func (s *Searcher) Load(ctx context.Context, indexData []byte, meta IndexMeta) e
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	if s.idx != nil {
+		_ = s.idx.Close()
+	}
 	idx, err := ReadDiskIndex(bytes.NewReader(indexData))
+	if err != nil {
+		return err
+	}
+	s.idx = idx
+	return nil
+}
+
+// LoadFromFile memory-maps the DiskANN index from disk without reading the full file into RAM.
+func (s *Searcher) LoadFromFile(ctx context.Context, path string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.idx != nil {
+		_ = s.idx.Close()
+	}
+	idx, err := OpenDiskIndexMmap(path)
 	if err != nil {
 		return err
 	}
@@ -138,12 +157,12 @@ func (s *Searcher) SearchWithRecompute(ctx context.Context, query []float32, top
 		rerankK = topK * 2
 	}
 
-	// Reranking fetches embeddings via the recompute callback (=disk read).
+	// Reranking fetches embeddings via in-memory/mmap first, then recompute callback (=disk read).
 	var recomputeErr error
 	getVector := func(id int64) []float32 {
-		// Try in-memory first (if embeddings are loaded).
-		if s.idx.Embeddings != nil && id >= 0 && id < s.idx.NumNodes && s.idx.Embeddings[id] != nil {
-			return s.idx.Embeddings[id]
+		// Try in-memory or mmap first.
+		if vec := s.idx.GetVector(id); vec != nil {
+			return vec
 		}
 		// Fall back to recompute callback.
 		vecs, err := recompute(ctx, []int64{id})
@@ -173,6 +192,10 @@ func (s *Searcher) SearchWithRecompute(ctx context.Context, query []float32, top
 func (s *Searcher) Close() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.idx = nil
+	if s.idx != nil {
+		err := s.idx.Close()
+		s.idx = nil
+		return err
+	}
 	return nil
 }

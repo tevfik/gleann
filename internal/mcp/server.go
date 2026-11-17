@@ -44,6 +44,8 @@ type Config struct {
 	// IndexDir above. When nil, a config derived from the fields above is
 	// used.
 	BuildConfig *gleann.Config
+	// SearcherCacheBudget is the memory budget in bytes for cached searchers (0 = disabled).
+	SearcherCacheBudget int64
 }
 
 // maxCachedSearchers is the maximum number of searchers to keep in memory.
@@ -159,6 +161,9 @@ func NewServer(cfg Config) *Server {
 	glCfg.OpenAIBaseURL = cfg.OpenAIBaseURL
 	glCfg.LLMProvider = cfg.LLMProvider
 	glCfg.LLMModel = cfg.LLMModel
+	if cfg.SearcherCacheBudget > 0 {
+		glCfg.SearcherCacheBudget = cfg.SearcherCacheBudget
+	}
 
 	baseURL := cfg.OllamaHost
 	apiKey := ""
@@ -230,6 +235,8 @@ func NewServer(cfg Config) *Server {
 	srv.addTool(srv.buildMemorySearchTool(), srv.handleMemorySearch)
 	srv.addTool(srv.buildMemoryListTool(), srv.handleMemoryList)
 	srv.addTool(srv.buildMemoryContextTool(), srv.handleMemoryContext)
+	srv.addTool(srv.buildMemoryFailureAddTool(), srv.handleMemoryFailureAdd)
+	srv.addTool(srv.buildMemoryFailureListTool(), srv.handleMemoryFailureList)
 
 	// Batch query — run multiple questions concurrently.
 	srv.addTool(srv.buildBatchAskTool(), srv.handleBatchAsk)
@@ -289,7 +296,7 @@ func (s *Server) isToolEnabled(name string) bool {
 	if profile == "" || profile == "core" {
 		switch name {
 		case "gleann_search", "gleann_read", "gleann_def", "gleann_graph_neighbors", "gleann_impact",
-			"memory_remember", "memory_context", "memory_search", "memory_forget", "gleann_sync":
+			"memory_remember", "memory_failure_add", "memory_context", "memory_search", "memory_forget", "gleann_sync":
 			return true
 		default:
 			return false
@@ -493,14 +500,47 @@ func (s *Server) getSearcher(name string) (*gleann.LeannSearcher, error) {
 		return existing, nil
 	}
 
-	// Evict oldest if at capacity.
-	if len(s.searchers) >= maxCachedSearchers {
+	s.searchers[name] = searcher
+	s.searcherLRU = append(s.searcherLRU, name)
+	s.enforceCacheBudgetLocked()
+	return searcher, nil
+}
+
+func (s *Server) searcherBudget() int64 {
+	if env := os.Getenv("GLEANN_SEARCHER_CACHE_BUDGET"); env != "" {
+		if b, err := gleann.ParseByteSize(env); err == nil {
+			return b
+		}
+	}
+	return s.config.SearcherCacheBudget
+}
+
+func (s *Server) enforceCacheBudgetLocked() {
+	for len(s.searchers) > maxCachedSearchers && len(s.searcherLRU) > 1 {
 		s.evictOldest()
 	}
 
-	s.searchers[name] = searcher
-	s.searcherLRU = append(s.searcherLRU, name)
-	return searcher, nil
+	budget := s.searcherBudget()
+	if budget <= 0 {
+		return
+	}
+
+	totalSize := int64(0)
+	for _, sr := range s.searchers {
+		if sr != nil {
+			totalSize += sr.EstimatedSize()
+		}
+	}
+
+	for totalSize > budget && len(s.searcherLRU) > 1 {
+		oldest := s.searcherLRU[0]
+		var size int64
+		if sr, ok := s.searchers[oldest]; ok && sr != nil {
+			size = sr.EstimatedSize()
+		}
+		s.evictOldest()
+		totalSize -= size
+	}
 }
 
 // touchLRU moves name to the end of the LRU list (most recently used).

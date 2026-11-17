@@ -2,6 +2,7 @@ package backends
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/tevfik/gleann/modules/diskann"
 	"github.com/tevfik/gleann/pkg/gleann"
@@ -28,7 +29,7 @@ func toDiskANNConfig(config gleann.Config) diskann.Config {
 			SearchL:        config.DiskANNConfig.SearchL,
 			SearchPQRerank: config.DiskANNConfig.SearchPQRerank,
 			DistanceMetric: diskann.DistanceMetric(config.DiskANNConfig.DistanceMetric),
-			UseMmap:        config.DiskANNConfig.UseMmap,
+			UseMmap:        config.MmapEnabled(),
 		},
 	}
 }
@@ -40,7 +41,11 @@ func (f *diskannFactoryAdapter) NewBuilder(config gleann.Config) gleann.BackendB
 
 func (f *diskannFactoryAdapter) NewSearcher(config gleann.Config) gleann.BackendSearcher {
 	factory := &diskann.Factory{}
-	return &diskannSearcherAdapter{inner: factory.NewSearcher(toDiskANNConfig(config))}
+	inner := factory.NewSearcher(toDiskANNConfig(config))
+	if config.MmapEnabled() {
+		return &diskannMmapSearcherAdapter{diskannSearcherAdapter{inner: inner}}
+	}
+	return &diskannSearcherAdapter{inner: inner}
 }
 
 // ── Builder adapter ──
@@ -92,6 +97,19 @@ func (s *diskannSearcherAdapter) Close() error {
 	return s.inner.Close()
 }
 
+// diskannMmapSearcherAdapter wraps diskannSearcherAdapter and adds LoadFromFile support.
+type diskannMmapSearcherAdapter struct {
+	diskannSearcherAdapter
+}
+
+func (s *diskannMmapSearcherAdapter) LoadFromFile(ctx context.Context, path string) error {
+	if mmap, ok := s.inner.(mmapInnerSearcher); ok {
+		return mmap.LoadFromFile(ctx, path)
+	}
+	return fmt.Errorf("backend searcher does not support LoadFromFile")
+}
+
 var _ gleann.BackendBuilder = (*diskannBuilderAdapter)(nil)
 var _ gleann.BackendSearcher = (*diskannSearcherAdapter)(nil)
 var _ gleann.BackendFactory = (*diskannFactoryAdapter)(nil)
+var _ gleann.MmapBackendSearcher = (*diskannMmapSearcherAdapter)(nil)

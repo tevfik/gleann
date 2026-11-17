@@ -10,13 +10,15 @@ import (
 	"strings"
 
 	gokuzu "github.com/kuzudb/go-kuzu"
+	gtypes "github.com/tevfik/gleann/internal/graph/types"
 )
 
+// Extractor output types live in the tag-free internal/graph/types package so
+// the pure-Go extractors and the format-2 (SQLite) write path build without
+// CGo. Aliases keep the Kùzu writer's API unchanged.
+
 // FileNode represents a code file node for CSV export.
-type FileNode struct {
-	Path string
-	Lang string
-}
+type FileNode = gtypes.FileNode
 
 // SymbolNode represents any code symbol (function, type, struct, etc.).
 // Weight is a language-aware importance score in [0, 10]: 1.0 is neutral;
@@ -24,29 +26,13 @@ type FileNode struct {
 // and risk analysis (e.g. Java interfaces, Rust traits, Python decorated
 // functions). It is set at ingest time by heuristics.applyHeuristics
 // and consumed by community.ComputeRiskScores and any future reranker.
-type SymbolNode struct {
-	FQN    string  // Fully Qualified Name, e.g. "github.com/foo/bar.MyFunc"
-	Kind   string  // "function" | "method" | "type" | "struct" | "interface" | "const" | "var"
-	File   string  // source file path
-	Line   int64   // line number in source file
-	Name   string  // short name, e.g. "MyFunc"
-	Doc    string  // documentation comment (optional)
-	Weight float64 // language-aware importance (default 1.0)
-	IsTest bool    // true if defined in a test file or is a test function
-}
+type SymbolNode = gtypes.SymbolNode
 
 // EdgeDeclares represents a DECLARES relationship matching KuzuDB schema (FROM CodeFile TO Symbol).
-type EdgeDeclares struct {
-	FilePath  string
-	SymbolFQN string
-}
+type EdgeDeclares = gtypes.EdgeDeclares
 
 // EdgeCalls represents a CALLS relationship (FROM Symbol TO Symbol).
-type EdgeCalls struct {
-	CallerFQN  string
-	CalleeFQN  string
-	Confidence string // "extracted" (AST-resolved), "inferred" (heuristic), "ambiguous"
-}
+type EdgeCalls = gtypes.EdgeCalls
 
 // UpsertFile inserts or ignores a CodeFile node.
 func (g *DB) UpsertFile(path, lang string) error {
@@ -319,18 +305,11 @@ func WriteCallsCSV(path string, edges []EdgeCalls) error {
 
 // EdgeImplements represents an IMPLEMENTS relationship (FROM Symbol TO Symbol).
 // e.g. MyStruct IMPLEMENTS io.Reader.
-type EdgeImplements struct {
-	ImplFQN  string // implementor (struct/type)
-	IfaceFQN string // interface
-}
+type EdgeImplements = gtypes.EdgeImplements
 
 // EdgeReferences represents a REFERENCES relationship (FROM Symbol TO Symbol).
 // e.g. MyFunc REFERENCES SomeType (uses it as parameter, field, return, etc.)
-type EdgeReferences struct {
-	RefererFQN string // the symbol that references
-	RefereeFQN string // the symbol being referenced
-	Confidence string // "extracted", "inferred"
-}
+type EdgeReferences = gtypes.EdgeReferences
 
 // WriteImplementsCSV writes a list of EdgeImplements to a CSV file.
 func WriteImplementsCSV(path string, edges []EdgeImplements) error {
@@ -393,70 +372,34 @@ func WriteReferencesCSV(path string, edges []EdgeReferences) error {
 // ─── Hierarchical Graph Types ────────────────────────────────────────────────────
 
 // FolderNode represents a structural folder.
-type FolderNode struct {
-	VPath string
-	Name  string
-}
+type FolderNode = gtypes.FolderNode
 
 // DocumentNode represents a document in the graph.
-type DocumentNode struct {
-	VPath   string
-	RPath   string
-	Name    string
-	Hash    string
-	Summary string
-}
+type DocumentNode = gtypes.DocumentNode
 
 // HeadingNode represents a markdown heading section.
-type HeadingNode struct {
-	ID    string
-	Name  string
-	Level int64
-}
+type HeadingNode = gtypes.HeadingNode
 
 // ChunkNode represents a chunk that links the vector index to the graph.
-type ChunkNode struct {
-	ID        string
-	Text      string
-	StartChar int64
-	EndChar   int64
-}
+type ChunkNode = gtypes.ChunkNode
 
 // EdgeContainsDoc represents CONTAINS_DOC (Folder→Document).
-type EdgeContainsDoc struct {
-	FolderVPath string
-	DocVPath    string
-}
+type EdgeContainsDoc = gtypes.EdgeContainsDoc
 
 // EdgeHasHeading represents HAS_HEADING (Document→Heading).
-type EdgeHasHeading struct {
-	DocVPath  string
-	HeadingID string
-}
+type EdgeHasHeading = gtypes.EdgeHasHeading
 
 // EdgeChildHeading represents CHILD_HEADING (Heading→Heading).
-type EdgeChildHeading struct {
-	ParentID string
-	ChildID  string
-}
+type EdgeChildHeading = gtypes.EdgeChildHeading
 
 // EdgeHasChunkHeading represents HAS_CHUNK_HEADING (Heading→Chunk).
-type EdgeHasChunkHeading struct {
-	HeadingID string
-	ChunkID   string
-}
+type EdgeHasChunkHeading = gtypes.EdgeHasChunkHeading
 
 // EdgeHasChunkDoc represents HAS_CHUNK_DOC (Document→Chunk).
-type EdgeHasChunkDoc struct {
-	DocVPath string
-	ChunkID  string
-}
+type EdgeHasChunkDoc = gtypes.EdgeHasChunkDoc
 
 // EdgeExplains represents EXPLAINS (Chunk→Symbol).
-type EdgeExplains struct {
-	ChunkID   string
-	SymbolFQN string
-}
+type EdgeExplains = gtypes.EdgeExplains
 
 // WriteFolderNodesCSV writes Folder nodes to a CSV file.
 func WriteFolderNodesCSV(path string, folders []FolderNode) error {

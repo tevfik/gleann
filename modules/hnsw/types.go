@@ -29,6 +29,7 @@ type HNSWConfig struct {
 	UseHeuristic      bool           `json:"use_heuristic"`
 	PruneEmbeddings   bool           `json:"prune_embeddings"`
 	PruneKeepFraction float64        `json:"prune_keep_fraction"`
+	VectorDType       string         `json:"vector_dtype,omitempty"`
 }
 
 // IndexMeta stores metadata about a built index.
@@ -41,6 +42,7 @@ type IndexMeta struct {
 	CreatedAt      time.Time `json:"created_at"`
 	UpdatedAt      time.Time `json:"updated_at"`
 	Version        string    `json:"version"`
+	VectorDType    string    `json:"vector_dtype,omitempty"`
 }
 
 // MarshalJSON implements custom JSON marshaling for IndexMeta.

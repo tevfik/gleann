@@ -2,8 +2,8 @@
 //
 // Memory is organized into three tiers:
 //   - Short-term (in-memory): Active conversation notes, ephemeral context
-//   - Medium-term (BBolt): Daily summaries, conversation digests
-//   - Long-term (BBolt): Persistent facts, user preferences, archived knowledge
+//   - Medium-term (SQLite): Daily summaries, conversation digests
+//   - Long-term (SQLite): Persistent facts, user preferences, archived knowledge
 //
 // Inspired by Letta's memory block architecture, adapted for gleann's RAG pipeline.
 package memory
@@ -19,8 +19,8 @@ type Tier string
 
 const (
 	TierShort  Tier = "short"  // In-memory, session-scoped
-	TierMedium Tier = "medium" // BBolt, daily summaries
-	TierLong   Tier = "long"   // BBolt, permanent archive
+	TierMedium Tier = "medium" // SQLite, daily summaries
+	TierLong   Tier = "long"   // SQLite, permanent archive
 )
 
 // ParseTier parses a tier string, returning an error for unknown tiers.
@@ -135,6 +135,15 @@ type ContextWindow struct {
 	MediumTerm []Block   `json:"medium_term,omitempty"`
 	LongTerm   []Block   `json:"long_term,omitempty"`
 	Summaries  []Summary `json:"summaries,omitempty"`
+
+	// Failures holds the failure memories surfaced for the current task
+	// (see Manager.BuildTaskContext). They render in their own short
+	// section and count against the injection budget like long-term blocks.
+	Failures []Block `json:"failures,omitempty"`
+
+	// Budget reports how the configured token budget shaped this window
+	// (what was injected and what was dropped). Nil for a hand-built window.
+	Budget *ContextBudgetReport `json:"budget,omitempty"`
 }
 
 // Render compiles the context window into a formatted string for LLM consumption.
@@ -167,6 +176,7 @@ func (cw *ContextWindow) Render() string {
 	}
 
 	renderTier(cw.LongTerm, "long_term_memory")
+	renderTier(cw.Failures, "failure_memory")
 	renderTier(cw.MediumTerm, "medium_term_memory")
 
 	if len(cw.Summaries) > 0 {
@@ -192,6 +202,9 @@ func (cw *ContextWindow) Render() string {
 }
 
 func renderBlockLine(block Block) string {
+	if block.Label == FailureLabel {
+		return renderFailureLine(block)
+	}
 	prefix := fmt.Sprintf("[%s]", block.Label)
 	if block.Suspect {
 		reason := block.StaleReason
@@ -209,7 +222,28 @@ func renderBlockLine(block Block) string {
 	return fmt.Sprintf("%s %s%s\n", prefix, block.Content, prov)
 }
 
+// renderFailureLine renders one failure block as a single line (the failure
+// section of the context window), keeping the command, error and fix in one
+// compact unit so the budget's token estimate matches the rendered text.
+func renderFailureLine(block Block) string {
+	cmd := block.Metadata[FailureMetaCommand]
+	fix := block.Metadata[FailureMetaFix]
+	line := fmt.Sprintf("[%s] %s", FailureLabel, cmd)
+	if block.Content != "" {
+		line += fmt.Sprintf(" — %s", block.Content)
+	}
+	if fix != "" {
+		line += fmt.Sprintf(" (fix: %s)", fix)
+	}
+	if len(block.Symbols) > 0 {
+		line += fmt.Sprintf(" (symbols: %s)", strings.Join(block.Symbols, ", "))
+	} else if len(block.Paths) > 0 {
+		line += fmt.Sprintf(" (files: %s)", strings.Join(block.Paths, ", "))
+	}
+	return line + "\n"
+}
+
 func (cw *ContextWindow) isEmpty() bool {
 	return len(cw.ShortTerm) == 0 && len(cw.MediumTerm) == 0 &&
-		len(cw.LongTerm) == 0 && len(cw.Summaries) == 0
+		len(cw.LongTerm) == 0 && len(cw.Summaries) == 0 && len(cw.Failures) == 0
 }

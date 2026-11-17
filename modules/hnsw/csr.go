@@ -33,8 +33,15 @@ type CSRGraph struct {
 	Levels []CSRLevel
 
 	// Optional stored embeddings (for high-degree nodes kept during pruning).
-	// Map from node ID to embedding vector.
+	// Map from node ID to embedding vector (used when VectorDType == "f32").
 	StoredEmbeddings map[int64][]float32
+
+	// Optional stored float16 embeddings (used when VectorDType == "f16").
+	// Map from node ID to []uint16 half-precision vector.
+	StoredEmbeddingsF16 map[int64][]uint16
+
+	// VectorDType specifies the storage format of stored embeddings: "f32" (default) or "f16".
+	VectorDType string
 
 	// Node-to-internal ID mapping.
 	IDMap []int64 // internal index -> external ID
@@ -60,8 +67,26 @@ type CSRLevel struct {
 // CSRMagic identifies a gleann CSR file.
 const CSRMagic uint32 = 0x474C454E // "GLEN"
 
-// CSRVersion is the current format version.
-const CSRVersion uint32 = 1
+// CSRVersion1 is format version 1 (float32 embeddings).
+const CSRVersion1 uint32 = 1
+
+// CSRVersion2 is format version 2 (with explicit VectorDType in header).
+const CSRVersion2 uint32 = 2
+
+// CSRVersion is the legacy default format version constant.
+const CSRVersion uint32 = CSRVersion1
+
+// Vector data type identifiers.
+const (
+	VectorDTypeF32 = "f32"
+	VectorDTypeF16 = "f16"
+)
+
+// DType codes stored in Version 2 CSR header.
+const (
+	DTypeCodeF32 uint32 = 0
+	DTypeCodeF16 uint32 = 1
+)
 
 // ConvertToCSR converts an HNSW graph to CSR format.
 func ConvertToCSR(g *Graph) *CSRGraph {
@@ -78,17 +103,24 @@ func ConvertToCSR(g *Graph) *CSRGraph {
 		extToInt[id] = i
 	}
 
+	dtype := g.vectorDType
+	if dtype == "" {
+		dtype = VectorDTypeF32
+	}
+
 	numNodes := int64(len(idMap))
 	csr := &CSRGraph{
-		NumNodes:         numNodes,
-		Dimensions:       g.dimensions,
-		MaxLevel:         g.maxLevel,
-		EntryPoint:       g.entryPoint,
-		M:                g.m,
-		Levels:           make([]CSRLevel, g.maxLevel+1),
-		StoredEmbeddings: make(map[int64][]float32),
-		IDMap:            idMap,
-		NodeLevels:       make([]int, len(idMap)),
+		NumNodes:            numNodes,
+		Dimensions:          g.dimensions,
+		MaxLevel:            g.maxLevel,
+		EntryPoint:          g.entryPoint,
+		M:                   g.m,
+		VectorDType:         dtype,
+		Levels:              make([]CSRLevel, g.maxLevel+1),
+		StoredEmbeddings:    make(map[int64][]float32),
+		StoredEmbeddingsF16: make(map[int64][]uint16),
+		IDMap:               idMap,
+		NodeLevels:          make([]int, len(idMap)),
 	}
 
 	// Record per-node levels.
@@ -139,26 +171,55 @@ func PruneEmbeddings(g *Graph, csr *CSRGraph, keepFraction float64) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 
+	storeNode := func(id int64, node *Node) {
+		if csr.VectorDType == VectorDTypeF16 {
+			if len(node.VectorF16) > 0 {
+				vec := make([]uint16, len(node.VectorF16))
+				copy(vec, node.VectorF16)
+				csr.StoredEmbeddingsF16[id] = vec
+			} else if len(node.Vector) > 0 {
+				csr.StoredEmbeddingsF16[id] = Float32SliceToFloat16(node.Vector)
+			}
+		} else {
+			if len(node.Vector) > 0 {
+				vec := make([]float32, len(node.Vector))
+				copy(vec, node.Vector)
+				csr.StoredEmbeddings[id] = vec
+			} else if len(node.VectorF16) > 0 {
+				csr.StoredEmbeddings[id] = Float16SliceToFloat32(node.VectorF16)
+			}
+		}
+	}
+
+	clearNode := func(node *Node) {
+		node.Vector = nil
+		node.VectorF16 = nil
+	}
+
+	hasVector := func(node *Node) bool {
+		return len(node.Vector) > 0 || len(node.VectorF16) > 0
+	}
+
 	if keepFraction >= 1.0 {
 		// Keep all embeddings — store them all.
 		for id, node := range g.nodes {
-			if len(node.Vector) > 0 {
-				csr.StoredEmbeddings[id] = node.Vector
+			if hasVector(node) {
+				storeNode(id, node)
 			}
 		}
 		return
 	}
 
 	// Always keep entry point embedding.
-	if epNode, ok := g.nodes[g.entryPoint]; ok && len(epNode.Vector) > 0 {
-		csr.StoredEmbeddings[g.entryPoint] = epNode.Vector
+	if epNode, ok := g.nodes[g.entryPoint]; ok && hasVector(epNode) {
+		storeNode(g.entryPoint, epNode)
 	}
 
 	if keepFraction <= 0 {
 		// Just keep entry point, prune everything else.
 		for id, node := range g.nodes {
 			if id != g.entryPoint {
-				node.Vector = nil
+				clearNode(node)
 			}
 		}
 		return
@@ -198,11 +259,10 @@ func PruneEmbeddings(g *Graph, csr *CSRGraph, keepFraction float64) {
 
 	// Store kept embeddings and prune the rest.
 	for id, node := range g.nodes {
-		if keepSet[id] && len(node.Vector) > 0 {
-			csr.StoredEmbeddings[id] = make([]float32, len(node.Vector))
-			copy(csr.StoredEmbeddings[id], node.Vector)
+		if keepSet[id] && hasVector(node) {
+			storeNode(id, node)
 		} else {
-			node.Vector = nil
+			clearNode(node)
 		}
 	}
 }
@@ -220,6 +280,8 @@ func (csr *CSRGraph) WriteTo(w io.Writer) (int64, error) {
 		switch v := data.(type) {
 		case uint32:
 			written += 4
+		case uint16:
+			written += 2
 		case int64:
 			written += 8
 		case int32:
@@ -232,11 +294,16 @@ func (csr *CSRGraph) WriteTo(w io.Writer) (int64, error) {
 		return nil
 	}
 
+	version := CSRVersion1
+	if csr.VectorDType == VectorDTypeF16 {
+		version = CSRVersion2
+	}
+
 	// === Header ===
 	if err := write(CSRMagic); err != nil {
 		return written, fmt.Errorf("write magic: %w", err)
 	}
-	if err := write(CSRVersion); err != nil {
+	if err := write(version); err != nil {
 		return written, fmt.Errorf("write version: %w", err)
 	}
 	if err := write(csr.NumNodes); err != nil {
@@ -257,8 +324,22 @@ func (csr *CSRGraph) WriteTo(w io.Writer) (int64, error) {
 
 	// Number of stored embeddings.
 	numStored := int64(len(csr.StoredEmbeddings))
+	if csr.VectorDType == VectorDTypeF16 {
+		numStored = int64(len(csr.StoredEmbeddingsF16))
+	}
 	if err := write(numStored); err != nil {
 		return written, fmt.Errorf("write numStored: %w", err)
+	}
+
+	// In Version 2, record explicit dtypeCode in header.
+	if version == CSRVersion2 {
+		dtypeCode := DTypeCodeF32
+		if csr.VectorDType == VectorDTypeF16 {
+			dtypeCode = DTypeCodeF16
+		}
+		if err := write(dtypeCode); err != nil {
+			return written, fmt.Errorf("write dtypeCode: %w", err)
+		}
 	}
 
 	// === ID Map ===
@@ -314,13 +395,38 @@ func (csr *CSRGraph) WriteTo(w io.Writer) (int64, error) {
 	}
 
 	// === Stored Embeddings ===
-	for id, vec := range csr.StoredEmbeddings {
-		if err := write(id); err != nil {
-			return written, fmt.Errorf("write embedding id: %w", err)
+	if csr.VectorDType == VectorDTypeF16 {
+		ids := make([]int64, 0, len(csr.StoredEmbeddingsF16))
+		for id := range csr.StoredEmbeddingsF16 {
+			ids = append(ids, id)
 		}
-		for _, v := range vec {
-			if err := write(v); err != nil {
-				return written, fmt.Errorf("write embedding value: %w", err)
+		sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+		for _, id := range ids {
+			vec := csr.StoredEmbeddingsF16[id]
+			if err := write(id); err != nil {
+				return written, fmt.Errorf("write embedding id: %w", err)
+			}
+			for _, v := range vec {
+				if err := write(v); err != nil {
+					return written, fmt.Errorf("write embedding value: %w", err)
+				}
+			}
+		}
+	} else {
+		ids := make([]int64, 0, len(csr.StoredEmbeddings))
+		for id := range csr.StoredEmbeddings {
+			ids = append(ids, id)
+		}
+		sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+		for _, id := range ids {
+			vec := csr.StoredEmbeddings[id]
+			if err := write(id); err != nil {
+				return written, fmt.Errorf("write embedding id: %w", err)
+			}
+			for _, v := range vec {
+				if err := write(v); err != nil {
+					return written, fmt.Errorf("write embedding value: %w", err)
+				}
 			}
 		}
 	}
@@ -347,12 +453,14 @@ func ReadCSR(r io.Reader) (*CSRGraph, error) {
 	if err := read(&version); err != nil {
 		return nil, fmt.Errorf("read version: %w", err)
 	}
-	if version != CSRVersion {
+	if version != CSRVersion1 && version != CSRVersion2 {
 		return nil, fmt.Errorf("unsupported version: %d", version)
 	}
 
 	csr := &CSRGraph{
-		StoredEmbeddings: make(map[int64][]float32),
+		VectorDType:         VectorDTypeF32,
+		StoredEmbeddings:    make(map[int64][]float32),
+		StoredEmbeddingsF16: make(map[int64][]uint16),
 	}
 
 	if err := read(&csr.NumNodes); err != nil {
@@ -384,6 +492,18 @@ func ReadCSR(r io.Reader) (*CSRGraph, error) {
 	var numStored int64
 	if err := read(&numStored); err != nil {
 		return nil, fmt.Errorf("read numStored: %w", err)
+	}
+
+	if version >= CSRVersion2 {
+		var dtypeCode uint32
+		if err := read(&dtypeCode); err != nil {
+			return nil, fmt.Errorf("read dtypeCode: %w", err)
+		}
+		if dtypeCode == DTypeCodeF16 {
+			csr.VectorDType = VectorDTypeF16
+		} else {
+			csr.VectorDType = VectorDTypeF32
+		}
 	}
 
 	// === ID Map ===
@@ -448,18 +568,34 @@ func ReadCSR(r io.Reader) (*CSRGraph, error) {
 	}
 
 	// === Stored Embeddings ===
-	for i := int64(0); i < numStored; i++ {
-		var id int64
-		if err := read(&id); err != nil {
-			return nil, fmt.Errorf("read embedding id[%d]: %w", i, err)
-		}
-		vec := make([]float32, csr.Dimensions)
-		for j := range vec {
-			if err := read(&vec[j]); err != nil {
-				return nil, fmt.Errorf("read embedding[%d][%d]: %w", i, j, err)
+	if csr.VectorDType == VectorDTypeF16 {
+		for i := int64(0); i < numStored; i++ {
+			var id int64
+			if err := read(&id); err != nil {
+				return nil, fmt.Errorf("read embedding id[%d]: %w", i, err)
 			}
+			vec := make([]uint16, csr.Dimensions)
+			for j := range vec {
+				if err := read(&vec[j]); err != nil {
+					return nil, fmt.Errorf("read embedding[%d][%d]: %w", i, j, err)
+				}
+			}
+			csr.StoredEmbeddingsF16[id] = vec
 		}
-		csr.StoredEmbeddings[id] = vec
+	} else {
+		for i := int64(0); i < numStored; i++ {
+			var id int64
+			if err := read(&id); err != nil {
+				return nil, fmt.Errorf("read embedding id[%d]: %w", i, err)
+			}
+			vec := make([]float32, csr.Dimensions)
+			for j := range vec {
+				if err := read(&vec[j]); err != nil {
+					return nil, fmt.Errorf("read embedding[%d][%d]: %w", i, j, err)
+				}
+			}
+			csr.StoredEmbeddings[id] = vec
+		}
 	}
 
 	return csr, nil
@@ -477,6 +613,7 @@ func (csr *CSRGraph) ToGraphWithDistance(distFunc DistanceFunc) *Graph {
 	g.entryPoint = csr.EntryPoint
 	g.maxLevel = csr.MaxLevel
 	g.nodeCount = csr.NumNodes
+	g.vectorDType = csr.VectorDType
 
 	// Build nodes with stored embeddings and correct levels.
 	for i, id := range csr.IDMap {
@@ -492,8 +629,14 @@ func (csr *CSRGraph) ToGraphWithDistance(distFunc DistanceFunc) *Graph {
 		for j := range node.Neighbors {
 			node.Neighbors[j] = nil
 		}
-		if vec, ok := csr.StoredEmbeddings[id]; ok {
-			node.Vector = vec
+		if csr.VectorDType == VectorDTypeF16 {
+			if vec, ok := csr.StoredEmbeddingsF16[id]; ok {
+				node.VectorF16 = vec
+			}
+		} else {
+			if vec, ok := csr.StoredEmbeddings[id]; ok {
+				node.Vector = vec
+			}
 		}
 		g.nodes[id] = node
 	}
@@ -546,11 +689,15 @@ type StorageStats struct {
 
 // Stats computes storage statistics for the CSR graph.
 func (csr *CSRGraph) Stats() StorageStats {
+	numStored := len(csr.StoredEmbeddings)
+	if csr.VectorDType == VectorDTypeF16 {
+		numStored = len(csr.StoredEmbeddingsF16)
+	}
 	stats := StorageStats{
 		NumNodes:         csr.NumNodes,
 		NumLevels:        len(csr.Levels),
-		StoredEmbeddings: len(csr.StoredEmbeddings),
-		PrunedEmbeddings: csr.NumNodes - int64(len(csr.StoredEmbeddings)),
+		StoredEmbeddings: numStored,
+		PrunedEmbeddings: csr.NumNodes - int64(numStored),
 	}
 
 	// Count total edges.
@@ -560,6 +707,9 @@ func (csr *CSRGraph) Stats() StorageStats {
 
 	// Estimate sizes in bytes.
 	headerSize := int64(4 + 4 + 8 + 4 + 4 + 8 + 4 + 8 + 8) // header fields
+	if csr.VectorDType == VectorDTypeF16 {
+		headerSize += 4 // dtypeCode
+	}
 	idMapSize := int64(len(csr.IDMap)) * 8
 
 	graphSize := int64(0)
@@ -572,15 +722,26 @@ func (csr *CSRGraph) Stats() StorageStats {
 	stats.GraphSizeBytes = headerSize + idMapSize + graphSize
 
 	// Embedding storage.
-	for _, vec := range csr.StoredEmbeddings {
-		stats.EmbeddingSizeBytes += int64(len(vec)) * 4 // float32
-		stats.EmbeddingSizeBytes += 8                   // id
+	if csr.VectorDType == VectorDTypeF16 {
+		for _, vec := range csr.StoredEmbeddingsF16 {
+			stats.EmbeddingSizeBytes += int64(len(vec)) * 2 // float16
+			stats.EmbeddingSizeBytes += 8                   // id
+		}
+	} else {
+		for _, vec := range csr.StoredEmbeddings {
+			stats.EmbeddingSizeBytes += int64(len(vec)) * 4 // float32
+			stats.EmbeddingSizeBytes += 8                   // id
+		}
 	}
 
 	stats.TotalSizeBytes = stats.GraphSizeBytes + stats.EmbeddingSizeBytes
 
-	// Original size (all embeddings stored).
-	stats.OriginalSizeBytes = stats.GraphSizeBytes + csr.NumNodes*int64(csr.Dimensions)*4
+	// Original size (all embeddings stored in current dtype).
+	elemBytes := int64(4)
+	if csr.VectorDType == VectorDTypeF16 {
+		elemBytes = 2
+	}
+	stats.OriginalSizeBytes = stats.GraphSizeBytes + csr.NumNodes*int64(csr.Dimensions)*elemBytes
 	if stats.OriginalSizeBytes > 0 {
 		stats.CompressionRatio = 1.0 - float64(stats.TotalSizeBytes)/float64(stats.OriginalSizeBytes)
 	}

@@ -132,7 +132,7 @@ gleann has two distinct memory subsystems that serve different audiences:
 | Subsystem | Storage | Interface | Audience |
 |-----------|---------|-----------|----------|
 | **Long-term Memory** (`pkg/memory`) | BBolt | `gleann memory *` · `/remember` in chat | Human users & agents via CLI |
-| **Memory Engine** (`internal/graph/kuzu`) | KuzuDB | MCP tools · REST `/api/memory/{name}/*` | External AI agents (programmatic API) |
+| **Memory Engine** (`pkg/memory`) | SQLite (`memory.sqlite`) | MCP tools · REST `/api/memory/{name}/*` | External AI agents (programmatic API) |
 
 The Long-term Memory layer stores natural-language facts and conversation
 summaries that are compiled into `<memory_context>` XML and automatically
@@ -245,7 +245,7 @@ External Agent (e.g. Cursor, Claude)
 | Hierarchical GraphRAG | — | ✅ (Folders, Documents, Headings) |
 | Extractive Summarizer | — | ✅ (Build-time NLP algorithm) |
 | MCP Server | ✅ | ✅ (built-in) |
-| Memory Engine (AI agent memory) | — | ✅ (Entity/RELATES_TO KuzuDB) |
+| Memory Engine (AI agent memory) | — | ✅ (entities and relations in SQLite) |
 | Long-term Memory (BBolt blocks) | — | ✅ (short/medium/long tiers, auto-injection) |
 | Rate Limiting | — | ✅ (per-IP token bucket, 429) |
 | Request Timeouts | — | ✅ (per-path context deadline, 504) |

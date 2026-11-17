@@ -120,6 +120,35 @@ jobs:
           fail_ci_if_error: false
           verbose: true
 
+  # ── RFC 003 step 0: SQLite store on windows/amd64 and linux/arm64 ──
+  # The store (internal/store, modernc.org/sqlite + FTS5) was measured only
+  # on linux/amd64 in the spike; running its tests on these two platforms is
+  # an early reversal gate (RFC 003 sections 7.2, 8 step 0).
+  store-sqlite:
+    name: Store SQLite (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-24.04-arm]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+
+      - name: Build store
+        run: GOTOOLCHAIN=auto go build ./internal/store/
+        shell: bash
+
+      - name: Test store (SQLite + FTS5)
+        timeout-minutes: 10
+        run: GOTOOLCHAIN=auto go test -count=1 -timeout 8m ./internal/store/
+        shell: bash
+
   # ── Build Verification (all platforms, both tags) ────────────
   build-check:
     name: Build (${{ matrix.os }} / ${{ matrix.tags }})
@@ -190,7 +219,9 @@ jobs:
       - name: staticcheck
         uses: dominikh/staticcheck-action@v1
         with:
-          version: latest
+          # Pinned: 2026.2.1 is staticcheck v0.8.1 (prebuilt binary); keep it
+          # equal to STATICCHECK_VERSION in the Makefile.
+          version: "2026.2.1"
           install-go: false
       - name: govulncheck
         continue-on-error: true

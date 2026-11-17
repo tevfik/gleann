@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/tevfik/gleann/internal/store"
 	"github.com/tevfik/gleann/pkg/gleann"
 )
 
@@ -23,6 +24,10 @@ import (
 func corruptLikeOlderVersions(t *testing.T, cfg gleann.Config, name, backend string) {
 	t.Helper()
 	base := filepath.Join(cfg.IndexDir, name, name)
+	if gleann.StoreFormatOf(base) == 2 {
+		corruptFormat2LikeInPlaceRemoval(t, cfg, base, backend)
+		return
+	}
 	pm := gleann.NewPassageManager(base)
 	if err := pm.Load(); err != nil {
 		t.Fatal(err)
@@ -59,17 +64,72 @@ func corruptLikeOlderVersions(t *testing.T, cfg gleann.Config, name, backend str
 	}
 }
 
+// corruptFormat2LikeInPlaceRemoval leaves a format-2 index in the same shape
+// of damage: the source holding slot 0 is deleted without renumbering (as a
+// crash between RemoveSource and ReassignSlots would), so the remaining slots
+// have a gap, and the vector file is rebuilt from the remaining passages in
+// slot order, so vector n belongs to the n-th remaining passage, not to the
+// passage whose slot is n.
+func corruptFormat2LikeInPlaceRemoval(t *testing.T, cfg gleann.Config, base, backend string) {
+	t.Helper()
+	ctx := context.Background()
+	st, err := store.Open(base+".db", store.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := st.BySlot(ctx, []int64{0})
+	if err != nil || len(first) == 0 {
+		t.Fatalf("read slot 0: %+v (%v)", first, err)
+	}
+	src := first[0].Source
+	if src == "" {
+		t.Fatal("passage at slot 0 has no source")
+	}
+	if _, err := st.RemoveSource(ctx, src); err != nil {
+		t.Fatal(err)
+	}
+	var remaining []store.Passage
+	if err := st.ForEach(ctx, func(p store.Passage) error {
+		remaining = append(remaining, p)
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	_ = st.Close()
+	sort.Slice(remaining, func(i, j int) bool { return *remaining[i].VecSlot < *remaining[j].VecSlot })
+
+	embs := make([][]float32, len(remaining))
+	for i, p := range remaining {
+		embs[i] = bowEmbed(p.Text)
+	}
+	factory, err := gleann.GetBackend(backend)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.Backend = backend
+	data, err := factory.NewBuilder(cfg).Build(context.Background(), embs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(base+".index", data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // selfRetrievalMisses returns the IDs of the passages that a vector search for
 // their own text does not return: not first when strict, not among the top three
 // otherwise (approximate backends may rank a near-tie ahead).
 func selfRetrievalMisses(t *testing.T, cfg gleann.Config, name string, strict bool) []int64 {
 	t.Helper()
-	pm := gleann.NewReadOnlyPassageManager(filepath.Join(cfg.IndexDir, name, name))
-	if err := pm.Load(); err != nil {
+	ps, err := gleann.OpenPassageStore(filepath.Join(cfg.IndexDir, name, name), true)
+	if err != nil {
 		t.Fatal(err)
 	}
-	all := pm.All()
-	_ = pm.Close()
+	if err := ps.Load(); err != nil {
+		t.Fatal(err)
+	}
+	all := ps.All()
+	_ = ps.Close()
 	if len(all) == 0 {
 		t.Fatal("no passages")
 	}
@@ -188,7 +248,13 @@ func TestRepairRefusesWhenThePassageStoreIsGone(t *testing.T) {
 	if _, err := Build(ctx, BuildOptions{Options: opts, Name: "g", DocsDir: equivFixture(t)}); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Remove(filepath.Join(cfg.IndexDir, "g", "g.passages.db")); err != nil {
+	// Remove the record store itself: format 1 keeps bbolt passages, format 2
+	// the SQLite database.
+	storeFile := filepath.Join(cfg.IndexDir, "g", "g.passages.db")
+	if gleann.StoreFormatOf(filepath.Join(cfg.IndexDir, "g", "g")) == 2 {
+		storeFile = filepath.Join(cfg.IndexDir, "g", "g.db")
+	}
+	if err := os.Remove(storeFile); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := Repair(ctx, RepairOptions{Options: opts, Name: "g"}); !errors.Is(err, ErrNotRepairable) {
@@ -261,15 +327,18 @@ func TestRepairForceDoesNothingForAnIndexWithoutPassages(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Remove every passage: the index is emptied, which is a valid state.
-	pm := gleann.NewPassageManager(filepath.Join(cfg.IndexDir, "e", "e"))
-	if err := pm.Load(); err != nil {
+	ps, err := gleann.OpenPassageStore(filepath.Join(cfg.IndexDir, "e", "e"), true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ps.Load(); err != nil {
 		t.Fatal(err)
 	}
 	var sources []string
-	for _, p := range pm.All() {
+	for _, p := range ps.All() {
 		sources = append(sources, p.Metadata["source"].(string))
 	}
-	_ = pm.Close()
+	_ = ps.Close()
 	embedder, cleanup, err := newPipelineEnv(ctx, &opts, true)
 	if err != nil {
 		t.Fatal(err)

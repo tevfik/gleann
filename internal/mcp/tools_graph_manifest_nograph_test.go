@@ -6,6 +6,7 @@ import "testing"
 
 // A build without the code graph must not advertise tools that can only fail.
 func TestMCP_NoGraphBuildHidesGraphTools(t *testing.T) {
+	t.Setenv("GLEANN_STORE_FORMAT", "")
 	for _, tc := range []struct {
 		profile string
 		clean   bool
@@ -37,5 +38,19 @@ func TestMCP_NoGraphBuildHidesGraphTools(t *testing.T) {
 			t.Errorf("profile %q lost gleann_search", tc.profile)
 		}
 		srv.Close()
+	}
+}
+
+// With a format-2 index the SQLite code graph serves the graph tools in a
+// build without CGo, so they stay advertised.
+func TestMCP_NoGraphBuildKeepsGraphToolsForFormat2(t *testing.T) {
+	t.Setenv("GLEANN_STORE_FORMAT", "2")
+	srv := NewServer(Config{IndexDir: t.TempDir(), EmbeddingProvider: "ollama", EmbeddingModel: "test", ToolsProfile: "full"})
+	defer srv.Close()
+	tools := srv.mcpServer.ListTools()
+	for _, n := range graphOnlyTools {
+		if _, ok := tools[n]; !ok {
+			t.Errorf("format 2 enabled but %q is not advertised", n)
+		}
 	}
 }

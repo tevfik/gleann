@@ -1,5 +1,3 @@
-//go:build treesitter
-
 // Package mcp — Memory Engine MCP tool definitions.
 //
 // These three tools allow autonomous AI agents that speak the Model Context
@@ -15,37 +13,40 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 
 	mcpsdk "github.com/mark3labs/mcp-go/mcp"
-	kgraph "github.com/tevfik/gleann/internal/graph/kuzu"
 	"github.com/tevfik/gleann/pkg/gleann"
+	"github.com/tevfik/gleann/pkg/memory"
 )
 
 // ── Memory service pool ───────────────────────────────────────────────────────
 
 // mcpMemoryPool caches MemoryService instances per index name within an MCP
-// server session.  Each database is stored at <indexDir>/<name>_memory.
+// server session, backed by the global SQLite memory database (RFC 003 section 3.5).
 type mcpMemoryPool struct {
 	mu            sync.RWMutex
-	services      map[string]*kgraph.MemoryService
-	dbs           map[string]*kgraph.DB
+	services      map[string]gleann.MemoryService
+	store         *memory.Store
 	dir           string
-	syncerFactory func(name string) kgraph.VectorSyncer // optional
+	syncerFactory func(name string) gleann.VectorSyncer // optional
+	warned        map[string]bool
 }
 
 func newMCPMemoryPool(indexDir string) *mcpMemoryPool {
 	return &mcpMemoryPool{
-		services: make(map[string]*kgraph.MemoryService),
-		dbs:      make(map[string]*kgraph.DB),
+		services: make(map[string]gleann.MemoryService),
 		dir:      indexDir,
+		warned:   make(map[string]bool),
 	}
 }
 
 // get returns a cached MemoryService for name, opening it lazily on first access.
-func (p *mcpMemoryPool) get(name string) (*kgraph.MemoryService, error) {
+func (p *mcpMemoryPool) get(name string) (gleann.MemoryService, error) {
 	p.mu.RLock()
 	svc, ok := p.services[name]
 	p.mu.RUnlock()
@@ -63,31 +64,45 @@ func (p *mcpMemoryPool) get(name string) (*kgraph.MemoryService, error) {
 	if err := gleann.ValidateName(name); err != nil {
 		return nil, err
 	}
-	dbPath := filepath.Join(p.dir, name+"_memory")
-	db, err := kgraph.Open(dbPath)
-	if err != nil {
-		return nil, fmt.Errorf("open memory db %q: %w", dbPath, err)
+
+	if p.store == nil {
+		s, err := memory.OpenStore(memory.DefaultStorePath())
+		if err != nil {
+			return nil, fmt.Errorf("open memory store: %w", err)
+		}
+		p.store = s
 	}
 
-	var syncer kgraph.VectorSyncer
+	// Check if legacy Kùzu data exists and SQLite namespace is empty.
+	kuzuPath := filepath.Join(p.dir, name+"_memory")
+	if fi, err := os.Stat(kuzuPath); err == nil && fi.IsDir() {
+		if !p.warned[name] {
+			if empty, err := p.store.EntityNamespaceEmpty(name); err == nil && empty {
+				p.warned[name] = true
+				slog.Warn("legacy Kùzu memory data detected; old entities need gleann index migrate in a kuzu build",
+					"index", name, "path", kuzuPath)
+			}
+		}
+	}
+
+	var syncer gleann.VectorSyncer
 	if p.syncerFactory != nil {
 		syncer = p.syncerFactory(name)
 	}
-	svc = kgraph.NewMemoryService(db, syncer)
-	p.dbs[name] = db
-	p.services[name] = svc
-	return svc, nil
+	entitySvc := p.store.EntityService(name, syncer)
+	p.services[name] = entitySvc
+	return entitySvc, nil
 }
 
-// closeAll releases all open database handles.
+// closeAll releases the memory store handle and clears cached services.
 func (p *mcpMemoryPool) closeAll() {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	for _, db := range p.dbs {
-		db.Close()
+	if p.store != nil {
+		_ = p.store.Close()
+		p.store = nil
 	}
-	p.dbs = make(map[string]*kgraph.DB)
-	p.services = make(map[string]*kgraph.MemoryService)
+	p.services = make(map[string]gleann.MemoryService)
 }
 
 // ── Tool: inject_knowledge_graph ─────────────────────────────────────────────

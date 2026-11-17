@@ -518,7 +518,19 @@ Options:
 			// Same path as `index sync`: model check, rollback of a failed
 			// rebuild and the graph update all happen inside.
 			if _, err := indexing.SyncChanged(ctx, syncOpts, files); err != nil {
-				fmt.Fprintf(os.Stderr, "error: %v\n", err)
+				if errors.Is(err, indexing.ErrIndexLocked) {
+					// Another gleann process is building/syncing this index.
+					// Keep the pending changes and retry on the next watch
+					// tick instead of dropping them or exiting.
+					fmt.Fprintf(os.Stderr, "index %q is busy: %v; retrying on next change\n", name, err)
+					changedMu.Lock()
+					for _, f := range files {
+						changedFiles[f] = true
+					}
+					changedMu.Unlock()
+				} else {
+					fmt.Fprintf(os.Stderr, "error: %v\n", err)
+				}
 			} else {
 				fmt.Printf("⚡ Update complete in %s\n", time.Since(start).Round(time.Millisecond))
 			}

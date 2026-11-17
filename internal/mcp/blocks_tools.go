@@ -7,11 +7,13 @@
 //
 // Tools registered (no build tag — pure Go):
 //
-//   - memory_remember  — store a fact in long-term memory
-//   - memory_forget    — remove a block by ID or content match
-//   - memory_search    — full-text search across all tiers
-//   - memory_list      — list blocks with optional tier filter
-//   - memory_context   — get the compiled <memory_context> window for LLM injection
+//   - memory_remember     — store a fact in long-term memory
+//   - memory_forget       — remove a block by ID or content match
+//   - memory_search       — full-text search across all tiers
+//   - memory_list         — list blocks with optional tier filter
+//   - memory_context      — get the compiled <memory_context> window for LLM injection
+//   - memory_failure_add  — record a command failure and its fix
+//   - memory_failure_list — list recorded failures
 package mcp
 
 import (
@@ -571,6 +573,19 @@ func (s *Server) buildMemoryContextTool() mcpsdk.Tool {
 					"type":        "string",
 					"description": "Scope for memory context (default: current git repository + global). Pass 'all' or '*' for all scopes.",
 				},
+				"verbose": map[string]interface{}{
+					"type":        "boolean",
+					"description": "Append the injection budget report (what was injected and what the token cap dropped).",
+				},
+				"command": map[string]interface{}{
+					"type":        "string",
+					"description": "The command the current task is about to run; surfaces matching recorded failures.",
+				},
+				"paths": map[string]interface{}{
+					"type":        "array",
+					"items":       map[string]interface{}{"type": "string"},
+					"description": "Files the current task touches; surfaces recorded failures overlapping these paths.",
+				},
 			},
 		},
 	}
@@ -579,8 +594,14 @@ func (s *Server) buildMemoryContextTool() mcpsdk.Tool {
 func (s *Server) handleMemoryContext(ctx context.Context, req mcpsdk.CallToolRequest) (*mcpsdk.CallToolResult, error) {
 	args, _ := req.Params.Arguments.(map[string]any)
 	scope := ""
+	verbose := false
+	var command string
+	var paths []string
 	if args != nil {
 		scope, _ = args["scope"].(string)
+		verbose, _ = args["verbose"].(bool)
+		command, _ = args["command"].(string)
+		paths = stringSliceArg(args, "paths")
 	}
 
 	if scope == "" {
@@ -590,12 +611,17 @@ func (s *Server) handleMemoryContext(ctx context.Context, req mcpsdk.CallToolReq
 	}
 
 	var rendered string
+	var budget *memory.ContextBudgetReport
 	var remoteDone bool
-	if rc := remoteMemoryClient(); rc != nil {
-		r, err := rc.Context(scope)
-		if err == nil {
-			rendered = r
-			remoteDone = true
+	// Failures are looked up locally (the running server cannot pass its
+	// manager), so a task-scoped context always builds against the local store.
+	if command == "" && len(paths) == 0 {
+		if rc := remoteMemoryClient(); rc != nil {
+			r, err := rc.Context(scope)
+			if err == nil {
+				rendered = r
+				remoteDone = true
+			}
 		}
 	}
 	if !remoteDone {
@@ -605,15 +631,27 @@ func (s *Server) handleMemoryContext(ctx context.Context, req mcpsdk.CallToolReq
 		}
 
 		s.checkStaleBlocks(mgr, scope)
-		cw, err := mgr.BuildScopedContext(scope)
+		var cw *memory.ContextWindow
+		if command != "" || len(paths) > 0 {
+			cw, err = mgr.BuildTaskContext(scope, command, paths)
+		} else {
+			cw, err = mgr.BuildScopedContext(scope)
+		}
 		if err != nil {
 			return mcpsdk.NewToolResultError("build context: " + err.Error()), nil
 		}
 		rendered = cw.Render()
+		budget = cw.Budget
 	}
 
 	if rendered == "" {
 		return mcpsdk.NewToolResultText("Memory is empty — no blocks stored yet for scope."), nil
+	}
+	if verbose {
+		if budget != nil {
+			return mcpsdk.NewToolResultText(rendered + "\n\n" + budget.Summary()), nil
+		}
+		rendered += "\n\nmemory budget: not reported by a running server"
 	}
 	return mcpsdk.NewToolResultText(rendered), nil
 }
@@ -641,4 +679,155 @@ func (s *Server) checkStaleBlocks(mgr *memory.Manager, scope string) {
 	if len(modifiedFiles) > 0 {
 		_, _ = mgr.MarkSuspect(modifiedFiles, nil)
 	}
+}
+
+// ── Tool: memory_failure_add ────────────────────────────────────────────────
+
+func (s *Server) buildMemoryFailureAddTool() mcpsdk.Tool {
+	return mcpsdk.Tool{
+		Name: "memory_failure_add",
+		Description: "Record a command failure and the fix that resolved it, so future " +
+			"sessions surface it (via memory_context) instead of repeating the mistake. " +
+			"Recording the same failure again reinforces the existing block.",
+		InputSchema: mcpsdk.ToolInputSchema{
+			Type: "object",
+			Properties: map[string]interface{}{
+				"command": map[string]interface{}{
+					"type":        "string",
+					"description": "The command that failed (e.g. 'go test ./pkg/memory/')",
+				},
+				"error": map[string]interface{}{
+					"type":        "string",
+					"description": "The error text produced by the failing command",
+				},
+				"fix": map[string]interface{}{
+					"type":        "string",
+					"description": "The fix that resolved the failure",
+				},
+				"paths": map[string]interface{}{
+					"type":        "array",
+					"items":       map[string]interface{}{"type": "string"},
+					"description": "File paths involved in the failure",
+				},
+				"symbols": map[string]interface{}{
+					"type":        "array",
+					"items":       map[string]interface{}{"type": "string"},
+					"description": "Symbol names involved in the failure",
+				},
+			},
+			Required: []string{"command", "error"},
+		},
+	}
+}
+
+func (s *Server) handleMemoryFailureAdd(ctx context.Context, req mcpsdk.CallToolRequest) (*mcpsdk.CallToolResult, error) {
+	args, ok := req.Params.Arguments.(map[string]any)
+	if !ok {
+		return mcpsdk.NewToolResultError("invalid arguments"), nil
+	}
+
+	command, _ := args["command"].(string)
+	errText, _ := args["error"].(string)
+	if command == "" || errText == "" {
+		return mcpsdk.NewToolResultError("command and error are required"), nil
+	}
+
+	fix, _ := args["fix"].(string)
+	paths := stringSliceArg(args, "paths")
+	symbols := stringSliceArg(args, "symbols")
+
+	mgr, err := s.blockMem.get()
+	if err != nil {
+		return mcpsdk.NewToolResultError("open memory store: " + err.Error()), nil
+	}
+
+	saved, err := mgr.RecordFailure(memory.Failure{
+		Command: command,
+		Error:   errText,
+		Fix:     fix,
+		Paths:   paths,
+		Symbols: symbols,
+	})
+	if err != nil {
+		return mcpsdk.NewToolResultError("record failure: " + err.Error()), nil
+	}
+
+	if saved.Confirms > 1 {
+		return mcpsdk.NewToolResultText(fmt.Sprintf(
+			"Failure confirmed (%dx) for %q: %s", saved.Confirms, command, saved.Content,
+		)), nil
+	}
+	return mcpsdk.NewToolResultText(fmt.Sprintf(
+		"Recorded failure (ID: %s) for %q: %s", saved.ID, command, saved.Content,
+	)), nil
+}
+
+// ── Tool: memory_failure_list ───────────────────────────────────────────────
+
+func (s *Server) buildMemoryFailureListTool() mcpsdk.Tool {
+	return mcpsdk.Tool{
+		Name:        "memory_failure_list",
+		Description: "List recorded command failures (command, error and fix).",
+		InputSchema: mcpsdk.ToolInputSchema{
+			Type:       "object",
+			Properties: map[string]interface{}{},
+		},
+	}
+}
+
+func (s *Server) handleMemoryFailureList(ctx context.Context, req mcpsdk.CallToolRequest) (*mcpsdk.CallToolResult, error) {
+	mgr, err := s.blockMem.get()
+	if err != nil {
+		return mcpsdk.NewToolResultError("open memory store: " + err.Error()), nil
+	}
+
+	failures, err := mgr.ListFailures()
+	if err != nil {
+		return mcpsdk.NewToolResultError("list failures: " + err.Error()), nil
+	}
+
+	if len(failures) == 0 {
+		return mcpsdk.NewToolResultText("No failures recorded."), nil
+	}
+
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "%d recorded failure(s):\n\n", len(failures))
+	for i, b := range failures {
+		fmt.Fprintf(&sb, "%d. command: %s\n   error: %s\n", i+1, b.Metadata[memory.FailureMetaCommand], b.Content)
+		if fix := b.Metadata[memory.FailureMetaFix]; fix != "" {
+			fmt.Fprintf(&sb, "   fix: %s\n", fix)
+		}
+		if len(b.Paths) > 0 {
+			fmt.Fprintf(&sb, "   files: %s\n", strings.Join(b.Paths, ", "))
+		}
+	}
+	return mcpsdk.NewToolResultText(sb.String()), nil
+}
+
+// stringSliceArg reads a string-array argument (marshalled back through JSON
+// so both []string and []interface{} arrive consistently).
+func stringSliceArg(args map[string]any, key string) []string {
+	raw, ok := args[key]
+	if !ok || raw == nil {
+		return nil
+	}
+	if slice, ok := raw.([]interface{}); ok {
+		out := make([]string, 0, len(slice))
+		for _, v := range slice {
+			if str, ok := v.(string); ok && str != "" {
+				out = append(out, str)
+			}
+		}
+		return out
+	}
+	if slice, ok := raw.([]string); ok {
+		out := make([]string, 0, len(slice))
+		for _, str := range slice {
+			if str != "" {
+				out = append(out, str)
+			}
+		}
+		return out
+	}
+	return nil
 }

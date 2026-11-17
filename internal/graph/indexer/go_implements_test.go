@@ -1,11 +1,11 @@
-//go:build treesitter && !windows
+//go:build !windows
 
 package indexer
 
 import (
 	"testing"
 
-	"github.com/tevfik/gleann/internal/graph/kuzu"
+	gtypes "github.com/tevfik/gleann/internal/graph/types"
 	"github.com/tevfik/gleann/modules/chunking"
 )
 
@@ -33,10 +33,9 @@ type MyServer struct {
 	name string
 }
 `
-	idx := &Indexer{module: "github.com/test/proj", root: "/proj"}
 	chunks := chunking.NewASTChunker(chunking.DefaultASTChunkerConfig()).ChunkCode(source, "/proj/server/server.go")
 
-	impls, refs, _ := collectGoImplementsEdges(idx, "server/server.go", source, chunks)
+	impls, refs, _ := collectGoImplementsEdges("github.com/test/proj", "server/server.go", source, chunks)
 
 	// ExtendedHandler should IMPLEMENT Handler and Logger.
 	foundHandlerImpl := false
@@ -95,10 +94,9 @@ func NewService(cfg Config, db Database) *Service {
 	return &Service{config: cfg, db: db}
 }
 `
-	idx := &Indexer{module: "github.com/test/proj", root: "/proj"}
 	chunks := chunking.NewASTChunker(chunking.DefaultASTChunkerConfig()).ChunkCode(source, "/proj/service/service.go")
 
-	_, refs, _ := collectGoImplementsEdges(idx, "service/service.go", source, chunks)
+	_, refs, _ := collectGoImplementsEdges("github.com/test/proj", "service/service.go", source, chunks)
 
 	// Service should REFERENCE Config and Database via fields.
 	foundConfigRef := false
@@ -136,10 +134,9 @@ func Handle(req Request) Response {
 	return Response{Code: 200}
 }
 `
-	idx := &Indexer{module: "github.com/test/proj", root: "/proj"}
 	chunks := chunking.NewASTChunker(chunking.DefaultASTChunkerConfig()).ChunkCode(source, "/proj/handler/handler.go")
 
-	_, refs, _ := collectGoImplementsEdges(idx, "handler/handler.go", source, chunks)
+	_, refs, _ := collectGoImplementsEdges("github.com/test/proj", "handler/handler.go", source, chunks)
 
 	foundReqRef := false
 	foundRespRef := false
@@ -169,10 +166,9 @@ import "net/http"
 func serve(w http.ResponseWriter, r *http.Request) {
 }
 `
-	idx := &Indexer{module: "github.com/test/proj", root: "/proj"}
 	chunks := chunking.NewASTChunker(chunking.DefaultASTChunkerConfig()).ChunkCode(source, "/proj/main.go")
 
-	_, refs, _ := collectGoImplementsEdges(idx, "main.go", source, chunks)
+	_, refs, _ := collectGoImplementsEdges("github.com/test/proj", "main.go", source, chunks)
 
 	// Cross-package references to net/http types should appear.
 	foundHTTPRef := false
@@ -188,9 +184,9 @@ func serve(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// Helper to check existing kuzu_symbol function still works.
+// Helper to check the callee stub builder still works.
 func TestKuzuSymbolHelper(t *testing.T) {
-	sym := kuzu_symbol("github.com/test/proj.MyFunc")
+	sym := calleeStub("github.com/test/proj.MyFunc")
 	if sym.FQN != "github.com/test/proj.MyFunc" {
 		t.Errorf("unexpected FQN: %s", sym.FQN)
 	}
@@ -201,7 +197,7 @@ func TestKuzuSymbolHelper(t *testing.T) {
 
 // Verify that kuzu types are properly constructed.
 func TestEdgeImplementsType(t *testing.T) {
-	e := kuzu.EdgeImplements{
+	e := gtypes.EdgeImplements{
 		ImplFQN:  "pkg.MyStruct",
 		IfaceFQN: "pkg.MyInterface",
 	}
@@ -211,7 +207,7 @@ func TestEdgeImplementsType(t *testing.T) {
 }
 
 func TestEdgeReferencesType(t *testing.T) {
-	e := kuzu.EdgeReferences{
+	e := gtypes.EdgeReferences{
 		RefererFQN: "pkg.MyFunc",
 		RefereeFQN: "pkg.Config",
 		Confidence: "extracted",

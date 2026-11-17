@@ -2,6 +2,8 @@
 
 gleann can build a property graph of your codebase **in parallel** with the vector embedding index, using KuzuDB as the storage engine and tree-sitter (or `go/ast`) as the parser.
 
+**Format-2 indexes (`GLEANN_STORE_FORMAT=2`) keep the graph in the index database instead** (`<name>/<name>.db`, tables `symbols`, `edges`, `doc_nodes`, `doc_explains`; RFC 003 step 7) and build and serve it in every build, including the pure-Go `CGO_ENABLED=0` binary: `index build --graph`, `index sync` and `graph deps|callers|explain|path|query|toc` work there, and no `<name>_graph` Kùzu directory is created. Without tree-sitter the graph is extracted with `go/ast`: Go files get CALLS, IMPLEMENTS and REFERENCES edges, other languages contribute their declarations only. The analysis commands (`graph viz|report|communities|export|wiki|hook|map|risk`) still need a `-tags treesitter` build and a Kùzu graph.
+
 ## Usage
 
 ```bash
@@ -106,7 +108,7 @@ Response includes:
 
 | Language | Declaration | Call Extraction |
 |----------|-------------|------------------|
-| Go | `go/ast` native | `go/ast` call expressions |
+| Go | `go/ast` native | `go/types` (exact) in format-2 full builds when the module type-checks; otherwise `go/ast` call expressions |
 | Python | tree-sitter `function_definition`, `class_definition` | `call` nodes |
 | JS / TS | tree-sitter `function_declaration`, `class_declaration` | `call_expression` nodes |
 | C / C++ | tree-sitter `function_definition`, `class_specifier` | `call_expression` nodes |
@@ -153,6 +155,13 @@ Each CALLS edge carries an implicit confidence label:
 | `extracted` | Deterministic, AST-resolved call (tree-sitter or go/ast) |
 | `inferred` | Heuristic-based resolution (e.g. methods via type inference) |
 | `ambiguous` | Unresolved — callee couldn't be mapped to a known FQN |
+| `exact` | Type-checked with `go/types` (format-2 full builds of a Go module, see below) |
+
+### Exact Go resolution
+
+A full graph build of a format-2 index whose source tree is a Go module loads the module with `go/types` (through `go list`) and resolves every call exactly: interface calls to the interface method, promoted methods to their declaring type, aliased and dot imports, generic calls, method values; a shadowed local function is not mistaken for the package-level one. IMPLEMENTS edges are added by method set (`T` or `*T` implements `I`), not only by embedding. These edges carry the confidence `exact`.
+
+It needs a Go toolchain on the machine; the load never downloads modules or edits `go.mod` (`GOPROXY=off`, `-mod=readonly`) and is bounded to two minutes. Without a toolchain, outside a module, or for a package with type errors, the syntactic resolver is used for those files. `GLEANN_GRAPH_EXACT=0` turns it off. Incremental syncs re-extract the changed files with the syntactic resolver. On gleann's own tree (20 sampled functions) the exact graph finds callers with precision 0.993 / recall 1.000 against 0.992 / 0.948 for the syntactic resolver; the full graph build takes 3.8 s instead of 1.8 s.
 
 ## Token Reduction Benchmark
 

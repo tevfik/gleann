@@ -120,14 +120,10 @@ func beamSearchPQ(idx *DiskIndex, query []float32, l int, pqTable [][]float32) [
 	return candidates
 }
 
-// SearchExact performs beam search with exact distances (all embeddings in RAM).
-// This is used when all embeddings fit in memory (small datasets or testing).
+// SearchExact performs beam search with exact distances (from in-memory or mmap embeddings).
 func SearchExact(idx *DiskIndex, query []float32, topK, searchL int, distFunc DistanceFunc) []Candidate {
 	getVector := func(id int64) []float32 {
-		if id >= 0 && id < idx.NumNodes {
-			return idx.Embeddings[id]
-		}
-		return nil
+		return idx.GetVector(id)
 	}
 	return SearchDiskIndex(idx, query, topK, searchL, 0, distFunc, getVector)
 }

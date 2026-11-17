@@ -1,5 +1,3 @@
-//go:build treesitter
-
 package indexer
 
 import (
@@ -10,47 +8,20 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/tevfik/gleann/internal/graph/kuzu"
+	gtypes "github.com/tevfik/gleann/internal/graph/types"
 	"github.com/tevfik/gleann/modules/chunking"
 )
 
-// collectGoCallQueries inspects Go source with go/ast and returns Cypher queries
-// for CALLS edges (to be batched into a transaction by the caller).
-func collectGoCallQueries(idx *Indexer, relPath, source string, chunks []chunking.CodeChunk) (nodes []kuzu.SymbolNode, edges []kuzu.EdgeCalls, err error) {
+// collectGoCallQueries inspects Go source with go/ast and returns CALLS edges
+// plus callee stub symbols (to be batched into a transaction by the caller).
+func collectGoCallQueries(module, relPath, source string, chunks []chunking.CodeChunk) (nodes []gtypes.SymbolNode, edges []gtypes.EdgeCalls, err error) {
 	fset := token.NewFileSet()
 	file, err := parser.ParseFile(fset, relPath, source, 0)
 	if err != nil {
 		return nil, nil, fmt.Errorf("parse: %w", err)
 	}
 
-	// Build a quick name → FQN map for locally known symbols.
-	localFQN := make(map[string]string)
-	for _, ch := range chunks {
-		if ch.Name != "" {
-			localFQN[ch.Name] = idx.buildFQN(relPath, ch.Name)
-		}
-	}
-
-	// Build a secondary map for chunker-split functions (e.g. "Agent.Run" → "Agent.Run_part1").
-	// When the chunker splits a large function into parts, the Go AST still sees
-	// the original declaration name. Map the original name to the _part1 FQN so
-	// CALLS edges reference a Symbol that actually exists.
-	splitFQN := make(map[string]string)
-	for name, fqn := range localFQN {
-		if strings.HasSuffix(name, "_part1") {
-			origName := strings.TrimSuffix(name, "_part1")
-			if _, exists := localFQN[origName]; !exists {
-				splitFQN[origName] = fqn
-			}
-		}
-	}
-
-	pkgDir := filepath.Dir(relPath)
-	pkgDir = strings.ReplaceAll(pkgDir, string(filepath.Separator), "/")
-	pkgPrefix := idx.module
-	if pkgDir != "." {
-		pkgPrefix = idx.module + "/" + pkgDir
-	}
+	localFQN, splitFQN, pkgPrefix := buildGoFQNMaps(module, relPath, chunks)
 
 	importMap := make(map[string]string)
 	for _, imp := range file.Imports {
@@ -75,22 +46,7 @@ func collectGoCallQueries(idx *Indexer, relPath, source string, chunks []chunkin
 			continue
 		}
 
-		callerName := funcDecl.Name.Name
-		if funcDecl.Recv != nil && len(funcDecl.Recv.List) > 0 {
-			recvType := exprTypeName(funcDecl.Recv.List[0].Type)
-			callerName = recvType + "." + callerName
-		}
-
-		// Resolve caller FQN: prefer localFQN (exact match), then splitFQN
-		// (chunker-split _part1), then fall back to pkgPrefix.
-		var callerFQN string
-		if fqn, ok := localFQN[callerName]; ok {
-			callerFQN = fqn
-		} else if fqn, ok := splitFQN[callerName]; ok {
-			callerFQN = fqn
-		} else {
-			callerFQN = pkgPrefix + "." + callerName
-		}
+		callerFQN := goCallerFQN(funcDecl, localFQN, splitFQN, pkgPrefix)
 
 		ast.Inspect(funcDecl.Body, func(n ast.Node) bool {
 			call, ok := n.(*ast.CallExpr)
@@ -107,8 +63,8 @@ func collectGoCallQueries(idx *Indexer, relPath, source string, chunks []chunkin
 			}
 			seen[edgeKey] = true
 
-			nodes = append(nodes, kuzu_symbol(calleeFQN))
-			edges = append(edges, kuzu.EdgeCalls{CallerFQN: callerFQN, CalleeFQN: calleeFQN, Confidence: "extracted"})
+			nodes = append(nodes, calleeStub(calleeFQN))
+			edges = append(edges, gtypes.EdgeCalls{CallerFQN: callerFQN, CalleeFQN: calleeFQN, Confidence: "extracted"})
 			return true
 		})
 	}
@@ -171,9 +127,56 @@ func exprTypeName(expr ast.Expr) string {
 	return ""
 }
 
-// kuzu_symbol builds a minimal SymbolNode for an unknown callee.
-func kuzu_symbol(fqn string) kuzu.SymbolNode {
+// calleeStub builds a minimal SymbolNode for an unknown callee.
+func calleeStub(fqn string) gtypes.SymbolNode {
 	parts := strings.SplitN(fqn, ".", -1)
 	name := parts[len(parts)-1]
-	return kuzu.SymbolNode{FQN: fqn, Kind: "function", Name: name}
+	return gtypes.SymbolNode{FQN: fqn, Kind: "function", Name: name}
+}
+
+// buildGoFQNMaps builds the name → FQN lookup maps shared by the syntactic and
+// the exact (go/types) call collectors so both attribute edges to the same
+// caller symbols. localFQN maps chunk symbol names to their FQN; splitFQN maps
+// the original name of a chunker-split function to its _part1 FQN (the AST sees
+// the unsplit declaration name); pkgPrefix is the package FQN prefix.
+func buildGoFQNMaps(module, relPath string, chunks []chunking.CodeChunk) (localFQN, splitFQN map[string]string, pkgPrefix string) {
+	localFQN = make(map[string]string)
+	for _, ch := range chunks {
+		if ch.Name != "" {
+			localFQN[ch.Name] = buildFQNOf(module, relPath, ch.Name)
+		}
+	}
+	splitFQN = make(map[string]string)
+	for name, fqn := range localFQN {
+		if strings.HasSuffix(name, "_part1") {
+			origName := strings.TrimSuffix(name, "_part1")
+			if _, exists := localFQN[origName]; !exists {
+				splitFQN[origName] = fqn
+			}
+		}
+	}
+	pkgDir := filepath.Dir(relPath)
+	pkgDir = strings.ReplaceAll(pkgDir, string(filepath.Separator), "/")
+	pkgPrefix = module
+	if pkgDir != "." {
+		pkgPrefix = module + "/" + pkgDir
+	}
+	return localFQN, splitFQN, pkgPrefix
+}
+
+// goCallerFQN resolves the FQN of the function declaring a call site: prefer
+// localFQN (exact match), then splitFQN (chunker-split _part1), then pkgPrefix.
+func goCallerFQN(funcDecl *ast.FuncDecl, localFQN, splitFQN map[string]string, pkgPrefix string) string {
+	callerName := funcDecl.Name.Name
+	if funcDecl.Recv != nil && len(funcDecl.Recv.List) > 0 {
+		recvType := exprTypeName(funcDecl.Recv.List[0].Type)
+		callerName = recvType + "." + callerName
+	}
+	if fqn, ok := localFQN[callerName]; ok {
+		return fqn
+	}
+	if fqn, ok := splitFQN[callerName]; ok {
+		return fqn
+	}
+	return pkgPrefix + "." + callerName
 }

@@ -24,6 +24,11 @@ type Manager struct {
 	// Character limit defaults (Letta-inspired).
 	DefaultCharLimit int  // Default char limit for new blocks (0 = unlimited)
 	EnforceCharLimit bool // Whether to truncate blocks that exceed their limit on Add
+
+	// MaxContextTokens caps the memory injected into prompts and compiled
+	// context windows, in estimated tokens (0 = unlimited). Blocks over the
+	// budget are dropped lowest-priority first; see ContextWindow.ApplyBudget.
+	MaxContextTokens int
 }
 
 // NewManager creates a new memory manager wrapping the given store.
@@ -36,6 +41,7 @@ func NewManager(store *Store) *Manager {
 		AutoCleanup:      true,
 		DefaultCharLimit: 0,
 		EnforceCharLimit: false,
+		MaxContextTokens: DefaultMaxContextTokens,
 	}
 
 	// Read char limit from env.
@@ -43,6 +49,13 @@ func NewManager(store *Store) *Manager {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
 			mgr.DefaultCharLimit = n
 			mgr.EnforceCharLimit = true
+		}
+	}
+
+	// Read the injection token budget from env (0 = unlimited).
+	if v := os.Getenv("GLEANN_MEMORY_MAX_TOKENS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
+			mgr.MaxContextTokens = n
 		}
 	}
 
@@ -118,6 +131,34 @@ func (m *Manager) RememberBlock(block *Block) (*Block, error) {
 		return nil, err
 	}
 	return block, nil
+}
+
+// RevertReflection reverts a reflection run by ID, removing exactly the blocks it added.
+// It restores nothing else and leaves original blocks untouched.
+func (m *Manager) RevertReflection(runID string) (*ChangeSet, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	cs, err := m.store.GetChangeSet(runID)
+	if err != nil {
+		return nil, err
+	}
+
+	// A block already gone (deleted by hand since) is not an error; any
+	// other failure stops before the run record is dropped, so the revert
+	// can be retried.
+	for _, id := range cs.BlocksAdded {
+		if _, err := m.store.Get(id); err != nil {
+			continue // already gone
+		}
+		if err := m.store.Delete(id); err != nil {
+			return nil, fmt.Errorf("reverting reflection run %s: deleting block %s: %w", runID, id, err)
+		}
+	}
+	if err := m.store.DeleteChangeSet(runID); err != nil {
+		return nil, fmt.Errorf("reverting reflection run %s: %w", runID, err)
+	}
+	return cs, nil
 }
 
 // MarkSuspect flags stored memory blocks associated with modified files or symbols as suspect.
@@ -302,14 +343,22 @@ func (m *Manager) buildContextLocked() (*ContextWindow, error) {
 
 // BuildContext compiles memory into a ContextWindow for LLM injection.
 // Automatically filters out low-validity (< 0.2) or expired blocks to keep context clean.
+// The result is capped at MaxContextTokens (lowest-priority blocks drop first)
+// and Budget records what was injected and what was dropped.
 func (m *Manager) BuildContext() (*ContextWindow, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	return m.buildContextLocked()
+	cw, err := m.buildContextLocked()
+	if err != nil {
+		return nil, err
+	}
+	m.applyBudget(cw)
+	return cw, nil
 }
 
 // BuildScopedContext compiles memory visible to a specific scope.
 // Includes both global blocks (scope="") and blocks matching the given scope.
+// The result is capped at MaxContextTokens after scope filtering.
 func (m *Manager) BuildScopedContext(scope string) (*ContextWindow, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -319,14 +368,21 @@ func (m *Manager) BuildScopedContext(scope string) (*ContextWindow, error) {
 		return nil, err
 	}
 
-	if scope == "" {
-		return cw, nil // No filtering needed.
+	if scope != "" {
+		cw.ShortTerm = filterScope(cw.ShortTerm, scope)
+		cw.MediumTerm = filterScope(cw.MediumTerm, scope)
+		cw.LongTerm = filterScope(cw.LongTerm, scope)
 	}
-
-	cw.ShortTerm = filterScope(cw.ShortTerm, scope)
-	cw.MediumTerm = filterScope(cw.MediumTerm, scope)
-	cw.LongTerm = filterScope(cw.LongTerm, scope)
+	m.applyBudget(cw)
 	return cw, nil
+}
+
+// applyBudget caps cw at the manager's configured injection budget; the
+// report stays on cw.Budget for the CLI, REST and MCP outputs. It does not
+// log: the TUI shares the terminal and a log line would corrupt its screen.
+// Must be called with m.mu held.
+func (m *Manager) applyBudget(cw *ContextWindow) {
+	cw.ApplyBudget(m.MaxContextTokens)
 }
 
 // Compact prunes expired blocks and blocks whose validity score falls below minValidity.
@@ -562,4 +618,18 @@ func (m *Manager) RecordAccess(id string) error {
 	}
 	block.RecordAccess()
 	return m.store.Update(block)
+}
+
+// Export exports all memory blocks and summaries to markdown files in dir.
+func (m *Manager) Export(dir string) (*ExportStats, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.store.Export(dir)
+}
+
+// Import imports memory blocks and summaries from markdown files in dir.
+func (m *Manager) Import(dir string) (*ImportStats, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.store.Import(dir)
 }

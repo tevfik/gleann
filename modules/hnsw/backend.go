@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 )
 
@@ -61,8 +62,14 @@ func (b *Builder) Build(ctx context.Context, embeddings [][]float32) ([]byte, er
 		graph.Insert(int64(i), emb)
 	}
 
+	dtype := strings.ToLower(strings.TrimSpace(hc.VectorDType))
+	if dtype == "" {
+		dtype = VectorDTypeF32
+	}
+
 	// Convert to CSR format.
 	csr := ConvertToCSR(graph)
+	csr.VectorDType = dtype
 
 	// Prune embeddings if configured.
 	if hc.PruneEmbeddings {
@@ -107,6 +114,15 @@ func (b *Builder) AddVectors(ctx context.Context, indexData []byte, embeddings [
 	// Re-convert.
 	newCSR := ConvertToCSR(graph)
 	hc := b.config.HNSWConfig
+	dtype := csr.VectorDType
+	if hc.VectorDType != "" {
+		dtype = strings.ToLower(strings.TrimSpace(hc.VectorDType))
+	}
+	if dtype == "" {
+		dtype = VectorDTypeF32
+	}
+	newCSR.VectorDType = dtype
+
 	if hc.PruneEmbeddings {
 		PruneEmbeddings(graph, newCSR, hc.PruneKeepFraction)
 	} else {
@@ -208,6 +224,33 @@ func (s *Searcher) SearchWithRecompute(ctx context.Context, query []float32, top
 	return ids, distances, nil
 }
 
+// VectorDistances computes the distance from the query vector to each of the
+// given passage IDs (vector slots) using the loaded graph's stored vectors and
+// distance function, without a top-k traversal. It backs gleann.VectorIDScorer
+// for filtered search: a SQL pre-selected set is scored directly. It fails when
+// no index is loaded, an ID is absent, or its vector was pruned, so the caller
+// falls back to lexical scoring.
+func (s *Searcher) VectorDistances(ctx context.Context, query []float32, ids []int64) ([]float32, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	if s.graph == nil {
+		return nil, fmt.Errorf("no index loaded")
+	}
+	out := make([]float32, len(ids))
+	for i, id := range ids {
+		n, ok := s.graph.nodes[id]
+		if !ok {
+			return nil, fmt.Errorf("hnsw: passage %d not in graph", id)
+		}
+		if len(n.Vector) == 0 && len(n.VectorF16) == 0 {
+			return nil, fmt.Errorf("hnsw: passage %d has pruned embeddings", id)
+		}
+		out[i] = s.graph.vectorNodeDist(query, n)
+	}
+	return out, nil
+}
+
 func (s *Searcher) Close() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -222,7 +265,7 @@ func (s *Searcher) Close() error {
 // Callers fall back to a full rebuild.
 func requireFullVectors(g *Graph) error {
 	for id, n := range g.nodes {
-		if len(n.Vector) == 0 {
+		if len(n.Vector) == 0 && len(n.VectorF16) == 0 {
 			return fmt.Errorf("hnsw: index has pruned embeddings (node %d); incremental edit unsupported, rebuild required", id)
 		}
 	}

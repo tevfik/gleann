@@ -154,6 +154,7 @@ Running `gleann install` auto-detects and installs configuration for:
 gleann index build my-code --docs ./src --graph   # Index source code with call graph
 gleann index build my-docs --docs ./docs          # Index technical documentation
 gleann index list                                 # List all indexes, status, and tags
+gleann index migrate my-docs                      # Convert an index to the SQLite passage store (format 2)
 gleann index watch my-code --docs ./src --graph   # Auto-sync index on file changes
 ```
 

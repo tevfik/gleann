@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"time"
 
 	"github.com/maypok86/otter/v2"
 	gleann "github.com/tevfik/gleann/pkg/gleann"
@@ -20,12 +21,14 @@ import (
 // L1: otter in-memory cache (hot, zero I/O)
 // L2: disk-based SHA-256 keyed files (cold, persists across restarts)
 type CachedComputer struct {
-	inner gleann.EmbeddingComputer
-	dir   string // cache directory
-	mu    sync.RWMutex
-	hits  int
-	total int
-	l1    *otter.Cache[string, []float32] // hot in-memory cache
+	inner     gleann.EmbeddingComputer
+	dir       string // cache directory
+	batchSize int    // uncached texts computed and persisted per inner call
+	mu        sync.RWMutex
+	dim       int // vector size seen in this process; guarded by mu
+	hits      int
+	total     int
+	l1        *otter.Cache[string, []float32] // hot in-memory cache
 }
 
 // CacheOptions configures the embedding cache.
@@ -35,6 +38,12 @@ type CacheOptions struct {
 	// MemoryCacheSize is the max number of vectors in the L1 in-memory cache.
 	// Default: 50000 (~200MB for 1024-dim float32 vectors).
 	MemoryCacheSize int
+	// BatchSize is how many uncached texts are computed and written to disk
+	// per inner call, so a killed build keeps the batches already written.
+	// Default: the inner computer's batch size times its concurrency (one
+	// parallel wave of requests), or 64 when the inner computer is not a
+	// *Computer.
+	BatchSize int
 }
 
 // NewCachedComputer wraps an existing EmbeddingComputer with 2-tier caching.
@@ -45,6 +54,7 @@ func NewCachedComputer(inner gleann.EmbeddingComputer, opts CacheOptions) *Cache
 		dir = filepath.Join(home, ".gleann", "cache", "embeddings")
 	}
 	_ = os.MkdirAll(dir, 0o755)
+	removeStaleTemps(dir)
 
 	memSize := opts.MemoryCacheSize
 	if memSize <= 0 {
@@ -58,10 +68,26 @@ func NewCachedComputer(inner gleann.EmbeddingComputer, opts CacheOptions) *Cache
 		l1 = nil
 	}
 
+	batchSize := opts.BatchSize
+	if batchSize <= 0 {
+		// One persisted batch is one "wave" of the inner computer: its
+		// request batch size times its concurrency. The inner computer runs
+		// that many requests in parallel, so a smaller chunk would serialise
+		// them and slow every build; a larger one would lose more work when
+		// a build is killed.
+		if comp, ok := inner.(*Computer); ok && comp.batchSize > 0 {
+			batchSize = comp.batchSize * max(comp.concurrency, 1)
+		}
+	}
+	if batchSize <= 0 {
+		batchSize = 64 // computers that don't batch still get crash-safe writes
+	}
+
 	return &CachedComputer{
-		inner: inner,
-		dir:   dir,
-		l1:    l1,
+		inner:     inner,
+		dir:       dir,
+		batchSize: batchSize,
+		l1:        l1,
 	}
 }
 
@@ -97,6 +123,7 @@ func (c *CachedComputer) Compute(ctx context.Context, texts []string) ([][]float
 		// L2: disk cache.
 		if vec, err := c.loadFromDisk(key); err == nil {
 			result[i] = vec
+			c.noteDim(len(vec))
 			// Promote to L1.
 			if c.l1 != nil {
 				c.l1.Set(key, vec)
@@ -118,22 +145,45 @@ func (c *CachedComputer) Compute(ctx context.Context, texts []string) ([][]float
 		return result, nil
 	}
 
-	// Compute uncached texts.
-	uncachedTexts := make([]string, len(uncached))
-	for j, idx := range uncached {
-		uncachedTexts[j] = texts[idx]
-	}
+	// Compute uncached texts in batches, persisting each batch (L1 + L2)
+	// before the next one starts, so a build killed halfway keeps every
+	// vector already computed (RFC 003 §3.3). Result order is unchanged:
+	// vectors land at their original input indices.
+	for start := 0; start < len(uncached); start += c.batchSize {
+		end := start + c.batchSize
+		if end > len(uncached) {
+			end = len(uncached)
+		}
+		batchIdx := uncached[start:end]
+		batchTexts := make([]string, len(batchIdx))
+		for j, idx := range batchIdx {
+			batchTexts[j] = texts[idx]
+		}
 
-	computed, err := c.inner.Compute(ctx, uncachedTexts)
-	if err != nil {
-		return nil, err
-	}
+		// Stop between batches when the caller has given up; the batches
+		// already written stay on disk.
+		if err := ctx.Err(); err != nil {
+			return nil, fmt.Errorf("computing embeddings: %w", err)
+		}
+		computed, err := c.inner.Compute(ctx, batchTexts)
+		if err != nil {
+			// Earlier batches are already on disk; a resumed build skips
+			// them instead of recomputing.
+			return nil, fmt.Errorf("computing a batch of %d embeddings (%d of %d uncached texts done): %w",
+				len(batchTexts), start, len(uncached), err)
+		}
+		// A short answer would leave nil vectors in the result, which the
+		// index builders cannot use.
+		if len(computed) != len(batchTexts) {
+			return nil, fmt.Errorf("embedder returned %d vectors for %d texts", len(computed), len(batchTexts))
+		}
 
-	// Store computed results in L1 + L2 caches and fill result.
-	for j, idx := range uncached {
-		if j < len(computed) {
+		for j, idx := range batchIdx {
 			result[idx] = computed[j]
+			c.noteDim(len(computed[j]))
 			key := cacheKey(model, texts[idx])
+			// A failed write (for example a reader holding the file on
+			// Windows) only means this vector is computed again next time.
 			_ = c.saveToDisk(key, computed[j])
 			if c.l1 != nil {
 				c.l1.Set(key, computed[j])
@@ -157,8 +207,25 @@ func (c *CachedComputer) ComputeSingle(ctx context.Context, text string) ([]floa
 }
 
 // Dimensions returns the embedding dimensions from the inner computer.
+// The inner computer learns its dimension from its first request, so when
+// every text is served from the cache it still reports 0; the size of the
+// vectors this process has seen is used then.
 func (c *CachedComputer) Dimensions() int {
-	return c.inner.Dimensions()
+	if d := c.inner.Dimensions(); d > 0 {
+		return d
+	}
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.dim
+}
+
+// noteDim records the vector size of the first vector this process sees.
+func (c *CachedComputer) noteDim(n int) {
+	c.mu.Lock()
+	if c.dim == 0 {
+		c.dim = n
+	}
+	c.mu.Unlock()
 }
 
 // ModelName returns the model name from the inner computer.
@@ -202,7 +269,9 @@ func cacheKey(model, text string) string {
 	return fmt.Sprintf("%x", h.Sum(nil))
 }
 
-// saveToDisk writes a float32 vector to a cache file.
+// saveToDisk writes a float32 vector to a cache file atomically: the bytes
+// go to a temp file that is renamed into place, so a killed process never
+// leaves a truncated .bin that a later run would load as a wrong vector.
 func (c *CachedComputer) saveToDisk(key string, vec []float32) error {
 	if len(vec) == 0 {
 		// Refuse to persist empty vectors — they would poison the cache
@@ -214,7 +283,26 @@ func (c *CachedComputer) saveToDisk(key string, vec []float32) error {
 	for i, v := range vec {
 		binary.LittleEndian.PutUint32(buf[i*4:], uint32FromFloat32(v))
 	}
-	return os.WriteFile(path, buf, 0o644)
+	tmp, err := os.CreateTemp(c.dir, key+".tmp-*")
+	if err != nil {
+		return fmt.Errorf("creating cache temp file: %w", err)
+	}
+	tmpPath := tmp.Name()
+	if _, err := tmp.Write(buf); err != nil {
+		_ = tmp.Close()
+		_ = os.Remove(tmpPath)
+		return fmt.Errorf("writing cache temp file: %w", err)
+	}
+	_ = tmp.Chmod(0o644) // keep the permissions os.WriteFile used before
+	if err := tmp.Close(); err != nil {
+		_ = os.Remove(tmpPath)
+		return fmt.Errorf("closing cache temp file: %w", err)
+	}
+	if err := os.Rename(tmpPath, path); err != nil {
+		_ = os.Remove(tmpPath)
+		return fmt.Errorf("renaming cache file into place: %w", err)
+	}
+	return nil
 }
 
 // loadFromDisk reads a float32 vector from a cache file.
@@ -233,6 +321,12 @@ func (c *CachedComputer) loadFromDisk(key string) ([]float32, error) {
 	}
 	if len(data)%4 != 0 {
 		return nil, fmt.Errorf("corrupt cache entry: %s", key)
+	}
+	// When the dimension is known, a file of the wrong length is a
+	// truncated or foreign entry — reject it so it is recomputed instead
+	// of loading as a wrong vector.
+	if dim := c.Dimensions(); dim > 0 && len(data) != dim*4 {
+		return nil, fmt.Errorf("corrupt cache entry: %s has %d bytes, expected %d", key, len(data), dim*4)
 	}
 	vec := make([]float32, len(data)/4)
 	for i := range vec {
@@ -255,5 +349,18 @@ func (c *CachedComputer) SetProgressCallback(cb ProgressCallback) {
 	defer c.mu.Unlock()
 	if reporter, ok := c.inner.(interface{ SetProgressCallback(ProgressCallback) }); ok {
 		reporter.SetProgressCallback(cb)
+	}
+}
+
+// removeStaleTemps deletes temp files that a killed process left behind
+// between writing and renaming a vector. Only files older than an hour are
+// removed, so a write in progress in another process is never touched.
+func removeStaleTemps(dir string) {
+	matches, _ := filepath.Glob(filepath.Join(dir, "*.tmp-*"))
+	cutoff := time.Now().Add(-time.Hour)
+	for _, m := range matches {
+		if info, err := os.Stat(m); err == nil && info.ModTime().Before(cutoff) {
+			_ = os.Remove(m)
+		}
 	}
 }

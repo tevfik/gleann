@@ -27,7 +27,7 @@ func (f *hybridFactory) NewSearcher(config gleann.Config) gleann.BackendSearcher
 	// The hybrid builder outputs CSR format — identical to the pure-Go HNSW
 	// backend. Reuse its searcher for search + SearchWithRecompute + mmap.
 	inner := (&hnsw.Factory{}).NewSearcher(toHNSWConfig(config))
-	if config.HNSWConfig.UseMmap {
+	if config.MmapEnabled() {
 		return &mmapSearcherAdapter{searcherAdapter{inner: inner}}
 	}
 	return &searcherAdapter{inner: inner}

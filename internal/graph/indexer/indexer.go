@@ -11,7 +11,6 @@
 package indexer
 
 import (
-	"bufio"
 	"context"
 	"fmt"
 	"io/fs"
@@ -277,7 +276,7 @@ func (idx *Indexer) indexFileOnConn(absPath, source string) (file *kuzu.FileNode
 
 	// Collect CALLS / IMPLEMENTS / REFERENCES.
 	if langEnum == chunking.LangGo {
-		nodes, edges, nodeErr := collectGoCallQueries(idx, relPath, source, chunks)
+		nodes, edges, nodeErr := collectGoCallQueries(idx.module, relPath, source, chunks)
 		if nodeErr != nil {
 			fmt.Fprintf(os.Stderr, "warn: call extraction failed for %s: %v\n", relPath, nodeErr)
 		} else {
@@ -285,7 +284,7 @@ func (idx *Indexer) indexFileOnConn(absPath, source string) (file *kuzu.FileNode
 			calls = append(calls, edges...)
 		}
 
-		implEdges, refEdges, extraSyms := collectGoImplementsEdges(idx, relPath, source, chunks)
+		implEdges, refEdges, extraSyms := collectGoImplementsEdges(idx.module, relPath, source, chunks)
 		impls = append(impls, implEdges...)
 		refs = append(refs, refEdges...)
 		symbols = append(symbols, extraSyms...)
@@ -306,37 +305,6 @@ func (idx *Indexer) indexFileOnConn(absPath, source string) (file *kuzu.FileNode
 	}
 
 	return fileNode, symbols, declares, calls, impls, refs, nil
-}
-
-// isTestSymbol returns true if the symbol is in a test file or is a test function/benchmark.
-func isTestSymbol(filePath, name string) bool {
-	base := filepath.Base(filePath)
-	cleanPath := filepath.ToSlash(filePath)
-
-	// Test directories
-	if strings.Contains(cleanPath, "/test/") || strings.Contains(cleanPath, "/tests/") || strings.Contains(cleanPath, "/testing/") {
-		return true
-	}
-
-	// File naming conventions
-	if strings.HasSuffix(base, "_test.go") ||
-		strings.HasPrefix(base, "test_") ||
-		strings.HasSuffix(base, "_test.py") ||
-		strings.HasSuffix(base, ".spec.ts") ||
-		strings.HasSuffix(base, ".test.ts") ||
-		strings.HasSuffix(base, ".spec.js") ||
-		strings.HasSuffix(base, ".test.js") ||
-		strings.HasSuffix(base, "_spec.rb") ||
-		strings.HasSuffix(base, "Test.java") {
-		return true
-	}
-
-	// Function naming conventions
-	if strings.HasPrefix(name, "Test") || strings.HasPrefix(name, "Benchmark") || strings.HasPrefix(name, "Fuzz") || strings.HasPrefix(name, "test_") {
-		return true
-	}
-
-	return false
 }
 
 // IndexDir recursively indexes all supported source files under root.
@@ -957,169 +925,11 @@ func (idx *Indexer) IndexFiles(files []string) error {
 
 // relPath converts an absolute path to a path relative to idx.root.
 func (idx *Indexer) relPath(absPath string) string {
-	cleanAbs := filepath.Clean(absPath)
-	if rel, err := filepath.Rel(idx.root, cleanAbs); err == nil && !strings.HasPrefix(rel, "..") {
-		return rel
-	}
-	// Try after resolving symlinks on both (handles e.g. /var vs /private/var on macOS)
-	realRoot, err1 := filepath.EvalSymlinks(idx.root)
-	realAbs, err2 := filepath.EvalSymlinks(cleanAbs)
-	if err1 == nil && err2 == nil {
-		if rel, err := filepath.Rel(realRoot, realAbs); err == nil && !strings.HasPrefix(rel, "..") {
-			return rel
-		}
-	}
-	rel, err := filepath.Rel(idx.root, cleanAbs)
-	if err != nil {
-		return absPath
-	}
-	return rel
+	return relPathOf(idx.root, absPath)
 }
 
 // buildFQN constructs a Fully Qualified Name for a symbol.
 // Format: <module>/<package>.<SymbolName>
 func (idx *Indexer) buildFQN(relPath, symbolName string) string {
-	pkg := filepath.Dir(relPath)
-	pkg = strings.ReplaceAll(pkg, string(filepath.Separator), "/")
-	if pkg == "." {
-		pkg = ""
-	}
-
-	var prefix string
-	if idx.module != "" {
-		if pkg != "" {
-			prefix = idx.module + "/" + pkg
-		} else {
-			prefix = idx.module
-		}
-	} else {
-		prefix = pkg
-	}
-
-	if prefix == "" {
-		return symbolName
-	}
-	return prefix + "." + symbolName
-}
-
-// DetectGoModule reads the module name from go.mod in the given directory.
-// Falls back to filepath.Base(dir) if go.mod is absent or unreadable.
-func DetectGoModule(dir string) string {
-	goModPath := filepath.Join(dir, "go.mod")
-	f, err := os.Open(goModPath)
-	if err != nil {
-		return filepath.Base(dir)
-	}
-	defer f.Close()
-
-	scanner := bufio.NewScanner(f)
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if strings.HasPrefix(line, "module ") {
-			return strings.TrimSpace(strings.TrimPrefix(line, "module "))
-		}
-	}
-	return filepath.Base(dir)
-}
-
-// rationaleComment represents a design rationale comment extracted from source code.
-type rationaleComment struct {
-	Line    int
-	Tag     string // WHY, NOTE, HACK, TODO, IMPORTANT, FIXME
-	Content string
-}
-
-// rationaleTagPrefixes are the comment tags that indicate design rationale.
-var rationaleTagPrefixes = []string{
-	"WHY:", "WHY ", "NOTE:", "NOTE ", "HACK:", "HACK ",
-	"TODO:", "TODO ", "IMPORTANT:", "IMPORTANT ",
-	"FIXME:", "FIXME ", "BUG:", "BUG ",
-}
-
-// extractRationale scans source code for rationale comments and returns them keyed by line number.
-func extractRationale(source string) map[int]rationaleComment {
-	result := make(map[int]rationaleComment)
-	lines := strings.Split(source, "\n")
-
-	for i, line := range lines {
-		trimmed := strings.TrimSpace(line)
-
-		// Strip comment prefix (// or # or /* or --)
-		comment := ""
-		if strings.HasPrefix(trimmed, "//") {
-			comment = strings.TrimSpace(trimmed[2:])
-		} else if strings.HasPrefix(trimmed, "#") && !strings.HasPrefix(trimmed, "#!") {
-			comment = strings.TrimSpace(trimmed[1:])
-		} else if strings.HasPrefix(trimmed, "--") {
-			comment = strings.TrimSpace(trimmed[2:])
-		}
-
-		if comment == "" {
-			continue
-		}
-
-		upper := strings.ToUpper(comment)
-		for _, prefix := range rationaleTagPrefixes {
-			if strings.HasPrefix(upper, prefix) {
-				tag := strings.TrimRight(prefix, ": ")
-				content := strings.TrimSpace(comment[len(prefix):])
-				if len(content) > 0 {
-					// Also try extracting from original case
-					if len(comment) > len(prefix) {
-						content = strings.TrimSpace(comment[len(prefix):])
-					}
-				}
-				result[i+1] = rationaleComment{
-					Line:    i + 1,
-					Tag:     tag,
-					Content: content,
-				}
-				break
-			}
-		}
-	}
-	return result
-}
-
-// attachRationale collects rationale comments within or near a symbol's line range
-// and returns them as a combined doc string.
-func attachRationale(rationale map[int]rationaleComment, startLine, endLine int) string {
-	if len(rationale) == 0 {
-		return ""
-	}
-
-	var parts []string
-	// Check 3 lines before the symbol (preamble comments) through end of symbol
-	for line := startLine - 3; line <= endLine; line++ {
-		if r, ok := rationale[line]; ok {
-			parts = append(parts, fmt.Sprintf("[%s] %s", r.Tag, r.Content))
-		}
-	}
-
-	if len(parts) == 0 {
-		return ""
-	}
-	return strings.Join(parts, "; ")
-}
-
-// dedupeSymbols keeps one node per FQN. A callee stub (no File) must never
-// shadow the real declaration, whatever order the workers finished in, so a
-// declared symbol replaces an earlier stub (C-03).
-func dedupeSymbols(in []kuzu.SymbolNode) []kuzu.SymbolNode {
-	pos := make(map[string]int, len(in))
-	out := make([]kuzu.SymbolNode, 0, len(in))
-	for _, sym := range in {
-		if sym.FQN == "" {
-			continue
-		}
-		if i, ok := pos[sym.FQN]; ok {
-			if out[i].File == "" && sym.File != "" {
-				out[i] = sym
-			}
-			continue
-		}
-		pos[sym.FQN] = len(out)
-		out = append(out, sym)
-	}
-	return out
+	return buildFQNOf(idx.module, relPath, symbolName)
 }

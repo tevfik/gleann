@@ -67,14 +67,56 @@ type SleepTimeEngine struct {
 	lastRun    time.Time // Track last processed timestamp.
 }
 
+// ChangeSet records the diff of a reflection cycle.
+type ChangeSet struct {
+	RunID             string    `json:"run_id"`
+	Timestamp         time.Time `json:"timestamp"`
+	BlocksAdded       []string  `json:"blocks_added"`
+	BlocksSuperseded  []string  `json:"blocks_superseded"`
+	AddedDetails      []Block   `json:"added_details,omitempty"`
+	SupersededDetails []Block   `json:"superseded_details,omitempty"`
+}
+
+const metaKeySleepTimeLastRun = "sleeptime_last_run"
+
 // NewSleepTimeEngine creates a new sleep-time engine.
 func NewSleepTimeEngine(mgr *Manager, cfg SleepTimeConfig) *SleepTimeEngine {
-	return &SleepTimeEngine{
+	engine := &SleepTimeEngine{
 		manager:    mgr,
 		summarizer: NewSummarizer(cfg.SummarizerCfg),
 		convStore:  cfg.ConvStore,
 		config:     cfg,
 	}
+	if mgr != nil && mgr.Store() != nil {
+		if raw, err := mgr.Store().Meta(metaKeySleepTimeLastRun); err == nil && raw != "" {
+			if t, err := time.Parse(time.RFC3339Nano, raw); err == nil {
+				engine.lastRun = t
+			} else if t, err := time.Parse(time.RFC3339, raw); err == nil {
+				engine.lastRun = t
+			}
+		}
+	}
+	return engine
+}
+
+// LastRun returns the timestamp of the last processed conversation.
+func (e *SleepTimeEngine) LastRun() time.Time {
+	return e.lastRun
+}
+
+func (e *SleepTimeEngine) updateLastRun(t time.Time) {
+	e.lastRun = t
+	if e.manager != nil && e.manager.Store() != nil {
+		_ = e.manager.Store().SetMeta(metaKeySleepTimeLastRun, t.Format(time.RFC3339Nano))
+	}
+}
+
+// Revert reverts a reflection run by ID, deleting the blocks it added.
+func (e *SleepTimeEngine) Revert(runID string) (*ChangeSet, error) {
+	if e.manager == nil {
+		return nil, fmt.Errorf("no manager configured")
+	}
+	return e.manager.RevertReflection(runID)
 }
 
 // Start launches the background goroutine. It stops when stopCh is closed.
@@ -127,18 +169,18 @@ func (e *SleepTimeEngine) runCycle() {
 	log.Println("sleep-time: reflection cycle complete")
 }
 
-func (e *SleepTimeEngine) processCycle(ctx context.Context) error {
+// Reflect executes a reflection cycle, returning the change set.
+// If dryRun is true, it identifies blocks to add and supersede without writing to the store.
+func (e *SleepTimeEngine) Reflect(ctx context.Context, dryRun bool) (*ChangeSet, error) {
 	if e.convStore == nil {
-		return fmt.Errorf("no conversation store configured")
+		return nil, fmt.Errorf("no conversation store configured")
 	}
 
-	// Get recent conversations.
 	convs, err := e.convStore.List()
 	if err != nil {
-		return fmt.Errorf("list conversations: %w", err)
+		return nil, fmt.Errorf("list conversations: %w", err)
 	}
 
-	// Filter to conversations updated since last run.
 	var recent []*conversations.Conversation
 	for i := range convs {
 		if e.lastRun.IsZero() || convs[i].UpdatedAt.After(e.lastRun) {
@@ -146,32 +188,43 @@ func (e *SleepTimeEngine) processCycle(ctx context.Context) error {
 		}
 	}
 
-	// Limit to MaxConvs most recent.
 	if len(recent) > e.config.MaxConvs {
 		recent = recent[:e.config.MaxConvs]
 	}
 
+	runID := fmt.Sprintf("reflect-%d", time.Now().UnixNano())
+	cs := &ChangeSet{
+		RunID:            runID,
+		Timestamp:        time.Now(),
+		BlocksAdded:      make([]string, 0),
+		BlocksSuperseded: make([]string, 0),
+	}
+
 	if len(recent) == 0 {
 		log.Println("sleep-time: no new conversations to process")
-		e.lastRun = time.Now()
-		return nil
+		if !dryRun {
+			e.updateLastRun(time.Now())
+		}
+		return cs, nil
 	}
 
 	log.Printf("sleep-time: processing %d conversation(s)", len(recent))
 
 	for _, conv := range recent {
 		if ctx.Err() != nil {
-			return ctx.Err()
+			return nil, ctx.Err()
 		}
 
-		// 1. Generate summary and store it.
+		// 1. Generate summary and store it (unless dry-run).
 		summary, err := e.summarizer.SummarizeConversation(ctx, conv)
 		if err != nil {
 			log.Printf("sleep-time: summarize %s: %v", conversations.ShortID(conv.ID), err)
 			continue
 		}
-		if err := e.manager.Store().SaveSummary(summary); err != nil {
-			log.Printf("sleep-time: save summary %s: %v", conversations.ShortID(conv.ID), err)
+		if !dryRun && e.manager != nil && e.manager.Store() != nil {
+			if err := e.manager.Store().SaveSummary(summary); err != nil {
+				log.Printf("sleep-time: save summary %s: %v", conversations.ShortID(conv.ID), err)
+			}
 		}
 
 		// 2. Extract memories (facts, preferences, decisions).
@@ -182,24 +235,81 @@ func (e *SleepTimeEngine) processCycle(ctx context.Context) error {
 		}
 
 		for i := range blocks {
-			// Tag with conversation and sleep-time source.
 			blocks[i].Source = "sleep_time"
 			blocks[i].Tags = append(blocks[i].Tags, "sleep_time", "conversation:"+conversations.ShortID(conv.ID))
+			if blocks[i].Metadata == nil {
+				blocks[i].Metadata = make(map[string]string)
+			}
 			if conv.ID != "" {
-				if blocks[i].Metadata == nil {
-					blocks[i].Metadata = make(map[string]string)
-				}
 				blocks[i].Metadata["conversation_id"] = conv.ID
 			}
+			blocks[i].Metadata["reflection_run_id"] = runID
+			if blocks[i].Tier == "" {
+				blocks[i].Tier = TierLong
+			}
+			if blocks[i].ID == "" {
+				blocks[i].ID = generateBlockID(&blocks[i])
+			}
 
-			if err := e.manager.Store().Add(&blocks[i]); err != nil {
-				log.Printf("sleep-time: add block: %v", err)
+			// Check contradictions against existing knowledge to determine superseded blocks.
+			if e.manager != nil {
+				contradictions := e.manager.checkContradictions(blocks[i].Content)
+				for _, c := range contradictions {
+					found := false
+					for _, sid := range cs.BlocksSuperseded {
+						if sid == c.ID {
+							found = true
+							break
+						}
+					}
+					if !found {
+						cs.BlocksSuperseded = append(cs.BlocksSuperseded, c.ID)
+						cs.SupersededDetails = append(cs.SupersededDetails, *c)
+					}
+				}
+			}
+
+			// Check if this is a newly added block or deduplicated on existing.
+			var existing *Block
+			if e.manager != nil && e.manager.Store() != nil {
+				existing, _ = e.manager.Store().Get(blocks[i].ID)
+			}
+			isNew := (existing == nil)
+
+			if !dryRun && e.manager != nil {
+				saved, err := e.manager.RememberBlock(&blocks[i])
+				if err != nil {
+					log.Printf("sleep-time: remember block: %v", err)
+					continue
+				}
+				if isNew {
+					cs.BlocksAdded = append(cs.BlocksAdded, saved.ID)
+					cs.AddedDetails = append(cs.AddedDetails, *saved)
+				}
+			} else if dryRun {
+				if isNew {
+					cs.BlocksAdded = append(cs.BlocksAdded, blocks[i].ID)
+					cs.AddedDetails = append(cs.AddedDetails, blocks[i])
+				}
 			}
 		}
 
 		log.Printf("sleep-time: %s → %d memories extracted", conversations.ShortID(conv.ID), len(blocks))
 	}
 
-	e.lastRun = time.Now()
-	return nil
+	if !dryRun {
+		if e.manager != nil && e.manager.Store() != nil {
+			if err := e.manager.Store().SaveChangeSet(cs); err != nil {
+				log.Printf("sleep-time: save change set: %v", err)
+			}
+		}
+		e.updateLastRun(time.Now())
+	}
+
+	return cs, nil
+}
+
+func (e *SleepTimeEngine) processCycle(ctx context.Context) error {
+	_, err := e.Reflect(ctx, false)
+	return err
 }

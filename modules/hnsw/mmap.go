@@ -16,18 +16,22 @@ type MmapGraph struct {
 	fileSize int64
 
 	// Extracted header info
-	NumNodes   int64
-	Dimensions int
-	MaxLevel   int
-	EntryPoint int64
-	M          int
-	NumStored  int64
+	NumNodes    int64
+	Dimensions  int
+	MaxLevel    int
+	EntryPoint  int64
+	M           int
+	NumStored   int64
+	VectorDType string
 
 	// Offsets into the memory-mapped byte slice
 	offsetIDMap      int64
 	offsetNodeLevels int64
 	offsetLevels     int64
 	offsetEmbeddings int64
+
+	// Index of stored embeddings: external ID -> byte offset in mg.data of vector start
+	storedOffsets map[int64]int64
 
 	// Caches to avoid repeated slice arithmetic
 	levels []mmapLevel
@@ -75,9 +79,28 @@ func OpenMmapGraph(path string) (*MmapGraph, error) {
 	return mg, nil
 }
 
+// OpenMmapGraphFromData initializes an MmapGraph from an existing byte slice in memory.
+func OpenMmapGraphFromData(data []byte) (*MmapGraph, error) {
+	mg := &MmapGraph{
+		data:     data,
+		fileSize: int64(len(data)),
+	}
+	if err := mg.parseHeaders(); err != nil {
+		return nil, err
+	}
+	return mg, nil
+}
+
+func (mg *MmapGraph) bytesPerElement() int {
+	if mg.VectorDType == VectorDTypeF16 {
+		return 2
+	}
+	return 4
+}
+
 func (mg *MmapGraph) parseHeaders() error {
 	dataLen := int64(len(mg.data))
-	if dataLen < 52 {
+	if dataLen < 44 {
 		return fmt.Errorf("file too small to contain header (%d bytes)", dataLen)
 	}
 
@@ -91,7 +114,7 @@ func (mg *MmapGraph) parseHeaders() error {
 
 	version := binary.LittleEndian.Uint32(mg.data[offset:])
 	offset += 4
-	if version != CSRVersion {
+	if version != CSRVersion1 && version != CSRVersion2 {
 		return fmt.Errorf("unsupported version: %d", version)
 	}
 
@@ -107,6 +130,21 @@ func (mg *MmapGraph) parseHeaders() error {
 	offset += 4
 	mg.NumStored = int64(binary.LittleEndian.Uint64(mg.data[offset:]))
 	offset += 8
+
+	if version >= CSRVersion2 {
+		if offset+4 > dataLen {
+			return fmt.Errorf("truncated: cannot read dtypeCode at offset %d", offset)
+		}
+		dtypeCode := binary.LittleEndian.Uint32(mg.data[offset:])
+		offset += 4
+		if dtypeCode == DTypeCodeF16 {
+			mg.VectorDType = VectorDTypeF16
+		} else {
+			mg.VectorDType = VectorDTypeF32
+		}
+	} else {
+		mg.VectorDType = VectorDTypeF32
+	}
 
 	// === ID Map ===
 	if offset+8 > dataLen {
@@ -186,6 +224,17 @@ func (mg *MmapGraph) parseHeaders() error {
 
 	// === Stored Embeddings ===
 	mg.offsetEmbeddings = offset
+	mg.storedOffsets = make(map[int64]int64, mg.NumStored)
+	vecBytes := int64(mg.Dimensions * mg.bytesPerElement())
+	cur := offset
+	for i := int64(0); i < mg.NumStored; i++ {
+		if cur+8+vecBytes > dataLen {
+			break
+		}
+		id := int64(binary.LittleEndian.Uint64(mg.data[cur : cur+8]))
+		mg.storedOffsets[id] = cur + 8
+		cur += 8 + vecBytes
+	}
 
 	return nil
 }
@@ -193,7 +242,7 @@ func (mg *MmapGraph) parseHeaders() error {
 // Close unmaps the memory and closes the file.
 func (mg *MmapGraph) Close() error {
 	var err1, err2 error
-	if mg.data != nil {
+	if mg.data != nil && mg.file != nil {
 		err1 = munmapFile(mg.data)
 		mg.data = nil
 	}
@@ -272,36 +321,118 @@ func (mg *MmapGraph) GetNeighbors(internalIdx int64, level int) []int64 {
 	return neighbors
 }
 
-// GetStoredEmbedding tries to retrieve a pruned stored embedding for an internal index.
+// GetStoredEmbedding tries to retrieve a stored embedding for an external ID.
 func (mg *MmapGraph) GetStoredEmbedding(externalID int64) []float32 {
-	if mg.NumStored == 0 {
+	if mg.NumStored == 0 || mg.storedOffsets == nil {
 		return nil
 	}
 
-	// Simple linear scan over stored embeddings.
-	// In a massive graph, a binary search or hash map approach right in the byte slice might be needed,
-	// but strictly according to the current gleann CSR format, we iterate over them.
-	offset := mg.offsetEmbeddings
-	vecBytes := int64(mg.Dimensions * 4)
-	dataLen := int64(len(mg.data))
-
-	for i := int64(0); i < mg.NumStored; i++ {
-		if offset+8+vecBytes > dataLen {
-			return nil
-		}
-		id := int64(binary.LittleEndian.Uint64(mg.data[offset : offset+8]))
-		offset += 8
-
-		if id == externalID {
-			vec := make([]float32, mg.Dimensions)
-			for j := 0; j < mg.Dimensions; j++ {
-				fbits := binary.LittleEndian.Uint32(mg.data[offset+(int64(j)*4):])
-				vec[j] = math.Float32frombits(fbits)
-			}
-			return vec
-		}
-		offset += vecBytes
+	offset, ok := mg.storedOffsets[externalID]
+	if !ok {
+		return nil
+	}
+	vecBytes := int64(mg.Dimensions * mg.bytesPerElement())
+	if offset+vecBytes > int64(len(mg.data)) {
+		return nil
 	}
 
-	return nil
+	vec := make([]float32, mg.Dimensions)
+	if mg.VectorDType == VectorDTypeF16 {
+		for j := 0; j < mg.Dimensions; j++ {
+			hbits := binary.LittleEndian.Uint16(mg.data[offset+int64(j*2):])
+			vec[j] = f16ToF32Table[hbits]
+		}
+	} else {
+		for j := 0; j < mg.Dimensions; j++ {
+			fbits := binary.LittleEndian.Uint32(mg.data[offset+int64(j*4):])
+			vec[j] = math.Float32frombits(fbits)
+		}
+	}
+	return vec
+}
+
+// DistanceToStoredEmbedding computes the distance between query and a stored embedding directly
+// from memory-mapped data without allocating a full float32 slice.
+func (mg *MmapGraph) DistanceToStoredEmbedding(query []float32, externalID int64, metric DistanceMetric) (float32, bool) {
+	if mg.NumStored == 0 || mg.storedOffsets == nil {
+		return 0, false
+	}
+	offset, ok := mg.storedOffsets[externalID]
+	if !ok {
+		return 0, false
+	}
+	vecBytes := int64(mg.Dimensions * mg.bytesPerElement())
+	if offset+vecBytes > int64(len(mg.data)) {
+		return 0, false
+	}
+
+	if mg.VectorDType == VectorDTypeF16 {
+		switch metric {
+		case "cosine":
+			var dot, normA, normB float32
+			for j := 0; j < mg.Dimensions; j++ {
+				hbits := binary.LittleEndian.Uint16(mg.data[offset+int64(j*2):])
+				bf := f16ToF32Table[hbits]
+				dot += query[j] * bf
+				normA += query[j] * query[j]
+				normB += bf * bf
+			}
+			denom := float32(math.Sqrt(float64(normA)) * math.Sqrt(float64(normB)))
+			if denom == 0 {
+				return float32(math.MaxFloat32), true
+			}
+			return 1.0 - dot/denom, true
+		case "ip", "inner_product":
+			var dot float32
+			for j := 0; j < mg.Dimensions; j++ {
+				hbits := binary.LittleEndian.Uint16(mg.data[offset+int64(j*2):])
+				bf := f16ToF32Table[hbits]
+				dot += query[j] * bf
+			}
+			return -dot, true
+		default: // L2
+			var sum float32
+			for j := 0; j < mg.Dimensions; j++ {
+				hbits := binary.LittleEndian.Uint16(mg.data[offset+int64(j*2):])
+				bf := f16ToF32Table[hbits]
+				d := query[j] - bf
+				sum += d * d
+			}
+			return sum, true
+		}
+	} else {
+		switch metric {
+		case "cosine":
+			var dot, normA, normB float32
+			for j := 0; j < mg.Dimensions; j++ {
+				fbits := binary.LittleEndian.Uint32(mg.data[offset+int64(j*4):])
+				bf := math.Float32frombits(fbits)
+				dot += query[j] * bf
+				normA += query[j] * query[j]
+				normB += bf * bf
+			}
+			denom := float32(math.Sqrt(float64(normA)) * math.Sqrt(float64(normB)))
+			if denom == 0 {
+				return float32(math.MaxFloat32), true
+			}
+			return 1.0 - dot/denom, true
+		case "ip", "inner_product":
+			var dot float32
+			for j := 0; j < mg.Dimensions; j++ {
+				fbits := binary.LittleEndian.Uint32(mg.data[offset+int64(j*4):])
+				bf := math.Float32frombits(fbits)
+				dot += query[j] * bf
+			}
+			return -dot, true
+		default: // L2
+			var sum float32
+			for j := 0; j < mg.Dimensions; j++ {
+				fbits := binary.LittleEndian.Uint32(mg.data[offset+int64(j*4):])
+				bf := math.Float32frombits(fbits)
+				d := query[j] - bf
+				sum += d * d
+			}
+			return sum, true
+		}
+	}
 }

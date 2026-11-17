@@ -15,16 +15,17 @@ import (
 	"github.com/tevfik/gleann/internal/graph/report"
 )
 
-// GraphSupported reports whether this binary was built with graph
-// indexing support (-tags treesitter).
+// GraphSupported reports whether this binary supports the Kùzu graph path
+// for format-1 indexes (-tags treesitter). Format-2 indexes build and serve
+// their graph from SQLite in every build, regardless of this constant.
 const GraphSupported = true
 
-// buildGraphIndex builds the AST graph index for the given directory and
+// buildGraphIndexKuzu builds the AST graph index for the given directory and
 // writes document graph nodes/edges for plugin-extracted documents.
 //
 // If ChangedFiles is non-empty, only those files are re-indexed
 // (incremental mode); otherwise the whole directory is re-indexed.
-func buildGraphIndex(opts GraphOptions, p *printer) error {
+func buildGraphIndexKuzu(opts GraphOptions, p *printer) error {
 	// Resolve docsDir to absolute path to avoid cwd-dependent issues.
 	absDocsDir, err := filepath.Abs(opts.DocsDir)
 	if err != nil {

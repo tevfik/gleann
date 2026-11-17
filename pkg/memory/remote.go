@@ -1,12 +1,10 @@
 // Package memory — REST fallback client.
 //
-// When `gleann serve` runs, it holds an exclusive bbolt lock on
-// ~/.gleann/memory/memory.db. Local processes (CLI, MCP server) that attempt
-// to open the same database directly will block on bbolt's file lock and
-// timeout after 5 seconds.
-//
-// RemoteClient routes memory operations to the running server's REST API
-// (/api/blocks), completely bypassing the bbolt lock contention.
+// RemoteClient routes memory operations to a running gleann server's REST API
+// (/api/blocks). The SQLite store (RFC 003) lets local processes (CLI, MCP
+// server) open the same memory.sqlite concurrently, so this is an optional
+// path rather than a way around bbolt's exclusive lock; it remains useful
+// when a deployment prefers all writes to go through one server process.
 package memory
 
 import (

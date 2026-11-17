@@ -201,6 +201,7 @@ func buildOne(ctx context.Context, opts BuildOptions) (*BuildResult, error) {
 	if err != nil {
 		return nil, err
 	}
+	builder.SetSourceDir(docsDir)
 	builder.SetProgressCallback(func(phase string, done, total int) {
 		approxBytes := int64(done) * est.TotalBytes / int64(max(total, 1))
 		prog.emit(phase, done, total, approxBytes, est.TotalBytes, done == total)
@@ -316,6 +317,11 @@ func manifestPath(indexDir, name string) string {
 }
 
 func saveManifestFromItems(indexDir, name, docsDir string, items []gleann.Item) {
+	// A format-2 index keeps its manifest in the files table, committed with
+	// the passages by ApplySource; there is no manifest file to write.
+	if gleann.StoreFormatOf(filepath.Join(indexDir, name, name)) == 2 {
+		return
+	}
 	var manifestFiles []string
 	seenFiles := make(map[string]bool)
 	for _, it := range items {
@@ -359,6 +365,11 @@ func (e *pipelineEnv) progressCallback() func(phase string, done, total int) {
 // watch mode and as Sync's fallback). opts.Embedder / opts.Tracker are used
 // when set; otherwise they are resolved for the duration of the call.
 func RebuildIndex(ctx context.Context, name, docsDir string, opts Options) ([]*PluginDoc, error) {
+	unlock, err := lockIndex(ctx, opts.Config.IndexDir, name)
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
 	env, cleanup, err := newPipelineEnv(ctx, &opts, true)
 	if err != nil {
 		return nil, err
@@ -372,6 +383,11 @@ func RebuildIndex(ctx context.Context, name, docsDir string, opts Options) ([]*P
 // returns an error when the backend cannot apply deltas, in which case the
 // caller should fall back to RebuildIndex.
 func UpdateIncremental(ctx context.Context, name, docsDir string, changedFiles []string, opts Options) ([]*PluginDoc, error) {
+	unlock, err := lockIndex(ctx, opts.Config.IndexDir, name)
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
 	env, cleanup, err := newPipelineEnv(ctx, &opts, true)
 	if err != nil {
 		return nil, err
@@ -426,6 +442,7 @@ func (e *pipelineEnv) rebuild(ctx context.Context, name, docsDir string) ([]*Plu
 	if err != nil {
 		return nil, err
 	}
+	builder.SetSourceDir(docsDir)
 	builder.SetProgressCallback(e.progressCallback())
 
 	// A rebuild recreates meta.json; carry over user-managed fields.
@@ -487,6 +504,7 @@ func (e *pipelineEnv) incremental(ctx context.Context, name, docsDir string, cha
 	if err != nil {
 		return nil, fmt.Errorf("incremental: creating builder: %w", err)
 	}
+	builder.SetSourceDir(docsDir)
 	builder.SetProgressCallback(e.progressCallback())
 
 	st, err := builder.UpdateIndexWithStats(ctx, name, items, removeSources)

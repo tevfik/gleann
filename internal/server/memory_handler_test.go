@@ -1,5 +1,3 @@
-//go:build treesitter
-
 package server
 
 import (
@@ -7,6 +5,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/tevfik/gleann/pkg/gleann"
@@ -501,4 +501,32 @@ func TestMemoryPool_CloseAll(t *testing.T) {
 	// closeAll should not panic even when called multiple times.
 	pool.closeAll()
 	pool.closeAll()
+}
+
+func TestMemoryPool_KuzuDirectoryWarning(t *testing.T) {
+	dir := t.TempDir()
+	kuzuDir := filepath.Join(dir, "legacy_memory")
+	if err := os.MkdirAll(kuzuDir, 0o755); err != nil {
+		t.Fatalf("mkdir kuzuDir: %v", err)
+	}
+
+	pool := newMemoryPool(dir)
+	defer pool.closeAll()
+
+	svc, err := pool.get("legacy")
+	if err != nil {
+		t.Fatalf("get legacy: %v", err)
+	}
+	if svc == nil {
+		t.Fatal("expected non-nil service")
+	}
+
+	if !pool.warned["legacy"] {
+		t.Error("expected warned flag to be true")
+	}
+
+	// Verify legacy directory was never deleted or modified
+	if fi, err := os.Stat(kuzuDir); err != nil || !fi.IsDir() {
+		t.Error("legacy Kuzu directory must not be deleted or modified")
+	}
 }

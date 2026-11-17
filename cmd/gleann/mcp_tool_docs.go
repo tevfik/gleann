@@ -51,5 +51,8 @@ func mcpMemoryToolLines() string {
 	if hasMCPTool("memory_search") {
 		sb.WriteString("memory_search   query=...\n")
 	}
+	if hasMCPTool("memory_failure_add") {
+		sb.WriteString("memory_failure_add command=... error=... fix=... paths=[...]\n")
+	}
 	return sb.String()
 }

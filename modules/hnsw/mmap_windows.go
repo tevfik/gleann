@@ -25,7 +25,12 @@ func mmapFile(fd uintptr, size int64) ([]byte, error) {
 		return nil, fmt.Errorf("MapViewOfFile failed: %w", err)
 	}
 
-	return unsafe.Slice((*byte)(unsafe.Pointer(addr)), size), nil
+	// MapViewOfFile returns the view address as a uintptr. Reading it back
+	// through a pointer to the variable is the conversion go vet accepts
+	// (unsafe.Pointer(addr) is reported as a possible misuse); the view is
+	// not Go memory, so the garbage collector never moves it.
+	ptr := *(*unsafe.Pointer)(unsafe.Pointer(&addr))
+	return unsafe.Slice((*byte)(ptr), size), nil
 }
 
 func munmapFile(data []byte) error {

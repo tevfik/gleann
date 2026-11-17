@@ -16,6 +16,7 @@ package server
 import (
 	"context"
 	"fmt"
+	"os"
 	"sync"
 	"time"
 
@@ -44,6 +45,7 @@ func (s *Server) acquireSearcher(ctx context.Context, name string) (*gleann.Lean
 	for attempt := 0; attempt < 3; attempt++ {
 		s.mu.Lock()
 		if sr, ok := s.searchers[name]; ok && sr != nil {
+			s.touchSearcherLRULocked(name)
 			release := s.retainLocked(sr)
 			s.mu.Unlock()
 			return sr, release, nil
@@ -106,7 +108,12 @@ func (s *Server) loadSearcher(name string) error {
 		return nil
 	}
 	s.searchers[name] = searcher
+	s.touchSearcherLRULocked(name)
+	toClose := s.enforceSearcherBudgetLocked()
 	s.mu.Unlock()
+	for _, sr := range toClose {
+		sr.Close()
+	}
 	return nil
 }
 
@@ -146,6 +153,7 @@ func (s *Server) retainLocked(sr *gleann.LeannSearcher) func() {
 func (s *Server) retireLocked(name string) *gleann.LeannSearcher {
 	sr, ok := s.searchers[name]
 	delete(s.searchers, name)
+	s.removeSearcherLRULocked(name)
 	if !ok || sr == nil {
 		return nil
 	}
@@ -155,6 +163,71 @@ func (s *Server) retireLocked(name string) *gleann.LeannSearcher {
 	}
 	delete(s.searcherRefs, sr)
 	return sr
+}
+
+func (s *Server) searcherCacheBudget() int64 {
+	if env := os.Getenv("GLEANN_SEARCHER_CACHE_BUDGET"); env != "" {
+		if b, err := gleann.ParseByteSize(env); err == nil {
+			return b
+		}
+	}
+	s.cfgMu.RLock()
+	defer s.cfgMu.RUnlock()
+	return s.config.SearcherCacheBudget
+}
+
+func (s *Server) touchSearcherLRULocked(name string) {
+	for i, n := range s.searcherLRU {
+		if n == name {
+			s.searcherLRU = append(s.searcherLRU[:i], s.searcherLRU[i+1:]...)
+			break
+		}
+	}
+	s.searcherLRU = append(s.searcherLRU, name)
+}
+
+func (s *Server) removeSearcherLRULocked(name string) {
+	for i, n := range s.searcherLRU {
+		if n == name {
+			s.searcherLRU = append(s.searcherLRU[:i], s.searcherLRU[i+1:]...)
+			return
+		}
+	}
+}
+
+// enforceSearcherBudgetLocked evicts least-recently-used searchers when total
+// resident size exceeds the configured searcherCacheBudget. Caller holds s.mu.
+// The returned searchers must be closed after unlocking s.mu.
+func (s *Server) enforceSearcherBudgetLocked() []*gleann.LeannSearcher {
+	budget := s.searcherCacheBudget()
+	if budget <= 0 {
+		return nil
+	}
+	totalSize := int64(0)
+	for _, sr := range s.searchers {
+		if sr != nil {
+			totalSize += sr.EstimatedSize()
+		}
+	}
+	if totalSize <= budget {
+		return nil
+	}
+
+	var toClose []*gleann.LeannSearcher
+	for len(s.searcherLRU) > 1 && totalSize > budget {
+		oldest := s.searcherLRU[0]
+		sr := s.searchers[oldest]
+		size := int64(0)
+		if sr != nil {
+			size = sr.EstimatedSize()
+		}
+		closed := s.retireLocked(oldest)
+		if closed != nil {
+			toClose = append(toClose, closed)
+		}
+		totalSize -= size
+	}
+	return toClose
 }
 
 // invalidateSearcher drops the cached searcher for name (closing it once

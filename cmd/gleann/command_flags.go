@@ -57,6 +57,9 @@ var indexFlagSets = map[string]flagSet{
 	"repair": configFlags.union(flagSet{
 		"--all": false, "--check": false, "--force": false, "--progress": true,
 	}),
+	"migrate": configFlags.union(flagSet{
+		"--all": false, "--rollback": false, "--cleanup": false, "--language": true,
+	}),
 }
 
 // memoryFlagSets maps each `gleann memory` subcommand to its flags.
@@ -71,8 +74,12 @@ var memoryFlagSets = map[string]flagSet{
 	"summarize": {"--last": false, "--id": true, "--extract": false},
 	"prune":     {"--age": true},
 	"compact":   {"--min-validity": true},
-	"context":   {"--json": false},
+	"context":   {"--json": false, "--verbose": false, "--path": true, "--command": true},
 	"maintain":  {},
+	"export":    {"--dir": true},
+	"import":    {"--dir": true},
+	"reflect":   {"--dry-run": false, "--revert": true},
+	"failure":   {"--command": true, "--error": true, "--fix": true, "--path": true, "--symbol": true, "--json": false},
 }
 
 // serviceFlagSets maps each `gleann service` subcommand to its flags.

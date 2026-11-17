@@ -1,5 +1,3 @@
-//go:build treesitter
-
 // Package indexer — language-specific symbol weighting.
 //
 // Different languages emphasise different constructs: in Java, an

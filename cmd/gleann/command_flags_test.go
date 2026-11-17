@@ -294,6 +294,7 @@ func TestHelpFlagsAreAccepted(t *testing.T) {
 		{"index set", indexFlagSets["set"], run(cmdSet, "--help")},
 		{"index storage", indexFlagSets["storage"], run(cmdStorage, "--help")},
 		{"index repair", indexFlagSets["repair"], printRepairUsage},
+		{"index migrate", indexFlagSets["migrate"], printMigrateUsage},
 		// The memory help also shows the conversation flags of gleann chat.
 		{"memory", unionAll(memoryFlagSets).union(chatFlags), printMemoryUsage},
 		{"service", unionAll(serviceFlagSets), printServiceUsage},

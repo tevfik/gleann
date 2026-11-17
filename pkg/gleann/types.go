@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"runtime/debug"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -62,6 +63,11 @@ type SearchResult struct {
 	// Reranked is set when Score comes from a cross-encoder. Such scores are
 	// comparable between indexes, so FuseAcrossIndexes keeps them.
 	Reranked bool `json:"reranked,omitempty"`
+
+	// pid is the stable passage identity (format 2 only), kept unexported so
+	// equal-score results can be ordered by it without changing the API
+	// output (RFC 003 section 3.4, IDX-06).
+	pid string
 }
 
 // Item represents a text item to be indexed.
@@ -75,6 +81,9 @@ type Passage struct {
 	ID       int64          `json:"id"`
 	Text     string         `json:"text"`
 	Metadata map[string]any `json:"metadata,omitempty"`
+	// PID is the stable passage identity of a format-2 index (RFC 003 section
+	// 3.4); empty for format 1. Equal-score results are ordered by it.
+	PID string `json:"pid,omitempty"`
 }
 
 // IndexMeta stores metadata about a built index.
@@ -104,6 +113,21 @@ type IndexMeta struct {
 	LexicalOnly    bool `json:"lexical_only,omitempty"`
 	VectorReady    bool `json:"vector_ready,omitempty"`
 	SignaturesOnly bool `json:"signatures_only,omitempty"`
+
+	// StoreFormat is the passage-store format of the index (RFC 003 section
+	// 6.3): absent or 1 = bbolt, 2 = the SQLite record store <name>.db. It is
+	// also stored in the database's own meta table; doctor cross-checks the
+	// field against the files on disk.
+	StoreFormat int `json:"store_format,omitempty"`
+
+	// VectorGeneration mirrors the store's vector_generation meta key after
+	// each vector publication (RFC 003 section 3.4). doctor cross-checks the
+	// two: a mismatch means a crash landed between the publication's database
+	// commit and this metadata write, and a repair republishes the vectors.
+	VectorGeneration int `json:"vector_generation,omitempty"`
+
+	// VectorDType records the storage data type of stored embeddings ("f32" or "f16").
+	VectorDType string `json:"vector_dtype,omitempty"`
 }
 
 // CurrentVersion is optionally set by the entrypoint (e.g. cmd/gleann/main.go).
@@ -262,6 +286,17 @@ type Config struct {
 	// QueryPromptTemplate is prepended to queries during search (e.g., "query: ").
 	QueryPromptTemplate string `json:"query_prompt_template,omitempty"`
 
+	// UseMmap, when set, chooses memory-mapped search (true) or loading the
+	// vector index into RAM (false) for every backend. Unset (the default),
+	// the per-backend keys decide; both default to memory-mapped.
+	// --no-mmap and GLEANN_MMAP=0|1 set it.
+	UseMmap *bool `json:"use_mmap,omitempty"`
+
+	// SearcherCacheBudget is the memory budget in bytes for cached searchers
+	// (0 = disabled, evict by count only). Configurable via environment variable
+	// GLEANN_SEARCHER_CACHE_BUDGET (e.g. "500MB", "2GB", "104857600").
+	SearcherCacheBudget int64 `json:"searcher_cache_budget,omitempty"`
+
 	// HNSW-specific parameters
 	HNSWConfig HNSWConfig `json:"hnsw_config,omitempty"`
 
@@ -318,7 +353,8 @@ type HNSWConfig struct {
 	// EfSearch is the size of the dynamic candidate list during search (default: 128).
 	EfSearch int `json:"ef_search"`
 
-	// UseMmap enables zero-copy memory-mapped search instead of loading the index into RAM (default: false).
+	// UseMmap enables zero-copy memory-mapped search instead of loading the index into RAM (default: true).
+	// Deprecated: configure top-level Config.UseMmap instead.
 	UseMmap bool `json:"use_mmap,omitempty"`
 
 	// MaxLevel is the maximum level of the HNSW graph (auto-computed if 0).
@@ -336,6 +372,9 @@ type HNSWConfig struct {
 
 	// PruneKeepFraction is the fraction of embeddings to keep (default: 0.0 = keep none).
 	PruneKeepFraction float64 `json:"prune_keep_fraction"`
+
+	// VectorDType specifies the storage format of stored embeddings: "f32" (default) or "f16".
+	VectorDType string `json:"vector_dtype,omitempty"`
 }
 
 // FAISSConfig holds FAISS-specific parameters for the CGo backend.
@@ -411,7 +450,8 @@ type DiskANNConfig struct {
 	// DistanceMetric selects distance function ("l2" or "cosine"). Default: "l2".
 	DistanceMetric string `json:"distance_metric,omitempty"`
 
-	// UseMmap enables memory-mapped raw vector access. Default: true.
+	// UseMmap enables memory-mapped raw vector access (default: true).
+	// Deprecated: configure top-level Config.UseMmap instead.
 	UseMmap bool `json:"use_mmap,omitempty"`
 }
 
@@ -502,6 +542,15 @@ func DefaultConfig() Config {
 			PruneEmbeddings:   false,
 			PruneKeepFraction: 0.0,
 		},
+		DiskANNConfig: DiskANNConfig{
+			R:              64,
+			L:              100,
+			Alpha:          1.2,
+			PQCentroids:    256,
+			SearchL:        100,
+			DistanceMetric: "l2",
+			UseMmap:        true,
+		},
 		SearchConfig: SearchConfig{
 			TopK:        10,
 			HybridAlpha: 0.7,
@@ -520,6 +569,79 @@ func DefaultConfig() Config {
 			LLMHFFile:       "qwen2.5-coder-1.5b-instruct-q4_k_m.gguf",
 		},
 	}
+}
+
+// MmapEnabled reports whether memory-mapping is enabled for vector indexes (default: true).
+// Top-level UseMmap takes precedence when set. When UseMmap is nil, it falls back
+// to the backend-specific setting (HNSWConfig.UseMmap or DiskANNConfig.UseMmap).
+func (c Config) MmapEnabled() bool {
+	// An explicit choice (use_mmap in config.json, --no-mmap, GLEANN_MMAP)
+	// applies to every backend.
+	if c.UseMmap != nil {
+		return *c.UseMmap
+	}
+	// Unset: the per-backend keys decide (both default to true), so saved
+	// configs that set hnsw_config.use_mmap or diskann_config.use_mmap keep
+	// working.
+	switch c.Backend {
+	case "diskann":
+		return c.DiskANNConfig.UseMmap
+	default:
+		return c.HNSWConfig.UseMmap
+	}
+}
+
+// ParseByteSize parses a human-readable size string (e.g. "500MB", "2GB", "1048576", "512MiB") into bytes.
+// If s is empty or "0", it returns 0, nil.
+func ParseByteSize(s string) (int64, error) {
+	s = strings.TrimSpace(s)
+	if s == "" || s == "0" {
+		return 0, nil
+	}
+	multiplier := int64(1)
+	upper := strings.ToUpper(s)
+	switch {
+	case strings.HasSuffix(upper, "GIB"):
+		multiplier = 1024 * 1024 * 1024
+		s = s[:len(s)-3]
+	case strings.HasSuffix(upper, "GB") || strings.HasSuffix(upper, "G"):
+		multiplier = 1024 * 1024 * 1024
+		if strings.HasSuffix(upper, "GB") {
+			s = s[:len(s)-2]
+		} else {
+			s = s[:len(s)-1]
+		}
+	case strings.HasSuffix(upper, "MIB"):
+		multiplier = 1024 * 1024
+		s = s[:len(s)-3]
+	case strings.HasSuffix(upper, "MB") || strings.HasSuffix(upper, "M"):
+		multiplier = 1024 * 1024
+		if strings.HasSuffix(upper, "MB") {
+			s = s[:len(s)-2]
+		} else {
+			s = s[:len(s)-1]
+		}
+	case strings.HasSuffix(upper, "KIB"):
+		multiplier = 1024
+		s = s[:len(s)-3]
+	case strings.HasSuffix(upper, "KB") || strings.HasSuffix(upper, "K"):
+		multiplier = 1024
+		if strings.HasSuffix(upper, "KB") {
+			s = s[:len(s)-2]
+		} else {
+			s = s[:len(s)-1]
+		}
+	case strings.HasSuffix(upper, "B"):
+		s = s[:len(s)-1]
+	}
+	n, err := strconv.ParseInt(strings.TrimSpace(s), 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("invalid byte size %q: %w", s, err)
+	}
+	if n < 0 {
+		return 0, fmt.Errorf("invalid negative byte size: %s", s)
+	}
+	return n * multiplier, nil
 }
 
 // ChunkConfig holds text chunking parameters.

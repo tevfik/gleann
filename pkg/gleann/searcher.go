@@ -12,6 +12,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/tevfik/gleann/internal/graphstore"
 )
 
 // LeannSearcher performs search on built indexes.
@@ -19,11 +21,12 @@ import (
 type LeannSearcher struct {
 	config           Config
 	backend          BackendSearcher
-	passages         *PassageManager
+	passages         PassageStore
 	warnings         []string
 	meta             IndexMeta
 	embedder         EmbeddingComputer
 	scorer           Scorer
+	lexicalMode      string // GLEANN_LEXICAL, read once at creation: "memory" (default) or "fts5"
 	reranker         Reranker
 	embServer        EmbeddingServer
 	graphDB          GraphDB
@@ -35,11 +38,50 @@ type LeannSearcher struct {
 
 	loaded          bool
 	vectorAvailable bool
+	storeFormat     int // passage-store format detected at Load: 1 bbolt, 2 SQLite (RFC 003)
+	name            string
+	estimatedSize   int64
 }
 
 // VectorAvailable reports whether a vector index is loaded and available for search.
 func (s *LeannSearcher) VectorAvailable() bool {
 	return s.vectorAvailable
+}
+
+// EstimatedSize returns the estimated resident memory size of the searcher in bytes.
+// If an explicit size was set via SetEstimatedSize, that value is returned.
+// Otherwise, it computes the sum of the file sizes of the index artifacts on disk.
+func (s *LeannSearcher) EstimatedSize() int64 {
+	if s == nil {
+		return 0
+	}
+	if s.estimatedSize > 0 {
+		return s.estimatedSize
+	}
+	name := s.name
+	if name == "" {
+		name = s.meta.Name
+	}
+	if name == "" {
+		return 0
+	}
+	indexDir := filepath.Join(s.config.IndexDir, name)
+	basePath := filepath.Join(indexDir, name)
+	var total int64
+	exts := []string{".index", ".db", ".passages.db", ".bm25", ".meta.json", ".meta", ".db-wal", ".db-shm"}
+	for _, ext := range exts {
+		if fi, err := os.Stat(basePath + ext); err == nil {
+			total += fi.Size()
+		}
+	}
+	return total
+}
+
+// SetEstimatedSize overrides the estimated size for testing.
+func (s *LeannSearcher) SetEstimatedSize(size int64) {
+	if s != nil {
+		s.estimatedSize = size
+	}
 }
 
 // NewSearcher creates a new LeannSearcher.
@@ -49,7 +91,20 @@ func NewSearcher(config Config, embedder EmbeddingComputer) *LeannSearcher {
 		embedder:         embedder,
 		embedderResolver: config.EmbedderResolver,
 		scorer:           NewBM25Adapter(),
+		lexicalMode:      lexicalLegMode(),
 	}
+}
+
+// lexicalLegMode reads the GLEANN_LEXICAL switch once, where a searcher or
+// builder is created, and returns it explicitly (no package-level mutable
+// state). Unset or "memory" keeps today's in-RAM BM25; "fts5" selects the
+// persisted FTS5 lexical leg (RFC 003 section 8 step 3). Any other value falls
+// back to the default so a typo cannot silently change retrieval.
+func lexicalLegMode() string {
+	if strings.EqualFold(strings.TrimSpace(os.Getenv("GLEANN_LEXICAL")), "fts5") {
+		return "fts5"
+	}
+	return "memory"
 }
 
 // SetScorer sets a BM25 scorer for hybrid search.
@@ -77,6 +132,17 @@ func (s *LeannSearcher) Load(ctx context.Context, name string) (retErr error) {
 	if err := checkPathName(name); err != nil {
 		return err
 	}
+	s.name = name
+	// A previous Load (or a Close that already ran) leaves s.graphDB bound to
+	// the store handle this Load is about to replace. Reset it up front so the
+	// format-2 attachment below always re-opens, and no adapter outlives its
+	// store (a stale adapter would query a closed database). Close on the
+	// SQLite backend is a no-op because the graph store is owned by the
+	// passage store; a Kùzu backend's Close releases its own handle.
+	if s.graphDB != nil {
+		s.graphDB.Close()
+		s.graphDB = nil
+	}
 	indexDir := filepath.Join(s.config.IndexDir, name)
 	basePath := filepath.Join(indexDir, name)
 
@@ -86,9 +152,13 @@ func (s *LeannSearcher) Load(ctx context.Context, name string) (retErr error) {
 	if err != nil {
 		return fmt.Errorf("read metadata: %w", err)
 	}
-	if err := json.Unmarshal(metaData, &s.meta); err != nil {
+	// A fresh value, not the previous index's: omitempty fields absent from
+	// this JSON would otherwise keep the values of an earlier Load.
+	var meta IndexMeta
+	if err := json.Unmarshal(metaData, &meta); err != nil {
 		return fmt.Errorf("unmarshal metadata: %w", err)
 	}
+	s.meta = meta
 
 	// Schema version check for backwards compatibility
 	expectedVersion := "1.0.0"
@@ -126,15 +196,46 @@ func (s *LeannSearcher) Load(ctx context.Context, name string) (retErr error) {
 			name, s.meta.Dimensions, s.meta.EmbeddingModel, s.embedder.Dimensions(), s.embedder.ModelName(), name)
 	}
 
-	// Load passages in read-only mode (shared flock)
-	s.passages = NewReadOnlyPassageManager(basePath)
+	// Load passages in read-only mode. Format 2 opens the SQLite record
+	// store; format 1 keeps the bbolt manager (shared flock).
+	ps, err := OpenPassageStore(basePath, true)
+	if err != nil {
+		return fmt.Errorf("load passages: %w", err)
+	}
+	s.passages = ps
+	s.storeFormat = ps.storeFormat()
+	// The format-2 opener may have rolled an interrupted vector publication
+	// forward and synced meta.json (recoverVectorPublication). Re-read the
+	// metadata so this Load sees the published state — VectorReady, the
+	// generation — instead of the pre-recovery copy read above.
+	if s.storeFormat == 2 {
+		if metaData, err := os.ReadFile(metaPath); err == nil {
+			// Decode into a fresh value: omitempty fields such as
+			// lexical_only are absent from the JSON when false, and
+			// unmarshalling over the old struct would keep their old value.
+			var fresh IndexMeta
+			if err := json.Unmarshal(metaData, &fresh); err != nil {
+				return fmt.Errorf("unmarshal metadata after recovery: %w", err)
+			}
+			s.meta = fresh
+		}
+	}
 	if err := s.passages.Load(); err != nil {
 		return fmt.Errorf("load passages: %w", err)
 	}
 	defer func() {
-		if retErr != nil && s.passages != nil {
-			_ = s.passages.Close()
-			s.passages = nil
+		if retErr != nil {
+			if s.passages != nil {
+				_ = s.passages.Close()
+				s.passages = nil
+			}
+			// The format-2 graph adapter shares the passage store's handle,
+			// which the close above just released; clear it so a retry
+			// reattaches instead of querying the closed store.
+			if s.graphDB != nil {
+				s.graphDB.Close()
+				s.graphDB = nil
+			}
 		}
 	}()
 
@@ -171,29 +272,97 @@ func (s *LeannSearcher) Load(ctx context.Context, name string) (retErr error) {
 		s.vectorAvailable = true
 	}
 
-	// Attempt to load Graph DB if it exists.
-	// Primary path: {indexDir}/{name}_graph (written by buildGraphIndex).
-	// Fallback: {basePath}/.kuzu (legacy location).
-	graphDir := filepath.Join(s.config.IndexDir, name+"_graph")
-	if _, err := os.Stat(graphDir); err != nil {
-		// Try legacy path
-		graphDir = filepath.Join(basePath, ".kuzu")
-	}
-	if _, err := os.Stat(graphDir); err == nil {
-		if GraphDBOpener != nil {
-			if db, openErr := GraphDBOpener(graphDir); openErr == nil {
-				s.graphDB = db
-			} else {
-				log.Printf("⚠  WARNING: Found graph database at %s but failed to open: %v", graphDir, openErr)
+	// The format-2 code graph lives in the index's own SQLite database
+	// (symbols/edges/doc_nodes tables, RFC 003 sections 3.4 and 3.7), not in
+	// a Kùzu sidecar, so a format-2 index with graph data gets graph queries
+	// in every build including CGO_ENABLED=0, sharing the passage store's
+	// connection pools (RFC 003 section 8 step 7). For a format-2 index the
+	// SQLite graph wins when it has data, even over a stale <name>_graph Kùzu
+	// directory left behind by a format-1 migration (RFC 003 section 6.4:
+	// migrate never deletes Kùzu directories); the Kùzu path below is only
+	// consulted when the SQLite tables are empty, or for a format-1 index.
+	if s.storeFormat == 2 {
+		if sp, ok := s.passages.(*storePassages); ok && sp.st != nil {
+			gs := graphstore.New(sp.st)
+			has, err := gs.HasData()
+			if err != nil {
+				log.Printf("⚠  WARNING: Checking graph data for index %q failed: %v", name, err)
+			} else if has {
+				s.graphDB = &sqliteGraphDB{g: gs}
 			}
-		} else {
-			log.Printf("ℹ️  Graph database found at %s but gleann was not built with graph support (Cgo/treesitter disabled)", graphDir)
+		}
+	}
+
+	// Attempt to load the Kùzu Graph DB if it exists and no format-2 graph
+	// was attached above. Primary path: {indexDir}/{name}_graph (written by
+	// buildGraphIndex). Fallback: {basePath}/.kuzu (legacy location).
+	if s.graphDB == nil {
+		graphDir := filepath.Join(s.config.IndexDir, name+"_graph")
+		if _, err := os.Stat(graphDir); err != nil {
+			// Try legacy path
+			graphDir = filepath.Join(basePath, ".kuzu")
+		}
+		if _, err := os.Stat(graphDir); err == nil {
+			if GraphDBOpener != nil {
+				if db, openErr := GraphDBOpener(graphDir); openErr == nil {
+					s.graphDB = db
+				} else {
+					log.Printf("⚠  WARNING: Found graph database at %s but failed to open: %v", graphDir, openErr)
+				}
+			} else {
+				log.Printf("ℹ️  Graph database found at %s but gleann was not built with graph support (Cgo/treesitter disabled)", graphDir)
+			}
+		}
+	}
+
+	// The persisted lexical leg. A format-2 index always uses its own lex
+	// table (the FTS scorer reads <name>.db directly, no sidecar). A format-1
+	// index uses the sidecar only when GLEANN_LEXICAL=fts5. Only the default
+	// adapter is replaced; a custom scorer (or nil, set to disable lexical
+	// search) is left untouched.
+	if s.storeFormat == 2 {
+		if _, isDefault := s.scorer.(*BM25Adapter); isDefault {
+			if fts := s.openFormat2Scorer(ctx); fts != nil {
+				s.scorer = fts
+				defer func() {
+					// A later step of Load failed: release the database
+					// handle and restore the default, so a retry starts clean.
+					if retErr != nil {
+						_ = fts.Close()
+						s.scorer = NewBM25Adapter()
+					}
+				}()
+			}
+		}
+	} else if s.lexicalMode == "fts5" {
+		if _, isDefault := s.scorer.(*BM25Adapter); isDefault {
+			// nil means the sidecar could not be made fresh; the in-RAM
+			// adapter below then serves this load as before.
+			if fts := s.openFTSScorer(ctx, basePath); fts != nil {
+				s.scorer = fts
+				defer func() {
+					// A later step of Load failed: release the database
+					// handle and restore the default, so a retry starts clean.
+					if retErr != nil {
+						_ = fts.Close()
+						s.scorer = NewBM25Adapter()
+					}
+				}()
+			}
 		}
 	}
 
 	// Build BM25 index if scorer is set.
 	// For large corpora, use streaming to avoid loading all passages into RAM.
 	if s.scorer != nil {
+		if ps, ok := s.scorer.(PersistedScorer); ok && ps.Persisted() {
+			// A persisted scorer's index already lives on disk: skip the whole
+			// passage scan / AddDocuments build, and MaxBM25Passages does not
+			// apply to it (RFC 003 section 3.1). This is what removes the cold
+			// open's tokenising pass (IDX-14).
+			s.loaded = true
+			return nil
+		}
 		numPassages := s.passages.Count()
 		maxBM25 := s.config.SearchConfig.MaxBM25Passages
 		if maxBM25 > 0 && numPassages > maxBM25 {
@@ -288,18 +457,26 @@ func (s *LeannSearcher) Search(ctx context.Context, query string, opts ...Search
 	// enabled). Symbol boosts and the reranker keep the original query.
 	rq := s.retrievalQuery(ctx, query, searchOpts)
 
+	// Metadata filters (WP-2.5): the widen-until-k loop below runs first for
+	// both store formats — it is cheap and answers the common case. Only when
+	// it stops at filterPoolCap with fewer than k results does a format-2
+	// index fall back to an exact SQL pre-selection (see searchPreselected).
+	var filterEngine *MetadataFilterEngine
+	if len(searchOpts.MetadataFilters) > 0 {
+		filterEngine = NewMetadataFilterEngine(searchOpts.MetadataFilters)
+		if searchOpts.FilterLogic != "" {
+			filterEngine.Logic = searchOpts.FilterLogic
+		}
+	}
+
 	// Fallback to pure lexical search if vector backend is not available or lexical-only search is requested
 	if !s.vectorAvailable || s.backend == nil || searchOpts.HybridAlpha == 0.0 {
+		if filterEngine != nil {
+			return s.searchLexicalFiltered(ctx, query, rq, searchOpts, topK, retrieveK, activeReranker, filterEngine)
+		}
 		results, err := s.SearchBM25(ctx, rq, retrieveK)
 		if err != nil {
 			return nil, err
-		}
-		if len(searchOpts.MetadataFilters) > 0 {
-			engine := NewMetadataFilterEngine(searchOpts.MetadataFilters)
-			if searchOpts.FilterLogic != "" {
-				engine.Logic = searchOpts.FilterLogic
-			}
-			results = engine.FilterResults(results)
 		}
 		if searchOpts.OnePerFile {
 			results = onePerFile(results)
@@ -315,12 +492,18 @@ func (s *LeannSearcher) Search(ctx context.Context, query string, opts ...Search
 
 	// Compute query embedding.
 	if s.embedder == nil {
+		if filterEngine != nil {
+			return s.searchLexicalFiltered(ctx, query, rq, searchOpts, topK, retrieveK, activeReranker, filterEngine)
+		}
 		return s.SearchBM25(ctx, rq, topK)
 	}
 	queryEmb, err := s.embedder.ComputeSingle(ctx, s.meta.QueryPrefix+rq) // the prefix the index was built for
 	if err != nil {
 		if s.scorer != nil {
 			log.Printf("⚠  Embedder error (%v); falling back to pure BM25 retrieval", err)
+			if filterEngine != nil {
+				return s.searchLexicalFiltered(ctx, query, rq, searchOpts, topK, retrieveK, activeReranker, filterEngine)
+			}
 			return s.SearchBM25(ctx, rq, topK)
 		}
 		return nil, fmt.Errorf("compute query embedding: %w", err)
@@ -333,252 +516,182 @@ func (s *LeannSearcher) Search(ctx context.Context, query string, opts ...Search
 			len(queryEmb), s.meta.Dimensions, s.meta.EmbeddingModel)
 	}
 
-	// Vector search.
-	var ids []int64
-	var distances []float32
+	// Widen-until-k (WP-2.5): with metadata filters a single retrieveK
+	// retrieval leaves fewer than k results when the filter is selective, so
+	// the candidate pool grows (nextFilterPool) until k results pass the filter, every
+	// pre-selected match has been examined, both retrieval legs are
+	// exhausted, or the pool reaches filterPoolCap. Without filters the loop
+	// runs exactly once with the original retrieveK: results, scores and
+	// order are unchanged.
+	pool := retrieveK
+	var results []SearchResult
+	var candidateCount, preFilterCount int
+	hitCap := false
+	// Vector score normalizer, fixed at the first round (pool == retrieveK):
+	// the max distance among the first retrieveK candidates — exactly the
+	// normalizer the unfiltered search uses. Widening the pool must not
+	// change a passage's score, so every later round (and the pre-selection
+	// fallback) reuses it instead of the wider pool's max distance.
+	var normDist float32
+	normSet := false
+	for {
+		// Vector search.
+		var ids []int64
+		var distances []float32
 
-	if s.embServer != nil && s.embServer.IsRunning() {
-		// Use dedicated recomputation server if available
-		ids, distances, err = s.backend.SearchWithRecompute(ctx, queryEmb, retrieveK, s.embServer.ComputeEmbeddings)
-	} else if _, isMmap := s.backend.(MmapBackendSearcher); isMmap {
-		// If using Mmap Searcher but no dedicated embServer, create an ad-hoc recomputer
-		// so that the graph can traverse locally.
-		adHocRecompute := func(ctx context.Context, targetIDs []int64) ([][]float32, error) {
-			texts := make([]string, 0, len(targetIDs))
-			for _, id := range targetIDs {
-				passage, pErr := s.passages.Get(id)
-				if pErr == nil {
-					texts = append(texts, passage.Text)
-				} else {
-					texts = append(texts, "")
+		if s.embServer != nil && s.embServer.IsRunning() {
+			// Use dedicated recomputation server if available
+			ids, distances, err = s.backend.SearchWithRecompute(ctx, queryEmb, pool, s.embServer.ComputeEmbeddings)
+		} else if _, isMmap := s.backend.(MmapBackendSearcher); isMmap {
+			// If using Mmap Searcher but no dedicated embServer, create an ad-hoc recomputer
+			// so that the graph can traverse locally.
+			adHocRecompute := func(ctx context.Context, targetIDs []int64) ([][]float32, error) {
+				texts := make([]string, 0, len(targetIDs))
+				for _, id := range targetIDs {
+					passage, pErr := s.passages.Get(id)
+					if pErr == nil {
+						texts = append(texts, passage.Text)
+					} else {
+						texts = append(texts, "")
+					}
 				}
+				return s.embedder.Compute(ctx, withPrefix(s.meta.PassagePrefix, texts)) // as the index was built
 			}
-			return s.embedder.Compute(ctx, withPrefix(s.meta.PassagePrefix, texts)) // as the index was built
-		}
-		// HNSW/mmap passes context natively if we wrapper it or we just ignore the inner errors.
-		ids, distances, err = s.backend.SearchWithRecompute(ctx, queryEmb, retrieveK, adHocRecompute)
-	} else {
-		// Standard RAM search with stored embeddings.
-		ids, distances, err = s.backend.Search(ctx, queryEmb, retrieveK)
-	}
-	if err != nil {
-		return nil, fmt.Errorf("vector search: %w", err)
-	}
-
-	// Raw distances, kept on the results for ranking several indexes together (FuseAcrossIndexes).
-	rawDistances := make(map[int64]float32, len(ids))
-	for i, id := range ids {
-		rawDistances[id] = distances[i]
-	}
-
-	// Convert distances to cosine-like scores (higher = better).
-	vectorScores := make(map[int64]float32, len(ids))
-	maxDist := float32(0)
-	for _, d := range distances {
-		if d > maxDist {
-			maxDist = d
-		}
-	}
-	for i, id := range ids {
-		if maxDist > 0 {
-			vectorScores[id] = 1.0 - distances[i]/maxDist
+			// HNSW/mmap passes context natively if we wrapper it or we just ignore the inner errors.
+			ids, distances, err = s.backend.SearchWithRecompute(ctx, queryEmb, pool, adHocRecompute)
 		} else {
-			vectorScores[id] = 1.0
+			// Standard RAM search with stored embeddings.
+			ids, distances, err = s.backend.Search(ctx, queryEmb, pool)
 		}
-	}
-
-	// Hybrid search with BM25 (RRF: Reciprocal Rank Fusion)
-	alpha := searchOpts.HybridAlpha
-	finalScores := make(map[int64]float32)
-
-	// If BM25 scorer is configured and alpha < 1.0, perform full-corpus lexical retrieval
-	var bm25IDs []int64
-	bm25Raw := map[int64]float32{}
-	if s.scorer != nil && alpha < 1.0 {
-		if topKScorer, ok := s.scorer.(TopKScorer); ok {
-			var bm25Scores []float32
-			bm25IDs, bm25Scores = topKScorer.TopK(rq, retrieveK)
-			for i, id := range bm25IDs {
-				if i < len(bm25Scores) {
-					bm25Raw[id] = bm25Scores[i]
-				}
-			}
-		}
-	}
-
-	if len(bm25IDs) > 0 && alpha < 1.0 {
-		// Reciprocal Rank Fusion (RRF with k = 60)
-		const kRRF = 60.0
-		rrfScores := make(map[int64]float32)
-
-		for i, id := range ids {
-			rank := float32(i + 1)
-			rrfScores[id] += alpha * (1.0 / (kRRF + rank))
-		}
-		for i, id := range bm25IDs {
-			rank := float32(i + 1)
-			rrfScores[id] += (1.0 - alpha) * (1.0 / (kRRF + rank))
-		}
-
-		// Normalize RRF scores relative to theoretical maximum rank 1 in both
-		maxRRFPossible := alpha*(1.0/(kRRF+1.0)) + (1.0-alpha)*(1.0/(kRRF+1.0))
-		if maxRRFPossible <= 0 {
-			maxRRFPossible = 1.0 / (kRRF + 1.0)
-		}
-		for id, rrf := range rrfScores {
-			normScore := rrf / maxRRFPossible
-			if normScore > 1.0 {
-				normScore = 1.0
-			}
-			finalScores[id] = normScore
-		}
-	} else {
-		finalScores = vectorScores
-	}
-
-	// Build results and apply boosts/penalties:
-	// 1. Symbol / FQN exact match boost (+0.35 to +0.5)
-	// 2. Kind filtering ("code" vs "docs")
-	// 3. Test / vendor demotion (unless searchOpts.IncludeTests is true or query mentions test)
-	qClean := strings.TrimSpace(query)
-	qLower := strings.ToLower(qClean)
-	queryMentionsTest := strings.Contains(qLower, "test") || strings.Contains(qLower, "benchmark")
-	// The "contains symbol name" boost also sees the expansion: symbols
-	// named in the hypothetical code are the bridge HyDE provides (without
-	// it the offline gain of MRR +0.19 vanished end to end).
-	containsLower := qLower
-	if rq != query {
-		containsLower = strings.ToLower(rq)
-	}
-
-	results := make([]SearchResult, 0, len(finalScores))
-	for id, score := range finalScores {
-		passage, err := s.passages.Get(id)
 		if err != nil {
-			continue
+			return nil, fmt.Errorf("vector search: %w", err)
 		}
 
-		// Kind filter: "code" vs "docs"
-		if searchOpts.Kind != "" && searchOpts.Kind != "all" {
-			isDoc := false
-			if k, ok := passage.Metadata["kind"].(string); ok && (k == "doc" || k == "documentation") {
-				isDoc = true
-			} else if ext, ok := passage.Metadata["ext"].(string); ok && (ext == ".md" || ext == ".txt" || ext == ".rst" || ext == ".markdown") {
-				isDoc = true
-			} else if src, ok := passage.Metadata["source"].(string); ok && (strings.HasSuffix(src, ".md") || strings.HasSuffix(src, ".txt") || strings.HasSuffix(src, ".rst") || strings.HasSuffix(src, ".markdown")) {
-				isDoc = true
-			} else if file, ok := passage.Metadata["file"].(string); ok && (strings.HasSuffix(file, ".md") || strings.HasSuffix(file, ".txt") || strings.HasSuffix(file, ".rst") || strings.HasSuffix(file, ".markdown")) {
-				isDoc = true
-			}
+		// Raw distances, kept on the results for ranking several indexes together (FuseAcrossIndexes).
+		rawDistances := make(map[int64]float32, len(ids))
+		for i, id := range ids {
+			rawDistances[id] = distances[i]
+		}
 
-			if searchOpts.Kind == "code" && isDoc {
-				continue
+		// Convert distances to cosine-like scores (higher = better).
+		vectorScores := make(map[int64]float32, len(ids))
+		maxDist := normDist
+		if !normSet {
+			for _, d := range distances {
+				if d > maxDist {
+					maxDist = d
+				}
 			}
-			if searchOpts.Kind == "docs" && !isDoc {
-				continue
+			// Fixed at the first round that returned vector candidates; an
+			// empty first round must not pin the normalizer to 0.
+			if len(distances) > 0 {
+				normDist, normSet = maxDist, true
+			}
+		}
+		for i, id := range ids {
+			if maxDist > 0 {
+				vectorScores[id] = 1.0 - distances[i]/maxDist
+			} else {
+				vectorScores[id] = 1.0
 			}
 		}
 
-		// Symbol and FQN boost
-		if name, ok := passage.Metadata["name"].(string); ok && name != "" {
-			if strings.EqualFold(qClean, name) {
-				score += 0.5 // Exact symbol match
-			} else if strings.Contains(containsLower, strings.ToLower(name)) && len(name) >= 3 {
-				score += 0.2 // Query contains symbol name
-			}
-		}
-		if fqn, ok := passage.Metadata["fqn"].(string); ok && fqn != "" {
-			if strings.EqualFold(qClean, fqn) || strings.HasSuffix(strings.ToLower(fqn), "."+qLower) {
-				score += 0.5 // Exact FQN match
-			}
-			// Graph-assisted ranking (T13): boost symbols with verified AST callers/centrality
-			if s.graphDB != nil {
-				if callers, err := s.graphDB.Callers(fqn); err == nil && len(callers) > 0 {
-					boost := float32(math.Log(1.0+float64(len(callers)))) * 0.05
-					if boost > 0.15 {
-						boost = 0.15
+		// Hybrid search with BM25 (RRF: Reciprocal Rank Fusion)
+		alpha := searchOpts.HybridAlpha
+		finalScores := make(map[int64]float32)
+
+		// If BM25 scorer is configured and alpha < 1.0, perform full-corpus lexical retrieval
+		var bm25IDs []int64
+		bm25Raw := map[int64]float32{}
+		if s.scorer != nil && alpha < 1.0 {
+			if topKScorer, ok := s.scorer.(TopKScorer); ok {
+				var bm25Scores []float32
+				bm25IDs, bm25Scores = topKScorer.TopK(rq, pool)
+				for i, id := range bm25IDs {
+					if i < len(bm25Scores) {
+						bm25Raw[id] = bm25Scores[i]
 					}
-					score += boost
 				}
 			}
 		}
 
-		// Test demotion
-		isTest := false
-		if it, ok := passage.Metadata["is_test"].(bool); ok && it {
-			isTest = true
+		if len(bm25IDs) > 0 && alpha < 1.0 {
+			// Reciprocal Rank Fusion (RRF with k = 60)
+			const kRRF = 60.0
+			rrfScores := make(map[int64]float32)
+
+			for i, id := range ids {
+				rank := float32(i + 1)
+				rrfScores[id] += alpha * (1.0 / (kRRF + rank))
+			}
+			for i, id := range bm25IDs {
+				rank := float32(i + 1)
+				rrfScores[id] += (1.0 - alpha) * (1.0 / (kRRF + rank))
+			}
+
+			// Normalize RRF scores relative to theoretical maximum rank 1 in both
+			maxRRFPossible := alpha*(1.0/(kRRF+1.0)) + (1.0-alpha)*(1.0/(kRRF+1.0))
+			if maxRRFPossible <= 0 {
+				maxRRFPossible = 1.0 / (kRRF + 1.0)
+			}
+			for id, rrf := range rrfScores {
+				normScore := rrf / maxRRFPossible
+				if normScore > 1.0 {
+					normScore = 1.0
+				}
+				finalScores[id] = normScore
+			}
 		} else {
-			for _, key := range []string{"source", "file"} {
-				if path, ok := passage.Metadata[key].(string); ok && path != "" {
-					base := filepath.Base(path)
-					if strings.HasSuffix(base, "_test.go") || strings.HasPrefix(base, "test_") ||
-						strings.HasSuffix(base, ".spec.ts") || strings.Contains(path, "/test/") ||
-						strings.Contains(path, "/tests/") {
-						isTest = true
-						break
-					}
-				}
-			}
-		}
-		if isTest && !searchOpts.IncludeTests && !queryMentionsTest {
-			score *= 0.5
+			finalScores = vectorScores
 		}
 
-		// Vendor demotion
-		isVendor := false
-		if iv, ok := passage.Metadata["is_vendor"].(bool); ok && iv {
-			isVendor = true
-		} else {
-			for _, key := range []string{"source", "file"} {
-				if path, ok := passage.Metadata[key].(string); ok && path != "" {
-					if strings.Contains(path, "vendor/") || strings.Contains(path, "third_party/") || strings.Contains(path, "node_modules/") {
-						isVendor = true
-						break
-					}
-				}
-			}
-		}
-		if isVendor {
-			score *= 0.3
+		results = s.buildBoostedResults(query, rq, searchOpts, finalScores, rawDistances, bm25Raw)
+
+		candidateCount = len(finalScores)
+		preFilterCount = len(results)
+
+		// Apply metadata filters if configured (BEFORE topK truncation).
+		if filterEngine != nil {
+			results = filterEngine.FilterResults(results)
 		}
 
-		if score >= searchOpts.MinScore {
-			r := SearchResult{
-				ID:       id,
-				Text:     passage.Text,
-				Score:    score,
-				Metadata: passage.Metadata,
+		if searchOpts.OnePerFile {
+			results = onePerFile(results)
+		}
+
+		if filterEngine == nil {
+			break // unfiltered: one retrieval, exactly the previous behaviour
+		}
+		if len(results) >= topK {
+			break // k results pass the filter
+		}
+		if len(ids) < pool && len(bm25IDs) < pool {
+			break // both legs returned fewer than requested: the index is exhausted
+		}
+		next := nextFilterPool(pool, len(results), preFilterCount, topK)
+		if next <= pool {
+			hitCap = true
+			break // the cap bounds the work
+		}
+		pool = next
+	}
+
+	// Exact pre-selection fallback (WP-2.5): the loop hit the pool cap with
+	// fewer than k results — a highly selective filter whose matches rank deep.
+	// On a format-2 index, pre-select the matching IDs in SQL and score only
+	// those; otherwise the loop's result stands.
+	if hitCap && len(results) < topK && filterEngine != nil && s.storeFormat == 2 {
+		if pre, exact, ok := s.searchPreselected(ctx, query, rq, queryEmb, searchOpts, topK, filterEngine, normDist); ok {
+			if exact {
+				results = pre
+			} else {
+				results = mergeLexicalFill(results, pre, topK, searchOpts.MinScore)
 			}
-			if d, ok := rawDistances[id]; ok {
-				r.VectorDistance = &d
-			}
-			if b, ok := bm25Raw[id]; ok {
-				r.BM25Score = &b
-			}
-			results = append(results, r)
 		}
 	}
 
-	// Sort by score descending.
-	sort.Slice(results, func(i, j int) bool {
-		return results[i].Score > results[j].Score
-	})
-
-	if len(finalScores) > 0 && len(results) == 0 && searchOpts.MinScore == 0 && searchOpts.Kind == "" {
+	if candidateCount > 0 && preFilterCount == 0 && searchOpts.MinScore == 0 && searchOpts.Kind == "" {
 		log.Printf("⚠  WARNING: Index %q backend returned candidate vectors, but none were found in the passages database! The index is desynchronized. Run: gleann index rebuild %s", s.meta.Name, s.meta.Name)
-	}
-
-	// Apply metadata filters if configured (BEFORE topK truncation).
-	if len(searchOpts.MetadataFilters) > 0 {
-		engine := NewMetadataFilterEngine(searchOpts.MetadataFilters)
-		if searchOpts.FilterLogic != "" {
-			engine.Logic = searchOpts.FilterLogic
-		}
-		results = engine.FilterResults(results)
-	}
-
-	if searchOpts.OnePerFile {
-		results = onePerFile(results)
 	}
 
 	// Truncate to topK if not reranking (reranker handles topK internally).
@@ -702,6 +815,17 @@ func (s *LeannSearcher) Close() error {
 	}
 	if s.graphDB != nil {
 		s.graphDB.Close()
+		s.graphDB = nil
+	}
+	// A persisted scorer (the FTS5 sidecar) holds its own database handle;
+	// release it so the index directory can be removed or renamed (Windows).
+	// The FTS scorer was put in place of the default by Load; restore the
+	// default so a later Load on this searcher opens a fresh one.
+	if fts, ok := s.scorer.(*FTSScorer); ok {
+		if err := fts.Close(); err != nil {
+			errs = append(errs, err)
+		}
+		s.scorer = NewBM25Adapter()
 	}
 	if len(errs) > 0 {
 		return fmt.Errorf("close errors: %v", errs)
@@ -724,8 +848,9 @@ func (s *LeannSearcher) GraphDB() GraphDB {
 	return s.graphDB
 }
 
-// PassageManager returns the internal passage manager containing all indexed chunks.
-func (s *LeannSearcher) PassageManager() *PassageManager {
+// PassageManager returns the internal passage store containing all indexed
+// chunks (bbolt for format 1, the SQLite record store for format 2).
+func (s *LeannSearcher) PassageManager() PassageStore {
 	return s.passages
 }
 
@@ -972,6 +1097,16 @@ func RemoveIndex(indexDir, name string) error {
 	if err := os.Remove(filepath.Join(indexDir, name+".rewrite.lock")); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("remove rewrite lock: %w", err)
 	}
+	// The format-2 build/migrate lock lives beside the index directory (RFC 003
+	// section 3.6). The SQLite store, its WAL companions and the .v1 rollback
+	// copies are inside <name>/ and go with the directory removed above.
+	if err := os.Remove(filepath.Join(indexDir, name+".lock")); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("remove index lock: %w", err)
+	}
+	// The lexical sidecar lives inside <name>/; its rebuild lock is beside it.
+	if err := os.Remove(lexicalLockPath(indexDir, name)); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("remove lexical lock: %w", err)
+	}
 
 	// 3. Remove the sync state file if it exists
 	syncPath := filepath.Join(indexDir, name+".sync.json")
@@ -1023,9 +1158,425 @@ func (s *LeannSearcher) SearchBM25(ctx context.Context, query string, topK int) 
 			Text:      p.Text,
 			Metadata:  p.Metadata,
 			BM25Score: &bm25,
+			pid:       p.PID,
+		})
+	}
+	if s.storeFormat == 2 {
+		// RFC 003 section 3.4 (IDX-06): order by score, then stable pid.
+		// Format 1 keeps the scorer's order unchanged.
+		sort.Slice(results, func(i, j int) bool {
+			if results[i].Score != results[j].Score {
+				return results[i].Score > results[j].Score
+			}
+			return results[i].pid < results[j].pid
 		})
 	}
 	return results, nil
+}
+
+// searchLexicalFiltered is the widen-until-k loop of the pure lexical leg
+// (WP-2.5): no vector backend, HybridAlpha 0, or an embedder that is absent or
+// failed. It grows the candidate pool geometrically until k results pass the
+// metadata filter, every pre-selected match has been examined, the scorer
+// returns fewer than requested (corpus exhausted) or the pool reaches
+// filterPoolCap, then applies the same onePerFile/rerank/topK tail as the
+// unfiltered lexical path.
+func (s *LeannSearcher) searchLexicalFiltered(ctx context.Context, query, rq string, searchOpts SearchConfig, topK, retrieveK int, activeReranker Reranker, engine *MetadataFilterEngine) ([]SearchResult, error) {
+	pool := retrieveK
+	var results []SearchResult
+	hitCap := false
+	for {
+		raw, err := s.SearchBM25(ctx, rq, pool)
+		if err != nil {
+			return nil, err
+		}
+		results = engine.FilterResults(raw)
+		if searchOpts.OnePerFile {
+			results = onePerFile(results)
+		}
+		if len(results) >= topK {
+			break
+		}
+		if len(raw) < pool {
+			break // the scorer returned fewer than requested: corpus exhausted
+		}
+		next := nextFilterPool(pool, len(results), len(raw), topK)
+		if next <= pool {
+			hitCap = true
+			break
+		}
+		pool = next
+	}
+	// Exact pre-selection fallback (WP-2.5): the loop hit the cap with fewer
+	// than k results on a format-2 index. The lexical leg has no query vector,
+	// so the pre-selected matches are scored lexically.
+	if hitCap && len(results) < topK && s.storeFormat == 2 {
+		if pre, _, ok := s.searchPreselected(ctx, query, rq, nil, searchOpts, topK, engine, 0); ok {
+			results = pre
+		}
+	}
+	if activeReranker != nil && searchOpts.UseReranker && len(results) > 0 {
+		return rerankStage(ctx, activeReranker, query, results, topK, searchOpts), nil
+	}
+	if len(results) > topK {
+		results = results[:topK]
+	}
+	return results, nil
+}
+
+// buildBoostedResults turns a score map into ranked results, applying the
+// symbol/FQN boosts, kind filter, test/vendor demotion and MinScore gate, then
+// sorting by score (stable pid tiebreak). It is shared by the widen-until-k
+// loop and the exact pre-selection fallback so both rank identically.
+func (s *LeannSearcher) buildBoostedResults(query, rq string, searchOpts SearchConfig, finalScores, rawDistances, bm25Raw map[int64]float32) []SearchResult {
+	// Build results and apply boosts/penalties:
+	// 1. Symbol / FQN exact match boost (+0.35 to +0.5)
+	// 2. Kind filtering ("code" vs "docs")
+	// 3. Test / vendor demotion (unless searchOpts.IncludeTests is true or query mentions test)
+	qClean := strings.TrimSpace(query)
+	qLower := strings.ToLower(qClean)
+	queryMentionsTest := strings.Contains(qLower, "test") || strings.Contains(qLower, "benchmark")
+	// The "contains symbol name" boost also sees the expansion: symbols
+	// named in the hypothetical code are the bridge HyDE provides (without
+	// it the offline gain of MRR +0.19 vanished end to end).
+	containsLower := qLower
+	if rq != query {
+		containsLower = strings.ToLower(rq)
+	}
+
+	results := make([]SearchResult, 0, len(finalScores))
+	for id, score := range finalScores {
+		passage, err := s.passages.Get(id)
+		if err != nil {
+			continue
+		}
+
+		// Kind filter: "code" vs "docs"
+		if searchOpts.Kind != "" && searchOpts.Kind != "all" {
+			isDoc := false
+			if k, ok := passage.Metadata["kind"].(string); ok && (k == "doc" || k == "documentation") {
+				isDoc = true
+			} else if ext, ok := passage.Metadata["ext"].(string); ok && (ext == ".md" || ext == ".txt" || ext == ".rst" || ext == ".markdown") {
+				isDoc = true
+			} else if src, ok := passage.Metadata["source"].(string); ok && (strings.HasSuffix(src, ".md") || strings.HasSuffix(src, ".txt") || strings.HasSuffix(src, ".rst") || strings.HasSuffix(src, ".markdown")) {
+				isDoc = true
+			} else if file, ok := passage.Metadata["file"].(string); ok && (strings.HasSuffix(file, ".md") || strings.HasSuffix(file, ".txt") || strings.HasSuffix(file, ".rst") || strings.HasSuffix(file, ".markdown")) {
+				isDoc = true
+			}
+
+			if searchOpts.Kind == "code" && isDoc {
+				continue
+			}
+			if searchOpts.Kind == "docs" && !isDoc {
+				continue
+			}
+		}
+
+		// Symbol and FQN boost
+		if name, ok := passage.Metadata["name"].(string); ok && name != "" {
+			if strings.EqualFold(qClean, name) {
+				score += 0.5 // Exact symbol match
+			} else if strings.Contains(containsLower, strings.ToLower(name)) && len(name) >= 3 {
+				score += 0.2 // Query contains symbol name
+			}
+		}
+		if fqn, ok := passage.Metadata["fqn"].(string); ok && fqn != "" {
+			if strings.EqualFold(qClean, fqn) || strings.HasSuffix(strings.ToLower(fqn), "."+qLower) {
+				score += 0.5 // Exact FQN match
+			}
+			// Graph-assisted ranking (T13): boost symbols with verified AST callers/centrality
+			if s.graphDB != nil {
+				if callers, err := s.graphDB.Callers(fqn); err == nil && len(callers) > 0 {
+					boost := float32(math.Log(1.0+float64(len(callers)))) * 0.05
+					if boost > 0.15 {
+						boost = 0.15
+					}
+					score += boost
+				}
+			}
+		}
+
+		// Test demotion
+		isTest := false
+		if it, ok := passage.Metadata["is_test"].(bool); ok && it {
+			isTest = true
+		} else {
+			for _, key := range []string{"source", "file"} {
+				if path, ok := passage.Metadata[key].(string); ok && path != "" {
+					base := filepath.Base(path)
+					if strings.HasSuffix(base, "_test.go") || strings.HasPrefix(base, "test_") ||
+						strings.HasSuffix(base, ".spec.ts") || strings.Contains(path, "/test/") ||
+						strings.Contains(path, "/tests/") {
+						isTest = true
+						break
+					}
+				}
+			}
+		}
+		if isTest && !searchOpts.IncludeTests && !queryMentionsTest {
+			score *= 0.5
+		}
+
+		// Vendor demotion
+		isVendor := false
+		if iv, ok := passage.Metadata["is_vendor"].(bool); ok && iv {
+			isVendor = true
+		} else {
+			for _, key := range []string{"source", "file"} {
+				if path, ok := passage.Metadata[key].(string); ok && path != "" {
+					if strings.Contains(path, "vendor/") || strings.Contains(path, "third_party/") || strings.Contains(path, "node_modules/") {
+						isVendor = true
+						break
+					}
+				}
+			}
+		}
+		if isVendor {
+			score *= 0.3
+		}
+
+		// MinScore gate. With no threshold (MinScore <= 0) every candidate
+		// is kept, including negative scores: under the fixed normalizer a
+		// candidate deeper than the first retrieveK can score below 0, and
+		// an unfiltered search of a larger topK would keep it (its wider
+		// pool normalizes it to a small positive score). Dropping it here
+		// would silently lose filtered matches.
+		if score >= searchOpts.MinScore || searchOpts.MinScore <= 0 {
+			r := SearchResult{
+				ID:       id,
+				Text:     passage.Text,
+				Score:    score,
+				Metadata: passage.Metadata,
+				pid:      passage.PID,
+			}
+			if d, ok := rawDistances[id]; ok {
+				r.VectorDistance = &d
+			}
+			if b, ok := bm25Raw[id]; ok {
+				r.BM25Score = &b
+			}
+			results = append(results, r)
+		}
+	}
+
+	// Sort by score descending; equal scores are ordered by the stable
+	// passage ID (pid) so results are deterministic across rebuilds (RFC 003
+	// section 3.4, IDX-06). Format-1 passages have no pid and keep the
+	// previous order.
+	sort.Slice(results, func(i, j int) bool {
+		if results[i].Score != results[j].Score {
+			return results[i].Score > results[j].Score
+		}
+		if results[i].pid != "" && results[j].pid != "" {
+			return results[i].pid < results[j].pid
+		}
+		return false
+	})
+	return results
+}
+
+// searchPreselected is the exact format-2 fallback (WP-2.5) for a highly
+// selective filter whose matches rank too deep for the widen-until-k loop: it
+// pre-selects the matching IDs in SQL (preselectFilterIDs, capped at
+// filterPreselectCap, never reading passage text) and scores ONLY those. It
+// returns ok=false when pre-selection cannot run (format 1, an inexpressible
+// filter, or a non-selective filter over the cap), leaving the loop's result.
+//
+// Scoring tiers: vector distance for the allowed slots when the backend
+// implements VectorIDScorer and a query vector is available (hybrid-fused with
+// lexical scores when alpha < 1); else lexical BM25 over the allowed rowids
+// (FTSScorer.ScoreRowIDs); else ok=false. queryEmb is nil on the lexical leg.
+// normDist is the widen loop's fixed score normalizer (the max distance among
+// the first retrieveK candidates), so a pre-selected passage scores exactly as
+// it would in the loop; it is 0 on the lexical leg, which never uses tier 1.
+// Both tiers rank through buildBoostedResults, so MinScore, Kind, the
+// symbol/graph boosts, test/vendor demotion and the pid tiebreak apply
+// identically on every path.
+//
+// exact reports whether the result scores the pre-selected set the way the
+// caller's leg scores passages: tier 1, or tier 2 on the lexical leg. Tier 2
+// on a vector or hybrid leg (a backend without VectorIDScorer) is a lexical
+// stand-in: the caller keeps its own results and only fills up with it
+// (mergeLexicalFill), never replacing vector-scored results by BM25 ones.
+func (s *LeannSearcher) searchPreselected(ctx context.Context, query, rq string, queryEmb []float32, searchOpts SearchConfig, topK int, engine *MetadataFilterEngine, normDist float32) (results []SearchResult, exact, ok bool) {
+	allowed, ran := s.preselectFilterIDs(ctx, engine)
+	if !ran {
+		return nil, false, false
+	}
+	if len(allowed) == 0 {
+		return []SearchResult{}, true, true // no passage matches the filter
+	}
+
+	// Tier 1: vector distance for the allowed slots, when the backend can score
+	// explicit IDs and a query vector is available.
+	if queryEmb != nil && searchOpts.HybridAlpha > 0 {
+		if vd, ok := s.backend.(VectorIDScorer); ok {
+			slots := make([]int64, 0, len(allowed))
+			for id := range allowed {
+				if id >= 0 {
+					slots = append(slots, id)
+				}
+			}
+			sort.Slice(slots, func(i, j int) bool { return slots[i] < slots[j] })
+			if len(slots) > 0 {
+				dists, err := vd.VectorDistances(ctx, queryEmb, slots)
+				if err == nil && len(dists) == len(slots) {
+					rawDistances := make(map[int64]float32, len(slots))
+					vectorScores := make(map[int64]float32, len(slots))
+					for i, id := range slots {
+						rawDistances[id] = dists[i]
+						if normDist > 0 {
+							vectorScores[id] = 1.0 - dists[i]/normDist
+						} else {
+							vectorScores[id] = 1.0
+						}
+					}
+					finalScores := vectorScores
+					bm25Raw := map[int64]float32{}
+					alpha := searchOpts.HybridAlpha
+					if alpha < 1.0 {
+						if fts, ok := s.scorer.(*FTSScorer); ok {
+							// As in the main loop, fusion runs only when the
+							// lexical leg matched something; otherwise the
+							// vector scores stand (fusing with an empty
+							// lexical ranking would cap every score at alpha).
+							rowids := make([]int64, 0, len(allowed))
+							for _, rid := range allowed {
+								rowids = append(rowids, rid)
+							}
+							rowScores := fts.ScoreRowIDs(rq, rowids)
+							for id, rid := range allowed {
+								if sc, ok := rowScores[rid]; ok {
+									bm25Raw[id] = sc
+								}
+							}
+						}
+						if len(bm25Raw) > 0 {
+							// RRF fuse: vector ranks by distance asc, lexical by
+							// score desc (k=60), normalized as in the main loop.
+							vOrder := append([]int64(nil), slots...)
+							sort.Slice(vOrder, func(i, j int) bool {
+								if rawDistances[vOrder[i]] != rawDistances[vOrder[j]] {
+									return rawDistances[vOrder[i]] < rawDistances[vOrder[j]]
+								}
+								return vOrder[i] < vOrder[j]
+							})
+							bOrder := make([]int64, 0, len(bm25Raw))
+							for id := range bm25Raw {
+								bOrder = append(bOrder, id)
+							}
+							sort.Slice(bOrder, func(i, j int) bool {
+								if bm25Raw[bOrder[i]] != bm25Raw[bOrder[j]] {
+									return bm25Raw[bOrder[i]] > bm25Raw[bOrder[j]]
+								}
+								return bOrder[i] < bOrder[j]
+							})
+							const kRRF = 60.0
+							rrf := make(map[int64]float32)
+							for i, id := range vOrder {
+								rrf[id] += alpha * (1.0 / (kRRF + float32(i+1)))
+							}
+							for i, id := range bOrder {
+								rrf[id] += (1.0 - alpha) * (1.0 / (kRRF + float32(i+1)))
+							}
+							maxRRF := alpha*(1.0/(kRRF+1.0)) + (1.0-alpha)*(1.0/(kRRF+1.0))
+							if maxRRF <= 0 {
+								maxRRF = 1.0 / (kRRF + 1.0)
+							}
+							finalScores = make(map[int64]float32, len(rrf))
+							for id, r := range rrf {
+								ns := r / maxRRF
+								if ns > 1.0 {
+									ns = 1.0
+								}
+								finalScores[id] = ns
+							}
+						}
+					}
+					results := s.buildBoostedResults(query, rq, searchOpts, finalScores, rawDistances, bm25Raw)
+					if searchOpts.OnePerFile {
+						results = onePerFile(results)
+					}
+					return results, true, true
+				}
+			}
+		}
+	}
+
+	// Tier 2: lexical BM25 over the allowed rowids (no vector path): only
+	// passages the query matches, raw BM25 kept. The scores go through the
+	// same buildBoostedResults tail as every other path, so MinScore, Kind,
+	// the symbol/graph boosts, test/vendor demotion and the pid tiebreak
+	// apply here too.
+	if fts, ok := s.scorer.(*FTSScorer); ok {
+		rowids := make([]int64, 0, len(allowed))
+		for _, rid := range allowed {
+			rowids = append(rowids, rid)
+		}
+		rowScores := fts.ScoreRowIDs(rq, rowids)
+		finalScores := make(map[int64]float32, len(rowScores))
+		bm25Raw := make(map[int64]float32, len(rowScores))
+		for id, rid := range allowed {
+			if sc, ok := rowScores[rid]; ok {
+				finalScores[id] = sc
+				bm25Raw[id] = sc
+			}
+		}
+		results := s.buildBoostedResults(query, rq, searchOpts, finalScores, map[int64]float32{}, bm25Raw)
+		if searchOpts.OnePerFile {
+			results = onePerFile(results)
+		}
+		return results, queryEmb == nil || searchOpts.HybridAlpha <= 0, true
+	}
+
+	// Tier 3: no way to score the pre-selected set; keep the loop's result.
+	return nil, false, false
+}
+
+// mergeLexicalFill keeps the widen loop's results (vector or hybrid scored)
+// and fills up to topK with lexical pre-selection hits it does not already
+// hold, in their BM25 order. The fill is ranked strictly below the weakest
+// loop result and carries no vector distance; its raw BM25 scores are not
+// comparable with the loop's, so they are mapped onto evenly spaced scores
+// under that floor. With a MinScore the mapped scores are held to it too.
+func mergeLexicalFill(results, lexical []SearchResult, topK int, minScore float32) []SearchResult {
+	if len(results) >= topK || len(lexical) == 0 {
+		return results
+	}
+	seen := make(map[int64]bool, len(results))
+	for _, r := range results {
+		seen[r.ID] = true
+	}
+	floor := float32(1)
+	if len(results) > 0 {
+		floor = results[len(results)-1].Score
+	}
+	var fill []SearchResult
+	for _, r := range lexical {
+		if len(results)+len(fill) >= topK {
+			break
+		}
+		if seen[r.ID] {
+			continue
+		}
+		fill = append(fill, r)
+	}
+	out := results
+	for i, r := range fill {
+		var sc float32
+		if floor > 0 {
+			sc = floor * float32(len(fill)-i) / float32(len(fill)+1)
+		} else {
+			sc = floor - float32(i+1)*1e-3
+		}
+		if minScore > 0 && sc < minScore {
+			break
+		}
+		r.Score = sc
+		r.VectorDistance = nil
+		out = append(out, r)
+	}
+	return out
 }
 
 // SearchGraphRAG performs graph-augmented hybrid retrieval. If a knowledge graph is available,
@@ -1121,7 +1672,19 @@ func (s *LeannSearcher) checkHealth(name string) {
 		return // no vectors, nothing is addressed by position
 	}
 	count, maxID, err := s.passages.idSpan()
-	if err != nil || count == 0 || int64(count) == maxID+1 {
+	if err != nil || count == 0 {
+		return
+	}
+	dense := int64(count) == maxID+1
+	if s.storeFormat == 2 {
+		// The slot span alone can look contiguous while passages without a
+		// slot exist (their count fills the gap in the span); the store's
+		// dense check counts them too, so ask it instead of trusting the span.
+		if d, derr := s.passages.IsDense(); derr == nil {
+			dense = d
+		}
+	}
+	if dense {
 		return
 	}
 	msg := fmt.Sprintf("index %q is damaged: its passage IDs are not contiguous (%d passages, highest ID %d), "+

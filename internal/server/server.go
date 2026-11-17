@@ -64,6 +64,7 @@ type Server struct {
 	// (searcher_cache.go) rather than touching the map directly.
 	searchers    map[string]*gleann.LeannSearcher
 	searcherRefs map[*gleann.LeannSearcher]*searcherRef
+	searcherLRU  []string
 	searcherGen  uint64
 	loadGroup    singleflight.Group
 	mu           sync.RWMutex
