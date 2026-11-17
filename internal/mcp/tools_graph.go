@@ -4,8 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -160,50 +158,13 @@ func (s *Server) evictGraph(name string) {
 }
 
 // registerGraphTools registers community detection, risk analysis, repo map
-// and symbol navigation. They run on the format-2 SQLite graph in every build;
-// withdrawGraphTools removes them when no format-2 graph can exist.
+// and symbol navigation. They run on the SQLite code graph of the index
+// database in every build.
 func (s *Server) registerGraphTools() {
 	s.addTool(s.buildCommunitiesTool(), s.handleCommunities)
 	s.addTool(s.buildRiskAnalysisTool(), s.handleRiskAnalysis)
 	s.addTool(s.buildRepoMapTool(), s.handleRepoMap)
 	s.addTool(s.buildNavigateSymbolTool(), s.handleNavigateSymbol)
-	s.withdrawGraphTools()
-}
-
-// withdrawGraphTools removes the graph-only tools unless a format-2 graph can
-// exist in this index directory, so the manifest does not advertise tools
-// that can only fail. Only format 2 stores a code graph (RFC 004 A3).
-// gleann_def is always kept: it falls back to vector search without a graph.
-func (s *Server) withdrawGraphTools() {
-	if sqliteGraphAvailable(s.config.IndexDir) {
-		return
-	}
-	names := make([]string, 0, len(graphOnlyTools))
-	for _, n := range graphOnlyTools {
-		if s.cleanToolNames {
-			n = strings.TrimPrefix(n, "gleann_")
-		}
-		names = append(names, n)
-	}
-	s.mcpServer.DeleteTools(names...)
-}
-
-// sqliteGraphAvailable reports whether new indexes are built in format 2
-// (GLEANN_STORE_FORMAT=2) or an existing index in indexDir is format 2.
-func sqliteGraphAvailable(indexDir string) bool {
-	if strings.TrimSpace(os.Getenv("GLEANN_STORE_FORMAT")) == "2" {
-		return true
-	}
-	entries, err := os.ReadDir(indexDir)
-	if err != nil {
-		return false
-	}
-	for _, e := range entries {
-		if e.IsDir() && gleann.StoreFormatOf(filepath.Join(indexDir, e.Name(), e.Name())) == 2 {
-			return true
-		}
-	}
-	return false
 }
 
 // ── Communities Tool ─────────────────────────────────────────────────────

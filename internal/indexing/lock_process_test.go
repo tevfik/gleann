@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/tevfik/gleann/internal/store"
+	"github.com/tevfik/gleann/internal/testutil/format1"
 	"github.com/tevfik/gleann/pkg/gleann"
 )
 
@@ -243,18 +244,17 @@ func TestBuildSyncFailFastWhenLockedByOtherProcess(t *testing.T) {
 	}
 }
 
-// TestMigrateFailsFastWhenSyncHoldsLock checks that migrate/rollback/cleanup
-// respect the same <name>.lock a running sync holds: while a child process
-// holds it through lockIndex (Sync's own lock), MigrateIndex fails fast and
-// switches nothing; the lock is free again once the holder dies. Before the
-// fix Sync took no cross-process lock, so a migrate could rename the store
-// under a running sync — this test fails on that code.
+// TestMigrateFailsFastWhenSyncHoldsLock checks that migrate respects the same
+// <name>.lock a running sync holds: while a child process holds it through
+// lockIndex (Sync's own lock), MigrateIndex fails fast and switches nothing;
+// the lock is free again once the holder dies.
 func TestMigrateFailsFastWhenSyncHoldsLock(t *testing.T) {
 	env := newEnv(t)
-	docs := fixture(t)
 	name := "migrateidx"
-	if _, err := Build(context.Background(), BuildOptions{Options: env.options(nil), Name: name, DocsDir: docs, InstantOnly: true}); err != nil {
-		t.Fatalf("initial build: %v", err)
+	if err := format1.Write(format1.Index{Dir: env.cfg.IndexDir, Name: name,
+		Passages: []format1.Passage{{ID: 0, Text: "old passage", Metadata: map[string]any{"source": "a.md"}}},
+		Meta:     map[string]any{"lexical_only": true}}); err != nil {
+		t.Fatal(err)
 	}
 	base := filepath.Join(env.cfg.IndexDir, name, name)
 	formatBefore := gleann.StoreFormatOf(base)
@@ -264,7 +264,7 @@ func TestMigrateFailsFastWhenSyncHoldsLock(t *testing.T) {
 	h := startSyncLockHolder(t, env.cfg.IndexDir, name)
 
 	start := time.Now()
-	err := gleann.MigrateIndex(env.cfg.IndexDir, name, gleann.MigrateOptions{})
+	_, err := gleann.MigrateIndex(env.cfg.IndexDir, name, gleann.MigrateOptions{})
 	if err == nil {
 		t.Fatal("MigrateIndex succeeded while a sync holds the index lock")
 	}
@@ -276,13 +276,6 @@ func TestMigrateFailsFastWhenSyncHoldsLock(t *testing.T) {
 	}
 	if gleann.StoreFormatOf(base) != formatBefore {
 		t.Error("a locked-out migration changed the store format")
-	}
-	// Rollback and cleanup take the same lock and must fail fast too.
-	if err := gleann.RollbackMigration(env.cfg.IndexDir, name); err == nil || !strings.Contains(err.Error(), "held by another process") {
-		t.Errorf("RollbackMigration with the lock held = %v; want the lock message", err)
-	}
-	if err := gleann.CleanupMigration(env.cfg.IndexDir, name); err == nil || !strings.Contains(err.Error(), "held by another process") {
-		t.Errorf("CleanupMigration with the lock held = %v; want the lock message", err)
 	}
 
 	// The OS freed the lock when the holder died.

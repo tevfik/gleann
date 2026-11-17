@@ -34,7 +34,7 @@ const filterPreselectCap = 50000
 // retrieval. An empty map proves that no passage matches.
 //
 // The second return value reports whether pre-selection ran at all. It is false
-// for a format-1 store, for filters the compiler cannot express (numeric
+// for a passage store that is not the SQLite store (tests), for filters the compiler cannot express (numeric
 // comparisons, ext/extension resolution, chunk_index), when the filter matches
 // more than filterPreselectCap rows (not selective — the widen loop's result
 // stands), and on any store error; the caller then keeps the loop's results.

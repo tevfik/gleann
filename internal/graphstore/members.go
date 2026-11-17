@@ -32,7 +32,10 @@ func (g *SQLite) FilesWithExternalCalls(dsts []string) ([]string, error) {
 		for i, d := range dsts[start:end] {
 			args[i] = d
 		}
-		rows, err := g.reader.QueryContext(readCtx(), `SELECT DISTINCT file FROM edges WHERE kind = 'CALLS' AND dst_external = 1 AND dst IN (`+ph+`)`, args...)
+		rows, err := g.reader.QueryContext(readCtx(), `SELECT DISTINCT s.file FROM graph_edges e
+JOIN symbols s ON s.id = e.src
+WHERE e.dst IN (SELECT id FROM symbols WHERE fqn IN (`+ph+`) UNION ALL SELECT id FROM graph_nodes WHERE fqn IN (`+ph+`))
+  AND e.kind = `+labelCalls+` AND e.dst_external = 1`, append(append(make([]any, 0, 2*len(args)), args...), args...)...)
 		if err != nil {
 			return nil, fmt.Errorf("listing files with external calls: %w", err)
 		}

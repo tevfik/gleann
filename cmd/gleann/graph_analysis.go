@@ -17,7 +17,7 @@ import (
 // The analysis subcommands of `gleann graph` (viz, report, communities,
 // export, wiki, hook, map, risk) run on the code graph of a format-2 index,
 // the SQLite tables of <name>.db, in every build including CGO_ENABLED=0
-// (RFC 004 A2). A format-1 index has no code graph (RFC 004 A3).
+// (RFC 004 A2).
 
 // analysisSource loads the graphs the analysis commands work on.
 type analysisSource interface {

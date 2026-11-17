@@ -15,8 +15,10 @@ package server
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
+	"net/http"
 	"os"
 	"sync"
 	"time"
@@ -303,4 +305,15 @@ func (s *Server) cachedSearcherCount() int {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return len(s.searchers)
+}
+
+// writeSearcherError answers a failed acquireSearcher: an index in the old
+// store format is a conflict the caller can resolve with `gleann index
+// migrate` (409 with that hint); anything else is reported as not found.
+func writeSearcherError(w http.ResponseWriter, name string, err error) {
+	if errors.Is(err, gleann.ErrOldStoreFormat) {
+		writeError(w, http.StatusConflict, err.Error())
+		return
+	}
+	writeError(w, http.StatusNotFound, fmt.Sprintf("index %q not found: %v", name, err))
 }

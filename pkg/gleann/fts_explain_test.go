@@ -2,7 +2,9 @@ package gleann
 
 import (
 	"context"
+	"fmt"
 	"math"
+	"strings"
 	"testing"
 )
 
@@ -10,13 +12,16 @@ import (
 // score down by term (it used to print no term table: FTSScorer had no
 // ExplainTerms).
 func TestFTSScorerExplainTerms(t *testing.T) {
-	t.Setenv("GLEANN_LEXICAL", "fts5")
-	// Pin the query options: a df cut would drop "apple" (it is in half the passages).
-	t.Setenv("GLEANN_LEXICAL_OPTS", "")
 	dir := t.TempDir()
 	b, embedder := newFormat2Builder(t, dir, 8)
 	ctx := context.Background()
-	if err := b.Build(ctx, "idx", f2Items()); err != nil {
+	// Filler passages keep "apple" below the document-frequency cut (0.2).
+	items := f2Items()
+	for i := 0; i < 8; i++ {
+		items = append(items, Item{Text: fmt.Sprintf("unrelated filler passage %d%s", i, strings.Repeat(" z", i)),
+			Metadata: map[string]any{"source": fmt.Sprintf("f%d.md", i), "chunk_index": 0}})
+	}
+	if err := b.Build(ctx, "idx", items); err != nil {
 		t.Fatal(err)
 	}
 	s := NewSearcher(Config{IndexDir: dir, Backend: "hnsw"}, embedder)

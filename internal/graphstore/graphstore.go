@@ -182,6 +182,7 @@ type GraphStore interface {
 type SQLite struct {
 	writer *sql.DB
 	reader *sql.DB
+	stmts  *stmtCache
 }
 
 var _ GraphStore = (*SQLite)(nil)
@@ -189,7 +190,7 @@ var _ GraphStore = (*SQLite)(nil)
 // New opens the graph side of an already-open index store. The store keeps
 // ownership of the database handles; closing it closes the graph store too.
 func New(s *store.Store) *SQLite {
-	return &SQLite{writer: s.WriterDB(), reader: s.ReaderDB()}
+	return &SQLite{writer: s.WriterDB(), reader: s.ReaderDB(), stmts: &stmtCache{}}
 }
 
 // Traversal depth caps. RFC 003 section 3.7 requires an explicit cap on

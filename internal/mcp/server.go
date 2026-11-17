@@ -515,8 +515,6 @@ func (s *Server) acquireSearcher(name string) (*gleann.LeannSearcher, func(), er
 	}
 
 	searcher := gleann.NewSearcher(s.config, embedder)
-	// Enable BM25 hybrid scoring by default for MCP-facing search/ask tools.
-	searcher.SetScorer(gleann.NewBM25Adapter())
 
 	// Configure reranker if enabled via config or environment
 	if s.config.SearchConfig.UseReranker || os.Getenv("GLEANN_RERANK") == "1" || os.Getenv("GLEANN_RERANK") == "true" {

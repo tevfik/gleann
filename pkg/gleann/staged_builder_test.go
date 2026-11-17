@@ -78,8 +78,8 @@ func TestBuildLexicalOnly_SearchBM25Fallback(t *testing.T) {
 
 	// Verify filesystem state
 	basePath := filepath.Join(dir, indexName, indexName)
-	if _, err := os.Stat(basePath + ".passages.db"); err != nil {
-		t.Fatalf("expected passages.db to exist: %v", err)
+	if _, err := os.Stat(basePath + ".db"); err != nil {
+		t.Fatalf("expected the index database to exist: %v", err)
 	}
 	if _, err := os.Stat(basePath + ".index"); !os.IsNotExist(err) {
 		t.Fatalf("expected .index to NOT exist for lexical-only build, but got err: %v", err)

@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
-	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -18,14 +17,13 @@ import (
 )
 
 // PassageStore is the record-store abstraction the searcher, builder helpers
-// and MCP read passages through (RFC 003 section 8 step 4). Today's bbolt
-// PassageManager satisfies it unchanged; the format-2 implementation below is
-// backed by the SQLite record store (internal/store). The ID space a caller
-// sees is the vector slot (vec_slot): for a vector hit it is the position the
-// backend returned, and the lexical leg maps its rowids to the same slots, so
-// both legs address the same passages and can be fused. A passage WITHOUT a
-// slot (vec_slot NULL: the lexical-only staging of a build, RFC 003 section
-// 3.6) has no vector position; its visible ID is the NEGATIVE internal rowid
+// and MCP read passages through (RFC 003 section 8 step 4), backed by the
+// SQLite record store (internal/store). The ID space a caller sees is the
+// vector slot (vec_slot): for a vector hit it is the position the backend
+// returned, and the lexical leg maps its rowids to the same slots, so both
+// legs address the same passages and can be fused. A passage WITHOUT a slot
+// (vec_slot NULL: the lexical-only staging of a build, RFC 003 section 3.6)
+// has no vector position; its visible ID is the NEGATIVE internal rowid
 // (-rowid), which cannot collide with a vec_slot (always >= 0). Get/GetBatch
 // and the FTS scorer map negative IDs back to rowids.
 type PassageStore interface {
@@ -46,36 +44,20 @@ type PassageStore interface {
 	RollbackAdd(ids []int64) error
 	Delete() error
 
-	// idSpan and storeFormat are package-internal so both implementations can
-	// share the cheap health check and the format dispatch without widening
+	// idSpan is package-internal so the cheap health check does not widen
 	// the public surface.
 	idSpan() (count int, maxID int64, err error)
-	storeFormat() int
 }
 
-var (
-	_ PassageStore = (*PassageManager)(nil)
-	_ PassageStore = (*storePassages)(nil)
-)
+var _ PassageStore = (*storePassages)(nil)
 
-// storeFormat reports the on-disk format of a bbolt PassageManager (always 1).
-func (pm *PassageManager) storeFormat() int { return 1 }
-
-// storeGuardPrefix marks the non-empty, non-bbolt guard files left at the old
-// names after a migration (RFC 003 sections 3.3 and 6.4 step 4). An old
-// binary's bbolt.Open on a non-empty non-bbolt file fails instead of silently
-// creating a fresh empty store, which is exactly what protects the index.
+// storeGuardPrefix marks the non-empty, non-bbolt guard files that the v1.9
+// migration left at the old names (<name>.passages.db, <name>.manifest.json).
+// They are leftovers of a migrated index now; the detection below and
+// `index migrate --cleanup` recognise them.
 const storeGuardPrefix = "gleann store format 2"
 
-// storeGuardText is the content written to the guard files. It is deliberately
-// not valid bbolt and not empty, so an old reader errors out loudly.
-func storeGuardText() string {
-	return storeGuardPrefix + ": this index uses the SQLite record store. " +
-		"Read it with gleann " + GetGleannVersion() + " or newer (gleann index migrate --rollback restores the old files). " +
-		"Do not open this file with bbolt.\n"
-}
-
-// isGuardFile reports whether path is one of the format-2 guard files.
+// isGuardFile reports whether path is one of the v1.9 format-2 guard files.
 func isGuardFile(path string) bool {
 	f, err := os.Open(path)
 	if err != nil {
@@ -91,12 +73,13 @@ func isGuardFile(path string) bool {
 type StoreFormat int
 
 const (
-	// StoreNone: no index exists at the path (no meta.json, no <name>.db, no
-	// <name>.passages.db, no <name>.index).
+	// StoreNone: no index exists at the path.
 	StoreNone StoreFormat = iota
-	// StoreV1: an existing index in the bbolt (format-1) layout.
-	StoreV1
-	// StoreV2: an existing index in the single-SQLite-file (format-2) layout.
+	// StoreOld: an index in the old (v1.9 format-1) layout - bbolt passages,
+	// a .lex.db sidecar or a Kùzu <name>_graph directory - without a
+	// format-2 database. Only `gleann index migrate` reads it.
+	StoreOld
+	// StoreV2: an index in the single-SQLite-file (format-2) layout.
 	StoreV2
 )
 
@@ -104,13 +87,38 @@ const (
 // there is none. It wraps fs.ErrNotExist.
 var ErrIndexNotFound = fmt.Errorf("index not found: %w", fs.ErrNotExist)
 
+// ErrOldStoreFormat matches (errors.Is) the refusal of every operation on an
+// index in the old store format (RFC 004 B2).
+var ErrOldStoreFormat = errors.New("old store format")
+
+// OldFormatError is the refusal for an index in the old store format: every
+// command except `gleann index migrate` (and `index remove` / `index list`)
+// stops with it.
+type OldFormatError struct{ Name string }
+
+func (e *OldFormatError) Error() string {
+	return fmt.Sprintf("index %s uses the old store format; run: gleann index migrate %s", e.Name, e.Name)
+}
+
+// Is makes errors.Is(err, ErrOldStoreFormat) true.
+func (e *OldFormatError) Is(target error) bool { return target == ErrOldStoreFormat }
+
+// CheckStoreFormat returns an *OldFormatError when the index called name
+// under indexDir is in the old store format, nil otherwise (format 2 or no
+// index at all).
+func CheckStoreFormat(indexDir, name string) error {
+	if DetectStoreFormat(filepath.Join(indexDir, name, name)) == StoreOld {
+		return &OldFormatError{Name: name}
+	}
+	return nil
+}
+
 // DetectStoreFormat detects the on-disk format of the index at basePath
-// (<IndexDir>/<name>/<name>) per RFC 003 section 6.3: the meta.json
-// store_format field wins; otherwise a present <name>.db with an absent or
-// guarded <name>.passages.db means format 2; any other trace of an index is
-// format 1; no trace at all is StoreNone. Existing format-2 indexes are always
-// read as format 2 regardless of the GLEANN_STORE_FORMAT switch, which only
-// governs NEW indexes.
+// (<IndexDir>/<name>/<name>): the meta.json store_format field 2 wins;
+// otherwise a present <name>.db with an absent or guarded <name>.passages.db
+// means format 2; any other trace of an index - a meta.json, a bbolt
+// <name>.passages.db, a <name>.lex.db sidecar, a vector file or a Kùzu
+// <name>_graph directory - is the old format; no trace at all is StoreNone.
 func DetectStoreFormat(basePath string) StoreFormat {
 	hasMeta := false
 	if data, err := os.ReadFile(basePath + ".meta.json"); err == nil {
@@ -129,29 +137,26 @@ func DetectStoreFormat(basePath string) StoreFormat {
 		if isGuardFile(basePath + ".passages.db") {
 			return StoreV2
 		}
-		return StoreV1
+		return StoreOld
 	}
 	if hasMeta {
-		return StoreV1
+		return StoreOld
 	}
-	for _, ext := range []string{".passages.db", ".index"} {
+	for _, ext := range []string{".passages.db", ".lex.db", ".index"} {
 		if _, err := os.Stat(basePath + ext); err == nil {
-			return StoreV1
+			return StoreOld
 		}
+	}
+	name := filepath.Base(basePath)
+	if fi, err := os.Stat(filepath.Join(filepath.Dir(filepath.Dir(basePath)), name+"_graph")); err == nil && fi.IsDir() {
+		return StoreOld
 	}
 	return StoreNone
 }
 
 // StoreFormatOf is the two-way form of DetectStoreFormat: 2 for format 2,
-// otherwise 1 - which includes an index that does not exist. Use
-// DetectStoreFormat where "missing" must not be read as format 1.
-//
-// Remaining callers (candidates for RFC 004 item B2, when format 1 goes away):
-// cmd/gleann graph_shared.go, cmd_migrate.go; pkg/gleann graphdb_open.go,
-// index_health.go, manifest_format2.go, migrate.go, builder.go (Build,
-// compactStored, the write entry points); internal/mcp tools_graph.go;
-// internal/indexing graph.go, sync.go, build.go, graph_format2.go. All of them
-// only ask "is it format 2?", for which a missing index correctly answers no.
+// otherwise 1 - which includes an index that does not exist. Callers only ask
+// "is it format 2?", for which a missing index correctly answers no.
 func StoreFormatOf(basePath string) int {
 	if DetectStoreFormat(basePath) == StoreV2 {
 		return 2
@@ -159,34 +164,18 @@ func StoreFormatOf(basePath string) int {
 	return 1
 }
 
-// storeFormatSwitch reads GLEANN_STORE_FORMAT once, where a builder is
-// created, and returns the format for NEW indexes (no package-level mutable
-// state). Unset or "1" keeps today's bbolt format; "2" selects the SQLite
-// record store. Any other value falls back to the default so a typo cannot
-// silently change the on-disk format (RFC 003 section 8 step 4).
-func storeFormatSwitch() int {
-	if strings.TrimSpace(os.Getenv("GLEANN_STORE_FORMAT")) == "2" {
-		return 2
-	}
-	return 1
-}
-
-// OpenPassageStore opens the record store for the index at basePath in the
-// format detected on disk. Read-only instances are used by searchers; the
-// builder opens its own writable handle for the write path.
+// OpenPassageStore opens the record store of the format-2 index at basePath.
+// Read-only instances are used by searchers. An index in the old store
+// format is refused with an *OldFormatError, a missing one with
+// ErrIndexNotFound.
 func OpenPassageStore(basePath string, readOnly bool) (PassageStore, error) {
 	switch DetectStoreFormat(basePath) {
 	case StoreV2:
 		return openStorePassages(basePath, readOnly)
-	case StoreNone:
-		// Not a format-1 index: a writable bbolt manager would create the
-		// directory and an empty store here.
-		return nil, ErrIndexNotFound
+	case StoreOld:
+		return nil, &OldFormatError{Name: filepath.Base(basePath)}
 	}
-	if readOnly {
-		return NewReadOnlyPassageManager(basePath), nil
-	}
-	return NewPassageManager(basePath), nil
+	return nil, ErrIndexNotFound
 }
 
 // storePassages is the format-2 PassageStore over internal/store. The ID space
@@ -209,9 +198,9 @@ type storePassages struct {
 func openFormat2Store(basePath string) (*store.Store, error) {
 	if _, err := os.Stat(basePath + ".db"); err != nil {
 		name := filepath.Base(basePath)
-		return nil, fmt.Errorf("index %q is store format 2 but its record store %s.db is missing (a crash may have interrupted a rollback); "+
-			"restore the format-1 files with: gleann index migrate --rollback %s, or repair the index: gleann index repair %s",
-			name, name, name, name)
+		return nil, fmt.Errorf("index %q is store format 2 but its record store %s.db is missing; "+
+			"rebuild the index from its sources: gleann index rebuild %s",
+			name, name, name)
 	}
 	st, err := store.Open(basePath+".db", store.Options{})
 	if err != nil {
@@ -242,8 +231,6 @@ func openStorePassages(basePath string, readOnly bool) (PassageStore, error) {
 	}, nil
 }
 
-func (sp *storePassages) storeFormat() int { return 2 }
-
 // splitItemMeta separates the source path from the rest of an item's metadata
 // and marshals the rest for the meta column. chunk_index is dropped here: it
 // is recomputed as chunk_no (the passage's position within its source).
@@ -272,24 +259,23 @@ func splitItemMeta(md map[string]any) (source, metaJSON string) {
 }
 
 // openFormat2Scorer wraps a format-2 index's own lex table as the persisted
-// lexical leg: the FTS scorer reads <name>.db directly, no sidecar (RFC 003
-// section 8 step 4). It shares the passage store's database handle and maps
+// lexical leg: the FTS scorer reads <name>.db directly (RFC 003 section 8
+// step 4) with the fixed query options (AND first, document-frequency cut
+// 0.2; RFC 004 B1). It shares the passage store's database handle and maps
 // between lex rowids and vec_slots (slotIDs). The write path keeps the lex
 // rows fresh; if the analyzer identity is missing or differs, the table is
-// rebuilt once from the stored texts. On any failure it returns nil and Load
-// falls back to the in-RAM BM25 build, so a search never fails.
-func (s *LeannSearcher) openFormat2Scorer(ctx context.Context) *FTSScorer {
+// rebuilt once from the stored texts.
+func (s *LeannSearcher) openFormat2Scorer(ctx context.Context) (*FTSScorer, error) {
 	sp, ok := s.passages.(*storePassages)
 	if !ok {
-		return nil
+		return nil, fmt.Errorf("index %q has no format-2 passage store", s.meta.Name)
 	}
 	if an, err := sp.st.Meta(ctx, "analyzer"); err != nil || an != analysis.ID {
 		if err := sp.st.Rebuild(ctx, sp.analyzer); err != nil {
-			log.Printf("ℹ️  Rebuilding lexical table for %q failed (%v); using in-memory BM25 for this load", s.meta.Name, err)
-			return nil
+			return nil, fmt.Errorf("rebuilding the lexical table of %q: %w", s.meta.Name, err)
 		}
 	}
-	return &FTSScorer{store: sp.st, analyzer: sp.analyzer, slotIDs: true, opts: parseLexicalOpts(os.Getenv("GLEANN_LEXICAL_OPTS"))}
+	return &FTSScorer{store: sp.st, analyzer: sp.analyzer, slotIDs: true, opts: LexicalQueryOptions()}, nil
 }
 
 // storePassageToGleann converts a store row to the searcher's Passage, using
@@ -540,7 +526,7 @@ func (sp *storePassages) Delete() error {
 		return err
 	}
 	sp.cached = nil
-	removeLexicalFiles(sp.basePath + ".db")
+	_ = removeDBFiles(sp.basePath + ".db")
 	return nil
 }
 
@@ -574,7 +560,7 @@ func (sp *storePassages) Add(items []Item) ([]int64, error) {
 		for _, i := range groups[src] {
 			it := items[i]
 			_, metaJSON := splitItemMeta(it.Metadata)
-			kind := sidecarKind(src)
+			kind := passageKind(src)
 			s := slot
 			slot++
 			ids[i] = s

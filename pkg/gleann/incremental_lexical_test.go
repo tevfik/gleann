@@ -10,8 +10,6 @@ import (
 // lexical leg reads the passage store, which the incremental publication
 // updated in the same transaction.
 func TestIncrementalDeltaPassageFoundLexically(t *testing.T) {
-	t.Setenv("GLEANN_LEXICAL", "fts5")
-	t.Setenv("GLEANN_LEXICAL_OPTS", "and,df=0.2")
 	dir := t.TempDir()
 	b, _ := newFormat2Builder(t, dir, 8)
 	ctx := context.Background()

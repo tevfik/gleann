@@ -13,55 +13,13 @@ import (
 	"github.com/tevfik/gleann/pkg/gleann"
 )
 
-// corruptLikeOlderVersions reproduces what older versions did on every changed
-// or deleted file: the file's passages are removed in place, which leaves a gap
-// in the passage IDs, and its vectors are removed from the vector file, which
-// moves every later vector to a new position. Vector n then belongs to the n-th
-// remaining passage, not to the passage whose ID is n.
-//
-// The file removed is the one holding passage 0, so every remaining passage
-// moves; which file that is depends on the order the directory was walked.
+// corruptLikeOlderVersions reproduces the damage older versions left: a
+// file's passages removed in place, which leaves a gap in the vector slots,
+// and the vector file rebuilt from the remaining passages, so vector n belongs
+// to the n-th remaining passage, not to the passage whose slot is n.
 func corruptLikeOlderVersions(t *testing.T, cfg gleann.Config, name, backend string) {
 	t.Helper()
-	base := filepath.Join(cfg.IndexDir, name, name)
-	if gleann.StoreFormatOf(base) == 2 {
-		corruptFormat2LikeInPlaceRemoval(t, cfg, base, backend)
-		return
-	}
-	pm := gleann.NewPassageManager(base)
-	if err := pm.Load(); err != nil {
-		t.Fatal(err)
-	}
-	first, err := pm.Get(0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	src, _ := first.Metadata["source"].(string)
-	if src == "" {
-		t.Fatal("passage 0 has no source")
-	}
-	if _, err := pm.RemoveBySource([]string{src}); err != nil {
-		t.Fatal(err)
-	}
-	remaining := pm.All()
-	_ = pm.Close()
-
-	embs := make([][]float32, len(remaining))
-	for i, p := range remaining {
-		embs[i] = bowEmbed(p.Text)
-	}
-	factory, err := gleann.GetBackend(backend)
-	if err != nil {
-		t.Fatal(err)
-	}
-	cfg.Backend = backend
-	data, err := factory.NewBuilder(cfg).Build(context.Background(), embs)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(base+".index", data, 0o644); err != nil {
-		t.Fatal(err)
-	}
+	corruptFormat2LikeInPlaceRemoval(t, cfg, filepath.Join(cfg.IndexDir, name, name), backend)
 }
 
 // corruptFormat2LikeInPlaceRemoval leaves a format-2 index in the same shape
@@ -253,13 +211,8 @@ func TestRepairRefusesWhenThePassageStoreIsGone(t *testing.T) {
 	if _, err := Build(ctx, BuildOptions{Options: opts, Name: "g", DocsDir: equivFixture(t)}); err != nil {
 		t.Fatal(err)
 	}
-	// Remove the record store itself: format 1 keeps bbolt passages, format 2
-	// the SQLite database.
-	storeFile := filepath.Join(cfg.IndexDir, "g", "g.passages.db")
-	if gleann.StoreFormatOf(filepath.Join(cfg.IndexDir, "g", "g")) == 2 {
-		storeFile = filepath.Join(cfg.IndexDir, "g", "g.db")
-	}
-	if err := os.Remove(storeFile); err != nil {
+	// Remove the record store itself, the SQLite database.
+	if err := os.Remove(filepath.Join(cfg.IndexDir, "g", "g.db")); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := Repair(ctx, RepairOptions{Options: opts, Name: "g"}); !errors.Is(err, ErrNotRepairable) {

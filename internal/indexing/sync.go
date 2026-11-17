@@ -92,6 +92,9 @@ func Sync(ctx context.Context, opts SyncOptions) (*SyncResult, error) {
 	if err != nil {
 		return nil, fmt.Errorf("index %q not found in %s: %w", name, cfg.IndexDir, err)
 	}
+	if err := gleann.CheckStoreFormat(cfg.IndexDir, name); err != nil {
+		return nil, err
+	}
 
 	// The vector index must be edited with the backend that wrote it; the
 	// flag/default backend may differ (and would misread the file).
@@ -142,8 +145,6 @@ func Sync(ctx context.Context, opts SyncOptions) (*SyncResult, error) {
 	defer release()
 
 	var changedFiles, deletedFiles, eligiblePaths []string
-	mPath := manifestPath(cfg.IndexDir, name)
-	var newManifest *gleann.Manifest
 
 	if len(opts.Files) > 0 {
 		for _, f := range opts.Files {
@@ -183,9 +184,8 @@ func Sync(ctx context.Context, opts SyncOptions) (*SyncResult, error) {
 
 		existingManifest, _ := gleann.LoadIndexManifest(cfg.IndexDir, name)
 		if existingManifest != nil {
-			diff, nm, dErr := gleann.QuickDiffDirectory(existingManifest, absDocsDir, eligiblePaths)
+			diff, _, dErr := gleann.QuickDiffDirectory(existingManifest, absDocsDir, eligiblePaths)
 			if dErr == nil {
-				newManifest = nm
 				if diff.IsEmpty() {
 					if buildGraph {
 						// A format-2 graph can hold dirty files even when no
@@ -384,18 +384,6 @@ func Sync(ctx context.Context, opts SyncOptions) (*SyncResult, error) {
 	// and retries, instead of calling the index up to date over a stale graph.
 	if graphErr != nil {
 		return finish(), fmt.Errorf("%w: %v", ErrGraphUpdate, graphErr)
-	}
-
-	// A format-2 index keeps its manifest in the files table (committed with
-	// the passages by ApplySource), so there is no manifest file to save.
-	if gleann.StoreFormatOf(filepath.Join(cfg.IndexDir, name, name)) != 2 {
-		if newManifest != nil {
-			_ = gleann.SaveManifest(mPath, newManifest)
-		} else if len(eligiblePaths) > 0 {
-			if mf, mErr := gleann.BuildManifest(name, absDocsDir, eligiblePaths); mErr == nil {
-				_ = gleann.SaveManifest(mPath, mf)
-			}
-		}
 	}
 
 	p.Printf("✅ Sync complete for %q in %s (%d files processed)\n", name, time.Since(start).Round(time.Millisecond), len(allChanged))

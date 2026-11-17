@@ -74,6 +74,9 @@ type GraphImportResult struct {
 	AlreadyImported bool
 	// Rows added; rows already present are left as they are.
 	Entities, Relations, Archive int
+	// AddedEntities are the entities this import inserted (not the ones that
+	// were already present), for the memory vector index.
+	AddedEntities []GraphExportEntity
 }
 
 type graphImportMarker struct {
@@ -226,10 +229,17 @@ func (s *Store) importGraphExport(ex *GraphExport, source, hash string) (GraphIm
 
 	err = s.writeTx(func(tx *sql.Tx) error {
 		var err error
+		res.AddedEntities = nil
 		res.Entities, err = insertAll(len(ex.Entities), func(i int) (sql.Result, error) {
 			e := ex.Entities[i]
-			return tx.Exec(`INSERT OR IGNORE INTO entities (ns, id, type, content, attributes) VALUES (?, ?, ?, ?, ?)`,
+			r, err := tx.Exec(`INSERT OR IGNORE INTO entities (ns, id, type, content, attributes) VALUES (?, ?, ?, ?, ?)`,
 				ex.Namespace, e.ID, e.Type, e.Content, attrsOrEmpty(e.Attributes))
+			if err == nil {
+				if k, kerr := r.RowsAffected(); kerr == nil && k > 0 {
+					res.AddedEntities = append(res.AddedEntities, e)
+				}
+			}
+			return r, err
 		})
 		if err != nil {
 			return fmt.Errorf("importing entities: %w", err)

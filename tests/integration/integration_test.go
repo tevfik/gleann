@@ -68,7 +68,6 @@ func hashString(s string) int {
 }
 
 func TestBuildAndSearch(t *testing.T) {
-	pinFormat1(t)
 	dir := t.TempDir()
 
 	config := gleann.DefaultConfig()
@@ -100,7 +99,7 @@ func TestBuildAndSearch(t *testing.T) {
 
 	// Verify index files exist.
 	indexDir := filepath.Join(dir, "test-index")
-	for _, suffix := range []string{".meta.json", ".passages.db", ".index"} {
+	for _, suffix := range []string{".meta.json", ".db", ".index"} {
 		path := filepath.Join(indexDir, "test-index"+suffix)
 		if _, err := os.Stat(path); os.IsNotExist(err) {
 			t.Errorf("expected file %s to exist", path)

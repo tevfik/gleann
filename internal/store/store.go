@@ -196,6 +196,7 @@ var migrations = []migration{
 	{name: "symbols_fts", format: "2", apply: migrateSymbolsFTS},
 	{name: "graph_counts", format: "2", apply: migrateGraphCounts},
 	{name: "edges_file_drop", format: "2", sql: migrationEdgesFileDrop},
+	{name: "graph_ids", format: "2", apply: migrateGraphIDs},
 }
 
 // migrationEdgesFileDrop removes the redundant edges_file index. The owner

@@ -17,7 +17,7 @@ var graphEdgeKinds = []string{"CALLS", "IMPLEMENTS", "REFERENCES"}
 
 // fileRowCounts counts the rows a file owns before retraction: its symbols
 // and its edges grouped by kind. Both queries are served by indexed lookups
-// (symbols_file, and the edges primary key via the file's src symbols), so the
+// (symbols_file, and the graph_edges primary key via the file's src ids), so the
 // accounting costs one indexed probe per file, not a table scan.
 func fileRowCounts(ctx context.Context, tx *sql.Tx, file string) (int64, map[string]int64, error) {
 	var syms int64
@@ -25,8 +25,8 @@ func fileRowCounts(ctx context.Context, tx *sql.Tx, file string) (int64, map[str
 		return 0, nil, fmt.Errorf("counting symbols of %q: %w", file, err)
 	}
 	edges := make(map[string]int64)
-	rows, err := tx.QueryContext(ctx, `SELECT kind, count(*) FROM edges
-WHERE src IN (SELECT fqn FROM symbols WHERE file = ?) GROUP BY kind`, file)
+	rows, err := tx.QueryContext(ctx, `SELECT k.label, count(*) FROM graph_edges e JOIN graph_labels k ON k.id = e.kind
+WHERE e.src IN (SELECT id FROM symbols WHERE file = ?) GROUP BY k.label`, file)
 	if err != nil {
 		return 0, nil, fmt.Errorf("counting edges of %q: %w", file, err)
 	}

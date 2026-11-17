@@ -12,7 +12,7 @@ import (
 
 // This file covers WP-2.5 (filtered search returns k): a selective metadata
 // filter must still return k results when k matching passages exist, on the
-// vector leg, the lexical leg and hybrid fusion, in store format 1 and 2.
+// vector leg, the lexical leg and hybrid fusion.
 
 // widenTestItems builds n passages sharing the query terms, with texts of
 // distinct lengths (the test embedder's vectors depend on text length, so
@@ -39,19 +39,14 @@ func widenTestItems(n int) []Item {
 }
 
 // newWidenSearcher builds and loads an index through NewBuilder (the CLI
-// path) in the requested store format, with the default HNSW parameters.
-func newWidenSearcher(t *testing.T, format2 bool, items []Item) *LeannSearcher {
+// path), with the default HNSW parameters.
+func newWidenSearcher(t *testing.T, items []Item) *LeannSearcher {
 	t.Helper()
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
 	initTestHNSW()
 	dir := t.TempDir()
-	// Set both ways: the suite also runs under GLEANN_STORE_FORMAT=2.
-	t.Setenv("GLEANN_STORE_FORMAT", "")
-	if format2 {
-		t.Setenv("GLEANN_STORE_FORMAT", "2")
-	}
 	embedder := &testEmbedder{dim: 8}
 	b, err := NewBuilder(Config{IndexDir: dir, Backend: "hnsw"}, embedder)
 	if err != nil {
@@ -61,13 +56,8 @@ func newWidenSearcher(t *testing.T, format2 bool, items []Item) *LeannSearcher {
 	if err := b.Build(ctx, "idx", items); err != nil {
 		t.Fatalf("Build: %v", err)
 	}
-	base := filepath.Join(dir, "idx", "idx")
-	wantFormat := 1
-	if format2 {
-		wantFormat = 2
-	}
-	if got := StoreFormatOf(base); got != wantFormat {
-		t.Fatalf("store format = %d, want %d", got, wantFormat)
+	if got := StoreFormatOf(filepath.Join(dir, "idx", "idx")); got != 2 {
+		t.Fatalf("store format = %d, want 2", got)
 	}
 	s := NewSearcher(Config{IndexDir: dir, Backend: "hnsw"}, embedder)
 	if err := s.Load(ctx, "idx"); err != nil {
@@ -79,17 +69,13 @@ func newWidenSearcher(t *testing.T, format2 bool, items []Item) *LeannSearcher {
 
 // TestFilteredSearch_LowSelectivityReturnsK is the E2E case IDX-12: ~3% of
 // 990 passages match the filter (30 matches), and a k=10 search must return
-// exactly 10 on every retrieval leg, in both store formats. The old code
+// exactly 10 on every retrieval leg, in the format-2 store. The old code
 // filtered a single top-50 pool and returned ~2.
 func TestFilteredSearch_LowSelectivityReturnsK(t *testing.T) {
 	filters := []MetadataFilter{{Field: "lang", Operator: OpEqual, Value: "go"}}
-	for _, format2 := range []bool{false, true} {
-		name := "format1"
-		if format2 {
-			name = "format2"
-		}
-		t.Run(name, func(t *testing.T) {
-			s := newWidenSearcher(t, format2, widenTestItems(990))
+	{
+		t.Run("format2", func(t *testing.T) {
+			s := newWidenSearcher(t, widenTestItems(990))
 			ctx := context.Background()
 			for _, alpha := range []float32{1.0, 0.5, 0.0} {
 				t.Run(fmt.Sprintf("alpha%.1f", alpha), func(t *testing.T) {
@@ -142,7 +128,7 @@ func widenDeepMatchItems(n, m int) []Item {
 // (its loop stopped at the cap with seenAllowed=0 < len(allowed)=10).
 func TestFilteredSearch_DeepMatchesFallback(t *testing.T) {
 	filters := []MetadataFilter{{Field: "lang", Operator: OpEqual, Value: "go"}}
-	s := newWidenSearcher(t, true, widenDeepMatchItems(5000, 10))
+	s := newWidenSearcher(t, widenDeepMatchItems(5000, 10))
 	ctx := context.Background()
 	for _, alpha := range []float32{1.0, 0.5, 0.0} {
 		t.Run(fmt.Sprintf("alpha%.1f", alpha), func(t *testing.T) {
@@ -205,13 +191,9 @@ func (c *countingSearcher) Close() error { return c.inner.Close() }
 // code, which returned 0 without any retrieval.
 func TestFilteredSearch_NoMatchReturnsZero(t *testing.T) {
 	filters := []MetadataFilter{{Field: "lang", Operator: OpEqual, Value: "nope"}}
-	for _, format2 := range []bool{false, true} {
-		name := "format1"
-		if format2 {
-			name = "format2"
-		}
-		t.Run(name, func(t *testing.T) {
-			s := newWidenSearcher(t, format2, widenTestItems(300))
+	{
+		t.Run("format2", func(t *testing.T) {
+			s := newWidenSearcher(t, widenTestItems(300))
 			counter := &countingSearcher{inner: s.backend}
 			s.backend = counter
 			ctx := context.Background()
@@ -225,7 +207,7 @@ func TestFilteredSearch_NoMatchReturnsZero(t *testing.T) {
 				if len(rs) != 0 {
 					t.Fatalf("no-match filter returned %d results, want 0", len(rs))
 				}
-				if format2 && alpha > 0 && counter.calls == 0 {
+				if alpha > 0 && counter.calls == 0 {
 					t.Errorf("format-2 no-match filter made 0 backend calls; the widen loop must run first (pre-selection is a post-cap fallback, not a short-circuit)")
 				}
 				if counter.maxK > filterPoolCap {
@@ -295,7 +277,7 @@ func TestFilteredSearch_CapBoundsWork(t *testing.T) {
 		t.Fatal(err)
 	}
 	basePath := filepath.Join(idxDir, indexName)
-	pm := NewPassageManager(basePath)
+	pm := testPassageStore(basePath)
 	items := make([]Item, 20)
 	for i := range items {
 		items[i] = Item{
@@ -387,7 +369,7 @@ func TestUnfilteredSearch_Unchanged(t *testing.T) {
 		t.Fatal(err)
 	}
 	basePath := filepath.Join(idxDir, indexName)
-	pm := NewPassageManager(basePath)
+	pm := testPassageStore(basePath)
 	items := []Item{
 		{Text: "beta", Metadata: map[string]any{"source": "a.go", "name": "Aaa"}},
 		{Text: "beta gamma", Metadata: map[string]any{"source": "b.go", "name": "Bbb"}},
@@ -513,7 +495,7 @@ func TestPreselectFilterIDs_MatchesEngine(t *testing.T) {
 	for i, md := range metas {
 		items[i] = Item{Text: fmt.Sprintf("preselect doc %d", i), Metadata: md}
 	}
-	s := newWidenSearcher(t, true, items)
+	s := newWidenSearcher(t, items)
 	sp, ok := s.passages.(*storePassages)
 	if !ok {
 		t.Fatalf("expected a format-2 store, got %T", s.passages)
@@ -624,7 +606,7 @@ func widenBenchItems(n int) []Item {
 }
 
 // BenchmarkFilteredSearch measures the WP-2.5 follow-up on 20K and 200K
-// synthetic format-2 indexes (mock embedder, GLEANN_STORE_FORMAT=2): the
+// synthetic format-2 indexes (mock embedder): the
 // unfiltered baseline against filtered search at 50%, 3% and 0.01% selectivity
 // (k=10). The 0.01% filter ranks its matches deep, exercising the post-cap SQL
 // pre-selection fallback; 50% and 3% are answered by the widen loop alone.
@@ -643,7 +625,6 @@ func BenchmarkFilteredSearch(b *testing.B) {
 			home := b.TempDir()
 			b.Setenv("HOME", home)
 			b.Setenv("USERPROFILE", home)
-			b.Setenv("GLEANN_STORE_FORMAT", "2")
 			initTestHNSW()
 			dir := b.TempDir()
 			embedder := &testEmbedder{dim: 8}

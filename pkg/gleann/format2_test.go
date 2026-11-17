@@ -15,13 +15,10 @@ import (
 // that leaves the other sources untouched, and compaction that keeps vec_slot
 // in step with the vector file.
 
-// newFormat2Builder builds through NewBuilder with GLEANN_STORE_FORMAT=2, the
-// same path the CLI takes. The literal newTestBuilder builders keep
-// storeFormat 0, which means format 1.
+// newFormat2Builder builds through NewBuilder, the same path the CLI takes.
 func newFormat2Builder(t *testing.T, dir string, dim int) (*LeannBuilder, *testEmbedder) {
 	t.Helper()
 	initTestHNSW()
-	t.Setenv("GLEANN_STORE_FORMAT", "2")
 	embedder := &testEmbedder{dim: dim}
 	b, err := NewBuilder(Config{IndexDir: dir, Backend: "hnsw"}, embedder)
 	if err != nil {
@@ -87,17 +84,17 @@ func TestFormat2_BuildSearchRoundTrip(t *testing.T) {
 
 	base := filepath.Join(dir, "idx", "idx")
 	if StoreFormatOf(base) != 2 {
-		t.Fatal("a build with GLEANN_STORE_FORMAT=2 must produce a format-2 index")
+		t.Fatal("a build must produce a format-2 index")
 	}
 	if _, err := os.Stat(base + ".db"); err != nil {
 		t.Fatalf("format-2 store missing: %v", err)
 	}
-	// No bbolt store and no format-1 lexical sidecar for a format-2 index.
+	// No bbolt store and no lexical sidecar.
 	if _, err := os.Stat(base + ".passages.db"); !os.IsNotExist(err) {
 		t.Errorf("format-2 build left a bbolt passage store: %v", err)
 	}
 	if _, err := os.Stat(base + ".lex.db"); !os.IsNotExist(err) {
-		t.Errorf("format-2 build left a format-1 lexical sidecar: %v", err)
+		t.Errorf("the build left a .lex.db lexical sidecar: %v", err)
 	}
 	meta, err := GetIndexMeta(dir, "idx")
 	if err != nil || meta.StoreFormat != 2 {

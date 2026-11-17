@@ -69,7 +69,7 @@ func TestOpenPragmasAndSchema(t *testing.T) {
 
 	// The first migration creates the full RFC 003 section 3.4 schema,
 	// including the graph and document tables that stay empty until R2.
-	rows, err := s.reader.QueryContext(ctx, `SELECT name FROM sqlite_master WHERE type IN ('table', 'index')`)
+	rows, err := s.reader.QueryContext(ctx, `SELECT name FROM sqlite_master WHERE type IN ('table', 'index', 'view')`)
 	if err != nil {
 		t.Fatalf("sqlite_master: %v", err)
 	}
@@ -85,7 +85,8 @@ func TestOpenPragmasAndSchema(t *testing.T) {
 	for _, want := range []string{
 		"meta", "files", "passages", "lex", "lex_vocab", "symbols", "edges", "doc_nodes", "doc_explains",
 		"files_dirty", "passages_source", "passages_slot",
-		"symbols_file", "symbols_name", "edges_dst", "symbols_fts", "doc_nodes_parent",
+		"symbols_file", "symbols_name", "symbols_fts", "doc_nodes_parent",
+		"graph_nodes", "graph_labels", "graph_edges", "graph_edges_dst",
 		"doc_nodes_rpath", "doc_nodes_type",
 	} {
 		if !have[want] {

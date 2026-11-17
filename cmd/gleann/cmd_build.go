@@ -317,37 +317,46 @@ func dualPassArgs(args []string, name, passName, passMode, passModel string) []s
 	return append(out, "--mode", passMode, "--model", passModel)
 }
 
-// cmdRebuild removes an existing index and rebuilds it from scratch.
+// cmdRebuild removes an existing index and rebuilds it from scratch. Without
+// --docs it takes the source directory recorded in the index; the index's
+// tags, description, MCP exposure, embedding model, backend and code graph
+// are kept unless a flag overrides them. It also replaces an index in the old
+// store format (RFC 004 B3).
 func cmdRebuild(args []string) {
 	if len(args) < 1 || hasFlag(args, "--help") || hasFlag(args, "-h") {
 		if hasFlag(args, "--help") || hasFlag(args, "-h") {
-			fmt.Println(`Usage: gleann index rebuild <name> --docs <dir> [options]
+			fmt.Println(`Usage: gleann index rebuild <name> [--docs <dir>] [options]
 
-Remove and completely rebuild an index from scratch. Supports all flags from 'index build'.
+Remove and completely rebuild an index from scratch (re-embeds every passage).
+Supports all flags from 'index build'. Without --docs the source directory
+recorded in the index is used. Tags, description, MCP exposure, the embedding
+model, the backend and the code graph of the old index are kept unless a
+flag sets them. Also rebuilds an index in the old store format.
 
 Options:
-  --docs <dir>            Source directory containing files to index (required)
+  --docs <dir>            Source directory (default: the one the index records)
   --graph                 Build the code graph (SQLite, in the index database)
   --mode <code|docs|all>  Index mode (code, docs, all)
   -h, --help              Show this help message`)
 			return
 		}
-		fmt.Fprintln(os.Stderr, "usage: gleann rebuild <name> --docs <dir>")
+		fmt.Fprintln(os.Stderr, "usage: gleann index rebuild <name> [--docs <dir>]")
 		os.Exit(1)
 	}
 
 	name := args[0]
 	if strings.HasPrefix(name, "-") {
-		fmt.Fprintf(os.Stderr, "error: index name %q looks like a flag\nusage: gleann index rebuild <name> --docs <dir>\n", name)
-		os.Exit(1)
-	}
-	docsDir := getFlag(args, "--docs")
-	if docsDir == "" {
-		fmt.Fprintln(os.Stderr, "error: --docs flag required")
+		fmt.Fprintf(os.Stderr, "error: index name %q looks like a flag\nusage: gleann index rebuild <name> [--docs <dir>]\n", name)
 		os.Exit(1)
 	}
 
 	config := getConfig(args)
+	applySavedConfig(&config, args)
+	args = rebuildArgs(args, config.IndexDir, name)
+	if getFlag(args, "--docs") == "" {
+		fmt.Fprintf(os.Stderr, "error: index %q records no source directory; pass --docs <dir>\n", name)
+		os.Exit(1)
+	}
 
 	// Step 1: Remove existing index (ignore error if it doesn't exist)
 	fmt.Printf("🗑️  Removing existing index %q...\n", name)
@@ -358,8 +367,40 @@ Options:
 	}
 
 	// Step 2: Build fresh
-	fmt.Printf("🔨 Rebuilding index %q from %s...\n", name, docsDir)
+	fmt.Printf("🔨 Rebuilding index %q from %s...\n", name, getFlag(args, "--docs"))
 	cmdBuild(args)
+}
+
+// rebuildArgs adds to the arguments of `index rebuild` what the existing
+// index records and the flags do not set: the source directory, embedding
+// model, backend, tags, description, MCP exposure and the code graph.
+func rebuildArgs(args []string, indexDir, name string) []string {
+	prev, err := gleann.GetIndexMeta(indexDir, name)
+	if err != nil {
+		return args
+	}
+	out := append([]string(nil), args...)
+	add := func(flag, value string) {
+		if value != "" && getFlag(out, flag) == "" {
+			out = append(out, flag, value)
+		}
+	}
+	add("--docs", prev.SourceDir)
+	if !prev.LexicalOnly {
+		add("--model", prev.EmbeddingModel)
+	}
+	add("--backend", prev.Backend)
+	if getFlag(out, "--tag") == "" && len(prev.Tags) > 0 {
+		add("--tags", strings.Join(prev.Tags, ","))
+	}
+	add("--desc", prev.Description)
+	if prev.MCPExposed != nil {
+		add("--mcp", strconv.FormatBool(*prev.MCPExposed))
+	}
+	if !hasFlag(out, "--graph") && (gleann.HasCodeGraph(indexDir, name) || gleann.HadOldCodeGraph(indexDir, name)) {
+		out = append(out, "--graph")
+	}
+	return out
 }
 
 func cmdWatch(args []string) {
@@ -633,7 +674,7 @@ func collectEligibleFiles(dir string, pluginManager *gleann.PluginManager, nativ
 }
 
 // buildGraphIndex builds the AST + document graph for an index, printing
-// to stdout/stderr. No-op (with a notice) for a format-1 index.
+// to stdout/stderr. An index in the old store format is refused with a warning.
 func buildGraphIndex(name, docsDir, indexDir string, pluginDocs []*PluginDoc, changedFiles []string, includeSubmodules bool) {
 	indexing.BuildGraphIndex(indexing.GraphOptions{
 		Name:              name,

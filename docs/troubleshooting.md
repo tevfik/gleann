@@ -181,14 +181,16 @@ gleann index repair my-docs --force
 
 ### "index X has no code graph yet"
 
-Every build (pure Go included) serves the code graph of a format-2 index from its
+Every build (pure Go included) serves the code graph of an index from its
 SQLite database. The graph is missing when the index was built without `--graph`
-(build it with `gleann index build X --docs <dir> --graph`), or when the index uses
-the old store format (format 1), which has no code graph since Kùzu was removed:
-convert it with `gleann index migrate X`, then build the graph. The REST API
-answers 404 for such an index (409 for `POST /api/graph/X/index` on format 1).
-An old `X_graph` directory from gleann v1.9 is not read; `gleann index remove X`
-deletes it.
+(build it with `gleann index build X --docs <dir> --graph`). An index built by
+gleann v1.9 or earlier uses the old store format: every command except
+`gleann index migrate` stops with `index X uses the old store format; run:
+gleann index migrate X`. Migrating rebuilds the code graph when the old index
+had one (`X_graph`). The REST API answers 404 for an index without a graph and
+409 for `POST /api/graph/X/index` on an old-format index. The old `X_graph`
+directory is not read; `gleann index migrate X --cleanup` or
+`gleann index remove X` deletes it.
 
 ## Plugin Issues
 

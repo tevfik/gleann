@@ -22,6 +22,9 @@ func main() {
 	cmd := os.Args[1]
 	args := os.Args[2:]
 
+	// Switches removed in v1.20 are ignored with a one-line notice.
+	gleann.NoticeRemovedEnv(os.Stderr)
+
 	if !configExemptCommands[cmd] {
 		requireValidConfig()
 	}

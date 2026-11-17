@@ -110,6 +110,9 @@ Options:
 		if len(idx.Tags) > 0 {
 			tagsStr = fmt.Sprintf("  tags: [@%s]", strings.Join(idx.Tags, ", @"))
 		}
+		if gleann.CheckStoreFormat(config.IndexDir, idx.Name) != nil {
+			mismatch += fmt.Sprintf(" (old store format: run gleann index migrate %s)", idx.Name)
+		}
 		fmt.Printf("  %-22s  %-18s  %4d passages  backend=%s%s%s\n",
 			idx.Name, statusBadge, idx.NumPassages, idx.Backend, mismatch, tagsStr)
 		if idx.Description != "" {
@@ -203,11 +206,11 @@ type indexFileSize struct {
 }
 
 // indexFileSizes lists the files of an index that exist, with their sizes:
-// .passages.db is the format-1 passage store, .db (with its WAL files) the
-// format-2 store; .passages.jsonl/.idx are the older layouts.
+// .db (with its WAL files) is the index database, .index and .delta the
+// vector files.
 func indexFileSizes(indexDir, name string) []indexFileSize {
 	var out []indexFileSize
-	for _, ext := range []string{".index", ".db", ".db-wal", ".db-shm", ".passages.db", ".passages.jsonl", ".passages.idx", ".meta.json"} {
+	for _, ext := range []string{".index", ".delta", ".db", ".db-wal", ".db-shm", ".meta.json"} {
 		if info, err := os.Stat(filepath.Join(indexDir, name+ext)); err == nil {
 			out = append(out, indexFileSize{ext, info.Size()})
 		}

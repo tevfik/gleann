@@ -82,7 +82,7 @@ func TestHybridRetrieval_ExactSymbolMatch(t *testing.T) {
 	}
 
 	basePath := filepath.Join(idxDir, indexName)
-	pm := NewPassageManager(basePath)
+	pm := testPassageStore(basePath)
 
 	items := []Item{
 		{
@@ -167,7 +167,7 @@ func TestHybridRetrieval_TestAndVendorDemotion(t *testing.T) {
 	}
 
 	basePath := filepath.Join(idxDir, indexName)
-	pm := NewPassageManager(basePath)
+	pm := testPassageStore(basePath)
 
 	items := []Item{
 		{
@@ -247,7 +247,7 @@ func TestHybridRetrieval_KindFilter(t *testing.T) {
 	os.MkdirAll(idxDir, 0755)
 
 	basePath := filepath.Join(idxDir, indexName)
-	pm := NewPassageManager(basePath)
+	pm := testPassageStore(basePath)
 	items := []Item{
 		{
 			Text: "func Authenticate(token string) bool { return true }",
@@ -322,7 +322,7 @@ func TestHybridRetrieval_MetadataFilterAliases(t *testing.T) {
 	os.MkdirAll(idxDir, 0755)
 
 	basePath := filepath.Join(idxDir, indexName)
-	pm := NewPassageManager(basePath)
+	pm := testPassageStore(basePath)
 	items := []Item{
 		{
 			Text: "package main\nfunc Run() {}",

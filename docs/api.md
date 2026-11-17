@@ -63,7 +63,7 @@ When the server is running, interactive Swagger UI documentation is available at
 | GET | `/api/graph/{name}/toc` | Document table of contents |
 | GET | `/api/graph/{name}/documents` | List indexed documents in graph |
 | POST | `/api/graph/{name}/query` | Query the code graph: `callers`, `callees`, `symbols_in_file`, `impact`, `toc`. A format-2 index answers in every build; `cypher` is gone (400 `raw Cypher was removed; use callers/callees/symbols_in_file/impact`); `toc` of a path that is not an indexed document is 404 |
-| POST | `/api/graph/{name}/index` | Trigger AST graph indexing into the index database (every build). A format-1 index has no code graph: 409 with the hint `gleann index migrate <name>`. The `module` field is accepted and ignored (the Go module is read from `go.mod`) |
+| POST | `/api/graph/{name}/index` | Trigger AST graph indexing into the index database (every build). An index in the old store format (gleann v1.9 or earlier): 409 with `index <name> uses the old store format; run: gleann index migrate <name>`. The `module` field is accepted and ignored (the Go module is read from `go.mod`) |
 
 ### Memory Engine (Generic Knowledge Graph)
 
@@ -355,7 +355,7 @@ derive `ext` from the file path. Filters are applied during retrieval, not
 after it: a selective filter still returns `top_k` results when that many
 passages match — the candidate pool widens until k pass (sized from the
 observed pass rate), capped at 4096 candidates. Only when the loop stops at that cap with fewer than k
-results does a format-2 index (`GLEANN_STORE_FORMAT=2`) fall back to an exact
+results does the index fall back to an exact
 SQL pre-selection of the matching IDs (reading `id`/`vec_slot`/`source`/`kind`/
 `meta`, never passage text, capped at 50,000 rows) and score just those. A
 filter nothing matches returns 0. A passage's score is the same with and

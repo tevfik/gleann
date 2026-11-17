@@ -3,6 +3,7 @@ package gleann
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"math"
@@ -20,14 +21,16 @@ import (
 // LeannSearcher performs search on built indexes.
 // This mirrors Python LEANN's LeannSearcher.
 type LeannSearcher struct {
-	config           Config
-	backend          BackendSearcher
-	passages         PassageStore
-	warnings         []string
-	meta             IndexMeta
-	embedder         EmbeddingComputer
-	scorer           Scorer
-	lexicalMode      string // GLEANN_LEXICAL, read once at creation: "memory" (default) or "fts5"
+	config   Config
+	backend  BackendSearcher
+	passages PassageStore
+	warnings []string
+	meta     IndexMeta
+	embedder EmbeddingComputer
+	scorer   Scorer
+	// customScorer is set by SetScorer: the caller's scorer (or nil, which
+	// disables the lexical leg) replaces the index's own FTS5 lexical index.
+	customScorer     bool
 	reranker         Reranker
 	embServer        EmbeddingServer
 	graphDB          GraphDB
@@ -39,7 +42,7 @@ type LeannSearcher struct {
 
 	loaded          bool
 	vectorAvailable bool
-	storeFormat     int // passage-store format detected at Load: 1 bbolt, 2 SQLite (RFC 003)
+	storeFormat     int // 2 once Load opened the index (format 2 is the only format, RFC 004)
 	name            string
 	estimatedSize   int64
 
@@ -79,7 +82,7 @@ func (s *LeannSearcher) EstimatedSize() int64 {
 	indexDir := filepath.Join(s.config.IndexDir, name)
 	basePath := filepath.Join(indexDir, name)
 	var total int64
-	exts := []string{".index", ".delta", ".db", ".passages.db", ".bm25", ".meta.json", ".meta", ".db-wal", ".db-shm"}
+	exts := []string{".index", ".delta", ".db", ".meta.json", ".db-wal", ".db-shm"}
 	for _, ext := range exts {
 		if fi, err := os.Stat(basePath + ext); err == nil {
 			total += fi.Size()
@@ -101,26 +104,15 @@ func NewSearcher(config Config, embedder EmbeddingComputer) *LeannSearcher {
 		config:           config,
 		embedder:         embedder,
 		embedderResolver: config.EmbedderResolver,
-		scorer:           NewBM25Adapter(),
-		lexicalMode:      lexicalLegMode(),
 	}
 }
 
-// lexicalLegMode reads the GLEANN_LEXICAL switch once, where a searcher or
-// builder is created, and returns it explicitly (no package-level mutable
-// state). Unset or "memory" keeps today's in-RAM BM25; "fts5" selects the
-// persisted FTS5 lexical leg (RFC 003 section 8 step 3). Any other value falls
-// back to the default so a typo cannot silently change retrieval.
-func lexicalLegMode() string {
-	if strings.EqualFold(strings.TrimSpace(os.Getenv("GLEANN_LEXICAL")), "fts5") {
-		return "fts5"
-	}
-	return "memory"
-}
-
-// SetScorer sets a BM25 scorer for hybrid search.
+// SetScorer replaces the index's own FTS5 lexical leg with a custom scorer
+// for hybrid search; nil disables the lexical leg. A scorer that is not
+// persisted is fed every passage at Load.
 func (s *LeannSearcher) SetScorer(scorer Scorer) {
 	s.scorer = scorer
+	s.customScorer = true
 }
 
 // SetReranker sets a reranker for two-stage retrieval.
@@ -154,8 +146,19 @@ func (s *LeannSearcher) Load(ctx context.Context, name string) (retErr error) {
 		s.graphDB.Close()
 		s.graphDB = nil
 	}
+	// Likewise the FTS scorer of a previous Load holds its own handle.
+	if fts, ok := s.scorer.(*FTSScorer); ok && !s.customScorer {
+		_ = fts.Close()
+		s.scorer = nil
+	}
 	indexDir := filepath.Join(s.config.IndexDir, name)
 	basePath := filepath.Join(indexDir, name)
+
+	// An old-format index is refused with the migration hint before anything
+	// else is read, also when its meta.json is missing.
+	if err := CheckStoreFormat(s.config.IndexDir, name); err != nil {
+		return err
+	}
 
 	// Load metadata.
 	metaPath := basePath + ".meta.json"
@@ -207,14 +210,17 @@ func (s *LeannSearcher) Load(ctx context.Context, name string) (retErr error) {
 			name, s.meta.Dimensions, s.meta.EmbeddingModel, s.embedder.Dimensions(), s.embedder.ModelName(), name)
 	}
 
-	// Load passages in read-only mode. Format 2 opens the SQLite record
-	// store; format 1 keeps the bbolt manager (shared flock).
+	// Load passages in read-only mode from the SQLite record store. An index
+	// in the old store format is refused (*OldFormatError).
 	ps, err := OpenPassageStore(basePath, true)
 	if err != nil {
+		if errors.Is(err, ErrOldStoreFormat) {
+			return err
+		}
 		return fmt.Errorf("load passages: %w", err)
 	}
 	s.passages = ps
-	s.storeFormat = ps.storeFormat()
+	s.storeFormat = 2
 	// The format-2 opener may have rolled an interrupted vector publication
 	// forward and synced meta.json (recoverVectorPublication). Re-read the
 	// metadata so this Load sees the published state — VectorReady, the
@@ -293,44 +299,26 @@ func (s *LeannSearcher) Load(ctx context.Context, name string) (retErr error) {
 		}
 	}
 
-	// The persisted lexical leg. A format-2 index always uses its own lex
-	// table (the FTS scorer reads <name>.db directly, no sidecar). A format-1
-	// index uses the sidecar only when GLEANN_LEXICAL=fts5. Only the default
-	// adapter is replaced; a custom scorer (or nil, set to disable lexical
+	// The lexical leg is the index's own FTS5 table: the scorer reads
+	// <name>.db directly. A custom scorer (or nil, set to disable lexical
 	// search) is left untouched.
-	if s.storeFormat == 2 {
-		if _, isDefault := s.scorer.(*BM25Adapter); isDefault {
-			if fts := s.openFormat2Scorer(ctx); fts != nil {
-				s.scorer = fts
-				defer func() {
-					// A later step of Load failed: release the database
-					// handle and restore the default, so a retry starts clean.
-					if retErr != nil {
-						_ = fts.Close()
-						s.scorer = NewBM25Adapter()
-					}
-				}()
-			}
+	if !s.customScorer {
+		fts, err := s.openFormat2Scorer(ctx)
+		if err != nil {
+			return fmt.Errorf("opening the lexical index: %w", err)
 		}
-	} else if s.lexicalMode == "fts5" {
-		if _, isDefault := s.scorer.(*BM25Adapter); isDefault {
-			// nil means the sidecar could not be made fresh; the in-RAM
-			// adapter below then serves this load as before.
-			if fts := s.openFTSScorer(ctx, basePath); fts != nil {
-				s.scorer = fts
-				defer func() {
-					// A later step of Load failed: release the database
-					// handle and restore the default, so a retry starts clean.
-					if retErr != nil {
-						_ = fts.Close()
-						s.scorer = NewBM25Adapter()
-					}
-				}()
+		s.scorer = fts
+		defer func() {
+			// A later step of Load failed: release the database handle, so a
+			// retry starts clean.
+			if retErr != nil {
+				_ = fts.Close()
+				s.scorer = nil
 			}
-		}
+		}()
 	}
 
-	// Build BM25 index if scorer is set.
+	// A custom scorer that is not persisted is fed every passage.
 	// For large corpora, use streaming to avoid loading all passages into RAM.
 	if s.scorer != nil {
 		if ps, ok := s.scorer.(PersistedScorer); ok && ps.Persisted() {
@@ -851,15 +839,13 @@ func (s *LeannSearcher) Close() error {
 		s.graphDB.Close()
 		s.graphDB = nil
 	}
-	// A persisted scorer (the FTS5 sidecar) holds its own database handle;
-	// release it so the index directory can be removed or renamed (Windows).
-	// The FTS scorer was put in place of the default by Load; restore the
-	// default so a later Load on this searcher opens a fresh one.
-	if fts, ok := s.scorer.(*FTSScorer); ok {
+	// The index's FTS scorer was put in place by Load; release it so a later
+	// Load on this searcher opens a fresh one.
+	if fts, ok := s.scorer.(*FTSScorer); ok && !s.customScorer {
 		if err := fts.Close(); err != nil {
 			errs = append(errs, err)
 		}
-		s.scorer = NewBM25Adapter()
+		s.scorer = nil
 	}
 	if len(errs) > 0 {
 		return fmt.Errorf("close errors: %v", errs)
@@ -883,7 +869,7 @@ func (s *LeannSearcher) GraphDB() GraphDB {
 }
 
 // PassageManager returns the internal passage store containing all indexed
-// chunks (bbolt for format 1, the SQLite record store for format 2).
+// chunks (the SQLite record store).
 func (s *LeannSearcher) PassageManager() PassageStore {
 	return s.passages
 }
@@ -1137,8 +1123,8 @@ func RemoveIndex(indexDir, name string) error {
 	if err := os.Remove(filepath.Join(indexDir, name+".lock")); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("remove index lock: %w", err)
 	}
-	// The lexical sidecar lives inside <name>/; its rebuild lock is beside it.
-	if err := os.Remove(lexicalLockPath(indexDir, name)); err != nil && !os.IsNotExist(err) {
+	// The v1.9 lexical sidecar lived inside <name>/; its rebuild lock beside it.
+	if err := os.Remove(filepath.Join(indexDir, name+".lex.lock")); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("remove lexical lock: %w", err)
 	}
 

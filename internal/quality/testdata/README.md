@@ -47,8 +47,13 @@ never with other benchmarks.
 
 ## Baseline and tolerance
 
-Three runs with the pinned corpus gave identical numbers, because the embedder
-and the HNSW build are deterministic. The tolerance is 0.01 (absolute, on MRR
+The baseline is measured on a format-2 index with the FTS5 lexical leg and
+its fixed query options (AND first, document-frequency cut 0.2), the only
+index format since v1.20 (RFC 004 B1): BM25 MRR 0.521, dense 0.297, hybrid
+0.376. The in-memory BM25 of format 1 measured 0.530 / 0.297 / 0.381; the
+BM25 and hybrid loss of 0.009 / 0.005 was accepted with the switch. Repeated
+runs move dense and hybrid MRR by at most 0.001 (0.296-0.297, 0.375-0.376).
+The tolerance is 0.01 (MRR floors 0.511 / 0.287 / 0.366; absolute, on MRR
 and R@10 as fractions) to absorb floating-point differences between CPU
 architectures, which can swap a few near-tied ranks. A run that is better than
 the baseline by more than the tolerance passes and logs a hint to update it.

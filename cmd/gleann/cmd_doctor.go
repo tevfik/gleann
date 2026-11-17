@@ -392,11 +392,35 @@ func checkIndexHealth(indexDir string, indexes []gleann.IndexMeta, warn func(str
 		for _, p := range h.Problems {
 			warn(fmt.Sprintf("Index %q: %s", idx.Name, p))
 		}
-		if h.Repairable {
+		switch {
+		case gleann.CheckStoreFormat(indexDir, idx.Name) != nil:
+			// The problem line already names `gleann index migrate`.
+		case h.Repairable:
 			fmt.Printf("       → repair it with: gleann index repair %s\n", idx.Name)
-		} else {
-			fmt.Printf("       → rebuild it with: gleann index rebuild %s --docs <dir>\n", idx.Name)
+		default:
+			fmt.Printf("       → rebuild it with: gleann index rebuild %s\n", idx.Name)
 		}
+	}
+	warnMigrationLeftovers(indexDir, indexes, warn)
+}
+
+// warnMigrationLeftovers lists the old-format files (<name>_graph,
+// _graph_file_hashes.db, .passages.db, .lex.db, ...) that a migrated index
+// still has next to it. They are never deleted implicitly (RFC 004 B3).
+func warnMigrationLeftovers(indexDir string, indexes []gleann.IndexMeta, warn func(string)) {
+	for _, idx := range indexes {
+		if gleann.DetectStoreFormat(filepath.Join(indexDir, idx.Name, idx.Name)) != gleann.StoreV2 {
+			continue
+		}
+		left := gleann.MigrationLeftovers(indexDir, idx.Name)
+		if len(left) == 0 {
+			continue
+		}
+		warn(fmt.Sprintf("Index %q: %d old-format file(s) left after the migration:", idx.Name, len(left)))
+		for _, p := range left {
+			fmt.Printf("       %s\n", p)
+		}
+		fmt.Printf("       → delete them with: gleann index migrate %s --cleanup\n", idx.Name)
 	}
 }
 

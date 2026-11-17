@@ -12,7 +12,6 @@ import (
 // A build with --graph writes the code graph and the report; an incremental
 // sync updates the existing graph. Every build, CGO_ENABLED=0 included.
 func TestBuildWithGraph(t *testing.T) {
-	t.Setenv("GLEANN_STORE_FORMAT", "2")
 	env := newEnv(t)
 	docs := fixture(t)
 	res, err := Build(context.Background(), BuildOptions{
@@ -48,7 +47,6 @@ func TestBuildWithGraph(t *testing.T) {
 // C-04: a graph created by Sync (index built without one) must cover the whole
 // tree, not only the files that changed in that sync.
 func TestSyncCreatesFullGraph(t *testing.T) {
-	t.Setenv("GLEANN_STORE_FORMAT", "2")
 	env := newEnv(t)
 	docs := t.TempDir()
 	for _, n := range []string{"a", "b", "c", "d"} {

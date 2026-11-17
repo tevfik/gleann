@@ -41,7 +41,7 @@ func buildFour(t *testing.T) (*LeannBuilder, string, string) {
 
 func passageTexts(t *testing.T, base string) (texts []string, dense bool) {
 	t.Helper()
-	pm := NewReadOnlyPassageManager(base)
+	pm := testPassageStore(base)
 	if err := pm.Load(); err != nil {
 		t.Fatal(err)
 	}
@@ -62,7 +62,7 @@ func TestUpdateIndex_AppendStaysInPlace(t *testing.T) {
 	if err := builder.UpdateIndex(context.Background(), "idx", []Item{{Text: "epsilon from file-d", Metadata: map[string]any{"source": "d.md"}}}, nil); err != nil {
 		t.Fatal(err)
 	}
-	pm := NewReadOnlyPassageManager(base)
+	pm := testPassageStore(base)
 	if err := pm.Load(); err != nil {
 		t.Fatal(err)
 	}
@@ -76,38 +76,13 @@ func TestUpdateIndex_AppendStaysInPlace(t *testing.T) {
 	}
 }
 
-// An index that earlier in-place removals left with gaps in its passage IDs is
-// repaired by the next update instead of being extended further out of step.
-func TestUpdateIndex_HealsAnIndexWithGaps(t *testing.T) {
-	builder, _, base := buildFour(t)
-	pm := NewPassageManager(base)
-	if err := pm.Load(); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := pm.RemoveBySource([]string{"a.md"}); err != nil { // the old in-place removal
-		t.Fatal(err)
-	}
-	_ = pm.Close()
-	if _, dense := passageTexts(t, base); dense {
-		t.Fatal("fixture should have gaps")
-	}
-
-	if err := builder.UpdateIndex(context.Background(), "idx", []Item{{Text: "epsilon from file-d", Metadata: map[string]any{"source": "d.md"}}}, nil); err != nil {
-		t.Fatal(err)
-	}
-	texts, dense := passageTexts(t, base)
-	if !dense || len(texts) != 3 {
-		t.Errorf("after healing: dense=%v texts=%v, want dense with 3 passages", dense, texts)
-	}
-}
-
 // If the embedder fails, nothing on disk may have changed.
 func TestUpdateIndex_EmbedFailureLeavesIndexUntouched(t *testing.T) {
 	builder, _, base := buildFour(t)
 	fe := &failingEmbedder{testEmbedder: testEmbedder{dim: 8}, fail: true}
 	builder.embedder = fe
 
-	// The bbolt file's bytes can change merely by opening it, so compare the
+	// The database's bytes can change merely by opening it, so compare the
 	// passages' content; the vector index is a plain file, compare its bytes.
 	snap := func() (idx []byte, passages []string) {
 		i, err := os.ReadFile(base + ".index")
@@ -192,15 +167,16 @@ func TestUpdateIndexWithStats_ReportsTheModeAndTheCost(t *testing.T) {
 			t.Errorf("elapsed not recorded: %+v", st)
 		}
 	})
-	t.Run("replacing a file compacts and re-embeds everything", func(t *testing.T) {
+	t.Run("replacing a file embeds only the new text", func(t *testing.T) {
 		builder, _, _ := buildFour(t)
 		st, err := builder.UpdateIndexWithStats(ctx, "idx", []Item{item("alpha v2", "a.md")}, []string{"a.md"})
 		if err != nil {
 			t.Fatal(err)
 		}
-		// 4 passages, 2 of them from a.md: 2 removed, 2 kept + 1 new = 3 embedded.
-		if st.Mode != UpdateCompact || st.Removed != 2 || st.Added != 1 || st.Embedded != 3 || st.Passages != 3 {
-			t.Errorf("compact stats: %+v", st)
+		// 4 passages, 2 of them from a.md: 2 slots die, 1 new passage goes to
+		// the delta (RFC 005).
+		if st.Mode != UpdateInPlace || st.Removed != 2 || st.Added != 1 || st.Embedded != 1 || st.Passages != 3 {
+			t.Errorf("replace stats: %+v", st)
 		}
 	})
 	t.Run("removing everything empties the index", func(t *testing.T) {

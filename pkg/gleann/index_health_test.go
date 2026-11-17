@@ -18,12 +18,12 @@ func TestCheckIndexHealth_FreshIndexIsHealthy(t *testing.T) {
 	}
 }
 
-// Removing passages directly is what older versions did on every changed or
-// deleted file: it leaves gaps in the IDs.
+// Removing passages directly, without the builder, leaves dead vector slots
+// and a stale passage count in meta.json.
 func gapIndex(t *testing.T) (*LeannBuilder, string, string) {
 	t.Helper()
 	builder, dir, base := buildFour(t)
-	pm := NewPassageManager(base)
+	pm := testPassageStore(base)
 	if err := pm.Load(); err != nil {
 		t.Fatal(err)
 	}
@@ -40,11 +40,12 @@ func TestCheckIndexHealth_FindsGapsAndStaleCount(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !h.NeedsRepair() || !h.Repairable || h.Dense {
-		t.Fatalf("gapped index not flagged as repairable: %+v", h)
+	// Dead slots below the high-water mark are a normal state (RFC 005).
+	if !h.NeedsRepair() || !h.Repairable || !h.Dense || h.DeadSlots != 2 {
+		t.Fatalf("index with a stale count not flagged as repairable: %+v", h)
 	}
 	all := strings.Join(h.Problems, "\n")
-	for _, want := range []string{"not contiguous", "metadata records 4 passages but the store holds 2"} {
+	for _, want := range []string{"metadata records 4 passages but the store holds 2"} {
 		if !strings.Contains(all, want) {
 			t.Errorf("problems %q lack %q", all, want)
 		}
@@ -67,7 +68,7 @@ func TestCheckIndexHealth_MissingVectorFile(t *testing.T) {
 
 func TestCheckIndexHealth_MissingPassageStoreIsNotRepairable(t *testing.T) {
 	_, dir, base := buildFour(t)
-	if err := os.Remove(base + ".passages.db"); err != nil {
+	if err := os.Remove(base + ".db"); err != nil {
 		t.Fatal(err)
 	}
 	h, err := CheckIndexHealth(dir, "idx")
@@ -128,7 +129,7 @@ func TestCompact_RefusesAnEmptyStore(t *testing.T) {
 // full scan while reading only the key count and the last key.
 func TestIDSpan(t *testing.T) {
 	_, _, base := buildFour(t)
-	pm := NewReadOnlyPassageManager(base)
+	pm := testPassageStore(base)
 	if err := pm.Load(); err != nil {
 		t.Fatal(err)
 	}
@@ -139,7 +140,7 @@ func TestIDSpan(t *testing.T) {
 	}
 
 	_, _, gapBase := gapIndex(t)
-	gpm := NewReadOnlyPassageManager(gapBase)
+	gpm := testPassageStore(gapBase)
 	if err := gpm.Load(); err != nil {
 		t.Fatal(err)
 	}
@@ -148,7 +149,8 @@ func TestIDSpan(t *testing.T) {
 	if err != nil || n != 2 || max != 3 {
 		t.Errorf("idSpan on a gapped index = (%d, %d, %v), want (2, 3, nil)", n, max, err)
 	}
-	if dense, _ := gpm.IsDense(); dense {
-		t.Error("a gapped index must not be dense")
+	// The dead slots 0 and 1 are below the high-water mark 4.
+	if dense, _ := gpm.IsDense(); !dense {
+		t.Error("dead slots below the high-water mark are dense")
 	}
 }

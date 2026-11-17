@@ -62,6 +62,7 @@ func newTestBuilder(t *testing.T, dir string, dim int) (*LeannBuilder, *testEmbe
 		config:   Config{IndexDir: dir, Backend: "hnsw"},
 		backend:  &hnswAdapter{inner: factory.NewBuilder(hnswCfg)},
 		embedder: embedder,
+		limits:   defaultIncrementalLimits(),
 	}, embedder
 }
 
@@ -85,7 +86,7 @@ func TestUpdateIndex(t *testing.T) {
 
 	// Verify initial state.
 	basePath := filepath.Join(dir, "test", "test")
-	pm := NewPassageManager(basePath)
+	pm := testPassageStore(basePath)
 	if err := pm.Load(); err != nil {
 		t.Fatalf("load: %v", err)
 	}
@@ -108,7 +109,7 @@ func TestUpdateIndex(t *testing.T) {
 	}
 
 	// Verify: should have 2 (b.md + c.md) + 3 (new a.md) = 5 passages.
-	pm2 := NewPassageManager(basePath)
+	pm2 := testPassageStore(basePath)
 	if err := pm2.Load(); err != nil {
 		t.Fatalf("load: %v", err)
 	}
@@ -118,14 +119,13 @@ func TestUpdateIndex(t *testing.T) {
 		t.Errorf("expected 5 passages after update, got %d", pm2.Count())
 	}
 
-	// Removing passages compacts the index: IDs are renumbered densely, so a
-	// vector's position keeps matching its passage ID. Check by content.
+	// Removed passages leave dead vector slots (RFC 005); every live passage
+	// keeps a slot below the high-water mark. Check by content.
+	if dense, err := pm2.IsDense(); err != nil || !dense {
+		t.Fatalf("every passage must have a slot below the high-water mark (dense=%v, %v)", dense, err)
+	}
 	texts := map[string]bool{}
-	for i := 0; i < pm2.Count(); i++ {
-		p, err := pm2.Get(int64(i))
-		if err != nil {
-			t.Fatalf("passage ids must be dense, missing %d: %v", i, err)
-		}
+	for _, p := range pm2.All() {
 		texts[p.Text] = true
 	}
 	for _, gone := range []string{"alpha from file-a", "beta from file-a"} {
@@ -162,7 +162,7 @@ func TestUpdateIndexDeleteOnly(t *testing.T) {
 	}
 
 	basePath := filepath.Join(dir, "test2", "test2")
-	pm := NewPassageManager(basePath)
+	pm := testPassageStore(basePath)
 	pm.Load()
 	defer pm.Close()
 
@@ -195,7 +195,7 @@ func TestUpdateIndexAddOnly(t *testing.T) {
 	}
 
 	basePath := filepath.Join(dir, "test3", "test3")
-	pm := NewPassageManager(basePath)
+	pm := testPassageStore(basePath)
 	pm.Load()
 	defer pm.Close()
 

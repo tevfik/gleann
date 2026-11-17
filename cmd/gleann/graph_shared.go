@@ -535,11 +535,11 @@ Usage:
       Risk analysis: centrality × coupling × blast radius scoring
 
 Build requirements:
-  Every graph subcommand works in EVERY build (including CGO_ENABLED=0) for
-  format-2 indexes (GLEANN_STORE_FORMAT=2), whose graph lives in the index's
-  own SQLite database. Format-1 indexes have no code graph: convert them with
-  gleann index migrate <name>. -tags treesitter adds the tree-sitter parsers
-  (CALLS edges for non-Go languages).
+  Every graph subcommand works in EVERY build (including CGO_ENABLED=0): the
+  graph lives in the index's own SQLite database. Indexes built by gleann
+  v1.9 or earlier are converted first: gleann index migrate <name>.
+  -tags treesitter adds the tree-sitter parsers (CALLS edges for non-Go
+  languages).
 
 Requires: gleann index build <name> --docs <dir> --graph
 

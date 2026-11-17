@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/tevfik/gleann/internal/testutil/format1"
 	"github.com/tevfik/gleann/pkg/gleann"
 )
 
@@ -25,6 +26,9 @@ func runMigrate(t *testing.T, args ...string) (stdout, stderr string, exitCode i
 		exitCode = code
 		panic(fmt.Sprintf("exit_%d", code))
 	}
+	outC, errC := make(chan []byte), make(chan []byte)
+	go func() { b, _ := io.ReadAll(rOut); outC <- b }()
+	go func() { b, _ := io.ReadAll(rErr); errC <- b }()
 	func() {
 		defer func() {
 			if r := recover(); r != nil && !strings.HasPrefix(fmt.Sprint(r), "exit_") {
@@ -35,80 +39,84 @@ func runMigrate(t *testing.T, args ...string) (stdout, stderr string, exitCode i
 	}()
 	wOut.Close()
 	wErr.Close()
-	o, _ := io.ReadAll(rOut)
-	e, _ := io.ReadAll(rErr)
-	return string(o), string(e), exitCode
+	return string(<-outC), string(<-errC), exitCode
 }
 
-// cmdMigrateFixture builds a small format-1 index with the hnsw backend the
-// CLI registers, over real source files and a manifest — the state
-// `gleann index migrate` converts.
-func cmdMigrateFixture(t *testing.T) (indexDir, name string) {
-	// migrate turns a format-1 index into format 2, so the fixture must be
-	// built as format 1 even when the suite runs with GLEANN_STORE_FORMAT=2.
-	t.Setenv("GLEANN_STORE_FORMAT", "1")
+// cmdMigrateFixture writes a small index in the v1.9 layout (test-only
+// writer, internal/testutil/format1) with the hnsw backend the CLI registers:
+// bbolt passages, a vector file, a manifest, a .lex.db sidecar and, with
+// graph, a Kùzu <name>_graph directory - the state `gleann index migrate`
+// converts. The source directory holds a Go file so the graph rebuild has
+// something to extract.
+func cmdMigrateFixture(t *testing.T, indexDir, name string, graph bool) {
 	t.Helper()
-	indexDir, name = t.TempDir(), "fixture"
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	docsDir := t.TempDir()
-	items := []gleann.Item{
-		{Text: "apple pie recipe", Metadata: map[string]any{"source": "a.md", "chunk_index": 0}},
-		{Text: "banana bread recipe", Metadata: map[string]any{"source": "b.md", "chunk_index": 0}},
-		{Text: "cherry tart dessert plate", Metadata: map[string]any{"source": "c.md", "chunk_index": 0}},
+	files := map[string]string{
+		"a.md":    "apple pie recipe",
+		"b.md":    "banana bread recipe",
+		"main.go": "package main\n\nfunc helper() int { return 1 }\n\nfunc main() { helper() }\n",
 	}
-	sources := make([]string, len(items))
-	for i, it := range items {
-		src := it.Metadata["source"].(string)
-		if err := os.WriteFile(filepath.Join(docsDir, src), []byte(it.Text), 0o644); err != nil {
+	var ps []format1.Passage
+	var texts []string
+	for i, src := range []string{"a.md", "b.md", "main.go"} {
+		if err := os.WriteFile(filepath.Join(docsDir, src), []byte(files[src]), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		sources[i] = filepath.Join(docsDir, src)
+		ps = append(ps, format1.Passage{ID: int64(i), Text: files[src], Metadata: map[string]any{"source": src, "chunk_index": 0}})
+		texts = append(texts, files[src])
 	}
-
+	vecs, err := (&testDefEmbedder{dim: 8}).Compute(context.Background(), texts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	factory, err := gleann.GetBackend("hnsw")
+	if err != nil {
+		t.Fatal(err)
+	}
 	cfg := gleann.DefaultConfig()
 	cfg.IndexDir, cfg.Backend = indexDir, "hnsw"
-	cfg.EmbeddingModel = "test-model"
-	cfg.HNSWConfig.UseMmap = false // RAM load keeps the test platform-independent
-	b, err := gleann.NewBuilder(cfg, &testDefEmbedder{dim: 8})
+	data, err := factory.NewBuilder(cfg).Build(context.Background(), vecs)
 	if err != nil {
-		t.Fatalf("NewBuilder: %v", err)
+		t.Fatal(err)
 	}
-	b.SetSourceDir(docsDir)
-	if err := b.Build(context.Background(), name, items); err != nil {
-		t.Fatalf("Build: %v", err)
+	if err := format1.Write(format1.Index{
+		Dir: indexDir, Name: name, Passages: ps, VectorFile: data, LexSidecar: true, Graph: graph,
+		Meta: map[string]any{"backend": "hnsw", "embedding_model": "test-model", "dimensions": 8,
+			"vector_ready": true, "source_dir": docsDir, "tags": []string{"work"}},
+	}); err != nil {
+		t.Fatal(err)
 	}
-	m, err := gleann.BuildManifest(name, docsDir, sources)
-	if err != nil {
-		t.Fatalf("BuildManifest: %v", err)
-	}
-	if err := gleann.SaveManifest(filepath.Join(indexDir, name, name)+".manifest.json", m); err != nil {
-		t.Fatalf("SaveManifest: %v", err)
-	}
-	return indexDir, name
 }
 
 func TestCmdMigrateEndToEnd(t *testing.T) {
-	dir, name := cmdMigrateFixture(t)
+	dir, name := t.TempDir(), "fixture"
+	cmdMigrateFixture(t, dir, name, true)
 	base := filepath.Join(dir, name, name)
 	ctx := context.Background()
 
 	out, errOut, code := runMigrate(t, name, "--index-dir", dir)
-	if code != 0 || !strings.Contains(out, "migrated to store format 2") {
+	if code != 0 || !strings.Contains(out, name+": migrated 3 passages to store format 2") {
 		t.Fatalf("migrate failed (exit %d): %q %q", code, out, errOut)
+	}
+	if !strings.Contains(out, "code graph rebuilt") || !strings.Contains(out, "--cleanup") {
+		t.Errorf("migrate output lacks the graph rebuild or the cleanup hint: %q", out)
 	}
 	if gleann.StoreFormatOf(base) != 2 {
 		t.Fatal("index is not format 2 after migrate")
 	}
-	for _, suffix := range []string{".passages.db.v1", ".manifest.json.v1"} {
-		if _, err := os.Stat(base + suffix); err != nil {
-			t.Errorf("preserved %s missing: %v", suffix, err)
-		}
+	if !gleann.HasCodeGraph(dir, name) {
+		t.Fatal("the old index had a code graph; migrate must rebuild it")
+	}
+	if _, err := os.Stat(base + ".passages.db"); err != nil {
+		t.Errorf("the old passage store must stay until --cleanup: %v", err)
 	}
 
-	// The migrated index searches: lexical and vector legs both work.
 	cfg := gleann.DefaultConfig()
 	cfg.IndexDir, cfg.Backend = dir, "hnsw"
 	cfg.EmbeddingModel = "test-model"
-	cfg.HNSWConfig.UseMmap = false
 	s := gleann.NewSearcher(cfg, &testDefEmbedder{dim: 8})
 	if err := s.Load(ctx, name); err != nil {
 		t.Fatalf("Load after migrate: %v", err)
@@ -123,54 +131,48 @@ func TestCmdMigrateEndToEnd(t *testing.T) {
 	}
 	s.Close()
 
-	// A second migrate is a skip, not a failure.
-	out, _, code = runMigrate(t, name, "--index-dir", dir)
+	// A second run skips; --cleanup deletes the old files and prints them.
+	out, errOut, code = runMigrate(t, name, "--cleanup", "--index-dir", dir)
 	if code != 0 || !strings.Contains(out, "already store format 2") {
-		t.Errorf("second migrate = exit %d: %q", code, out)
+		t.Fatalf("second migrate (exit %d): %q %q", code, out, errOut)
 	}
-
-	// Rollback returns the index to format 1.
-	out, errOut, code = runMigrate(t, name, "--index-dir", dir, "--rollback")
-	if code != 0 || !strings.Contains(out, "rolled back") {
-		t.Fatalf("rollback failed (exit %d): %q %q", code, out, errOut)
-	}
-	if gleann.StoreFormatOf(base) != 1 {
-		t.Fatal("index is not format 1 after rollback")
-	}
-
-	// Migrate again, then cleanup removes the preserved files for good.
-	if _, _, code = runMigrate(t, name, "--index-dir", dir); code != 0 {
-		t.Fatal("re-migrate after rollback failed")
-	}
-	out, errOut, code = runMigrate(t, name, "--index-dir", dir, "--cleanup")
-	if code != 0 || !strings.Contains(out, "rollback is no longer possible") {
-		t.Fatalf("cleanup failed (exit %d): %q %q", code, out, errOut)
-	}
-	for _, suffix := range []string{".passages.db.v1", ".manifest.json.v1"} {
-		if _, err := os.Stat(base + suffix); !os.IsNotExist(err) {
-			t.Errorf("cleanup left %s behind: %v", suffix, err)
+	for _, p := range []string{base + ".passages.db", base + ".lex.db", filepath.Join(dir, name+"_graph")} {
+		if !strings.Contains(out, "removed "+p) {
+			t.Errorf("--cleanup did not print %s: %q", p, out)
+		}
+		if _, err := os.Stat(p); !os.IsNotExist(err) {
+			t.Errorf("--cleanup left %s (%v)", p, err)
 		}
 	}
-	_, errOut, code = runMigrate(t, name, "--index-dir", dir, "--rollback")
-	if code != 1 || !strings.Contains(errOut, "no preserved format-1 store") {
-		t.Errorf("rollback after cleanup = exit %d: %q, want a readable refusal", code, errOut)
+	if !gleann.HasCodeGraph(dir, name) {
+		t.Fatal("--cleanup must not touch the new code graph")
 	}
 }
 
-func TestCmdMigrateAll(t *testing.T) {
-	dir, name := cmdMigrateFixture(t)
+func TestCmdMigrateAllWithMemoryVectors(t *testing.T) {
+	dir := t.TempDir()
+	cmdMigrateFixture(t, dir, "one", false)
+	cmdMigrateFixture(t, dir, "one_memory_vectors", false)
+	cmdMigrateFixture(t, dir, "two", false)
 	out, errOut, code := runMigrate(t, "--all", "--index-dir", dir)
-	if code != 0 || !strings.Contains(out, name+": migrated to store format 2") {
+	if code != 0 {
 		t.Fatalf("--all failed (exit %d): %q %q", code, out, errOut)
 	}
-	if gleann.StoreFormatOf(filepath.Join(dir, name, name)) != 2 {
-		t.Fatal("--all did not migrate the fixture")
+	for _, want := range []string{"one: migrated", "one_memory_vectors: migrated", "two: migrated"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("--all output lacks %q: %q", want, out)
+		}
+	}
+	for _, n := range []string{"one", "one_memory_vectors", "two"} {
+		if gleann.StoreFormatOf(filepath.Join(dir, n, n)) != 2 {
+			t.Errorf("--all did not migrate %s", n)
+		}
 	}
 }
 
 func TestMigrateHelp(t *testing.T) {
 	out, _, code := runMigrate(t, "--help")
-	if code != 0 || !strings.Contains(out, "Usage: gleann index migrate") || !strings.Contains(out, "--rollback") {
+	if code != 0 || !strings.Contains(out, "Usage: gleann index migrate") || !strings.Contains(out, "--cleanup") || strings.Contains(out, "--rollback") {
 		t.Errorf("help output unexpected (exit %d): %q", code, out)
 	}
 }
@@ -196,16 +198,11 @@ func TestMigrateUnknownIndexFails(t *testing.T) {
 	}
 }
 
-func TestMigrateRollbackCleanupConflict(t *testing.T) {
-	_, errOut, code := runMigrate(t, "idx", "--rollback", "--cleanup", "--index-dir", t.TempDir())
-	if code != 1 || !strings.Contains(errOut, "cannot be combined") {
-		t.Errorf("want exit 1 refusing the combination, got %d: %q", code, errOut)
-	}
-}
-
-func TestMigrateLanguageOnlyForMigration(t *testing.T) {
-	_, errOut, code := runMigrate(t, "idx", "--rollback", "--language", "tr", "--index-dir", t.TempDir())
-	if code != 1 || !strings.Contains(errOut, "--language") {
-		t.Errorf("want exit 1 refusing --language on rollback, got %d: %q", code, errOut)
+func TestMigrateRemovedFlags(t *testing.T) {
+	for _, args := range [][]string{{"idx", "--rollback"}, {"idx", "--language", "tr"}} {
+		_, errOut, code := runMigrate(t, append(args, "--index-dir", t.TempDir())...)
+		if code != 1 || !strings.Contains(errOut, "removed in v1.20") {
+			t.Errorf("%v: want exit 1 saying the flag was removed, got %d: %q", args, code, errOut)
+		}
 	}
 }

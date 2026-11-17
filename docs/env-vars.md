@@ -184,19 +184,12 @@ When a `gleann serve` instance is running, the bbolt memory store holds an exclu
 
 When the auto-probe succeeds, affected commands print a `(via running server)` tag so it is obvious which path serviced the request.
 
-## Lexical Search
+## Index Format and Incremental Updates
+
+Every index is format 2: one SQLite database `<index_dir>/<name>/<name>.db` with the passages, the persisted FTS5 lexical index (AND-first queries with a document-frequency cut of 0.2), the manifest and the code graph. `GLEANN_STORE_FORMAT`, `GLEANN_LEXICAL` and `GLEANN_LEXICAL_OPTS` were removed in v1.20: a value still set is ignored and gleann prints a one-line notice. Indexes built by gleann v1.9 or earlier are converted with `gleann index migrate <name>` (or rebuilt with `gleann index rebuild <name>`).
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `GLEANN_LEXICAL` | `memory` | Selects the lexical (BM25) leg of search. Unset or `memory` keeps today's in-RAM BM25 index. `fts5` uses the persisted FTS5 lexical index stored in a sidecar database `<index_dir>/<name>/<name>.lex.db`, so loading an index skips the in-RAM BM25 build (RFC 003, hidden gate switch). The sidecar is built at index build/sync time and rebuilt automatically when missing or stale. Only the default BM25 scorer is replaced; a custom scorer is left untouched |
-| `GLEANN_LEXICAL_OPTS` | `""` | Comma-separated options for the persisted FTS5 lexical leg (`GLEANN_LEXICAL=fts5`), used for benchmarking and quality gates. Supported options: `and` or `and-first` (runs term groups AND-ed first, fills with OR), and `df=<fraction>` (drops terms with document frequency above fraction of N, e.g. `df=0.05`, `df=0.1`, `df=0.2`) |
-
-
-## Passage Store Format
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `GLEANN_STORE_FORMAT` | `1` | Selects the passage-store format for NEW indexes (RFC 003). Unset or `1` keeps the bbolt store (`<name>.passages.db`); `2` uses the SQLite record store (`<name>.db`) with stable passage IDs, per-file transactions and the persisted FTS5 lexical leg built in. Any other value falls back to the default. Existing indexes keep their on-disk format regardless of this switch: a format-1 index is converted explicitly with `gleann index migrate <name>` (and restored with `--rollback`), never implicitly by a write |
 | `GLEANN_DELTA_MIN` / `GLEANN_DELTA_SHARE` | `4096` / `0.02` | Format-2 incremental updates (RFC 005): a sync keeps new vectors in a small delta file until it holds more than `max(GLEANN_DELTA_MIN, GLEANN_DELTA_SHARE x live passages)` entries; the sync that crosses the limit rebuilds the main vector file from the stored vectors (a merge, no re-embedding) |
 | `GLEANN_DEAD_SHARE` / `GLEANN_DEAD_SHARE_PRUNED` / `GLEANN_DEAD_MIN` | `0.05` / `0.05` / `256` | Share of dead vector slots (removed or replaced passages) that triggers the same rebuild with dense slots, and the number of dead slots below which it never does; an explicit share sets the minimum to 0 unless `GLEANN_DEAD_MIN` is given |
 

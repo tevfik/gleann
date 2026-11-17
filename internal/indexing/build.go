@@ -158,6 +158,11 @@ func buildOne(ctx context.Context, opts BuildOptions) (*BuildResult, error) {
 	name, docsDir := opts.Name, opts.DocsDir
 	mode := opts.mode()
 
+	// An index in the old store format is converted (index migrate) or
+	// removed first (index rebuild), never overwritten by a build.
+	if err := gleann.CheckStoreFormat(cfg.IndexDir, name); err != nil {
+		return nil, err
+	}
 	unlock, err := lockIndex(ctx, cfg.IndexDir, name)
 	if err != nil {
 		return nil, err
@@ -314,36 +319,7 @@ func buildOne(ctx context.Context, opts BuildOptions) (*BuildResult, error) {
 		}
 	}
 
-	// Build and persist Manifest for instant diffing and Merkle tree verification.
-	saveManifestFromItems(cfg.IndexDir, name, docsDir, items)
-
 	return res, nil
-}
-
-func manifestPath(indexDir, name string) string {
-	return filepath.Join(indexDir, name, name+".manifest.json")
-}
-
-func saveManifestFromItems(indexDir, name, docsDir string, items []gleann.Item) {
-	// A format-2 index keeps its manifest in the files table, committed with
-	// the passages by ApplySource; there is no manifest file to write.
-	if gleann.StoreFormatOf(filepath.Join(indexDir, name, name)) == 2 {
-		return
-	}
-	var manifestFiles []string
-	seenFiles := make(map[string]bool)
-	for _, it := range items {
-		if src, ok := it.Metadata["source"].(string); ok && src != "" && !seenFiles[src] {
-			seenFiles[src] = true
-			if !filepath.IsAbs(src) {
-				src = filepath.Join(docsDir, src)
-			}
-			manifestFiles = append(manifestFiles, src)
-		}
-	}
-	if mf, mErr := gleann.BuildManifest(name, docsDir, manifestFiles); mErr == nil {
-		_ = gleann.SaveManifest(manifestPath(indexDir, name), mf)
-	}
 }
 
 // pipelineEnv bundles the resolved resources shared by the rebuild and

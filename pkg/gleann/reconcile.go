@@ -37,8 +37,8 @@ func (b *LeannBuilder) Reconcile(ctx context.Context, name, docsRoot string) (*R
 	indexDir := filepath.Join(b.config.IndexDir, name)
 	basePath := filepath.Join(indexDir, name)
 
-	// Load passages through the format-dispatching opener: bbolt for a
-	// format-1 index, the SQLite record store for format 2.
+	// Load passages from the SQLite record store (an index in the old store
+	// format is refused).
 	ps, err := OpenPassageStore(basePath, false)
 	if err != nil {
 		return nil, fmt.Errorf("load passages: %w", err)
@@ -96,10 +96,10 @@ func (b *LeannBuilder) Reconcile(ctx context.Context, name, docsRoot string) (*R
 	return result, nil
 }
 
-// ReconcilePassageManager checks a PassageManager for orphan sources
+// ReconcilePassageManager checks a passage store for orphan sources
 // and returns the list of sources that no longer exist on disk.
 // This is a read-only check; call Reconcile to actually remove them.
-func ReconcilePassageManager(pm *PassageManager, docsRoot string) (orphanSources []string, totalPassages int) {
+func ReconcilePassageManager(pm PassageStore, docsRoot string) (orphanSources []string, totalPassages int) {
 	seenSources := make(map[string]bool)
 
 	pm.ForEachPassage(func(p Passage) error {

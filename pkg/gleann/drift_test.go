@@ -131,7 +131,6 @@ func driftRecall(t *testing.T, dir string, corpus []driftPassage, queries []stri
 
 func TestVectorRecallDoesNotDrift(t *testing.T) {
 	initTestHNSW()
-	t.Setenv("GLEANN_STORE_FORMAT", "2")
 	n := envInt("GLEANN_DRIFT_PASSAGES", 100000)
 	rounds := envInt("GLEANN_DRIFT_ROUNDS", 50)
 	nsrc := n / driftPerSrc

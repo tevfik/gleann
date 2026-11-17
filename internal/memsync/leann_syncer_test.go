@@ -93,6 +93,37 @@ func TestLeannSyncer_AddAndDeleteRoundTrip(t *testing.T) {
 	}
 }
 
+// AddContents writes a batch (what `memory import-graph` hands over) in one
+// update, creating the index on first use; a repeated batch replaces the
+// entities instead of duplicating them.
+func TestLeannSyncer_AddContentsBatch(t *testing.T) {
+	dir := t.TempDir()
+	cfg := gleann.DefaultConfig()
+	cfg.IndexDir = dir
+	cfg.Backend = "hnsw"
+	emb := hashEmbedder{dim: 8}
+	b, err := gleann.NewBuilder(cfg, emb)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const name = "imported_memory_vectors"
+	syncer := memsync.NewLeannSyncer(b, name, emb)
+	ctx := context.Background()
+	batch := []memsync.Content{
+		{NodeID: "a", Content: "alpha entity text", Attrs: map[string]any{"type": "concept"}},
+		{NodeID: "b", Content: "beta entity text"},
+		{NodeID: "c"}, // no content: skipped
+	}
+	for round := 0; round < 2; round++ {
+		if err := syncer.AddContents(ctx, batch); err != nil {
+			t.Fatalf("AddContents round %d: %v", round, err)
+		}
+		if got := passages(t, dir, name); got != 2 {
+			t.Fatalf("round %d: %d passages, want 2", round, got)
+		}
+	}
+}
+
 func passages(t *testing.T, dir, name string) int {
 	t.Helper()
 	metas, err := gleann.ListIndexes(dir)

@@ -14,8 +14,9 @@ import (
 // when the symbol survives the delta (RFC 003 section 6.5 step 1, the port
 // of kuzu IncomingEdges).
 type inboundEdge struct {
-	src, dst, kind, file, confidence string
-	dstExternal                      int
+	src, dst, kindID, confidence int64 // node and label ids
+	dstExternal                  int
+	kind, file                   string // kind label (counters) and owner file (the src's)
 }
 
 // ApplyFileDelta replaces one file's graph rows atomically, following RFC
@@ -80,18 +81,19 @@ func (g *SQLite) ApplyFileDeltaTx(ctx context.Context, tx *sql.Tx, d FileDelta) 
 	if err != nil {
 		return fmt.Errorf("applying graph delta for %q: %w", d.File, err)
 	}
+	previous, gcCands, err := fileNodes(ctx, tx, d.File)
+	if err != nil {
+		return fmt.Errorf("applying graph delta for %q: %w", d.File, err)
+	}
+	ids, err := newIDSpace(ctx, tx) // before the deletes: see idSpace
+	if err != nil {
+		return fmt.Errorf("applying graph delta for %q: %w", d.File, err)
+	}
+	defer ids.close()
 	if err := deleteFileRows(ctx, tx, d.File); err != nil {
 		return fmt.Errorf("applying graph delta for %q: %w", d.File, err)
 	}
 
-	// Step 3: insert the new declarations and references.
-	if err := insertSymbols(ctx, tx, d); err != nil {
-		return fmt.Errorf("applying graph delta for %q: %w", d.File, err)
-	}
-	inserted, err := insertEdges(ctx, tx, d)
-	if err != nil {
-		return fmt.Errorf("applying graph delta for %q: %w", d.File, err)
-	}
 	// Referential integrity (AGENTS.md section 2.3). An edge's src must be a
 	// declaration of this file: anything else is an extractor bug and the
 	// delta is refused. An internal dst that is not declared (yet) is not
@@ -102,7 +104,13 @@ func (g *SQLite) ApplyFileDeltaTx(ctx context.Context, tx *sql.Tx, d FileDelta) 
 	if err := checkSources(d); err != nil {
 		return fmt.Errorf("applying graph delta for %q: %w", d.File, err)
 	}
-	dropped, err := dropUnresolved(ctx, tx, d.File)
+
+	// Step 3: insert the new declarations and references.
+	symIDs, err := insertSymbols(ctx, tx, ids, previous, d)
+	if err != nil {
+		return fmt.Errorf("applying graph delta for %q: %w", d.File, err)
+	}
+	inserted, unresolved, err := insertEdges(ctx, tx, ids, symIDs, d)
 	if err != nil {
 		return fmt.Errorf("applying graph delta for %q: %w", d.File, err)
 	}
@@ -113,21 +121,19 @@ func (g *SQLite) ApplyFileDeltaTx(ctx context.Context, tx *sql.Tx, d FileDelta) 
 	if err != nil {
 		return fmt.Errorf("applying graph delta for %q: %w", d.File, err)
 	}
+	if err := gcNodes(ctx, tx, gcCands); err != nil {
+		return fmt.Errorf("applying graph delta for %q: %w", d.File, err)
+	}
 
 	// Keep the meta row counters exact in the same transaction: credits are
-	// the rows inserted and restored, debits the rows retracted and dropped.
+	// the rows inserted and restored, debits the rows retracted.
 	edgeDelta := make(map[string]int64)
 	addKind(edgeDelta, inserted)
 	addKind(edgeDelta, restored)
 	subKind(edgeDelta, inboundKindCounts(inbound))
 	subKind(edgeDelta, delOwn)
-	subKind(edgeDelta, dropped)
 	if err := bumpGraphCounts(ctx, tx, int64(len(d.Symbols))-delSyms, edgeDelta); err != nil {
 		return fmt.Errorf("applying graph delta for %q: %w", d.File, err)
-	}
-	unresolved := int64(0)
-	for _, n := range dropped {
-		unresolved += n
 	}
 
 	// The graph columns of the manifest row advance with the delta, never
@@ -146,11 +152,16 @@ ON CONFLICT(path) DO UPDATE SET graph_hash = excluded.graph_hash, graph_dirty = 
 }
 
 // readInbound is step 1 of RFC 003 section 6.5 (port of IncomingEdges):
-// edges whose dst is declared in file and whose owner is a different file.
-// External targets have no symbols row, so they never appear here.
+// edges whose dst is declared in file and whose owner (the src's file) is a
+// different file. External targets have no symbols row, so they never appear
+// here.
 func readInbound(ctx context.Context, tx *sql.Tx, file string) ([]inboundEdge, error) {
-	rows, err := tx.QueryContext(ctx, `SELECT src, dst, kind, file, dst_external, confidence FROM edges
-WHERE dst IN (SELECT fqn FROM symbols WHERE file = ?) AND file <> ?`, file, file)
+	rows, err := tx.QueryContext(ctx, `SELECT e.src, e.dst, e.kind, e.dst_external, e.confidence, k.label, ss.file
+FROM symbols ds
+JOIN graph_edges e ON e.dst = ds.id
+JOIN symbols ss ON ss.id = e.src
+JOIN graph_labels k ON k.id = e.kind
+WHERE ds.file = ? AND ss.file <> ?`, file, file)
 	if err != nil {
 		return nil, fmt.Errorf("reading inbound edges: %w", err)
 	}
@@ -158,7 +169,7 @@ WHERE dst IN (SELECT fqn FROM symbols WHERE file = ?) AND file <> ?`, file, file
 	var out []inboundEdge
 	for rows.Next() {
 		var e inboundEdge
-		if err := rows.Scan(&e.src, &e.dst, &e.kind, &e.file, &e.dstExternal, &e.confidence); err != nil {
+		if err := rows.Scan(&e.src, &e.dst, &e.kindID, &e.dstExternal, &e.confidence, &e.kind, &e.file); err != nil {
 			return nil, fmt.Errorf("reading inbound edges: %w", err)
 		}
 		out = append(out, e)
@@ -169,19 +180,65 @@ WHERE dst IN (SELECT fqn FROM symbols WHERE file = ?) AND file <> ?`, file, file
 	return out, nil
 }
 
+// fileNodes reads what retraction is about to remove: the ids of the file's
+// symbols by FQN (a re-declared symbol keeps its id, so restored inbound edges
+// still point at it) and the graph_nodes targets of its external edges, which
+// gcNodes deletes after the delta when nothing points at them any more.
+func fileNodes(ctx context.Context, tx *sql.Tx, file string) (map[string]int64, []int64, error) {
+	previous := make(map[string]int64)
+	rows, err := tx.QueryContext(ctx, `SELECT fqn, id FROM symbols WHERE file = ?`, file)
+	if err != nil {
+		return nil, nil, fmt.Errorf("listing symbols of %q: %w", file, err)
+	}
+	for rows.Next() {
+		var fqn string
+		var id int64
+		if err := rows.Scan(&fqn, &id); err != nil {
+			rows.Close()
+			return nil, nil, fmt.Errorf("listing symbols of %q: %w", file, err)
+		}
+		previous[fqn] = id
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, nil, fmt.Errorf("listing symbols of %q: %w", file, err)
+	}
+	rows.Close()
+
+	rows, err = tx.QueryContext(ctx, `SELECT DISTINCT e.dst FROM graph_edges e
+WHERE e.src IN (SELECT id FROM symbols WHERE file = ?) AND e.dst_external = 1
+  AND EXISTS (SELECT 1 FROM graph_nodes n WHERE n.id = e.dst)`, file)
+	if err != nil {
+		return nil, nil, fmt.Errorf("listing external targets of %q: %w", file, err)
+	}
+	defer rows.Close()
+	var targets []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, nil, fmt.Errorf("listing external targets of %q: %w", file, err)
+		}
+		targets = append(targets, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, nil, fmt.Errorf("listing external targets of %q: %w", file, err)
+	}
+	return previous, targets, nil
+}
+
 // deleteFileRows is step 2 of RFC 003 section 6.5. The inbound delete runs
 // first because its subquery reads symbols; there are no foreign key
 // cascades, so every retraction is explicit. The file's own edges are found by
-// src (the owner invariant makes edges.file == src's file), over the edges
-// primary key and symbols_file — there is no edges_file index (it repeated the
-// whole primary key per edge; see store's edges_file_drop step).
+// src (the owner invariant makes the owning file the src's file) over the
+// graph_edges primary key and symbols_file. External graph_nodes are not
+// deleted here: gcNodes drops the unreferenced ones once the delta is in.
 func deleteFileRows(ctx context.Context, tx *sql.Tx, file string) error {
-	if _, err := tx.ExecContext(ctx, `DELETE FROM edges
-WHERE dst IN (SELECT fqn FROM symbols WHERE file = ?) AND file <> ?`, file, file); err != nil {
+	if _, err := tx.ExecContext(ctx, `DELETE FROM graph_edges
+WHERE dst IN (SELECT id FROM symbols WHERE file = ?1) AND src NOT IN (SELECT id FROM symbols WHERE file = ?1)`, file); err != nil {
 		return fmt.Errorf("deleting inbound edges: %w", err)
 	}
-	if _, err := tx.ExecContext(ctx, `DELETE FROM edges
-WHERE src IN (SELECT fqn FROM symbols WHERE file = ?)`, file); err != nil {
+	if _, err := tx.ExecContext(ctx, `DELETE FROM graph_edges
+WHERE src IN (SELECT id FROM symbols WHERE file = ?)`, file); err != nil {
 		return fmt.Errorf("deleting edges: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM symbols WHERE file = ?`, file); err != nil {
@@ -190,34 +247,34 @@ WHERE src IN (SELECT fqn FROM symbols WHERE file = ?)`, file); err != nil {
 	return nil
 }
 
-// insertSymbols writes the delta's declarations. A duplicate FQN within the
+// insertSymbols writes the delta's declarations, each under the id
+// idSpace.symbolID gives it, and returns fqn -> id. A duplicate FQN within the
 // delta, or one already declared in another file (build-tag variants, RFC
 // 003 section 6.5), is an error rather than an ignored conflict: the
 // extraction rule that avoids it belongs to RFC 001, and silently merging
 // two declarations would break the one-anchor invariant.
-func insertSymbols(ctx context.Context, tx *sql.Tx, d FileDelta) error {
-	seen := make(map[string]bool, len(d.Symbols))
+func insertSymbols(ctx context.Context, tx *sql.Tx, idSpace *idSpace, previous map[string]int64, d FileDelta) (map[string]int64, error) {
+	ids := make(map[string]int64, len(d.Symbols))
 	ins, err := tx.PrepareContext(ctx, `INSERT INTO symbols
-(fqn, name, kind, file, start_line, end_line, start_col, byte_offset, is_test, weight, doc)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+(id, fqn, name, kind, file, start_line, end_line, start_col, byte_offset, is_test, weight, doc)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
 	if err != nil {
-		return fmt.Errorf("preparing symbol insert: %w", err)
+		return nil, fmt.Errorf("preparing symbol insert: %w", err)
 	}
 	defer ins.Close()
 	for _, s := range d.Symbols {
 		if s.FQN == "" {
-			return fmt.Errorf("inserting symbols: empty FQN")
+			return nil, fmt.Errorf("inserting symbols: empty FQN")
 		}
-		if seen[s.FQN] {
-			return fmt.Errorf("inserting symbols: %q declared twice in the same delta", s.FQN)
+		if _, dup := ids[s.FQN]; dup {
+			return nil, fmt.Errorf("inserting symbols: %q declared twice in the same delta", s.FQN)
 		}
-		seen[s.FQN] = true
 		file := slashPath(s.File)
 		if file == "" {
 			file = d.File
 		}
 		if file != d.File {
-			return fmt.Errorf("inserting symbols: %q is anchored in %q, not the delta's file %q", s.FQN, file, d.File)
+			return nil, fmt.Errorf("inserting symbols: %q is anchored in %q, not the delta's file %q", s.FQN, file, d.File)
 		}
 		weight := s.Weight
 		if weight == 0 {
@@ -227,33 +284,48 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
 		if s.IsTest {
 			isTest = 1
 		}
-		if _, err := ins.ExecContext(ctx, s.FQN, s.Name, s.Kind, file, s.StartLine, s.EndLine, s.StartCol, s.ByteOffset, isTest, weight, s.Doc); err != nil {
-			// A primary key conflict means another file already declares this
-			// FQN; name that file so the extractor can be fixed.
+		id, err := idSpace.symbolID(ctx, s.FQN, previous)
+		if err != nil {
+			return nil, fmt.Errorf("inserting symbols: %w", err)
+		}
+		ids[s.FQN] = id
+		if _, err := ins.ExecContext(ctx, id, s.FQN, s.Name, s.Kind, file, s.StartLine, s.EndLine, s.StartCol, s.ByteOffset, isTest, weight, s.Doc); err != nil {
+			// A key conflict means another file already declares this FQN;
+			// name that file so the extractor can be fixed.
 			var owner string
 			qerr := tx.QueryRowContext(ctx, `SELECT file FROM symbols WHERE fqn = ?`, s.FQN).Scan(&owner)
 			if qerr == nil && owner != d.File {
-				return fmt.Errorf("inserting symbols: %q is already declared in %q", s.FQN, owner)
+				return nil, fmt.Errorf("inserting symbols: %q is already declared in %q", s.FQN, owner)
 			}
-			return fmt.Errorf("inserting symbol %q: %w", s.FQN, err)
+			return nil, fmt.Errorf("inserting symbol %q: %w", s.FQN, err)
 		}
 	}
-	return nil
+	return ids, nil
 }
 
 // insertEdges writes the delta's references, owned by the delta's file, and
 // returns the number actually inserted per kind (INSERT OR IGNORE skips
-// duplicates, so the credit is the rows affected, not len(d.Edges)).
-// INSERT OR IGNORE on PRIMARY KEY (src, dst, kind, file) removes the Kùzu
-// "duplicated primary key" failure mode for edges (RFC 003 section 6.5).
-func insertEdges(ctx context.Context, tx *sql.Tx, d FileDelta) (map[string]int64, error) {
-	ins, err := tx.PrepareContext(ctx, `INSERT OR IGNORE INTO edges (src, dst, kind, file, dst_external, confidence)
-VALUES (?, ?, ?, ?, ?, ?)`)
+// duplicates, so the credit is the rows affected, not len(d.Edges)) and the
+// number of references to internal targets with no declaration, which are not
+// written (the caller marks the file graph_dirty). INSERT OR IGNORE on
+// PRIMARY KEY (src, dst, kind) removes the Kùzu "duplicated primary key"
+// failure mode for edges (RFC 003 section 6.5). checkSources has run, so
+// every src is in symIDs.
+func insertEdges(ctx context.Context, tx *sql.Tx, idSpace *idSpace, symIDs map[string]int64, d FileDelta) (map[string]int64, int64, error) {
+	ins, err := tx.PrepareContext(ctx, `INSERT OR IGNORE INTO graph_edges (src, dst, kind, dst_external, confidence)
+VALUES (?, ?, ?, ?, ?)`)
 	if err != nil {
-		return nil, fmt.Errorf("preparing edge insert: %w", err)
+		return nil, 0, fmt.Errorf("preparing edge insert: %w", err)
 	}
 	defer ins.Close()
+	declared, err := tx.PrepareContext(ctx, `SELECT id FROM symbols WHERE fqn = ?`)
+	if err != nil {
+		return nil, 0, fmt.Errorf("preparing symbol lookup: %w", err)
+	}
+	defer declared.Close()
+	labels := labelCache{}
 	inserted := make(map[string]int64)
+	var unresolved int64
 	for _, e := range d.Edges {
 		kind := e.Kind
 		if kind == "" {
@@ -264,20 +336,43 @@ VALUES (?, ?, ?, ?, ?, ?)`)
 			confidence = "extracted"
 		}
 		external := 0
+		var dst int64
 		if e.DstExternal {
 			external = 1
+			if dst, err = idSpace.targetID(ctx, e.Dst); err != nil {
+				return nil, 0, fmt.Errorf("inserting edge %q -> %q: %w", e.Src, e.Dst, err)
+			}
+		} else if id, ok := symIDs[e.Dst]; ok {
+			dst = id
+		} else {
+			err := declared.QueryRowContext(ctx, e.Dst).Scan(&dst)
+			if errors.Is(err, sql.ErrNoRows) {
+				unresolved++ // unresolved internal target: not written, owner marked dirty
+				continue
+			}
+			if err != nil {
+				return nil, 0, fmt.Errorf("inserting edge %q -> %q: %w", e.Src, e.Dst, err)
+			}
 		}
-		res, err := ins.ExecContext(ctx, e.Src, e.Dst, kind, d.File, external, confidence)
+		kindID, err := labels.id(ctx, tx, kind)
 		if err != nil {
-			return nil, fmt.Errorf("inserting edge %q -> %q: %w", e.Src, e.Dst, err)
+			return nil, 0, err
+		}
+		confID, err := labels.id(ctx, tx, confidence)
+		if err != nil {
+			return nil, 0, err
+		}
+		res, err := ins.ExecContext(ctx, symIDs[e.Src], dst, kindID, external, confID)
+		if err != nil {
+			return nil, 0, fmt.Errorf("inserting edge %q -> %q: %w", e.Src, e.Dst, err)
 		}
 		n, err := res.RowsAffected()
 		if err != nil {
-			return nil, fmt.Errorf("inserting edge %q -> %q: %w", e.Src, e.Dst, err)
+			return nil, 0, fmt.Errorf("inserting edge %q -> %q: %w", e.Src, e.Dst, err)
 		}
 		inserted[kind] += n
 	}
-	return inserted, nil
+	return inserted, unresolved, nil
 }
 
 // checkSources refuses a delta with an edge whose src is not declared in
@@ -300,34 +395,6 @@ func checkSources(d FileDelta) error {
 	return nil
 }
 
-// dropUnresolved deletes the file's edges to internal targets that have no
-// declaration and reports how many it dropped per kind; the caller marks the
-// file graph_dirty when any were and debits the counters by the same amounts.
-func dropUnresolved(ctx context.Context, tx *sql.Tx, file string) (map[string]int64, error) {
-	const pred = `FROM edges WHERE src IN (SELECT fqn FROM symbols WHERE file = ?) AND dst_external = 0 AND NOT EXISTS (SELECT 1 FROM symbols s WHERE s.fqn = edges.dst)`
-	dropped := make(map[string]int64)
-	rows, err := tx.QueryContext(ctx, `SELECT kind, count(*) `+pred+` GROUP BY kind`, file)
-	if err != nil {
-		return nil, fmt.Errorf("dropping unresolved edges: %w", err)
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var kind string
-		var n int64
-		if err := rows.Scan(&kind, &n); err != nil {
-			return nil, fmt.Errorf("dropping unresolved edges: %w", err)
-		}
-		dropped[kind] = n
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("dropping unresolved edges: %w", err)
-	}
-	if _, err := tx.ExecContext(ctx, `DELETE `+pred, file); err != nil {
-		return nil, fmt.Errorf("dropping unresolved edges: %w", err)
-	}
-	return dropped, nil
-}
-
 func boolInt(b bool) int {
 	if b {
 		return 1
@@ -337,45 +404,47 @@ func boolInt(b bool) int {
 
 // restoreInbound is step 4 of RFC 003 section 6.5 (port of
 // ExistingSymbolFQNs): an inbound edge whose dst survived the delta is
-// re-inserted under its original owner; one whose dst is gone stays deleted
-// (step 2 removed it, so no dangling edge remains) and its owner is marked
-// graph_dirty so the next sync re-resolves the reference. The src is checked
-// too, although the RFC names only dst: a restored edge must not dangle on
-// either end (AGENTS.md section 2.3).
+// re-inserted under its original owner (ids are stable across the delta: a
+// re-declared symbol gets its old id back, and a new symbol never gets the id
+// of a retracted one); one whose dst is gone stays deleted (step 2 removed it, so no
+// dangling edge remains) and its owner is marked graph_dirty so the next sync
+// re-resolves the reference. The src is checked too, although the RFC names
+// only dst: a restored edge must not dangle on either end (AGENTS.md section
+// 2.3).
 func restoreInbound(ctx context.Context, tx *sql.Tx, inbound []inboundEdge) (map[string]int64, error) {
 	restored := make(map[string]int64)
 	if len(inbound) == 0 {
 		return restored, nil
 	}
-	exists, err := tx.PrepareContext(ctx, `SELECT 1 FROM symbols WHERE fqn = ?`)
+	exists, err := tx.PrepareContext(ctx, `SELECT 1 FROM symbols WHERE id = ?`)
 	if err != nil {
 		return nil, fmt.Errorf("preparing symbol lookup: %w", err)
 	}
 	defer exists.Close()
-	ins, err := tx.PrepareContext(ctx, `INSERT OR IGNORE INTO edges (src, dst, kind, file, dst_external, confidence)
-VALUES (?, ?, ?, ?, ?, ?)`)
+	ins, err := tx.PrepareContext(ctx, `INSERT OR IGNORE INTO graph_edges (src, dst, kind, dst_external, confidence)
+VALUES (?, ?, ?, ?, ?)`)
 	if err != nil {
 		return nil, fmt.Errorf("preparing inbound restore: %w", err)
 	}
 	defer ins.Close()
 	// Cache the declared() answers for this call: many inbound edges share
 	// endpoints, and the symbol set does not change while the loop runs (it
-	// only inserts edges), so one lookup per FQN is enough.
-	declaredCache := make(map[string]bool)
-	declared := func(fqn string) (bool, error) {
-		if ok, cached := declaredCache[fqn]; cached {
+	// only inserts edges), so one lookup per node is enough.
+	declaredCache := make(map[int64]bool)
+	declared := func(id int64) (bool, error) {
+		if ok, cached := declaredCache[id]; cached {
 			return ok, nil
 		}
 		var one int
-		err := exists.QueryRowContext(ctx, fqn).Scan(&one)
+		err := exists.QueryRowContext(ctx, id).Scan(&one)
 		if errors.Is(err, sql.ErrNoRows) {
-			declaredCache[fqn] = false
+			declaredCache[id] = false
 			return false, nil
 		}
 		if err != nil {
-			return false, fmt.Errorf("looking up %q: %w", fqn, err)
+			return false, fmt.Errorf("looking up node %d: %w", id, err)
 		}
-		declaredCache[fqn] = true
+		declaredCache[id] = true
 		return true, nil
 	}
 	dirty := make(map[string]bool)
@@ -391,13 +460,13 @@ VALUES (?, ?, ?, ?, ?, ?)`)
 			}
 		}
 		if dstOK && srcOK {
-			res, err := ins.ExecContext(ctx, e.src, e.dst, e.kind, e.file, e.dstExternal, e.confidence)
+			res, err := ins.ExecContext(ctx, e.src, e.dst, e.kindID, e.dstExternal, e.confidence)
 			if err != nil {
-				return nil, fmt.Errorf("restoring inbound edge %q -> %q: %w", e.src, e.dst, err)
+				return nil, fmt.Errorf("restoring inbound edge %d -> %d: %w", e.src, e.dst, err)
 			}
 			n, err := res.RowsAffected()
 			if err != nil {
-				return nil, fmt.Errorf("restoring inbound edge %q -> %q: %w", e.src, e.dst, err)
+				return nil, fmt.Errorf("restoring inbound edge %d -> %d: %w", e.src, e.dst, err)
 			}
 			restored[e.kind] += n
 			continue
@@ -468,6 +537,10 @@ func (g *SQLite) RemoveFileTx(ctx context.Context, tx *sql.Tx, file string) erro
 	if err != nil {
 		return fmt.Errorf("removing graph rows of %q: %w", file, err)
 	}
+	_, gcCands, err := fileNodes(ctx, tx, file)
+	if err != nil {
+		return fmt.Errorf("removing graph rows of %q: %w", file, err)
+	}
 	if err := deleteFileRows(ctx, tx, file); err != nil {
 		return fmt.Errorf("removing graph rows of %q: %w", file, err)
 	}
@@ -475,6 +548,9 @@ func (g *SQLite) RemoveFileTx(ctx context.Context, tx *sql.Tx, file string) erro
 	// owner becomes dirty; restoreInbound applies the same rule as a delta.
 	restored, err := restoreInbound(ctx, tx, inbound)
 	if err != nil {
+		return fmt.Errorf("removing graph rows of %q: %w", file, err)
+	}
+	if err := gcNodes(ctx, tx, gcCands); err != nil {
 		return fmt.Errorf("removing graph rows of %q: %w", file, err)
 	}
 	edgeDelta := make(map[string]int64)

@@ -33,9 +33,6 @@ func TestRetrievalQualityGrownIncrementally(t *testing.T) {
 			home := t.TempDir()
 			t.Setenv("HOME", home)
 			t.Setenv("USERPROFILE", home)
-			t.Setenv("GLEANN_STORE_FORMAT", "2")
-			t.Setenv("GLEANN_LEXICAL", "fts5")
-			t.Setenv("GLEANN_LEXICAL_OPTS", "and,df=0.2")
 			if variant.merge {
 				t.Setenv("GLEANN_DELTA_MIN", "0")
 				t.Setenv("GLEANN_DELTA_SHARE", "0")

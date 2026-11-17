@@ -78,7 +78,6 @@ func newLenOllama(t *testing.T) *httptest.Server {
 // (the "CLI") uses.
 func newFreshServer(t *testing.T) (*Server, http.Handler, gleann.Config, gleann.EmbeddingComputer) {
 	t.Helper()
-	t.Setenv("GLEANN_STORE_FORMAT", "2")
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)

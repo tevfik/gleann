@@ -56,7 +56,7 @@ func (b linearIDScorer) VectorDistances(ctx context.Context, query []float32, id
 // swaps in a deterministic fake backend so scores are exactly predictable.
 func newLinearSearcher(t *testing.T, items []Item, backend BackendSearcher) *LeannSearcher {
 	t.Helper()
-	s := newWidenSearcher(t, true, items)
+	s := newWidenSearcher(t, items)
 	old := s.backend
 	s.backend = backend
 	t.Cleanup(func() { old.Close() })
@@ -86,7 +86,7 @@ func TestPreselectFilterIDs_HostileFieldNames(t *testing.T) {
 	for i, md := range metas {
 		items[i] = Item{Text: fmt.Sprintf("hostile doc %d", i), Metadata: md}
 	}
-	s := newWidenSearcher(t, true, items)
+	s := newWidenSearcher(t, items)
 	all := s.passages.All()
 	ctx := context.Background()
 

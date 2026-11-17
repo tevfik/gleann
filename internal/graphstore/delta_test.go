@@ -343,14 +343,33 @@ func TestRandomDeltaSequenceIntegrity(t *testing.T) {
 			checkIntegrity := func(step int) {
 				t.Helper()
 				var n int
-				err := g.reader.QueryRow(`SELECT count(*) FROM edges e
-WHERE NOT EXISTS (SELECT 1 FROM symbols s WHERE s.fqn = e.src)
-   OR (e.dst_external = 0 AND NOT EXISTS (SELECT 1 FROM symbols s WHERE s.fqn = e.dst))`).Scan(&n)
+				// On the integer tables, not the edges view: the view's
+				// joins would hide a dangling id.
+				err := g.reader.QueryRow(`SELECT count(*) FROM graph_edges e
+WHERE NOT EXISTS (SELECT 1 FROM symbols s WHERE s.id = e.src)
+   OR (e.dst_external = 0 AND NOT EXISTS (SELECT 1 FROM symbols s WHERE s.id = e.dst))
+   OR (NOT EXISTS (SELECT 1 FROM symbols s WHERE s.id = e.dst) AND NOT EXISTS (SELECT 1 FROM graph_nodes n WHERE n.id = e.dst))`).Scan(&n)
 				if err != nil {
 					t.Fatal(err)
 				}
 				if n != 0 {
 					t.Fatalf("step %d: %d edges with a missing internal endpoint", step, n)
+				}
+				// An id or FQN lives in one of symbols and graph_nodes, and
+				// no external node is left that no edge points at (gcNodes).
+				if err := g.reader.QueryRow(`SELECT count(*) FROM graph_nodes n
+WHERE EXISTS (SELECT 1 FROM symbols s WHERE s.id = n.id OR s.fqn = n.fqn)`).Scan(&n); err != nil {
+					t.Fatal(err)
+				}
+				if n != 0 {
+					t.Fatalf("step %d: %d graph nodes sharing an id or FQN with a symbol", step, n)
+				}
+				if err := g.reader.QueryRow(`SELECT count(*) FROM graph_nodes n
+WHERE NOT EXISTS (SELECT 1 FROM graph_edges e WHERE e.dst = n.id)`).Scan(&n); err != nil {
+					t.Fatal(err)
+				}
+				if n != 0 {
+					t.Fatalf("step %d: %d unreferenced graph nodes", step, n)
 				}
 			}
 			// genDelta builds a valid delta: a random subset of the file's

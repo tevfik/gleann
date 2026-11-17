@@ -1,9 +1,12 @@
 package graphstore
 
 import (
+	"cmp"
 	"context"
+	"database/sql"
 	"fmt"
-	"sort"
+	"slices"
+	"strings"
 	"time"
 
 	"github.com/tevfik/gleann/internal/store"
@@ -16,9 +19,13 @@ import (
 // COPY load), where ApplyFileDelta is the incremental one.
 //
 // It is fast because it does the work a fresh build actually needs, once:
-//   - all symbols are inserted first (sorted by fqn), then all edges (sorted by
-//     primary key), so both WITHOUT ROWID b-trees and the rowid table append in
-//     order instead of splitting pages at random;
+//   - ids are assigned in Go — symbols in FQN order, then the external
+//     targets in FQN order — and edge rows are integer tuples sorted and
+//     deduplicated in Go, so symbols, graph_nodes and the graph_edges b-tree
+//     all append in key order instead of splitting pages at random;
+//   - rows go in through multi-row INSERT statements, a few rows per
+//     statement execution instead of one: the per-execution cost of
+//     database/sql and the driver dominated the load (see bulkBatch);
 //   - the secondary indexes are dropped during the load and rebuilt afterwards
 //     in one sorted pass each, instead of being maintained row by row;
 //   - internal edge targets are resolved against the COMPLETE symbol set in
@@ -31,13 +38,13 @@ import (
 // ApplyFileDelta and converging the dirty files (TestReplaceAllMatchesPerFile):
 // an edge whose src is not declared in its owning file is an extractor bug and
 // refuses the whole rebuild; an internal dst that no delta declares is dropped
-// and its owner marked graph_dirty, exactly as dropUnresolved does. Files not
+// and its owner marked graph_dirty, exactly as insertEdges does. Files not
 // present in deltas keep their passage manifest but lose their graph columns.
 //
 // The transaction holds the single writer for the whole rebuild (RFC 003
 // section 3.6); callers serialise rebuilds with the per-index build lock.
 func (g *SQLite) ReplaceAll(ctx context.Context, deltas []FileDelta) error {
-	symRows, edgeRows, dirty, err := normalizeBulk(deltas)
+	b, err := normalizeBulk(deltas)
 	if err != nil {
 		return err
 	}
@@ -50,17 +57,18 @@ func (g *SQLite) ReplaceAll(ctx context.Context, deltas []FileDelta) error {
 
 	// Retract everything. Drop the FTS triggers first so the mass DELETE does
 	// not fire one FTS delete per row, and the secondary indexes so the deletes
-	// and the ordered inserts do not maintain them row by row.
+	// and the ordered inserts do not maintain them row by row. Labels stay:
+	// their ids are stable for the life of the database.
 	for _, q := range []string{
 		`DROP TRIGGER IF EXISTS symbols_fts_insert`,
 		`DROP TRIGGER IF EXISTS symbols_fts_delete`,
 		`DROP TRIGGER IF EXISTS symbols_fts_update`,
 		`DROP INDEX IF EXISTS symbols_file`,
 		`DROP INDEX IF EXISTS symbols_name`,
-		`DROP INDEX IF EXISTS edges_dst`,
-		`DROP INDEX IF EXISTS edges_file`,
-		`DELETE FROM edges`,
+		`DROP INDEX IF EXISTS graph_edges_dst`,
+		`DELETE FROM graph_edges`,
 		`DELETE FROM symbols`,
+		`DELETE FROM graph_nodes`,
 		`UPDATE files SET graph_hash = NULL, graph_dirty = 0`,
 	} {
 		if _, err := tx.ExecContext(ctx, q); err != nil {
@@ -68,53 +76,71 @@ func (g *SQLite) ReplaceAll(ctx context.Context, deltas []FileDelta) error {
 		}
 	}
 
-	// All symbols first, in fqn order (the rowid table and its UNIQUE fqn
-	// index append; ids follow lexical order).
-	symIns, err := tx.PrepareContext(ctx, `INSERT INTO symbols
-(fqn, name, kind, file, start_line, end_line, start_col, byte_offset, is_test, weight, doc)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-	if err != nil {
-		return fmt.Errorf("replacing graph: preparing symbol insert: %w", err)
-	}
-	for _, s := range symRows {
-		if _, err := symIns.ExecContext(ctx, s.fqn, s.name, s.kind, s.file, s.startLine, s.endLine, s.startCol, s.byteOffset, s.isTest, s.weight, s.doc); err != nil {
-			symIns.Close()
-			return fmt.Errorf("replacing graph: inserting symbol %q: %w", s.fqn, err)
+	// Edge rows as integer tuples in primary-key order, deduplicated on
+	// (src, dst, kind) keeping the first occurrence (INSERT OR IGNORE's
+	// rule); the survivors per kind are the exact counter totals.
+	labels := labelCache{}
+	labelID := make([]int32, len(b.labels))
+	for i, l := range b.labels {
+		id, err := labels.id(ctx, tx, l)
+		if err != nil {
+			return fmt.Errorf("replacing graph: %w", err)
 		}
+		labelID[i] = int32(id)
 	}
-	symIns.Close()
-
-	// Then all edges, in primary-key order. INSERT OR IGNORE deduplicates
-	// (src, dst, kind, file) exactly as the per-file path does; the rows
-	// affected give the exact per-kind totals for the counters.
-	edgeIns, err := tx.PrepareContext(ctx, `INSERT OR IGNORE INTO edges (src, dst, kind, file, dst_external, confidence)
-VALUES (?, ?, ?, ?, ?, ?)`)
-	if err != nil {
-		return fmt.Errorf("replacing graph: preparing edge insert: %w", err)
+	edges := b.edges
+	for i := range edges {
+		edges[i].kind = labelID[edges[i].kind]
+		edges[i].conf = labelID[edges[i].conf]
+	}
+	slices.SortStableFunc(edges, func(a, b bulkEdgeIDs) int {
+		if c := cmp.Compare(a.src, b.src); c != 0 {
+			return c
+		}
+		if c := cmp.Compare(a.dst, b.dst); c != 0 {
+			return c
+		}
+		return cmp.Compare(a.kind, b.kind)
+	})
+	edges = slices.CompactFunc(edges, func(a, b bulkEdgeIDs) bool {
+		return a.src == b.src && a.dst == b.dst && a.kind == b.kind
+	})
+	kindName := make(map[int32]string, len(labels))
+	for name, id := range labels {
+		kindName[int32(id)] = name
 	}
 	edgeCounts := make(map[string]int64)
-	for _, e := range edgeRows {
-		res, err := edgeIns.ExecContext(ctx, e.src, e.dst, e.kind, e.file, e.external, e.confidence)
-		if err != nil {
-			edgeIns.Close()
-			return fmt.Errorf("replacing graph: inserting edge %q -> %q: %w", e.src, e.dst, err)
-		}
-		n, err := res.RowsAffected()
-		if err != nil {
-			edgeIns.Close()
-			return fmt.Errorf("replacing graph: inserting edge %q -> %q: %w", e.src, e.dst, err)
-		}
-		edgeCounts[e.kind] += n
+	for _, e := range edges {
+		edgeCounts[kindName[e.kind]]++
 	}
-	edgeIns.Close()
+
+	// Symbols, external nodes, then edges, each in key order.
+	order, extFQNs := b.symOrder, b.ext
+	if err := insertRows(ctx, tx, `INSERT INTO symbols
+(id, fqn, name, kind, file, start_line, end_line, start_col, byte_offset, is_test, weight, doc) VALUES `, 12, bulkBatchSymbols, len(order),
+		func(i int, args []any) []any {
+			s := &b.syms[order[i]]
+			return append(args, int64(i+1), s.fqn, s.name, s.kind, s.file, s.startLine, s.endLine, s.startCol, s.byteOffset, s.isTest, s.weight, s.doc)
+		}); err != nil {
+		return fmt.Errorf("replacing graph: inserting symbols: %w", err)
+	}
+	if err := insertRows(ctx, tx, `INSERT INTO graph_nodes (id, fqn) VALUES `, 2, bulkBatchNodes, len(extFQNs),
+		func(j int, args []any) []any { return append(args, int64(len(order)+1+j), extFQNs[j]) }); err != nil {
+		return fmt.Errorf("replacing graph: inserting external nodes: %w", err)
+	}
+	if err := insertRows(ctx, tx, `INSERT INTO graph_edges (src, dst, kind, dst_external, confidence) VALUES `, 5, bulkBatchEdges, len(edges),
+		func(i int, args []any) []any {
+			e := &edges[i]
+			return append(args, e.src, e.dst, e.kind, e.external, e.conf)
+		}); err != nil {
+		return fmt.Errorf("replacing graph: inserting edges: %w", err)
+	}
 
 	// Rebuild the secondary indexes (one sorted pass each) and the FTS index.
-	// edges_file is intentionally not recreated: it is redundant with the
-	// edges primary key under the owner invariant (store's edges_file_drop).
 	for _, q := range []string{
 		`CREATE INDEX symbols_file ON symbols(file)`,
 		`CREATE INDEX symbols_name ON symbols(name)`,
-		`CREATE INDEX edges_dst ON edges(dst, kind)`,
+		store.GraphEdgesDstIndex,
 	} {
 		if _, err := tx.ExecContext(ctx, q); err != nil {
 			return fmt.Errorf("replacing graph: %s: %w", q, err)
@@ -128,22 +154,26 @@ VALUES (?, ?, ?, ?, ?, ?)`)
 	}
 
 	// The counters are exactly the rows just inserted (the wipe emptied them).
-	if err := setGraphCounts(ctx, tx, int64(len(symRows)), edgeCounts); err != nil {
+	if err := setGraphCounts(ctx, tx, int64(len(b.syms)), edgeCounts); err != nil {
 		return fmt.Errorf("replacing graph: %w", err)
 	}
 
 	// Advance the manifest graph columns for every delta file, in file order.
 	now := time.Now().UnixNano()
+	fileUp, err := tx.PrepareContext(ctx, `INSERT INTO files (path, size, mtime_ns, hash, graph_hash, graph_dirty, indexed_at)
+VALUES (?, 0, 0, '', ?, ?, ?)
+ON CONFLICT(path) DO UPDATE SET graph_hash = excluded.graph_hash, graph_dirty = excluded.graph_dirty`)
+	if err != nil {
+		return fmt.Errorf("replacing graph: preparing files upsert: %w", err)
+	}
+	defer fileUp.Close()
 	for _, d := range deltas {
 		file := slashPath(d.File)
 		var graphHash any
 		if d.GraphHash != "" {
 			graphHash = d.GraphHash
 		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO files (path, size, mtime_ns, hash, graph_hash, graph_dirty, indexed_at)
-VALUES (?, 0, 0, '', ?, ?, ?)
-ON CONFLICT(path) DO UPDATE SET graph_hash = excluded.graph_hash, graph_dirty = excluded.graph_dirty`,
-			file, graphHash, boolInt(dirty[file]), now); err != nil {
+		if _, err := fileUp.ExecContext(ctx, file, graphHash, boolInt(b.dirty[file]), now); err != nil {
 			return fmt.Errorf("replacing graph: writing files row %q: %w", file, err)
 		}
 	}
@@ -153,20 +183,81 @@ ON CONFLICT(path) DO UPDATE SET graph_hash = excluded.graph_hash, graph_dirty = 
 	}
 
 	// Maintenance after commit (the data is already durable): reclaim free
-	// pages left by a rebuild's wipe, then flush the WAL back into the
+	// pages when a rebuild left a noticeable share of the file free (a large
+	// graph replaced by a smaller one), then flush the WAL back into the
 	// database and truncate it. The order matters: in WAL mode VACUUM writes
 	// the whole database through the WAL, so checkpointing first left a
-	// database-sized WAL behind (181 MiB at 1M edges). Both are best-effort —
-	// a busy reader must not fail a committed rebuild.
-	var free int64
+	// database-sized WAL behind (181 MiB at 1M edges). A first load or a
+	// same-size rebuild reuses the freed pages and leaves only a few behind
+	// (FTS segment merges); rewriting the whole file for those cost a second
+	// at 1M edges and gained nothing. Both steps are best-effort — a busy
+	// reader must not fail a committed rebuild.
+	var free, pages int64
 	if err := g.writer.QueryRowContext(ctx, `PRAGMA freelist_count`).Scan(&free); err == nil && free > 0 {
-		_, _ = g.writer.ExecContext(ctx, `VACUUM`)
+		if err := g.writer.QueryRowContext(ctx, `PRAGMA page_count`).Scan(&pages); err == nil && free*vacuumFreeShare > pages {
+			_, _ = g.writer.ExecContext(ctx, `VACUUM`)
+		}
 	}
 	_, _ = g.writer.ExecContext(ctx, `PRAGMA wal_checkpoint(TRUNCATE)`)
 	return nil
 }
 
-// bulkSymbol and bulkEdge are the normalised, insert-ready rows of a rebuild.
+const (
+	// vacuumFreeShare: ReplaceAll VACUUMs when more than 1/vacuumFreeShare
+	// of the database pages are free after the rebuild.
+	vacuumFreeShare = 10
+
+	// Rows per multi-row INSERT execution. The driver binds each parameter
+	// by searching the argument list (modernc.org/sqlite conn.bind is
+	// quadratic in the parameter count), so large statements lose what they
+	// save in executions; at 1M edges 16/8/32 rows loaded in 4.1 s where 1
+	// row per statement took 5.2 s and 1024 rows 20 s.
+	bulkBatchEdges   = 16
+	bulkBatchSymbols = 8
+	bulkBatchNodes   = 32
+)
+
+// insertRows inserts n rows of ncols columns with multi-row INSERT statements
+// of up to batch rows each: head is the statement up to and including VALUES,
+// and row appends row i's values to args. One prepared statement serves every
+// full batch; the tail gets its own.
+func insertRows(ctx context.Context, tx *sql.Tx, head string, ncols, batch, n int, row func(i int, args []any) []any) error {
+	if n == 0 {
+		return nil
+	}
+	tuple := "(" + inList(ncols) + ")"
+	prepare := func(rows int) (*sql.Stmt, error) {
+		return tx.PrepareContext(ctx, head+strings.TrimSuffix(strings.Repeat(tuple+",", rows), ","))
+	}
+	full, err := prepare(min(batch, n))
+	if err != nil {
+		return err
+	}
+	defer full.Close()
+	args := make([]any, 0, batch*ncols)
+	for start := 0; start < n; start += batch {
+		end := min(start+batch, n)
+		args = args[:0]
+		for i := start; i < end; i++ {
+			args = row(i, args)
+		}
+		stmt := full
+		if end-start < batch && start > 0 {
+			tail, err := prepare(end - start)
+			if err != nil {
+				return err
+			}
+			defer tail.Close()
+			stmt = tail
+		}
+		if _, err := stmt.ExecContext(ctx, args...); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// bulkSymbol is a normalised, insert-ready symbol row of a rebuild.
 type bulkSymbol struct {
 	fqn, name, kind, file                    string
 	startLine, endLine, startCol, byteOffset int64
@@ -175,43 +266,58 @@ type bulkSymbol struct {
 	doc                                      string
 }
 
-type bulkEdge struct {
-	src, dst, kind, file string
-	external             int
-	confidence           string
+// bulkEdgeIDs is a normalised edge of a rebuild as it is stored: node ids
+// for src and dst, and the kind and confidence label ids. normalizeBulk fills
+// kind and conf with indexes into bulkGraph.labels, which ReplaceAll maps to
+// graph_labels ids. 32 bytes per edge: the rebuild holds a million of them.
+type bulkEdgeIDs struct {
+	src, dst   int64
+	kind, conf int32
+	external   int32
+}
+
+// bulkGraph is the validated content of a rebuild with its ids assigned:
+// symbols 1..S in FQN order, then the external targets no symbol declares
+// S+1.. in FQN order.
+type bulkGraph struct {
+	syms     []bulkSymbol  // in delta order
+	symOrder []int         // indexes into syms, by FQN (the row with id i+1 is syms[symOrder[i]])
+	edges    []bulkEdgeIDs // surviving edges, in delta order
+	ext      []string      // external target FQNs, by id
+	labels   []string      // kind and confidence strings, by local index
+	dirty    map[string]bool
 }
 
 // normalizeBulk validates and normalises every delta against the complete
-// symbol set, mirroring insertSymbols / insertEdges / checkSources /
-// dropUnresolved exactly, and returns the rows sorted for ordered insertion
-// plus the set of files whose unresolved internal targets mark them dirty.
-func normalizeBulk(deltas []FileDelta) ([]bulkSymbol, []bulkEdge, map[string]bool, error) {
-	owner := make(map[string]string) // fqn -> declaring file (duplicate detection + resolution)
-	var symRows []bulkSymbol
-	var edgeRows []bulkEdge
-	dirty := make(map[string]bool)
+// symbol set, mirroring insertSymbols / insertEdges / checkSources exactly,
+// and assigns the ids: it returns the symbols, the surviving edges with
+// resolved endpoints, the external targets, and the set of files whose
+// unresolved internal targets mark them dirty.
+func normalizeBulk(deltas []FileDelta) (*bulkGraph, error) {
+	b := &bulkGraph{dirty: make(map[string]bool)}
+	owner := make(map[string]int) // fqn -> index into b.syms (duplicate detection + resolution)
 
 	for _, d := range deltas {
 		file := slashPath(d.File)
 		if file == "" {
-			return nil, nil, nil, fmt.Errorf("replacing graph: empty file path")
+			return nil, fmt.Errorf("replacing graph: empty file path")
 		}
 		for _, s := range d.Symbols {
 			if s.FQN == "" {
-				return nil, nil, nil, fmt.Errorf("replacing graph: inserting symbols: empty FQN")
+				return nil, fmt.Errorf("replacing graph: inserting symbols: empty FQN")
 			}
 			if prev, ok := owner[s.FQN]; ok {
-				if prev == file {
-					return nil, nil, nil, fmt.Errorf("replacing graph: inserting symbols: %q declared twice in the same delta", s.FQN)
+				if b.syms[prev].file == file {
+					return nil, fmt.Errorf("replacing graph: inserting symbols: %q declared twice in the same delta", s.FQN)
 				}
-				return nil, nil, nil, fmt.Errorf("replacing graph: inserting symbols: %q is already declared in %q", s.FQN, prev)
+				return nil, fmt.Errorf("replacing graph: inserting symbols: %q is already declared in %q", s.FQN, b.syms[prev].file)
 			}
 			sFile := slashPath(s.File)
 			if sFile == "" {
 				sFile = file
 			}
 			if sFile != file {
-				return nil, nil, nil, fmt.Errorf("replacing graph: inserting symbols: %q is anchored in %q, not the delta's file %q", s.FQN, sFile, file)
+				return nil, fmt.Errorf("replacing graph: inserting symbols: %q is anchored in %q, not the delta's file %q", s.FQN, sFile, file)
 			}
 			weight := s.Weight
 			if weight == 0 {
@@ -221,8 +327,8 @@ func normalizeBulk(deltas []FileDelta) ([]bulkSymbol, []bulkEdge, map[string]boo
 			if s.IsTest {
 				isTest = 1
 			}
-			owner[s.FQN] = file
-			symRows = append(symRows, bulkSymbol{
+			owner[s.FQN] = len(b.syms)
+			b.syms = append(b.syms, bulkSymbol{
 				fqn: s.FQN, name: s.Name, kind: s.Kind, file: sFile,
 				startLine: s.StartLine, endLine: s.EndLine, startCol: s.StartCol, byteOffset: s.ByteOffset,
 				isTest: isTest, weight: weight, doc: s.Doc,
@@ -230,8 +336,34 @@ func normalizeBulk(deltas []FileDelta) ([]bulkSymbol, []bulkEdge, map[string]boo
 		}
 	}
 
+	// Symbol ids follow FQN order.
+	b.symOrder = make([]int, len(b.syms))
+	for i := range b.symOrder {
+		b.symOrder[i] = i
+	}
+	slices.SortFunc(b.symOrder, func(x, y int) int { return strings.Compare(b.syms[x].fqn, b.syms[y].fqn) })
+	symID := make([]int64, len(b.syms))
+	for rank, i := range b.symOrder {
+		symID[i] = int64(rank + 1)
+	}
+
 	// Edges are resolved against the complete symbol set, so order never
 	// matters: an internal dst declared by any delta is kept on this pass.
+	// An external target that some delta declares is that symbol (an external
+	// classification can be stale), as idSpace.targetID resolves it. Other
+	// external targets get -1-j (j in first-seen order) until their ids are
+	// known below.
+	ext := make(map[string]int)
+	labelIdx := make(map[string]int32)
+	label := func(l string) int32 {
+		i, ok := labelIdx[l]
+		if !ok {
+			i = int32(len(b.labels))
+			labelIdx[l] = i
+			b.labels = append(b.labels, l)
+		}
+		return i
+	}
 	for _, d := range deltas {
 		file := slashPath(d.File)
 		for _, e := range d.Edges {
@@ -243,36 +375,51 @@ func normalizeBulk(deltas []FileDelta) ([]bulkSymbol, []bulkEdge, map[string]boo
 			if confidence == "" {
 				confidence = "extracted"
 			}
-			if srcFile, ok := owner[e.Src]; !ok || srcFile != file {
-				return nil, nil, nil, fmt.Errorf("replacing graph: edge %q -> %q starts at a symbol with no declaration in this file", e.Src, e.Dst)
+			src, ok := owner[e.Src]
+			if !ok || b.syms[src].file != file {
+				return nil, fmt.Errorf("replacing graph: edge %q -> %q starts at a symbol with no declaration in this file", e.Src, e.Dst)
 			}
-			external := 0
+			var dst int64
+			var external int32
+			if di, declared := owner[e.Dst]; declared {
+				dst = symID[di]
+			} else if !e.DstExternal {
+				b.dirty[file] = true // unresolved internal target: drop, mark owner dirty
+				continue
+			}
 			if e.DstExternal {
 				external = 1
-			}
-			if external == 0 {
-				if _, ok := owner[e.Dst]; !ok {
-					dirty[file] = true // unresolved internal target: drop, mark owner dirty
-					continue
+				if dst == 0 {
+					j, seen := ext[e.Dst]
+					if !seen {
+						j = len(b.ext)
+						ext[e.Dst] = j
+						b.ext = append(b.ext, e.Dst)
+					}
+					dst = int64(-1 - j)
 				}
 			}
-			edgeRows = append(edgeRows, bulkEdge{src: e.Src, dst: e.Dst, kind: kind, file: file, external: external, confidence: confidence})
+			b.edges = append(b.edges, bulkEdgeIDs{src: symID[src], dst: dst, kind: label(kind), conf: label(confidence), external: external})
 		}
 	}
 
-	sort.Slice(symRows, func(i, j int) bool { return symRows[i].fqn < symRows[j].fqn })
-	sort.Slice(edgeRows, func(i, j int) bool {
-		a, b := edgeRows[i], edgeRows[j]
-		if a.src != b.src {
-			return a.src < b.src
+	// External ids follow FQN order after the symbols.
+	extOrder := make([]int, len(b.ext))
+	for j := range extOrder {
+		extOrder[j] = j
+	}
+	slices.SortFunc(extOrder, func(x, y int) int { return strings.Compare(b.ext[x], b.ext[y]) })
+	extID := make([]int64, len(b.ext))
+	sorted := make([]string, len(b.ext))
+	for r, j := range extOrder {
+		extID[j] = int64(len(b.syms) + 1 + r)
+		sorted[r] = b.ext[j]
+	}
+	b.ext = sorted
+	for i := range b.edges {
+		if d := b.edges[i].dst; d < 0 {
+			b.edges[i].dst = extID[-1-d]
 		}
-		if a.dst != b.dst {
-			return a.dst < b.dst
-		}
-		if a.kind != b.kind {
-			return a.kind < b.kind
-		}
-		return a.file < b.file
-	})
-	return symRows, edgeRows, dirty, nil
+	}
+	return b, nil
 }

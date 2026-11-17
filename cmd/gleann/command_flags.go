@@ -57,8 +57,11 @@ var indexFlagSets = map[string]flagSet{
 	"repair": configFlags.union(flagSet{
 		"--all": false, "--check": false, "--force": false, "--progress": true,
 	}),
+	// --rollback and --language were removed in v1.20; they stay accepted so
+	// cmdMigrate can say so instead of a bare "unknown flag".
 	"migrate": configFlags.union(flagSet{
-		"--all": false, "--rollback": false, "--cleanup": false, "--language": true,
+		"--all": false, "--graph": false, "--cleanup": false,
+		"--rollback": false, "--language": true,
 	}),
 }
 

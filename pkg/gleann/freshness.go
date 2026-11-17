@@ -138,7 +138,7 @@ const (
 
 // Change reports what changed in the index on disk since this searcher loaded
 // it. It costs one small database read and no file walk. A searcher that did
-// not record a state (format 1, a custom or unloaded searcher) never changes.
+// not record a state (a custom or unloaded searcher) never changes.
 // A read failure (the database is gone or unreadable) is reported as a full
 // reload together with the error, so the caller's reload surfaces the real
 // problem.
@@ -276,9 +276,9 @@ func (s *LeannSearcher) Refresh(ctx context.Context) (bool, error) {
 	s.loaded, s.vectorAvailable = false, false
 	s.backend, s.passages = nil, nil
 	s.dstate.Store(nil)
-	// A reload must not stack the new passages on the previous in-memory
-	// BM25 documents.
-	if _, ok := s.scorer.(*BM25Adapter); ok {
+	// A reload must not stack the new passages on the previous documents of
+	// a custom in-memory BM25 scorer.
+	if _, ok := s.scorer.(*BM25Adapter); ok && s.customScorer {
 		s.scorer = NewBM25Adapter()
 	}
 	if err := s.Load(ctx, name); err != nil {

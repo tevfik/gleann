@@ -749,23 +749,6 @@ func sortChunksByLine(chunks []CodeChunk) {
 	}
 }
 
-// extractCalls walks the subtree under node and returns the names of
-// all call-like constructs (function calls, method invocations, etc.).
-//
-// It uses a single compiled tree-sitter query (built lazily via
-// GetOrCompileQuery) instead of a recursive Go DFS. For files with
-// 1000+ lines the cursor-driven approach is materially faster because
-// the query engine in C short-circuits unmatched branches without
-// paying the Go-call overhead per node.
-//
-// lang is the source language of `node`; it is used to pick the
-// grammar binding under which the query is compiled. If lang is
-// empty, the function falls back to a Go recursion so the call site
-// (chunking machinery) is never broken by a missing binding.
-func extractCalls(node *sitter.Node, source []byte) []string {
-	return extractCallsForLang(LangUnknown, node, source)
-}
-
 // extractCallsForLang walks the subtree under node and returns the names
 // of all call-like constructs (function calls, method invocations, etc.).
 //

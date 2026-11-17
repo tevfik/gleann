@@ -5,22 +5,20 @@ import (
 	"database/sql"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/tevfik/gleann/internal/store"
 )
 
-// Counterparts of the format-1 sidecar tests (lexical_leg_test.go): a format-2
-// index keeps its lexical rows in <name>.db itself, so there is no sidecar to
-// build, lock or swap. The same load-time guarantees must hold through the
-// store's own lex table (RFC 003 section 8 step 4).
+// The index keeps its lexical rows in <name>.db itself (RFC 003 section 8
+// step 4): the FTS5 leg is the only lexical path (RFC 004 B1).
 
 // buildFormat2Lexical builds a lexical-only format-2 index (no vectors, so
 // Load never needs a vector backend) and returns its builder.
 func buildFormat2Lexical(t *testing.T, dir string, items []Item) *LeannBuilder {
 	t.Helper()
 	initTestHNSW()
-	t.Setenv("GLEANN_STORE_FORMAT", "2")
 	b, err := NewBuilder(Config{IndexDir: dir, Backend: "hnsw"}, nil)
 	if err != nil {
 		t.Fatalf("NewBuilder: %v", err)
@@ -39,22 +37,24 @@ func format2LexItems() []Item {
 	}
 }
 
-// The persisted lexical leg of a format-2 index is its own lex table in both
-// GLEANN_LEXICAL modes: no sidecar is created, Load skips the passage scan,
-// a wiped lex table is rebuilt once from the stored texts, and a rebuild after
-// a delete keeps the leg in step with the passages.
+// The persisted lexical leg is the index's own lex table: no sidecar is
+// created, Load skips the passage scan, a wiped lex table is rebuilt once from
+// the stored texts, and a rebuild after a delete keeps the leg in step with
+// the passages. The removed GLEANN_LEXICAL switch changes nothing.
 func TestFormat2_LexicalLeg(t *testing.T) {
 	ctx := context.Background()
 	items := format2LexItems()
 
-	for _, mode := range []string{"memory", "fts5"} {
+	for _, mode := range []string{"unset", "memory"} {
 		t.Run(mode, func(t *testing.T) {
-			t.Setenv("GLEANN_LEXICAL", mode)
+			if mode != "unset" {
+				t.Setenv("GLEANN_LEXICAL", mode)
+			}
 			dir := t.TempDir()
 			buildFormat2Lexical(t, dir, items)
 			base := filepath.Join(dir, "idx", "idx")
 			if _, err := os.Stat(base + ".lex.db"); !os.IsNotExist(err) {
-				t.Fatalf("format-2 build created a format-1 sidecar: %v", err)
+				t.Fatalf("the build created a .lex.db sidecar: %v", err)
 			}
 
 			s := NewSearcher(Config{IndexDir: dir, Backend: "hnsw"}, nil)
@@ -135,9 +135,9 @@ func TestFormat2_LexicalLeg(t *testing.T) {
 }
 
 // When the lex table cannot be made fresh (here: it is damaged and the rebuild
-// fails), Load does not fail: it serves this load with the in-memory BM25
-// adapter, the format-2 counterpart of the busy-sidecar fallback.
-func TestFormat2_LoadFallsBackWhenLexRebuildFails(t *testing.T) {
+// fails), Load fails with the cause: there is no in-memory fallback any more
+// (RFC 004 B2), and no handle is left open.
+func TestFormat2_LoadFailsWhenLexRebuildFails(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()
 	buildFormat2Lexical(t, dir, format2LexItems()[:1])
@@ -161,15 +161,12 @@ func TestFormat2_LoadFallsBackWhenLexRebuildFails(t *testing.T) {
 	db.Close()
 
 	s := NewSearcher(Config{IndexDir: dir, Backend: "hnsw"}, nil)
-	if err := s.Load(ctx, "idx"); err != nil {
-		t.Fatalf("Load with a damaged lex table: %v", err)
+	err = s.Load(ctx, "idx")
+	if err == nil || !strings.Contains(err.Error(), "lexical") {
+		t.Fatalf("Load with a damaged lex table = %v, want a lexical-index error", err)
 	}
-	defer s.Close()
-	if _, ok := s.scorer.(*BM25Adapter); !ok {
-		t.Fatalf("scorer = %T, want the in-memory *BM25Adapter", s.scorer)
-	}
-	if rs, err := s.SearchBM25(ctx, "apple", 5); err != nil || len(rs) == 0 {
-		t.Fatalf("search during fallback = %v, %v", rs, err)
+	if s.scorer != nil || s.passages != nil {
+		t.Fatalf("a failed Load left handles behind: scorer %T, passages %T", s.scorer, s.passages)
 	}
 }
 

@@ -27,21 +27,43 @@ func TestDetectStoreFormatThreeWay(t *testing.T) {
 		t.Fatalf("format-2 index = %v, want StoreV2", got)
 	}
 
-	v1 := filepath.Join(dir, "old", "old")
-	if err := os.MkdirAll(filepath.Dir(v1), 0o755); err != nil {
+	// Every trace of a v1.9 index without a format-2 database is the old
+	// format: meta.json alone, a bbolt store, a lexical sidecar, a vector
+	// file, or only a Kùzu <name>_graph directory.
+	for _, tc := range []struct {
+		name  string
+		write func(base string) error
+	}{
+		{"meta", func(b string) error { return os.WriteFile(b+".meta.json", []byte(`{"name":"x"}`), 0o644) }},
+		{"passages", func(b string) error { return os.WriteFile(b+".passages.db", []byte("bolt"), 0o644) }},
+		{"lexdb", func(b string) error { return os.WriteFile(b+".lex.db", []byte("lex"), 0o644) }},
+		{"vectors", func(b string) error { return os.WriteFile(b+".index", []byte("vec"), 0o644) }},
+	} {
+		old := filepath.Join(dir, tc.name, tc.name)
+		if err := os.MkdirAll(filepath.Dir(old), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := tc.write(old); err != nil {
+			t.Fatal(err)
+		}
+		if got := DetectStoreFormat(old); got != StoreOld {
+			t.Errorf("%s: DetectStoreFormat = %v, want StoreOld", tc.name, got)
+		}
+		if err := CheckStoreFormat(dir, tc.name); !errors.Is(err, ErrOldStoreFormat) {
+			t.Errorf("%s: CheckStoreFormat = %v, want ErrOldStoreFormat", tc.name, err)
+		}
+	}
+	if err := os.MkdirAll(filepath.Join(dir, "graphonly_graph"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(v1+".meta.json", []byte(`{"name":"old"}`), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if got := DetectStoreFormat(v1); got != StoreV1 {
-		t.Fatalf("index with meta.json and no store_format = %v, want StoreV1", got)
+	if got := DetectStoreFormat(filepath.Join(dir, "graphonly", "graphonly")); got != StoreOld {
+		t.Errorf("only <name>_graph: DetectStoreFormat = %v, want StoreOld", got)
 	}
 }
 
-// A missing index is not a format-1 index: nothing is created for it, and the
-// callers get a typed error.
-func TestMissingIndexIsNotTreatedAsFormat1(t *testing.T) {
+// A missing index is not an old-format index: nothing is created for it, and
+// the callers get a typed error.
+func TestMissingIndexIsNotTreatedAsOldFormat(t *testing.T) {
 	dir := t.TempDir()
 	b, _ := newFormat2Builder(t, dir, 8)
 	ctx := context.Background()
@@ -60,7 +82,6 @@ func TestMissingIndexIsNotTreatedAsFormat1(t *testing.T) {
 			t.Fatalf("OpenPassageStore(readOnly=%v) on a missing index = %v, want ErrIndexNotFound", ro, err)
 		}
 	}
-	// The writable open must not have created the index directory.
 	if _, err := os.Stat(filepath.Join(dir, "ghost")); !os.IsNotExist(err) {
 		t.Fatalf("a missing index left %s behind (%v)", filepath.Join(dir, "ghost"), err)
 	}

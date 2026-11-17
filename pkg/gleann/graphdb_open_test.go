@@ -21,19 +21,19 @@ func TestHasCodeGraphAndOpenGraphStore(t *testing.T) {
 		t.Fatalf("OpenGraphStore(absent) = %v, %v; want nil, nil", g, err)
 	}
 
-	// Legacy format-1 index: it has no code graph, with or without <name>_graph.
+	// Index in the old store format: it has no code graph, with or without <name>_graph.
 	if err := os.MkdirAll(filepath.Join(dir, "old"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	if HasCodeGraph(dir, "old") {
-		t.Fatal("format-1 index without sidecar reported a graph")
+		t.Fatal("old-format index without sidecar reported a graph")
 	}
 	if err := os.WriteFile(filepath.Join(dir, "old_graph"), []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	// RFC 004 A3: an old Kùzu sidecar is never read, so it is no code graph.
 	if HasCodeGraph(dir, "old") {
-		t.Fatal("format-1 index with an old Kùzu sidecar must not report a graph")
+		t.Fatal("old-format index with an old Kùzu sidecar must not report a graph")
 	}
 
 	// Format-2 index: graph data in <name>.db.

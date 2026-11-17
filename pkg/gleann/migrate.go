@@ -2,140 +2,226 @@ package gleann
 
 import (
 	"context"
+	"encoding/binary"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
+
+	"go.etcd.io/bbolt"
 
 	"github.com/tevfik/gleann/internal/analysis"
 	"github.com/tevfik/gleann/internal/store"
 )
 
-// This file implements `gleann index migrate` (RFC 003 section 6.4): converting
-// a format-1 bbolt index to the format-2 SQLite record store without touching
-// the vector file, with verification, guard files and a byte-identical
-// rollback.
+// This file implements `gleann index migrate` for v1.20 (RFC 004 B3): it
+// converts an index in the old store format (v1.9 format 1: bbolt passages,
+// <name>.manifest.json, in-memory or .lex.db lexical index) to format 2
+// without re-embedding. It is the only code that still reads the old format;
+// it is kept for v1.20.x and removed in v1.21. The code graph is rebuilt from
+// the sources by the caller (internal/indexing), not here.
 
-// MigrateOptions controls a migration. Language overrides the analyzer
-// language; empty means guess it from the corpus (RFC 003 section 6.4 step 2).
+// ErrAlreadyFormat2 is returned by MigrateIndex for an index that is already
+// format 2 (a re-run of `migrate --all` skips it).
+var ErrAlreadyFormat2 = errors.New("already store format 2")
+
+// MigrateOptions controls a migration.
 type MigrateOptions struct {
-	Language string
+	// Config supplies the vector backend settings used when the passage IDs
+	// have to be renumbered and the main vector file is rebuilt from the
+	// stored vectors. Zero means DefaultConfig with the index's backend.
+	Config *Config
 	// crashHook injects a failure at a named step of the switch (tests only;
-	// see the migrateAfter* constants). It runs after each rename and guard
-	// write of step 4; a non-nil error aborts the migration there, leaving the
-	// crash state that a re-run or --rollback must resolve. Unexported: only
-	// in-package tests can set it, so it is not part of the public API.
+	// see the migrateAfter* constants). Unexported: only in-package tests can
+	// set it.
 	crashHook func(point string) error
 }
 
-// Crash-injection points of the migration switch (step 4), for tests only.
-// They fire after each rename / guard write, in the switch's execution order.
+// MigrateResult says what a migration did.
+type MigrateResult struct {
+	// Passages is how many passages were copied.
+	Passages int
+	// Renumbered is true when the old passage IDs had gaps: the passages got
+	// dense vector slots and the main vector file was rebuilt from the vectors
+	// it stored (no embedding).
+	Renumbered bool
+	// HadGraph is true when the old index had a Kùzu code graph
+	// (<name>_graph); the caller rebuilds the graph from the sources.
+	HadGraph bool
+}
+
+// Crash-injection points of the migration switch, for tests only, in the
+// switch's execution order.
 const (
-	migrateAfterPassagesRename = "after_passages_rename"
-	migrateAfterManifestRename = "after_manifest_rename"
-	migrateAfterPassagesGuard  = "after_passages_guard"
-	migrateAfterManifestGuard  = "after_manifest_guard"
-	migrateAfterDBRename       = "after_db_rename"
+	migrateAfterIndexAside = "after_index_aside" // renumbered: old vector file renamed to .index.v1
+	migrateAfterIndexNew   = "after_index_new"   // renumbered: rebuilt vector file in place
+	migrateAfterDBRename   = "after_db_rename"   // <name>.db in place, meta.json not yet updated
 )
 
-// MigrateIndex converts the format-1 index at indexDir/name to format 2. It
-// takes the exclusive index lock, copies every passage into <name>.db.tmp with
-// id = vec_slot = the old passage ID (so the vector file stays valid), verifies
-// the copy, then switches with all handles closed: the old files are renamed
-// to .v1 and guarded FIRST, and the database rename plus the meta flag are the
-// last actions, so every interrupted state is resolved by a re-run or
-// --rollback. The vector file is never modified.
-func MigrateIndex(indexDir, name string, opts MigrateOptions) error {
+// MigrationLeftovers lists the files of the old format that a migrated index
+// still has next to it (they are never deleted implicitly; `index migrate
+// --cleanup` deletes them, `gleann doctor` lists them). Paths are absolute
+// when indexDir is.
+func MigrationLeftovers(indexDir, name string) []string {
+	base := filepath.Join(indexDir, name, name)
+	var out []string
+	for _, p := range []string{
+		base + ".passages.db",
+		base + ".passages.db.v1",
+		base + ".manifest.json",
+		base + ".manifest.json.v1",
+		base + ".index.v1",
+		base + ".lex.db",
+		base + ".lex.db-wal",
+		base + ".lex.db-shm",
+		filepath.Join(indexDir, name+".lex.lock"),
+		filepath.Join(indexDir, name+"_graph"),
+		filepath.Join(indexDir, name+"_graph.wal"),
+		filepath.Join(indexDir, name+"_graph.shadow"),
+		filepath.Join(indexDir, name+"_graph_file_hashes.db"),
+	} {
+		if _, err := os.Lstat(p); err == nil {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// HadOldCodeGraph reports whether the index had a v1.9 Kùzu code graph
+// (<IndexDir>/<name>_graph, a directory or a single-file database).
+func HadOldCodeGraph(indexDir, name string) bool {
+	_, err := os.Lstat(filepath.Join(indexDir, name+"_graph"))
+	return err == nil
+}
+
+// CleanupMigration deletes the old-format leftovers of a migrated (format-2)
+// index and returns the deleted paths. It refuses an index that is not
+// format 2, so the only copy of an unmigrated index is never deleted.
+func CleanupMigration(indexDir, name string) ([]string, error) {
 	if err := checkPathName(name); err != nil {
-		return err
+		return nil, err
+	}
+	basePath := filepath.Join(indexDir, name, name)
+	if DetectStoreFormat(basePath) != StoreV2 {
+		return nil, fmt.Errorf("index %q is not store format 2; migrate it first: gleann index migrate %s", name, name)
+	}
+	lock, err := store.AcquireLock(filepath.Join(indexDir, name+".lock"))
+	if err != nil {
+		return nil, err
+	}
+	defer lock.Release()
+	var removed []string
+	for _, p := range MigrationLeftovers(indexDir, name) {
+		if err := os.RemoveAll(p); err != nil {
+			return removed, fmt.Errorf("removing %s: %w", p, err)
+		}
+		removed = append(removed, p)
+	}
+	return removed, nil
+}
+
+// MigrateIndex converts the old-format index at indexDir/name to format 2.
+// It takes the exclusive index lock, copies every passage into <name>.db.tmp
+// (vector slot = old passage ID when the IDs are dense, so the vector file
+// stays valid; otherwise dense slots and a main vector file rebuilt from the
+// stored vectors), builds the FTS5 lexical rows with the analyzer a fresh
+// build uses, verifies the copy and switches: the database rename and the
+// meta.json store_format field are the last actions, so an interrupted run is
+// completed or redone by the next one. The old files stay as leftovers.
+func MigrateIndex(indexDir, name string, opts MigrateOptions) (*MigrateResult, error) {
+	if err := checkPathName(name); err != nil {
+		return nil, err
 	}
 	basePath := filepath.Join(indexDir, name, name)
 
-	// Step 1: exclusive lock; fail fast if another process holds it.
 	lock, err := store.AcquireLock(filepath.Join(indexDir, name+".lock"))
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer lock.Release()
 
-	// A live format-2 database means a previous attempt already switched, or
-	// crashed between the database rename and the meta flag (the LAST two
-	// actions of the switch): refuse the former, complete the latter, so a
-	// re-run of migrate resolves every leftover state.
-	if _, err := os.Stat(basePath + ".db"); err == nil {
+	switch DetectStoreFormat(basePath) {
+	case StoreNone:
+		return nil, fmt.Errorf("migrating index %q: %w", name, ErrIndexNotFound)
+	case StoreV2:
+		// A crash between the database rename and the meta flag leaves the
+		// database in place: record the flag.
 		m, err := GetIndexMeta(indexDir, name)
-		if err != nil {
-			return fmt.Errorf("reading index meta: %w", err)
+		if err == nil && m.StoreFormat != 2 {
+			if err := UpdateIndexMeta(indexDir, name, func(m *IndexMeta) { m.StoreFormat = 2 }); err != nil {
+				return nil, fmt.Errorf("recording store format: %w", err)
+			}
+			return &MigrateResult{HadGraph: HadOldCodeGraph(indexDir, name)}, nil
 		}
-		if m.StoreFormat == 2 {
-			return fmt.Errorf("index %q is already store format 2", name)
-		}
+		return nil, ErrAlreadyFormat2
+	}
+	if _, err := os.Stat(basePath + ".db"); err == nil {
+		// A real bbolt store next to a <name>.db without the meta flag: the
+		// previous run renamed the database but crashed before recording the
+		// flag. The database was verified before the rename: complete it.
 		if err := UpdateIndexMeta(indexDir, name, func(m *IndexMeta) { m.StoreFormat = 2 }); err != nil {
-			return fmt.Errorf("recording store format: %w", err)
+			return nil, fmt.Errorf("recording store format: %w", err)
 		}
-		return nil
+		return &MigrateResult{HadGraph: HadOldCodeGraph(indexDir, name)}, nil
 	}
-	if StoreFormatOf(basePath) == 2 {
-		// meta.json says format 2 but the database is gone: a crash state
-		// (an interrupted rollback), not an index to migrate. Never create an
-		// empty store over it.
-		return fmt.Errorf("index %q is store format 2 but %s.db is missing (a crash may have interrupted a rollback); "+
-			"restore the format-1 files with: gleann index migrate --rollback %s, or repair the index: gleann index repair %s",
-			name, name, name, name)
-	}
-	// Undo the leftovers of an interrupted switch (partial .v1 renames, guard
-	// files, a stale staging database) so this run starts from a clean
-	// format-1 index.
+	// Undo the leftovers of an interrupted switch (of this version or of the
+	// v1.9 migration) so this run starts from a clean old-format index.
 	if err := undoMigrationSwitch(basePath); err != nil {
-		return err
-	}
-	if _, err := os.Stat(basePath + ".passages.db"); err != nil {
-		return fmt.Errorf("index %q has no format-1 passage store to migrate", name)
+		return nil, err
 	}
 	meta, err := GetIndexMeta(indexDir, name)
 	if err != nil {
-		return fmt.Errorf("reading index meta: %w", err)
+		return nil, fmt.Errorf("reading index meta: %w", err)
 	}
-
-	// Read the old store read-only and collect its passages in ID order.
-	pm := NewReadOnlyPassageManager(basePath)
-	if err := pm.Load(); err != nil {
-		return fmt.Errorf("opening format-1 store: %w", err)
-	}
-	var passages []Passage
-	err = pm.ForEachPassage(func(p Passage) error {
-		passages = append(passages, p)
-		return nil
-	})
-	pm.Close()
+	passages, err := readOldPassages(basePath)
 	if err != nil {
-		return fmt.Errorf("reading format-1 passages: %w", err)
+		return nil, err
 	}
 	n := len(passages)
 	if n == 0 {
-		return fmt.Errorf("index %q has no passages to migrate", name)
+		return nil, fmt.Errorf("index %q has no passages to migrate; rebuild it: gleann index rebuild %s", name, name)
 	}
-	// A format-1 index with non-dense IDs cannot keep its vector file valid
-	// (vec_slot = old ID would leave gaps); refuse and point at repair.
+	res := &MigrateResult{Passages: n, HadGraph: HadOldCodeGraph(indexDir, name)}
+
+	// Vector slots: the old ID when the IDs are dense (the vector file
+	// addresses a vector by it), otherwise the position (renumbered).
+	dense := true
 	for i, p := range passages {
 		if p.ID != int64(i) {
-			return fmt.Errorf("index %q has non-contiguous passage IDs (ID %d at position %d); "+
-				"repair it before migrating: gleann index repair %s", name, p.ID, i, name)
+			dense = false
+			break
 		}
 	}
-	if meta.NumPassages != n {
-		return fmt.Errorf("index %q holds %d passages but meta records %d; repair it before migrating", name, n, meta.NumPassages)
+	_, statErr := os.Stat(basePath + suffixMain)
+	hasVectors := statErr == nil && meta.VectorReady && !meta.LexicalOnly
+	var newIndex []byte
+	if !dense {
+		res.Renumbered = true
+		if hasVectors {
+			newIndex, err = renumberVectors(context.Background(), indexDir, basePath, meta, passages, opts.Config)
+			if err != nil {
+				return nil, fmt.Errorf("index %q has non-contiguous passage IDs and its vectors cannot be renumbered (%v); rebuild it from its sources: gleann index rebuild %s", name, err, name)
+			}
+		}
 	}
 
-	language := opts.Language
-	if language == "" {
-		language = guessLanguage(passages)
-	}
-	analyzer := analysis.New(language)
+	// The analyzer of a fresh build (builder_format2.go).
+	analyzer := analysis.New("")
 
 	// Group by source, ordering each source's passages by chunk_index so
 	// chunk_no reproduces the original chunk order.
+	slotOf := make(map[int64]int64, n)
+	for i, p := range passages {
+		if dense {
+			slotOf[p.ID] = p.ID
+		} else {
+			slotOf[p.ID] = int64(i)
+		}
+	}
 	groups := make(map[string][]Passage)
 	order := []string{}
 	for _, p := range passages {
@@ -153,34 +239,36 @@ func MigrateIndex(indexDir, name string, opts MigrateOptions) error {
 
 	oldManifest, _ := LoadManifest(basePath + ".manifest.json")
 
-	// Step 2: copy into <name>.db.tmp, one transaction per source, with
-	// id = vec_slot = old ID and the files rows from the old manifest.
 	ctx := context.Background()
 	tmpPath := basePath + ".db.tmp"
-	removeLexicalFiles(tmpPath)
+	_ = removeDBFiles(tmpPath)
 	st, err := store.Open(tmpPath, store.Options{})
 	if err != nil {
-		return fmt.Errorf("creating format-2 store: %w", err)
+		return nil, fmt.Errorf("creating format-2 store: %w", err)
 	}
-	fail := func(err error) error {
+	fail := func(err error) (*MigrateResult, error) {
 		st.Close()
-		removeLexicalFiles(tmpPath)
-		return err
+		_ = removeDBFiles(tmpPath)
+		return nil, err
 	}
 	for _, src := range order {
 		delta := store.SourceDelta{Source: src, File: migrateFileRow(src, oldManifest, meta.SourceDir)}
 		for _, p := range groups[src] {
-			id := p.ID
-			kind := sidecarKind(src)
+			slot := slotOf[p.ID]
+			id := slot + 1 // internal rowid, dense and positive
+			kind := passageKind(src)
 			_, metaJSON := splitItemMeta(p.Metadata)
-			delta.Passages = append(delta.Passages, store.NewPassage{
-				ID:      &id, // internal id = old passage ID
-				VecSlot: &id, // vec_slot = old ID: the vector file stays valid
-				Text:    p.Text,
-				Kind:    kind,
-				Meta:    metaJSON,
-				Tokens:  strings.Join(analyzer.Tokens(p.Text, analysis.Kind(kind)), " "),
-			})
+			np := store.NewPassage{
+				ID:     &id,
+				Text:   p.Text,
+				Kind:   kind,
+				Meta:   metaJSON,
+				Tokens: strings.Join(analyzer.Tokens(p.Text, analysis.Kind(kind)), " "),
+			}
+			if hasVectors {
+				np.VecSlot = &slot
+			}
+			delta.Passages = append(delta.Passages, np)
 		}
 		if _, err := st.ApplySource(ctx, delta); err != nil {
 			return fail(fmt.Errorf("migrating source %q: %w", src, err))
@@ -204,93 +292,169 @@ func MigrateIndex(indexDir, name string, opts MigrateOptions) error {
 		}
 	}
 
-	// Step 3: verify the copy before switching. No embedding happens.
-	if err := verifyMigration(ctx, st, analyzer, passages, meta, indexDir, basePath, n); err != nil {
+	// Verify the copy before switching. No embedding happens.
+	if err := verifyMigration(ctx, st, analyzer, passages, slotOf, n); err != nil {
 		return fail(err)
+	}
+	if hasVectors && newIndex == nil {
+		if err := verifyVectorFile(ctx, indexDir, basePath, meta); err != nil {
+			return fail(err)
+		}
 	}
 	// Close every handle so the renames below are safe on Windows.
 	if err := st.Close(); err != nil {
-		removeLexicalFiles(tmpPath)
-		return fmt.Errorf("closing format-2 store: %w", err)
+		_ = removeDBFiles(tmpPath)
+		return nil, fmt.Errorf("closing format-2 store: %w", err)
 	}
 
-	// Step 4: switch, with every database handle closed (Windows cannot rename
-	// an open file). The database rename and the meta flag are the LAST
-	// actions: every earlier crash state still has the format-1 originals (or
-	// their .v1 copies) and no live format-2 database, so a migrate re-run or
-	// --rollback resolves it. The guards go in before the switch so an old
-	// binary's bbolt.Open fails loudly at every point after the old files are
-	// renamed aside. On error, the completed steps are undone in reverse
-	// order, restoring the byte-identical format-1 files.
-	var undo []func()
-	failSwitch := func(err error) error {
-		for i := len(undo) - 1; i >= 0; i-- {
-			undo[i]()
-		}
-		// The staging database is a derived intermediate: drop it too, so a
-		// failed switch leaves a pristine format-1 index (a panic skips this
-		// cleanup; a re-run or rollback discards the stale tmp instead).
-		removeLexicalFiles(tmpPath)
-		return err
-	}
 	hook := func(point string) error {
 		if opts.crashHook == nil {
 			return nil
 		}
 		return opts.crashHook(point)
 	}
-	if err := os.Rename(basePath+".passages.db", basePath+".passages.db.v1"); err != nil {
-		return fmt.Errorf("preserving old passage store: %w", err)
-	}
-	undo = append(undo, func() { _ = os.Rename(basePath+".passages.db.v1", basePath+".passages.db") })
-	if err := hook(migrateAfterPassagesRename); err != nil {
-		return failSwitch(err)
-	}
-	if _, err := os.Stat(basePath + ".manifest.json"); err == nil {
-		if err := os.Rename(basePath+".manifest.json", basePath+".manifest.json.v1"); err != nil {
-			return failSwitch(fmt.Errorf("preserving old manifest: %w", err))
+	// The switch. A renumbered index first puts its rebuilt vector file in
+	// place (the old one is kept as .index.v1, which a re-run restores); the
+	// database rename and the meta flag are the last actions.
+	if newIndex != nil {
+		staged := basePath + suffixMain + ".migrate"
+		if err := os.WriteFile(staged, newIndex, 0o644); err != nil {
+			_ = removeDBFiles(tmpPath)
+			return nil, fmt.Errorf("staging the renumbered vector file: %w", err)
 		}
-		undo = append(undo, func() { _ = os.Rename(basePath+".manifest.json.v1", basePath+".manifest.json") })
-		if err := hook(migrateAfterManifestRename); err != nil {
-			return failSwitch(err)
+		if err := os.Rename(basePath+suffixMain, basePath+suffixMain+".v1"); err != nil {
+			_ = os.Remove(staged)
+			_ = removeDBFiles(tmpPath)
+			return nil, fmt.Errorf("preserving the old vector file: %w", err)
 		}
-	}
-	guard := []byte(storeGuardText())
-	if err := os.WriteFile(basePath+".passages.db", guard, 0o644); err != nil {
-		return failSwitch(fmt.Errorf("writing passage guard: %w", err))
-	}
-	undo = append(undo, func() { _ = os.Remove(basePath + ".passages.db") })
-	if err := hook(migrateAfterPassagesGuard); err != nil {
-		return failSwitch(err)
-	}
-	if err := os.WriteFile(basePath+".manifest.json", guard, 0o644); err != nil {
-		return failSwitch(fmt.Errorf("writing manifest guard: %w", err))
-	}
-	undo = append(undo, func() { _ = os.Remove(basePath + ".manifest.json") })
-	if err := hook(migrateAfterManifestGuard); err != nil {
-		return failSwitch(err)
+		if err := hook(migrateAfterIndexAside); err != nil {
+			return nil, err
+		}
+		if err := os.Rename(staged, basePath+suffixMain); err != nil {
+			return nil, fmt.Errorf("publishing the renumbered vector file: %w", err)
+		}
+		if err := hook(migrateAfterIndexNew); err != nil {
+			return nil, err
+		}
 	}
 	if err := os.Rename(tmpPath, basePath+".db"); err != nil {
-		return failSwitch(fmt.Errorf("switching to format 2: %w", err))
+		return nil, fmt.Errorf("switching to format 2: %w", err)
 	}
-	undo = append(undo, func() {
-		_ = os.Rename(basePath+".db", tmpPath)
-		removeLexicalFiles(basePath + ".db") // WAL companions, if any remain
-	})
 	if err := hook(migrateAfterDBRename); err != nil {
-		return failSwitch(err)
+		return nil, err
 	}
-	if err := UpdateIndexMeta(indexDir, name, func(m *IndexMeta) { m.StoreFormat = 2 }); err != nil {
-		return failSwitch(fmt.Errorf("recording store format: %w", err))
+	if err := UpdateIndexMeta(indexDir, name, func(m *IndexMeta) {
+		m.StoreFormat = 2
+		m.NumPassages = n
+		m.VectorGeneration, m.VectorMainGeneration, m.VectorSlots = 0, 0, 0
+		if !hasVectors {
+			m.VectorReady, m.LexicalOnly = false, true
+		}
+		m.UpdatedAt = time.Now()
+	}); err != nil {
+		return nil, fmt.Errorf("recording store format: %w", err)
 	}
-	// Step 5: the vector file (.index) is untouched.
-	return nil
+	return res, nil
 }
 
-// undoMigrationSwitch restores the format-1 files after an interrupted
-// switch: it removes the guard files (never a real store), renames the
-// preserved .v1 originals back and deletes a stale staging database. It is
-// the reverse of step 4's order, shared by a migrate re-run and rollback.
+// readOldPassages reads every passage of the old-format bbolt store
+// (<name>.passages.db, bucket "passages", 8-byte big-endian ID keys, JSON
+// values) read-only, in ID order.
+func readOldPassages(basePath string) ([]Passage, error) {
+	path := basePath + ".passages.db"
+	if _, err := os.Stat(path); err != nil {
+		return nil, fmt.Errorf("index %q has no old-format passage store to migrate (%s); rebuild it: gleann index rebuild %s",
+			filepath.Base(basePath), filepath.Base(path), filepath.Base(basePath))
+	}
+	db, err := bbolt.Open(path, 0o644, &bbolt.Options{Timeout: 5 * time.Second, ReadOnly: true})
+	if err != nil {
+		return nil, fmt.Errorf("opening old-format passage store: %w", err)
+	}
+	defer db.Close()
+	var out []Passage
+	err = db.View(func(tx *bbolt.Tx) error {
+		b := tx.Bucket([]byte("passages"))
+		if b == nil {
+			return nil
+		}
+		return b.ForEach(func(k, v []byte) error {
+			var p Passage
+			if err := json.Unmarshal(v, &p); err != nil {
+				return fmt.Errorf("passage key %x: %w", k, err)
+			}
+			if len(k) == 8 {
+				p.ID = int64(binary.BigEndian.Uint64(k))
+			}
+			out = append(out, p)
+			return nil
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("reading old-format passages: %w", err)
+	}
+	sort.SliceStable(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	return out, nil
+}
+
+// renumberVectors reads the stored vector of every passage (by its old ID)
+// from the old vector file and builds a new main file in which passage i of
+// the ID-ordered list is at slot i. A backend that pruned its vectors (or
+// cannot return them) fails; the caller then points at a rebuild.
+func renumberVectors(ctx context.Context, indexDir, basePath string, meta *IndexMeta, passages []Passage, cfgIn *Config) ([]byte, error) {
+	cfg := DefaultConfig()
+	if cfgIn != nil {
+		cfg = *cfgIn
+	}
+	cfg.IndexDir = indexDir
+	if meta.Backend != "" {
+		cfg.Backend = meta.Backend
+	}
+	if meta.VectorDType != "" {
+		cfg.HNSWConfig.VectorDType = meta.VectorDType
+	}
+	factory, err := GetBackend(cfg.Backend)
+	if err != nil {
+		return nil, fmt.Errorf("getting backend: %w", err)
+	}
+	data, err := os.ReadFile(basePath + suffixMain)
+	if err != nil {
+		return nil, fmt.Errorf("reading the vector file: %w", err)
+	}
+	noMmap := false
+	scfg := cfg
+	scfg.UseMmap = &noMmap
+	searcher := factory.NewSearcher(scfg)
+	defer searcher.Close()
+	extractor, ok := searcher.(VectorExtractor)
+	if !ok {
+		return nil, fmt.Errorf("the %s backend cannot return its stored vectors", cfg.Backend)
+	}
+	if err := searcher.Load(ctx, data, *meta); err != nil {
+		return nil, fmt.Errorf("loading the vector file: %w", err)
+	}
+	ids := make([]int64, len(passages))
+	for i, p := range passages {
+		ids[i] = p.ID
+	}
+	vecs, err := extractor.ExtractVectors(ctx, ids)
+	if err != nil {
+		return nil, err
+	}
+	if len(vecs) != len(ids) {
+		return nil, fmt.Errorf("the vector file returned %d vectors for %d passages", len(vecs), len(ids))
+	}
+	out, err := factory.NewBuilder(cfg).Build(ctx, vecs)
+	if err != nil {
+		return nil, fmt.Errorf("building the renumbered vector file: %w", err)
+	}
+	return out, nil
+}
+
+// undoMigrationSwitch restores the old-format files after an interrupted
+// switch, of this version (.index.v1 next to a rebuilt vector file) or of
+// the v1.9 migration (.v1 copies and guard files): it removes guard files
+// (never a real store), renames the preserved originals back and deletes
+// stale staging files.
 func undoMigrationSwitch(basePath string) error {
 	for _, suffix := range []string{".passages.db", ".manifest.json"} {
 		if isGuardFile(basePath + suffix) {
@@ -299,17 +463,15 @@ func undoMigrationSwitch(basePath string) error {
 			}
 		}
 	}
-	if _, err := os.Stat(basePath + ".passages.db.v1"); err == nil {
-		if err := os.Rename(basePath+".passages.db.v1", basePath+".passages.db"); err != nil {
-			return fmt.Errorf("restoring old passage store: %w", err)
+	for _, suffix := range []string{".passages.db", ".manifest.json", suffixMain} {
+		if _, err := os.Stat(basePath + suffix + ".v1"); err == nil {
+			if err := os.Rename(basePath+suffix+".v1", basePath+suffix); err != nil {
+				return fmt.Errorf("restoring old %s: %w", suffix, err)
+			}
 		}
 	}
-	if _, err := os.Stat(basePath + ".manifest.json.v1"); err == nil {
-		if err := os.Rename(basePath+".manifest.json.v1", basePath+".manifest.json"); err != nil {
-			return fmt.Errorf("restoring old manifest: %w", err)
-		}
-	}
-	removeLexicalFiles(basePath + ".db.tmp")
+	_ = os.Remove(basePath + suffixMain + ".migrate")
+	_ = removeDBFiles(basePath + ".db.tmp")
 	return nil
 }
 
@@ -338,10 +500,10 @@ func chunkIndexOf(p Passage) int {
 	return 0
 }
 
-// verifyMigration checks the copied store: the passage count matches, every
-// vec_slot is within the vector file, and sampled passages are their own
-// lexical top-10 hit (RFC 003 section 6.4 step 3).
-func verifyMigration(ctx context.Context, st *store.Store, analyzer analysis.Analyzer, passages []Passage, meta *IndexMeta, indexDir, basePath string, n int) error {
+// verifyMigration checks the copied store: the passage count matches and
+// sampled passages are their own lexical top-10 hit (RFC 003 section 6.4
+// step 3).
+func verifyMigration(ctx context.Context, st *store.Store, analyzer analysis.Analyzer, passages []Passage, slotOf map[int64]int64, n int) error {
 	cnt, err := st.Count(ctx)
 	if err != nil {
 		return fmt.Errorf("verify count: %w", err)
@@ -349,22 +511,15 @@ func verifyMigration(ctx context.Context, st *store.Store, analyzer analysis.Ana
 	if cnt != n {
 		return fmt.Errorf("verify: copied %d passages, expected %d", cnt, n)
 	}
-	// vec_slot range: the old IDs are dense 0..n-1 and a dense format-1 index
-	// stores exactly n vectors (passage ID == vector position), so the slots
-	// are in range once the vector file loads. A lexical-only index has none.
-	if err := verifyVectorFile(ctx, indexDir, basePath, meta); err != nil {
-		return err
-	}
-	// 20 sampled passages must retrieve themselves in the top 10.
-	sample := samplePassages(passages, 20)
-	for _, p := range sample {
+	for _, p := range samplePassages(passages, analyzer, 20) {
 		hits, err := st.Search(ctx, store.LexQuery{Text: p.Text, Analyzer: analyzer}, 10)
 		if err != nil {
 			return fmt.Errorf("verify lexical search: %w", err)
 		}
+		want := slotOf[p.ID] + 1 // the internal rowid
 		found := false
 		for _, h := range hits {
-			if h.ID == p.ID {
+			if h.ID == want {
 				found = true
 				break
 			}
@@ -377,13 +532,9 @@ func verifyMigration(ctx context.Context, st *store.Store, analyzer analysis.Ana
 }
 
 // verifyVectorFile loads the vector backend to confirm the file the migrated
-// vec_slots address is present and well-formed. A lexical-only index (no
-// .index) has nothing to check.
+// vec_slots address is present and well-formed.
 func verifyVectorFile(ctx context.Context, indexDir, basePath string, meta *IndexMeta) error {
-	indexPath := basePath + ".index"
-	if _, err := os.Stat(indexPath); err != nil {
-		return nil // no vectors
-	}
+	indexPath := basePath + suffixMain
 	factory, err := GetBackend(meta.Backend)
 	if err != nil {
 		return fmt.Errorf("verify vectors: getting backend: %w", err)
@@ -408,12 +559,11 @@ func verifyVectorFile(ctx context.Context, indexDir, basePath string, meta *Inde
 
 // samplePassages picks up to k passages spread evenly across the corpus,
 // skipping ones that tokenize to nothing (they cannot be a lexical self-hit).
-func samplePassages(passages []Passage, k int) []Passage {
+func samplePassages(passages []Passage, an analysis.Analyzer, k int) []Passage {
 	var usable []Passage
-	an := analysis.New("")
 	for _, p := range passages {
 		src, _ := p.Metadata["source"].(string)
-		if len(an.Tokens(p.Text, analysis.Kind(sidecarKind(src)))) > 0 {
+		if len(an.Tokens(p.Text, analysis.Kind(passageKind(src)))) > 0 {
 			usable = append(usable, p)
 		}
 	}
@@ -425,95 +575,4 @@ func samplePassages(passages []Passage, k int) []Passage {
 		out = append(out, usable[i*len(usable)/k])
 	}
 	return out
-}
-
-// guessLanguage infers the analyzer language from the corpus: a substantial
-// share of prose passages containing Turkish-specific letters means Turkish,
-// otherwise the default (RFC 003 section 6.4 step 2).
-func guessLanguage(passages []Passage) string {
-	prose, tr := 0, 0
-	for _, p := range passages {
-		src, _ := p.Metadata["source"].(string)
-		if sidecarKind(src) != "prose" {
-			continue
-		}
-		prose++
-		if strings.ContainsAny(p.Text, "ıİşğŞĞ") {
-			tr++
-		}
-	}
-	if prose > 0 && tr*5 >= prose { // >= 20% of prose passages
-		return "tr"
-	}
-	return ""
-}
-
-// RollbackMigration restores a migrated index to format 1: the format flag in
-// meta.json is cleared FIRST, then the format-2 store is deleted, then the
-// guard files are replaced by the preserved .v1 originals (byte-identical).
-// That order matters: deleting the database before clearing the flag left a
-// crash window where meta.json said format 2 with no database, and the next
-// open created an EMPTY format-2 store. With the flag cleared first, every
-// later crash state is re-runnable: the remaining steps are idempotent, and
-// an interrupted switch's leftovers (.v1 files, guards, a stale .db.tmp) are
-// resolved too. Changes synced after the switch are lost (RFC 003 section
-// 6.4). It takes the same exclusive lock.
-func RollbackMigration(indexDir, name string) error {
-	if err := checkPathName(name); err != nil {
-		return err
-	}
-	basePath := filepath.Join(indexDir, name, name)
-	lock, err := store.AcquireLock(filepath.Join(indexDir, name+".lock"))
-	if err != nil {
-		return err
-	}
-	defer lock.Release()
-
-	_, v1PassagesErr := os.Stat(basePath + ".passages.db.v1")
-	_, v1ManifestErr := os.Stat(basePath + ".manifest.json.v1")
-	guarded := isGuardFile(basePath+".passages.db") || isGuardFile(basePath+".manifest.json")
-	if StoreFormatOf(basePath) != 2 && v1PassagesErr != nil && v1ManifestErr != nil && !guarded {
-		return fmt.Errorf("index %q is not store format 2; nothing to roll back", name)
-	}
-	if v1PassagesErr != nil {
-		// Nothing preserved to restore. A real format-1 store already in place
-		// means a previous rollback restored it and only the flag, the
-		// database or the manifest guard may remain; otherwise refuse.
-		if _, err := os.Stat(basePath + ".passages.db"); err != nil || isGuardFile(basePath+".passages.db") {
-			return fmt.Errorf("index %q has no preserved format-1 store to roll back to", name)
-		}
-	}
-	// Clear the format flag first: a crash after this point leaves meta.json
-	// saying format 1, which the opener reads as format 1 (or refuses loudly
-	// on a guard), never as an empty format-2 store.
-	if err := UpdateIndexMeta(indexDir, name, func(m *IndexMeta) { m.StoreFormat = 0 }); err != nil {
-		return fmt.Errorf("clearing store format: %w", err)
-	}
-	removeLexicalFiles(basePath + ".db")
-	// Replace the guards with the originals. Rename over the guard works on
-	// unix and Windows (Go uses MOVEFILE_REPLACE_EXISTING).
-	return undoMigrationSwitch(basePath)
-}
-
-// CleanupMigration removes the preserved .v1 files of a migrated index, making
-// the switch permanent (rollback is no longer possible). It takes the lock.
-func CleanupMigration(indexDir, name string) error {
-	if err := checkPathName(name); err != nil {
-		return err
-	}
-	basePath := filepath.Join(indexDir, name, name)
-	lock, err := store.AcquireLock(filepath.Join(indexDir, name+".lock"))
-	if err != nil {
-		return err
-	}
-	defer lock.Release()
-	if StoreFormatOf(basePath) != 2 {
-		return fmt.Errorf("index %q is not store format 2; nothing to clean up", name)
-	}
-	for _, suffix := range []string{".passages.db.v1", ".manifest.json.v1"} {
-		if err := os.Remove(basePath + suffix); err != nil && !os.IsNotExist(err) {
-			return fmt.Errorf("removing %s: %w", suffix, err)
-		}
-	}
-	return nil
 }

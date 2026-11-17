@@ -3,6 +3,8 @@ package main
 import (
 	"fmt"
 	"os"
+
+	"github.com/tevfik/gleann/pkg/gleann"
 )
 
 // cmdIndex dispatches index management subcommands:
@@ -13,7 +15,7 @@ import (
 //	gleann index rebuild <name> --docs <dir>
 //	gleann index info <name>
 //	gleann index repair <name>|--all [--check]
-//	gleann index migrate <name>|--all [--rollback] [--cleanup] [--language <l>]
+//	gleann index migrate <name>|--all [--graph] [--cleanup]
 //	gleann index watch <name> --docs <dir>
 func cmdIndex(args []string) {
 	if len(args) < 1 {
@@ -26,6 +28,7 @@ func cmdIndex(args []string) {
 	if fs, ok := indexFlagSets[sub]; ok {
 		rejectUnknownFlags("index "+sub, subArgs, fs)
 	}
+	refuseOldFormat(sub, subArgs)
 
 	switch sub {
 	case "list":
@@ -61,6 +64,27 @@ func cmdIndex(args []string) {
 	}
 }
 
+// refuseOldFormat stops an index subcommand on an index in the old store
+// format with the migration hint. Only migrate (which converts it), remove,
+// rebuild (which deletes it first), list (which marks it) and build (which
+// refuses on its own) handle such an index (RFC 004 B2).
+func refuseOldFormat(sub string, args []string) {
+	switch sub {
+	case "info", "watch", "sync", "repair", "storage", "tag", "set":
+	default:
+		return
+	}
+	if len(args) == 0 || len(args[0]) == 0 || args[0][0] == '-' {
+		return
+	}
+	config := getConfig(args)
+	applySavedConfig(&config, args)
+	if err := gleann.CheckStoreFormat(config.IndexDir, args[0]); err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		exitFunc(1)
+	}
+}
+
 func printIndexUsage() {
 	fmt.Println(`gleann index — manage vector indexes
 
@@ -70,8 +94,8 @@ Usage:
   gleann index sync   <name> [--docs <dir>] Sync index incrementally with workspace changes
   gleann index remove <name>                Remove an index
   gleann index repair <name>|--all [--check] [--force]  Check an index for damage and rebuild its vectors from stored passages
-  gleann index migrate <name>|--all [--rollback] [--cleanup]  Convert an index to the SQLite passage store (format 2)
-  gleann index rebuild <name> --docs <dir>  Remove & rebuild index from scratch
+  gleann index migrate <name>|--all [--graph] [--cleanup]  Convert an index built by gleann v1.9 or earlier
+  gleann index rebuild <name> [--docs <dir>]  Remove & rebuild index from scratch (source dir from the index)
   gleann index info   <name>                Show index metadata
   gleann index watch  <name> --docs <dir>   Watch & auto-rebuild on changes
   gleann index storage [<name>] [--set store|recompute]  Show/change how vectors are kept (fast vs. small)

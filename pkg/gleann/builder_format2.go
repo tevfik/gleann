@@ -43,28 +43,6 @@ const (
 // resolves, and an empty hash otherwise.
 func (b *LeannBuilder) SetSourceDir(dir string) { b.sourceDir = dir }
 
-// buildFormat decides the on-disk format for a build of the index at basePath.
-// An existing index keeps its format: a format-2 index is always written as
-// format 2, and a format-1 index stays format 1 (writes do not implicitly
-// migrate it — RFC 003 open question 9.1). Only a NEW index follows the
-// GLEANN_STORE_FORMAT switch read at builder creation.
-func (b *LeannBuilder) buildFormat(basePath string) int {
-	switch DetectStoreFormat(basePath) {
-	case StoreV2:
-		return 2
-	case StoreV1:
-		// A real (non-guard) bbolt passage store means an existing format-1
-		// index; leftovers without one are rebuilt per the switch.
-		if _, err := os.Stat(basePath + ".passages.db"); err == nil && !isGuardFile(basePath+".passages.db") {
-			return 1
-		}
-	}
-	if b.storeFormat == 2 {
-		return 2
-	}
-	return 1
-}
-
 // fileRowFor builds the files-table manifest row for a source, hashing the
 // file on disk exactly like the format-1 manifest (HashFileContent). A source
 // that cannot be resolved (e.g. a synthetic memory item) still gets a row with
@@ -110,7 +88,7 @@ func sourceDeltas(an analysis.Analyzer, items []Item, slots []int64, sourceDir s
 	idxs := make([][]int, 0, len(order))
 	for _, src := range order {
 		delta := store.SourceDelta{Source: src, File: fileRowFor(src, sourceDir)}
-		kind := sidecarKind(src)
+		kind := passageKind(src)
 		for _, i := range groups[src] {
 			it := items[i]
 			_, metaJSON := splitItemMeta(it.Metadata)

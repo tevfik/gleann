@@ -134,13 +134,15 @@ func openStoreHandle(indexDir, name string) (graphDBHandle, error) {
 	return newStoreHandle(gs), nil
 }
 
-// runGraphIndex builds the code graph of a format-2 index from a directory
-// into its index database (every build); the Go module is read from go.mod.
-// A format-1 index cannot hold a code graph (RFC 004 A3): the error wraps
-// errNoCodeGraph and names the conversion.
+// runGraphIndex builds the code graph of an index from a directory into its
+// index database (every build); the Go module is read from go.mod. An index
+// in the old store format is refused with the migration hint.
 func runGraphIndex(name, docsDir, indexDir string) error {
-	if gleann.StoreFormatOf(filepath.Join(indexDir, name, name)) != 2 {
-		return fmt.Errorf("%w: index %q uses the old store format, which has no code graph; convert it with: gleann index migrate %s", errNoCodeGraph, name, name)
+	switch gleann.DetectStoreFormat(filepath.Join(indexDir, name, name)) {
+	case gleann.StoreOld:
+		return &gleann.OldFormatError{Name: name}
+	case gleann.StoreNone:
+		return fmt.Errorf("%w: index %q not found", errNoCodeGraph, name)
 	}
 	if err := indexing.BuildGraphIndexErr(indexing.GraphOptions{
 		Name:     name,

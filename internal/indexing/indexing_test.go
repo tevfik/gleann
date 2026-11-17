@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tevfik/gleann/internal/testutil/format1"
 	"github.com/tevfik/gleann/internal/vault"
 	"github.com/tevfik/gleann/pkg/gleann"
 )
@@ -378,20 +379,25 @@ func TestPluginResultRoundTrip(t *testing.T) {
 	}
 }
 
-// A format-1 index has no code graph (RFC 004 A3): the graph step is skipped
-// with a notice, and the report says there is no graph, in every build.
-func TestBuildGraphIndexFormat1HasNoGraph(t *testing.T) {
+// An index in the old store format gets no code graph (RFC 004 B2): the
+// graph step refuses it with the migration hint, and the report says there
+// is no graph, in every build.
+func TestBuildGraphIndexOldFormatRefused(t *testing.T) {
 	var errBuf bytes.Buffer
 	indexDir := t.TempDir()
+	if err := format1.Write(format1.Index{Dir: indexDir, Name: "g",
+		Passages: []format1.Passage{{ID: 0, Text: "x", Metadata: map[string]any{"source": "a.md"}}}}); err != nil {
+		t.Fatal(err)
+	}
 	BuildGraphIndex(GraphOptions{Name: "g", DocsDir: t.TempDir(), IndexDir: indexDir, Stderr: &errBuf})
-	if !strings.Contains(errBuf.String(), "old store format") {
-		t.Errorf("expected the old-format notice, got %q", errBuf.String())
+	if !strings.Contains(errBuf.String(), "index g uses the old store format; run: gleann index migrate g") {
+		t.Errorf("expected the old-format refusal, got %q", errBuf.String())
 	}
 	if _, err := os.Stat(filepath.Join(indexDir, "g_graph")); !os.IsNotExist(err) {
 		t.Errorf("no g_graph directory may be created: %v", err)
 	}
 	err := GenerateGraphReport("g", indexDir, t.TempDir(), filepath.Join(t.TempDir(), "r.md"))
-	if err == nil || !strings.Contains(err.Error(), "no code graph") {
-		t.Errorf("GenerateGraphReport = %v, want a no-code-graph error", err)
+	if err == nil || !strings.Contains(err.Error(), "gleann index migrate g") {
+		t.Errorf("GenerateGraphReport = %v, want the migration refusal", err)
 	}
 }

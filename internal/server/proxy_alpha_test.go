@@ -18,7 +18,6 @@ import (
 // process, as a format-2 index called name on s.
 func buildFormat2DocsIndex(t *testing.T, s *Server, name string, files map[string]string) {
 	t.Helper()
-	t.Setenv("GLEANN_STORE_FORMAT", "2")
 	docs := t.TempDir()
 	for f, text := range files {
 		if err := os.WriteFile(filepath.Join(docs, f), []byte(text), 0o644); err != nil {

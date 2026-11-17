@@ -172,9 +172,8 @@ Add to `claude_desktop_config.json`:
 
 The tools that read the code graph (`gleann_graph_neighbors`, `gleann_impact`, `gleann_document_links`,
 `gleann_graph_stats`, `gleann_symbols_in_file`, `gleann_document_toc`, and the four graph-analysis tools `gleann_communities`,
-`gleann_risk_analysis`, `gleann_repo_map`, `gleann_navigate_symbol`) read the code graph. A format-2 index serves all of
-them, including the four analysis tools, from its SQLite graph in every build; a format-1 index has no code graph. They
-are advertised only when an index in the index directory is format 2 or `GLEANN_STORE_FORMAT=2` is set. Without tree-sitter, only Go files have CALLS edges, so communities, risk and the repo map
+`gleann_risk_analysis`, `gleann_repo_map`, `gleann_navigate_symbol`) read the code graph. Every index serves all of
+them, including the four analysis tools, from its SQLite graph in every build, so they are always advertised. Without tree-sitter, only Go files have CALLS edges, so communities, risk and the repo map
 of other languages rest on declarations alone.
 `gleann_def` stays and falls back to vector search when there is no graph.
 
@@ -260,8 +259,6 @@ gleann mcp --tools "search,read,symbol,recall,sync"
 ```
 
 The `core` profile exposes: `gleann_search`, `gleann_read`, `gleann_def`, `gleann_graph_neighbors`, `gleann_impact`, `gleann_sync`, `memory_remember`, `memory_failure_add`, `memory_context`, `memory_search`, `memory_forget`.
-
-That is the list with a format-2 index (or `GLEANN_STORE_FORMAT=2`). Without format-2 indexes there is no code graph, so `gleann_graph_neighbors` and `gleann_impact` are not advertised and `core` is the other nine tools (`gleann_search`, `gleann_read`, `gleann_def`, `gleann_sync` and the five `memory_*` tools).
 
 You can also set the default profile using the `GLEANN_TOOLS` environment variable. Passing `--clean-names` strips the `gleann_` prefix (e.g. `search`, `read`, `impact`).
 

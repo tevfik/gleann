@@ -18,7 +18,6 @@ import (
 // 3. Delete a file → reconcile stale passages
 // 4. Switch embedding model → cache invalidation
 func TestE2E_FullLifecycle(t *testing.T) {
-	pinFormat1(t)
 	dir := t.TempDir()
 	docsRoot := filepath.Join(dir, "docs")
 	os.MkdirAll(docsRoot, 0755)
@@ -152,7 +151,7 @@ func newFunc() string {
 	os.Remove(filepath.Join(docsRoot, "utils.go"))
 
 	basePath := filepath.Join(dir, indexName, indexName)
-	pm := gleann.NewPassageManager(basePath)
+	pm := openPassages(t, basePath)
 	if err := pm.Load(); err != nil {
 		t.Fatalf("load passages: %v", err)
 	}
@@ -281,7 +280,6 @@ func TestE2E_ProvenanceInSearchResults(t *testing.T) {
 
 // TestE2E_ReconcileAfterBuild tests full build → delete → reconcile → verify.
 func TestE2E_ReconcileAfterBuild(t *testing.T) {
-	pinFormat1(t)
 	dir := t.TempDir()
 	docsRoot := filepath.Join(dir, "docs")
 	os.MkdirAll(docsRoot, 0755)
@@ -335,7 +333,7 @@ func TestE2E_ReconcileAfterBuild(t *testing.T) {
 
 	// Verify only a.txt passages remain.
 	basePath := filepath.Join(dir, indexName, indexName)
-	pm := gleann.NewPassageManager(basePath)
+	pm := openPassages(t, basePath)
 	pm.Load()
 	defer pm.Close()
 

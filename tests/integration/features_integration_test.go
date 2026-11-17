@@ -159,7 +159,6 @@ func helper() int {
 // ── Feature #6: Reconciliation Integration ──
 
 func TestReconciliation_EndToEnd(t *testing.T) {
-	pinFormat1(t)
 	dir := t.TempDir()
 	docsRoot := filepath.Join(dir, "docs")
 	os.MkdirAll(docsRoot, 0755)
@@ -196,7 +195,7 @@ func TestReconciliation_EndToEnd(t *testing.T) {
 
 	// Run reconciliation check.
 	basePath := filepath.Join(dir, "test-recon", "test-recon")
-	pm := gleann.NewPassageManager(basePath)
+	pm := openPassages(t, basePath)
 	if err := pm.Load(); err != nil {
 		t.Fatalf("load: %v", err)
 	}

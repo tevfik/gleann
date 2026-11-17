@@ -1,8 +1,12 @@
 package graphstore
 
 import (
+	"cmp"
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -150,15 +154,15 @@ func (g *SQLite) ResolveSymbols(q string, dir Direction) ([]string, error) {
 	// also excludes external targets (dst_external): a call to a third-party
 	// symbol does not make the caller resolvable, just as the empty MATCH
 	// would not.
-	edgePred := "e.dst = s.fqn"
+	edgePred := "e.dst = s.id"
 	if dir == DirectionCallees {
-		edgePred = "e.src = s.fqn AND e.dst_external = 0"
+		edgePred = "e.src = s.id AND e.dst_external = 0"
 	}
 
 	// Step 1: exact FQN (indexed primary-key probe).
 	if seeds, err := g.resolveSeedRows(`SELECT s.fqn FROM symbols s
  WHERE s.fqn = ?
-   AND EXISTS (SELECT 1 FROM edges e WHERE e.kind = 'CALLS' AND `+edgePred+`)
+   AND EXISTS (SELECT 1 FROM graph_edges e WHERE e.kind = `+labelCalls+` AND `+edgePred+`)
  ORDER BY s.fqn`, q); err != nil || len(seeds) > 0 {
 		return seeds, err
 	}
@@ -169,7 +173,7 @@ func (g *SQLite) ResolveSymbols(q string, dir Direction) ([]string, error) {
 	if strings.ContainsAny(q, ".:/") {
 		if seeds, err := g.resolveSeedRows(`SELECT s.fqn FROM symbols s
  WHERE (substr(s.fqn, -length(?)) = ? OR substr(s.fqn, -length(?)) = ? OR substr(s.fqn, -length(?)) = ?)
-   AND EXISTS (SELECT 1 FROM edges e WHERE e.kind = 'CALLS' AND `+edgePred+`)
+   AND EXISTS (SELECT 1 FROM graph_edges e WHERE e.kind = `+labelCalls+` AND `+edgePred+`)
  ORDER BY s.fqn`, "::"+q, "::"+q, "."+q, "."+q, "/"+q, "/"+q); err != nil || len(seeds) > 0 {
 			return seeds, err
 		}
@@ -179,7 +183,7 @@ func (g *SQLite) ResolveSymbols(q string, dir Direction) ([]string, error) {
 	// query matches a.name = baseName OR a.fqn = clean).
 	return g.resolveSeedRows(`SELECT s.fqn FROM symbols s
  WHERE (s.name = ? OR s.fqn = ?)
-   AND EXISTS (SELECT 1 FROM edges e WHERE e.kind = 'CALLS' AND `+edgePred+`)
+   AND EXISTS (SELECT 1 FROM graph_edges e WHERE e.kind = `+labelCalls+` AND `+edgePred+`)
  ORDER BY s.fqn`, baseName(q), q)
 }
 
@@ -261,33 +265,35 @@ func likePattern(q string) string {
 // (matching kuzu, where MATCH (a)-[:CALLS]->(b) returns rec for the self edge
 // but Callers(a) on the cycle returns only b).
 const callersSQL = `
-WITH RECURSIVE walk(fqn, depth) AS (
-  SELECT ?, 0
+WITH RECURSIVE start(id) AS (` + nodeIDOf + `),
+walk(id, depth) AS (
+  SELECT id, 0 FROM start
   UNION
   SELECT e.src, w.depth + 1
-  FROM edges e JOIN walk w ON e.dst = w.fqn
-  WHERE e.kind = 'CALLS' AND w.depth < ?
+  FROM graph_edges e JOIN walk w ON e.dst = w.id
+  WHERE e.kind = ` + labelCalls + ` AND w.depth < ?2
 )
 SELECT s.fqn, s.name, s.kind, s.file, s.start_line, s.is_test, min(w.depth) AS depth
-FROM walk w CROSS JOIN symbols s ON s.fqn = w.fqn
-WHERE w.depth > 0 AND (w.fqn <> ? OR w.depth = 1)
-GROUP BY s.fqn, s.name, s.kind, s.file, s.start_line, s.is_test
+FROM walk w CROSS JOIN symbols s ON s.id = w.id
+WHERE w.depth > 0 AND (w.id <> (SELECT id FROM start) OR w.depth = 1)
+GROUP BY s.id
 ORDER BY depth, s.is_test, s.fqn`
 
 // calleesSQL walks CALLS edges forwards. External targets are excluded from
 // the walk: they are not declarations and have no outgoing edges.
 const calleesSQL = `
-WITH RECURSIVE walk(fqn, depth) AS (
-  SELECT ?, 0
+WITH RECURSIVE start(id) AS (` + nodeIDOf + `),
+walk(id, depth) AS (
+  SELECT id, 0 FROM start
   UNION
   SELECT e.dst, w.depth + 1
-  FROM edges e JOIN walk w ON e.src = w.fqn
-  WHERE e.kind = 'CALLS' AND e.dst_external = 0 AND w.depth < ?
+  FROM graph_edges e JOIN walk w ON e.src = w.id
+  WHERE e.kind = ` + labelCalls + ` AND e.dst_external = 0 AND w.depth < ?2
 )
 SELECT s.fqn, s.name, s.kind, s.file, s.start_line, s.is_test, min(w.depth) AS depth
-FROM walk w CROSS JOIN symbols s ON s.fqn = w.fqn
-WHERE w.depth > 0 AND (w.fqn <> ? OR w.depth = 1)
-GROUP BY s.fqn, s.name, s.kind, s.file, s.start_line, s.is_test
+FROM walk w CROSS JOIN symbols s ON s.id = w.id
+WHERE w.depth > 0 AND (w.id <> (SELECT id FROM start) OR w.depth = 1)
+GROUP BY s.id
 ORDER BY depth, s.is_test, s.fqn`
 
 // Callers returns the symbols that call fqn, transitively up to depth hops
@@ -305,7 +311,7 @@ func (g *SQLite) Callees(fqn string, depth int) ([]Hop, error) {
 }
 
 func (g *SQLite) walk(query, fqn string, depth int, doing string, args ...any) ([]Hop, error) {
-	rows, err := g.reader.QueryContext(readCtx(), query, fqn, depth, fqn)
+	rows, err := g.queryRead(query, fqn, depth)
 	if err != nil {
 		return nil, fmt.Errorf(doing+": %w", append(args, err)...)
 	}
@@ -331,19 +337,20 @@ func (g *SQLite) walk(query, fqn string, depth int, doing string, args ...any) (
 // level where they appear and never propagate the blast radius further.
 // The outer CROSS JOIN pins the walk as the outer loop (see callersSQL).
 const impactSQL = `
-WITH RECURSIVE walk(fqn, depth, is_test) AS (
-  SELECT ?, 0, 0
+WITH RECURSIVE start(id) AS (` + nodeIDOf + `),
+walk(id, depth, is_test) AS (
+  SELECT id, 0, 0 FROM start
   UNION
   SELECT e.src, w.depth + 1, s.is_test
-  FROM edges e
-  JOIN walk w ON e.dst = w.fqn
-  JOIN symbols s ON s.fqn = e.src
-  WHERE e.kind = 'CALLS' AND w.is_test = 0 AND w.depth < ?
+  FROM graph_edges e
+  JOIN walk w ON e.dst = w.id
+  JOIN symbols s ON s.id = e.src
+  WHERE e.kind = ` + labelCalls + ` AND w.is_test = 0 AND w.depth < ?2
 )
-SELECT w.fqn, min(w.depth) AS depth, s.is_test, s.file
-FROM walk w CROSS JOIN symbols s ON s.fqn = w.fqn
-WHERE w.depth > 0 AND (w.fqn <> ? OR w.depth = 1)
-GROUP BY w.fqn, s.is_test, s.file
+SELECT s.fqn, min(w.depth) AS depth, s.is_test, s.file
+FROM walk w CROSS JOIN symbols s ON s.id = w.id
+WHERE w.depth > 0 AND (w.id <> (SELECT id FROM start) OR w.depth = 1)
+GROUP BY w.id, s.is_test, s.file
 ORDER BY depth, s.fqn`
 
 // Impact reports the blast radius of changing fqn: direct production
@@ -352,7 +359,7 @@ ORDER BY depth, s.fqn`
 // Depth follows kuzu.Impact's rule: non-positive or above the cap means 5.
 func (g *SQLite) Impact(fqn string, depth int) (*ImpactResult, error) {
 	depth = impactDepth(depth)
-	rows, err := g.reader.QueryContext(readCtx(), impactSQL, fqn, depth, fqn)
+	rows, err := g.queryRead(impactSQL, fqn, depth)
 	if err != nil {
 		return nil, fmt.Errorf("querying impact of %q: %w", fqn, err)
 	}
@@ -393,7 +400,8 @@ func (g *SQLite) Impact(fqn string, depth int) (*ImpactResult, error) {
 // It is a bidirectional BFS in Go over indexed single-hop neighbour lookups:
 // one search grows from `from` following the traversal edges forward, another
 // from `to` following them backward, each level expanding the smaller frontier
-// with batched IN-list queries over edges(src) and edges_dst. They meet in the
+// with batched IN-list queries over graph_edges by src and by dst (ids only;
+// FQNs are fetched once per newly reached node). They meet in the
 // middle, so a typical path of length L explores roughly two frontiers of
 // depth L/2 instead of one of depth L — milliseconds instead of the seconds a
 // full depth-10 recursive CTE walk costs on a dense graph. The first meeting
@@ -410,138 +418,257 @@ func (g *SQLite) Path(from, to string) ([]Step, error) {
 	if from == to {
 		return nil, nil
 	}
-	type parent struct{ node, rel string }
-	distF := map[string]int{from: 0}
-	distB := map[string]int{to: 0}
-	parF := map[string]parent{} // node -> predecessor toward from
-	parB := map[string]parent{} // node -> successor toward to
-	frontF := []string{from}
-	frontB := []string{to}
+	noPath := fmt.Errorf("finding path from %q to %q: no path within %d hops", from, to, maxPathDepth)
+	fromID, ok, err := g.nodeID(from)
+	if err != nil {
+		return nil, fmt.Errorf("finding path from %q to %q: %w", from, to, err)
+	}
+	if !ok {
+		return nil, noPath
+	}
+	toID, ok, err := g.nodeID(to)
+	if err != nil {
+		return nil, fmt.Errorf("finding path from %q to %q: %w", from, to, err)
+	}
+	if !ok {
+		return nil, noPath
+	}
+	pn := &pathNames{g: g, names: map[int64]string{fromID: from, toID: to}}
+
+	type parent struct {
+		node int64
+		rel  string
+	}
+	distF := map[int64]int{fromID: 0}
+	distB := map[int64]int{toID: 0}
+	parF := map[int64]parent{} // node -> predecessor toward from
+	parB := map[int64]parent{} // node -> successor toward to
+	frontF := []int64{fromID}
+	frontB := []int64{toID}
 	depthF, depthB := 0, 0
 	best := maxPathDepth + 1
-	meet := ""
+	var meet int64
+	found := false
 	for {
 		if best <= depthF+depthB || depthF+depthB >= maxPathDepth || len(frontF) == 0 || len(frontB) == 0 {
 			break
 		}
-		if len(frontF) <= len(frontB) {
-			hops, err := g.pathHops(frontF, true)
-			if err != nil {
-				return nil, fmt.Errorf("finding path from %q to %q: %w", from, to, err)
-			}
-			depthF++
-			var next []string
-			for _, h := range hops {
-				n := h.to
-				if _, ok := distF[n]; ok {
-					continue
+		forward := len(frontF) <= len(frontB)
+		front, dist, other, par := frontB, distB, distF, parB
+		if forward {
+			front, dist, other, par = frontF, distF, distB, parF
+		}
+		level, err := g.pathLevel(front, forward, dist, other, pn)
+		if err != nil {
+			return nil, fmt.Errorf("finding path from %q to %q: %w", from, to, err)
+		}
+		depth := depthB + 1
+		if forward {
+			depth = depthF + 1
+		}
+		// level holds one winning hop per newly reached node, those the other
+		// side reached first and in hop order: the first that closes a
+		// shorter path is the meeting node.
+		next := make([]int64, 0, len(level))
+		for _, h := range level {
+			dist[h.nbr] = depth
+			par[h.nbr] = parent{h.frontier, h.rel}
+			next = append(next, h.nbr)
+			if d, ok := other[h.nbr]; ok {
+				if c := depth + d; c < best {
+					best, meet, found = c, h.nbr, true
 				}
-				distF[n] = depthF
-				parF[n] = parent{h.from, h.rel}
-				next = append(next, n)
-				if d, ok := distB[n]; ok {
-					if c := depthF + d; c < best {
-						best, meet = c, n
-					}
-				}
 			}
-			frontF = next
+		}
+		if forward {
+			depthF, frontF = depth, next
 		} else {
-			hops, err := g.pathHops(frontB, false)
-			if err != nil {
-				return nil, fmt.Errorf("finding path from %q to %q: %w", from, to, err)
-			}
-			depthB++
-			var next []string
-			for _, h := range hops {
-				n := h.from
-				if _, ok := distB[n]; ok {
-					continue
-				}
-				distB[n] = depthB
-				parB[n] = parent{h.to, h.rel}
-				next = append(next, n)
-				if d, ok := distF[n]; ok {
-					if c := d + depthB; c < best {
-						best, meet = c, n
-					}
-				}
-			}
-			frontB = next
+			depthB, frontB = depth, next
 		}
 	}
-	if meet == "" {
-		return nil, fmt.Errorf("finding path from %q to %q: no path within %d hops", from, to, maxPathDepth)
+	if !found {
+		return nil, noPath
 	}
 
 	// Reconstruct: walk the forward tree back from meet to from, reverse it,
 	// then walk the backward tree forward from meet to to.
-	var rev []Step
-	for cur := meet; cur != from; {
+	var chain []int64
+	for cur := meet; cur != fromID; {
 		p, ok := parF[cur]
 		if !ok {
-			return nil, fmt.Errorf("finding path from %q to %q: broken forward chain at %q", from, to, cur)
+			return nil, fmt.Errorf("finding path from %q to %q: broken forward chain at node %d", from, to, cur)
 		}
-		rev = append(rev, Step{From: p.node, To: cur, Relation: p.rel})
+		chain = append(chain, cur, p.node)
 		cur = p.node
+	}
+	for cur := meet; cur != toID; {
+		p, ok := parB[cur]
+		if !ok {
+			return nil, fmt.Errorf("finding path from %q to %q: broken backward chain at node %d", from, to, cur)
+		}
+		chain = append(chain, cur, p.node)
+		cur = p.node
+	}
+	if err := pn.load(chain); err != nil {
+		return nil, fmt.Errorf("finding path from %q to %q: %w", from, to, err)
+	}
+	var rev []Step
+	for cur := meet; cur != fromID; cur = parF[cur].node {
+		p := parF[cur]
+		rev = append(rev, Step{From: pn.names[p.node], To: pn.names[cur], Relation: p.rel})
 	}
 	steps := make([]Step, 0, best)
 	for i := len(rev) - 1; i >= 0; i-- {
 		steps = append(steps, rev[i])
 	}
-	for cur := meet; cur != to; {
-		p, ok := parB[cur]
-		if !ok {
-			return nil, fmt.Errorf("finding path from %q to %q: broken backward chain at %q", from, to, cur)
-		}
-		steps = append(steps, Step{From: cur, To: p.node, Relation: p.rel})
-		cur = p.node
+	for cur := meet; cur != toID; cur = parB[cur].node {
+		p := parB[cur]
+		steps = append(steps, Step{From: pn.names[cur], To: pn.names[p.node], Relation: p.rel})
 	}
 	return steps, nil
 }
 
-// pathHop is one traversal step discovered while expanding a frontier, always
-// read in from->to path direction: for a forward expansion From is the
-// frontier node and To the neighbour; for a backward expansion From is the
-// predecessor (neighbour) and To the frontier node.
-type pathHop struct{ from, to, rel string }
+// nodeID resolves an FQN to its node id (declared symbol or external target).
+func (g *SQLite) nodeID(fqn string) (int64, bool, error) {
+	var id int64
+	err := g.reader.QueryRowContext(readCtx(), nodeIDOf, fqn).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, false, nil
+	}
+	if err != nil {
+		return 0, false, fmt.Errorf("resolving %q: %w", fqn, err)
+	}
+	return id, true, nil
+}
 
-// pathHops expands one frontier level with batched IN-list queries. forward
-// selects the outgoing traversal edges of the frontier nodes; backward selects
-// the incoming ones (the predecessors). Each query returns (from, to, rel) in
-// path direction. The frontier is chunked so the IN-list stays bounded.
-func (g *SQLite) pathHops(frontier []string, forward bool) ([]pathHop, error) {
+// pathNames caches node FQNs for one Path call, fetched only when a tie has
+// to be broken by name or a step is reported.
+type pathNames struct {
+	g     *SQLite
+	names map[int64]string
+}
+
+// load fetches the FQNs of ids not cached yet: symbols first, then the
+// external graph_nodes for the rest.
+func (p *pathNames) load(ids []int64) error {
+	var missing []int64
+	for _, id := range ids {
+		if _, ok := p.names[id]; !ok {
+			p.names[id] = "" // queued once
+			missing = append(missing, id)
+		}
+	}
+	for _, table := range []string{"symbols", "graph_nodes"} {
+		if len(missing) == 0 {
+			return nil
+		}
+		const chunk = 512
+		for start := 0; start < len(missing); start += chunk {
+			end := min(start+chunk, len(missing))
+			args := make([]any, end-start)
+			for i, id := range missing[start:end] {
+				args[i] = id
+			}
+			rows, err := p.g.reader.QueryContext(readCtx(), `SELECT id, fqn FROM `+table+` WHERE id IN (`+inList(end-start)+`)`, args...)
+			if err != nil {
+				return fmt.Errorf("reading node names: %w", err)
+			}
+			for rows.Next() {
+				var id int64
+				var fqn string
+				if err := rows.Scan(&id, &fqn); err != nil {
+					rows.Close()
+					return fmt.Errorf("reading node names: %w", err)
+				}
+				p.names[id] = fqn
+			}
+			if err := rows.Err(); err != nil {
+				rows.Close()
+				return fmt.Errorf("reading node names: %w", err)
+			}
+			rows.Close()
+		}
+		rest := missing[:0]
+		for _, id := range missing {
+			if p.names[id] == "" {
+				rest = append(rest, id)
+			}
+		}
+		missing = rest
+	}
+	if len(missing) > 0 {
+		return fmt.Errorf("node %d has no name", missing[0])
+	}
+	return nil
+}
+
+// pathHop is one traversal step found while expanding a frontier: frontier is
+// the expanding side's node, nbr the newly reached one. rel is the relation in
+// path direction (forward: frontier -> nbr; backward: nbr -> frontier).
+type pathHop struct {
+	frontier, nbr, kind int64
+	arm                 int // 0: the CALLS/IMPLEMENTS arm, 1: the CALLED_BY arm
+	rel                 string
+}
+
+// pathLevel expands one frontier level with batched IN-list queries over the
+// graph_edges primary key (by src) and graph_edges_dst (by dst), on ids only:
+// forward follows the outgoing traversal edges of the frontier nodes, backward
+// the incoming ones. Hops to nodes the expanding side already visited are
+// dropped; of the hops reaching the same new node only the first in hop order
+// is kept (it becomes the node's parent), and the result is in hop order up to
+// ties between different new nodes, which only matter for the meeting node.
+//
+// Hop order is canonical: the CALLS/IMPLEMENTS arm before the CALLED_BY arm,
+// then the frontier node's FQN, then the neighbour's FQN (the backward
+// CALLS/IMPLEMENTS arm: kind before the neighbour; the forward one: kind
+// after it). That is the order the former text-keyed index scans returned,
+// so the same shortest path is reported among several; FQNs are fetched only
+// to break a real tie, not for every reached node.
+func (g *SQLite) pathLevel(frontier []int64, forward bool, seen, other map[int64]int, pn *pathNames) ([]pathHop, error) {
 	const chunk = 512
 	var hops []pathHop
 	for start := 0; start < len(frontier); start += chunk {
 		end := min(start+chunk, len(frontier))
-		ph := strings.TrimSuffix(strings.Repeat("?,", end-start), ",")
+		ph := inList(end - start)
 		args := make([]any, end-start)
 		for i, n := range frontier[start:end] {
 			args[i] = n
 		}
-		var queries []string
+		// Each query returns (frontier node, neighbour, kind).
+		var queries [2]string
 		if forward {
-			queries = []string{
-				`SELECT src, dst, kind FROM edges WHERE src IN (` + ph + `) AND kind IN ('CALLS', 'IMPLEMENTS') AND dst_external = 0`,
-				`SELECT dst, src, 'CALLED_BY' FROM edges WHERE dst IN (` + ph + `) AND kind = 'CALLS'`,
+			queries = [2]string{
+				`SELECT src, dst, kind FROM graph_edges WHERE src IN (` + ph + `) AND kind IN (` + labelCalls + `, ` + labelImplements + `) AND dst_external = 0`,
+				`SELECT dst, src, kind FROM graph_edges WHERE dst IN (` + ph + `) AND kind = ` + labelCalls,
 			}
 		} else {
-			queries = []string{
-				`SELECT src, dst, kind FROM edges WHERE dst IN (` + ph + `) AND kind IN ('CALLS', 'IMPLEMENTS') AND dst_external = 0`,
-				`SELECT dst, src, 'CALLED_BY' FROM edges WHERE src IN (` + ph + `) AND kind = 'CALLS'`,
+			queries = [2]string{
+				`SELECT dst, src, kind FROM graph_edges WHERE dst IN (` + ph + `) AND kind IN (` + labelCalls + `, ` + labelImplements + `) AND dst_external = 0`,
+				`SELECT src, dst, kind FROM graph_edges WHERE src IN (` + ph + `) AND kind = ` + labelCalls,
 			}
 		}
-		for _, q := range queries {
+		for arm, q := range queries {
 			rows, err := g.reader.QueryContext(readCtx(), q, args...)
 			if err != nil {
 				return nil, fmt.Errorf("expanding path frontier: %w", err)
 			}
 			for rows.Next() {
-				var h pathHop
-				if err := rows.Scan(&h.from, &h.to, &h.rel); err != nil {
+				h := pathHop{arm: arm}
+				if err := rows.Scan(&h.frontier, &h.nbr, &h.kind); err != nil {
 					rows.Close()
 					return nil, fmt.Errorf("expanding path frontier: %w", err)
+				}
+				if _, ok := seen[h.nbr]; ok {
+					continue
+				}
+				switch {
+				case arm == 1:
+					h.rel = "CALLED_BY"
+				case h.kind == store.GraphLabelCalls:
+					h.rel = "CALLS"
+				default:
+					h.rel = "IMPLEMENTS"
 				}
 				hops = append(hops, h)
 			}
@@ -552,7 +679,95 @@ func (g *SQLite) pathHops(frontier []string, forward bool) ([]pathHop, error) {
 			rows.Close()
 		}
 	}
-	return hops, nil
+
+	// One winner per new node: the minimal hop by (arm, frontier FQN, kind).
+	// Frontier FQNs are needed only where several frontier nodes reach the
+	// same new node.
+	byNbr := make(map[int64][]int, len(hops))
+	order := make([]int64, 0, len(hops))
+	for i, h := range hops {
+		if _, ok := byNbr[h.nbr]; !ok {
+			order = append(order, h.nbr)
+		}
+		byNbr[h.nbr] = append(byNbr[h.nbr], i)
+	}
+	var need []int64
+	for _, idx := range byNbr {
+		for _, i := range idx[1:] {
+			if hops[i].frontier != hops[idx[0]].frontier {
+				for _, j := range idx {
+					need = append(need, hops[j].frontier)
+				}
+				break
+			}
+		}
+	}
+	if err := pn.load(need); err != nil {
+		return nil, fmt.Errorf("expanding path frontier: %w", err)
+	}
+	key := func(a, b pathHop) int { // hop order without the neighbour
+		if c := cmp.Compare(a.arm, b.arm); c != 0 {
+			return c
+		}
+		if a.frontier != b.frontier {
+			if c := strings.Compare(pn.names[a.frontier], pn.names[b.frontier]); c != 0 {
+				return c
+			}
+		}
+		if a.arm == 0 {
+			return cmp.Compare(a.kind, b.kind)
+		}
+		return 0
+	}
+	level := make([]pathHop, 0, len(order))
+	for _, n := range order {
+		idx := byNbr[n]
+		w := hops[idx[0]]
+		for _, i := range idx[1:] {
+			if key(hops[i], w) < 0 {
+				w = hops[i]
+			}
+		}
+		level = append(level, w)
+	}
+
+	// The caller takes the first hop, in hop order, whose node closes the
+	// shortest path. Only nodes the other side reached can, so the full hop
+	// order (neighbour FQNs included) is established among those alone and
+	// they go first; the order of the rest matters to nothing.
+	var cands, rest []pathHop
+	var need2 []int64
+	for _, h := range level {
+		if _, ok := other[h.nbr]; ok {
+			cands = append(cands, h)
+			need2 = append(need2, h.frontier, h.nbr)
+			continue
+		}
+		rest = append(rest, h)
+	}
+	if len(cands) > 1 {
+		if err := pn.load(need2); err != nil {
+			return nil, fmt.Errorf("expanding path frontier: %w", err)
+		}
+		slices.SortStableFunc(cands, func(a, b pathHop) int {
+			if c := cmp.Compare(a.arm, b.arm); c != 0 {
+				return c
+			}
+			if c := strings.Compare(pn.names[a.frontier], pn.names[b.frontier]); c != 0 {
+				return c
+			}
+			if a.arm == 0 && !forward { // backward CALLS/IMPLEMENTS: kind before neighbour
+				if c := cmp.Compare(a.kind, b.kind); c != 0 {
+					return c
+				}
+			}
+			if c := strings.Compare(pn.names[a.nbr], pn.names[b.nbr]); c != 0 {
+				return c
+			}
+			return cmp.Compare(a.kind, b.kind)
+		})
+	}
+	return append(cands, rest...), nil
 }
 
 // neighborQueries are the four expansions of kuzu.Neighbors, each returning
@@ -564,14 +779,14 @@ var neighborQueries = []struct {
 	relation string
 	q        string
 }{
-	{"CALLS", `SELECT e.dst, s.kind FROM edges e JOIN symbols s ON s.fqn = e.dst
-WHERE e.src = ? AND e.kind = 'CALLS' ORDER BY e.dst`},
-	{"CALLS", `SELECT e.src, s.kind FROM edges e JOIN symbols s ON s.fqn = e.src
-WHERE e.dst = ? AND e.kind = 'CALLS' ORDER BY e.src`},
-	{"IMPLEMENTS", `SELECT e.dst, s.kind FROM edges e JOIN symbols s ON s.fqn = e.dst
-WHERE e.src = ? AND e.kind = 'IMPLEMENTS' ORDER BY e.dst`},
-	{"REFERENCES", `SELECT e.dst, s.kind FROM edges e JOIN symbols s ON s.fqn = e.dst
-WHERE e.src = ? AND e.kind = 'REFERENCES' ORDER BY e.dst`},
+	{"CALLS", `SELECT s.fqn, s.kind FROM graph_edges e JOIN symbols s ON s.id = e.dst
+WHERE e.src = (SELECT id FROM symbols WHERE fqn = ?) AND e.kind = ` + labelCalls + ` ORDER BY s.fqn`},
+	{"CALLS", `SELECT s.fqn, s.kind FROM graph_edges e JOIN symbols s ON s.id = e.src
+WHERE e.dst IN (` + nodeIDOf + `) AND e.kind = ` + labelCalls + ` ORDER BY s.fqn`},
+	{"IMPLEMENTS", `SELECT s.fqn, s.kind FROM graph_edges e JOIN symbols s ON s.id = e.dst
+WHERE e.src = (SELECT id FROM symbols WHERE fqn = ?) AND e.kind = ` + labelImplements + ` ORDER BY s.fqn`},
+	{"REFERENCES", `SELECT s.fqn, s.kind FROM graph_edges e JOIN symbols s ON s.id = e.dst
+WHERE e.src = (SELECT id FROM symbols WHERE fqn = ?) AND e.kind = ` + labelReferences + ` ORDER BY s.fqn`},
 }
 
 // Neighbors returns the edges around fqn, expanded breadth-first up to
@@ -659,8 +874,14 @@ func (g *SQLite) AllSymbols() ([]Symbol, error) {
 // symbols row). It feeds the community and PageRank loader (RFC 003 section
 // 3.7).
 func (g *SQLite) AllEdges() ([]Edge, error) {
-	rows, err := g.reader.QueryContext(readCtx(), `SELECT src, dst, kind, dst_external, confidence
-FROM edges ORDER BY src, dst, kind`)
+	rows, err := g.reader.QueryContext(readCtx(), `SELECT sn.fqn, coalesce(ds.fqn, dn.fqn), k.label, e.dst_external, c.label
+FROM graph_edges e
+JOIN symbols sn ON sn.id = e.src
+LEFT JOIN symbols ds ON ds.id = e.dst
+LEFT JOIN graph_nodes dn ON dn.id = e.dst
+JOIN graph_labels k ON k.id = e.kind
+JOIN graph_labels c ON c.id = e.confidence
+ORDER BY 1, 2, 3`)
 	if err != nil {
 		return nil, fmt.Errorf("listing all edges: %w", err)
 	}
@@ -801,9 +1022,10 @@ func (g *SQLite) CodeFileCount() (int, error) {
 // tools ran as Cypher count(caller) (RFC 003 section 6.2); counting edge
 // rows matches Kùzu, where one caller symbol can contribute several edges
 // from different files. The aggregate runs on edges alone and the LIMIT is
-// applied before joining symbols, so only the top n rows pay for the
-// symbol lookup; every internal dst has a symbols row (dropUnresolved and
-// checkSources guarantee it), so the join drops nothing.
+// applied before joining symbols, so only the groups that can still make
+// the top n (ties broken by FQN) pay for the symbol lookup; every internal
+// dst has a symbols row (insertEdges and checkSources guarantee it), so the
+// join drops nothing.
 func (g *SQLite) InDegreeTop(n int) ([]InDegree, error) {
 	return g.InDegreeTopExcluding(n)
 }
@@ -818,17 +1040,21 @@ func (g *SQLite) InDegreeTopExcluding(n int, excludeKinds ...string) ([]InDegree
 	if len(excludeKinds) > 0 {
 		return g.inDegreeTopFiltered(n, excludeKinds)
 	}
-	rows, err := g.reader.QueryContext(readCtx(), `WITH top AS (
+	// Ties are broken by FQN, which needs the symbols row; the cut (the n-th
+	// largest in-degree) keeps that join to the groups that can still make
+	// the top n.
+	rows, err := g.reader.QueryContext(readCtx(), `WITH agg AS MATERIALIZED (
   SELECT dst, count(*) AS in_degree
-  FROM edges
-  WHERE kind = 'CALLS' AND dst_external = 0
+  FROM graph_edges
+  WHERE kind = `+labelCalls+` AND dst_external = 0
   GROUP BY dst
-  ORDER BY in_degree DESC, dst
-  LIMIT ?
-)
-SELECT t.dst, s.name, s.kind, s.file, t.in_degree
-FROM top t JOIN symbols s ON s.fqn = t.dst
-ORDER BY t.in_degree DESC, t.dst`, n)
+),
+cut AS (SELECT min(in_degree) AS c FROM (SELECT in_degree FROM agg ORDER BY in_degree DESC LIMIT ?1))
+SELECT s.fqn, s.name, s.kind, s.file, a.in_degree
+FROM agg a JOIN symbols s ON s.id = a.dst
+WHERE a.in_degree >= (SELECT c FROM cut)
+ORDER BY a.in_degree DESC, s.fqn
+LIMIT ?1`, n)
 	if err != nil {
 		return nil, fmt.Errorf("aggregating in-degrees: %w", err)
 	}
@@ -855,11 +1081,11 @@ func (g *SQLite) inDegreeTopFiltered(n int, excludeKinds []string) ([]InDegree, 
 		args = append(args, k)
 	}
 	args = append(args, n)
-	rows, err := g.reader.QueryContext(readCtx(), `SELECT e.dst, s.name, s.kind, s.file, count(*) AS in_degree
-FROM edges e JOIN symbols s ON s.fqn = e.dst
-WHERE e.kind = 'CALLS' AND e.dst_external = 0 AND s.kind NOT IN (`+strings.Join(marks, ",")+`)
+	rows, err := g.reader.QueryContext(readCtx(), `SELECT s.fqn, s.name, s.kind, s.file, count(*) AS in_degree
+FROM graph_edges e JOIN symbols s ON s.id = e.dst
+WHERE e.kind = `+labelCalls+` AND e.dst_external = 0 AND s.kind NOT IN (`+strings.Join(marks, ",")+`)
 GROUP BY e.dst
-ORDER BY in_degree DESC, e.dst
+ORDER BY in_degree DESC, s.fqn
 LIMIT ?`, args...)
 	if err != nil {
 		return nil, fmt.Errorf("aggregating in-degrees: %w", err)

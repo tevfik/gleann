@@ -85,7 +85,6 @@ func runContextBenchmark(config gleann.Config, indexName, tasksFile string, topK
 	embedder := newEmbedder(config)
 
 	searcher := gleann.NewSearcher(config, embedder)
-	searcher.SetScorer(gleann.NewBM25Adapter())
 
 	if err := searcher.Load(ctx, indexName); err != nil {
 		fmt.Fprintf(os.Stderr, "error loading index %q: %v\n", indexName, err)

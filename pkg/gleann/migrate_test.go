@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -11,68 +12,83 @@ import (
 	"testing"
 
 	"github.com/tevfik/gleann/internal/store"
+	"github.com/tevfik/gleann/internal/testutil/format1"
 )
 
-// This file covers the format-1 → format-2 migration (RFC 003 sections 6.3,
-// 6.4 and 7.1): identical lexical results across the switch, byte-identical
-// rollback, refusal of non-dense stores, guard files that old readers cannot
-// open (and that stay untouched when they try), and fail-fast locking.
+// This file covers `gleann index migrate` for v1.20 (RFC 004 B3): an index
+// written in the v1.9 layout by a test-only writer (internal/testutil/format1,
+// no committed *.db fixtures) is converted with its vectors reused, gaps in
+// the passage IDs are renumbered, every interrupted state is completed by a
+// re-run, and the old files stay until --cleanup. Every other operation on
+// an unmigrated index is refused with the migration hint.
 
-// migrateWords gives every fixture passage a keyword of its own, so each BM25
-// query matches exactly one passage and result lists have no score ties.
+// migrateWords gives every fixture passage a keyword of its own, so each
+// lexical query matches exactly one passage.
 var migrateWords = []string{
 	"apple", "banana", "cherry", "damson", "elderberry", "fig",
 	"grape", "hazelnut", "kiwi", "lemon", "mango", "nectarine",
 }
 
-// migrateFixture builds a format-1 index the way the pipeline does: bbolt
-// passages, a vector file, real source files and a manifest. GLEANN_LEXICAL
-// is set to fts5 so the "before" side of the comparison uses the same FTS5
-// scorer the format-2 store will use.
-func migrateFixture(t *testing.T) (dir, name string, items []Item) {
+// oldFixture writes a v1.9 index whose passages have the given IDs (gaps
+// allowed). Like v1.9 after an in-place removal, the vector file holds a
+// vector for every ID up to the highest one, so a gap is a vector without a
+// passage. The test embedder's vector depends only on the text length, and
+// every text has a distinct length, so a query equal to a passage text finds
+// exactly that passage.
+func oldFixture(t *testing.T, dir, name string, ids []int64, withVectors, withGraph bool) []format1.Passage {
 	t.Helper()
 	initTestHNSW()
-	// Migration converts format 1 to format 2, so the fixture must be built as
-	// format 1 even when GLEANN_STORE_FORMAT=2 selects format 2 for new indexes.
-	t.Setenv("GLEANN_STORE_FORMAT", "1")
-	t.Setenv("GLEANN_LEXICAL", "fts5")
-	dir, name = t.TempDir(), "idx"
-	docsDir := t.TempDir()
-
-	items = make([]Item, len(migrateWords))
-	sources := make([]string, len(migrateWords))
-	for i, w := range migrateWords {
+	docs := t.TempDir()
+	var ps []format1.Passage
+	text := func(i int) string {
+		w := migrateWords[i%len(migrateWords)]
+		return fmt.Sprintf("%s preserves and %s jam recipe number %d%s", w, w, i, strings.Repeat(".", i))
+	}
+	for i, id := range ids {
 		src := fmt.Sprintf("doc%02d.md", i)
-		text := fmt.Sprintf("%s preserves and %s jam recipe number %d", w, w, i)
-		if err := os.WriteFile(filepath.Join(docsDir, src), []byte(text), 0o644); err != nil {
+		if err := os.WriteFile(filepath.Join(docs, src), []byte(text(i)), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		items[i] = Item{Text: text, Metadata: map[string]any{"source": src, "chunk_index": 0}}
-		sources[i] = filepath.Join(docsDir, src)
+		ps = append(ps, format1.Passage{ID: id, Text: text(i), Metadata: map[string]any{"source": src, "chunk_index": 0}})
 	}
-
-	b, err := NewBuilder(Config{IndexDir: dir, Backend: "hnsw"}, &testEmbedder{dim: 8})
-	if err != nil {
-		t.Fatalf("NewBuilder: %v", err)
+	meta := map[string]any{"backend": "hnsw", "source_dir": docs, "tags": []string{"keep"}}
+	var vecFile []byte
+	if withVectors {
+		emb := &testEmbedder{dim: 8}
+		maxID := ids[len(ids)-1]
+		texts := make([]string, maxID+1)
+		for j := range texts {
+			texts[j] = fmt.Sprintf("removed passage %d %s", j, strings.Repeat("#", 200+j))
+		}
+		for _, p := range ps {
+			texts[p.ID] = p.Text
+		}
+		vecs, err := emb.Compute(context.Background(), texts)
+		if err != nil {
+			t.Fatal(err)
+		}
+		vecFile, err = (&testHNSWFactory{}).NewBuilder(Config{IndexDir: dir}).Build(context.Background(), vecs)
+		if err != nil {
+			t.Fatal(err)
+		}
+		meta["embedding_model"] = emb.ModelName()
+		meta["dimensions"] = 8
+		meta["vector_ready"] = true
+	} else {
+		meta["lexical_only"] = true
 	}
-	b.SetSourceDir(docsDir)
-	if err := b.Build(context.Background(), name, items); err != nil {
-		t.Fatalf("Build: %v", err)
+	if err := format1.Write(format1.Index{
+		Dir: dir, Name: name, Passages: ps, Meta: meta, VectorFile: vecFile,
+		LexSidecar: true, Graph: withGraph,
+	}); err != nil {
+		t.Fatal(err)
 	}
-	m, err := BuildManifest(name, docsDir, sources)
-	if err != nil {
-		t.Fatalf("BuildManifest: %v", err)
+	if got := DetectStoreFormat(filepath.Join(dir, name, name)); got != StoreOld {
+		t.Fatalf("fixture = %v, want StoreOld", got)
 	}
-	if err := SaveManifest(filepath.Join(dir, name, name)+".manifest.json", m); err != nil {
-		t.Fatalf("SaveManifest: %v", err)
-	}
-	if StoreFormatOf(filepath.Join(dir, name, name)) != 1 {
-		t.Fatal("fixture must be format 1")
-	}
-	return dir, name, items
+	return ps
 }
 
-// fileSHA returns the hex sha256 of a file.
 func fileSHA(t *testing.T, path string) string {
 	t.Helper()
 	b, err := os.ReadFile(path)
@@ -83,275 +99,233 @@ func fileSHA(t *testing.T, path string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// bm25Lists runs the queries through a searcher's BM25-only leg.
-func bm25Lists(t *testing.T, s *LeannSearcher, queries []string) [][]SearchResult {
+// checkSearches loads the index and checks that every passage is its own
+// first vector hit and its own first lexical hit.
+func checkSearches(t *testing.T, dir, name string, ps []format1.Passage, vectors bool) {
 	t.Helper()
-	out := make([][]SearchResult, len(queries))
-	for i, q := range queries {
-		rs, err := s.SearchBM25(context.Background(), q, 5)
-		if err != nil {
-			t.Fatalf("SearchBM25(%q): %v", q, err)
-		}
-		out[i] = rs
-	}
-	return out
-}
-
-func TestMigrate_BM25ResultsIdentical(t *testing.T) {
-	dir, name, _ := migrateFixture(t)
 	ctx := context.Background()
-	base := filepath.Join(dir, name, name)
-	queries := migrateWords[:10]
-
-	before := NewSearcher(Config{IndexDir: dir, Backend: "hnsw"}, &testEmbedder{dim: 8})
-	if err := before.Load(ctx, name); err != nil {
-		t.Fatalf("Load before: %v", err)
-	}
-	if _, ok := before.scorer.(*FTSScorer); !ok {
-		t.Fatalf("before must use the FTS5 sidecar, got %T", before.scorer)
-	}
-	want := bm25Lists(t, before, queries)
-	before.Close()
-
-	if err := MigrateIndex(dir, name, MigrateOptions{}); err != nil {
-		t.Fatalf("MigrateIndex: %v", err)
-	}
-
-	after := NewSearcher(Config{IndexDir: dir, Backend: "hnsw"}, &testEmbedder{dim: 8})
-	if err := after.Load(ctx, name); err != nil {
-		t.Fatalf("Load after: %v", err)
-	}
-	defer after.Close()
-	if _, ok := after.scorer.(*FTSScorer); !ok {
-		t.Fatalf("after must use the format-2 lex table, got %T", after.scorer)
-	}
-	got := bm25Lists(t, after, queries)
-	for i, q := range queries {
-		if len(got[i]) != len(want[i]) {
-			t.Fatalf("query %q: %d results after migration, %d before", q, len(got[i]), len(want[i]))
-		}
-		for j := range want[i] {
-			if got[i][j].ID != want[i][j].ID || got[i][j].Text != want[i][j].Text {
-				t.Errorf("query %q rank %d: before {ID:%d Text:%q} after {ID:%d Text:%q}",
-					q, j, want[i][j].ID, want[i][j].Text, got[i][j].ID, got[i][j].Text)
-			}
-			if d := got[i][j].Score - want[i][j].Score; d > 1e-6 || d < -1e-6 {
-				t.Errorf("query %q rank %d: score %v before, %v after", q, j, want[i][j].Score, got[i][j].Score)
-			}
-		}
-	}
-
-	// The vector file is untouched by the migration, and vectors still load.
-	if !after.VectorAvailable() {
-		t.Error("vectors unavailable after migration")
-	}
-	if got := StoreFormatOf(base); got != 2 {
-		t.Errorf("StoreFormatOf after migration = %d, want 2", got)
-	}
-}
-
-func TestMigrate_RollbackRestoresBytes(t *testing.T) {
-	dir, name, _ := migrateFixture(t)
-	base := filepath.Join(dir, name, name)
-	oldPassages := fileSHA(t, base+".passages.db")
-	oldManifest := fileSHA(t, base+".manifest.json")
-	oldVectors := fileSHA(t, base+".index")
-
-	if err := MigrateIndex(dir, name, MigrateOptions{}); err != nil {
-		t.Fatalf("MigrateIndex: %v", err)
-	}
-	if fileSHA(t, base+".index") != oldVectors {
-		t.Error("migration modified the vector file")
-	}
-	if fileSHA(t, base+".passages.db.v1") != oldPassages {
-		t.Error("preserved passages.db.v1 differs from the original")
-	}
-	if fileSHA(t, base+".manifest.json.v1") != oldManifest {
-		t.Error("preserved manifest.json.v1 differs from the original")
-	}
-
-	if err := RollbackMigration(dir, name); err != nil {
-		t.Fatalf("RollbackMigration: %v", err)
-	}
-	if fileSHA(t, base+".passages.db") != oldPassages {
-		t.Error("rollback did not restore the passage store byte-identically")
-	}
-	if fileSHA(t, base+".manifest.json") != oldManifest {
-		t.Error("rollback did not restore the manifest byte-identically")
-	}
-	if fileSHA(t, base+".index") != oldVectors {
-		t.Error("rollback modified the vector file")
-	}
-	if StoreFormatOf(base) != 1 {
-		t.Error("rollback did not return the index to format 1")
-	}
-	if _, err := os.Stat(base + ".db"); !os.IsNotExist(err) {
-		t.Errorf("format-2 store survived rollback: %v", err)
-	}
-	meta, err := GetIndexMeta(dir, name)
-	if err != nil || meta.StoreFormat != 0 {
-		t.Errorf("meta store_format after rollback = %+v (%v), want 0", meta, err)
-	}
-
-	// The restored index searches again through its format-1 sidecar.
 	s := NewSearcher(Config{IndexDir: dir, Backend: "hnsw"}, &testEmbedder{dim: 8})
-	if err := s.Load(context.Background(), name); err != nil {
-		t.Fatalf("Load after rollback: %v", err)
+	if err := s.Load(ctx, name); err != nil {
+		t.Fatalf("Load after migrate: %v", err)
 	}
 	defer s.Close()
-	rs, err := s.SearchBM25(context.Background(), "apple", 5)
-	if err != nil || len(rs) != 1 || !strings.Contains(rs[0].Text, "apple preserves") {
-		t.Errorf("SearchBM25 after rollback = %+v (%v), want the apple passage", rs, err)
+	if s.VectorAvailable() != vectors {
+		t.Fatalf("VectorAvailable = %v, want %v", s.VectorAvailable(), vectors)
+	}
+	for _, p := range ps {
+		src := p.Metadata["source"]
+		if vectors {
+			rs, err := s.Search(ctx, p.Text, WithTopK(1), WithHybridAlpha(1.0))
+			if err != nil || len(rs) == 0 {
+				t.Fatalf("vector search %q: %v (%d hits)", p.Text, err, len(rs))
+			}
+			if rs[0].Text != p.Text || rs[0].Metadata["source"] != src {
+				t.Errorf("vector search for %s: got %q (%v)", src, rs[0].Text, rs[0].Metadata["source"])
+			}
+		}
+		w := strings.Fields(p.Text)[0]
+		rs, err := s.SearchBM25(ctx, w+" preserves", 1)
+		if err != nil || len(rs) == 0 {
+			t.Fatalf("lexical search %q: %v (%d hits)", w, err, len(rs))
+		}
+		if rs[0].Metadata["source"] != src {
+			t.Errorf("lexical search for %s: got %v", src, rs[0].Metadata["source"])
+		}
+	}
+	if h, err := CheckIndexHealth(dir, name); err != nil || h.NeedsRepair() {
+		t.Fatalf("health after migrate: %+v (%v)", h, err)
 	}
 }
 
-func TestMigrate_RefusesNonDenseIDs(t *testing.T) {
-	dir, name, _ := migrateFixture(t)
+func TestMigrate_DenseReusesVectorsAndKeepsLeftovers(t *testing.T) {
+	dir, name := t.TempDir(), "idx"
+	ps := oldFixture(t, dir, name, []int64{0, 1, 2, 3, 4, 5}, true, true)
 	base := filepath.Join(dir, name, name)
+	vecBefore := fileSHA(t, base+".index")
 
-	// Deleting one source leaves an ID gap in the bbolt store.
-	pm := NewPassageManager(base)
-	if err := pm.Load(); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := pm.RemoveBySource([]string{"doc00.md"}); err != nil {
-		t.Fatal(err)
-	}
-	if err := pm.Close(); err != nil {
-		t.Fatal(err)
-	}
-
-	err := MigrateIndex(dir, name, MigrateOptions{})
-	if err == nil || !strings.Contains(err.Error(), "non-contiguous passage IDs") {
-		t.Fatalf("MigrateIndex on a gapped store = %v, want a non-contiguous-ID refusal", err)
-	}
-	if StoreFormatOf(base) != 1 {
-		t.Error("a refused migration switched the format anyway")
-	}
-	if _, err := os.Stat(base + ".db"); !os.IsNotExist(err) {
-		t.Errorf("a refused migration created a format-2 store: %v", err)
-	}
-	if _, err := os.Stat(base + ".db.tmp"); !os.IsNotExist(err) {
-		t.Errorf("a refused migration left a staging file: %v", err)
-	}
-	// The format-1 store is still readable and intact.
-	pm2 := NewReadOnlyPassageManager(base)
-	if err := pm2.Load(); err != nil {
-		t.Fatalf("format-1 store unreadable after refusal: %v", err)
-	}
-	defer pm2.Close()
-	if n := pm2.Count(); n != len(migrateWords)-1 {
-		t.Errorf("passage count after refusal = %d, want %d", n, len(migrateWords)-1)
-	}
-}
-
-func TestMigrate_GuardFileBlocksOldReader(t *testing.T) {
-	dir, name, _ := migrateFixture(t)
-	base := filepath.Join(dir, name, name)
-	if err := MigrateIndex(dir, name, MigrateOptions{}); err != nil {
+	res, err := MigrateIndex(dir, name, MigrateOptions{})
+	if err != nil {
 		t.Fatalf("MigrateIndex: %v", err)
 	}
+	if res.Passages != len(ps) || res.Renumbered || !res.HadGraph {
+		t.Fatalf("result = %+v, want %d passages, not renumbered, had graph", res, len(ps))
+	}
+	if DetectStoreFormat(base) != StoreV2 {
+		t.Fatal("index is not format 2 after migrate")
+	}
+	if got := fileSHA(t, base+".index"); got != vecBefore {
+		t.Fatal("a dense migration must reuse the vector file unchanged")
+	}
+	m, _ := GetIndexMeta(dir, name)
+	if m.StoreFormat != 2 || m.NumPassages != len(ps) || len(m.Tags) != 1 {
+		t.Fatalf("meta after migrate: %+v", m)
+	}
+	checkSearches(t, dir, name, ps, true)
 
-	for _, path := range []string{base + ".passages.db", base + ".manifest.json"} {
-		info, err := os.Stat(path)
-		if err != nil {
-			t.Fatalf("guard missing: %v", err)
-		}
-		if info.Size() == 0 {
-			t.Fatalf("guard %s is empty; bbolt would initialize an empty file instead of failing", path)
-		}
-		size, sum := info.Size(), fileSHA(t, path)
-
-		// Both format-1 bbolt openers must fail on the guard...
-		pm := NewPassageManager(base)
-		if err := pm.Load(); err == nil {
-			pm.Close()
-			t.Fatalf("writable bbolt opener accepted the guard at %s", path)
-		}
-		ro := NewReadOnlyPassageManager(base)
-		if err := ro.Load(); err == nil {
-			ro.Close()
-			t.Fatalf("read-only bbolt opener accepted the guard at %s", path)
-		}
-
-		// ...and the guard is unchanged afterwards (size and sha256).
-		info2, err := os.Stat(path)
-		if err != nil {
-			t.Fatalf("guard vanished: %v", err)
-		}
-		if info2.Size() != size {
-			t.Errorf("guard %s size changed after failed opens: %d -> %d", path, size, info2.Size())
-		}
-		if fileSHA(t, path) != sum {
-			t.Errorf("guard %s bytes changed after failed opens", path)
-		}
+	if _, err := MigrateIndex(dir, name, MigrateOptions{}); !errors.Is(err, ErrAlreadyFormat2) {
+		t.Fatalf("second migrate = %v, want ErrAlreadyFormat2", err)
 	}
 
-	guard, err := os.ReadFile(base + ".passages.db")
-	if err != nil || !strings.HasPrefix(string(guard), storeGuardPrefix) {
-		t.Errorf("guard does not start with %q: %q (%v)", storeGuardPrefix, guard, err)
+	left := MigrationLeftovers(dir, name)
+	for _, want := range []string{base + ".passages.db", base + ".lex.db", filepath.Join(dir, name+"_graph"), filepath.Join(dir, name+"_graph_file_hashes.db")} {
+		found := false
+		for _, l := range left {
+			found = found || l == want
+		}
+		if !found {
+			t.Errorf("leftover %s not listed in %v", want, left)
+		}
 	}
-	// The format-2 store itself is intact.
-	st, err := store.Open(base+".db", store.Options{})
-	if err != nil {
-		t.Fatal(err)
+	removed, err := CleanupMigration(dir, name)
+	if err != nil || len(removed) != len(left) {
+		t.Fatalf("CleanupMigration = %v, %v; want the %d leftovers", removed, err, len(left))
 	}
-	defer st.Close()
-	if n, err := st.Count(context.Background()); err != nil || n != len(migrateWords) {
-		t.Errorf("format-2 count = %d (%v), want %d", n, err, len(migrateWords))
+	if l := MigrationLeftovers(dir, name); len(l) != 0 {
+		t.Fatalf("leftovers after cleanup: %v", l)
 	}
+	checkSearches(t, dir, name, ps, true)
 }
 
-// A natively built format-2 index has nothing to migrate: the switch must be
-// refused without touching the store (the format-2 side of the migration).
-func TestMigrate_RefusesFormat2Index(t *testing.T) {
-	initTestHNSW()
-	t.Setenv("GLEANN_STORE_FORMAT", "2")
-	dir := t.TempDir()
-	b, err := NewBuilder(Config{IndexDir: dir, Backend: "hnsw"}, &testEmbedder{dim: 8})
-	if err != nil {
-		t.Fatalf("NewBuilder: %v", err)
-	}
-	if err := b.Build(context.Background(), "idx", []Item{{Text: "apple pie recipe", Metadata: map[string]any{"source": "a.md"}}}); err != nil {
-		t.Fatalf("Build: %v", err)
-	}
-	base := filepath.Join(dir, "idx", "idx")
-	sum := fileSHA(t, base+".db")
+func TestMigrate_RenumbersGapsAndRebuildsVectors(t *testing.T) {
+	dir, name := t.TempDir(), "gaps"
+	ps := oldFixture(t, dir, name, []int64{0, 1, 3, 4, 7, 9}, true, false)
+	base := filepath.Join(dir, name, name)
 
-	err = MigrateIndex(dir, "idx", MigrateOptions{})
-	if err == nil || !strings.Contains(err.Error(), "already store format 2") {
-		t.Fatalf("MigrateIndex on a format-2 index = %v, want an already-format-2 refusal", err)
+	res, err := MigrateIndex(dir, name, MigrateOptions{})
+	if err != nil {
+		t.Fatalf("MigrateIndex: %v", err)
 	}
-	if fileSHA(t, base+".db") != sum {
-		t.Error("a refused migration modified the format-2 store")
+	if !res.Renumbered || res.HadGraph {
+		t.Fatalf("result = %+v, want renumbered, no graph", res)
 	}
-	// There is no preserved format-1 store, so rollback must refuse too.
-	if err := RollbackMigration(dir, "idx"); err == nil || !strings.Contains(err.Error(), "no preserved format-1 store") {
-		t.Fatalf("RollbackMigration without a .v1 store = %v, want a refusal", err)
+	h, err := CheckIndexHealth(dir, name)
+	if err != nil || !h.Dense || h.MaxID != int64(len(ps)-1) {
+		t.Fatalf("health = %+v (%v), want dense slots 0..%d", h, err, len(ps)-1)
+	}
+	if _, err := os.Stat(base + ".index.v1"); err != nil {
+		t.Fatalf("the old vector file must be kept as .index.v1: %v", err)
+	}
+	checkSearches(t, dir, name, ps, true)
+}
+
+func TestMigrate_LexicalOnlyIndex(t *testing.T) {
+	dir, name := t.TempDir(), "lex"
+	ps := oldFixture(t, dir, name, []int64{0, 2, 5}, false, false)
+	if _, err := MigrateIndex(dir, name, MigrateOptions{}); err != nil {
+		t.Fatalf("MigrateIndex: %v", err)
+	}
+	checkSearches(t, dir, name, ps, false)
+}
+
+// Every interrupted state of the switch is completed or redone by a re-run.
+func TestMigrate_CrashStatesRecoverable(t *testing.T) {
+	for _, point := range []string{migrateAfterIndexAside, migrateAfterIndexNew, migrateAfterDBRename} {
+		t.Run(point, func(t *testing.T) {
+			dir, name := t.TempDir(), "crash"
+			ps := oldFixture(t, dir, name, []int64{0, 2, 3, 6}, true, false)
+			crash := errors.New("injected crash")
+			_, err := MigrateIndex(dir, name, MigrateOptions{crashHook: func(p string) error {
+				if p == point {
+					return crash
+				}
+				return nil
+			}})
+			if !errors.Is(err, crash) {
+				t.Fatalf("MigrateIndex = %v, want the injected crash", err)
+			}
+			// Until the re-run, nothing but migrate reads the index.
+			if point != migrateAfterDBRename {
+				if got := DetectStoreFormat(filepath.Join(dir, name, name)); got != StoreOld {
+					t.Fatalf("after a crash at %s: %v, want StoreOld", point, got)
+				}
+			}
+			if _, err := MigrateIndex(dir, name, MigrateOptions{}); err != nil {
+				t.Fatalf("re-run after a crash at %s: %v", point, err)
+			}
+			checkSearches(t, dir, name, ps, true)
+		})
 	}
 }
 
 func TestMigrate_FailsFastWhenLocked(t *testing.T) {
-	dir, name, _ := migrateFixture(t)
-	base := filepath.Join(dir, name, name)
+	dir, name := t.TempDir(), "locked"
+	oldFixture(t, dir, name, []int64{0, 1}, true, false)
 	lock, err := store.AcquireLock(filepath.Join(dir, name+".lock"))
 	if err != nil {
-		t.Fatalf("AcquireLock: %v", err)
+		t.Fatal(err)
 	}
 	defer lock.Release()
+	if _, err := MigrateIndex(dir, name, MigrateOptions{}); err == nil {
+		t.Fatal("MigrateIndex must fail while another process holds the index lock")
+	}
+	if DetectStoreFormat(filepath.Join(dir, name, name)) != StoreOld {
+		t.Fatal("a refused migration must leave the index as it was")
+	}
+}
 
-	err = MigrateIndex(dir, name, MigrateOptions{})
-	if err == nil || !strings.Contains(err.Error(), "held by another process") {
-		t.Fatalf("MigrateIndex with the lock held = %v, want a readable lock message", err)
+// The v1.9 migration left guard files and .v1 copies; the index is format 2
+// and those files are leftovers that --cleanup deletes.
+func TestMigrate_V19MigratedIndexLeftovers(t *testing.T) {
+	dir := t.TempDir()
+	b, _ := newFormat2Builder(t, dir, 8)
+	if err := b.Build(context.Background(), "v19", f2Items()); err != nil {
+		t.Fatal(err)
 	}
-	if StoreFormatOf(base) != 1 {
-		t.Error("a locked-out migration switched the format anyway")
+	base := filepath.Join(dir, "v19", "v19")
+	guard := []byte(storeGuardPrefix + ": this index uses the SQLite record store.\n")
+	for _, f := range []string{".passages.db", ".manifest.json"} {
+		if err := os.WriteFile(base+f, guard, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(base+f+".v1", []byte("old"), 0o644); err != nil {
+			t.Fatal(err)
+		}
 	}
-	// Rollback and cleanup take the same lock.
-	if err := RollbackMigration(dir, name); err == nil || !strings.Contains(err.Error(), "held by another process") {
-		t.Errorf("RollbackMigration with the lock held = %v, want the lock message", err)
+	if DetectStoreFormat(base) != StoreV2 {
+		t.Fatal("a v1.9-migrated index is format 2")
 	}
-	if err := CleanupMigration(dir, name); err == nil || !strings.Contains(err.Error(), "held by another process") {
-		t.Errorf("CleanupMigration with the lock held = %v, want the lock message", err)
+	if l := MigrationLeftovers(dir, "v19"); len(l) != 4 {
+		t.Fatalf("leftovers = %v, want the 2 guards and 2 .v1 copies", l)
+	}
+	if _, err := CleanupMigration(dir, "v19"); err != nil {
+		t.Fatal(err)
+	}
+	if l := MigrationLeftovers(dir, "v19"); len(l) != 0 {
+		t.Fatalf("leftovers after cleanup: %v", l)
+	}
+}
+
+// Every operation but migrate refuses an old-format index with the hint.
+func TestOldFormatRefused(t *testing.T) {
+	dir, name := t.TempDir(), "old"
+	oldFixture(t, dir, name, []int64{0, 1, 2}, true, true)
+	want := "index old uses the old store format; run: gleann index migrate old"
+	check := func(what string, err error) {
+		t.Helper()
+		if !errors.Is(err, ErrOldStoreFormat) || !strings.Contains(err.Error(), want) {
+			t.Errorf("%s = %v, want %q", what, err, want)
+		}
+	}
+	ctx := context.Background()
+	s := NewSearcher(Config{IndexDir: dir, Backend: "hnsw"}, &testEmbedder{dim: 8})
+	check("Load", s.Load(ctx, name))
+	b, _ := newFormat2Builder(t, dir, 8)
+	check("Build", b.Build(ctx, name, f2Items()))
+	check("AddToIndex", b.AddToIndex(ctx, name, f2Items()))
+	check("UpdateIndex", b.UpdateIndex(ctx, name, nil, []string{"doc00.md"}))
+	_, err := b.Compact(ctx, name)
+	check("Compact", err)
+	_, err = LoadIndexManifest(dir, name)
+	check("LoadIndexManifest", err)
+	check("NoCodeGraphError", NoCodeGraphError(dir, name))
+	if _, err := CleanupMigration(dir, name); err == nil {
+		t.Error("CleanupMigration must refuse an unmigrated index")
+	}
+	h, err := CheckIndexHealth(dir, name)
+	if err != nil || len(h.Problems) != 1 || h.Problems[0] != want {
+		t.Errorf("CheckIndexHealth = %+v (%v), want the refusal as the problem", h, err)
+	}
+	if DetectStoreFormat(filepath.Join(dir, name, name)) != StoreOld {
+		t.Fatal("a refused operation changed the index")
 	}
 }

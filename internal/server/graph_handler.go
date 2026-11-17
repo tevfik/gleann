@@ -128,6 +128,9 @@ func (p *graphDBPool) get(name string) (graphDBHandle, error) {
 		return nil, err
 	}
 	if h == nil {
+		if err := gleann.CheckStoreFormat(p.dir, name); err != nil {
+			return nil, fmt.Errorf("%w: %w", errNoCodeGraph, err)
+		}
 		return nil, fmt.Errorf("%w: %v (or POST /api/graph/%s/index)", errNoCodeGraph, gleann.NoCodeGraphError(p.dir, name), name)
 	}
 	p.dbs[name] = h
@@ -392,7 +395,7 @@ func (s *Server) handleGraphIndex(w http.ResponseWriter, r *http.Request) {
 
 	start := time.Now()
 	err := runGraphIndex(name, docsDir, s.cfg().IndexDir)
-	if errors.Is(err, errNoCodeGraph) {
+	if errors.Is(err, errNoCodeGraph) || errors.Is(err, gleann.ErrOldStoreFormat) {
 		writeError(w, http.StatusConflict, err.Error())
 		return
 	}

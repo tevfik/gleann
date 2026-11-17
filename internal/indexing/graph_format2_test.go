@@ -25,7 +25,6 @@ func goFixture(t *testing.T) string {
 // buildFormat2 builds a format-2 index of docs with the graph enabled.
 func buildFormat2(t *testing.T, env *testEnv, docs string) {
 	t.Helper()
-	t.Setenv("GLEANN_STORE_FORMAT", "2")
 	if _, err := Build(context.Background(), BuildOptions{Options: env.options(nil), Name: "g", DocsDir: docs, Graph: true}); err != nil {
 		t.Fatalf("Build: %v", err)
 	}

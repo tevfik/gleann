@@ -58,48 +58,13 @@ func CheckIndexHealth(indexDir, name string) (*IndexHealth, error) {
 	h := &IndexHealth{Name: name, MetaPassages: meta.NumPassages, Repairable: true}
 	basePath := filepath.Join(indexDir, name, name)
 
-	if StoreFormatOf(basePath) == 2 {
-		checkHealthFormat2(h, meta, basePath)
-	} else {
-		dbPath := basePath + ".passages.db"
-		if _, err := os.Stat(dbPath); err != nil {
-			h.Repairable = false
-			h.Problems = append(h.Problems, "the passage store is missing; rebuild the index from its source files")
-			return h, nil
-		}
-		pm := NewReadOnlyPassageManager(basePath)
-		if err := pm.Load(); err != nil {
-			h.Repairable = false
-			h.Problems = append(h.Problems, fmt.Sprintf("the passage store cannot be read (%v); rebuild the index from its source files", err))
-			return h, nil
-		}
-		defer pm.Close()
-
-		var spanErr error
-		h.Passages, h.MaxID, spanErr = pm.idSpan()
-		if err := spanErr; err != nil {
-			h.Repairable = false
-			h.Problems = append(h.Problems, fmt.Sprintf("the passage store cannot be read (%v); rebuild the index from its source files", err))
-			return h, nil
-		}
-		h.Dense = int64(h.Passages) == h.MaxID+1
-
-		if h.Passages != meta.NumPassages {
-			h.Problems = append(h.Problems, fmt.Sprintf("the metadata records %d passages but the store holds %d", meta.NumPassages, h.Passages))
-		}
-		// Vectors are only addressed by passage ID when there is a vector index.
-		if meta.VectorReady && h.Passages > 0 {
-			if !h.Dense {
-				h.Problems = append(h.Problems, fmt.Sprintf(
-					"passage IDs are not contiguous (%d passages, highest ID %d): vectors may be attached to the wrong passages, so searches can return the wrong text",
-					h.Passages, h.MaxID))
-			}
-			if _, err := os.Stat(basePath + ".index"); errors.Is(err, fs.ErrNotExist) {
-				h.Problems = append(h.Problems, "the vector index file is missing")
-			}
-		}
+	if DetectStoreFormat(basePath) == StoreOld {
+		// Only `gleann index migrate` reads the old format.
+		h.Repairable = false
+		h.Problems = append(h.Problems, (&OldFormatError{Name: name}).Error())
+		return h, nil
 	}
-
+	checkHealthFormat2(h, meta, basePath)
 	return h, nil
 }
 

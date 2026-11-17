@@ -660,7 +660,7 @@ func escapesRoot(rel string) bool {
 // convergeDirtyFormat2Graph re-applies the deltas of graph_dirty files when
 // no passage changed, so a failed or partial graph write converges on the
 // next sync instead of being masked by an "already up to date" result
-// (RFC 003 section 6.5). It is a no-op for format-1 indexes and clean graphs.
+// (RFC 003 section 6.5). It is a no-op for clean graphs.
 func convergeDirtyFormat2Graph(indexDir, name, absDocsDir string, opts GraphOptions, p *printer) error {
 	base := filepath.Join(indexDir, name, name)
 	if gleann.StoreFormatOf(base) != 2 {

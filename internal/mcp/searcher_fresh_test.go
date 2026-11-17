@@ -10,7 +10,6 @@ import (
 
 func freshFixture(t *testing.T) (*Server, gleann.Config, *testBudgetEmbedder) {
 	t.Helper()
-	t.Setenv("GLEANN_STORE_FORMAT", "2")
 	dir := t.TempDir()
 	emb := &testBudgetEmbedder{dim: 8}
 	glCfg := gleann.DefaultConfig()

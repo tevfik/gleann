@@ -134,6 +134,7 @@ func TestSearcher_DimensionMismatchError(t *testing.T) {
 		Backend:        "mock-hybrid-backend",
 		EmbeddingModel: "model-1024",
 		Dimensions:     1024,
+		StoreFormat:    2,
 	}
 	metaBytes, _ := meta.MarshalJSON()
 	os.WriteFile(basePath+".meta.json", metaBytes, 0644)

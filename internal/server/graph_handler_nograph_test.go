@@ -15,11 +15,18 @@ import (
 	"github.com/tevfik/gleann/pkg/gleann"
 )
 
-// A format-1 (or unknown) index has no code graph in any build (RFC 004 A3):
-// POST /api/graph/{name}/index answers 409 and creates nothing.
-func TestHandleGraphIndex_Format1Conflict(t *testing.T) {
+// An index in the old store format gets no code graph in any build (RFC 004
+// B2): POST /api/graph/{name}/index answers 409 with the migration hint and
+// creates nothing.
+func TestHandleGraphIndex_OldFormatConflict(t *testing.T) {
 	s := newTestServerWithGraph(nil)
 	s.config.IndexDir = t.TempDir()
+	if err := os.MkdirAll(filepath.Join(s.config.IndexDir, "test-index"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(s.config.IndexDir, "test-index", "test-index.passages.db"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	docs := t.TempDir()
 	t.Setenv("GLEANN_ALLOWED_ROOTS", docs)
 	req := httptest.NewRequest("POST", "/api/graph/test-index/index", bytes.NewBufferString(`{"docs_dir":`+strconv.Quote(docs)+`}`))
@@ -38,7 +45,7 @@ func TestHandleGraphIndex_Format1Conflict(t *testing.T) {
 }
 
 // An old <name>_graph Kùzu directory is not a code graph: the pool reports
-// errNoCodeGraph and the hint for a format-1 index.
+// errNoCodeGraph and the migration hint for an index in the old format.
 func TestGraphDBPool_Get_OldKuzuDirectoryIsNoGraph(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(dir, "old"), 0o755); err != nil {
@@ -56,17 +63,28 @@ func TestGraphDBPool_Get_OldKuzuDirectoryIsNoGraph(t *testing.T) {
 		t.Fatalf("get = %v, want errNoCodeGraph", err)
 	}
 	if !strings.Contains(err.Error(), "gleann index migrate old") {
-		t.Errorf("format-1 hint missing: %v", err)
+		t.Errorf("migration hint missing: %v", err)
 	}
 	if _, err := pool.get("nonexistent"); !errors.Is(err, errNoCodeGraph) {
 		t.Errorf("get(nonexistent) = %v, want errNoCodeGraph", err)
 	}
 }
 
-func TestRunGraphIndex_Format1(t *testing.T) {
+func TestRunGraphIndex_MissingAndOldIndex(t *testing.T) {
 	err := runGraphIndex("test", t.TempDir(), t.TempDir())
 	if !errors.Is(err, errNoCodeGraph) {
-		t.Errorf("runGraphIndex on a format-1 index = %v, want errNoCodeGraph", err)
+		t.Errorf("runGraphIndex on a missing index = %v, want errNoCodeGraph", err)
+	}
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "old"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "old", "old.meta.json"), []byte(`{"name":"old"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	err = runGraphIndex("old", t.TempDir(), dir)
+	if !errors.Is(err, gleann.ErrOldStoreFormat) || !strings.Contains(err.Error(), "gleann index migrate old") {
+		t.Errorf("runGraphIndex on an old-format index = %v, want the migration refusal", err)
 	}
 }
 
@@ -81,4 +99,31 @@ func TestMemoryStub_StopMemoryPool(t *testing.T) {
 func TestMemoryStub_CloseAll(t *testing.T) {
 	p := newMemoryPool("/tmp")
 	p.closeAll() // should not panic
+}
+
+// Search and the other searcher-backed endpoints answer 409 with the
+// migration hint for an index in the old store format, not 404.
+func TestAcquireSearcher_OldFormatConflict(t *testing.T) {
+	s := newTestServerWithGraph(nil)
+	s.config.IndexDir = t.TempDir()
+	if err := os.MkdirAll(filepath.Join(s.config.IndexDir, "old"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(s.config.IndexDir, "old", "old.passages.db"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, _, err := s.acquireSearcher(context.Background(), "old")
+	if !errors.Is(err, gleann.ErrOldStoreFormat) {
+		t.Fatalf("acquireSearcher = %v, want ErrOldStoreFormat", err)
+	}
+	w := httptest.NewRecorder()
+	writeSearcherError(w, "old", err)
+	if w.Code != http.StatusConflict || !strings.Contains(w.Body.String(), "gleann index migrate old") {
+		t.Errorf("got %d %s, want 409 with the migration hint", w.Code, w.Body.String())
+	}
+	w = httptest.NewRecorder()
+	writeSearcherError(w, "x", errors.New("boom"))
+	if w.Code != http.StatusNotFound {
+		t.Errorf("other errors: got %d, want 404", w.Code)
+	}
 }

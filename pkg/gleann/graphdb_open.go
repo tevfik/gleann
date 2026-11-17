@@ -93,9 +93,8 @@ func OpenGraphStore(indexDir, name string) (*GraphStore, error) {
 }
 
 // HasCodeGraph reports whether the index has a code graph to query: the
-// graph data (symbols or documents) of a format-2 index in <name>.db. A
-// format-1 index has no code graph: its old Kùzu <name>_graph directory is
-// not read since Kùzu was removed (RFC 004 A3). It is the single probe behind
+// graph data (symbols or documents) of the index in <name>.db. An old Kùzu
+// <name>_graph directory is not read since Kùzu was removed (RFC 004 A3). It is the single probe behind
 // the TUI agent scope, the update endpoint's graph_stale flag,
 // `gleann benchmark` and sync.
 func HasCodeGraph(indexDir, name string) bool {
@@ -108,11 +107,11 @@ func HasCodeGraph(indexDir, name string) bool {
 }
 
 // NoCodeGraphError is the error every graph command (CLI, REST, MCP, A2A)
-// returns for an index without a code graph. Only format 2 stores a code
-// graph, so the hint for a format-1 index names the conversion first.
+// returns for an index without a code graph. An index in the old store
+// format gets the migration refusal instead (*OldFormatError).
 func NoCodeGraphError(indexDir, name string) error {
-	if DetectStoreFormat(filepath.Join(indexDir, name, name)) == StoreV1 {
-		return fmt.Errorf("index %q has no code graph yet: it uses the old store format, which has none; convert it with: gleann index migrate %s, then build the graph with: gleann index build %s --docs <dir> --graph", name, name, name)
+	if err := CheckStoreFormat(indexDir, name); err != nil {
+		return err
 	}
 	return fmt.Errorf("index %q has no code graph yet; build it with: gleann index build %s --docs <dir> --graph", name, name)
 }

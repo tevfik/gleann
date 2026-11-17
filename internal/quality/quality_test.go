@@ -113,7 +113,6 @@ func TestRetrievalQuality(t *testing.T) {
 func measureQuality(t *testing.T, ctx context.Context, cfg gleann.Config, name string, tasks []benchmark.Task, commit string) Baseline {
 	t.Helper()
 	searcher := gleann.NewSearcher(cfg, hashEmbedder{})
-	searcher.SetScorer(gleann.NewBM25Adapter())
 	if err := searcher.Load(ctx, name); err != nil {
 		t.Fatalf("loading the index: %v", err)
 	}

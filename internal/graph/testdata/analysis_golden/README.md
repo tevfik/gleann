@@ -15,7 +15,8 @@ reference. Only the files the SQLite path is still compared against are kept
 `rest_query_{callees,callees_rust,callers_short}.json`, were deleted with
 their tests).
 
-The goldens were produced with `GLEANN_STORE_FORMAT` unset (format 1) by
+The goldens were produced with the then-default format-1 store (the
+`GLEANN_STORE_FORMAT` switch, removed in v1.20, unset) by
 `indexing.BuildGraphIndex` on the fixture, which was then the graph step of
 `gleann index build --graph` for a format-1 index.
 

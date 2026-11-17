@@ -683,7 +683,7 @@ func (s *Server) handleGetIndex(w http.ResponseWriter, r *http.Request) {
 
 	searcher, release, err := s.acquireSearcher(r.Context(), name)
 	if err != nil {
-		writeError(w, http.StatusNotFound, fmt.Sprintf("index %q not found: %v", name, err))
+		writeSearcherError(w, name, err)
 		return
 	}
 	defer release()
@@ -795,7 +795,7 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 
 	searcher, release, err := s.acquireSearcher(r.Context(), name)
 	if err != nil {
-		writeError(w, http.StatusNotFound, fmt.Sprintf("index %q not found: %v", name, err))
+		writeSearcherError(w, name, err)
 		return
 	}
 	defer release()
@@ -848,7 +848,7 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		release()
 		if searcher, release, err = s.acquireSearcher(r.Context(), name); err != nil {
 			serverMetrics.RecordSearch(time.Since(start), true)
-			writeError(w, http.StatusNotFound, fmt.Sprintf("index %q not found: %v", name, err))
+			writeSearcherError(w, name, err)
 			return
 		}
 		defer release()
@@ -936,7 +936,7 @@ func (s *Server) handleAsk(w http.ResponseWriter, r *http.Request) {
 
 	searcher, release, err := s.acquireSearcher(r.Context(), name)
 	if err != nil {
-		writeError(w, http.StatusNotFound, fmt.Sprintf("index %q not found: %v", name, err))
+		writeSearcherError(w, name, err)
 		return
 	}
 	defer release()

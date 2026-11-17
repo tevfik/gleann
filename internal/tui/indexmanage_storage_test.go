@@ -15,7 +15,7 @@ func mkIndex(t *testing.T, dir, name, backend string, passages, dims int, indexB
 	d := filepath.Join(dir, name)
 	_ = os.MkdirAll(d, 0o755)
 	_ = os.WriteFile(filepath.Join(d, name+".index"), make([]byte, indexBytes), 0o644)
-	_ = os.WriteFile(filepath.Join(d, name+".passages.db"), make([]byte, 1000), 0o644)
+	_ = os.WriteFile(filepath.Join(d, name+".db"), make([]byte, 1000), 0o644)
 	return gleann.IndexMeta{Name: name, Backend: backend, NumPassages: passages, Dimensions: dims, VectorReady: true}
 }
 

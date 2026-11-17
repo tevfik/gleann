@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/tevfik/gleann/internal/indexing"
+	"github.com/tevfik/gleann/internal/memsync"
 	"github.com/tevfik/gleann/internal/tui"
 	"github.com/tevfik/gleann/pkg/conversations"
 	"github.com/tevfik/gleann/pkg/gleann"
@@ -1070,9 +1072,43 @@ func cmdMemoryImportGraph(args []string) {
 		}
 		fmt.Printf("📥 %s: %d entities, %d relations, %d archive rows added\n",
 			r.Namespace, r.Entities, r.Relations, r.Archive)
+		syncImportedEntities(r)
 	}
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error importing graph: %v\n", err)
 		exitFunc(1)
 	}
+}
+
+// syncImportedEntities adds the entities an import-graph run inserted to the
+// namespace's memory vector index (<ns>_memory_vectors), as the server and
+// MCP memory syncer do for injected entities. It runs when an embedding model
+// is configured (the condition under which the syncer is enabled); a failure
+// is a warning, the entities stay imported.
+func syncImportedEntities(r memory.GraphImportResult) {
+	if len(r.AddedEntities) == 0 {
+		return
+	}
+	config := getConfig(nil)
+	applySavedConfig(&config, nil)
+	if config.EmbeddingModel == "" || gleann.ValidateName(r.Namespace) != nil {
+		return
+	}
+	builder, err := gleann.NewBuilder(config, indexing.NewEmbedder(config))
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "⚠  %s: entities imported, memory vector index not updated: %v\n", r.Namespace, err)
+		return
+	}
+	contents := make([]memsync.Content, 0, len(r.AddedEntities))
+	for _, e := range r.AddedEntities {
+		var attrs map[string]any
+		_ = json.Unmarshal([]byte(e.Attributes), &attrs)
+		contents = append(contents, memsync.Content{NodeID: e.ID, Content: e.Content, Attrs: attrs})
+	}
+	name := r.Namespace + "_memory_vectors"
+	if err := memsync.NewLeannSyncer(builder, name, nil).AddContents(context.Background(), contents); err != nil {
+		fmt.Fprintf(os.Stderr, "⚠  %s: entities imported, memory vector index %s not updated: %v\n", r.Namespace, name, err)
+		return
+	}
+	fmt.Printf("🧠 %s: %d entities added to the memory vector index %s\n", r.Namespace, len(contents), name)
 }

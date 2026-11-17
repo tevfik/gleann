@@ -8,16 +8,19 @@ import (
 )
 
 // LoadIndexManifest returns the file inventory of an index for change
-// detection. A format-1 index reads <name>.manifest.json; a format-2 index has
-// no manifest file — its files table IS the manifest (RFC 003 sections 3.4 and
-// 6.1), so the entries are built from store.Files with the same Path/Size/
-// ModTime/Hash shape QuickDiffDirectory expects. The content hash is the one
-// committed with the passages, so a synced-but-uncommitted file never looks
-// indexed.
+// detection. The index has no manifest file: its files table IS the manifest
+// (RFC 003 sections 3.4 and 6.1), so the entries are built from store.Files
+// with the same Path/Size/ModTime/Hash shape QuickDiffDirectory expects. The
+// content hash is the one committed with the passages, so a
+// synced-but-uncommitted file never looks indexed. An index in the old store
+// format is refused (*OldFormatError).
 func LoadIndexManifest(indexDir, name string) (*Manifest, error) {
 	basePath := filepath.Join(indexDir, name, name)
-	if StoreFormatOf(basePath) != 2 {
-		return LoadManifest(basePath + ".manifest.json")
+	switch DetectStoreFormat(basePath) {
+	case StoreOld:
+		return nil, &OldFormatError{Name: name}
+	case StoreNone:
+		return nil, fmt.Errorf("loading the manifest of index %q: %w", name, ErrIndexNotFound)
 	}
 	st, err := openFormat2Store(basePath)
 	if err != nil {

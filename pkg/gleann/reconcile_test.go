@@ -17,7 +17,7 @@ func TestReconcilePassageManager_NoOrphans(t *testing.T) {
 
 	// Set up passages DB.
 	basePath := filepath.Join(tmp, "test_index")
-	pm := NewPassageManager(basePath)
+	pm := testPassageStore(basePath)
 	defer pm.Close()
 
 	pm.Add([]Item{
@@ -44,7 +44,7 @@ func TestReconcilePassageManager_WithOrphans(t *testing.T) {
 	os.WriteFile(filepath.Join(docsRoot, "file1.go"), []byte("content"), 0644)
 
 	basePath := filepath.Join(tmp, "test_index")
-	pm := NewPassageManager(basePath)
+	pm := testPassageStore(basePath)
 	defer pm.Close()
 
 	pm.Add([]Item{
@@ -73,7 +73,7 @@ func TestReconcilePassageManager_AllOrphans(t *testing.T) {
 	// No source files exist.
 
 	basePath := filepath.Join(tmp, "test_index")
-	pm := NewPassageManager(basePath)
+	pm := testPassageStore(basePath)
 	defer pm.Close()
 
 	pm.Add([]Item{
@@ -97,7 +97,7 @@ func TestReconcilePassageManager_NoSourceMetadata(t *testing.T) {
 	os.MkdirAll(docsRoot, 0755)
 
 	basePath := filepath.Join(tmp, "test_index")
-	pm := NewPassageManager(basePath)
+	pm := testPassageStore(basePath)
 	defer pm.Close()
 
 	// Passages without source metadata.
@@ -123,7 +123,7 @@ func TestReconcilePassageManager_SubdirectoryPaths(t *testing.T) {
 	os.WriteFile(filepath.Join(docsRoot, "pkg", "util", "helper.go"), []byte("code"), 0644)
 
 	basePath := filepath.Join(tmp, "test_index")
-	pm := NewPassageManager(basePath)
+	pm := testPassageStore(basePath)
 	defer pm.Close()
 
 	pm.Add([]Item{
@@ -147,7 +147,7 @@ func TestReconcilePassageManager_EmptyDB(t *testing.T) {
 	os.MkdirAll(docsRoot, 0755)
 
 	basePath := filepath.Join(tmp, "test_index")
-	pm := NewPassageManager(basePath)
+	pm := testPassageStore(basePath)
 	defer pm.Close()
 
 	orphans, total := ReconcilePassageManager(pm, docsRoot)
@@ -167,7 +167,7 @@ func TestReconcilePassageManager_DuplicateSources(t *testing.T) {
 	// file1 doesn't exist → orphan checked only once.
 
 	basePath := filepath.Join(tmp, "test_index")
-	pm := NewPassageManager(basePath)
+	pm := testPassageStore(basePath)
 	defer pm.Close()
 
 	pm.Add([]Item{

@@ -95,6 +95,54 @@ func (s *LeannSyncer) AddContent(ctx context.Context, nodeID, content string, at
 	return nil
 }
 
+// Content is one entity for AddContents.
+type Content struct {
+	NodeID  string
+	Content string
+	Attrs   map[string]any
+}
+
+// AddContents embeds several entities and writes them to the vector index in
+// one update (one publication instead of one per entity). An entity that is
+// already in the index is replaced, so a repeated call adds no duplicates.
+// Entities without content are skipped.
+func (s *LeannSyncer) AddContents(ctx context.Context, contents []Content) error {
+	if s.builder == nil {
+		return nil
+	}
+	var items []gleann.Item
+	var sources []string
+	for _, c := range contents {
+		if c.Content == "" {
+			continue
+		}
+		meta := map[string]any{
+			"memory_node_id": c.NodeID,
+			"source":         "memory_engine:" + c.NodeID,
+		}
+		for k, v := range c.Attrs {
+			if k != "memory_node_id" && k != "source" {
+				meta[k] = v
+			}
+		}
+		items = append(items, gleann.Item{Text: c.Content, Metadata: meta})
+		sources = append(sources, "memory_engine:"+c.NodeID)
+	}
+	if len(items) == 0 {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	err := s.builder.UpdateIndex(ctx, s.name, items, sources)
+	if errors.Is(err, gleann.ErrIndexNotFound) {
+		err = s.builder.Build(ctx, s.name, items)
+	}
+	if err != nil {
+		return fmt.Errorf("leann syncer: add %d entities: %w", len(items), err)
+	}
+	return nil
+}
+
 // DeleteContent removes all passages whose metadata source matches the
 // given nodeID from the vector index.  This uses UpdateIndex with removal
 // of the "memory_engine:<nodeID>" source key.
