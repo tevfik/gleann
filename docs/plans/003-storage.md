@@ -1,6 +1,7 @@
 # RFC 003: Storage Engine — SQLite Record Store, Persisted Lexical Index, Code Graph in SQL
 
 * **Status:** Approved by the maintainer 2026-11-16, including the two post-audit choices in 9.16 (graph through SQL and recursive CTEs only, no CSR; embedding cache kept as per-vector files in R1). Audited 2026-11-16 (section 10). Implementation follows section 8; the other open questions in section 9 are settled by the measurement or step named there.
+* **v1.20 note (2026-11-17):** superseded in part by [RFC 004](./004-v1.20-sqlite-only.md). Format 2 is the only index format as of v1.20.0; there was no bridge release: steps 8 and 9 (Kùzu behind `-tags kuzu`, then removal) collapsed into one, Kùzu and the format-1 read paths are removed in v1.20.0, `gleann index migrate` is the only reader of format 1 (kept for v1.20.x), and memory entities of old Kùzu stores are carried over with `kuzu-memory-export` + `gleann memory import-graph` (question 11). See [the decision record](../decisions/kuzu-to-sqlite.md).
 * **Related RFCs:** [001](./001-code-graph-rebuild.md) (graph schema and extraction), [002](./002-retrieval-quality.md) (retrieval stages that sit on top of the lexical leg)
 * **Evidence:** storage decision record D4 and the spike code in `gleann-rag-test/bench/sqlbench` (`main.go`, `spike/main.go`, `drivers/main.go`). Every number below comes from those measurements; where something was not measured, the text says so.
 * **Code references** are to commit 05863e4 (v1.9.0).
@@ -620,8 +621,8 @@ Each step is a separate small commit series on a feature branch (`feature/storag
 | 5 | Embedding cache stays as files; `Compute` writes per batch instead of after the whole inner call (`cache.go:128-140`). | R1 | Cache unit tests; a build killed halfway resumes with fewer embed calls. |
 | 6 | Memory on SQLite: tables, import of `memory.db` through the locked, verified `.tmp` copy (6.4), `Add` in one transaction, no mandatory daemon (WP-4.8); recall by FTS is WP-4.1 and not here. | R1 | MEM-04, MEM-06; migration kill test. |
 | 7 | `internal/graphstore`: populate the graph tables, SQL and recursive CTEs, `ApplyFileDelta`, port of the consumers in 6.2, entity tables; extractor types moved out of the tagged package (with RFC 001 owners). No CSR. | **R2** | GRAPH-01..06 on the lite build. |
-| 8 | Kùzu to `-tags kuzu`; export-to-SQLite in `migrate`; REST raw Cypher retired together with the `Graph.tsx` option; AGENTS.md section 1.3 updated. | R2 | Build-tag matrix; migration from a real Kùzu database. |
-| 9 | Remove Kùzu, `go-kuzu`, `legacy_bbolt.go`, `.v1` cleanup. | **R3** | `go mod tidy` shows no kuzu; build matrix. |
+| 8 | *(v1.20: merged into step 9, no bridge release; see RFC 004)* Kùzu to `-tags kuzu`; export-to-SQLite in `migrate`; REST raw Cypher retired together with the `Graph.tsx` option; AGENTS.md section 1.3 updated. | R2 | Build-tag matrix; migration from a real Kùzu database. |
+| 9 | *(done in v1.20.0, RFC 004 A3/B2)* Remove Kùzu, `go-kuzu`, `legacy_bbolt.go`, `.v1` cleanup. | **R3** | `go mod tidy` shows no kuzu; build matrix. |
 | 10 | Optional: `-tags sqlitecgo`, AND-first query and df cut if the scale benchmark requires them, field weights if the paired bench improves, a CSR (3.7) or a global SQLite embedding cache (3.3) only if a measurement shows a need. | As needed | Scale benchmark; paired bench. |
 
 Step 3 is the milestone that decides whether steps 4 onward continue as written.

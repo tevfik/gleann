@@ -58,7 +58,7 @@ Sleep 3500ms
 Type "# Persistent Long-Term Memory across terminal restarts"
 Sleep 400ms
 Enter
-Type "gleann memory remember 'Architecture: Core uses in-process EIF BitNet and KùzuDB' --tag architecture"
+Type "gleann memory remember 'Architecture: Core uses in-process EIF BitNet and one SQLite database per index' --tag architecture"
 Sleep 300ms
 Enter
 Sleep 1500ms

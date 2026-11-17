@@ -42,8 +42,8 @@
 │  HNSW Graph      │  HNSW via libfaiss C API                          │
 │  CSR Format      │  AVX2/SIMD, OpenMP                                │
 ├──────────────────┴───────────────────────────────────────────────────┤
-│  Passage Manager  │  BM25 Scorer  │  Chunking                        │
-│  (Bbolt KV)       │  (Okapi BM25) │  (sentence/AST/markdown)         │
+│  Passage Store    │  Lexical      │  Chunking                        │
+│  (SQLite)         │  (FTS5, BM25) │  (sentence/AST/markdown)         │
 ├───────────────────┴───────────────┴──────────────────────────────────┤
 │  Embedding Server  (goroutine pool + retry)                          │
 ├──────────────────────────────────────────────────────────────────────┤
@@ -56,8 +56,8 @@
 ├──────────────────────────────────────────────────────────────────────┤
 │  Long-term Memory Layer  (pkg/memory)                                │
 │  ├── Short-term  in-process  session notes → promoted on exit        │
-│  ├── Medium-term BBolt      conversation summaries, daily digests    │
-│  ├── Long-term   BBolt      permanent facts, preferences, knowledge  │
+│  ├── Medium-term SQLite     conversation summaries, daily digests    │
+│  ├── Long-term   SQLite     permanent facts, preferences, knowledge  │
 │  └── Maintenance Scheduler  (background goroutine, 24h cycle)        │
 ├──────────────────────────────────────────────────────────────────────┤
 │  Background Task Manager  (internal/background)                      │
@@ -117,7 +117,7 @@ the others automatically at query time:
 │     Trace dependencies, callers, blast-radius.         │
 │     Search results enriched with structural context.   │
 ├────────────────────────────────────────────────────────┤
-│  3. Long-term Memory  (pkg/memory → BBolt)             │
+│  3. Long-term Memory  (pkg/memory → SQLite)            │
 │     Persistent facts, preferences, conversation sums.  │
 │     Injected as a system message into EVERY LLM query. │
 │     Human: /remember  •  CLI: gleann memory remember   │
@@ -131,7 +131,7 @@ gleann has two distinct memory subsystems that serve different audiences:
 
 | Subsystem | Storage | Interface | Audience |
 |-----------|---------|-----------|----------|
-| **Long-term Memory** (`pkg/memory`) | BBolt | `gleann memory *` · `/remember` in chat | Human users & agents via CLI |
+| **Long-term Memory** (`pkg/memory`) | SQLite (`memory.sqlite`) | `gleann memory *` · `/remember` in chat | Human users & agents via CLI |
 | **Memory Engine** (`pkg/memory`) | SQLite (`memory.sqlite`) | MCP tools · REST `/api/memory/{name}/*` | External AI agents (programmatic API) |
 
 The Long-term Memory layer stores natural-language facts and conversation
@@ -183,20 +183,20 @@ External Agent (e.g. Cursor, Claude)
   └─ Edge: {from, to, relation_type, weight, attributes}
         │
         ▼ (when content is non-empty)
-  HNSW + BM25 vector index (via VectorSyncer)
+  gleann index `<name>_memory_vectors` (via VectorSyncer, every build)
 ```
 
 **Key design properties:**
 
 | Property | Implementation |
 |----------|---------------|
-| **Generic schema** | Single `Entity` node table + single `RELATES_TO` rel table |
-| **Idempotent writes** | Cypher `MERGE` — safe to re-inject the same payload |
+| **Generic schema** | `entities`, `relations` and `entity_archive` tables in `memory.sqlite`, one namespace per index |
+| **Idempotent writes** | `INSERT … ON CONFLICT DO UPDATE` — safe to re-inject the same payload |
 | **Atomic batches** | `BEGIN / COMMIT` transaction per `InjectEntities` call |
 | **Vector sync** | Optional `VectorSyncer` interface — graph write commits first, then vector store is updated |
-| **Cascade deletes** | `DETACH DELETE` removes a node and all its incident edges atomically |
-| **Traversal** | Variable-length Cypher path `[:RELATES_TO*0..N]` with depth cap at 10 |
-| **Co-existence** | Entity/RELATES_TO live in a separate DB (`<name>_memory`) from the AST/document graph |
+| **Cascade deletes** | Deleting an entity removes its incident relations in the same transaction |
+| **Traversal** | Recursive SQL (`WITH RECURSIVE`) over `(id, depth)`, depth cap at 10 |
+| **Co-existence** | Entities live in `memory.sqlite`, apart from the code/document graph in the index database |
 
 ### Hierarchical GraphRAG & Extractive Summarization
 
@@ -216,11 +216,13 @@ External Agent (e.g. Cursor, Claude)
 - Selective embedding storage with entry-point preservation
 - O(1) node lookup by position
 
-### bbolt Passage Storage
+### One SQLite Database per Index
 
-- Key-value store for passages and metadata
-- Efficient random access and append-only operations
-- Single file database for easy deployment
+- `<IndexDir>/<name>/<name>.db` holds the passages (stable IDs), the persisted FTS5 lexical index, the file manifest, the code graph and the document graph (format 2, the only index format since v1.20)
+- Pure-Go driver (`modernc.org/sqlite`), so every build has it, `CGO_ENABLED=0` and Windows included
+- One transaction per source file: passages, lexical rows, manifest and graph change together
+- WAL mode (one writer, many readers; `journal_mode=DELETE` on a network file system); builds and syncs of an index are serialised by the index lock `<IndexDir>/<name>.lock`
+- The vector file is published crash-safely next to it; a sync appends new passages to a small delta file and marks removed ones as dead slots until a merge or compaction (RFC 005)
 
 ## Comparison with Python LEANN
 
@@ -246,7 +248,7 @@ External Agent (e.g. Cursor, Claude)
 | Extractive Summarizer | — | ✅ (Build-time NLP algorithm) |
 | MCP Server | ✅ | ✅ (built-in) |
 | Memory Engine (AI agent memory) | — | ✅ (entities and relations in SQLite) |
-| Long-term Memory (BBolt blocks) | — | ✅ (short/medium/long tiers, auto-injection) |
+| Long-term Memory (SQLite blocks) | — | ✅ (short/medium/long tiers, auto-injection) |
 | Rate Limiting | — | ✅ (per-IP token bucket, 429) |
 | Request Timeouts | — | ✅ (per-path context deadline, 504) |
 | Retry Logic | — | ✅ (failsafe-go: exponential backoff + circuit breaker, per-call timeout) |

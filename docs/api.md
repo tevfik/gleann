@@ -62,7 +62,7 @@ When the server is running, interactive Swagger UI documentation is available at
 | GET | `/api/graph/{name}` | Graph statistics (404 when the index has no code graph) |
 | GET | `/api/graph/{name}/toc` | Document table of contents |
 | GET | `/api/graph/{name}/documents` | List indexed documents in graph |
-| POST | `/api/graph/{name}/query` | Query the code graph: `callers`, `callees`, `symbols_in_file`, `impact`, `toc`. A format-2 index answers in every build; `cypher` is gone (400 `raw Cypher was removed; use callers/callees/symbols_in_file/impact`); `toc` of a path that is not an indexed document is 404 |
+| POST | `/api/graph/{name}/query` | Query the code graph: `callers`, `callees`, `symbols_in_file`, `impact`, `toc`. Every build answers; `cypher` is gone (400 `raw Cypher was removed; use callers/callees/symbols_in_file/impact`); `toc` of a path that is not an indexed document is 404 |
 | POST | `/api/graph/{name}/index` | Trigger AST graph indexing into the index database (every build). An index in the old store format (gleann v1.9 or earlier): 409 with `index <name> uses the old store format; run: gleann index migrate <name>`. The `module` field is accepted and ignored (the Go module is read from `go.mod`) |
 
 ### Memory Engine (Generic Knowledge Graph)
@@ -107,7 +107,7 @@ carried over with `kuzu-memory-export` and `gleann memory import-graph` (see
 
 ### Memory Blocks (Long-term Memory)
 
-Hierarchical BBolt memory store with three tiers (short, medium, long). Blocks stored here are automatically injected into every LLM query as system context. Supports **scoped isolation** (e.g. per-conversation) and **character limits**.
+Hierarchical memory store (SQLite, `memory.sqlite`) with three tiers (short, medium, long). Blocks stored here are automatically injected into every LLM query as system context. Supports **scoped isolation** (e.g. per-conversation) and **character limits**.
 
 | Method | Path | Description |
 |--------|------|-------------|

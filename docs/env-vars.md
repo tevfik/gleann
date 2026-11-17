@@ -176,11 +176,11 @@ Read by `gleann benchmark` and the benchmark runner; they only add retrieval str
 
 ## CLI ↔ Server Coordination
 
-When a `gleann serve` instance is running, the bbolt memory store holds an exclusive write lock that blocks other CLI invocations (`remember`, `forget`, `list`, `search`, `clear`, `add`, `stats`). To avoid this contention, those commands first probe a local server and, if reachable, route through its REST API instead of opening the bbolt file directly.
+The memory store (`memory.sqlite`) can be opened by several processes at once, so the CLI does not need a running server. When a local `gleann serve` instance answers, the memory commands (`remember`, `forget`, `list`, `search`, `clear`, `add`, `stats`) still route through its REST API, so that a deployment can keep every write in one server process.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `GLEANN_REMOTE_ADDR` | `http://localhost:8080` | Base URL of a running `gleann serve` instance. Set to `off` (or empty) to disable REST auto-routing and always open the local bbolt store |
+| `GLEANN_REMOTE_ADDR` | `http://localhost:8081` | Base URL of a running `gleann serve` instance. Set to `off` (or empty) to disable REST auto-routing and always open the local `memory.sqlite` |
 
 When the auto-probe succeeds, affected commands print a `(via running server)` tag so it is obvious which path serviced the request.
 

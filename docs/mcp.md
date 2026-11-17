@@ -192,7 +192,7 @@ actually need. Use `gleann_get` to resolve citation references at any time.
 ### Session Tracking Tools
 
 Capture what an AI agent does during a gleann session. Sessions are stored in
-BBolt (TierShort for events, TierLong for summaries) and survive process restarts.
+the memory store (`memory.sqlite`; TierShort for events, TierLong for summaries) and survive process restarts.
 
 | Tool | Description |
 |------|-------------|
@@ -217,7 +217,7 @@ These three work in every build; the entities are kept in the memory database (`
 
 ### Long-term Memory (Blocks) Tools
 
-Persistent hierarchical memory (BBolt). Facts stored here are automatically
+Persistent hierarchical memory (SQLite, `memory.sqlite`). Facts stored here are automatically
 compiled into a `<memory_context>` system message for every LLM query. This
 gives agents persistent knowledge across sessions.
 
@@ -248,7 +248,7 @@ gives agents persistent knowledge across sessions.
 Gleann supports scoping the MCP surface to prevent token bloat in client context windows:
 
 ```bash
-# Core profile (default, 11 essential tools for fast coding agent loops; 9 without a format-2 code graph)
+# Core profile (default, 11 essential tools for fast coding agent loops)
 gleann mcp --tools core
 
 # Full profile (all tools registered)
@@ -412,7 +412,7 @@ Retrieve the complete text of an indexed document using its virtual or relative 
 ### inject_knowledge_graph
 
 Inject Entity nodes and RELATES_TO edges in a single atomic transaction.
-Re-submitting the same payload is safe (MERGE semantics — no duplicates created).
+Re-submitting the same payload is safe (upsert — no duplicates created).
 
 ```json
 {

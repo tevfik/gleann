@@ -85,7 +85,8 @@ edges; `DiskBytes` is called after `Close`.
 
 ## Last known numbers
 
-Kùzu removed from gleann after this comparison (RFC 003). 1M edges (999K
+Kùzu was removed from gleann after this comparison (RFC 004, v1.20.0; the
+decision record is `docs/decisions/kuzu-to-sqlite.md`). 1M edges (999K
 unique stored), 200K symbols, 2K files, cores 0-3, p50:
 
 | | Kùzu | SQLite (graphstore) |
@@ -103,6 +104,24 @@ unique stored), 200K symbols, 2K files, cores 0-3, p50:
 Those were measured with the earlier in-tree test; this harness reproduces the
 same operations, so expect the same ballpark (the Kùzu adapter returns only
 FQNs and sorts search results, so its figures differ slightly).
+
+After RFC 004 item E (integer-keyed graph, commit "perf(graphstore): faster
+bulk load and smaller code graph"), SQLite only, this harness, cores 0-3,
+median of 3 runs, p50:
+
+| | 100K edges | 1M edges |
+|---|---:|---:|
+| bulk load | 339 ms | 3.77 s |
+| disk | 8.0 MiB | 75.3 MiB |
+| callers d3 | 0.50 ms | 0.71 ms |
+| impact d3 | 0.50 ms | 0.73 ms |
+| search | 0.42 ms | 1.47 ms |
+| path | 0.94 ms | 2.61 ms |
+| update one file | 55 ms | 102 ms |
+
+Every answer of the new schema equals the old one at 10K, 100K and 1M edges,
+except 1 of 200 sampled shortest-path pairs at 1M, which reports a different
+path of the same length.
 
 Reproduced with this harness at 100K edges (99,978 stored), cores 0-3, p50
 (Kùzu parity 0 everywhere except path, 20 of 20 pairs: the 1000-node cap):

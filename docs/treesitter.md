@@ -1,6 +1,6 @@
 # Tree-sitter Backend (Optional)
 
-gleann includes an optional tree-sitter backend for precise AST-aware code chunking across all supported languages. Without this tag, non-Go languages use regex-based boundary detection.
+gleann includes an optional tree-sitter backend for precise AST-aware code chunking across all supported languages and for the call graph of non-Go languages. Without this tag, non-Go languages use regex-based boundary detection and contribute only their declarations to the code graph. The code graph itself (SQLite, in the index database) is part of every build; see [graph.md](graph.md).
 
 ## Default (Regex) vs Tree-sitter
 
@@ -50,3 +50,16 @@ def add(self, a, b):
 ```
 
 **Accurate boundaries** — Tree-sitter knows exactly where a function/class ends (matching braces, indentation), while regex guesses from the next boundary pattern.
+
+## Call graph
+
+In a `-tags treesitter` build, `index build --graph` and `index sync` also extract CALLS edges of Python, JavaScript/TypeScript, Rust, C/C++, Java, C#, Ruby, PHP, Swift, Scala, Kotlin and Elixir files into the code graph (Go uses `go/ast` / `go/types` in every build). A call is charged to the innermost function or method that contains it; calls at the top level of a file go to a per-file `<script:file>` symbol anchored at line 1. A callee named by its bare name binds to a member of the same package (`inferred`, or `ambiguous` with several candidates); more than 8 candidates stay external. Full builds extract files in parallel with a deterministic merge.
+
+### Call graph limits
+
+- **Lua:** declarations only. The bundled Lua grammar yields no chunks, so Lua keeps the regex chunker and no calls are extracted.
+- **Ruby:** only calls written with parentheses (`helper(x)`) are found; `helper x` is not.
+- **Elixir:** `def` and `defmodule` are macros, so they are recorded as calls as well as the real callees.
+- **Kotlin:** the chunker finds no Kotlin declarations, so every call is charged to the file's `<script:file>` symbol and the callee stays unresolved unless another file declares it.
+- **Scala:** the call query is registered, but no test checks the extracted edges yet.
+- **Svelte:** no call query (the grammar's node names do not match the JS/TS query).

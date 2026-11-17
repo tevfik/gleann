@@ -9,7 +9,7 @@ with the Kùzu binding (go-kuzu v0.11.3, CGo); the main gleann module does not d
 
 ```bash
 make kuzu-memory-export          # builds bin/kuzu-memory-export in the repository root
-kuzu-memory-export <store path | index dir> [-o dir]
+kuzu-memory-export [-o dir] <store path | index dir>   # flags before the path
 ```
 
 * A path ending in `_memory` is one store (file or directory); any other folder is

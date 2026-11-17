@@ -51,7 +51,6 @@ github.com/josharian/intern
 github.com/klauspost/compress
 github.com/kr/pretty
 github.com/kr/text
-github.com/kuzudb/go-kuzu
 github.com/kylelemons/godebug
 github.com/ledongthuc/pdf
 github.com/lithammer/shortuuid/v3

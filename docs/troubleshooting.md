@@ -174,7 +174,9 @@ gleann index repair my-docs --force
   ```bash
   gleann index build my-code --docs ./src --graph
   ```
-- The full build (with tree-sitter) is required for AST parsing:
+- Every build has the code graph. Without tree-sitter only Go files get call
+  edges; Python, TypeScript, Rust and the other languages contribute their
+  declarations only. For their calls use a build with tree-sitter:
   ```bash
   task full   # CGo build with tree-sitter support
   ```

@@ -1,6 +1,7 @@
 # RFC 001: Code Graph Rebuild — Phantom & Split Symbol Prevention
 
 * **Status:** Draft / Open for Agent & Human Review
+* **v1.20 note (2026-11-17):** the graph store described here (Kùzu) was replaced by the SQLite code graph inside the index database ([RFC 003](./003-storage.md), [RFC 004](./004-v1.20-sqlite-only.md), [decision record](../decisions/kuzu-to-sqlite.md)). The invariants (fully-qualified names, source anchors, no phantom symbols, referential integrity on sync) hold for the SQLite graph (`graphstore.ApplyFileDelta`). Format 2 is the only index format as of v1.20.0; there was no bridge release.
 * **Target Feature Branch:** `feature/graph-rebuild`
 * **Related Issue:** [Issue #12](https://github.com/tevfik/gleann/issues/12)
 * **Contributors:** @citkane, @tevfik

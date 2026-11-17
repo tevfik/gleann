@@ -18,7 +18,7 @@ All agents modifying this codebase must adhere strictly to the following fundame
    - Docker is permitted only as an optional deployment convenience for users, never as a build or runtime prerequisite.
 
 3. **Build Tags Discipline & Pure-Go Graceful Degradation:**
-   - **Pure Go (Default):** Must build with `CGO_ENABLED=0` without any tags. Uses pure-Go vector indexing (DiskANN), BM25, in-memory caches, and the SQLite code graph (`internal/graphstore`, inside the index database `<name>/<name>.db`).
+   - **Pure Go (Default):** Must build with `CGO_ENABLED=0` without any tags. Uses pure-Go vector indexing (DiskANN), the pure-Go SQLite driver (`modernc.org/sqlite`) for the index database `<name>/<name>.db` (passages, FTS5 lexical index, manifest and code graph, `internal/store` + `internal/graphstore`), and in-memory caches.
    - **`-tags "eif"`:** Activates embedded C-runtime (`ext/bitllm.c`) for CPU-native BERT and BitNet quantized model inference.
    - **`-tags "treesitter"`:** Activates the Tree-sitter AST parsers only (symbols and CALLS edges for non-Go languages). The code graph itself is SQLite in every build.
    - **`-tags "native"`:** Activates embedded Rust core acceleration (`ext/gleann-core-rs`).
@@ -57,7 +57,7 @@ When working on `internal/graph`, `internal/indexing`, or Tree-sitter AST extrac
    - Graph mutation operations must be atomic and report errors cleanly. If graph update fails, the manifest must not advance.
 
 4. **Single-Writer Concurrency:**
-   - The code graph lives in the index's SQLite database (WAL mode: one writer, many readers). Builds and syncs of an index are serialised across processes by the index lock (`<name>.lock`).
+   - The code graph lives in the index's SQLite database (WAL mode, `journal_mode=DELETE` on a network file system: one writer, many readers). Builds and syncs of an index are serialised across processes by the index lock (`<name>.lock`).
    - Server processes must release graph handles or coordinate internal sync safely. CLI commands attempting to write to a locked index must fail fast with a human-readable lock message.
 
 ---
@@ -118,7 +118,7 @@ To ensure consistent, bug-free, and aligned development between collaborating ag
    go build -tags "treesitter" ./cmd/gleann
 
    # 3. Integration & graph tests (if working on graph)
-   go test -v -tags "treesitter" ./internal/graph/...
+   go test -v -tags "treesitter" ./internal/graph/... ./internal/graphstore/... ./internal/indexing/... ./pkg/gleann/...
    ```
 
 ---

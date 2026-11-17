@@ -27,15 +27,15 @@ go install github.com/tevfik/gleann/cmd/gleann@latest
 # Or One-Liner (Linux & macOS) — installs the lite build
 curl -sSfL https://raw.githubusercontent.com/tevfik/gleann/main/scripts/install.sh | sh
 
-# With bitllm.c local embeddings, FAISS and the tree-sitter code graph
+# With bitllm.c local embeddings, FAISS and the tree-sitter parsers
 curl -sSfL https://raw.githubusercontent.com/tevfik/gleann/main/scripts/install.sh | GLEANN_VARIANT=full sh
 ```
 
 | `GLEANN_VARIANT` | Includes | Platforms |
 |---|---|---|
-| `lite` (default) | pure Go; no bitllm.c, FAISS or code graph | all |
+| `lite` (default) | pure Go, with the code graph (Go calls; declarations for other languages); no bitllm.c, FAISS or tree-sitter | all |
 | `eif` | + bitllm.c local embeddings (EIF runtime) | linux-amd64, linux-arm64, darwin-arm64 |
-| `full` | + bitllm.c, FAISS, tree-sitter parsers | linux-amd64, linux-arm64, darwin-arm64 |
+| `full` | + bitllm.c, FAISS, tree-sitter parsers (call graph of non-Go languages) | linux-amd64, linux-arm64, darwin-arm64 |
 
 Later, update gleann and its plugins from the latest GitHub release:
 
@@ -154,7 +154,7 @@ Running `gleann install` auto-detects and installs configuration for:
 gleann index build my-code --docs ./src --graph   # Index source code with call graph
 gleann index build my-docs --docs ./docs          # Index technical documentation
 gleann index list                                 # List all indexes, status, and tags
-gleann index migrate my-docs                      # Convert an index built by gleann v1.9 or earlier
+gleann index migrate my-docs                      # Convert an index built by gleann v1.9 or earlier (see docs/releases/v1.20.0.md)
 gleann index watch my-code --docs ./src --graph   # Auto-sync index on file changes
 ```
 

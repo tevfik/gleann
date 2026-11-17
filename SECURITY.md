@@ -24,13 +24,28 @@ Gleann is designed as a **local-first** tool. Key security notes:
   are stored in `~/.gleann/config.json`. Ensure restrictive file
   permissions (`chmod 600 ~/.gleann/config.json`).
 - **REST server**: The `gleann serve` command binds to `localhost:8080`
-  by default. There is **no built-in authentication** — if you expose the
-  port to a network, place it behind an authenticated reverse proxy.
+  by default. API authentication is on by default (`auth`, `GLEANN_AUTH`;
+  `off` is accepted only on a loopback bind), see
+  [docs/env-vars.md](docs/env-vars.md). If you expose the port to a network,
+  also place it behind a TLS-terminating reverse proxy.
+- **Indexing paths**: the REST server indexes or reads directories on a
+  client's request only inside `allowed_roots` (`GLEANN_ALLOWED_ROOTS`;
+  default: your home directory), resolved through symlinks; MCP file tools
+  stay inside the project and the exposed indexes' source directories.
+- **Index data**: every index is one SQLite database
+  (`<index_dir>/<name>/<name>.db`, pure-Go driver) plus its vector files.
+  Since v1.20 gleann ships no native graph-database library (Kùzu was
+  removed). The optional `kuzu-memory-export` tool, used once to carry v1.9
+  memory entities over, links the Kùzu library and opens the old stores
+  read-only.
 - **MCP server**: Runs over stdio (not network), so it is inherently
   local.
 - **Plugin system**: Plugins run as local HTTP servers. **Only install
   plugins you trust** — they receive raw document text and may execute
   arbitrary code on your machine.
+  gleann sends each plugin a per-plugin bearer token
+  (`<gleann home>/auth/plugins/<name>.token`, mode 0600) on every request
+  except `/health`.
 
 ## Threat Model
 

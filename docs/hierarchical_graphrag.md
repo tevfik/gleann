@@ -49,10 +49,9 @@ Instead of just storing chunks in a flat vector database, Gleann creates the fol
 When a user asks: *"How do I restart the cache?"*
 
 1. **Precision Vector Match:** The BM25/Vector hybrid search perfectly targets `Chunk_42`: *"Run the manual override script to clear the cache."*
-2. **Instant Graph Traversal:** Before passing this text anywhere, Gleann runs a lightning-fast Cypher query starting at `Chunk_42` and crawling *up* the tree to the root:
-   ```cypher
-   MATCH (f:Folder)-[:CONTAINS_DOC]->(d:Document)-[:HAS_HEADING]->(h1:Heading)-[:CHILD_HEADING]->(h2:Heading)-[:HAS_CHUNK]->(c:Chunk {id: 'Chunk_42'})
-   RETURN f.name, d.summary, h1.name, h2.name
+2. **Instant Graph Traversal:** Before passing this text anywhere, Gleann follows the document hierarchy from `Chunk_42` *up* to the root. Every node is a row of the `doc_nodes` table in the index database (`id`, `type` = folder/document/heading/chunk, `parent`, `name`, `level`, `rpath`, `summary`, ...), so the walk follows the `parent` column (indexed) with small SQL queries, for example:
+   ```sql
+   SELECT id, type, parent, name, level, summary FROM doc_nodes WHERE id = ?  -- repeated with the parent id
    ```
 3. **Context Stitching:** The engine instantly realizes this chunk lives at:
    `/docs/production/maintenance.md > Database Operations > Emergency Overrides`
@@ -81,7 +80,7 @@ sequenceDiagram
     
     rect rgb(85, 93, 102)
         note right of U: Graph Context Stitching
-        U->>G: Cypher: MATCH (d:Document)-[*]->(c:Chunk)
+        U->>G: Walk doc_nodes parents from the chunk to its document
         G-->>U: Return path + d.summary
         U->>U: Prepend `[Location...] [Summary...]` to Chunk
     end

@@ -42,7 +42,7 @@ For first-time setup or advanced configuration, continue with the steps below.
 ```bash
 # Option A: One-liner install (Linux/macOS) — lite build
 curl -sSL https://raw.githubusercontent.com/tevfik/gleann/main/scripts/install.sh | sh
-# ...or with bitllm.c embeddings, FAISS and the code graph (linux amd64/arm64, macOS arm64):
+# ...or with bitllm.c embeddings, FAISS and the tree-sitter parsers (linux amd64/arm64, macOS arm64):
 curl -sSL https://raw.githubusercontent.com/tevfik/gleann/main/scripts/install.sh | GLEANN_VARIANT=full sh
 
 # Option B: Build from source

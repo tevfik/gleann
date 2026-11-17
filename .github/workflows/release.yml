@@ -379,10 +379,111 @@ jobs:
           path: dist/*
           retention-days: 1
 
+  # ── kuzu-memory-export (v1.9 memory entity exporter, nested module, CGo) ──
+  # gleann itself has no Kùzu since v1.20; this one-shot tool reads the
+  # <name>_memory Kùzu stores of v1.9.x so `gleann memory import-graph` can load
+  # them (docs/memory_engine.md, "Upgrading entities from v1.9"). go-kuzu links
+  # its bundled libkuzu dynamically, so the archive carries the library next to
+  # the binary and the binary looks for it there ($ORIGIN / @loader_path).
+  # go-kuzu ships no Windows build that gleann used, hence no Windows asset.
+  release-kuzu-memory-export:
+    name: Build kuzu-memory-export (${{ matrix.suffix }})
+    needs: test
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            suffix: linux-amd64
+            lib: libkuzu.so
+            rpath: "$ORIGIN"
+          - os: ubuntu-24.04-arm
+            suffix: linux-arm64
+            lib: libkuzu.so
+            rpath: "$ORIGIN"
+          - os: macos-14
+            suffix: darwin-arm64
+            lib: libkuzu.dylib
+            rpath: "@loader_path"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+
+      - name: Determine version
+        id: version
+        shell: bash
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+            echo "version=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build kuzu-memory-export
+        shell: bash
+        env:
+          CGO_ENABLED: "1"
+          RPATH: ${{ matrix.rpath }}
+        working-directory: tools/kuzu-memory-export
+        run: |
+          mkdir -p build
+          GOTOOLCHAIN=auto go build -trimpath -ldflags "-s -w -extldflags '-Wl,-rpath,${RPATH}'" -o build/kuzu-memory-export .
+          # The library go-kuzu links against, from the module cache.
+          KUZU_DIR=$(GOTOOLCHAIN=auto go list -m -f '{{.Dir}}' github.com/kuzudb/go-kuzu)
+          case "${{ matrix.suffix }}" in
+            linux-amd64)  LIBDIR="${KUZU_DIR}/lib/dynamic/linux-amd64" ;;
+            linux-arm64)  LIBDIR="${KUZU_DIR}/lib/dynamic/linux-arm64" ;;
+            darwin-arm64) LIBDIR="${KUZU_DIR}/lib/dynamic/darwin" ;;
+          esac
+          cp "${LIBDIR}/${{ matrix.lib }}" build/
+          chmod 0644 "build/${{ matrix.lib }}"
+
+      - name: Smoke test with only the bundled library
+        # Move the binary and library away from the module cache path baked in
+        # by go-kuzu's own rpath, so the run proves the bundled copy is found.
+        shell: bash
+        run: |
+          SMOKE="${RUNNER_TEMP}/kme-smoke"
+          mkdir -p "${SMOKE}"
+          cp tools/kuzu-memory-export/build/* "${SMOKE}/"
+          KUZU_DIR=$(cd tools/kuzu-memory-export && GOTOOLCHAIN=auto go list -m -f '{{.Dir}}' github.com/kuzudb/go-kuzu)
+          chmod -R u+w "$(dirname "${KUZU_DIR}")" 2>/dev/null || true
+          mv "${KUZU_DIR}" "${KUZU_DIR}.hidden"
+          set +e
+          (cd / && "${SMOKE}/kuzu-memory-export" -h >/dev/null 2>&1)
+          status=$?
+          set -e
+          mv "${KUZU_DIR}.hidden" "${KUZU_DIR}"
+          # -h prints the usage and exits 0 once the dynamic loader has found libkuzu.
+          if [ "$status" -ne 0 ]; then
+            echo "::error::kuzu-memory-export did not start with the bundled ${{ matrix.lib }} (exit ${status})"
+            exit 1
+          fi
+
+      - name: Compress binary and library
+        shell: bash
+        run: |
+          mkdir -p dist
+          SUFFIX="kuzu-memory-export-${{ steps.version.outputs.version }}-${{ matrix.suffix }}"
+          tar czf "dist/${SUFFIX}.tar.gz" -C tools/kuzu-memory-export/build kuzu-memory-export "${{ matrix.lib }}"
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: kuzu-memory-export-${{ matrix.suffix }}
+          path: dist/*
+          retention-days: 1
+
   # ── Only publish to GitHub Releases for tags ──
   publish-release:
     name: Publish Release
-    needs: [release-pure, release-eif, release-full]
+    needs: [release-pure, release-eif, release-full, release-kuzu-memory-export]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:

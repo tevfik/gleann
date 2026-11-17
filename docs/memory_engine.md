@@ -454,12 +454,16 @@ directory; stores created before the temporal archive existed lack the
 `Entity_Archive` table. The entities cannot be rebuilt from sources, so they
 are carried over in two steps. gleann does not read Kùzu itself.
 
-1. Export, with the separate tool (own Go module with the Kùzu binding, CGo;
-   build it with `make kuzu-memory-export`, which writes `bin/kuzu-memory-export`):
+1. Export, with the separate tool (own Go module with the Kùzu binding, CGo).
+   Download `kuzu-memory-export-<version>-<os>-<arch>.tar.gz` from the
+   release assets (linux-amd64, linux-arm64, darwin-arm64; Kùzu had no Windows
+   build in gleann). The archive holds the binary and the Kùzu library
+   (`libkuzu.so` / `libkuzu.dylib`); keep them in the same folder. Or build it
+   with `make kuzu-memory-export`, which writes `bin/kuzu-memory-export`:
 
    ```bash
-   kuzu-memory-export ~/.gleann/indexes/myproj_memory -o gleann-memory-export
-   kuzu-memory-export ~/.gleann/indexes -o gleann-memory-export   # every *_memory store in the folder
+   kuzu-memory-export -o gleann-memory-export ~/.gleann/indexes/myproj_memory
+   kuzu-memory-export -o gleann-memory-export ~/.gleann/indexes   # every *_memory store in the folder
    ```
 
    The tool opens the store read-only (a store with a pending write-ahead log is

@@ -140,6 +140,29 @@ jobs:
           fail_ci_if_error: false
           verbose: true
 
+  # ── pkg/gleann with the tree-sitter parsers (RFC 004 F) ──
+  # The public API's graph paths (GraphDB, the format-2 graph goldens) with
+  # tree-sitter CALLS for non-Go languages. Own job: about 95 s without -race
+  # on 8 cores, several times that with it, which the test job's 15 minutes
+  # cannot absorb.
+  test-treesitter-pkg:
+    name: Test pkg/gleann (treesitter)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+
+      - name: Test (unit, treesitter tag — pkg/gleann)
+        run: GOTOOLCHAIN=auto CGO_ENABLED=1 go test -tags treesitter -race -timeout 25m ./pkg/gleann/...
+        shell: bash
+
   # ── RFC 003 step 0: SQLite store on windows/amd64 and linux/arm64 ──
   # The store (internal/store, modernc.org/sqlite + FTS5) was measured only
   # on linux/amd64 in the spike; running its tests on these two platforms is

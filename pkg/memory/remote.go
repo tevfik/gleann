@@ -127,7 +127,7 @@ func readPIDServerAddr() string {
 //  1. GLEANN_REMOTE_ADDR (env var)
 //  2. server_addr from ~/.gleann/config.json
 //  3. addr from ~/.gleann/server.pid
-//  4. DefaultRemoteAddr (http://localhost:8080)
+//  4. DefaultRemoteAddr (http://localhost:8081)
 //
 // If GLEANN_REMOTE_ADDR is explicitly "off", remote connection is disabled and nil is returned.
 // Re-probes periodically (every 2s).

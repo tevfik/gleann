@@ -351,7 +351,7 @@ func (s *Store) LegacyKuzuStores(indexDir string) []LegacyKuzuStore {
 
 // LegacyImportCommands returns the two commands that carry a store over.
 func LegacyImportCommands(l LegacyKuzuStore) (export, importCmd string) {
-	return fmt.Sprintf("kuzu-memory-export %q -o gleann-memory-export", l.Path),
+	return fmt.Sprintf("kuzu-memory-export -o gleann-memory-export %q", l.Path),
 		fmt.Sprintf("gleann memory import-graph %q", filepath.Join("gleann-memory-export", l.Name+".kuzu-export.json"))
 }
 

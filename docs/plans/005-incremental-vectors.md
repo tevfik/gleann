@@ -116,7 +116,7 @@ New indexes: none. Existing format-2 indexes: no `.delta` = empty; `vector_slots
 
 ## 11. Audit log
 - 2026-11-17: drafted by a read-only planning subagent against main 13cae74; every claim cites a function at that commit.
-- 2026-11-17: implemented in three commits (68dcf73, 4eba8c5, 9068959). Deviations from sections 3.1 and 3.4, all measured:
+- 2026-11-17: implemented in three commits (68dcf73, 4eba8c5, 9068959; the last landed on main as 36b01ca). Deviations from sections 3.1 and 3.4, all measured:
   - A merge renumbers slots densely for every backend (no `BuildWithIDs`), and builds the HNSW graph in a shuffled insertion order seeded by the generation. Building in slot order, with the newest topics last, lost about 3 points of recall@10 against a fresh build at 30K passages. A merge is a main-file publication, so readers reload on `vector_main_generation`; this is the same exposure as a full rebuild before this RFC.
   - Compaction defaults: dead share 5 % (also for pruned indexes) and at least 256 dead slots (`GLEANN_DEAD_MIN`); an explicit `GLEANN_DEAD_SHARE` sets the minimum to 0. With 25 % the G6 drift test failed (0.855 against 0.917); with these defaults it passes (0.941 against 0.917).
   - Faiss and pruned (recompute) indexes take the full re-embedding path, because they cannot return stored vectors.

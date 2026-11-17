@@ -2,7 +2,7 @@
 
 gleann can build a property graph of your codebase **in parallel** with the vector embedding index, stored in the index's own SQLite database and parsed with `go/ast` (Go) and tree-sitter (other languages, `-tags treesitter`).
 
-**Every index keeps the graph in the index database** (`<name>/<name>.db`, tables `symbols`, `edges`, `doc_nodes`, `doc_explains`; RFC 003 step 7) and build and serve it in every build, including the pure-Go `CGO_ENABLED=0` binary: `index build --graph`, `index sync` and `graph deps|callers|explain|path|query|toc` work there, and no other graph store is created. Without tree-sitter the graph is extracted with `go/ast`: Go files get CALLS, IMPLEMENTS and REFERENCES edges, other languages contribute their declarations only. The analysis commands (`graph viz|report|communities|export|wiki|hook|map|risk`), the MCP tools `gleann_communities`, `gleann_risk_analysis`, `gleann_repo_map`, `gleann_navigate_symbol` and the REST/A2A graph endpoints run on this SQLite graph in every build. **Kùzu was removed (v1.20, RFC 004):** an index built by gleann v1.9 or earlier is refused by every command but `gleann index migrate <name>`, which converts it and rebuilds the code graph from the index's source directory when the old index had one. An old `<name>_graph` directory is never read; `gleann index migrate <name> --cleanup` and `gleann index remove` delete it. Community detection, PageRank, risk, the repo map, export and viz are deterministic: the same graph gives the same output on every run. Raw Cypher (`POST /api/graph/{name}/query` with `cypher`, and the UI option) is removed.
+**Every index keeps the graph in the index database** (`<name>/<name>.db`, tables `symbols`, `graph_nodes`, `graph_edges`, `graph_labels`, `doc_nodes`, `doc_explains`, and a read-only `edges` view in the older text shape; RFC 003 step 7, RFC 004 E) and build and serve it in every build, including the pure-Go `CGO_ENABLED=0` binary: `index build --graph`, `index sync` and `graph deps|callers|explain|path|query|toc` work there, and no other graph store is created. Without tree-sitter the graph is extracted with `go/ast`: Go files get CALLS, IMPLEMENTS and REFERENCES edges, other languages contribute their declarations only. The analysis commands (`graph viz|report|communities|export|wiki|hook|map|risk`), the MCP tools `gleann_communities`, `gleann_risk_analysis`, `gleann_repo_map`, `gleann_navigate_symbol` and the REST/A2A graph endpoints run on this SQLite graph in every build. **Kùzu was removed (v1.20, RFC 004):** an index built by gleann v1.9 or earlier is refused by every command but `gleann index migrate <name>`, which converts it and rebuilds the code graph from the index's source directory when the old index had one. An old `<name>_graph` directory is never read; `gleann index migrate <name> --cleanup` and `gleann index remove` delete it. Community detection, PageRank, risk, the repo map, export and viz are deterministic: the same graph gives the same output on every run. Raw Cypher (`POST /api/graph/{name}/query` with `cypher`, and the UI option) is removed.
 
 ## Usage
 
@@ -116,11 +116,13 @@ Response includes:
 | Java / C# | tree-sitter `method_declaration`, `class_declaration` | `call_expression` nodes |
 | Ruby | tree-sitter `method`, `class` | `call` nodes |
 | PHP | tree-sitter `function_definition`, `class_declaration` | `function_call_expression` nodes |
-| **Kotlin** | tree-sitter `function_declaration`, `class_declaration` | `call_expression` nodes |
+| **Kotlin** | none found by the chunker | `call_expression` nodes, charged to `<script:file>` |
 | **Scala** | tree-sitter `function_definition`, `class_definition` | `call_expression` nodes |
 | **Swift** | tree-sitter `function_declaration`, `struct_declaration` | `call_expression` nodes |
-| **Lua** | tree-sitter `function_declaration`, `local_function_declaration` | `function_call` nodes |
-| **Elixir** | tree-sitter `call` | `call` nodes |
+| **Lua** | regex fallback (the bundled grammar yields no chunks) | none: declarations only |
+| **Elixir** | tree-sitter `call` | `call` nodes; `def`/`defmodule` macros are recorded as calls too |
+
+All languages other than Go need a `-tags treesitter` build for call extraction; a build without it gives their declarations only. Ruby calls are found only when written with parentheses (`foo(x)`, not `foo x`), Kotlin calls are charged to the file's `<script:file>` symbol (the chunker finds no Kotlin declarations), and Scala call extraction is not covered by a test that checks the edges. See [treesitter.md](treesitter.md#call-graph-limits).
 
 ## Community Detection (Louvain)
 
@@ -176,7 +178,21 @@ Output: `Token Reduction: 62.1x` — raw corpus tokens / RAG context tokens.
 
 ## Graph Index Performance
 
-A full build replaces the graph in one bulk load (`graphstore.ReplaceAll`); an incremental sync applies one `FileDelta` per changed file in a transaction (`ApplyFileDelta`). Calls to symbols outside the indexed codebase (cross-module, stdlib) are kept as external edges (`dst_external`), never as symbol rows. Measured numbers against the former Kùzu store are in [benchmarks.md](benchmarks.md) and the graph-database benchmark (`make bench-graphdb`).
+A full build replaces the graph in one bulk load (`graphstore.ReplaceAll`); an incremental sync applies one `FileDelta` per changed file in a transaction (`ApplyFileDelta`). Calls to symbols outside the indexed codebase (cross-module, stdlib) are kept as external edges (`dst_external`), never as symbol rows. Edge endpoints are integer node ids (a declared symbol's `symbols.id`, or a `graph_nodes` row for an external target), edge kinds and confidences are interned in `graph_labels`, and `graph_edges` is a `WITHOUT ROWID` table keyed by `(src, dst, kind)`; `graph_edges_dst` serves the caller walks. The database runs in WAL mode (one writer, many readers; `journal_mode=DELETE` on a network file system); builds and syncs of an index are serialised across processes by the index lock `<IndexDir>/<name>.lock`.
+
+Synthetic graph with 1M CALLS edges, `bench/graphdb`, cores 0-3, p50:
+
+| | SQLite |
+|---|---:|
+| bulk load | 3.77 s |
+| disk | 75.3 MiB |
+| callers, depth 3 | 0.71 ms |
+| impact, depth 3 | 0.73 ms |
+| symbol search | 1.47 ms |
+| shortest path | 2.61 ms |
+| one-file update | 102 ms |
+
+At 100K edges the bulk load takes 339 ms and the graph 8.0 MiB. A full graph build of this repository (12,224 symbols, 35,620 edges) takes 0.85 s. The comparison with the former Kùzu store is in [decisions/kuzu-to-sqlite.md](decisions/kuzu-to-sqlite.md); the harness is described in [benchmarks.md](benchmarks.md) (`make bench-graphdb`).
 
 ## Risk Scoring
 

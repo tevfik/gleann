@@ -12,7 +12,7 @@ Gleann is a self-contained AI/RAG backend implemented in Go. This test plan cove
 
 1. Core RAG functionality (semantic search, multi-index queries)
 2. Code intelligence (AST call graph, blast-radius analysis)
-3. Long-term memory engine (BBolt blocks with TTL)
+3. Long-term memory engine (SQLite blocks with TTL)
 4. MCP server (for Cursor/Claude/Gemini/etc.)
 5. REST API & A2A protocol
 6. Security & performance requirements

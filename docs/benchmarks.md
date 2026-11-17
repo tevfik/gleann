@@ -30,4 +30,6 @@ make bench-graphdb GRAPHDB_TAGS=kuzu GRAPHDB_EDGES=100000,1000000   # with Kùzu
 ```
 
 See [`bench/graphdb/README.md`](../bench/graphdb/README.md) for how to add a
-candidate and the last known numbers.
+candidate and the last known numbers, and
+[decisions/kuzu-to-sqlite.md](decisions/kuzu-to-sqlite.md) for the comparison
+that led to the removal of Kùzu.
