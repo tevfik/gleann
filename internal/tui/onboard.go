@@ -126,12 +126,16 @@ type OnboardResult struct {
 	// Auth: "" or "on" (token required), "off" (loopback binds only).
 	Auth        string   `json:"auth,omitempty"`
 	CORSOrigins []string `json:"cors_origins,omitempty"`
-	RateLimit   int      `json:"rate_limit,omitempty"` // requests/s per client IP (default 60)
-	RateBurst   int      `json:"rate_burst,omitempty"` // burst per client IP (default 120)
+	// AllowedRoots: directories the REST server may index on a client's request (default: home).
+	AllowedRoots []string `json:"allowed_roots,omitempty"`
+	RateLimit    int      `json:"rate_limit,omitempty"` // requests/s per client IP (default 60)
+	RateBurst    int      `json:"rate_burst,omitempty"` // burst per client IP (default 120)
 	// ProxyMode: "" (gleann's chat client) or "passthrough" for POST /v1/chat/completions.
 	ProxyMode string `json:"proxy_mode,omitempty"`
 	// corsText is cors_origins as the settings screens edit it (comma-separated).
 	corsText string
+	// rootsText is allowed_roots as the settings screens edit it (comma-separated).
+	rootsText string
 
 	// CLI behavior.
 	Quiet    bool `json:"quiet,omitempty"`     // Suppress status messages.

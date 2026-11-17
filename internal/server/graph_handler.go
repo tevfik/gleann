@@ -370,13 +370,18 @@ func (s *Server) handleGraphIndex(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	docsDir, ok := s.containClientPath(w, req.DocsDir)
+	if !ok {
+		return
+	}
+
 	// Close existing cached DB so indexer can get exclusive access.
 	if s.graphPool != nil {
 		s.graphPool.close(name)
 	}
 
 	start := time.Now()
-	err := runGraphIndex(name, req.DocsDir, s.cfg().IndexDir, req.Module)
+	err := runGraphIndex(name, docsDir, s.cfg().IndexDir, req.Module)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "indexing failed: "+err.Error())
 		return

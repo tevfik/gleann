@@ -20,6 +20,7 @@ import (
 	"github.com/mark3labs/mcp-go/server"
 	"github.com/tevfik/gleann/internal/embedding"
 	"github.com/tevfik/gleann/internal/indexing"
+	"github.com/tevfik/gleann/internal/pathpolicy"
 	"github.com/tevfik/gleann/pkg/gleann"
 )
 
@@ -1357,14 +1358,14 @@ func (s *Server) handleReadFullDocument(ctx context.Context, request mcp.CallToo
 		}
 	}
 
-	// Fallback to direct file read if path exists on disk
-	if data, err := os.ReadFile(vpath); err == nil && len(data) > 0 {
-		return mcp.NewToolResultText(string(data)), nil
-	}
-	if searcher != nil && searcher.Meta().SourceDir != "" {
-		cand := filepath.Join(searcher.Meta().SourceDir, vpath)
-		if data, err := os.ReadFile(cand); err == nil && len(data) > 0 {
-			return mcp.NewToolResultText(string(data)), nil
+	// Fallback to reading the file from disk, but only from inside the
+	// index's source directory: vpath is client input and must not reach other
+	// files. A refused path gets the same answer as a missing one.
+	if meta, mErr := gleann.GetIndexMeta(s.config.IndexDir, indexName); mErr == nil {
+		if full, ok := containedSourcePath(meta.SourceDir, vpath); ok {
+			if data, err := os.ReadFile(full); err == nil && len(data) > 0 {
+				return mcp.NewToolResultText(string(data)), nil
+			}
 		}
 	}
 
@@ -1852,6 +1853,12 @@ func (s *Server) handleSync(ctx context.Context, request mcp.CallToolRequest) (*
 	isNew := (metaErr != nil)
 
 	docsDir := request.GetString("docs_dir", "")
+	// A docs_dir the client names is held to the allowed roots (allowed_roots,
+	// GLEANN_ALLOWED_ROOTS, else the home directory), the index's own source
+	// directory and the working directory.
+	if docsDir != "" && !s.docsDirAllowed(docsDir, meta) {
+		return mcp.NewToolResultError(fmt.Sprintf("docs_dir %q is not inside the allowed roots; add its parent to allowed_roots in config.json (or GLEANN_ALLOWED_ROOTS)", docsDir)), nil
+	}
 	if docsDir == "" && meta != nil {
 		docsDir = meta.SourceDir
 	}
@@ -1904,6 +1911,17 @@ func (s *Server) handleSync(ctx context.Context, request mcp.CallToolRequest) (*
 	runner := s.syncRunner
 	if runner == nil {
 		runner = s.defaultSyncRunner
+	}
+
+	// Explicit files are indexed as given, so they must stay inside docsDir.
+	for _, f := range files {
+		cand := f
+		if !filepath.IsAbs(cand) {
+			cand = filepath.Join(docsDir, cand)
+		}
+		if _, err := pathpolicy.Contain(cand, []string{docsDir}); err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("file %q is not inside the index's source directory", f)), nil
+		}
 	}
 
 	opts := SyncOptions{
@@ -2333,4 +2351,43 @@ func (s *Server) focusResults(ctx context.Context, indexName, query string, resu
 		}
 	}
 	return out
+}
+
+// containedSourcePath resolves p (absolute, or relative to sourceDir) and
+// reports whether it lies inside sourceDir once symlinks are followed. An
+// index without a recorded source directory contains no readable files.
+func containedSourcePath(sourceDir, p string) (string, bool) {
+	if sourceDir == "" || p == "" {
+		return "", false
+	}
+	cand := p
+	if !filepath.IsAbs(cand) {
+		cand = filepath.Join(sourceDir, cand)
+	}
+	full, err := pathpolicy.Contain(cand, []string{sourceDir})
+	if err != nil {
+		return "", false
+	}
+	return full, true
+}
+
+// docsDirAllowed reports whether a client-supplied docs_dir may be built or
+// synced: it must lie inside the allowed roots, the index's recorded source
+// directory or the working directory.
+func (s *Server) docsDirAllowed(docsDir string, meta *gleann.IndexMeta) bool {
+	var configured []string
+	if env := strings.TrimSpace(os.Getenv("GLEANN_ALLOWED_ROOTS")); env != "" {
+		configured = filepath.SplitList(env)
+	} else if s.buildConfig != nil {
+		configured = s.buildConfig.AllowedRoots
+	}
+	roots := pathpolicy.DefaultRoots(configured)
+	if meta != nil && meta.SourceDir != "" {
+		roots = append(roots, meta.SourceDir)
+	}
+	if cwd, err := os.Getwd(); err == nil && cwd != "" && filepath.Dir(cwd) != cwd {
+		roots = append(roots, cwd)
+	}
+	_, err := pathpolicy.Contain(docsDir, roots)
+	return err == nil
 }

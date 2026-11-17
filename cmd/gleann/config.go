@@ -299,6 +299,10 @@ func applySavedConfig(config *gleann.Config, args []string) {
 	if getFlag(args, "--llm-model") == "" && savedCfg.LLMModel != "" {
 		config.LLMModel = savedCfg.LLMModel
 	}
+	// Result count from saved config (an explicit --top-k wins).
+	if getFlag(args, "--top-k") == "" && savedCfg.TopK > 0 {
+		config.SearchConfig.TopK = savedCfg.TopK
+	}
 	// Vector storage mode from saved config (an explicit --prune/--storage wins).
 	if getFlag(args, "--storage") == "" && getFlag(args, "--prune") == "" && savedCfg.StorageMode != "" {
 		config.StorageMode = savedCfg.StorageMode
@@ -330,6 +334,9 @@ func applySavedConfig(config *gleann.Config, args []string) {
 	}
 	if len(savedCfg.CORSOrigins) > 0 {
 		config.CORSOrigins = savedCfg.CORSOrigins
+	}
+	if len(savedCfg.AllowedRoots) > 0 {
+		config.AllowedRoots = savedCfg.AllowedRoots
 	}
 	if savedCfg.RateLimit > 0 {
 		config.RateLimit = savedCfg.RateLimit

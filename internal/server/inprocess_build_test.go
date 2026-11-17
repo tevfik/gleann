@@ -101,6 +101,7 @@ func TestUploadEmptyFileFails(t *testing.T) {
 func TestIndexPathBuildsInProcess(t *testing.T) {
 	s, h, cfg := newBuildServer(t)
 	docs := t.TempDir()
+	t.Setenv("GLEANN_ALLOWED_ROOTS", docs)
 	if err := os.WriteFile(filepath.Join(docs, "main.go"), []byte("package main\n\nfunc main() {}\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}

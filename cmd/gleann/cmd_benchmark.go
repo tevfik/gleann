@@ -528,6 +528,7 @@ func benchFormatBytes(b int64) string {
 }
 
 func runAgentBenchmark(asJSON bool, outputFile string) {
+	fmt.Fprintln(os.Stderr, benchmark.SimulationNotice)
 	ctx := context.Background()
 	summary, err := benchmark.RunAgentEvaluation(ctx, nil)
 	if err != nil {
@@ -569,7 +570,7 @@ Usage:
   gleann benchmark --index <name> --docs <dir> [--top-k <n>]
 
 Options:
-  --agent             Run agent-level 4-task evaluation suite (T25)
+  --agent             Run the simulated agent-level 4-task scenario (assumed numbers, not a measurement)
   --suite <name>      Evaluation suite: agent, contextbench
   --index <name>      Index name (required for retrieval benchmarks)
   --tasks <file>      SWE-Bench/ContextBench task file (optional, auto-generates if omitted)

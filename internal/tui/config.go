@@ -1,7 +1,9 @@
 package tui
 
 import (
+	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -308,20 +310,92 @@ func UpdateConfig(mutate func(cfg *OnboardResult)) error {
 	return SaveConfig(*cfg)
 }
 
-// LoadSavedConfig reads the saved config. Returns nil if not found.
-// Paths in the config are expanded for the current platform.
-func LoadSavedConfig() *OnboardResult {
-	data, err := os.ReadFile(configPath())
+// ConfigError reports a config.json that exists but is not valid JSON. Line
+// and Column (1-based) locate the first offending byte; they are 0 when the
+// error carries no offset.
+type ConfigError struct {
+	Path   string
+	Line   int
+	Column int
+	Err    error
+}
+
+func (e *ConfigError) Error() string {
+	if e.Line > 0 {
+		return fmt.Sprintf("%s is not valid JSON at line %d, column %d: %v; fix it with 'gleann config edit' — the file was left untouched",
+			e.Path, e.Line, e.Column, e.Err)
+	}
+	return fmt.Sprintf("%s is not valid JSON: %v; fix it with 'gleann config edit' — the file was left untouched", e.Path, e.Err)
+}
+
+func (e *ConfigError) Unwrap() error { return e.Err }
+
+// newConfigError builds a ConfigError, turning the byte offset of a JSON
+// syntax or type error into a line and column.
+func newConfigError(path string, data []byte, err error) *ConfigError {
+	ce := &ConfigError{Path: path, Err: err}
+	var offset int64 = -1
+	var syn *json.SyntaxError
+	var typ *json.UnmarshalTypeError
+	switch {
+	case errors.As(err, &syn):
+		offset = syn.Offset
+	case errors.As(err, &typ):
+		offset = typ.Offset
+	}
+	if offset < 0 {
+		return ce
+	}
+	// Offset counts the bytes read, so the offending byte is at offset-1.
+	pos := int(offset) - 1
+	if pos < 0 {
+		pos = 0
+	}
+	if pos > len(data) {
+		pos = len(data)
+	}
+	ce.Line = 1 + bytes.Count(data[:pos], []byte{'\n'})
+	ce.Column = pos - bytes.LastIndexByte(data[:pos], '\n')
+	return ce
+}
+
+// ConfigFilePath returns the path of the saved config file.
+func ConfigFilePath() string { return configPath() }
+
+// LoadSavedConfigChecked reads the saved config like LoadSavedConfig but
+// reports a config.json that cannot be parsed (a *ConfigError) instead of
+// hiding it. A missing or empty file is not an error: it returns (nil, nil).
+func LoadSavedConfigChecked() (*OnboardResult, error) {
+	path := configPath()
+	data, err := os.ReadFile(path)
 	if err != nil {
-		return nil
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("reading %s: %w", path, err)
+	}
+	if len(bytes.TrimSpace(data)) == 0 {
+		return nil, nil
 	}
 	var r OnboardResult
 	if err := json.Unmarshal(data, &r); err != nil {
-		return nil
+		return nil, newConfigError(path, data, err)
 	}
 	// Expand paths for cross-platform compatibility.
 	if r.IndexDir != "" {
 		r.IndexDir = ExpandPath(r.IndexDir)
 	}
-	return &r
+	return &r, nil
+}
+
+// LoadSavedConfig reads the saved config. Returns nil if not found or if the
+// file cannot be parsed; commands call LoadSavedConfigChecked up front (see
+// cmd/gleann) so a malformed file is reported rather than ignored.
+// Paths in the config are expanded for the current platform.
+func LoadSavedConfig() *OnboardResult {
+	r, err := LoadSavedConfigChecked()
+	if err != nil {
+		return nil
+	}
+	return r
 }

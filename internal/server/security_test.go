@@ -347,6 +347,7 @@ func TestUpdateConfig_SaveErrorReturns500(t *testing.T) {
 }
 
 func TestProxyModels_SentinelSubstitution(t *testing.T) {
+	t.Setenv("GLEANN_MODEL_DOWNLOAD_ALLOW_PRIVATE", "1") // the "other" host is a loopback test server
 	var gotAuth atomic.Value
 	gotAuth.Store("")
 	configured := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

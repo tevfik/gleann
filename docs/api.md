@@ -36,10 +36,12 @@ When the server is running, interactive Swagger UI documentation is available at
 |--------|------|-------------|
 | GET | `/api/indexes` | List all indexes |
 | GET | `/api/indexes/{name}` | Get index metadata |
+| GET | `/api/storage` | Disk space of the index directory: `index_dir`, `indexes`, `passages`, `bytes` (every file under it) and the file system's `disk_total_bytes` / `disk_free_bytes` (0 where the platform does not report it) |
+| POST | `/api/indexes/{name}/storage` | Convert the index between `store` and `recompute` vector storage (body `{"mode":"store"\|"recompute"}`); `202 {"task_id"}` while it re-indexes in the background (see Background Tasks), `200 {"unchanged":true}` when it already uses that mode, `409` when the index cannot be switched, `501` when the server was started without the converter |
 | PATCH | `/api/indexes/{name}` | Update index governance (`tags`, `description`, `mcp_exposed`) |
 | POST | `/api/indexes/{name}/build` | Build index from texts/items |
 | POST | `/api/indexes/{name}/update` | Remove the passages of some sources and/or add items |
-| POST | `/api/indexes/{name}/index-path` | Update source path for index |
+| POST | `/api/indexes/{name}/index-path` | Index a directory on the server (must be inside `allowed_roots`, default: home) |
 | POST | `/api/indexes/{name}/watch` | Watch and auto-rebuild index on changes |
 | POST | `/api/indexes/{name}/upload` | Upload documents to index |
 | DELETE | `/api/indexes/{name}` | Delete an index |
@@ -124,6 +126,7 @@ Use gleann indexes as if they were OpenAI models. Compatible with any tool that 
 |--------|------|-------------|
 | GET | `/v1/models` | List indexes as OpenAI-compatible model objects |
 | POST | `/v1/chat/completions` | Chat completions with automatic RAG injection |
+| POST | `/stop` | Forwarded to the LLM server in pass-through mode (below); `404` otherwise |
 
 **Model naming**: `"gleann/<index-name>"` for RAG-augmented answers, `"gleann/"` for pure LLM pass-through.
 
@@ -299,8 +302,21 @@ new version into the packs directory and call `POST /api/packs/reload`.
 | POST | `/api/config` | Update server configuration |
 | GET | `/api/logs` | Retrieve recent server logs |
 | GET | `/api/proxy/models` | List available models from configured provider |
-| GET | `/api/plugins` | List registered plugins |
+| GET | `/api/settings` | gleann's settings form: the fields the TUI settings screen edits, with their values and a `revision` (only when the server was started by the CLI) |
+| PUT | `/api/settings` | Save settings: `{"values":{...},"revision":"..."}`; `422` with per-key errors saves nothing, `409` when the config changed since the GET |
+| GET | `/api/docs` | Swagger UI |
+| GET | `/api/openapi.json` | OpenAPI 3.0 specification |
+| GET | `/api/plugins` | Plugin catalog with each plugin's status (`not_installed` or `installed`) |
+| POST | `/api/plugins/{name}/install` | Install a catalog plugin in the background; `202 {"task_id"}` |
+| DELETE | `/api/plugins/{name}` | Uninstall a plugin |
+| GET | `/api/plugins/{name}/settings` | The installed plugin's own settings form (proxied; the plugin is started if needed; `501` when it has none) |
+| PUT | `/api/plugins/{name}/settings` | Save the plugin's settings (proxied, `{"values":{...}}`) |
+| GET | `/api/plugins/{name}/models` | The plugin's model catalog and download state (proxied; `501` when it has none) |
+| POST | `/api/plugins/{name}/models` | Start a plugin model download (proxied, `{"id":"..."}`) |
 | POST | `/api/models/download` | Download a model |
+| GET | `/api/models/local` | List the `.gguf` files in `~/.gleann/models/` (`{"models":[...]}`) |
+| GET | `/api/models/catalog` | The local GGUF model catalog with each model's state (`available`, `installed`, `downloading`, `failed`, `blocked`) |
+| POST | `/api/models/catalog` | Download a catalog model: `{"id":"..."}`; `202`, `404` unknown id, `409` already downloading or blocked |
 
 ## Examples
 
@@ -795,11 +811,28 @@ Common HTTP status codes:
 |------|---------|
 | 200 | Success |
 | 400 | Bad request (missing required fields) |
+| 403 | Scope too low, or a client-supplied path (`index-path`, `update` `docs_root`, `watch` `dir`, graph `docs_dir`) is outside `allowed_roots` (see below) |
 | 404 | Index or graph not found |
 | 429 | Rate limit exceeded (per-IP token bucket; see `GLEANN_RATE_LIMIT`) — includes `Retry-After: 1` header |
 | 500 | Internal server error |
 | 503 | Feature unavailable (e.g., graph without treesitter build tag) |
 | 504 | Gateway timeout — request exceeded its deadline (see `GLEANN_TIMEOUT_*_S` env vars) |
+
+## Allowed Paths
+
+Routes that make the server read or index a directory named by the client (`index-path`, `update` with
+`docs_root`, `watch` with `dir`, `POST /api/graph/{name}/index` with `docs_dir`) accept only paths inside the
+directories listed in `allowed_roots` (config) or `GLEANN_ALLOWED_ROOTS` (path-list separated); with neither set,
+that is the server user's home directory. Paths are cleaned and symlinks resolved first, so `..` and symlinks
+cannot leave a root. Anything else gets `403`:
+
+```json
+{ "error": "path \"/etc\" is not inside the directories this server may read; add its parent to allowed_roots in config.json (or GLEANN_ALLOWED_ROOTS)" }
+```
+
+`gleann index build` on the command line is not restricted. The MCP tools `gleann_read` and
+`gleann_read_full_document` read only inside the index's source directory, and `gleann_sync` holds an explicit
+`docs_dir` to the same roots (plus the index's source directory and the working directory).
 
 ## Rate Limiting
 

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -160,5 +161,55 @@ func TestSyncReportsEmbeddingProgress(t *testing.T) {
 	last := events[len(events)-1]
 	if last.Phase != "vector_index" || last.TotalItems == 0 || last.ItemsDone != last.TotalItems {
 		t.Errorf("final progress = %+v, want vector_index complete", last)
+	}
+}
+
+// C-09: an `index watch` update goes through Sync, so it refuses a model
+// chosen on purpose that differs from the index's, and keeps the recorded one
+// when the model is only the inherited default.
+func TestSyncChangedChecksTheModel(t *testing.T) {
+	env := newEnv(t)
+	docs := buildFor(t, env, "m")
+	built, _ := gleann.GetIndexMeta(env.cfg.IndexDir, "m")
+	changed := filepath.Join(docs, "main.go")
+	writeFile(t, changed, "package main\n\nfunc Mul(a, b int) int { return a * b }\n")
+
+	opts := env.options(nil)
+	opts.Config.EmbeddingModel = "another-model"
+	opts.ModelExplicit = true
+	_, err := SyncChanged(context.Background(), SyncOptions{Options: opts, Name: "m", DocsDir: docs}, []string{changed})
+	var mm *ModelMismatchError
+	if !errors.As(err, &mm) {
+		t.Fatalf("err = %v, want *ModelMismatchError", err)
+	}
+	assertUntouched(t, env, "m", *built)
+
+	opts.ModelExplicit = false
+	res, err := SyncChanged(context.Background(), SyncOptions{Options: opts, Name: "m", DocsDir: docs}, []string{changed})
+	if err != nil || res.UpToDate {
+		t.Fatalf("SyncChanged with the inherited default: %v %+v", err, res)
+	}
+	after, _ := gleann.GetIndexMeta(env.cfg.IndexDir, "m")
+	if after.EmbeddingModel != built.EmbeddingModel {
+		t.Errorf("model changed %q -> %q", built.EmbeddingModel, after.EmbeddingModel)
+	}
+}
+
+// A deleted file reaches the index as a deletion, and relative paths work.
+func TestSyncChangedDeletion(t *testing.T) {
+	env := newEnv(t)
+	docs := buildFor(t, env, "m")
+	before, _ := gleann.GetIndexMeta(env.cfg.IndexDir, "m")
+	gone := filepath.Join(docs, "main.go")
+	if err := os.Remove(gone); err != nil {
+		t.Fatal(err)
+	}
+	res, err := SyncChanged(context.Background(), SyncOptions{Options: env.options(nil), Name: "m", DocsDir: docs}, []string{gone})
+	if err != nil || len(res.Deleted) != 1 {
+		t.Fatalf("SyncChanged: %v %+v", err, res)
+	}
+	after, _ := gleann.GetIndexMeta(env.cfg.IndexDir, "m")
+	if after.NumPassages >= before.NumPassages {
+		t.Errorf("passages %d -> %d, want fewer", before.NumPassages, after.NumPassages)
 	}
 }

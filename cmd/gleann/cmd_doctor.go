@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/tevfik/gleann/internal/indexing"
 	"github.com/tevfik/gleann/internal/tui"
 	"github.com/tevfik/gleann/pkg/gleann"
 )
@@ -31,8 +32,10 @@ func cmdDoctor() {
 
 	// ── 1. Configuration ────────────────────────────────────────────────
 	fmt.Println("Configuration")
-	cfg := tui.LoadSavedConfig()
-	if cfg == nil || !cfg.Completed {
+	cfg, cfgErr := tui.LoadSavedConfigChecked()
+	if cfgErr != nil {
+		fail(fmt.Sprintf("Config is malformed: %v", cfgErr))
+	} else if cfg == nil || !cfg.Completed {
 		fail("No config found — run 'gleann setup' or 'gleann setup --bootstrap'")
 	} else {
 		configPath := configFilePath()
@@ -109,6 +112,7 @@ func cmdDoctor() {
 		}
 		checkIndexHealth(indexDir, indexes, warn)
 	}
+	warnPendingSyncBackups(indexDir, warn)
 
 	// ── 4. Disk space ───────────────────────────────────────────────────
 	fmt.Println()
@@ -427,4 +431,14 @@ func indexDiskSize(indexDir, name string) int64 {
 		return nil
 	})
 	return total
+}
+
+// warnPendingSyncBackups reports indexes with a rollback copy (<dir>.sync-bak)
+// on disk: a sync is rewriting them right now, or one was killed mid-rebuild
+// and the index directory may be partial or missing. `gleann index sync <name>`
+// settles it (restores the copy or discards a stale one).
+func warnPendingSyncBackups(indexDir string, warn func(string)) {
+	for _, name := range indexing.PendingSyncBackups(indexDir) {
+		warn(fmt.Sprintf("Index %q: a sync left a rollback copy (%s); if no sync is running it was interrupted. Run: gleann index sync %s", name, indexing.SyncBackupPath(indexDir, name), name))
+	}
 }

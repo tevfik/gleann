@@ -227,13 +227,48 @@ func cmdGraphReport(args []string, config gleann.Config) {
 		output = "GRAPH_REPORT.md"
 	}
 
+	// The default report lives in the working directory, where agent hooks look
+	// for it. Do not silently replace the report of another index.
+	if other := existingReportIndex(output); other != "" && other != indexName && !hasFlag(args, "--force") {
+		fmt.Fprintf(os.Stderr, "error: %s already holds the graph report of index %q; refusing to overwrite it with index %q.\n"+
+			"       Use --output <file.md> to write elsewhere or --force to overwrite.\n", absPath(output), other, indexName)
+		os.Exit(1)
+	}
+
 	fmt.Println("📊 Running community detection for report...")
 	if err := generateGraphReportFile(indexName, config.IndexDir, getFlag(args, "--docs"), output); err != nil {
 		fmt.Fprintf(os.Stderr, "error generating graph report: %v\n", err)
 		os.Exit(1)
 	}
 
-	fmt.Printf("✅ Graph report saved to %s\n", output)
+	fmt.Printf("✅ Graph report saved to %s\n", absPath(output))
+}
+
+// absPath returns the absolute form of p, or p itself if that fails.
+func absPath(p string) string {
+	if abs, err := filepath.Abs(p); err == nil {
+		return abs
+	}
+	return p
+}
+
+// existingReportIndex returns the index name recorded in the heading
+// ("# Graph Report: <index>") of the report at path, or "" when there is no
+// such report.
+func existingReportIndex(path string) string {
+	f, err := os.Open(path)
+	if err != nil {
+		return ""
+	}
+	defer f.Close()
+	buf := make([]byte, 512)
+	n, _ := f.Read(buf)
+	first, _, _ := strings.Cut(string(buf[:n]), "\n")
+	const prefix = "# Graph Report: "
+	if !strings.HasPrefix(first, prefix) {
+		return ""
+	}
+	return strings.TrimSpace(strings.TrimPrefix(first, prefix))
 }
 
 // cmdGraphCommunities prints community detection results to stdout.
@@ -1192,8 +1227,10 @@ Usage:
   gleann graph viz         --index <name> [--output <file.html>]
       Generate interactive HTML graph visualization (vis.js)
 
-  gleann graph report      --index <name> [--output <file.md>]
-      Generate Markdown graph report with communities, god nodes
+  gleann graph report      --index <name> [--output <file.md>] [--force]
+      Generate Markdown graph report with communities, god nodes.
+      Default output is ./GRAPH_REPORT.md; the report of another index
+      is not overwritten unless --force is given.
 
   gleann graph communities --index <name>
       Print community detection results to stdout

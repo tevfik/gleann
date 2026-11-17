@@ -3,7 +3,9 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 
 	"github.com/mark3labs/mcp-go/mcp"
@@ -83,7 +85,7 @@ func (s *Server) buildReadTool() mcp.Tool {
 			Properties: map[string]interface{}{
 				"path": map[string]interface{}{
 					"type":        "string",
-					"description": "Absolute or relative path to the file to read.",
+					"description": "Path to a file inside the current project or an indexed source directory (absolute, or relative to either).",
 				},
 				"mode": map[string]interface{}{
 					"type":        "string",
@@ -141,18 +143,18 @@ func (s *Server) handleRead(ctx context.Context, request mcp.CallToolRequest) (*
 		MaxLines:   maxLines,
 	}
 
-	content, err := gleann.ReadFileWithMode(path, opts)
-	if err != nil && !filepath.IsAbs(path) {
-		idxName := s.resolveIndexName()
-		if idxName != "" {
-			if meta, mErr := gleann.GetIndexMeta(s.config.IndexDir, idxName); mErr == nil && meta.SourceDir != "" {
-				cand := filepath.Join(meta.SourceDir, path)
-				if c, cErr := gleann.ReadFileWithMode(cand, opts); cErr == nil {
-					content = c
-					err = nil
-					path = cand
-				}
-			}
+	// The path is client input: only files inside an indexed source directory
+	// are readable, and a refused path looks the same as a missing one.
+	var content string
+	err := errors.New("file not found in any indexed source directory")
+	for _, root := range s.readRoots() {
+		full, ok := containedSourcePath(root, path)
+		if !ok {
+			continue
+		}
+		if c, rErr := gleann.ReadFileWithMode(full, opts); rErr == nil {
+			content, err, path = c, nil, full
+			break
 		}
 	}
 	if err != nil {
@@ -200,4 +202,40 @@ func (s *Server) handleGain(ctx context.Context, request mcp.CallToolRequest) (*
 
 	data, _ := json.MarshalIndent(sessionGain, "", "  ")
 	return mcp.NewToolResultText(string(data)), nil
+}
+
+// readRoots lists the directories gleann_read may read from: the working
+// directory of the MCP process (the project the agent runs in) first, so
+// relative paths resolve as before, then the resolved index's source
+// directory, then every MCP-exposed index. The working directory is skipped
+// when it is a file-system root or the home directory itself, where it would
+// expose everything below it.
+func (s *Server) readRoots() []string {
+	var roots []string
+	seen := map[string]bool{}
+	add := func(dir string) {
+		if dir != "" && !seen[dir] {
+			seen[dir] = true
+			roots = append(roots, dir)
+		}
+	}
+	if cwd, err := os.Getwd(); err == nil && filepath.Dir(cwd) != cwd {
+		home, _ := os.UserHomeDir()
+		if home == "" || filepath.Clean(cwd) != filepath.Clean(home) {
+			add(cwd)
+		}
+	}
+	if idxName := s.resolveIndexName(); idxName != "" {
+		if meta, err := gleann.GetIndexMeta(s.config.IndexDir, idxName); err == nil {
+			add(meta.SourceDir)
+		}
+	}
+	if indexes, err := gleann.ListIndexes(s.config.IndexDir); err == nil {
+		for _, idx := range indexes {
+			if idx.IsMCPExposed() {
+				add(idx.SourceDir)
+			}
+		}
+	}
+	return roots
 }

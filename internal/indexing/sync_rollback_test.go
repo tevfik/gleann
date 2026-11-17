@@ -18,7 +18,7 @@ func TestWithIndexRollback(t *testing.T) {
 	_ = os.WriteFile(filepath.Join(dir, "demo.meta.json"), []byte(`{"name":"demo","source_dir":"/src","tags":["t"],"vector_ready":true}`), 0o644)
 
 	// Failure: old index restored byte for byte.
-	err := withIndexRollback(idx, "demo", func() error {
+	err := withIndexRollback(idx, "demo", newPrinter(nil, nil), func() error {
 		_ = os.MkdirAll(dir, 0o755)
 		_ = os.WriteFile(filepath.Join(dir, "demo.meta.json"), []byte(`{"name":"demo","lexical_only":true}`), 0o644)
 		return errors.New("embedder down")
@@ -38,7 +38,7 @@ func TestWithIndexRollback(t *testing.T) {
 	}
 
 	// Success: user-owned metadata carried over to the new index.
-	err = withIndexRollback(idx, "demo", func() error {
+	err = withIndexRollback(idx, "demo", newPrinter(nil, nil), func() error {
 		_ = os.MkdirAll(dir, 0o755)
 		return os.WriteFile(filepath.Join(dir, "demo.meta.json"), []byte(`{"name":"demo","vector_ready":true}`), 0o644)
 	})

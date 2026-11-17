@@ -42,6 +42,36 @@ The TUI plugin manager downloads the correct binary for your platform and regist
 
 ## Plugin API
 
+### Authentication
+
+Every request gleann makes to a plugin (except `GET /health`) carries
+`Authorization: Bearer <token>`.
+
+- **Plugins gleann launches** (a `command` is registered): gleann creates a random 256-bit
+  token once per plugin, stores it in `<gleann home>/auth/plugins/<name>.token` (directory
+  `0700`, file `0600`; the home is `~/.gleann` or `$GLEANN_CONFIG_DIR`), passes it to the
+  process in the environment variable `GLEANN_PLUGIN_TOKEN` and sends it on every request.
+  The file is shared by all gleann processes (`serve`, `mcp`, CLI), so a plugin started by
+  one of them stays reachable from the others. It is reused on later launches; delete it to
+  rotate (restart the plugin afterwards). If the plugin entry has a `token` field, that
+  value wins over the file.
+- **Plugins registered by URL** (started by you, or by a service manager): put the token
+  the plugin was started with into `plugins.json`:
+
+  ```json
+  {"plugins": [{"name": "gleann-plugin-sound", "url": "http://127.0.0.1:8766",
+                "capabilities": ["audio-transcription"], "token": "<secret>"}]}
+  ```
+
+  `plugins.json` should be readable only by you (`chmod 600`). If gleann has never launched the plugin and there is no
+  `token` field, no `Authorization` header is sent.
+
+A plugin that finds `GLEANN_PLUGIN_TOKEN` set must answer `401` to a request without the
+right token (constant-time comparison), `403` to a request whose `Host` header is not a
+loopback name when it is bound to loopback, and keep `/health` open. A plugin without a
+token configured keeps accepting unauthenticated requests (and should log a warning), so
+older gleann versions keep working with new plugins and the reverse.
+
 Plugins must implement this HTTP API:
 
 ### `GET /health`

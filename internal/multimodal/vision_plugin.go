@@ -83,6 +83,9 @@ func CallVisionPlugin(pluginURL, path string) (*VisionResult, error) {
 		return nil, err
 	}
 	req.Header.Set("Content-Type", writer.FormDataContentType())
+	if tok := os.Getenv("GLEANN_VISION_PLUGIN_TOKEN"); tok != "" {
+		req.Header.Set("Authorization", "Bearer "+tok)
+	}
 
 	client := &http.Client{Timeout: 2 * time.Minute}
 	resp, err := client.Do(req)

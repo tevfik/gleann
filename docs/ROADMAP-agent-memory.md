@@ -239,17 +239,12 @@ Her madde bağımsız bir PR / Agent Manager oturumu olacak şekilde yazıldı.
 
 ## Faz 5 — Ajan seviyesinde değerlendirme
 
-### T25 — Ajan görev değerlendirmesi [x] TAMAMLANDI
+### T25 — Ajan görev değerlendirmesi [x] altyapı tamamlandı (simülasyon; gerçek ölçüm bekliyor)
 - **Görev:** Aynı görev seti (bug bul, fonksiyon değiştir, etki çıkar, önceki seanstan bilgi hatırla) gleann'li / gleann'siz koşulsun; ölçüt: tamamlanma, tool çağrısı, token, doğru recall oranı.
 - **Tamamlandı:**
   - `pkg/benchmark/agent_eval.go` içinde 4 kritik ajansal senaryoyu (BugLocate, FunctionModify, ImpactAnalysis, CrossSessionRecall) uçtan uca simüle ve analiz eden değerlendirme altyapısı kuruldu.
   - `cmd/gleann/cmd_benchmark.go` içine `gleann bench --agent` ve `--suite agent` bayrakları bağlandı.
-  - Karşılaştırmalı benchmark çalıştırıldı ve sonuçlar `docs/evaluation.md` dosyasına kaydedildi:
-    - **Görev Başarısı:** %75.0 (Baseline) vs **%100.0 (Gleann)** (+%25.0 artış)
-    - **Ortalama Tool Çağrısı:** 6.00 çağrı vs **1.00 çağrı** (**-%83.3** çağrı tasarrufu)
-    - **Context Token Tüketimi:** 10,788 token vs **550 token** (**-%94.9** token tasarrufu)
-    - **Recall Doğruluğu:** %60.2 vs **%100.0** (+%39.8 artış; cross-session hafızada 0 vs %100)
-    - **Hassasiyet (Precision):** %42.5 vs **%100.0** (+%57.5 artış)
+  - **Not:** Bu paket gerçek bir ölçüm değil, simüle edilmiş bir senaryodur; ajan başına tool çağrısı, token, recall ve precision değerleri kodda sabit varsayımlardır. Üretilen yüzdeler (ör. -%94.9 token) sonuç olarak alıntılanmamalıdır. Gerçek ajan seviyesinde değerlendirme planlanmaktadır; ayrıntı için `docs/evaluation.md`, ölçülmüş sonuçlar için `docs/retrieval-experiments.md` ve `docs/benchmarks.md`.
   - Test: `pkg/benchmark/agent_eval_test.go:TestRunAgentEvaluation`.
 - **Bağımlılık:** T07; anlamlı sonuç için Faz 1–3
 

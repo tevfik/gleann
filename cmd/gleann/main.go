@@ -22,6 +22,10 @@ func main() {
 	cmd := os.Args[1]
 	args := os.Args[2:]
 
+	if !configExemptCommands[cmd] {
+		requireValidConfig()
+	}
+
 	switch cmd {
 	case "index":
 		cmdIndex(args)

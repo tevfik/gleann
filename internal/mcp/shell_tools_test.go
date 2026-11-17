@@ -24,6 +24,24 @@ func testServer(t *testing.T) *Server {
 	})
 }
 
+// serverWithSource returns a server whose only index, "src", has a source
+// directory; it is the directory gleann_read and gleann_read_full_document
+// may read from.
+func serverWithSource(t *testing.T) (*Server, string) {
+	t.Helper()
+	srv := testServer(t)
+	src := t.TempDir()
+	idxDir := filepath.Join(srv.config.IndexDir, "src")
+	if err := os.MkdirAll(idxDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	meta, _ := json.Marshal(gleann.IndexMeta{Name: "src", SourceDir: src})
+	if err := os.WriteFile(filepath.Join(idxDir, "src.meta.json"), meta, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return srv, src
+}
+
 // ── gleann_shell tests ────────────────────────────────────────────────────
 
 func TestShellTool_Build(t *testing.T) {
@@ -109,9 +127,9 @@ func TestReadTool_Build(t *testing.T) {
 }
 
 func TestReadTool_HandleRead_Auto(t *testing.T) {
-	srv := testServer(t)
+	srv, src := serverWithSource(t)
 
-	tmpFile := filepath.Join(t.TempDir(), "test.go")
+	tmpFile := filepath.Join(src, "test.go")
 	os.WriteFile(tmpFile, []byte("package main\n\nfunc main() {}\n"), 0o644)
 
 	req := mcp.CallToolRequest{}
@@ -134,11 +152,11 @@ func TestReadTool_HandleRead_Auto(t *testing.T) {
 }
 
 func TestReadTool_HandleRead_Map(t *testing.T) {
-	srv := testServer(t)
+	srv, src := serverWithSource(t)
 
 	// Create a file with structure
 	content := "package main\n\ntype Foo struct {}\n\nfunc Bar() {}\n"
-	tmpFile := filepath.Join(t.TempDir(), "app.go")
+	tmpFile := filepath.Join(src, "app.go")
 	os.WriteFile(tmpFile, []byte(content), 0o644)
 
 	req := mcp.CallToolRequest{}
@@ -158,13 +176,13 @@ func TestReadTool_HandleRead_Map(t *testing.T) {
 }
 
 func TestReadTool_HandleRead_Lines(t *testing.T) {
-	srv := testServer(t)
+	srv, src := serverWithSource(t)
 
 	lines := make([]string, 20)
 	for i := range lines {
 		lines[i] = "line " + string(rune('A'+i))
 	}
-	tmpFile := filepath.Join(t.TempDir(), "data.txt")
+	tmpFile := filepath.Join(src, "data.txt")
 	os.WriteFile(tmpFile, []byte(strings.Join(lines, "\n")), 0o644)
 
 	req := mcp.CallToolRequest{}
@@ -272,5 +290,74 @@ func TestGainTool_HandleGain_Reset(t *testing.T) {
 	}
 	if sessionGain.Calls != 0 {
 		t.Error("gain should be reset to zero")
+	}
+}
+
+func TestReadTool_RefusesPathsOutsideSource(t *testing.T) {
+	srv, src := serverWithSource(t)
+	outside := filepath.Join(t.TempDir(), "secret.txt")
+	if err := os.WriteFile(outside, []byte("TOP-SECRET"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	paths := []string{outside, filepath.Join(src, "..", filepath.Base(filepath.Dir(outside)), "secret.txt"), "../secret.txt"}
+	if err := os.Symlink(outside, filepath.Join(src, "link.txt")); err == nil {
+		paths = append(paths, filepath.Join(src, "link.txt"), "link.txt")
+	}
+	for _, p := range paths {
+		req := mcp.CallToolRequest{}
+		req.Params.Arguments = map[string]interface{}{"path": p, "mode": "full"}
+		res, err := srv.handleRead(context.Background(), req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		text := res.Content[0].(mcp.TextContent).Text
+		if !res.IsError || strings.Contains(text, "TOP-SECRET") {
+			t.Errorf("path %q was served: %q", p, text)
+		}
+	}
+}
+
+func TestReadTool_RelativeToSource(t *testing.T) {
+	srv, src := serverWithSource(t)
+	if err := os.WriteFile(filepath.Join(src, "a.txt"), []byte("inside"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	req := mcp.CallToolRequest{}
+	req.Params.Arguments = map[string]interface{}{"path": "a.txt", "mode": "full"}
+	res, _ := srv.handleRead(context.Background(), req)
+	if res.IsError || !strings.Contains(res.Content[0].(mcp.TextContent).Text, "inside") {
+		t.Errorf("relative read failed: %v", res.Content)
+	}
+}
+
+func TestReadTool_WorkingDirectory(t *testing.T) {
+	srv, _ := serverWithSource(t)
+	project := t.TempDir()
+	if err := os.WriteFile(filepath.Join(project, "main.go"), []byte("package main // in-project"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(project)
+	for _, p := range []string{"main.go", filepath.Join(project, "main.go")} {
+		req := mcp.CallToolRequest{}
+		req.Params.Arguments = map[string]interface{}{"path": p, "mode": "full"}
+		res, _ := srv.handleRead(context.Background(), req)
+		if res.IsError || !strings.Contains(res.Content[0].(mcp.TextContent).Text, "in-project") {
+			t.Errorf("read of %q inside the working directory failed: %v", p, res.Content)
+		}
+	}
+
+	// A home directory as working directory must not open everything below it.
+	home := t.TempDir()
+	if err := os.WriteFile(filepath.Join(home, "secret.txt"), []byte("HOME-SECRET"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	t.Chdir(home)
+	req := mcp.CallToolRequest{}
+	req.Params.Arguments = map[string]interface{}{"path": "secret.txt", "mode": "full"}
+	res, _ := srv.handleRead(context.Background(), req)
+	if !res.IsError || strings.Contains(res.Content[0].(mcp.TextContent).Text, "HOME-SECRET") {
+		t.Errorf("home directory as working directory was readable: %v", res.Content)
 	}
 }

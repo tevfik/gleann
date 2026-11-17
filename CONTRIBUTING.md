@@ -31,6 +31,22 @@ make vet && make test
 go vet ./...
 ```
 
+## Go Modules Layout
+
+`go install github.com/tevfik/gleann/cmd/gleann@latest` only works if the root
+`go.mod` has no `replace` directives. For that reason:
+
+- `modules/bm25`, `modules/chunking`, `modules/diskann` and `modules/hnsw` are
+  ordinary packages of the root module (no `go.mod` of their own). Edit and test
+  them like any other package (`go test ./modules/...`).
+- `modules/settings` is a separate module because the plugin repositories import
+  it on its own. The root `go.mod` requires a published pseudo-version of it.
+  To change it: edit `modules/settings`, merge to `main` and push, then bump the
+  root requirement with
+  `go get github.com/tevfik/gleann/modules/settings@<commit>` followed by
+  `go mod tidy`. Until the bump, the root module keeps building against the
+  previously published version, not your local edit.
+
 ## Code Style
 
 - Follow standard Go conventions (`gofmt`, `go vet`)

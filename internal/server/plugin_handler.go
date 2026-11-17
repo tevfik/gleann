@@ -211,6 +211,7 @@ func (s *Server) proxyPlugin(w http.ResponseWriter, r *http.Request, path, missi
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
+	mgr.AuthorizeRequest(req, plugin)
 	resp, err := (&http.Client{Timeout: 15 * time.Second}).Do(req)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, "plugin request failed: "+err.Error())

@@ -10,7 +10,6 @@ import (
 // MmapSearcher implements BackendSearcher directly on a memory-mapped graph.
 type MmapSearcher struct {
 	config    Config
-	csrFile   string // We keep the path so we can mmap it.
 	mmapGraph *MmapGraph
 	mu        sync.RWMutex
 }

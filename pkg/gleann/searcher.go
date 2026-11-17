@@ -964,6 +964,15 @@ func RemoveIndex(indexDir, name string) error {
 		}
 	}
 
+	// A rollback copy left by an interrupted sync and the cross-process rewrite
+	// lock would otherwise make a later index of this name look half-synced.
+	if err := os.RemoveAll(indexPath + ".sync-bak"); err != nil {
+		return fmt.Errorf("remove rollback copy: %w", err)
+	}
+	if err := os.Remove(filepath.Join(indexDir, name+".rewrite.lock")); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("remove rewrite lock: %w", err)
+	}
+
 	// 3. Remove the sync state file if it exists
 	syncPath := filepath.Join(indexDir, name+".sync.json")
 	if err := os.Remove(syncPath); err != nil && !os.IsNotExist(err) {

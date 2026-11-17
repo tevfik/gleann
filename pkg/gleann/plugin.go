@@ -49,6 +49,13 @@ type Plugin struct {
 	// Priority orders multiple plugins that claim the same capability+ext.
 	// Higher wins. Zero (default) preserves legacy first-match behaviour.
 	Priority int `json:"priority,omitempty"`
+
+	// Token is a bearer token gleann sends as "Authorization: Bearer <token>"
+	// to a plugin that is registered by URL and protected by its own token
+	// (e.g. gleann-plugin-sound --token). For plugins gleann launches itself
+	// a random per-process token is generated and passed in GLEANN_PLUGIN_TOKEN
+	// instead; if Token is set it is used as that token, so it stays stable.
+	Token string `json:"token,omitempty"`
 }
 
 // MaxSupportedSchemaVersion is the highest plugin protocol version this
@@ -73,6 +80,11 @@ type PluginManager struct {
 	// long conversion may be too slow to answer the next health probe.
 	declared map[string]int
 	mu       sync.Mutex
+
+	// tokens holds the bearer token of each plugin process this manager
+	// launched, by plugin name. Separate lock: it is read while mu is held.
+	tokMu  sync.Mutex
+	tokens map[string]string
 }
 
 // pluginStartTimeout bounds how long EnsurePluginRunning waits for an
@@ -188,6 +200,9 @@ func (m *PluginManager) Close() {
 	m.activeCmds = make(map[string]*exec.Cmd)
 	m.logFiles = make(map[string]*os.File)
 	m.exited = make(map[*exec.Cmd]chan struct{})
+	m.tokMu.Lock()
+	m.tokens = nil
+	m.tokMu.Unlock()
 }
 
 // stopPluginLocked stops (if still running) and forgets the process tracked
@@ -215,6 +230,7 @@ func (m *PluginManager) stopPluginLocked(name string) {
 		f.Close()
 	}
 	delete(m.logFiles, name)
+	m.forgetToken(name)
 }
 
 // deprecatedMediaExts lists media extensions (audio) not handled by document extraction plugins.
@@ -297,6 +313,7 @@ func (m *PluginManager) ResolveMultimodalPluginEnv() (audioURL, visionURL string
 		if p := m.FindByCapability(CapAudioTranscription, ""); p != nil && p.URL != "" {
 			audioURL = p.URL
 			_ = os.Setenv("GLEANN_AUDIO_PLUGIN_URL", audioURL)
+			m.exportEnvToken(p)
 		}
 	}
 	visionURL = os.Getenv("GLEANN_VISION_PLUGIN_URL")
@@ -304,6 +321,7 @@ func (m *PluginManager) ResolveMultimodalPluginEnv() (audioURL, visionURL string
 		if p := m.FindByCapability(CapVisionExtraction, ""); p != nil && p.URL != "" {
 			visionURL = p.URL
 			_ = os.Setenv("GLEANN_VISION_PLUGIN_URL", visionURL)
+			m.exportEnvToken(p)
 		}
 	}
 	if os.Getenv("GLEANN_DOCLING_VLM") == "" {
@@ -324,8 +342,13 @@ func (m *PluginManager) FetchPluginInfo(p *Plugin) (*PluginInfo, error) {
 		return nil, fmt.Errorf("plugin has no URL")
 	}
 	url := strings.TrimRight(p.URL, "/") + "/info"
+	req, err := http.NewRequest(http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
+	}
+	m.AuthorizeRequest(req, p)
 	client := &http.Client{Timeout: 2 * time.Second}
-	resp, err := client.Get(url)
+	resp, err := client.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -461,6 +484,11 @@ func (m *PluginManager) EnsurePluginRunning(p *Plugin) error {
 	m.stopPluginLocked(p.Name)
 
 	cmd := exec.Command(p.Command[0], p.Command[1:]...)
+	token, err := m.launchToken(p)
+	if err != nil {
+		return fmt.Errorf("failed to auto-start plugin %s: %w", p.Name, err)
+	}
+	cmd.Env = append(os.Environ(), PluginTokenEnv+"="+token)
 
 	home, _ := os.UserHomeDir()
 	logDir := filepath.Join(home, ".gleann", "logs")
@@ -474,6 +502,7 @@ func (m *PluginManager) EnsurePluginRunning(p *Plugin) error {
 	}
 
 	if err := cmd.Start(); err != nil {
+		m.forgetToken(p.Name)
 		if logFile != nil {
 			logFile.Close()
 		}
@@ -489,6 +518,7 @@ func (m *PluginManager) EnsurePluginRunning(p *Plugin) error {
 
 	m.activeCmds[p.Name] = cmd
 	m.exited[cmd] = done
+	m.exportEnvToken(p)
 	if pluginStartedHook != nil {
 		pluginStartedHook(cmd, done)
 	}
@@ -636,6 +666,7 @@ func (m *PluginManager) processRaw(plugin *Plugin, filePath string) (map[string]
 		return nil, fmt.Errorf("new http request: %w", err)
 	}
 	req.Header.Set("Content-Type", writer.FormDataContentType())
+	m.AuthorizeRequest(req, plugin)
 
 	client := &http.Client{Timeout: time.Duration(m.requestTimeout(plugin)) * time.Second}
 	resp, err := client.Do(req)

@@ -30,6 +30,7 @@ func Settings() *settings.Registry[OnboardResult] {
 		Load:       loadSettings,
 		Save: func(c *OnboardResult) error {
 			c.CORSOrigins = splitOrigins(c.corsText)
+			c.AllowedRoots = splitRoots(c.rootsText)
 			return saveExact(configPath(), *c)
 		},
 		BeforeSave: func(c *OnboardResult) { c.Completed = true },
@@ -203,6 +204,12 @@ func settingsFields() []settings.Field[OnboardResult] {
 				"listens on a loopback address. GLEANN_AUTH overrides it.",
 			Options: settings.Opts("on", "on — token required (recommended)", "off", "off — no token (loopback only)"),
 			Bind:    func(c *OnboardResult) any { return &c.Auth }},
+		{Key: "allowed_roots", Label: "Directories the server may index", Type: settings.Text, Group: groupServices,
+			Apply: settings.Restart,
+			Help: "Comma-separated directories. Over the REST API (index-path, update docs_root, watch) only paths " +
+				"inside them can be indexed. Empty: your home directory. GLEANN_ALLOWED_ROOTS overrides it. " +
+				"The command line is not restricted.",
+			Bind: func(c *OnboardResult) any { return &c.rootsText }},
 		{Key: "cors_origins", Label: "Allowed browser origins", Type: settings.Text, Group: groupServices,
 			Apply: settings.Restart,
 			Help: "Comma-separated origins (https://app.example.com) whose web pages may call the API. " +
@@ -275,7 +282,19 @@ func loadSettings() (*OnboardResult, error) {
 		}
 	}
 	r.corsText = strings.Join(r.CORSOrigins, ", ")
+	r.rootsText = strings.Join(r.AllowedRoots, ", ")
 	return &r, nil
+}
+
+// splitRoots turns "a, b" into [a b], dropping empty entries.
+func splitRoots(s string) []string {
+	var out []string
+	for _, p := range strings.Split(s, ",") {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 // splitOrigins turns "a, b" into [a b], dropping empty entries and a trailing slash.

@@ -200,6 +200,9 @@ func RunAgentEvaluation(ctx context.Context, tasks []AgentTask) (*AgentEvalSumma
 	return summary, nil
 }
 
+// SimulationNotice states that the agent suite is a scripted scenario.
+const SimulationNotice = "NOTE: the agent suite is a simulated scenario with assumed per-task numbers, not a measurement of a real agent."
+
 // evaluateAgentTask simulates and scores a single agent task across baseline vs gleann.
 func evaluateAgentTask(task AgentTask) AgentTaskComparison {
 	comp := AgentTaskComparison{
@@ -336,7 +339,8 @@ func (s *AgentEvalSummary) FormatMarkdown() string {
 	var sb strings.Builder
 
 	sb.WriteString("# Gleann vs Baseline: Agent-Level Task Evaluation (T25)\n\n")
-	sb.WriteString("Empirical evaluation comparing an AI coding agent with native tools (file reading, grep, zero cross-session state) ")
+	sb.WriteString("**" + SimulationNotice + "**\n\n")
+	sb.WriteString("Simulated scenario comparing an AI coding agent with native tools (file reading, grep, zero cross-session state) ")
 	sb.WriteString("against an agent empowered by **Gleann** (hybrid dense+BM25 search, mode-aware file read, AST code graph blast radius, and tiered persistent BBolt memory).\n\n")
 
 	sb.WriteString("## Executive Summary\n\n")

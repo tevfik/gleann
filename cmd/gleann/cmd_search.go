@@ -16,7 +16,7 @@ import (
 func cmdSearch(args []string) {
 	if len(args) < 2 || hasFlag(args, "--help") || hasFlag(args, "-h") {
 		if hasFlag(args, "--help") || hasFlag(args, "-h") {
-			fmt.Println(`Usage: gleann search <name[,name2,...]|--all> <query> [options]
+			fmt.Printf(`Usage: gleann search <name[,name2,...]|--all> <query> [options]
 
 Semantic vector search across one or more indexes.
 
@@ -26,7 +26,7 @@ Arguments:
 
 Options:
   --all                   Search across all existing indexes
-  --top-k <N>             Number of top results to return (default: 5)
+  --top-k <N>             Number of top results to return (default: %d)
   --rerank                Rerank results with cross-encoder
   --rerank-url <url>      Rerank through a /v1/rerank server (e.g. llama-server --reranking)
   --rerank-pool <N>       Candidates sent to the reranker (default: 20 for the built-in reranker,
@@ -42,12 +42,15 @@ Options:
 Examples:
   gleann search core "auth middleware"
   gleann search px4,core "ekf estimation" --rerank
-  gleann search --all "PID controller"`)
+  gleann search --all "PID controller"
+`, gleann.DefaultConfig().SearchConfig.TopK)
 			return
 		}
 		fmt.Fprintln(os.Stderr, "usage: gleann search <name[,name2,...]|--all> <query>")
 		os.Exit(1)
 	}
+
+	rejectUnknownFlags("search", args, searchFlags)
 
 	name := args[0]
 	query := stripSearchFlags(args[1:])
@@ -318,19 +321,6 @@ func rerankerConfigFromFlags(config gleann.Config, args []string) gleann.Reranke
 	return gleann.ResolveRerankerConfig(config, model)
 }
 
-// searchValueFlags are the search/config flags that consume the next argument.
-// Every other --flag is a boolean switch and must not swallow a query word.
-var searchValueFlags = map[string]bool{
-	"--top-k": true, "--top": true, "--model": true, "--code-model": true,
-	"--code-embedding-model": true, "--docs-model": true, "--provider": true,
-	"--host": true, "--base-url": true, "--openai-base-url": true,
-	"--api-key": true, "--ollama-api-key": true, "--index-dir": true,
-	"--kind": true, "--llm-model": true, "--llm-provider": true,
-	"--rerank-model": true, "--rerank-url": true, "--rerank-pool": true, "--rerank-provider": true,
-	"--expand-model": true,
-	"--hybrid":       true, "--hybrid-alpha": true, "--prune": true,
-}
-
 // stripSearchFlags returns the query text from the arguments after the index
 // name, dropping flags and (only for value-taking flags) their values.
 // "--" ends flag parsing; "--flag=value" is a single token.
@@ -343,7 +333,7 @@ func stripSearchFlags(args []string) string {
 			break
 		}
 		if strings.HasPrefix(a, "--") {
-			if !strings.Contains(a, "=") && searchValueFlags[a] {
+			if !strings.Contains(a, "=") && searchFlags[a] {
 				i++
 			}
 			continue

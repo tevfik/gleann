@@ -12,9 +12,6 @@ WORKDIR /src
 
 # Cache module downloads.
 COPY go.mod go.sum ./
-COPY modules/hnsw/go.mod    modules/hnsw/go.sum    modules/hnsw/
-COPY modules/bm25/go.mod    modules/bm25/go.sum    modules/bm25/
-COPY modules/chunking/go.mod modules/chunking/go.sum modules/chunking/
 
 RUN go mod download
 

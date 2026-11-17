@@ -88,13 +88,11 @@ jobs:
         shell: bash
 
       - name: Test (unit, treesitter tag — modules/chunking)
-        # modules/chunking is a separate Go module with its own go.mod.
-        # We test it from inside its own directory.
+        # modules/chunking is a package of the root module; run it with the tag.
         if: matrix.os != 'windows-latest'
         timeout-minutes: 10
         run: |
-          cd modules/chunking
-          GOTOOLCHAIN=auto CGO_ENABLED=1 go test -tags treesitter -race -timeout 8m -coverprofile=coverage-chunking.out ./...
+          GOTOOLCHAIN=auto CGO_ENABLED=1 go test -tags treesitter -race -timeout 8m -coverprofile=coverage-chunking.out ./modules/chunking/...
         shell: bash
 
       - name: Test (modules/settings)
@@ -111,7 +109,7 @@ jobs:
         uses: codecov/codecov-action@v4
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
-          files: ./coverage.out,./coverage-ts.out,./modules/chunking/coverage-chunking.out
+          files: ./coverage.out,./coverage-ts.out,./coverage-chunking.out
           fail_ci_if_error: false
           verbose: true
 

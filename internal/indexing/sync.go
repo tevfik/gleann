@@ -80,6 +80,14 @@ func Sync(ctx context.Context, opts SyncOptions) (*SyncResult, error) {
 		p.Printf("📄 Sync mode: DOCUMENTS (office docs only, skipping raw code)\n")
 	}
 
+	// An interrupted full rebuild leaves the index in <dir>.sync-bak and <dir>
+	// partial or missing: settle that before reading the metadata.
+	if what, err := RecoverSyncBackup(ctx, cfg.IndexDir, name); err != nil {
+		return nil, fmt.Errorf("recovering index %q after an interrupted sync: %w", name, err)
+	} else if what == "restored" {
+		p.Printf("ℹ️  A previous sync of %q was interrupted; its index was restored from the rollback copy\n", name)
+	}
+
 	meta, err := gleann.GetIndexMeta(cfg.IndexDir, name)
 	if err != nil {
 		return nil, fmt.Errorf("index %q not found in %s: %w", name, cfg.IndexDir, err)
@@ -312,7 +320,7 @@ func Sync(ctx context.Context, opts SyncOptions) (*SyncResult, error) {
 			res.FullRebuild = true
 			// A failed rebuild (e.g. the embedder is still down) must not
 			// leave a degraded index behind: roll back to the previous one.
-			err = withIndexRollback(cfg.IndexDir, name, func() error {
+			err = withIndexRollback(cfg.IndexDir, name, p, func() error {
 				var rerr error
 				pDocs, rerr = env.rebuild(ctx, name, absDocsDir)
 				return rerr
@@ -471,10 +479,23 @@ func bootstrapTrackerFromIndex(ctx context.Context, tracker *vault.Tracker, docs
 // withIndexRollback runs fn, which rewrites the index <indexDir>/<name>. The
 // existing index directory is moved aside first and restored if fn fails, so a
 // failure never replaces a working index with a partial or lexical-only one.
-func withIndexRollback(indexDir, name string, fn func() error) error {
+//
+// The copy survives a killed process: the next run settles it first
+// (recoverSyncBackupLocked) instead of deleting it, and a cross-process guard
+// keeps a second gleann from "recovering" an index that is being rebuilt.
+func withIndexRollback(indexDir, name string, p *printer, fn func() error) error {
 	dir := filepath.Join(indexDir, name)
-	bak := dir + ".sync-bak"
-	_ = os.RemoveAll(bak)
+	bak := SyncBackupPath(indexDir, name)
+	release, err := acquireRewriteGuard(indexDir, name)
+	if err != nil {
+		return err
+	}
+	defer release()
+	if what, err := recoverSyncBackupLocked(indexDir, name); err != nil {
+		return err
+	} else if what != "" {
+		p.Printf("ℹ️  A previous sync of %q was interrupted (rollback copy: %s)\n", name, what)
+	}
 	prevMeta, _ := gleann.GetIndexMeta(indexDir, name)
 	moved := false
 	if _, err := os.Stat(dir); err == nil {
@@ -506,4 +527,30 @@ func withIndexRollback(indexDir, name string, fn func() error) error {
 		_ = os.RemoveAll(bak)
 	}
 	return nil
+}
+
+// SyncChanged applies one batch of file-system events (index watch) to an
+// existing index. It is a Sync limited to the given paths, so a watch update
+// gets what `index sync` gets: the index's recorded embedding model is
+// reconciled (a model chosen on purpose that differs is refused instead of
+// mixing vectors), the index is locked, a failed full rebuild is rolled back,
+// the graph is updated and the manifest advances. Paths may be relative to
+// the process directory, as fsnotify reports them; a path that no longer
+// exists is a deletion.
+func SyncChanged(ctx context.Context, opts SyncOptions, files []string) (*SyncResult, error) {
+	abs := make([]string, 0, len(files))
+	for _, f := range files {
+		if f = strings.TrimSpace(f); f == "" {
+			continue
+		}
+		if a, err := filepath.Abs(f); err == nil {
+			f = a
+		}
+		abs = append(abs, f)
+	}
+	if len(abs) == 0 {
+		return &SyncResult{Name: opts.Name, UpToDate: true}, nil
+	}
+	opts.Files = abs
+	return Sync(ctx, opts)
 }

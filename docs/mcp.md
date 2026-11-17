@@ -160,12 +160,20 @@ Add to `claude_desktop_config.json`:
 | `gleann_ask` | RAG Q&A with an index |
 | `gleann_graph_neighbors` | Query callers/callees of a symbol |
 | `gleann_document_links` | Get document structure links |
+| `gleann_document_toc` | Table of contents / heading outline of an indexed document, or the list of indexed documents |
+| `gleann_graph_stats` | Code graph statistics for an index: file count, symbol count, edge counts by type |
+| `gleann_symbols_in_file` | List the symbols (functions, methods, types) defined in one source file |
 | `gleann_impact` | Blast radius analysis for a symbol |
 | `gleann_read_full_document` | Retrieve intact full document text via KuzuDB path resolution or graph chunks |
 | `gleann_communities` | Run Louvain community detection on code graph |
 | `gleann_risk_analysis` | Compute change risk scores for symbols via PageRank and coupling |
 | `gleann_repo_map` | Compact text map of repository ranked by symbol importance |
 | `gleann_navigate_symbol` | Navigate symbol definition, callers, and callees |
+
+The tools that read the code graph (`gleann_graph_neighbors`, `gleann_impact`, `gleann_document_links`,
+`gleann_graph_stats`, `gleann_symbols_in_file`, `gleann_document_toc`, and the four graph-analysis tools `gleann_communities`,
+`gleann_risk_analysis`, `gleann_repo_map`, `gleann_navigate_symbol`) need a build with `-tags treesitter`. A
+pure-Go build does not advertise them. `gleann_def` stays and falls back to vector search when there is no graph.
 
 ### Progressive Disclosure Tools
 
@@ -203,6 +211,8 @@ relationships.
 | `delete_graph_entity` | Remove an entity and all its incident edges |
 | `traverse_knowledge_graph` | Walk the graph N hops from a start node |
 
+Without `-tags treesitter` these three are still listed but every call returns a "Memory Engine not available in this build" error.
+
 ### Long-term Memory (Blocks) Tools
 
 Persistent hierarchical memory (BBolt). Facts stored here are automatically
@@ -234,7 +244,7 @@ gives agents persistent knowledge across sessions.
 Gleann supports scoping the MCP surface to prevent token bloat in client context windows:
 
 ```bash
-# Core profile (default, 10 essential tools for fast coding agent loops)
+# Core profile (default, 10 essential tools for fast coding agent loops; 8 without -tags treesitter)
 gleann mcp --tools core
 
 # Full profile (all tools registered)
@@ -244,7 +254,9 @@ gleann mcp --tools full
 gleann mcp --tools "search,read,symbol,recall,sync"
 ```
 
-The `core` profile exposes: `gleann_search`, `gleann_read`, `gleann_def`, `gleann_graph_neighbors`, `gleann_impact`, `memory_remember`, `memory_context`, `memory_search`, `memory_forget`, `gleann_sync`.
+The `core` profile exposes: `gleann_search`, `gleann_read`, `gleann_def`, `gleann_graph_neighbors`, `gleann_impact`, `gleann_sync`, `memory_remember`, `memory_context`, `memory_search`, `memory_forget`.
+
+That is the list of a build with `-tags treesitter`. In the pure-Go build there is no code graph, so `gleann_graph_neighbors` and `gleann_impact` are not advertised and `core` is the other eight tools (`gleann_search`, `gleann_read`, `gleann_def`, `gleann_sync` and the four `memory_*` tools).
 
 You can also set the default profile using the `GLEANN_TOOLS` environment variable. Passing `--clean-names` strips the `gleann_` prefix (e.g. `search`, `read`, `impact`).
 

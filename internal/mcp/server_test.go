@@ -363,8 +363,16 @@ func TestHandleReadFullDocument_Validation(t *testing.T) {
 		t.Errorf("expected error result for empty arguments")
 	}
 
-	// 3. Fallback on-disk direct read
-	testFilePath := filepath.Join(tmpDir, "readme.md")
+	// 3. Fallback on-disk read inside the index's source directory
+	srcDir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(tmpDir, "docs-idx"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	metaJSON, _ := json.Marshal(gleann.IndexMeta{Name: "docs-idx", SourceDir: srcDir})
+	if err := os.WriteFile(filepath.Join(tmpDir, "docs-idx", "docs-idx.meta.json"), metaJSON, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	testFilePath := filepath.Join(srcDir, "readme.md")
 	testContent := "# Gleann Full Document Test Content\nValidating read_full_document tool."
 	if err := os.WriteFile(testFilePath, []byte(testContent), 0644); err != nil {
 		t.Fatalf("write file: %v", err)
@@ -372,16 +380,64 @@ func TestHandleReadFullDocument_Validation(t *testing.T) {
 
 	reqFallback := mcp.CallToolRequest{}
 	reqFallback.Params.Arguments = map[string]interface{}{
-		"index": "nonexistent-index",
+		"index": "docs-idx",
 		"vpath": testFilePath,
 	}
 	res3, err := srv.handleReadFullDocument(context.Background(), reqFallback)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	// Fallback to direct file read if relative path exists
 	if res3.IsError {
 		t.Errorf("expected successful file read via fallback, got error result")
+	}
+
+	// 4. Relative vpath resolves against the source directory.
+	reqRel := mcp.CallToolRequest{}
+	reqRel.Params.Arguments = map[string]interface{}{"index": "docs-idx", "vpath": "readme.md"}
+	if res4, _ := srv.handleReadFullDocument(context.Background(), reqRel); res4.IsError {
+		t.Errorf("relative vpath refused")
+	}
+}
+
+func TestHandleReadFullDocument_RefusesOutsideSource(t *testing.T) {
+	srv, src := serverWithSource(t)
+	outsideDir := t.TempDir()
+	secret := filepath.Join(outsideDir, "secret.txt")
+	if err := os.WriteFile(secret, []byte("TOP-SECRET"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// A sibling directory sharing the source directory's name as a prefix.
+	sibling := src + "-sibling"
+	if err := os.MkdirAll(sibling, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(sibling) })
+	siblingFile := filepath.Join(sibling, "x.txt")
+	if err := os.WriteFile(siblingFile, []byte("TOP-SECRET"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	vpaths := []string{secret, siblingFile, "../" + filepath.Base(outsideDir) + "/secret.txt"}
+	if err := os.Symlink(secret, filepath.Join(src, "link.txt")); err == nil {
+		vpaths = append(vpaths, "link.txt")
+	}
+	for _, index := range []string{"src", "nonexistent-index"} {
+		for _, vp := range vpaths {
+			req := mcp.CallToolRequest{}
+			req.Params.Arguments = map[string]interface{}{"index": index, "vpath": vp}
+			res, err := srv.handleReadFullDocument(context.Background(), req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var text string
+			for _, c := range res.Content {
+				if tc, ok := c.(mcp.TextContent); ok {
+					text += tc.Text
+				}
+			}
+			if strings.Contains(text, "TOP-SECRET") {
+				t.Errorf("index %q vpath %q leaked content", index, vp)
+			}
+		}
 	}
 }
 
@@ -473,6 +529,7 @@ func TestBuildSyncTool(t *testing.T) {
 }
 
 func TestHandleSync(t *testing.T) {
+	t.Setenv("GLEANN_ALLOWED_ROOTS", os.TempDir())
 	tmpDir := t.TempDir()
 	t.Setenv("GLEANN_MEMORY_DIR", tmpDir)
 	srv := NewServer(Config{
@@ -703,6 +760,7 @@ func TestHandleSearch_AutoResolveEmptyIndex(t *testing.T) {
 }
 
 func TestHandleSync_ProgressReporting(t *testing.T) {
+	t.Setenv("GLEANN_ALLOWED_ROOTS", os.TempDir())
 	// 1. Verify parseProgressLine
 	line := "gleann-progress phase=vector_index pct=62.5 items=625/1000 bytes=12500/20000 rate=25.0 eta_s=15.0"
 	phase, pct, done, total, rate, etaSec, ok := parseProgressLine(line)
@@ -777,4 +835,39 @@ func TestHandleSync_ProgressReporting(t *testing.T) {
 
 	// Release runner
 	close(blockRunner)
+}
+
+func TestHandleSync_DocsDirAndFilesContained(t *testing.T) {
+	srv, src := serverWithSource(t)
+	allowed := t.TempDir()
+	outside := t.TempDir()
+	t.Setenv("GLEANN_ALLOWED_ROOTS", allowed)
+	ran := false
+	srv.syncRunner = func(ctx context.Context, opts SyncOptions) (string, error) {
+		ran = true
+		return "ok", nil
+	}
+
+	call := func(args map[string]interface{}) *mcp.CallToolResult {
+		req := mcp.CallToolRequest{}
+		req.Params.Arguments = args
+		res, err := srv.handleSync(context.Background(), req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return res
+	}
+
+	if res := call(map[string]interface{}{"index": "fresh", "docs_dir": outside}); !res.IsError || ran {
+		t.Errorf("docs_dir outside the allowed roots must be refused (ran=%v)", ran)
+	}
+	if res := call(map[string]interface{}{"index": "src", "files": []interface{}{filepath.Join(outside, "x.go")}}); !res.IsError || ran {
+		t.Errorf("file outside the source directory must be refused (ran=%v)", ran)
+	}
+	if res := call(map[string]interface{}{"index": "src", "files": []interface{}{"../escape.go"}}); !res.IsError || ran {
+		t.Errorf("relative escape must be refused (ran=%v)", ran)
+	}
+	if res := call(map[string]interface{}{"index": "src", "files": []interface{}{filepath.Join(src, "ok.go")}}); res.IsError {
+		t.Errorf("file inside the source directory refused: %v", res.Content)
+	}
 }

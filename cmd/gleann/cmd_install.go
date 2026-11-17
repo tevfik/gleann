@@ -627,7 +627,9 @@ func getSkillMDContent(indexName string) string {
 	if idx == "" {
 		idx = "<name>"
 	}
-	res := strings.ReplaceAll(skillMDContent, "<name>", idx)
+	res := strings.ReplaceAll(skillMDContent, "@@MEMORY_TOOLS@@\n", mcpMemoryToolLines())
+	res = strings.ReplaceAll(res, "@@MCP_TOOLS@@", mcpToolList()+"\n\n"+mcpFullProfileNote)
+	res = strings.ReplaceAll(res, "<name>", idx)
 	res = strings.ReplaceAll(res, "<index>", idx)
 	res = strings.ReplaceAll(res, "<index-name>", idx)
 	return res
@@ -659,11 +661,7 @@ persistent facts about this codebase.  Use gleann graph tools before exploring s
 
 ### MCP tools
 ` + "```" + `
-memory_context              → compiled <memory_context> window for LLM injection
-memory_remember content=... tier=long|medium|short label=... tags=[...]
-memory_forget   id_or_query=...
-memory_search   query=...
-memory_list     tier=long|medium|short  (optional filter)
+@@MEMORY_TOOLS@@
 ` + "```" + `
 
 ### CLI equivalents
@@ -733,9 +731,9 @@ curl -X POST http://localhost:8080/a2a/v1/message:send \
   -d '{"message":{"role":"user","parts":[{"text":"explain validateToken"}]}}'
 ` + "```" + `
 
-### MCP graph tools
-` + "`gleann_search`" + ` · ` + "`gleann_ask`" + ` · ` + "`gleann_graph_neighbors`" + ` · ` + "`gleann_impact`" + ` · ` + "`gleann_read_full_document`" + `
-` + "`inject_knowledge_graph`" + ` · ` + "`traverse_knowledge_graph`" + `
+### MCP tools (default profile)
+@@MCP_TOOLS@@
+
 `
 
 // appendOrCreateFile appends content to a file, creating it if absent.
@@ -1467,7 +1465,7 @@ func installCopilot(dir, home string) error {
 		return fmt.Errorf("creating skill dir: %w", err)
 	}
 	skillPath := filepath.Join(skillDir, "SKILL.md")
-	if err := os.WriteFile(skillPath, []byte(skillMDContent), 0o644); err != nil {
+	if err := os.WriteFile(skillPath, []byte(getSkillMDContent("")), 0o644); err != nil {
 		return fmt.Errorf("writing SKILL.md: %w", err)
 	}
 	fmt.Printf("  • %s\n", skillPath)

@@ -75,6 +75,7 @@ func TestProxyModels_OllamaPassesBearer(t *testing.T) {
 }
 
 func TestProxyModels_StoredKeyNotSentToOtherHost(t *testing.T) {
+	t.Setenv("GLEANN_MODEL_DOWNLOAD_ALLOW_PRIVATE", "1") // the "other" host is a loopback test server
 	t.Setenv(gleann.OllamaAPIKeyEnv, "")
 	srv, last := newTagsAuthServer(t)
 	s := &Server{config: gleann.Config{

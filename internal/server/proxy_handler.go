@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -681,7 +682,7 @@ func (s *Server) handleProxyModels(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		gleann.SetBearerAuth(req, apiKey)
-		resp, err := proxyHTTPClient.Do(req)
+		resp, err := s.proxyClientFor(host).Do(req)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
@@ -734,7 +735,7 @@ func (s *Server) handleProxyModels(w http.ResponseWriter, r *http.Request) {
 		if apiKey != "" {
 			req.Header.Set("Authorization", "Bearer "+apiKey)
 		}
-		resp, err := proxyHTTPClient.Do(req)
+		resp, err := s.proxyClientFor(host).Do(req)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
@@ -767,9 +768,64 @@ func (s *Server) handleProxyModels(w http.ResponseWriter, r *http.Request) {
 // defaultOpenAIBaseURL is used when no OpenAI-compatible host is given.
 const defaultOpenAIBaseURL = "https://api.openai.com/v1"
 
-// proxyHTTPClient is used for the model-list proxy; it must never hang a
-// handler indefinitely on an unresponsive provider.
-var proxyHTTPClient = &http.Client{Timeout: 15 * time.Second}
+// proxyModelTimeout bounds a model-list request so an unresponsive provider
+// never hangs a handler.
+const proxyModelTimeout = 15 * time.Second
+
+// proxyGuardedClient talks to client-supplied hosts. Like webhooks and model
+// downloads it refuses private, loopback and link-local targets (also behind
+// DNS and redirects) unless GLEANN_MODEL_DOWNLOAD_ALLOW_PRIVATE=1.
+var proxyGuardedClient = &http.Client{
+	Timeout:   proxyModelTimeout,
+	Transport: newGuardedTransport(modelDownloadAllowPrivate, proxyModelTimeout),
+}
+
+// proxyConfiguredClient talks to a provider the operator configured
+// (ollama_host, openai_base_url or the built-in default). Those are normally
+// local or on the LAN, so private addresses are allowed, but a redirect may
+// not leave the configured host: it would otherwise be a way to reach other
+// internal services through a trusted endpoint.
+var proxyConfiguredClient = &http.Client{
+	Timeout:   proxyModelTimeout,
+	Transport: newGuardedTransport(func() bool { return true }, proxyModelTimeout),
+	CheckRedirect: func(req *http.Request, via []*http.Request) error {
+		if len(via) >= 10 {
+			return errors.New("stopped after 10 redirects")
+		}
+		if !strings.EqualFold(req.URL.Host, via[0].URL.Host) {
+			return fmt.Errorf("refusing redirect from the configured provider to another host")
+		}
+		return nil
+	},
+}
+
+// proxyClientFor picks the HTTP client for a model-list request to host: the
+// configured providers stay reachable, any other target is guarded.
+func (s *Server) proxyClientFor(host string) *http.Client {
+	if s.isConfiguredProviderHost(host) {
+		return proxyConfiguredClient
+	}
+	return proxyGuardedClient
+}
+
+// isConfiguredProviderHost reports whether host is a provider base URL from
+// the server configuration (or the default local Ollama).
+func (s *Server) isConfiguredProviderHost(host string) bool {
+	norm := func(u string) string {
+		return strings.TrimSuffix(strings.TrimRight(strings.TrimSpace(u), "/"), "/v1")
+	}
+	h := norm(host)
+	if h == "" {
+		return false
+	}
+	cfg := s.cfg()
+	for _, c := range []string{cfg.OllamaHost, cfg.OpenAIBaseURL, gleann.DefaultOllamaHost, "http://localhost:11434"} {
+		if c != "" && !strings.Contains(c, "(auto-scan") && sameBaseURL(h, norm(c)) {
+			return true
+		}
+	}
+	return false
+}
 
 // sameBaseURL reports whether two base URLs refer to the same endpoint,
 // ignoring trailing slashes and scheme/host case.

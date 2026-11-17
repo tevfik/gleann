@@ -141,6 +141,8 @@ github.com/stretchr/testify v1.11.1 h1:7s2iGBzp5EwR7/aIZr8ao5+dra3wiQyKjjFuvgVKu
 github.com/stretchr/testify v1.11.1/go.mod h1:wZwfW3scLgRK+23gO65QZefKpKQRnfz6sD981Nm4B6U=
 github.com/tevfik/agenttui v0.3.2 h1:CU2v+1UvVEj5h5CZ68N0Il8Am9wGoeXONo6XHkqoiTk=
 github.com/tevfik/agenttui v0.3.2/go.mod h1:l1DaTT9Ec3HKYXN0wHbP/jrKu5U/U0/eY19ZYm9s12Q=
+github.com/tevfik/gleann/modules/settings v0.0.0-20261026125249-6940c866c9f4 h1:9ZdZuVxR5Gl5Xk1yUQelFHS2RGDcvn1bxqDqEwsRbC8=
+github.com/tevfik/gleann/modules/settings v0.0.0-20261026125249-6940c866c9f4/go.mod h1:NDfSPUlkcij+jCatjsNP0GUap2kjRopX0wBPGqyBx88=
 github.com/tiendc/go-deepcopy v1.7.2 h1:Ut2yYR7W9tWjTQitganoIue4UGxZwCcJy3orjrrIj44=
 github.com/tiendc/go-deepcopy v1.7.2/go.mod h1:4bKjNC2r7boYOkD2IOuZpYjmlDdzjbpTRyCx+goBCJQ=
 github.com/wk8/go-ordered-map/v2 v2.1.8 h1:5h/BUHu93oj4gIdvHHHGsScSTMijfx5PeYkE/fJgbpc=

@@ -237,7 +237,7 @@ tasks:
   test-treesitter:
     desc: Run treesitter backend tests
     cmds:
-      - cd modules/chunking && go test -tags "cgo treesitter" -count=1 -timeout 60s ./...
+      - go test -tags "cgo treesitter" -count=1 -timeout 60s ./modules/chunking/...
 
   test-e2e:
     desc: Run Go integration E2E tests (Requires Ollama)

@@ -7,6 +7,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"testing"
 
 	"github.com/tevfik/gleann/pkg/gleann"
@@ -14,7 +15,9 @@ import (
 
 func TestHandleGraphIndex_StubReturnsError(t *testing.T) {
 	s := newTestServerWithGraph(nil)
-	req := httptest.NewRequest("POST", "/api/graph/test-index/index", bytes.NewBufferString(`{"docs_dir":"/tmp/test"}`))
+	docs := t.TempDir()
+	t.Setenv("GLEANN_ALLOWED_ROOTS", docs)
+	req := httptest.NewRequest("POST", "/api/graph/test-index/index", bytes.NewBufferString(`{"docs_dir":`+strconv.Quote(docs)+`}`))
 	req.SetPathValue("name", "test-index")
 	w := httptest.NewRecorder()
 	s.handleGraphIndex(w, req)

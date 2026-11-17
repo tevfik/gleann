@@ -22,6 +22,7 @@ func cmdConfig(args []string) {
 
 	switch sub {
 	case "show":
+		requireValidConfig()
 		cmdConfigShow()
 	case "path":
 		cmdConfigPath()
@@ -30,6 +31,7 @@ func cmdConfig(args []string) {
 	case "validate":
 		cmdConfigValidate()
 	case "set":
+		requireValidConfig()
 		cmdConfigSet(args[1:])
 	default:
 		fmt.Fprintf(os.Stderr, "unknown config subcommand: %s\n", sub)
@@ -117,7 +119,7 @@ func cmdConfigValidate() {
 	home, _ := os.UserHomeDir()
 	p := filepath.Join(home, ".gleann", "config.json")
 
-	data, err := os.ReadFile(p)
+	_, err := os.ReadFile(p)
 	if err != nil {
 		if os.IsNotExist(err) {
 			fmt.Println("⚠️  No config file found at", p)
@@ -128,16 +130,14 @@ func cmdConfigValidate() {
 		os.Exit(1)
 	}
 
-	var raw map[string]interface{}
-	if err := json.Unmarshal(data, &raw); err != nil {
-		fmt.Fprintf(os.Stderr, "❌ Invalid JSON in %s:\n   %v\n", p, err)
+	// Parse as OnboardResult; a syntax or type error names line and column.
+	cfg, err := tui.LoadSavedConfigChecked()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "❌ Invalid config: %v\n", err)
 		os.Exit(1)
 	}
-
-	// Try loading as OnboardResult.
-	cfg := tui.LoadSavedConfig()
 	if cfg == nil {
-		fmt.Fprintf(os.Stderr, "❌ Config file exists but could not be parsed.\n")
+		fmt.Fprintf(os.Stderr, "❌ Config file %s is empty.\n", p)
 		os.Exit(1)
 	}
 

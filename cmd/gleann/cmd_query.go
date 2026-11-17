@@ -53,6 +53,8 @@ Options:
 		os.Exit(1)
 	}
 
+	warnPendingSyncBackups(config.IndexDir, func(msg string) { fmt.Fprintln(os.Stderr, "⚠  "+msg) })
+
 	if tagFilter != "" {
 		var filtered []gleann.IndexMeta
 		for _, idx := range indexes {
@@ -205,6 +207,7 @@ func cmdAsk(args []string) {
 	if len(args) == 0 {
 		printCmdAskUsage()
 	}
+	rejectUnknownFlags("ask", args, askFlags)
 
 	config := getConfig(args)
 	applySavedConfig(&config, args)

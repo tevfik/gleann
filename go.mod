@@ -22,14 +22,11 @@ require (
 	github.com/qmuntal/stateless v1.8.0
 	github.com/smacker/go-tree-sitter v0.0.0-20240827094217-dd81d9e9be82
 	github.com/tevfik/agenttui v0.3.2
-	github.com/tevfik/gleann/modules/bm25 v0.0.0-20260303190343-2b5861edadac
-	github.com/tevfik/gleann/modules/chunking v0.0.0-20260303190343-2b5861edadac
-	github.com/tevfik/gleann/modules/diskann v0.0.0-00010101000000-000000000000
-	github.com/tevfik/gleann/modules/hnsw v0.0.0-20260303190343-2b5861edadac
-	github.com/tevfik/gleann/modules/settings v0.0.0-00010101000000-000000000000
+	github.com/tevfik/gleann/modules/settings v0.0.0-20261026125249-6940c866c9f4
 	github.com/xuri/excelize/v2 v2.10.1
 	go.etcd.io/bbolt v1.4.3
 	golang.org/x/sync v0.22.0
+	golang.org/x/sys v0.47.0
 	golang.org/x/term v0.40.0
 	gopkg.in/yaml.v3 v3.0.1
 )
@@ -84,16 +81,5 @@ require (
 	golang.org/x/crypto v0.48.0 // indirect
 	golang.org/x/exp v0.0.0-20251023183803-a4bb9ffd2546 // indirect
 	golang.org/x/net v0.50.0 // indirect
-	golang.org/x/sys v0.47.0 // indirect
 	golang.org/x/text v0.34.0 // indirect
 )
-
-replace github.com/tevfik/gleann/modules/hnsw => ./modules/hnsw
-
-replace github.com/tevfik/gleann/modules/bm25 => ./modules/bm25
-
-replace github.com/tevfik/gleann/modules/chunking => ./modules/chunking
-
-replace github.com/tevfik/gleann/modules/diskann => ./modules/diskann
-
-replace github.com/tevfik/gleann/modules/settings => ./modules/settings

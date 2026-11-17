@@ -212,6 +212,12 @@ type Config struct {
 	// Empty (default) means same-origin only.
 	CORSOrigins []string `json:"cors_origins,omitempty"`
 
+	// AllowedRoots lists the directories the REST server may index or read
+	// from on a client's request (index-path, update docs_root, watch). Empty
+	// means the user's home directory. GLEANN_ALLOWED_ROOTS overrides it. The
+	// CLI is not restricted.
+	AllowedRoots []string `json:"allowed_roots,omitempty"`
+
 	// Backend is the backend to use (e.g., "hnsw", "ivf").
 	Backend string `json:"backend"`
 

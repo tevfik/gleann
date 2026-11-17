@@ -292,7 +292,7 @@ func (m PluginModel) updateMain(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.state, m.settings = psDetail, nil
 		if m.statuses[m.cursor] == statusRunning {
 			if p := registered(m.registry, m.plugins[m.cursor]); p != nil {
-				return m, fetchSettingsSummary(m.plugins[m.cursor].Name, p.URL)
+				return m, fetchSettingsSummary(m.plugins[m.cursor].Name, p.URL, m.manager.TokenFor(p))
 			}
 		}
 
@@ -515,10 +515,17 @@ func resolveBinary(info gleann.PluginMeta, reg *gleann.Plugin) string {
 // fetchSettingsSummary reads a running plugin's settings from its GET
 // /settings form, so the detail view shows the same values the web UI and the
 // plugin's own TUI edit, for any plugin, without knowing its config file.
-func fetchSettingsSummary(name, url string) tea.Cmd {
+func fetchSettingsSummary(name, url, token string) tea.Cmd {
 	return func() tea.Msg {
 		client := &http.Client{Timeout: 2 * time.Second}
-		resp, err := client.Get(strings.TrimRight(url, "/") + "/settings")
+		req, err := http.NewRequest(http.MethodGet, strings.TrimRight(url, "/")+"/settings", nil)
+		if err != nil {
+			return settingsSummaryMsg{plugin: name}
+		}
+		if token != "" {
+			req.Header.Set("Authorization", "Bearer "+token)
+		}
+		resp, err := client.Do(req)
 		if err != nil {
 			return settingsSummaryMsg{plugin: name}
 		}

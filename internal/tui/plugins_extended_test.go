@@ -339,13 +339,13 @@ func TestFetchSettingsSummaryReadsThePluginForm(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	msg := fetchSettingsSummary("p", srv.URL)().(settingsSummaryMsg)
+	msg := fetchSettingsSummary("p", srv.URL, "")().(settingsSummaryMsg)
 	want := []settingRow{{"Page parser", "auto"}, {"Granite VLM", "off"}, {"ONNX Runtime", "auto: /lib/libonnxruntime.so"}}
 	if !reflect.DeepEqual(msg.rows, want) {
 		t.Errorf("rows = %+v\nwant  %+v", msg.rows, want)
 	}
 	// A plugin without a settings form shows no settings, and no error.
-	if msg := fetchSettingsSummary("p", srv.URL+"/nothing")().(settingsSummaryMsg); msg.rows != nil {
+	if msg := fetchSettingsSummary("p", srv.URL+"/nothing", "")().(settingsSummaryMsg); msg.rows != nil {
 		t.Errorf("rows for a plugin without settings: %+v", msg.rows)
 	}
 }

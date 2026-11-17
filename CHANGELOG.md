@@ -4,6 +4,32 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Security
+- **The REST server no longer indexes or reads arbitrary directories on a client's request.** `index-path`, `update` (`docs_root`, `sources`), `watch` (`dir`), graph `docs_dir` and the A2A multimodal file path must lie inside `allowed_roots` (new setting, or `GLEANN_ALLOWED_ROOTS`; default: your home directory), otherwise the server answers 403. Paths are resolved through symlinks before the check. The command line is not restricted. Servers that index directories outside the home directory through the API need `allowed_roots` set.
+- **MCP file tools stay inside the project.** `gleann_read_full_document` reads only inside the index's source directory; `gleann_read` reads inside the agent's working directory (unless that is a file-system root or the home directory) and the source directories of the exposed indexes; `gleann_sync` keeps `docs_dir` and `files` inside the allowed roots or the source directory. A refused path gets the same answer as a missing file.
+
+- **Plugins get a bearer token.** gleann creates a token per plugin on first launch, keeps it in `<gleann home>/auth/plugins/<name>.token` (0600, shared by all gleann processes), passes it to the plugin as `GLEANN_PLUGIN_TOKEN` and sends it as `Authorization: Bearer` on every request except `/health`. A `token` in `plugins.json` overrides it (for plugins started by hand). Plugins that do not check tokens keep working.
+- `/api/proxy/models` no longer follows client-supplied loopback, private or link-local hosts, or redirects to them; the configured Ollama and OpenAI-compatible hosts stay reachable, and a configured host may not redirect to another host. `GLEANN_MODEL_DOWNLOAD_ALLOW_PRIVATE=1` lifts the guard.
+
+### Fixed
+- **`go install github.com/tevfik/gleann/cmd/gleann@latest` works** (from the next release on). `modules/bm25`, `chunking`, `diskann` and `hnsw` are packages of the root module and the root `go.mod` has no `replace` directives; `modules/settings` stays a separate module because the plugins import it.
+- **A malformed `~/.gleann/config.json` is no longer ignored.** Commands stop with the file path and the line and column of the JSON error; the file is never rewritten. `version`, `help`, `config path|edit|validate`, `setup`, `doctor`, `completion` and `update` still run, and `config validate` and `doctor` report the error.
+- **`gleann search` and `gleann ask` reject unknown flags** (exit code 2, `unknown flag --x`, with a suggestion for near misses); `--` ends flag parsing. The values of `--doc-model`, `--backend` and about a dozen other flags no longer leak into the search query.
+- `gleann search --help` shows the real `--top-k` default (10), and the saved `top_k` setting now applies to CLI commands (`--top-k` still wins).
+- **`gleann mcp` in the default pure-Go build no longer advertises tools that need the code graph** (`gleann_graph_neighbors`, `gleann_impact`, `gleann_document_links`, `gleann_graph_stats`, `gleann_symbols_in_file`, `gleann_document_toc`); they could only return errors. `gleann_def` stays (it falls back to search).
+- The generated AGENTS.md and SKILL.md list only the MCP tools of the default profile and say how to enable the full set (`gleann mcp --tools full`).
+- **The text chunker splits text without sentence punctuation or spaces** (logs, minified text, CJK) at the size limit instead of producing one huge chunk; `。！？` end a sentence, and a single paragraph longer than the chunk size is split by sentences. On gleann's own documentation the passage count changes from 662 to 663.
+- **`index sync` no longer deletes the only good copy of an index after a killed rebuild.** A leftover `<index>.sync-bak` is restored (or discarded when the index is complete), and a cross-process lock keeps a second gleann away from an index that is being rebuilt. `gleann index list` and `gleann doctor` report a pending rollback copy.
+- **`index watch` updates go through the same path as `index sync`**: the recorded embedding model is enforced (before, watch could mix vectors of another model into the index) and a failed rebuild is rolled back.
+- `gleann graph report` prints the absolute path of the report and does not overwrite a `GRAPH_REPORT.md` that belongs to another index unless `--force` is given.
+
+### Changed
+- `docs/evaluation.md` and `gleann bench --agent` state that the agent suite is a simulated scenario with assumed numbers, not a measurement.
+
+### Added
+- `allowed_roots` setting (settings screens, web UI, `config.json`, `GLEANN_ALLOWED_ROOTS`).
+- [RFC 003](docs/plans/003-storage.md) (draft): SQLite record store, persisted lexical index and in-memory code graph.
+
 ## [v1.9.0] — 2026-11-11
 
 See [docs/releases/v1.9.0.md](docs/releases/v1.9.0.md).

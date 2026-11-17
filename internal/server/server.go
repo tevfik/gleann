@@ -27,6 +27,7 @@ import (
 	"github.com/tevfik/gleann/internal/indexing"
 	"github.com/tevfik/gleann/internal/modelcatalog"
 	"github.com/tevfik/gleann/internal/multimodal"
+	"github.com/tevfik/gleann/internal/pathpolicy"
 
 	"github.com/tevfik/gleann/internal/eventbus"
 	"github.com/tevfik/gleann/pkg/conversations"
@@ -1333,6 +1334,10 @@ func (s *Server) handleUpdateIndex(w http.ResponseWriter, r *http.Request) {
 
 	// If no explicit items were provided, read sources from disk under DocsRoot
 	if len(items) == 0 && req.DocsRoot != "" {
+		docsRoot, ok := s.containClientPath(w, req.DocsRoot)
+		if !ok {
+			return
+		}
 		for _, src := range req.Sources {
 			// Sources are relative to docs_root and must not escape it
 			// (absolute paths and ".." are rejected).
@@ -1340,7 +1345,12 @@ func (s *Server) handleUpdateIndex(w http.ResponseWriter, r *http.Request) {
 				writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid source path %q: must be relative to docs_root and stay inside it", src))
 				return
 			}
-			fullPath := filepath.Join(req.DocsRoot, src)
+			fullPath := filepath.Join(docsRoot, src)
+			// A symlink below docs_root must not lead out of the allowed roots.
+			if _, cerr := pathpolicy.Contain(fullPath, s.allowedRoots()); cerr != nil {
+				writeError(w, http.StatusForbidden, fmt.Sprintf("source %q resolves outside the directories this server may read (allowed_roots)", src))
+				return
+			}
 			content, err := os.ReadFile(fullPath)
 			if err != nil {
 				writeError(w, http.StatusBadRequest, fmt.Sprintf("read source file %s: %v", src, err))
@@ -2105,7 +2115,13 @@ func (s *Server) handleIndexPath(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	opts := s.buildOptions(name, req.Path)
+	// A client may only have the server index what is inside allowed_roots.
+	docsDir, ok := s.containClientPath(w, req.Path)
+	if !ok {
+		return
+	}
+
+	opts := s.buildOptions(name, docsDir)
 	opts.Tags = req.Tags
 	opts.Description = req.Description
 	opts.MCPExposed = req.MCPExposed
@@ -2292,6 +2308,13 @@ func (s *Server) handleWatch(w http.ResponseWriter, r *http.Request) {
 		if dirToWatch == "" {
 			writeError(w, http.StatusBadRequest, "no directory provided or configured to watch")
 			return
+		}
+		// A client-supplied directory is indexed on every change, so it is
+		// held to allowed_roots. The index's own recorded SourceDir is not.
+		if req.Dir != "" {
+			if _, ok := s.containClientPath(w, req.Dir); !ok {
+				return
+			}
 		}
 
 		s.aiMu.Lock()

@@ -272,10 +272,13 @@ source <(gleann completion bash)
 | Search + rerank | `gleann search <name> <query> --rerank` |
 | Ask (RAG) | `gleann ask <name> <question>` |
 | Chat | `gleann chat <name>` |
+| Find a definition | `gleann def <symbol> [--index <name>] [--kind <kind>] [-k <N>] [--json]` |
 | Graph explain | `gleann graph explain <symbol> --index <name>` |
 | Graph report | `gleann graph report --index <name>` |
 | Memory store | `gleann memory remember "<fact>"` |
 | Memory recall | `gleann memory list` |
+| Generate AGENTS.md | `gleann agents [dump] [--dir <dir>] [--index <name>] [--stdout] [--force]` |
+| Describe images/audio/video | `gleann multimodal analyze <file-or-dir> [--model <model>] [--host <url>]` |
 | Install for AI editor | `gleann install [--platform <name>]` |
 | Install (all 17 platforms) | `gleann install --list` |
 | Read file (smart mode) | `gleann_read` (MCP tool: `mode=signatures\|map\|entropy\|auto`) |
@@ -288,6 +291,7 @@ source <(gleann completion bash)
 | Shell completion | `gleann completion [bash\|zsh\|fish]` |
 | Token estimate | `gleann tokens <file-or-dir>` |
 | Health check | `gleann doctor` |
+| Uninstall | `gleann uninstall [--all] [-y]` (`--all` also removes `~/.gleann`) |
 | Help | `gleann help` |
 
 ## Next Steps

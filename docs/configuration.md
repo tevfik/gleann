@@ -106,6 +106,7 @@ Location: `~/.gleann/config.json`
 | `proxy_mode` | — | `passthrough` makes `POST /v1/chat/completions` forward the client's request unchanged (plus the retrieved context) and stream the LLM server's reply back byte for byte; empty uses gleann's chat client. `GLEANN_PROXY_MODE` overrides it. See [REST API](api.md) |
 | `auth` | `on` | REST API authentication: `on` (token required) or `off` (accepted only on a loopback address). `GLEANN_AUTH` overrides it |
 | `cors_origins` | — | Origins whose web pages may call the API, e.g. `["https://app.example.com"]`. `GLEANN_CORS_ORIGINS` adds more |
+| `allowed_roots` | home directory | Directories a REST client may have the server index or read: `index-path`, `update` `docs_root`, `watch` `dir`, graph `docs_dir`. Other paths get `403`. `GLEANN_ALLOWED_ROOTS` (path-list separated) overrides it. The command line is not restricted. See [REST API](api.md) |
 | `rate_limit` / `rate_burst` | `60` / `120` | Requests per second / burst per client address (loopback clients are not limited). `GLEANN_RATE_LIMIT` / `GLEANN_RATE_BURST` override them |
 
 Every field above is also editable from `gleann setup` → All Settings and from the web UI (System → Settings); both are built from the same list, so they offer the same values and checks.

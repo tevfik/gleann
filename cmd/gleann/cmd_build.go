@@ -21,7 +21,6 @@ import (
 	"time"
 
 	"github.com/fsnotify/fsnotify"
-	"github.com/tevfik/gleann/internal/embedding"
 	"github.com/tevfik/gleann/internal/indexing"
 	"github.com/tevfik/gleann/internal/multimodal"
 	"github.com/tevfik/gleann/internal/vault"
@@ -408,6 +407,8 @@ Options:
 		}
 	}
 
+	mode, noPlugins := parseIndexMode(args)
+	args = withModeModel(args, mode)
 	config := getConfig(args)
 	applySavedConfig(&config, args)
 
@@ -415,9 +416,6 @@ Options:
 		fmt.Fprintf(os.Stderr, "error initializing llamacpp: %v\n", err)
 		os.Exit(1)
 	}
-
-	// Wrap with embedding cache for rebuild efficiency.
-	cachedEmbedder := embedding.NewCachedComputer(newEmbedder(config), embedding.CacheOptions{})
 
 	fmt.Printf("👁️  Watching %s for changes via fsnotify (debounce: %s)\n", docsDir, interval)
 	fmt.Printf("   Index: %s\n", name)
@@ -442,15 +440,17 @@ Options:
 	}
 	defer watcher.Close()
 
-	mode, noPlugins := parseIndexMode(args)
 	includeSubmodules := hasFlag(args, "--include-submodules")
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	opts := stdOptions(config, mode, noPlugins, includeSubmodules)
-	opts.Embedder = cachedEmbedder
+	// No preset embedder: Sync uses the model the index was built with
+	// (reconcileModel) and builds the embedder for that model.
 	opts.Tracker = tracker
+	opts.ModelExplicit = modelExplicit(args)
+	syncOpts := indexing.SyncOptions{Options: opts, Name: name, DocsDir: docsDir, Graph: buildGraph}
 
 	rebuild := func() []*PluginDoc {
 		pDocs, err := indexing.RebuildIndex(ctx, name, docsDir, opts)
@@ -464,12 +464,7 @@ Options:
 	// incremental sync instead of being deleted and re-embedded (N-04).
 	if _, statErr := os.Stat(filepath.Join(config.IndexDir, name, name+".meta.json")); statErr == nil {
 		fmt.Printf("📂 Index %q exists, syncing instead of rebuilding...\n", name)
-		if _, err := indexing.Sync(ctx, indexing.SyncOptions{
-			Options: opts,
-			Name:    name,
-			DocsDir: docsDir,
-			Graph:   buildGraph,
-		}); err != nil {
+		if _, err := indexing.Sync(ctx, syncOpts); err != nil {
 			fmt.Fprintf(os.Stderr, "error: initial sync failed: %v\n(run `gleann index rebuild %s` to rebuild from scratch)\n", err, name)
 		}
 	} else {
@@ -522,16 +517,12 @@ Options:
 
 			fmt.Printf("🔄 %d file(s) changed, updating index %q...\n", len(files), name)
 			start := time.Now()
-			pDocs, err := indexing.UpdateIncremental(ctx, name, docsDir, files, opts)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "%v, falling back to full rebuild\n", err)
-				pDocs = rebuild()
+			// Same path as `index sync`: model check, rollback of a failed
+			// rebuild and the graph update all happen inside.
+			if _, err := indexing.SyncChanged(ctx, syncOpts, files); err != nil {
+				fmt.Fprintf(os.Stderr, "error: %v\n", err)
 			} else {
-				fmt.Printf("⚡ Incremental update complete in %s\n", time.Since(start).Round(time.Millisecond))
-			}
-
-			if buildGraph {
-				buildGraphIndex(name, docsDir, config.IndexDir, pDocs, files, includeSubmodules)
+				fmt.Printf("⚡ Update complete in %s\n", time.Since(start).Round(time.Millisecond))
 			}
 
 			// drain any queued up builds during sleep

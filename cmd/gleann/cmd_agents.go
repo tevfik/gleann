@@ -66,9 +66,10 @@ func getAgentsMDContent(indexName string) string {
 	sb.WriteString("gleann memory clear --tier short         # wipe session-tier blocks\n")
 	sb.WriteString("```\n\n")
 	sb.WriteString("### 3 — MCP tools (when gleann mcp is running)\n\n")
-	sb.WriteString("**Search & graph:**\n")
-	sb.WriteString("`gleann_search` · `gleann_search_multi` · `gleann_ask` · `gleann_graph_neighbors` · `gleann_impact` · `gleann_read_full_document` · `gleann_document_toc` · `gleann_sync`\n")
-	sb.WriteString("`inject_knowledge_graph` · `delete_graph_entity` · `traverse_knowledge_graph`\n\n")
+	sb.WriteString("**Available tools:**\n")
+	sb.WriteString(mcpToolList() + "\n\n")
+	sb.WriteString(mcpFullProfileNote + "\n\n")
+	sb.WriteString("**Search & code:**\n")
 	if indexName != "" {
 		sb.WriteString(fmt.Sprintf("- `gleann_search` — semantic search. Pass `{\"query\": \"...\"}` (the index automatically defaults to `%s`).\n", indexName))
 		sb.WriteString(fmt.Sprintf("- `gleann_sync` — **CRITICAL:** call this (`{\"index\": \"%s\"}`) after creating, editing, or deleting files to incrementally refresh vector passages and AST graph! Default mode is `\"code\"` for fast indexing. Use `mode: \"docs\"` to index office documents on-demand.\n", indexName))
@@ -76,12 +77,13 @@ func getAgentsMDContent(indexName string) string {
 		sb.WriteString("- `gleann_search` — semantic search across indexes. Can omit index to auto-resolve.\n")
 		sb.WriteString("- `gleann_sync` — call this after creating, editing, or deleting files to incrementally refresh vector passages and AST graph! Default mode is `\"code\"` for fast indexing. Use `mode: \"docs\"` for office documents.\n")
 	}
-	sb.WriteString("- `gleann_impact` — inspect callers and blast radius before modifying symbols.\n\n")
-	sb.WriteString("**Memory (always-available, no build tag):**\n")
+	if hasMCPTool("gleann_impact") {
+		sb.WriteString("- `gleann_impact` — inspect callers and blast radius before modifying symbols.\n")
+	}
+	sb.WriteString("\n**Memory (always-available, no build tag):**\n")
 	sb.WriteString("- `memory_remember` — store fact with tier/label/tags/scope\n")
 	sb.WriteString("- `memory_forget` — remove block by ID or content match\n")
 	sb.WriteString("- `memory_search` — full-text search across all tiers\n")
-	sb.WriteString("- `memory_list` — browse blocks, filter by tier\n")
 	sb.WriteString("- `memory_context` — returns the compiled `<memory_context>` window that gleann\n")
 	sb.WriteString("  injects into LLM system prompts — call this at session start to recall everything\n\n")
 	sb.WriteString("**Workflow:** call `memory_context` at the start of every session, use `gleann_sync` after modifying files so code intelligence tools immediately reflect changes, then call `memory_remember` whenever you learn something important about the codebase.\n")

@@ -12,6 +12,7 @@ import (
 
 	"github.com/tevfik/gleann/internal/a2a"
 	"github.com/tevfik/gleann/internal/multimodal"
+	"github.com/tevfik/gleann/internal/pathpolicy"
 	"github.com/tevfik/gleann/pkg/gleann"
 )
 
@@ -375,6 +376,14 @@ func (s *Server) a2aMultimodalHandler(ctx a2a.SkillContext) (string, error) {
 
 	// Otherwise, treat query as a file path.
 	filePath := strings.TrimSpace(ctx.Query)
+
+	// The query names a file the server reads and sends to the model, so it
+	// is held to allowed_roots like any other client-supplied path.
+	resolved, cerr := pathpolicy.Contain(filePath, s.allowedRoots())
+	if cerr != nil {
+		return "", fmt.Errorf("path %q is not inside the directories this server may read (allowed_roots)", filePath)
+	}
+	filePath = resolved
 
 	// Use multimodal processor.
 	proc := multimodal.NewProcessor(ollamaHost, model)

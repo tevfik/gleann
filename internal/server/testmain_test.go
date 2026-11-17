@@ -13,7 +13,6 @@ func TestMain(m *testing.M) {
 	if err != nil {
 		panic(err)
 	}
-	defer os.RemoveAll(tmpDir)
 
 	origRemote := os.Getenv("GLEANN_REMOTE_ADDR")
 	origMemDir := os.Getenv("GLEANN_MEMORY_DIR")
@@ -42,5 +41,7 @@ func TestMain(m *testing.M) {
 	}
 	memory.ResetRemoteForTesting()
 
+	// os.Exit skips deferred calls, so remove the temp dir explicitly.
+	_ = os.RemoveAll(tmpDir)
 	os.Exit(code)
 }

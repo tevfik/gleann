@@ -4,6 +4,7 @@ package chunking
 import (
 	"strings"
 	"unicode"
+	"unicode/utf8"
 )
 
 // Chunk represents a piece of text and its associated metadata.
@@ -50,7 +51,18 @@ func (s *SentenceSplitter) Chunk(text string) []string {
 	currentLen := 0
 
 	for _, para := range paragraphs {
-		paraLen := countWords(para)
+		paraLen := weight(para)
+		if s.oversize(para) {
+			// A paragraph that alone exceeds the limit: flush what is pending
+			// and split it by sentences, hard-splitting where needed.
+			if currentLen > 0 {
+				chunks = append(chunks, strings.TrimSpace(currentChunk.String()))
+				currentChunk.Reset()
+				currentLen = 0
+			}
+			chunks = append(chunks, s.chunkBySentences(para)...)
+			continue
+		}
 		if currentLen+paraLen > s.ChunkSize && currentLen > 0 {
 			chunks = append(chunks, strings.TrimSpace(currentChunk.String()))
 			// Overlap: keep some of the previous content.
@@ -59,7 +71,7 @@ func (s *SentenceSplitter) Chunk(text string) []string {
 			if overlapText != "" {
 				currentChunk.WriteString(overlapText)
 				currentChunk.WriteString("\n\n")
-				currentLen = countWords(overlapText)
+				currentLen = weight(overlapText)
 			} else {
 				currentLen = 0
 			}
@@ -99,7 +111,12 @@ func (s *SentenceSplitter) ChunkWithMetadata(text string, metadata map[string]an
 
 // chunkBySentences splits text into chunks by sentences.
 func (s *SentenceSplitter) chunkBySentences(text string) []string {
-	sentences := splitSentences(text)
+	var sentences []string
+	for _, sent := range splitSentences(text) {
+		// Text without sentence punctuation (logs, minified text, CJK) arrives
+		// as one huge "sentence": hard-split it at the size limit.
+		sentences = append(sentences, splitOversize(sent, s.ChunkSize, s.ChunkSize*maxRunesPerWord)...)
+	}
 	if len(sentences) == 0 {
 		return nil
 	}
@@ -109,7 +126,7 @@ func (s *SentenceSplitter) chunkBySentences(text string) []string {
 	currentLen := 0
 
 	for _, sent := range sentences {
-		sentLen := countWords(sent)
+		sentLen := weight(sent)
 		if currentLen+sentLen > s.ChunkSize && currentLen > 0 {
 			chunks = append(chunks, strings.TrimSpace(currentChunk.String()))
 			overlapText := getOverlapText(currentChunk.String(), s.ChunkOverlap)
@@ -117,7 +134,7 @@ func (s *SentenceSplitter) chunkBySentences(text string) []string {
 			if overlapText != "" {
 				currentChunk.WriteString(overlapText)
 				currentChunk.WriteString(" ")
-				currentLen = countWords(overlapText)
+				currentLen = weight(overlapText)
 			} else {
 				currentLen = 0
 			}
@@ -277,8 +294,10 @@ func splitSentences(text string) []string {
 		current.WriteRune(runes[i])
 
 		// Detect sentence end: period/question/exclamation followed by space or end.
-		if runes[i] == '.' || runes[i] == '?' || runes[i] == '!' {
-			if i+1 >= len(runes) || unicode.IsSpace(runes[i+1]) {
+		if runes[i] == '.' || runes[i] == '?' || runes[i] == '!' || runes[i] == '。' || runes[i] == '！' || runes[i] == '？' {
+			// CJK full-stops are not followed by a space.
+			cjkStop := runes[i] == '。' || runes[i] == '！' || runes[i] == '？'
+			if cjkStop || i+1 >= len(runes) || unicode.IsSpace(runes[i+1]) {
 				s := strings.TrimSpace(current.String())
 				if s != "" {
 					sentences = append(sentences, s)
@@ -296,14 +315,155 @@ func splitSentences(text string) []string {
 	return sentences
 }
 
+// maxRunesPerWord bounds a chunk in characters (ChunkSize * maxRunesPerWord) so
+// that text without spaces cannot slip past the word-based limit.
+const maxRunesPerWord = 16
+
+// oversize reports whether text alone exceeds the chunk size.
+func (s *SentenceSplitter) oversize(text string) bool {
+	return weight(text) > s.ChunkSize
+}
+
+func isCJK(r rune) bool {
+	return unicode.In(r, unicode.Han, unicode.Hiragana, unicode.Katakana, unicode.Hangul)
+}
+
+func containsCJK(text string) bool {
+	for _, r := range text {
+		if isCJK(r) {
+			return true
+		}
+	}
+	return false
+}
+
+// tokenStarts returns the byte offsets at which a token starts. A token is a
+// whitespace-separated field, except that every CJK character counts as a token
+// of its own (CJK text has no spaces).
+func tokenStarts(text string) []int {
+	var starts []int
+	prev := 0 // 0 space, 1 word, 2 CJK
+	for i, r := range text {
+		k := runeKind(r)
+		if k == 2 || (k == 1 && prev != 1) {
+			starts = append(starts, i)
+		}
+		prev = k
+	}
+	return starts
+}
+
+func runeKind(r rune) int {
+	switch {
+	case unicode.IsSpace(r):
+		return 0
+	case isCJK(r):
+		return 2
+	default:
+		return 1
+	}
+}
+
+// weight is the size of text for packing: its token count, or its length in
+// characters divided by maxRunesPerWord when that is larger (text without spaces).
+func weight(text string) int {
+	w := countWords(text)
+	if r := (utf8.RuneCountInString(text) + maxRunesPerWord - 1) / maxRunesPerWord; r > w {
+		return r
+	}
+	return w
+}
+
 func countWords(text string) int {
-	return len(strings.Fields(text))
+	return len(tokenStarts(text))
+}
+
+// splitOversize cuts text into pieces of at most maxWords tokens and maxRunes
+// characters. It breaks at the last newline in a piece, else at the last
+// space, else hard at the limit. It only cuts between runes, so UTF-8
+// sequences stay intact. Text within the limits is returned unchanged.
+func splitOversize(text string, maxWords, maxRunes int) []string {
+	if maxWords < 1 {
+		maxWords = 1
+	}
+	if maxRunes < 1 {
+		maxRunes = 1
+	}
+	if countWords(text) <= maxWords && utf8.RuneCountInString(text) <= maxRunes {
+		return []string{text}
+	}
+	rs := []rune(text)
+	var out []string
+	add := func(from, to int) {
+		if p := strings.TrimSpace(string(rs[from:to])); p != "" {
+			out = append(out, p)
+		}
+	}
+	start := 0
+	for start < len(rs) {
+		words, prev, cut := 0, 0, len(rs)
+		for i := start; i < len(rs); i++ {
+			k := runeKind(rs[i])
+			if k == 2 || (k == 1 && prev != 1) {
+				words++
+			}
+			if words > maxWords || i-start >= maxRunes {
+				cut = i
+				break
+			}
+			prev = k
+		}
+		if cut == len(rs) {
+			add(start, cut)
+			break
+		}
+		brk := cut
+		nl, sp := -1, -1
+		for i := cut - 1; i > start; i-- {
+			if rs[i] == '\n' {
+				nl = i
+				break
+			}
+			if sp < 0 && unicode.IsSpace(rs[i]) {
+				sp = i
+			}
+		}
+		switch {
+		case nl > start:
+			brk = nl + 1
+		case sp > start:
+			brk = sp + 1
+		}
+		add(start, brk)
+		start = brk
+	}
+	return out
 }
 
 func getOverlapText(text string, overlapWords int) string {
+	if overlapWords <= 0 {
+		return ""
+	}
+	if starts := tokenStarts(text); len(starts) > 0 && containsCJK(text) {
+		if len(starts) <= overlapWords {
+			return tailRunes(text, overlapWords*maxRunesPerWord)
+		}
+		return text[starts[len(starts)-overlapWords]:]
+	}
 	words := strings.Fields(text)
 	if len(words) <= overlapWords {
-		return text
+		return tailRunes(text, overlapWords*maxRunesPerWord)
 	}
 	return strings.Join(words[len(words)-overlapWords:], " ")
+}
+
+// tailRunes returns at most the last n runes of text (never cutting inside a
+// UTF-8 sequence). It keeps the overlap of a chunk made of a few huge tokens
+// from duplicating the whole chunk.
+func tailRunes(text string, n int) string {
+	if n < 1 || utf8.RuneCountInString(text) <= n {
+		return text
+	}
+	rs := []rune(text)
+	return string(rs[len(rs)-n:])
 }

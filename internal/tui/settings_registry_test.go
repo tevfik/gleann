@@ -179,3 +179,32 @@ func TestSettingsAuthOffOnlyOnLoopback(t *testing.T) {
 		t.Fatalf("auth off is fine on loopback: %v", errs)
 	}
 }
+
+func TestSettingsAllowedRootsRoundTrip(t *testing.T) {
+	home := settingsHome(t)
+	path := filepath.Join(home, ".gleann", "config.json")
+	if err := os.WriteFile(path, []byte(`{"allowed_roots":["/srv/a"]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	reg := Settings()
+	c, err := reg.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := reg.Display(c, "allowed_roots"); got != "/srv/a" {
+		t.Fatalf("allowed_roots shows %q", got)
+	}
+	if _, errs := reg.Update(c, map[string]any{"allowed_roots": "/srv/a, /data/b"}); len(errs) > 0 {
+		t.Fatal(errs)
+	}
+	if err := reg.Save(c); err != nil {
+		t.Fatal(err)
+	}
+	raw := map[string]any{}
+	data, _ := os.ReadFile(path)
+	_ = json.Unmarshal(data, &raw)
+	roots, _ := raw["allowed_roots"].([]any)
+	if len(roots) != 2 || roots[0] != "/srv/a" || roots[1] != "/data/b" {
+		t.Fatalf("allowed_roots not saved as a list: %v", raw)
+	}
+}
