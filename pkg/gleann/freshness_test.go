@@ -15,6 +15,7 @@ import (
 // passages resolved through renumbered slots (ErrIndexChanged), and Refresh
 // reloads in place so the next search is right.
 func TestSearcher_FreshnessAcrossPublication(t *testing.T) {
+	t.Setenv("GLEANN_DEAD_MIN", "0")
 	dir := t.TempDir()
 	b, embedder := newFormat2Builder(t, dir, 8)
 	ctx := context.Background()

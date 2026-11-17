@@ -125,10 +125,11 @@ func (s *Server) handleBatchAsk(ctx context.Context, req mcpsdk.CallToolRequest)
 	}
 
 	// Load searcher.
-	searcher, err := s.getSearcherMCP(ctx, indexName)
+	searcher, release, err := s.acquireSearcher(indexName)
 	if err != nil {
 		return mcpsdk.NewToolResultError(fmt.Sprintf("index %q not found: %v", indexName, err)), nil
 	}
+	defer release()
 
 	// Run questions concurrently with a semaphore.
 	results := make([]batchResult, len(questions))
@@ -192,12 +193,6 @@ func (s *Server) handleBatchAsk(ctx context.Context, req mcpsdk.CallToolRequest)
 	}
 
 	return mcpsdk.NewToolResultText(sb.String()), nil
-}
-
-// getSearcherMCP loads (and caches) a LeannSearcher for MCP tool use.
-// We mirror the existing s.getSearcher() which manages the LRU cache.
-func (s *Server) getSearcherMCP(ctx context.Context, name string) (*gleann.LeannSearcher, error) {
-	return s.getSearcher(name)
 }
 
 // cacheSearcher is unused — calls go through getSearcher instead.

@@ -748,6 +748,7 @@ gleann_multi_search_requests_total 5
 # TYPE gleann_update_requests_total counter
 gleann_update_requests_total{mode="in-place"} 12
 gleann_update_requests_total{mode="compact"} 3
+gleann_update_requests_total{mode="merge"} 1
 gleann_update_requests_total{mode="emptied"} 0
 gleann_update_requests_total{mode="noop"} 1
 

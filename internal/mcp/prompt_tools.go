@@ -58,10 +58,11 @@ func (s *Server) handleDeepRefactorPrompt(ctx context.Context, request mcp.GetPr
 		return nil, fmt.Errorf("component argument is required")
 	}
 
-	searcher, err := s.getSearcher(indexName)
+	searcher, release, err := s.acquireSearcher(indexName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load index %q: %v", indexName, err)
 	}
+	defer release()
 
 	// Retrieve context about the component
 	query := fmt.Sprintf("architecture and implementation of %s", component)
@@ -109,10 +110,11 @@ func (s *Server) handleBugHunterPrompt(ctx context.Context, request mcp.GetPromp
 		return nil, fmt.Errorf("error_description argument is required")
 	}
 
-	searcher, err := s.getSearcher(indexName)
+	searcher, release, err := s.acquireSearcher(indexName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load index %q: %v", indexName, err)
 	}
+	defer release()
 
 	// Retrieve context about the error
 	results, err := searcher.Search(ctx, errorDesc, gleann.WithTopK(10), gleann.WithGraphContext(true))

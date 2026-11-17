@@ -8,6 +8,7 @@ import (
 	"sync"
 
 	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/tevfik/gleann/pkg/gleann"
 )
 
 var (
@@ -49,12 +50,16 @@ func (s *Server) handleRootsListChanged(ctx context.Context, notification mcp.JS
 
 	// Clear the cached searchers since the index directory has changed
 	s.searcherMu.Lock()
+	var toClose []*gleann.LeannSearcher
 	for k, searcher := range s.searchers {
-		if searcher != nil {
-			searcher.Close()
+		if sr := s.retireSearcherLocked(searcher); sr != nil {
+			toClose = append(toClose, sr)
 		}
 		delete(s.searchers, k)
 	}
 	s.searcherLRU = []string{}
 	s.searcherMu.Unlock()
+	for _, sr := range toClose {
+		sr.Close()
+	}
 }

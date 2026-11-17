@@ -50,10 +50,20 @@ func (s *Server) acquireSearcher(ctx context.Context, name string) (*gleann.Lean
 			release := s.retainLocked(sr)
 			s.mu.Unlock()
 			// Another process (a CLI sync or build) may have written to the
-			// index since this searcher loaded: one small read decides.
-			// A stale searcher is retired, not closed under its borrowers,
-			// and the loop loads a fresh one.
-			if stale, serr := sr.Stale(ctx); stale {
+			// index since this searcher loaded: one small read decides. A
+			// delta-only change (an incremental sync) is absorbed in place, the
+			// main vector file stays loaded and concurrent searches are not
+			// disturbed. Anything else retires the searcher, which is not
+			// closed under its borrowers, and the loop loads a fresh one.
+			change, serr := sr.Change(ctx)
+			if change == gleann.IndexDeltaChanged && serr == nil {
+				if rerr := sr.RefreshDelta(ctx); rerr == nil {
+					return sr, release, nil
+				} else {
+					serr = rerr
+				}
+			}
+			if change != gleann.IndexUnchanged || serr != nil {
 				release()
 				if serr != nil {
 					log.Printf("ℹ️  Index %q freshness check failed (%v); reloading", name, serr)

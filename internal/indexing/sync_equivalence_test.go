@@ -434,9 +434,8 @@ func TestSyncSelfRetrieval(t *testing.T) {
 	}
 }
 
-// Sync says how it applied the change: a modified file compacts, a new file is
-// appended in place (format 1) or compacts too (format 2 has no in-place
-// append), nothing to do reports nothing.
+// Sync says how it applied the change: a modified file compacts (format 1), a new file is
+// appended in place; format 2 embeds only the changed passages for both, nothing to do reports nothing.
 func TestSyncReportsHowTheVectorIndexWasUpdated(t *testing.T) {
 	ctx := context.Background()
 	opts, cfg := equivEnv(t, "hnsw", false)
@@ -452,10 +451,9 @@ func TestSyncReportsHowTheVectorIndexWasUpdated(t *testing.T) {
 		t.Fatalf("adding a file should add passages: %+v (%v)", res.Update, err)
 	}
 	if format2 {
-		// The format-2 write path always compacts, so an add re-embeds every
-		// passage, not just the new one.
-		if res.Update.Mode != gleann.UpdateCompact || res.Update.Embedded != res.Update.Passages {
-			t.Fatalf("format-2 add should compact and re-embed every passage: %+v", res.Update)
+		// The format-2 incremental path embeds only the new passages.
+		if res.Update.Mode != gleann.UpdateInPlace || res.Update.Embedded != res.Update.Added {
+			t.Fatalf("format-2 add should update in place and embed only the new passages: %+v", res.Update)
 		}
 	} else if res.Update.Mode != gleann.UpdateInPlace {
 		t.Fatalf("adding a file should append in place: %+v", res.Update)
@@ -463,8 +461,17 @@ func TestSyncReportsHowTheVectorIndexWasUpdated(t *testing.T) {
 
 	writeFile(t, filepath.Join(docs, "main.go"), "package main\n\n// Mul multiplies values.\nfunc Mul(a, b int) int { return a * b }\n")
 	res, err = Sync(ctx, SyncOptions{Options: opts, Name: "s"})
-	if err != nil || res.Update == nil || res.Update.Mode != gleann.UpdateCompact || res.Update.Removed == 0 || res.Update.Embedded != res.Update.Passages {
-		t.Fatalf("changing a file should compact and re-embed every passage: %+v (%v)", res.Update, err)
+	if err != nil || res.Update == nil || res.Update.Removed == 0 {
+		t.Fatalf("changing a file should remove its old passages: %+v (%v)", res.Update, err)
+	}
+	if format2 {
+		// Three of eight slots die: past the dead-share limit, so this sync also
+		// merges (rebuilds the main file from the stored vectors).
+		if (res.Update.Mode != gleann.UpdateInPlace && res.Update.Mode != gleann.UpdateMerge) || res.Update.Embedded != res.Update.Added {
+			t.Fatalf("format-2 change should embed only the new passages: %+v", res.Update)
+		}
+	} else if res.Update.Mode != gleann.UpdateCompact || res.Update.Embedded != res.Update.Passages {
+		t.Fatalf("changing a file should compact and re-embed every passage: %+v", res.Update)
 	}
 
 	res, err = Sync(ctx, SyncOptions{Options: opts, Name: "s"})

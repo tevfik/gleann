@@ -488,6 +488,12 @@ func (sp *storePassages) IsDense() (bool, error) {
 	if err != nil {
 		return false, err
 	}
+	// After incremental updates slots are sparse (dead slots are never
+	// reused): the rule is that every passage has a slot below the high-water
+	// mark. Without a recorded mark the slots must be dense.
+	if vslots, _ := currentVectorSlots(ctx, sp.st); vslots > 0 {
+		return slotless == 0 && maxSlot < vslots, nil
+	}
 	return slotless == 0 && int64(count) == maxSlot+1, nil
 }
 

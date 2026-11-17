@@ -4,13 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"strings"
 
 	"github.com/tevfik/gleann/internal/store"
 )
 
 // ErrIndexChanged is returned by Search when another process published a new
-// vector generation while the search ran: the passages the query resolved may
+// main vector file while the search ran: the passages the query resolved may
 // belong to a different vector file than the one this searcher holds, so the
 // result is discarded instead of returning a wrong passage. The caller reloads
 // the searcher (the server and the MCP server do this on acquire) and retries.
@@ -21,28 +22,36 @@ var ErrIndexChanged = errors.New("index changed while searching; reload the inde
 // sync, a build, watch in another binary) wrote to the index since.
 //
 //   - vector is the published vector generation plus the pending-publication
-//     keys. A publication commits the renumbered vec_slots together with the
-//     pending keys (state "pending"), renames the vector file, then finishes
-//     (state "generation+1"); every transition differs from the loaded state,
-//     and the generation never decreases, so equality means the slots this
-//     searcher resolves still address the vector file it holds. This is the
-//     part Search re-checks after resolving passages.
+//     keys. Every publication moves it (pending, then generation+1), and the
+//     generation never decreases. A change of only this part means the delta
+//     file and the live/dead slot counts changed: the main vector file is
+//     untouched, so a searcher refreshes its delta in place (RFC 005
+//     section 5).
+//   - main is vector_main_generation, which changes only when the main vector
+//     file is replaced (a merge, a compaction, a full build, an emptied
+//     index). Slots may then have been renumbered, so the searcher must load
+//     the new file; a result computed against the old one is discarded. This
+//     is the part Search re-checks after resolving passages.
 //   - graph is the graph row counters and the document-graph presence. The
 //     graph handle reads the live tables, so it never serves stale rows; what
 //     can go stale is the decision made at Load whether the index has a graph
 //     at all, and that decision follows these values.
 type indexFreshness struct {
 	vector string
+	main   string
 	graph  string
 }
 
-var freshnessKeys = []string{
-	"vector_generation", "pending_vector_generation", "pending_vector_file",
+var graphFreshnessKeys = []string{
 	store.MetaGraphSymbols,
 	store.MetaGraphEdgesPrefix + "CALLS",
 	store.MetaGraphEdgesPrefix + "IMPLEMENTS",
 	store.MetaGraphEdgesPrefix + "REFERENCES",
 }
+
+var freshnessKeys = append([]string{
+	"vector_generation", "pending_vector_generation", "pending_vector_file", metaVectorMainGeneration,
+}, graphFreshnessKeys...)
 
 // freshness reads the current state: one meta read plus one indexed probe.
 func (sp *storePassages) freshness(ctx context.Context) (indexFreshness, error) {
@@ -55,59 +64,116 @@ func (sp *storePassages) freshness(ctx context.Context) (indexFreshness, error) 
 		return indexFreshness{}, err
 	}
 	var g strings.Builder
-	for _, k := range freshnessKeys[3:] {
+	for _, k := range graphFreshnessKeys {
 		fmt.Fprintf(&g, "%s=%s;", k, m[k])
 	}
 	fmt.Fprintf(&g, "docs=%t", docs)
 	return indexFreshness{
 		vector: fmt.Sprintf("gen=%s;pending=%s@%s", m["vector_generation"], m["pending_vector_generation"], m["pending_vector_file"]),
+		main:   m[metaVectorMainGeneration],
 		graph:  g.String(),
 	}, nil
 }
 
+func (s *LeannSearcher) loadFresh() (indexFreshness, bool) {
+	s.freshMu.Lock()
+	defer s.freshMu.Unlock()
+	return s.fresh, s.freshKnown
+}
+
+func (s *LeannSearcher) storeFresh(f indexFreshness, known bool) {
+	s.freshMu.Lock()
+	s.fresh, s.freshKnown = f, known
+	s.freshMu.Unlock()
+}
+
 // recordFreshness stores the state the searcher is about to load. It runs
-// right after the publication recovery and before the vector file is read: a
-// publication that lands later makes the recorded state differ, so it is
-// detected, never missed.
+// right after the publication recovery and before the vector files are read:
+// a publication that lands later makes the recorded state differ, so it is
+// detected, never missed. A publication that is pending at this moment (a
+// writer committed it between the open's recovery and this read) is rolled
+// forward first, so the recorded state always describes files that are in
+// place.
 func (s *LeannSearcher) recordFreshness(ctx context.Context) error {
-	s.fresh, s.freshKnown = indexFreshness{}, false
+	s.storeFresh(indexFreshness{}, false)
 	sp, ok := s.passages.(*storePassages)
 	if !ok || sp.st == nil {
 		return nil
 	}
-	f, err := sp.freshness(ctx)
-	if err != nil {
-		return fmt.Errorf("recording index freshness: %w", err)
+	for attempt := 0; ; attempt++ {
+		f, err := sp.freshness(ctx)
+		if err != nil {
+			return fmt.Errorf("recording index freshness: %w", err)
+		}
+		pending, err := sp.st.Meta(ctx, "pending_vector_file")
+		if err != nil {
+			return fmt.Errorf("recording index freshness: %w", err)
+		}
+		if pending == "" || attempt >= 3 {
+			s.storeFresh(f, true)
+			return nil
+		}
+		if err := recoverVectorPublication(ctx, sp.st, sp.basePath); err != nil {
+			return fmt.Errorf("recovering vector publication: %w", err)
+		}
 	}
-	s.fresh, s.freshKnown = f, true
-	return nil
+}
+
+// IndexChange says what, if anything, changed in the index on disk since a
+// searcher loaded it.
+type IndexChange int
+
+const (
+	// IndexUnchanged: nothing a search depends on changed.
+	IndexUnchanged IndexChange = iota
+	// IndexDeltaChanged: only the delta file and the slot counts changed (an
+	// incremental sync). RefreshDelta brings the searcher up to date without
+	// touching the main vector file.
+	IndexDeltaChanged
+	// IndexFullReload: the main vector file was replaced (slots may have been
+	// renumbered) or the graph decision changed; the searcher must be loaded
+	// again.
+	IndexFullReload
+)
+
+// Change reports what changed in the index on disk since this searcher loaded
+// it. It costs one small database read and no file walk. A searcher that did
+// not record a state (format 1, a custom or unloaded searcher) never changes.
+// A read failure (the database is gone or unreadable) is reported as a full
+// reload together with the error, so the caller's reload surfaces the real
+// problem.
+func (s *LeannSearcher) Change(ctx context.Context) (IndexChange, error) {
+	cur, ok, err := s.currentFreshness(ctx)
+	if !ok {
+		return IndexUnchanged, nil
+	}
+	if err != nil {
+		return IndexFullReload, err
+	}
+	rec, _ := s.loadFresh()
+	switch {
+	case cur.main != rec.main || cur.graph != rec.graph:
+		return IndexFullReload, nil
+	case cur.vector != rec.vector:
+		return IndexDeltaChanged, nil
+	}
+	return IndexUnchanged, nil
 }
 
 // Stale reports whether the index on disk changed since this searcher loaded
-// it: another process published a vector generation (slots renumbered, vector
-// file replaced) or changed whether the index has a code or document graph. It
-// costs one small database read and no file walk. A searcher that did not
-// record a state (format 1, a custom or unloaded searcher) is never stale. A
-// read failure (the database is gone or unreadable) is reported as stale
-// together with the error, so the caller's reload surfaces the real problem.
-//
-// Callers that cache searchers across requests (the server, the MCP server)
-// check Stale on acquire and replace a stale searcher; a long-lived single
-// holder (the chat) uses Refresh.
+// it in any way a search could notice (see Change). Callers that cache
+// searchers across requests (the server, the MCP server) use Change to tell a
+// delta-only change, which RefreshDelta absorbs in place, from one that needs
+// a new searcher; a long-lived single holder (the chat) uses Refresh.
 func (s *LeannSearcher) Stale(ctx context.Context) (bool, error) {
-	cur, ok, err := s.currentFreshness(ctx)
-	if !ok {
-		return false, nil
-	}
-	if err != nil {
-		return true, err
-	}
-	return cur != s.fresh, nil
+	c, err := s.Change(ctx)
+	return c != IndexUnchanged || err != nil, err
 }
 
-// vectorStale is the Search-time check: only a change of the published
-// vector state invalidates a result in flight.
-func (s *LeannSearcher) vectorStale(ctx context.Context) (bool, error) {
+// mainChanged is the Search-time check: only a replacement of the main vector
+// file invalidates a result in flight. A delta-only publication never reuses
+// a slot, so a hit of the older state still names the right passage.
+func (s *LeannSearcher) mainChanged(ctx context.Context) (bool, error) {
 	cur, ok, err := s.currentFreshness(ctx)
 	if !ok {
 		return false, nil
@@ -115,12 +181,16 @@ func (s *LeannSearcher) vectorStale(ctx context.Context) (bool, error) {
 	if err != nil {
 		return true, err
 	}
-	return cur.vector != s.fresh.vector, nil
+	rec, _ := s.loadFresh()
+	return cur.main != rec.main, nil
 }
 
 // currentFreshness reads the database state when this searcher recorded one.
 func (s *LeannSearcher) currentFreshness(ctx context.Context) (indexFreshness, bool, error) {
-	if s == nil || !s.freshKnown {
+	if s == nil {
+		return indexFreshness{}, false, nil
+	}
+	if _, known := s.loadFresh(); !known {
 		return indexFreshness{}, false, nil
 	}
 	sp, ok := s.passages.(*storePassages)
@@ -131,15 +201,72 @@ func (s *LeannSearcher) currentFreshness(ctx context.Context) (indexFreshness, b
 	return cur, true, err
 }
 
-// Refresh reloads the searcher in place when the index changed on disk (see
-// Stale) and reports whether it did. It is for a single holder that issues one
-// request at a time, such as the chat session: it is NOT safe to call while
-// another goroutine is searching with the same searcher. Servers replace a
-// stale searcher instead, so in-flight requests finish on the old one.
+// errNeedsFullReload is returned by RefreshDelta when the main vector file
+// changed too: the caller loads the index again.
+var errNeedsFullReload = errors.New("the main vector file changed; reload the index")
+
+// RefreshDelta reloads the delta file and the live/dead slot counts of a
+// searcher whose main vector file is still current (Change reported
+// IndexDeltaChanged). It is safe while other goroutines search with the same
+// searcher: they see the old delta or the new one, never a mix. It follows
+// load-then-verify: the state is recorded, the delta read, and the state read
+// again; a publication that lands in between repeats the load. It returns
+// errNeedsFullReload when the main file changed meanwhile.
+func (s *LeannSearcher) RefreshDelta(ctx context.Context) error {
+	sp, ok := s.passages.(*storePassages)
+	if !ok || sp.st == nil {
+		return errNeedsFullReload
+	}
+	basePath := filepath.Join(s.config.IndexDir, s.name, s.name)
+	loaded, _ := s.loadFresh()
+	for attempt := 0; attempt < 4; attempt++ {
+		// A publication pending now is rolled forward, so the files read below
+		// are the ones the recorded state describes.
+		if err := recoverVectorPublication(ctx, sp.st, basePath); err != nil {
+			return fmt.Errorf("recovering vector publication: %w", err)
+		}
+		rec, err := sp.freshness(ctx)
+		if err != nil {
+			return fmt.Errorf("recording index freshness: %w", err)
+		}
+		if rec.main != loaded.main || rec.graph != loaded.graph {
+			return errNeedsFullReload
+		}
+		ds, err := s.loadDeltaState(ctx, basePath)
+		if err != nil {
+			return err
+		}
+		cur, err := sp.freshness(ctx)
+		if err != nil {
+			return fmt.Errorf("verifying index freshness: %w", err)
+		}
+		if cur.vector == rec.vector && cur.main == rec.main {
+			s.dstate.Store(ds)
+			s.storeFresh(rec, true)
+			return nil
+		}
+	}
+	return ErrIndexChanged
+}
+
+// Refresh brings the searcher up to date when the index changed on disk (see
+// Change) and reports whether it did: a delta-only change reloads the delta
+// in place, anything else reloads the searcher. It is for a single holder that
+// issues one request at a time, such as the chat session: a full reload is NOT
+// safe while another goroutine is searching with the same searcher. Servers
+// replace a stale searcher instead, so in-flight requests finish on the old
+// one.
 func (s *LeannSearcher) Refresh(ctx context.Context) (bool, error) {
-	stale, serr := s.Stale(ctx)
-	if !stale {
+	change, serr := s.Change(ctx)
+	if change == IndexUnchanged && serr == nil {
 		return false, nil
+	}
+	if change == IndexDeltaChanged && serr == nil {
+		if err := s.RefreshDelta(ctx); err == nil {
+			return true, nil
+		}
+		// The main file changed meanwhile (or the delta could not be read):
+		// load everything again below.
 	}
 	name := s.name
 	if name == "" {
@@ -148,6 +275,7 @@ func (s *LeannSearcher) Refresh(ctx context.Context) (bool, error) {
 	_ = s.Close()
 	s.loaded, s.vectorAvailable = false, false
 	s.backend, s.passages = nil, nil
+	s.dstate.Store(nil)
 	// A reload must not stack the new passages on the previous in-memory
 	// BM25 documents.
 	if _, ok := s.scorer.(*BM25Adapter); ok {

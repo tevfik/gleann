@@ -2,6 +2,7 @@ package gleann
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"sync"
@@ -15,6 +16,49 @@ import (
 type MultiSearcher struct {
 	searchers map[string]*LeannSearcher // name → loaded searcher
 	names     []string                  // ordered index names
+
+	// mu lets searches run concurrently (read side) while a full reload of a
+	// searcher whose index was replaced on disk (write side) has the
+	// searcher to itself.
+	mu sync.RWMutex
+}
+
+// refresh brings s up to date when its index changed on disk. A delta-only
+// change is absorbed in place while other searches run; a replaced main
+// vector file reloads the searcher under the write lock.
+func (ms *MultiSearcher) refresh(ctx context.Context, s *LeannSearcher) error {
+	change, err := s.Change(ctx)
+	if err == nil {
+		switch change {
+		case IndexUnchanged:
+			return nil
+		case IndexDeltaChanged:
+			if s.RefreshDelta(ctx) == nil {
+				return nil
+			}
+		}
+	}
+	ms.mu.Lock()
+	defer ms.mu.Unlock()
+	_, rerr := s.Refresh(ctx)
+	return rerr
+}
+
+// searchOne searches one index, refreshing it first if it changed on disk, and
+// retries once when a publication landed during the search.
+func (ms *MultiSearcher) searchOne(ctx context.Context, s *LeannSearcher, query string, opts []SearchOption) ([]SearchResult, error) {
+	for attempt := 0; ; attempt++ {
+		if err := ms.refresh(ctx, s); err != nil {
+			return nil, err
+		}
+		ms.mu.RLock()
+		results, err := s.Search(ctx, query, opts...)
+		ms.mu.RUnlock()
+		if errors.Is(err, ErrIndexChanged) && attempt == 0 {
+			continue
+		}
+		return results, err
+	}
 }
 
 // NewMultiSearcher creates a MultiSearcher from pre-loaded searchers.
@@ -67,7 +111,7 @@ func (ms *MultiSearcher) Search(ctx context.Context, query string, opts ...Searc
 		name := name
 		s := ms.searchers[name]
 		g.Go(func() error {
-			results, err := s.Search(gctx, query, opts...)
+			results, err := ms.searchOne(gctx, s, query, opts)
 			if err != nil {
 				return fmt.Errorf("search index %q: %w", name, err)
 			}
@@ -117,6 +161,8 @@ func (ms *MultiSearcher) Search(ctx context.Context, query string, opts ...Searc
 
 // Close releases all underlying searchers.
 func (ms *MultiSearcher) Close() error {
+	ms.mu.Lock()
+	defer ms.mu.Unlock()
 	var errs []error
 	for name, s := range ms.searchers {
 		if err := s.Close(); err != nil {

@@ -419,6 +419,11 @@ func describeIndex(indexDir string, idx gleann.IndexMeta) string {
 			parts = append(parts, fmt.Sprintf("%d dims", idx.Dimensions))
 		}
 	}
+	// Incremental updates leave dead vector slots behind until the next merge.
+	if idx.VectorSlots > 0 && idx.VectorSlots > int64(idx.NumPassages) {
+		dead := idx.VectorSlots - int64(idx.NumPassages)
+		parts = append(parts, fmt.Sprintf("%.0f%% dead vector slots", 100*float64(dead)/float64(idx.VectorSlots)))
+	}
 	parts = append(parts, formatBytes(indexDiskSize(indexDir, idx.Name)))
 	return idx.Name + " — " + strings.Join(parts, ", ")
 }

@@ -1,6 +1,6 @@
 # RFC 005: Incremental vector updates for format 2 (WP-2.2)
 
-Status: draft for maintainer approval (2026-11-17)
+Status: implemented (2026-11-17; approved by the maintainer the same day)
 Builds on: RFC 003 section 3.4 (publication order, `vec_slot`), RFC 004 B0 ("Incremental append", "Readers see other processes' writes")
 Release: v1.20.0 (part of RFC 004 B0, before B1)
 
@@ -116,3 +116,9 @@ New indexes: none. Existing format-2 indexes: no `.delta` = empty; `vector_slots
 
 ## 11. Audit log
 - 2026-11-17: drafted by a read-only planning subagent against main 13cae74; every claim cites a function at that commit.
+- 2026-11-17: implemented in three commits (68dcf73, 4eba8c5, 9068959). Deviations from sections 3.1 and 3.4, all measured:
+  - A merge renumbers slots densely for every backend (no `BuildWithIDs`), and builds the HNSW graph in a shuffled insertion order seeded by the generation. Building in slot order, with the newest topics last, lost about 3 points of recall@10 against a fresh build at 30K passages. A merge is a main-file publication, so readers reload on `vector_main_generation`; this is the same exposure as a full rebuild before this RFC.
+  - Compaction defaults: dead share 5 % (also for pruned indexes) and at least 256 dead slots (`GLEANN_DEAD_MIN`); an explicit `GLEANN_DEAD_SHARE` sets the minimum to 0. With 25 % the G6 drift test failed (0.855 against 0.917); with these defaults it passes (0.941 against 0.917).
+  - Faiss and pruned (recompute) indexes take the full re-embedding path, because they cannot return stored vectors.
+  - Merge and compaction cost about 87 % of a full build with a 0 ms embedder (109.6 s and 110.3 s against 126.2 s at 100K); they save only the embedding calls. Inserting the delta into the existing graph (`AddVectorsWithIDs`) is left as a later optimisation.
+  - Measured at 100K (gleann-rag-test `results/scale/rfc005-README.md`): one-file add 0.349 s, change 0.334 s, delete 0.320 s, no-op 0.087 s (G1 target 4.5 s; before: 73 s). The 1M run belongs to the v1.20 test campaign.

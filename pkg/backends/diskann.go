@@ -93,6 +93,15 @@ func (s *diskannSearcherAdapter) SearchWithRecompute(ctx context.Context, query 
 	return s.inner.SearchWithRecompute(ctx, query, topK, daRecompute)
 }
 
+func (s *diskannSearcherAdapter) ExtractVectors(ctx context.Context, ids []int64) ([][]float32, error) {
+	if ve, ok := s.inner.(interface {
+		ExtractVectors(ctx context.Context, ids []int64) ([][]float32, error)
+	}); ok {
+		return ve.ExtractVectors(ctx, ids)
+	}
+	return nil, fmt.Errorf("diskann backend does not support ExtractVectors")
+}
+
 func (s *diskannSearcherAdapter) Close() error {
 	return s.inner.Close()
 }

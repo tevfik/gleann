@@ -96,6 +96,22 @@ func TestRetrievalQuality(t *testing.T) {
 		t.Fatalf("corpus produced only %d chunks; the snapshot was not read", res.Chunks)
 	}
 
+	got := measureQuality(t, ctx, cfg, name, tasks, strings.TrimSpace(string(commit)))
+
+	if *update || os.Getenv("GLEANN_QUALITY_UPDATE") == "1" {
+		writeBaseline(t, got)
+		t.Logf("baseline rewritten at %s", baselinePath)
+		logTable(t, got, nil)
+		return
+	}
+
+	compareToBaseline(t, got)
+}
+
+// measureQuality loads the index and runs every task through the three
+// strategies. The caller built the index however it wants to test.
+func measureQuality(t *testing.T, ctx context.Context, cfg gleann.Config, name string, tasks []benchmark.Task, commit string) Baseline {
+	t.Helper()
 	searcher := gleann.NewSearcher(cfg, hashEmbedder{})
 	searcher.SetScorer(gleann.NewBM25Adapter())
 	if err := searcher.Load(ctx, name); err != nil {
@@ -137,7 +153,7 @@ func TestRetrievalQuality(t *testing.T) {
 	}
 
 	got := Baseline{
-		Corpus:     strings.TrimSpace(string(commit)),
+		Corpus:     commit,
 		Tasks:      len(tasks),
 		Tolerance:  0.01,
 		Strategies: map[string]Metrics{},
@@ -147,13 +163,13 @@ func TestRetrievalQuality(t *testing.T) {
 		got.Strategies[s] = Metrics{R1: round4(r.AvgRecall1 / 100), R10: round4(r.AvgRecall10 / 100), MRR: r.AvgMRR}
 	}
 
-	if *update || os.Getenv("GLEANN_QUALITY_UPDATE") == "1" {
-		writeBaseline(t, got)
-		t.Logf("baseline rewritten at %s", baselinePath)
-		logTable(t, got, nil)
-		return
-	}
+	return got
+}
 
+// compareToBaseline fails when a strategy fell below the stored numbers by more
+// than the tolerance.
+func compareToBaseline(t *testing.T, got Baseline) {
+	t.Helper()
 	var want Baseline
 	readJSON(t, baselinePath, &want)
 	logTable(t, got, &want)

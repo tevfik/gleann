@@ -54,6 +54,15 @@ type VectorIDScorer interface {
 	VectorDistances(ctx context.Context, query []float32, ids []int64) ([]float32, error)
 }
 
+// VectorExtractor is an optional interface for backends that still hold the
+// stored vectors of an index they loaded: a merge or compaction rebuilds the
+// main vector file from them without embedding a single text (RFC 005
+// section 3.4). A backend that pruned its embeddings or cannot read them back
+// returns an error, and the update then takes the full re-embedding path.
+type VectorExtractor interface {
+	ExtractVectors(ctx context.Context, ids []int64) ([][]float32, error)
+}
+
 // EmbeddingRecomputer is a function that recomputes embeddings for given passage IDs.
 // This is the core of LEANN's storage optimization — embeddings are not stored
 // but recomputed on-demand during search.

@@ -57,10 +57,11 @@ func (s *Server) handleDef(ctx context.Context, request mcp.CallToolRequest) (*m
 		indexName = s.resolveIndexName()
 	}
 
-	searcher, err := s.getSearcher(indexName)
+	searcher, release, err := s.acquireSearcher(indexName)
 	if err != nil {
 		return s.indexBusyError(indexName, err), nil
 	}
+	defer release()
 
 	topK := 5
 	if limit, ok := args["top_k"].(float64); ok && limit > 0 {

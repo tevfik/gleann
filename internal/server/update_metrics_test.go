@@ -49,7 +49,8 @@ func postUpdate(t *testing.T, h http.Handler, req updateIndexRequest) map[string
 
 // An update says how it was applied, and /metrics counts it by mode, so a slow
 // update can be told apart: a compaction re-embeds every remaining passage.
-// Format 2 has no in-place append, so both updates compact there.
+// Format 2 applies both updates in place (through the delta file), embedding
+// only the changed texts.
 func TestUpdateReportsAndCountsHowItWasApplied(t *testing.T) {
 	_, h, cfg := newIndexedServer(t)
 	format2 := gleann.StoreFormatOf(filepath.Join(cfg.IndexDir, "idx", "idx")) == 2
@@ -63,22 +64,22 @@ func TestUpdateReportsAndCountsHowItWasApplied(t *testing.T) {
 	}
 
 	resp := postUpdate(t, h, updateIndexRequest{Items: item("a note about caching")})
-	if format2 {
-		if resp["mode"] != "compact" || resp["passages"] != float64(21) || resp["embedded_texts"] != float64(21) {
-			t.Errorf("append response: %v", resp)
-		}
-	} else if resp["mode"] != "in-place" || resp["passages"] != float64(21) || resp["embedded_texts"] != float64(1) {
+	if resp["mode"] != "in-place" || resp["passages"] != float64(21) || resp["embedded_texts"] != float64(1) {
 		t.Errorf("append response: %v", resp)
 	}
 
 	resp = postUpdate(t, h, updateIndexRequest{Items: item("a revised note about caching"), Sources: []string{"n.md"}})
-	if resp["mode"] != "compact" || resp["removed"] != float64(1) || resp["embedded_texts"] != float64(21) {
+	if format2 {
+		if resp["mode"] != "in-place" || resp["removed"] != float64(1) || resp["embedded_texts"] != float64(1) {
+			t.Errorf("replace response: %v", resp)
+		}
+	} else if resp["mode"] != "compact" || resp["removed"] != float64(1) || resp["embedded_texts"] != float64(21) {
 		t.Errorf("replace response: %v", resp)
 	}
 
 	wantInPlace, wantCompact, wantEmbedded := float64(1), float64(1), float64(22)
 	if format2 {
-		wantInPlace, wantCompact, wantEmbedded = 0, 2, 42
+		wantInPlace, wantCompact, wantEmbedded = 2, 0, 2
 	}
 	if got := metricValue(t, h, inPlace) - inPlace0; got != wantInPlace {
 		t.Errorf("in-place updates counted: %v, want %v", got, wantInPlace)
@@ -87,7 +88,7 @@ func TestUpdateReportsAndCountsHowItWasApplied(t *testing.T) {
 		t.Errorf("compactions counted: %v, want %v", got, wantCompact)
 	}
 	if got := metricValue(t, h, embedded) - embedded0; got != wantEmbedded {
-		t.Errorf("embedded texts counted: %v, want %v (1 append + 21 re-embedded in format 1, 21 + 21 in format 2)", got, wantEmbedded)
+		t.Errorf("embedded texts counted: %v, want %v (1 append + 21 re-embedded in format 1, 1 + 1 in format 2)", got, wantEmbedded)
 	}
 }
 
@@ -95,6 +96,9 @@ func TestUpdateReportsAndCountsHowItWasApplied(t *testing.T) {
 // response, so a client does not trust wrong results.
 func TestSearchResponseWarnsAboutADamagedIndex(t *testing.T) {
 	_, h, cfg := newIndexedServer(t)
+	if gleann.StoreFormatOf(filepath.Join(cfg.IndexDir, "idx", "idx")) == 2 {
+		t.Skip("format 2 keeps a high-water mark: a gap in the slots is a dead slot, not damage (see the repair tests)")
+	}
 	// Two appended notes; removing the first leaves a gap (removing the last
 	// passage would not).
 	postUpdate(t, h, updateIndexRequest{Items: []gleann.Item{

@@ -61,10 +61,11 @@ type Server struct {
 	toolsProfile    string
 	searcherMu      sync.Mutex
 	searchers       map[string]*gleann.LeannSearcher
-	searcherLRU     []string       // tracks access order: most recent at end
-	memPool         *mcpMemoryPool // Memory Engine: generic Entity/RELATES_TO graph
-	blockMem        *blockMemPool  // BBolt hierarchical memory blocks (pkg/memory)
-	gPool           *graphPool     // Community detection graph pool
+	searcherLRU     []string                               // tracks access order: most recent at end
+	searcherRefs    map[*gleann.LeannSearcher]*searcherRef // borrowers of each searcher, guarded by searcherMu
+	memPool         *mcpMemoryPool                         // Memory Engine: generic Entity/RELATES_TO graph
+	blockMem        *blockMemPool                          // BBolt hierarchical memory blocks (pkg/memory)
+	gPool           *graphPool                             // Community detection graph pool
 	syncRunner      syncRunnerFunc
 	syncMu          sync.Mutex
 	syncTasks       map[string]*syncTask
@@ -367,18 +368,38 @@ func (s *Server) Close() {
 		s.blockMem.close()
 	}
 	s.searcherMu.Lock()
+	var toClose []*gleann.LeannSearcher
 	for _, searcher := range s.searchers {
-		if searcher != nil {
-			searcher.Close()
+		if sr := s.retireSearcherLocked(searcher); sr != nil {
+			toClose = append(toClose, sr)
 		}
 	}
 	s.searchers = make(map[string]*gleann.LeannSearcher)
 	s.searcherLRU = nil
 	s.searcherMu.Unlock()
+	for _, sr := range toClose {
+		sr.Close()
+	}
 	s.closeGraphPool()
 }
 
+// getSearcher returns the cached searcher without keeping it borrowed: the
+// caller must not hold it across a freshness replacement. Tool handlers use
+// acquireSearcher and release the searcher when done.
 func (s *Server) getSearcher(name string) (*gleann.LeannSearcher, error) {
+	sr, release, err := s.acquireSearcher(name)
+	if err != nil {
+		return nil, err
+	}
+	release()
+	return sr, nil
+}
+
+// acquireSearcher returns the cached searcher for name (loading it when
+// needed) and a release func the caller must call exactly once when done. A
+// searcher replaced or evicted while borrowed stays open until its last
+// borrower releases it.
+func (s *Server) acquireSearcher(name string) (*gleann.LeannSearcher, func(), error) {
 	// Auto-resolve index name if empty
 	if name == "" {
 		if envIdx := os.Getenv("GLEANN_INDEX"); envIdx != "" {
@@ -411,17 +432,17 @@ func (s *Server) getSearcher(name string) (*gleann.LeannSearcher, error) {
 		}
 	}
 	if name == "" {
-		return nil, fmt.Errorf("index name required (use gleann_list to see available indexes)")
+		return nil, nil, fmt.Errorf("index name required (use gleann_list to see available indexes)")
 	}
 	if err := gleann.ValidateName(name); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	// Verify index is exposed to MCP
 	meta, err := gleann.GetIndexMeta(s.config.IndexDir, name)
 	if err == nil {
 		if !meta.IsMCPExposed() {
-			return nil, fmt.Errorf("access denied: index %q is private and not exposed to MCP", name)
+			return nil, nil, fmt.Errorf("access denied: index %q is private and not exposed to MCP", name)
 		}
 		if tagEnv := os.Getenv("GLEANN_TAGS"); tagEnv != "" {
 			matched := false
@@ -432,7 +453,7 @@ func (s *Server) getSearcher(name string) (*gleann.LeannSearcher, error) {
 				}
 			}
 			if !matched {
-				return nil, fmt.Errorf("access denied: index %q does not match required tags (%s)", name, tagEnv)
+				return nil, nil, fmt.Errorf("access denied: index %q does not match required tags (%s)", name, tagEnv)
 			}
 		}
 	}
@@ -440,15 +461,29 @@ func (s *Server) getSearcher(name string) (*gleann.LeannSearcher, error) {
 	s.searcherMu.Lock()
 	if searcher, ok := s.searchers[name]; ok {
 		s.touchLRU(name)
+		release := s.retainSearcherLocked(searcher)
 		s.searcherMu.Unlock()
 		// Another process (a CLI sync or build) may have written to the index
-		// since this searcher loaded: one small read decides. A stale searcher
-		// is replaced by a fresh load below.
-		if stale, serr := searcher.Stale(context.Background()); !stale {
-			return searcher, nil
-		} else if serr != nil {
+		// since this searcher loaded: one small read decides. A delta-only
+		// change (an incremental sync) is absorbed in place; anything else
+		// replaces the searcher, which closes when its last borrower releases
+		// it.
+		ctx := context.Background()
+		change, serr := searcher.Change(ctx)
+		if change == gleann.IndexDeltaChanged && serr == nil {
+			if rerr := searcher.RefreshDelta(ctx); rerr == nil {
+				return searcher, release, nil
+			} else {
+				serr = rerr
+			}
+		}
+		if change == gleann.IndexUnchanged && serr == nil {
+			return searcher, release, nil
+		}
+		if serr != nil {
 			log.Printf("ℹ️  Index %q freshness check failed (%v); reloading", name, serr)
 		}
+		release()
 		s.retireStale(name, searcher)
 	} else {
 		s.searcherMu.Unlock()
@@ -497,37 +532,87 @@ func (s *Server) getSearcher(name string) (*gleann.LeannSearcher, error) {
 
 	ctx := context.Background()
 	if err := searcher.Load(ctx, name); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	s.searcherMu.Lock()
-	defer s.searcherMu.Unlock()
-
 	// Double-check in case another goroutine loaded the same index concurrently
 	if existing, ok := s.searchers[name]; ok {
 		s.touchLRU(name)
-		return existing, nil
+		release := s.retainSearcherLocked(existing)
+		s.searcherMu.Unlock()
+		searcher.Close()
+		return existing, release, nil
 	}
 
 	s.searchers[name] = searcher
 	s.searcherLRU = append(s.searcherLRU, name)
-	s.enforceCacheBudgetLocked()
-	return searcher, nil
+	release := s.retainSearcherLocked(searcher)
+	toClose := s.enforceCacheBudgetLocked()
+	s.searcherMu.Unlock()
+	for _, sr := range toClose {
+		sr.Close()
+	}
+	return searcher, release, nil
 }
 
-// staleSearcherGrace is how long a replaced (stale) searcher stays open. The
-// MCP server does not count borrowers, so a tool call that fetched the
-// searcher just before the replacement may still be using it; closing it
-// right away would pull the database from under that call.
-const staleSearcherGrace = 2 * time.Minute
+// searcherRef counts the borrowers of a cached searcher. Guarded by
+// Server.searcherMu.
+type searcherRef struct {
+	refs    int
+	retired bool // out of the cache: close when refs drops to 0
+}
+
+// retainSearcherLocked counts one more borrower of sr and returns the func that
+// releases it (extra calls are no-ops). Caller holds s.searcherMu.
+func (s *Server) retainSearcherLocked(sr *gleann.LeannSearcher) func() {
+	if s.searcherRefs == nil {
+		s.searcherRefs = make(map[*gleann.LeannSearcher]*searcherRef)
+	}
+	ref := s.searcherRefs[sr]
+	if ref == nil {
+		ref = &searcherRef{}
+		s.searcherRefs[sr] = ref
+	}
+	ref.refs++
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			s.searcherMu.Lock()
+			ref.refs--
+			closeNow := ref.retired && ref.refs <= 0
+			if ref.refs <= 0 {
+				delete(s.searcherRefs, sr)
+			}
+			s.searcherMu.Unlock()
+			if closeNow {
+				sr.Close()
+			}
+		})
+	}
+}
+
+// retireSearcherLocked takes sr out of use: it returns sr when it can be
+// closed right away, or nil when a borrower still holds it (the last release
+// closes it). Caller holds s.searcherMu and closes the result after unlocking.
+func (s *Server) retireSearcherLocked(sr *gleann.LeannSearcher) *gleann.LeannSearcher {
+	if sr == nil {
+		return nil
+	}
+	if ref := s.searcherRefs[sr]; ref != nil && ref.refs > 0 {
+		ref.retired = true
+		return nil
+	}
+	delete(s.searcherRefs, sr)
+	return sr
+}
 
 // retireStale removes sr from the cache when it is still the cached searcher
-// for name and closes it after staleSearcherGrace.
+// for name. It closes as soon as its last borrower releases it.
 func (s *Server) retireStale(name string, sr *gleann.LeannSearcher) {
 	s.searcherMu.Lock()
-	removed := false
+	var toClose *gleann.LeannSearcher
 	if cur, ok := s.searchers[name]; ok && cur == sr {
-		removed = true
 		delete(s.searchers, name)
 		for i, n := range s.searcherLRU {
 			if n == name {
@@ -535,10 +620,11 @@ func (s *Server) retireStale(name string, sr *gleann.LeannSearcher) {
 				break
 			}
 		}
+		toClose = s.retireSearcherLocked(sr)
 	}
 	s.searcherMu.Unlock()
-	if removed {
-		time.AfterFunc(staleSearcherGrace, func() { sr.Close() })
+	if toClose != nil {
+		toClose.Close()
 	}
 }
 
@@ -551,14 +637,17 @@ func (s *Server) searcherBudget() int64 {
 	return s.config.SearcherCacheBudget
 }
 
-func (s *Server) enforceCacheBudgetLocked() {
+func (s *Server) enforceCacheBudgetLocked() []*gleann.LeannSearcher {
+	var toClose []*gleann.LeannSearcher
 	for len(s.searchers) > maxCachedSearchers && len(s.searcherLRU) > 1 {
-		s.evictOldest()
+		if sr := s.evictOldest(); sr != nil {
+			toClose = append(toClose, sr)
+		}
 	}
 
 	budget := s.searcherBudget()
 	if budget <= 0 {
-		return
+		return toClose
 	}
 
 	totalSize := int64(0)
@@ -574,9 +663,12 @@ func (s *Server) enforceCacheBudgetLocked() {
 		if sr, ok := s.searchers[oldest]; ok && sr != nil {
 			size = sr.EstimatedSize()
 		}
-		s.evictOldest()
+		if sr := s.evictOldest(); sr != nil {
+			toClose = append(toClose, sr)
+		}
 		totalSize -= size
 	}
+	return toClose
 }
 
 // touchLRU moves name to the end of the LRU list (most recently used).
@@ -591,29 +683,29 @@ func (s *Server) touchLRU(name string) {
 	}
 }
 
-// evictOldest removes the least recently used searcher from the cache.
-// Caller must hold s.searcherMu.
-func (s *Server) evictOldest() {
+// evictOldest removes the least recently used searcher from the cache and
+// returns it when it can be closed right away (no borrower). Caller must hold
+// s.searcherMu and close the result after unlocking.
+func (s *Server) evictOldest() *gleann.LeannSearcher {
 	if len(s.searcherLRU) == 0 {
-		return
+		return nil
 	}
 	oldest := s.searcherLRU[0]
 	s.searcherLRU = s.searcherLRU[1:]
-	if searcher, ok := s.searchers[oldest]; ok {
-		if searcher != nil {
-			searcher.Close()
-		}
-		delete(s.searchers, oldest)
+	searcher, ok := s.searchers[oldest]
+	if !ok {
+		return nil
 	}
+	delete(s.searchers, oldest)
+	return s.retireSearcherLocked(searcher)
 }
 
 // evictIndex closes and removes any cached searcher and graph database handle for the given index.
 func (s *Server) evictIndex(name string) {
 	s.searcherMu.Lock()
+	var toClose *gleann.LeannSearcher
 	if searcher, ok := s.searchers[name]; ok {
-		if searcher != nil {
-			searcher.Close()
-		}
+		toClose = s.retireSearcherLocked(searcher)
 		delete(s.searchers, name)
 		for i, n := range s.searcherLRU {
 			if n == name {
@@ -623,6 +715,9 @@ func (s *Server) evictIndex(name string) {
 		}
 	}
 	s.searcherMu.Unlock()
+	if toClose != nil {
+		toClose.Close()
+	}
 	s.evictGraph(name)
 }
 
@@ -694,10 +789,11 @@ func (s *Server) handleReadResource(ctx context.Context, request mcp.ReadResourc
 	indexName := parts[0]
 	filePath := parts[1]
 
-	searcher, err := s.getSearcher(indexName)
+	searcher, release, err := s.acquireSearcher(indexName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load index %q: %v", indexName, err)
 	}
+	defer release()
 
 	// Because we want an exact metadata match (not a vector search),
 	// we use a dummy empty query. However, searchers normally require a semantic vector.
@@ -945,12 +1041,13 @@ func (s *Server) handleSearch(ctx context.Context, request mcp.CallToolRequest) 
 		}
 
 		for _, name := range targetNames {
-			searcher, err := s.getSearcher(name)
+			searcher, release, err := s.acquireSearcher(name)
 			if err != nil {
 				continue
 			}
 			warnings = append(warnings, searcher.Warnings()...)
 			res, err := searcher.Search(ctx, query, searchOpts...)
+			release()
 			if err != nil {
 				continue
 			}
@@ -971,10 +1068,11 @@ func (s *Server) handleSearch(ctx context.Context, request mcp.CallToolRequest) 
 			results = results[:topK]
 		}
 	} else {
-		searcher, err := s.getSearcher(indexName)
+		searcher, release, err := s.acquireSearcher(indexName)
 		if err != nil {
 			return s.indexBusyError(indexName, err), nil
 		}
+		defer release()
 
 		warnings = searcher.Warnings()
 		res, err := searcher.Search(ctx, query, searchOpts...)
@@ -1155,10 +1253,11 @@ func (s *Server) handleAsk(ctx context.Context, request mcp.CallToolRequest) (*m
 		return mcp.NewToolResultError("index and question are required"), nil
 	}
 
-	searcher, err := s.getSearcher(indexName)
+	searcher, release, err := s.acquireSearcher(indexName)
 	if err != nil {
 		return s.indexBusyError(indexName, err), nil
 	}
+	defer release()
 
 	chat := gleann.NewChat(searcher, s.chatConfig())
 
@@ -1215,10 +1314,11 @@ func (s *Server) handleGraphNeighbors(ctx context.Context, request mcp.CallToolR
 		return mcp.NewToolResultError("index and node_fqn are required"), nil
 	}
 
-	searcher, err := s.getSearcher(indexName)
+	searcher, release, err := s.acquireSearcher(indexName)
 	if err != nil {
 		return s.indexBusyError(indexName, err), nil
 	}
+	defer release()
 
 	db := searcher.GraphDB()
 	if db == nil {
@@ -1358,10 +1458,11 @@ func (s *Server) handleDocumentLinks(ctx context.Context, request mcp.CallToolRe
 		return mcp.NewToolResultError("index and doc_path are required"), nil
 	}
 
-	searcher, err := s.getSearcher(indexName)
+	searcher, release, err := s.acquireSearcher(indexName)
 	if err != nil {
 		return s.indexBusyError(indexName, err), nil
 	}
+	defer release()
 
 	db := searcher.GraphDB()
 	if db == nil {
@@ -1424,14 +1525,16 @@ func (s *Server) handleReadFullDocument(ctx context.Context, request mcp.CallToo
 		return mcp.NewToolResultError("index and vpath are required"), nil
 	}
 
-	searcher, err := s.getSearcher(indexName)
+	searcher, release, err := s.acquireSearcher(indexName)
 	if err == nil && searcher != nil {
 		db := searcher.GraphDB()
 		if db != nil {
 			if content, err := db.FullDocument(vpath); err == nil && content != "" {
+				release()
 				return mcp.NewToolResultText(content), nil
 			}
 		}
+		release()
 	}
 
 	// Fallback to reading the file from disk, but only from inside the
@@ -1497,10 +1600,11 @@ func (s *Server) handleDocumentTOC(ctx context.Context, request mcp.CallToolRequ
 		return mcp.NewToolResultError("index is required"), nil
 	}
 
-	searcher, err := s.getSearcher(indexName)
+	searcher, release, err := s.acquireSearcher(indexName)
 	if err != nil {
 		return s.indexBusyError(indexName, err), nil
 	}
+	defer release()
 	db := searcher.GraphDB()
 	if db == nil {
 		return mcp.NewToolResultError(fmt.Sprintf("graph database not available for index %q", indexName)), nil
@@ -1620,10 +1724,11 @@ func (s *Server) handleImpact(ctx context.Context, request mcp.CallToolRequest) 
 		return mcp.NewToolResultError("index and symbol are required"), nil
 	}
 
-	searcher, err := s.getSearcher(indexName)
+	searcher, release, err := s.acquireSearcher(indexName)
 	if err != nil {
 		return s.indexBusyError(indexName, err), nil
 	}
+	defer release()
 
 	db := searcher.GraphDB()
 	if db == nil {
@@ -1740,10 +1845,11 @@ func (s *Server) handleGraphStats(ctx context.Context, request mcp.CallToolReque
 		return mcp.NewToolResultError("index is required"), nil
 	}
 
-	searcher, err := s.getSearcher(indexName)
+	searcher, release, err := s.acquireSearcher(indexName)
 	if err != nil {
 		return s.indexBusyError(indexName, err), nil
 	}
+	defer release()
 
 	db := searcher.GraphDB()
 	if db == nil {
@@ -1802,10 +1908,11 @@ func (s *Server) handleSymbolsInFile(ctx context.Context, request mcp.CallToolRe
 		return mcp.NewToolResultError("index and file_path are required"), nil
 	}
 
-	searcher, err := s.getSearcher(indexName)
+	searcher, release, err := s.acquireSearcher(indexName)
 	if err != nil {
 		return s.indexBusyError(indexName, err), nil
 	}
+	defer release()
 
 	db := searcher.GraphDB()
 	if db == nil {
@@ -2414,11 +2521,12 @@ func (s *Server) focusResults(ctx context.Context, indexName, query string, resu
 		if idx, ok := r.Metadata["_index"].(string); ok && idx != "" {
 			name = idx
 		}
-		searcher, err := s.getSearcher(name)
+		searcher, release, err := s.acquireSearcher(name)
 		if err != nil {
 			continue
 		}
 		exp, err := searcher.ExplainResult(ctx, query, r, gleann.ExplainOptions{})
+		release()
 		if err != nil || len(exp.Segments) < 4 {
 			continue
 		}

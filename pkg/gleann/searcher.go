@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/tevfik/gleann/internal/graphstore"
@@ -46,6 +47,11 @@ type LeannSearcher struct {
 	// (freshKnown false when none was recorded); see freshness.go.
 	fresh      indexFreshness
 	freshKnown bool
+	freshMu    sync.Mutex
+
+	// dstate is the delta file and slot counts of the loaded index (RFC 005);
+	// nil for a format-1 index or an index without vectors.
+	dstate atomic.Pointer[deltaState]
 }
 
 // VectorAvailable reports whether a vector index is loaded and available for search.
@@ -73,7 +79,7 @@ func (s *LeannSearcher) EstimatedSize() int64 {
 	indexDir := filepath.Join(s.config.IndexDir, name)
 	basePath := filepath.Join(indexDir, name)
 	var total int64
-	exts := []string{".index", ".db", ".passages.db", ".bm25", ".meta.json", ".meta", ".db-wal", ".db-shm"}
+	exts := []string{".index", ".delta", ".db", ".passages.db", ".bm25", ".meta.json", ".meta", ".db-wal", ".db-shm"}
 	for _, ext := range exts {
 		if fi, err := os.Stat(basePath + ext); err == nil {
 			total += fi.Size()
@@ -257,29 +263,14 @@ func (s *LeannSearcher) Load(ctx context.Context, name string) (retErr error) {
 	// Check if vector index exists and is ready
 	indexPath := basePath + ".index"
 	s.vectorAvailable = false
+	s.dstate.Store(nil)
+	if s.backend != nil {
+		_ = s.backend.Close()
+		s.backend = nil
+	}
 	if _, err := os.Stat(indexPath); err == nil && !s.meta.LexicalOnly {
-		// Get backend.
-		factory, err := GetBackend(s.meta.Backend)
-		if err != nil {
-			return fmt.Errorf("get backend: %w", err)
-		}
-		s.backend = factory.NewSearcher(s.config)
-
-		// Attempt Zero-Copy Memory Mapping first, fallback to standard RAM loading
-		if mmapSearcher, ok := s.backend.(MmapBackendSearcher); ok {
-			// Native zero-copy mmap
-			if err := mmapSearcher.LoadFromFile(ctx, indexPath); err != nil {
-				return fmt.Errorf("load backend mmap: %w", err)
-			}
-		} else {
-			// Standard RAM load
-			indexData, err := os.ReadFile(indexPath)
-			if err != nil {
-				return fmt.Errorf("read index: %w", err)
-			}
-			if err := s.backend.Load(ctx, indexData, s.meta); err != nil {
-				return fmt.Errorf("load backend: %w", err)
-			}
+		if err := s.loadVectorFiles(ctx, basePath); err != nil {
+			return err
 		}
 		s.vectorAvailable = true
 	}
@@ -398,7 +389,7 @@ func (s *LeannSearcher) Search(ctx context.Context, query string, opts ...Search
 	if err != nil {
 		return nil, err
 	}
-	if stale, serr := s.vectorStale(ctx); stale {
+	if stale, serr := s.mainChanged(ctx); stale {
 		if serr != nil {
 			return nil, fmt.Errorf("%w: %v", ErrIndexChanged, serr)
 		}
@@ -538,37 +529,30 @@ func (s *LeannSearcher) search(ctx context.Context, query string, opts ...Search
 	// fallback) reuses it instead of the wider pool's max distance.
 	var normDist float32
 	normSet := false
+	dst := s.dstate.Load() // one state for the whole query, whatever a refresh does meanwhile
 	for {
-		// Vector search.
+		// Vector search. With dead slots the backend is asked for more hits,
+		// so that about pool remain once the dead ones are dropped.
 		var ids []int64
 		var distances []float32
-
-		if s.embServer != nil && s.embServer.IsRunning() {
-			// Use dedicated recomputation server if available
-			ids, distances, err = s.backend.SearchWithRecompute(ctx, queryEmb, pool, s.embServer.ComputeEmbeddings)
-		} else if _, isMmap := s.backend.(MmapBackendSearcher); isMmap {
-			// If using Mmap Searcher but no dedicated embServer, create an ad-hoc recomputer
-			// so that the graph can traverse locally.
-			adHocRecompute := func(ctx context.Context, targetIDs []int64) ([][]float32, error) {
-				texts := make([]string, 0, len(targetIDs))
-				for _, id := range targetIDs {
-					passage, pErr := s.passages.Get(id)
-					if pErr == nil {
-						texts = append(texts, passage.Text)
-					} else {
-						texts = append(texts, "")
-					}
-				}
-				return s.embedder.Compute(ctx, withPrefix(s.meta.PassagePrefix, texts)) // as the index was built
+		fetch := overfetch(pool, dst)
+		for {
+			ids, distances, err = s.vectorSearch(ctx, queryEmb, fetch)
+			if err != nil {
+				return nil, fmt.Errorf("vector search: %w", err)
 			}
-			// HNSW/mmap passes context natively if we wrapper it or we just ignore the inner errors.
-			ids, distances, err = s.backend.SearchWithRecompute(ctx, queryEmb, pool, adHocRecompute)
-		} else {
-			// Standard RAM search with stored embeddings.
-			ids, distances, err = s.backend.Search(ctx, queryEmb, pool)
-		}
-		if err != nil {
-			return nil, fmt.Errorf("vector search: %w", err)
+			returned := len(ids)
+			if ids, distances, err = s.mergeDeltaHits(ctx, dst, queryEmb, ids, distances, pool, fetch); err != nil {
+				return nil, fmt.Errorf("vector search: %w", err)
+			}
+			// The over-fetch assumes the dead slots are spread evenly. When
+			// they were not and fewer than pool hits survived although the
+			// backend still had more, ask for more.
+			capFetch := max(pool, filterPoolCap)
+			if dst == nil || dst.dead == 0 || len(ids) >= pool || returned < fetch || fetch >= capFetch {
+				break
+			}
+			fetch = min(fetch*2, capFetch)
 		}
 
 		// Raw distances, kept on the results for ranking several indexes together (FuseAcrossIndexes).
@@ -711,6 +695,52 @@ func (s *LeannSearcher) search(ctx context.Context, query string, opts ...Search
 	}
 
 	return results, nil
+}
+
+// vectorSearch runs the vector leg against the main file: through the
+// recomputation server when one runs, through the memory-mapped graph with an
+// ad-hoc recomputer otherwise, or against stored embeddings.
+func (s *LeannSearcher) vectorSearch(ctx context.Context, queryEmb []float32, fetch int) ([]int64, []float32, error) {
+	if s.embServer != nil && s.embServer.IsRunning() {
+		// Use dedicated recomputation server if available
+		return s.backend.SearchWithRecompute(ctx, queryEmb, fetch, s.embServer.ComputeEmbeddings)
+	}
+	if _, isMmap := s.backend.(MmapBackendSearcher); isMmap {
+		// If using Mmap Searcher but no dedicated embServer, create an ad-hoc recomputer
+		// so that the graph can traverse locally.
+		adHocRecompute := func(ctx context.Context, targetIDs []int64) ([][]float32, error) {
+			// A dead slot (its passage was removed or replaced) has no
+			// text to embed: it gets a nil vector, which the graph
+			// traversal skips, instead of the embedding of "".
+			out := make([][]float32, len(targetIDs))
+			texts := make([]string, 0, len(targetIDs))
+			at := make([]int, 0, len(targetIDs))
+			for i, id := range targetIDs {
+				if passage, pErr := s.passages.Get(id); pErr == nil {
+					texts = append(texts, passage.Text)
+					at = append(at, i)
+				}
+			}
+			if len(texts) == 0 {
+				return out, nil
+			}
+			vecs, cErr := s.embedder.Compute(ctx, withPrefix(s.meta.PassagePrefix, texts)) // as the index was built
+			if cErr != nil {
+				return nil, cErr
+			}
+			if len(vecs) != len(texts) {
+				return nil, fmt.Errorf("embedder returned %d vectors for %d texts", len(vecs), len(texts))
+			}
+			for j, i := range at {
+				out[i] = vecs[j]
+			}
+			return out, nil
+		}
+		// HNSW/mmap passes context natively if we wrapper it or we just ignore the inner errors.
+		return s.backend.SearchWithRecompute(ctx, queryEmb, fetch, adHocRecompute)
+	}
+	// Standard RAM search with stored embeddings.
+	return s.backend.Search(ctx, queryEmb, fetch)
 }
 
 // enrichWithGraphContext enriches search results with graph-derived context.
@@ -1415,6 +1445,9 @@ func (s *LeannSearcher) searchPreselected(ctx context.Context, query, rq string,
 	// explicit IDs and a query vector is available.
 	if queryEmb != nil && searchOpts.HybridAlpha > 0 {
 		if vd, ok := s.backend.(VectorIDScorer); ok {
+			if dst := s.dstate.Load(); dst != nil && dst.delta.Len() > 0 {
+				vd = deltaScorer{main: vd, delta: dst.delta}
+			}
 			slots := make([]int64, 0, len(allowed))
 			for id := range allowed {
 				if id >= 0 {

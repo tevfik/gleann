@@ -197,6 +197,8 @@ When the auto-probe succeeds, affected commands print a `(via running server)` t
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `GLEANN_STORE_FORMAT` | `1` | Selects the passage-store format for NEW indexes (RFC 003). Unset or `1` keeps the bbolt store (`<name>.passages.db`); `2` uses the SQLite record store (`<name>.db`) with stable passage IDs, per-file transactions and the persisted FTS5 lexical leg built in. Any other value falls back to the default. Existing indexes keep their on-disk format regardless of this switch: a format-1 index is converted explicitly with `gleann index migrate <name>` (and restored with `--rollback`), never implicitly by a write |
+| `GLEANN_DELTA_MIN` / `GLEANN_DELTA_SHARE` | `4096` / `0.02` | Format-2 incremental updates (RFC 005): a sync keeps new vectors in a small delta file until it holds more than `max(GLEANN_DELTA_MIN, GLEANN_DELTA_SHARE x live passages)` entries; the sync that crosses the limit rebuilds the main vector file from the stored vectors (a merge, no re-embedding) |
+| `GLEANN_DEAD_SHARE` / `GLEANN_DEAD_SHARE_PRUNED` / `GLEANN_DEAD_MIN` | `0.05` / `0.05` / `256` | Share of dead vector slots (removed or replaced passages) that triggers the same rebuild with dense slots, and the number of dead slots below which it never does; an explicit share sets the minimum to 0 unless `GLEANN_DEAD_MIN` is given |
 
 ## LLM Context Window
 

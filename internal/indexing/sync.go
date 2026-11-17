@@ -350,7 +350,10 @@ func Sync(ctx context.Context, opts SyncOptions) (*SyncResult, error) {
 			if err != nil {
 				return nil, fmt.Errorf("full rebuild (previous index restored): %w", err)
 			}
-			if buildGraph {
+			if env.dbRecreated && !buildGraph {
+				p.Printf("⚠️  The index database was recreated, so the code graph is rebuilt from the sources.\n")
+			}
+			if buildGraph || env.dbRecreated {
 				graphOpts.ChangedFiles = nil
 				graphOpts.PluginDocs = pDocs
 				graphErr = buildGraphIndex(graphOpts, p)

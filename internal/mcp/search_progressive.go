@@ -107,10 +107,11 @@ func (s *Server) handleSearchIDs(ctx context.Context, request mcp.CallToolReques
 		topK = int(limit)
 	}
 
-	searcher, err := s.getSearcher(indexName)
+	searcher, release, err := s.acquireSearcher(indexName)
 	if err != nil {
 		return s.indexBusyError(indexName, err), nil
 	}
+	defer release()
 
 	searchOpts := []gleann.SearchOption{gleann.WithTopK(topK)}
 	if filters, logic := parseFilters(args); len(filters) > 0 {
@@ -217,10 +218,11 @@ func (s *Server) handleFetch(ctx context.Context, request mcp.CallToolRequest) (
 		}
 	}
 
-	searcher, err := s.getSearcher(indexName)
+	searcher, release, err := s.acquireSearcher(indexName)
 	if err != nil {
 		return s.indexBusyError(indexName, err), nil
 	}
+	defer release()
 
 	pm := searcher.PassageManager()
 	passages, err := pm.GetBatch(ids)
@@ -280,10 +282,11 @@ func (s *Server) handleGet(ctx context.Context, request mcp.CallToolRequest) (*m
 		return mcp.NewToolResultError("invalid passage ID in ref: " + ref), nil
 	}
 
-	searcher, err := s.getSearcher(indexName)
+	searcher, release, err := s.acquireSearcher(indexName)
 	if err != nil {
 		return s.indexBusyError(indexName, err), nil
 	}
+	defer release()
 
 	p, err := searcher.PassageManager().Get(passageID)
 	if err != nil {

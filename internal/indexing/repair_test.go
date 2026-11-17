@@ -95,6 +95,11 @@ func corruptFormat2LikeInPlaceRemoval(t *testing.T, cfg gleann.Config, base, bac
 	}); err != nil {
 		t.Fatal(err)
 	}
+	// An index written by an older version has no vector_slots high-water mark,
+	// so its slots must be dense; with a mark a gap is a legal dead slot.
+	if err := st.SetMeta(ctx, "vector_slots", "0"); err != nil {
+		t.Fatal(err)
+	}
 	_ = st.Close()
 	sort.Slice(remaining, func(i, j int) bool { return *remaining[i].VecSlot < *remaining[j].VecSlot })
 

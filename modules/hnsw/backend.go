@@ -251,6 +251,34 @@ func (s *Searcher) VectorDistances(ctx context.Context, query []float32, ids []i
 	return out, nil
 }
 
+// ExtractVectors returns the stored vector of each passage ID (vector slot),
+// widened to float32. It fails when no index is loaded, an ID is absent, or
+// its vector was pruned: a merge cannot rebuild from what is not stored.
+func (s *Searcher) ExtractVectors(ctx context.Context, ids []int64) ([][]float32, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	if s.graph == nil {
+		return nil, fmt.Errorf("no index loaded")
+	}
+	out := make([][]float32, len(ids))
+	for i, id := range ids {
+		n, ok := s.graph.nodes[id]
+		if !ok {
+			return nil, fmt.Errorf("hnsw: passage %d not in graph", id)
+		}
+		switch {
+		case len(n.Vector) > 0:
+			out[i] = append([]float32(nil), n.Vector...)
+		case len(n.VectorF16) > 0:
+			out[i] = Float16SliceToFloat32(n.VectorF16)
+		default:
+			return nil, fmt.Errorf("hnsw: passage %d has pruned embeddings", id)
+		}
+	}
+	return out, nil
+}
+
 func (s *Searcher) Close() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

@@ -357,6 +357,11 @@ type pipelineEnv struct {
 
 	// lastUpdate is what the most recent vector update did and cost.
 	lastUpdate gleann.UpdateStats
+
+	// dbRecreated is set by rebuild when the index database had to be created
+	// anew (damaged, or from an incompatible build): the code graph that lived
+	// in it is gone and the caller must rebuild it from the sources.
+	dbRecreated bool
 }
 
 // progressCallback forwards a builder's embedding progress to Options.Progress.
@@ -383,7 +388,26 @@ func RebuildIndex(ctx context.Context, name, docsDir string, opts Options) ([]*P
 		return nil, err
 	}
 	defer cleanup()
-	return env.rebuild(ctx, name, docsDir)
+	pDocs, err := env.rebuild(ctx, name, docsDir)
+	if err != nil {
+		return pDocs, err
+	}
+	// Like Build and Sync, a rebuild that had to recreate the database lost
+	// its graph with it: rebuild the graph even though no graph option exists
+	// on this path (watch mode).
+	if env.dbRecreated {
+		opts.printer().Printf("⚠️  The index database was recreated, so the code graph is rebuilt from the sources.\n")
+		if gerr := buildGraphIndex(GraphOptions{
+			Name:              name,
+			DocsDir:           docsDir,
+			IndexDir:          env.cfg.IndexDir,
+			PluginDocs:        pDocs,
+			IncludeSubmodules: opts.IncludeSubmodules,
+		}, env.p); gerr != nil {
+			return pDocs, fmt.Errorf("%w: %v", ErrGraphUpdate, gerr)
+		}
+	}
+	return pDocs, nil
 }
 
 // UpdateIncremental re-chunks only changedFiles (existing files are
@@ -460,6 +484,7 @@ func (e *pipelineEnv) rebuild(ctx context.Context, name, docsDir string) ([]*Plu
 	if err := builder.Build(ctx, name, items); err != nil {
 		return nil, fmt.Errorf("building: %w", err)
 	}
+	e.dbRecreated = builder.DatabaseRecreated()
 	_ = gleann.UpdateIndexMeta(e.cfg.IndexDir, name, func(meta *gleann.IndexMeta) {
 		meta.SourceDir = docsDir
 		meta.GleannVersion = gleann.GetGleannVersion()
@@ -536,6 +561,9 @@ func describeUpdate(st gleann.UpdateStats) string {
 	case gleann.UpdateInPlace:
 		return fmt.Sprintf("updated in place: +%d passages, %d text(s) embedded in %s (total %s)",
 			st.Added, st.Embedded, fmtDur(st.EmbedTime), fmtDur(st.Elapsed))
+	case gleann.UpdateMerge:
+		return fmt.Sprintf("merged: -%d +%d passages (now %d), the vector index was rebuilt from stored vectors, %d text(s) embedded in %s (total %s)",
+			st.Removed, st.Added, st.Passages, st.Embedded, fmtDur(st.EmbedTime), fmtDur(st.Elapsed))
 	case gleann.UpdateCompact:
 		return fmt.Sprintf("compacted: -%d +%d passages (now %d), %d text(s) re-embedded in %s (total %s)",
 			st.Removed, st.Added, st.Passages, st.Embedded, fmtDur(st.EmbedTime), fmtDur(st.Elapsed))

@@ -189,6 +189,26 @@ func (s *Searcher) SearchWithRecompute(ctx context.Context, query []float32, top
 	return ids, distances, nil
 }
 
+// ExtractVectors returns the stored vector of each node ID (vector slot). A
+// merge or compaction rebuilds the index from them without embedding.
+func (s *Searcher) ExtractVectors(ctx context.Context, ids []int64) ([][]float32, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	if s.idx == nil {
+		return nil, fmt.Errorf("index not loaded")
+	}
+	out := make([][]float32, len(ids))
+	for i, id := range ids {
+		v := s.idx.GetVector(id)
+		if v == nil {
+			return nil, fmt.Errorf("diskann: node %d has no stored vector", id)
+		}
+		out[i] = append([]float32(nil), v...)
+	}
+	return out, nil
+}
+
 func (s *Searcher) Close() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

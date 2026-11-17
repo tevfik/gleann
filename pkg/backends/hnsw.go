@@ -95,6 +95,17 @@ func (s *searcherAdapter) VectorDistances(ctx context.Context, query []float32, 
 	return nil, fmt.Errorf("hnsw backend does not support VectorDistances")
 }
 
+// ExtractVectors forwards to the inner searcher when it can return its stored
+// vectors (the RAM searcher does), so a merge can rebuild without embedding.
+func (s *searcherAdapter) ExtractVectors(ctx context.Context, ids []int64) ([][]float32, error) {
+	if ve, ok := s.inner.(interface {
+		ExtractVectors(ctx context.Context, ids []int64) ([][]float32, error)
+	}); ok {
+		return ve.ExtractVectors(ctx, ids)
+	}
+	return nil, fmt.Errorf("hnsw backend does not support ExtractVectors")
+}
+
 func (s *searcherAdapter) Close() error {
 	return s.inner.Close()
 }

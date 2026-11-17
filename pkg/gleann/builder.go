@@ -10,6 +10,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -22,9 +23,10 @@ type LeannBuilder struct {
 	embedder    EmbeddingComputer
 	chunker     Chunker
 	progressCb  func(phase string, done, total int)
-	lexicalMode string // GLEANN_LEXICAL, read once at creation: "memory" (default) or "fts5"
-	storeFormat int    // GLEANN_STORE_FORMAT, read once at creation: format for NEW indexes (1 bbolt, 2 SQLite)
-	sourceDir   string // documents directory, for the files-table content hashes (SetSourceDir)
+	lexicalMode string            // GLEANN_LEXICAL, read once at creation: "memory" (default) or "fts5"
+	storeFormat int               // GLEANN_STORE_FORMAT, read once at creation: format for NEW indexes (1 bbolt, 2 SQLite)
+	limits      incrementalLimits // delta and dead-slot limits of RFC 005, read once at creation
+	sourceDir   string            // documents directory, for the files-table content hashes (SetSourceDir)
 	// crashHook injects a failure at a named boundary of the format-2 vector
 	// publication (tests only; see the crash* constants in builder_format2.go).
 	// A struct field, not a package global: production builders never set it.
@@ -63,6 +65,7 @@ func NewBuilder(config Config, embedder EmbeddingComputer) (*LeannBuilder, error
 		embedder:    embedder,
 		lexicalMode: lexicalLegMode(),
 		storeFormat: storeFormatSwitch(),
+		limits:      incrementalLimitsFromEnv(),
 	}, nil
 }
 
@@ -271,8 +274,11 @@ func (b *LeannBuilder) BuildVectors(ctx context.Context, name string, items []It
 			idToSlot[id] = int64(i)
 		}
 		nextGen := currentVectorGeneration(ctx, st) + 1
-		if err := b.publishVectorFormat2(ctx, st, basePath, indexData, nextGen, func(tx *sql.Tx) error {
-			return st.AssignSlotsTx(ctx, tx, idToSlot)
+		if err := b.publishVectorFormat2(ctx, st, basePath, []stagedVectorFile{{Suffix: suffixMain, Data: indexData}, b.emptyDeltaFile(expectedDim)}, nextGen, func(tx *sql.Tx) error {
+			if err := st.AssignSlotsTx(ctx, tx, idToSlot); err != nil {
+				return err
+			}
+			return st.SetMetaTx(ctx, tx, metaVectorSlots, strconv.Itoa(len(ids)))
 		}); err != nil {
 			return err
 		}
@@ -284,6 +290,8 @@ func (b *LeannBuilder) BuildVectors(ctx context.Context, name string, items []It
 			m.LexicalOnly = false
 			m.SignaturesOnly = b.config.ChunkConfig.SignaturesOnly
 			m.VectorGeneration = nextGen
+			m.VectorMainGeneration = nextGen
+			m.VectorSlots = int64(len(ids))
 			if b.config.Backend == "hnsw" && b.config.HNSWConfig.VectorDType != "" {
 				m.VectorDType = b.config.HNSWConfig.VectorDType
 			}
@@ -353,6 +361,10 @@ const (
 	UpdateNoop UpdateMode = "noop"
 	// UpdateInPlace: new passages were appended to the existing vector index.
 	UpdateInPlace UpdateMode = "in-place"
+	// UpdateMerge: the main vector file was rebuilt from the vectors already
+	// stored, plus the embeddings of the new texts only (a delta merge or a
+	// compaction of dead slots; the slots are dense again).
+	UpdateMerge UpdateMode = "merge"
 	// UpdateCompact: the index was rebuilt from its remaining passages.
 	UpdateCompact UpdateMode = "compact"
 	// UpdateEmptied: the last passages were removed; the vector index is gone.

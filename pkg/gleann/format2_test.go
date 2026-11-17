@@ -199,8 +199,8 @@ func TestFormat2_SyncKeepsOtherSourcesUntouched(t *testing.T) {
 	if err != nil {
 		t.Fatalf("UpdateIndex: %v", err)
 	}
-	if st.Mode != UpdateCompact || st.Passages != 4 {
-		t.Errorf("update stats = %+v, want a compaction to 4 passages", st)
+	if st.Mode != UpdateInPlace || st.Passages != 4 || st.Embedded != 1 {
+		t.Errorf("update stats = %+v, want an in-place update to 4 passages embedding 1 text", st)
 	}
 	after := f2Rows(t, base)
 	for _, text := range []string{"apple pie recipe", "apple pie recipe with cinnamon sugar", "cherry tart dessert"} {
@@ -218,19 +218,32 @@ func TestFormat2_SyncKeepsOtherSourcesUntouched(t *testing.T) {
 		t.Error("the new b.md passage is missing")
 	}
 
-	// Slots stay dense: 4 passages at 0..3, none without a slot.
+	// Nothing is renumbered: the unchanged passages keep their slots, the
+	// replacement takes the next one (4) and the old slot (2) is dead.
+	for _, text := range []string{"apple pie recipe", "apple pie recipe with cinnamon sugar", "cherry tart dessert"} {
+		if *after[text].VecSlot != *before[text].VecSlot {
+			t.Errorf("slot of untouched %q changed: %d -> %d", text, *before[text].VecSlot, *after[text].VecSlot)
+		}
+	}
+	if got := *after["banana bread with walnuts"].VecSlot; got != 4 {
+		t.Errorf("slot of the replacement = %d, want 4 (slots are never reused)", got)
+	}
 	db, err := store.Open(base+".db", store.Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer db.Close()
 	count, maxSlot, slotless, err := db.SlotSpan(context.Background())
-	if err != nil || count != 4 || maxSlot != 3 || slotless != 0 {
-		t.Errorf("slot span after sync = (%d, %d, %d, %v), want (4, 3, 0, nil)", count, maxSlot, slotless, err)
+	if err != nil || count != 4 || maxSlot != 4 || slotless != 0 {
+		t.Errorf("slot span after sync = (%d, %d, %d, %v), want (4, 4, 0, nil)", count, maxSlot, slotless, err)
+	}
+	if got := f2Meta(t, base, metaVectorSlots); got != "5" {
+		t.Errorf("vector_slots = %q, want 5", got)
 	}
 }
 
 func TestFormat2_CompactionKeepsSlotsAligned(t *testing.T) {
+	t.Setenv("GLEANN_DEAD_MIN", "0")
 	dir := t.TempDir()
 	b, embedder := newFormat2Builder(t, dir, 8)
 	ctx := context.Background()
@@ -245,8 +258,8 @@ func TestFormat2_CompactionKeepsSlotsAligned(t *testing.T) {
 	if err != nil {
 		t.Fatalf("UpdateIndex: %v", err)
 	}
-	if st.Mode != UpdateCompact || st.Removed != 2 || st.Passages != 2 {
-		t.Fatalf("removal stats = %+v, want compact with 2 removed and 2 left", st)
+	if st.Mode != UpdateMerge || st.Removed != 2 || st.Passages != 2 || st.Embedded != 0 {
+		t.Fatalf("removal stats = %+v, want a merge (half the slots dead) with 2 removed, 2 left, nothing embedded", st)
 	}
 	if gen := f2Meta(t, base, "vector_generation"); gen != "2" {
 		t.Errorf("vector_generation after compaction = %q, want 2", gen)

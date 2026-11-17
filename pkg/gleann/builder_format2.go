@@ -27,6 +27,15 @@ import (
 // place, then the generation is finished (recoverVectorPublication resolves
 // a crash at any boundary).
 
+// Meta keys of the incremental vector scheme (RFC 005): vector_slots is the
+// high-water mark of the vec_slot space (a slot is never reused), and
+// vector_main_generation changes only when the main vector file is replaced,
+// where vector_generation changes with every publication.
+const (
+	metaVectorSlots          = "vector_slots"
+	metaVectorMainGeneration = "vector_main_generation"
+)
+
 // SetSourceDir records the documents directory the builder is indexing, so the
 // files-table rows can carry the same content hash as the format-1 manifest
 // (computed from the file on disk). The indexing pipeline sets it before
@@ -286,6 +295,8 @@ func (b *LeannBuilder) replacePassagesInPlace(ctx context.Context, basePath, nam
 		{"analyzer", analysis.ID},
 		{"language", analyzer.Language},
 		{"vector_generation", strconv.Itoa(nextGen)},
+		// Every slot is NULL now; the next vector publication assigns 0..n-1.
+		{metaVectorSlots, "0"},
 	} {
 		if err := st.SetMetaTx(ctx, tx, kv[0], kv[1]); err != nil {
 			return nil, fmt.Errorf("setting store meta %q: %w", kv[0], err)
@@ -338,6 +349,10 @@ const (
 	crashAfterCommit  = "after_commit"  // transaction committed, rename not done
 	crashAfterRename  = "after_rename"  // rename done, generation not finished
 	crashAfterFinish  = "after_finish"  // generation finished, meta.json not written
+
+	// Points of a publication that stages more than one file (RFC 005 section 4).
+	crashAfterRenameMain  = "after_rename_main"  // main file renamed, the other staged files not yet
+	crashAfterMergeCommit = "after_merge_commit" // a publication that replaces the main file committed, nothing renamed
 )
 
 // crashPoint runs the builder's test crash hook, if set. It is a struct field,
@@ -360,26 +375,107 @@ func currentVectorGeneration(ctx context.Context, st *store.Store) int {
 	return 0
 }
 
-// publishVectorFormat2 publishes indexData as the new vector file of the
-// format-2 index at basePath, in the crash-safe order of RFC 003 section 3.4:
+// stagedVectorFile is one file of a vector publication: Suffix is the final
+// name's extension after the index name (".index" for the main vector file,
+// ".delta" for the delta file of RFC 005); the bytes are staged under the
+// final name plus ".tmp".
+type stagedVectorFile struct {
+	Suffix string
+	Data   []byte
+}
+
+// Names of the files a vector publication can stage.
+const (
+	suffixMain  = ".index"
+	suffixDelta = ".delta"
+)
+
+// pendingSeparator joins the staged names of a publication in the
+// pending_vector_file meta value. A single name (every publication before
+// RFC 005) is the one-element list.
+const pendingSeparator = "\n"
+
+func joinPendingFiles(names []string) string { return strings.Join(names, pendingSeparator) }
+
+func splitPendingFiles(v string) []string {
+	var out []string
+	for _, n := range strings.Split(v, pendingSeparator) {
+		if n = strings.TrimSpace(n); n != "" {
+			out = append(out, n)
+		}
+	}
+	return out
+}
+
+// currentVectorSlots reads the high-water mark of the vec_slot space. An index
+// without the key (built before RFC 005) derives it as the highest occupied
+// slot plus one, which is what the key would have held.
+func currentVectorSlots(ctx context.Context, st *store.Store) (int64, error) {
+	v, err := st.Meta(ctx, metaVectorSlots)
+	if err != nil {
+		return 0, fmt.Errorf("reading vector slots: %w", err)
+	}
+	if v != "" {
+		if n, e := strconv.ParseInt(v, 10, 64); e == nil && n >= 0 {
+			return n, nil
+		}
+	}
+	_, maxSlot, _, err := st.SlotSpan(ctx)
+	if err != nil {
+		return 0, err
+	}
+	return maxSlot + 1, nil
+}
+
+// currentVectorMainGeneration reads the generation of the main vector file;
+// an index without the key counts as its published generation.
+func currentVectorMainGeneration(ctx context.Context, st *store.Store) int {
+	if v, err := st.Meta(ctx, metaVectorMainGeneration); err == nil && v != "" {
+		if g, e := strconv.Atoi(v); e == nil {
+			return g
+		}
+	}
+	return currentVectorGeneration(ctx, st)
+}
+
+// publishVectorFormat2 publishes files as the new vector file(s) of the
+// format-2 index at basePath, in the crash-safe order of RFC 003 section 3.4
+// (generalised to several files by RFC 005 section 4):
 //
-//  1. stage the bytes under <name>.index.tmp;
+//  1. stage each file under its final name plus ".tmp";
 //  2. run dbChanges — EVERY database change of this update — together with
-//     the pending_vector_file / pending_vector_generation meta keys in ONE
-//     transaction, and commit. Before the commit the database still matches
-//     the old vector file; after it, the pending keys mark the publication;
-//  3. rename the staging file over <name>.index;
+//     the pending_vector_file (a list) / pending_vector_generation meta keys
+//     in ONE transaction, and commit. Before the commit the database still
+//     matches the old vector files; after it, the pending keys mark the
+//     publication;
+//  3. rename each staged file to its final name, main file first;
 //  4. finish: set vector_generation to the pending value and delete both
 //     pending keys in a second small transaction.
 //
-// A crash between 2 and 3, or between 3 and 4, leaves the pending keys, which
-// recoverVectorPublication rolls forward on the next open. A crash before the
-// commit leaves only a stale staging file, which recovery deletes. The caller
-// writes meta.json (including VectorGeneration) after this returns.
-func (b *LeannBuilder) publishVectorFormat2(ctx context.Context, st *store.Store, basePath string, indexData []byte, nextGen int, dbChanges func(tx *sql.Tx) error) error {
-	tmpIndex := basePath + ".index.tmp"
-	if err := os.WriteFile(tmpIndex, indexData, 0o644); err != nil {
-		return fmt.Errorf("staging vector index: %w", err)
+// A crash between 2 and 4 leaves the pending keys, which
+// recoverVectorPublication rolls forward on the next open (it renames every
+// staged file still present). A crash before the commit leaves only stale
+// staging files, which recovery deletes. The caller writes meta.json
+// (including VectorGeneration) after this returns.
+//
+// A publication that stages the main file also records vector_main_generation
+// in the same transaction: readers re-map the main file only when it changes.
+func (b *LeannBuilder) publishVectorFormat2(ctx context.Context, st *store.Store, basePath string, files []stagedVectorFile, nextGen int, dbChanges func(tx *sql.Tx) error) error {
+	if len(files) == 0 {
+		return fmt.Errorf("publishing vector files: nothing staged")
+	}
+	// The main file is renamed first: a mixed pair (new main, old delta) is
+	// still correct for HNSW (stable slots) and is resolved by recovery.
+	sort.SliceStable(files, func(i, j int) bool { return files[i].Suffix == suffixMain && files[j].Suffix != suffixMain })
+	names := make([]string, len(files))
+	hasMain := false
+	for i, f := range files {
+		tmp := basePath + f.Suffix + ".tmp"
+		if err := os.WriteFile(tmp, f.Data, 0o644); err != nil {
+			return fmt.Errorf("staging vector file %s: %w", filepath.Base(tmp), err)
+		}
+		names[i] = filepath.Base(tmp)
+		hasMain = hasMain || f.Suffix == suffixMain
 	}
 
 	tx, err := st.BeginWrite(ctx)
@@ -390,11 +486,16 @@ func (b *LeannBuilder) publishVectorFormat2(ctx context.Context, st *store.Store
 	if err := dbChanges(tx); err != nil {
 		return err
 	}
-	if err := st.SetMetaTx(ctx, tx, "pending_vector_file", filepath.Base(tmpIndex)); err != nil {
+	if err := st.SetMetaTx(ctx, tx, "pending_vector_file", joinPendingFiles(names)); err != nil {
 		return fmt.Errorf("recording pending vector file: %w", err)
 	}
 	if err := st.SetMetaTx(ctx, tx, "pending_vector_generation", strconv.Itoa(nextGen)); err != nil {
 		return fmt.Errorf("recording pending vector generation: %w", err)
+	}
+	if hasMain {
+		if err := st.SetMetaTx(ctx, tx, metaVectorMainGeneration, strconv.Itoa(nextGen)); err != nil {
+			return fmt.Errorf("recording main vector generation: %w", err)
+		}
 	}
 	if err := b.crashPoint(crashBeforeCommit); err != nil {
 		return err
@@ -406,18 +507,31 @@ func (b *LeannBuilder) publishVectorFormat2(ctx context.Context, st *store.Store
 	if err := b.crashPoint(crashAfterCommit); err != nil {
 		return err
 	}
-	if err := os.Rename(tmpIndex, basePath+".index"); err != nil {
-		// A reader that opened the index between the commit and this rename
-		// runs recoverVectorPublication, which rolls the publication forward
-		// itself: the staging file is gone because it was renamed already.
-		// The finish step below is idempotent, so carry on.
-		if !errors.Is(err, fs.ErrNotExist) {
-			// Keep the staging file: the pending keys are committed, so
-			// recovery needs it to roll the publication forward.
-			return fmt.Errorf("publishing vector index: %w", err)
+	if hasMain {
+		if err := b.crashPoint(crashAfterMergeCommit); err != nil {
+			return err
 		}
-		if _, statErr := os.Stat(basePath + ".index"); statErr != nil {
-			return fmt.Errorf("publishing vector index: %w", err)
+	}
+	for i, f := range files {
+		final := basePath + f.Suffix
+		if err := os.Rename(final+".tmp", final); err != nil {
+			// A reader that opened the index between the commit and this rename
+			// runs recoverVectorPublication, which rolls the publication forward
+			// itself: the staging file is gone because it was renamed already.
+			// The finish step below is idempotent, so carry on.
+			if !errors.Is(err, fs.ErrNotExist) {
+				// Keep the staging files: the pending keys are committed, so
+				// recovery needs them to roll the publication forward.
+				return fmt.Errorf("publishing vector file %s: %w", filepath.Base(final), err)
+			}
+			if _, statErr := os.Stat(final); statErr != nil {
+				return fmt.Errorf("publishing vector file %s: %w", filepath.Base(final), err)
+			}
+		}
+		if i == 0 && len(files) > 1 && f.Suffix == suffixMain {
+			if err := b.crashPoint(crashAfterRenameMain); err != nil {
+				return err
+			}
 		}
 	}
 
@@ -455,18 +569,30 @@ func finishVectorPublication(ctx context.Context, st *store.Store, gen int) erro
 	return nil
 }
 
+// removeStaleVectorStaging deletes the staging files of a publication that
+// never committed (.index.tmp, .delta.tmp).
+func removeStaleVectorStaging(basePath string) error {
+	for _, suffix := range []string{suffixMain, suffixDelta} {
+		tmp := basePath + suffix + ".tmp"
+		if _, err := os.Stat(tmp); err == nil {
+			if err := os.Remove(tmp); err != nil {
+				return fmt.Errorf("removing stale vector staging file: %w", err)
+			}
+		}
+	}
+	return nil
+}
+
 // recoverVectorPublication resolves an interrupted vector publication (RFC
-// 003 section 3.4). It runs when a format-2 index is opened for search or
-// write, before any reader trusts the slots:
+// 003 section 3.4, RFC 005 section 4). It runs when a format-2 index is opened
+// for search or write, before any reader trusts the slots:
 //
-//   - pending_vector_file set and the staging file present: the crash landed
-//     after the database commit but before the rename — roll forward (rename
-//     the file into place, then finish);
-//   - pending_vector_file set and the staging file absent: the rename already
-//     happened — finish;
-//   - no pending key but a stale .index.tmp: the crash landed before the
-//     commit, so the database still matches the old vector file — delete the
-//     staging file;
+//   - pending_vector_file set (a list of staged names): every staged file
+//     still present is renamed to its name without ".tmp" — the crash landed
+//     after the database commit — and the generation is finished; a staged
+//     file already gone was renamed before the crash;
+//   - no pending key but stale staging files: the crash landed before the
+//     commit, so the database still matches the old vector files — delete them;
 //   - no pending key but meta.json behind the database's vector_generation:
 //     the crash landed after the finish step but before the builder wrote
 //     meta.json — sync meta.json, else a fresh build would stay marked
@@ -483,10 +609,8 @@ func recoverVectorPublication(ctx context.Context, st *store.Store, basePath str
 		return fmt.Errorf("reading pending vector file: %w", err)
 	}
 	if pendingFile == "" {
-		if _, err := os.Stat(basePath + ".index.tmp"); err == nil {
-			if err := os.Remove(basePath + ".index.tmp"); err != nil {
-				return fmt.Errorf("removing stale vector staging file: %w", err)
-			}
+		if err := removeStaleVectorStaging(basePath); err != nil {
+			return err
 		}
 		if gen := currentVectorGeneration(ctx, st); gen > 0 {
 			name := filepath.Base(basePath)
@@ -506,13 +630,22 @@ func recoverVectorPublication(ctx context.Context, st *store.Store, basePath str
 		return fmt.Errorf("interrupted vector publication records generation %q: %w; repair the index: gleann index repair %s",
 			pendingGen, err, filepath.Base(basePath))
 	}
-	tmpPath := filepath.Join(filepath.Dir(basePath), pendingFile)
-	if _, err := os.Stat(tmpPath); err == nil {
-		if err := os.Rename(tmpPath, basePath+".index"); err != nil {
-			return fmt.Errorf("rolling forward vector publication: %w", err)
+	// Staged names are file names next to the database, never paths: a
+	// tampered value must not rename anything outside the index directory.
+	dir := filepath.Dir(basePath)
+	for _, n := range splitPendingFiles(pendingFile) {
+		if n != filepath.Base(n) || !strings.HasSuffix(n, ".tmp") {
+			return fmt.Errorf("interrupted vector publication records staged file %q; repair the index: gleann index repair %s",
+				n, filepath.Base(basePath))
 		}
-	} else if !errors.Is(err, fs.ErrNotExist) {
-		return fmt.Errorf("checking staged vector file: %w", err)
+		tmpPath := filepath.Join(dir, n)
+		if _, err := os.Stat(tmpPath); err == nil {
+			if err := os.Rename(tmpPath, strings.TrimSuffix(tmpPath, ".tmp")); err != nil {
+				return fmt.Errorf("rolling forward vector publication: %w", err)
+			}
+		} else if !errors.Is(err, fs.ErrNotExist) {
+			return fmt.Errorf("checking staged vector file: %w", err)
+		}
 	}
 	if err := finishVectorPublication(ctx, st, gen); err != nil {
 		return err
@@ -542,9 +675,16 @@ func syncPublishedMeta(ctx context.Context, st *store.Store, basePath string, ge
 		return fmt.Errorf("reading slot span after recovery: %w", err)
 	}
 	vectorReady := statErr == nil && count > 0 && slotless == 0
+	slots, err := currentVectorSlots(ctx, st)
+	if err != nil {
+		return fmt.Errorf("reading vector slots after recovery: %w", err)
+	}
+	mainGen := currentVectorMainGeneration(ctx, st)
 	if err := UpdateIndexMeta(indexDir, name, func(m *IndexMeta) {
 		m.NumPassages = count
 		m.VectorGeneration = gen
+		m.VectorSlots = slots
+		m.VectorMainGeneration = mainGen
 		m.StoreFormat = 2
 		m.VectorReady = vectorReady
 		m.LexicalOnly = !vectorReady
@@ -578,6 +718,22 @@ func (b *LeannBuilder) updateIndexFormat2(ctx context.Context, name, basePath st
 	analyzer := analysis.New("")
 	if lang, err := storeDB.Meta(ctx, "language"); err == nil {
 		analyzer = analysis.New(lang)
+	}
+
+	// The incremental branch (RFC 005): embed only the changed chunks and
+	// publish the delta, leaving the main vector file and every unchanged
+	// slot alone. A forced rebuild (repair, compaction), a missing main file or
+	// a crossed limit takes the full path below.
+	if !force {
+		done, err := b.updateIncremental(ctx, name, basePath, st, incrementalUpdate{
+			store: storeDB, analyzer: analyzer, newItems: newItems, removeSources: removeSources,
+		})
+		if err != nil {
+			return err
+		}
+		if done {
+			return nil
+		}
 	}
 
 	var all []store.Passage
@@ -696,7 +852,7 @@ func (b *LeannBuilder) updateIndexFormat2(ctx context.Context, name, basePath st
 		}
 	}
 	nextGen := currentVectorGeneration(ctx, storeDB) + 1
-	err = b.publishVectorFormat2(ctx, storeDB, basePath, indexData, nextGen, func(tx *sql.Tx) error {
+	err = b.publishVectorFormat2(ctx, storeDB, basePath, []stagedVectorFile{{Suffix: suffixMain, Data: indexData}, b.emptyDeltaFile(dim)}, nextGen, func(tx *sql.Tx) error {
 		// Remove deleted and changed sources first so the renumbering targets
 		// are free, reassign the unchanged passages to 0..k-1, then write the
 		// changed/new sources at k..n-1.
@@ -724,7 +880,8 @@ func (b *LeannBuilder) updateIndexFormat2(ctx context.Context, name, basePath st
 		if _, err := applySourceGroupsTx(ctx, tx, storeDB, analyzer, newItems, k, sourceDir); err != nil {
 			return err
 		}
-		return nil
+		// The renumbering is dense: the high-water mark restarts at n.
+		return storeDB.SetMetaTx(ctx, tx, metaVectorSlots, strconv.FormatInt(n, 10))
 	})
 	if err != nil {
 		return err
@@ -743,6 +900,8 @@ func (b *LeannBuilder) updateIndexFormat2(ctx context.Context, name, basePath st
 		// store's vector_generation (a crash between the finish and this write
 		// leaves a mismatch that a repair resolves).
 		m.VectorGeneration = nextGen
+		m.VectorSlots = n
+		m.VectorMainGeneration = nextGen
 		m.UpdatedAt = time.Now()
 	})
 }
@@ -810,17 +969,27 @@ func (b *LeannBuilder) emptyFormat2(ctx context.Context, name, basePath string, 
 	if _, err := storeDB.RemoveSource(ctx, ""); err != nil {
 		return fmt.Errorf("removing sourceless passages: %w", err)
 	}
-	if err := os.Remove(basePath + ".index"); err != nil && !errors.Is(err, fs.ErrNotExist) {
-		return fmt.Errorf("remove vector index: %w", err)
+	for _, suffix := range []string{suffixMain, suffixDelta} {
+		if err := os.Remove(basePath + suffix); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return fmt.Errorf("remove vector file %s: %w", suffix, err)
+		}
 	}
 	// Bump the generation so a searcher that still holds the removed vector
 	// file sees the change on its next freshness check.
 	nextGen := currentVectorGeneration(ctx, storeDB) + 1
-	if err := storeDB.SetMeta(ctx, "vector_generation", strconv.Itoa(nextGen)); err != nil {
-		return fmt.Errorf("setting vector generation: %w", err)
+	for _, kv := range [][2]string{
+		{"vector_generation", strconv.Itoa(nextGen)},
+		{metaVectorMainGeneration, strconv.Itoa(nextGen)},
+		{metaVectorSlots, "0"},
+	} {
+		if err := storeDB.SetMeta(ctx, kv[0], kv[1]); err != nil {
+			return fmt.Errorf("setting %s: %w", kv[0], err)
+		}
 	}
 	return UpdateIndexMeta(b.config.IndexDir, name, func(m *IndexMeta) {
 		m.VectorGeneration = nextGen
+		m.VectorMainGeneration = nextGen
+		m.VectorSlots = 0
 		m.NumPassages = 0
 		m.VectorReady = false
 		m.LexicalOnly = true

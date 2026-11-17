@@ -27,6 +27,11 @@ type IndexHealth struct {
 	MaxID    int64
 	// Dense reports whether the IDs are exactly 0..Passages-1.
 	Dense bool
+	// DeadSlots is how many vector slots below the high-water mark no passage
+	// holds (removed or replaced passages, RFC 005); DeltaEntries is how many
+	// vectors the delta file holds. Both are 0 for an index without them.
+	DeadSlots    int64
+	DeltaEntries int
 	// MetaPassages is the count recorded in the index metadata.
 	MetaPassages int
 	// Problems describes everything found wrong, one line each.
@@ -153,7 +158,30 @@ func checkHealthFormat2(h *IndexHealth, meta *IndexMeta, basePath string) {
 		return
 	}
 	h.Passages, h.MaxID = count, maxSlot
-	h.Dense = slotless == 0 && int64(count) == maxSlot+1
+	// Slots are never reused (RFC 005), so after an incremental update they
+	// are sparse: the rule is that every passage has a slot below the
+	// high-water mark. An index that never recorded the mark (built before
+	// incremental updates) must still be dense.
+	vslots, _ := currentVectorSlots(ctx, st)
+	if vslots > 0 {
+		h.Dense = slotless == 0 && maxSlot < vslots
+	} else {
+		h.Dense = slotless == 0 && int64(count) == maxSlot+1
+	}
+
+	if vslots > 0 {
+		h.DeadSlots = max(0, vslots-int64(count-slotless))
+	}
+	// The delta must be readable and hold vectors of the index's dimensions;
+	// a missing delta is an index that never had one.
+	if d, derr := readVectorDelta(basePath + suffixDelta); derr != nil {
+		h.Problems = append(h.Problems, fmt.Sprintf("the delta vector file cannot be read (%v); repair the index with: gleann index repair %s", derr, h.Name))
+	} else if d != nil {
+		h.DeltaEntries = d.Len()
+		if d.Len() > 0 && meta.Dimensions > 0 && d.dims != meta.Dimensions {
+			h.Problems = append(h.Problems, fmt.Sprintf("the delta vector file holds %d-dimensional vectors, the index %d; repair the index with: gleann index repair %s", d.dims, meta.Dimensions, h.Name))
+		}
+	}
 
 	if h.Passages != meta.NumPassages {
 		h.Problems = append(h.Problems, fmt.Sprintf("the metadata records %d passages but the store holds %d", meta.NumPassages, h.Passages))
@@ -162,8 +190,8 @@ func checkHealthFormat2(h *IndexHealth, meta *IndexMeta, basePath string) {
 	if meta.VectorReady && h.Passages > 0 {
 		if !h.Dense {
 			h.Problems = append(h.Problems, fmt.Sprintf(
-				"vector slots are not contiguous (%d passages, highest slot %d, %d without a slot): vectors may be attached to the wrong passages, so searches can return the wrong text",
-				h.Passages, h.MaxID, slotless))
+				"vector slots are inconsistent (%d passages, highest slot %d, %d without a slot, vector_slots %d): vectors may be attached to the wrong passages, so searches can return the wrong text",
+				h.Passages, h.MaxID, slotless, vslots))
 		}
 		if _, err := os.Stat(basePath + ".index"); errors.Is(err, fs.ErrNotExist) {
 			h.Problems = append(h.Problems, "the vector index file is missing")

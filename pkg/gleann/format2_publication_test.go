@@ -84,6 +84,7 @@ func f2Healthy(t *testing.T, dir string) {
 func TestFormat2_PublicationCrashAfterCommit(t *testing.T) {
 	dir := t.TempDir()
 	b, embedder := newFormat2Builder(t, dir, 8)
+	b.limits = incrementalLimits{} // every update rebuilds the main file: its publication is under test here
 	ctx := context.Background()
 	if err := b.Build(ctx, "idx", f2Items()); err != nil {
 		t.Fatalf("Build: %v", err)
@@ -94,8 +95,8 @@ func TestFormat2_PublicationCrashAfterCommit(t *testing.T) {
 	if err := b.UpdateIndex(ctx, "idx", f2UpdateItems(), nil); err == nil {
 		t.Fatal("UpdateIndex must fail at the injected crash")
 	}
-	if got := f2Meta(t, base, "pending_vector_file"); got != "idx.index.tmp" {
-		t.Fatalf("pending_vector_file = %q, want idx.index.tmp", got)
+	if got := f2Meta(t, base, "pending_vector_file"); got != "idx.index.tmp\nidx.delta.tmp" {
+		t.Fatalf("pending_vector_file = %q, want the main file and the empty delta", got)
 	}
 	if got := f2Meta(t, base, "pending_vector_generation"); got != "2" {
 		t.Fatalf("pending_vector_generation = %q, want 2", got)
@@ -139,6 +140,7 @@ func TestFormat2_PublicationCrashAfterCommit(t *testing.T) {
 func TestFormat2_PublicationCrashAfterRename(t *testing.T) {
 	dir := t.TempDir()
 	b, embedder := newFormat2Builder(t, dir, 8)
+	b.limits = incrementalLimits{} // every update rebuilds the main file: its publication is under test here
 	ctx := context.Background()
 	if err := b.Build(ctx, "idx", f2Items()); err != nil {
 		t.Fatalf("Build: %v", err)
@@ -152,8 +154,8 @@ func TestFormat2_PublicationCrashAfterRename(t *testing.T) {
 	if _, err := os.Stat(base + ".index.tmp"); !os.IsNotExist(err) {
 		t.Fatalf("the rename must have happened before this crash: %v", err)
 	}
-	if got := f2Meta(t, base, "pending_vector_file"); got != "idx.index.tmp" {
-		t.Fatalf("pending_vector_file = %q, want idx.index.tmp", got)
+	if got := f2Meta(t, base, "pending_vector_file"); got != "idx.index.tmp\nidx.delta.tmp" {
+		t.Fatalf("pending_vector_file = %q, want the main file and the empty delta", got)
 	}
 	if got := f2Meta(t, base, "vector_generation"); got != "1" {
 		t.Fatalf("vector_generation before the finish = %q, want the old 1", got)
@@ -186,6 +188,7 @@ func TestFormat2_PublicationCrashAfterRename(t *testing.T) {
 func TestFormat2_PublicationCrashBeforeCommit(t *testing.T) {
 	dir := t.TempDir()
 	b, embedder := newFormat2Builder(t, dir, 8)
+	b.limits = incrementalLimits{} // every update rebuilds the main file: its publication is under test here
 	ctx := context.Background()
 	if err := b.Build(ctx, "idx", f2Items()); err != nil {
 		t.Fatalf("Build: %v", err)
@@ -242,6 +245,8 @@ func TestFormat2_BuildVectorsCrashRecovers(t *testing.T) {
 		t.Run(point, func(t *testing.T) {
 			dir := t.TempDir()
 			b, embedder := newFormat2Builder(t, dir, 8)
+			b.limits = incrementalLimits{}
+			b.limits = incrementalLimits{} // every update rebuilds the main file: its publication is under test here
 			ctx := context.Background()
 			items := f2Items()
 			ids, err := b.BuildPassages("idx", items)
@@ -303,6 +308,7 @@ func TestFormat2_BuildVectorsCrashRecovers(t *testing.T) {
 func TestFormat2_GenerationMismatchReported(t *testing.T) {
 	dir := t.TempDir()
 	b, embedder := newFormat2Builder(t, dir, 8)
+	b.limits = incrementalLimits{} // every update rebuilds the main file: its publication is under test here
 	ctx := context.Background()
 	if err := b.Build(ctx, "idx", f2Items()); err != nil {
 		t.Fatalf("Build: %v", err)

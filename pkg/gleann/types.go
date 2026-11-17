@@ -126,6 +126,14 @@ type IndexMeta struct {
 	// commit and this metadata write, and a repair republishes the vectors.
 	VectorGeneration int `json:"vector_generation,omitempty"`
 
+	// VectorSlots mirrors the store's vector_slots meta key: the high-water
+	// mark of the vec_slot space (RFC 005 section 3.1). Slots below it that no
+	// passage holds are dead; a slot is never reused. VectorMainGeneration
+	// mirrors vector_main_generation, which changes only when the main vector
+	// file is replaced (readers re-map it only then).
+	VectorSlots          int64 `json:"vector_slots,omitempty"`
+	VectorMainGeneration int   `json:"vector_main_generation,omitempty"`
+
 	// VectorDType records the storage data type of stored embeddings ("f32" or "f16").
 	VectorDType string `json:"vector_dtype,omitempty"`
 }

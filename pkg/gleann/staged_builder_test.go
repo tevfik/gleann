@@ -2,6 +2,7 @@ package gleann
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sync"
@@ -43,6 +44,12 @@ func (s *testSearcherAdapter) SearchWithRecompute(ctx context.Context, query []f
 	return s.inner.SearchWithRecompute(ctx, query, topK, func(ctx context.Context, ids []int64) ([][]float32, error) {
 		return recompute(ctx, ids)
 	})
+}
+func (s *testSearcherAdapter) ExtractVectors(ctx context.Context, ids []int64) ([][]float32, error) {
+	if ve, ok := s.inner.(VectorExtractor); ok {
+		return ve.ExtractVectors(ctx, ids)
+	}
+	return nil, fmt.Errorf("no vector extraction")
 }
 func (s *testSearcherAdapter) Close() error {
 	return s.inner.Close()

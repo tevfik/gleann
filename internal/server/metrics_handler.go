@@ -29,6 +29,7 @@ type metrics struct {
 	updateNoop      atomic.Int64
 	updateInPlace   atomic.Int64
 	updateCompact   atomic.Int64
+	updateMerge     atomic.Int64
 	updateEmptied   atomic.Int64
 	updateErrors    atomic.Int64
 	updateLatencyNs atomic.Int64 // cumulative nanoseconds
@@ -77,6 +78,8 @@ func (m *metrics) RecordUpdate(st gleann.UpdateStats, err bool) {
 		m.updateInPlace.Add(1)
 	case gleann.UpdateCompact:
 		m.updateCompact.Add(1)
+	case gleann.UpdateMerge:
+		m.updateMerge.Add(1)
 	case gleann.UpdateEmptied:
 		m.updateEmptied.Add(1)
 	default:
@@ -162,6 +165,7 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, "# TYPE gleann_update_requests_total counter\n")
 	fmt.Fprintf(w, "gleann_update_requests_total{mode=\"in-place\"} %d\n", m.updateInPlace.Load())
 	fmt.Fprintf(w, "gleann_update_requests_total{mode=\"compact\"} %d\n", m.updateCompact.Load())
+	fmt.Fprintf(w, "gleann_update_requests_total{mode=\"merge\"} %d\n", m.updateMerge.Load())
 	fmt.Fprintf(w, "gleann_update_requests_total{mode=\"emptied\"} %d\n", m.updateEmptied.Load())
 	fmt.Fprintf(w, "gleann_update_requests_total{mode=\"noop\"} %d\n\n", m.updateNoop.Load())
 
@@ -169,7 +173,7 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, "# TYPE gleann_update_errors_total counter\n")
 	fmt.Fprintf(w, "gleann_update_errors_total %d\n\n", m.updateErrors.Load())
 
-	updates := m.updateInPlace.Load() + m.updateCompact.Load() + m.updateEmptied.Load() + m.updateNoop.Load() + m.updateErrors.Load()
+	updates := m.updateInPlace.Load() + m.updateCompact.Load() + m.updateMerge.Load() + m.updateEmptied.Load() + m.updateNoop.Load() + m.updateErrors.Load()
 	avgUpdateMs := float64(0)
 	if updates > 0 {
 		avgUpdateMs = float64(m.updateLatencyNs.Load()) / float64(updates) / 1e6
