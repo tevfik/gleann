@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 )
@@ -128,10 +130,31 @@ func (s *Summarizer) callOllama(ctx context.Context, client *http.Client, prompt
 	return result.Response, nil
 }
 
+// ErrOpenAIEndpointUnset is returned when the openai provider has no
+// endpoint. It mirrors gleann.ErrOpenAIEndpointUnset: summaries are never sent
+// to OpenAI's cloud unless its URL was set explicitly.
+var ErrOpenAIEndpointUnset = errors.New("openai endpoint not set: set openai_base_url or OPENAI_BASE_URL " +
+	"(https://api.openai.com/v1 to use OpenAI's cloud)")
+
+// OpenAIBaseURL returns configured, else OPENAI_BASE_URL, without trailing
+// slashes or "/v1". It never defaults to OpenAI's cloud and returns
+// ErrOpenAIEndpointUnset when neither is set.
+func OpenAIBaseURL(configured string) (string, error) {
+	u := strings.TrimSpace(configured)
+	if u == "" {
+		u = strings.TrimSpace(os.Getenv("OPENAI_BASE_URL"))
+	}
+	u = strings.TrimRight(strings.TrimSuffix(strings.TrimRight(u, "/"), "/v1"), "/")
+	if u == "" {
+		return "", ErrOpenAIEndpointUnset
+	}
+	return u, nil
+}
+
 func (s *Summarizer) callOpenAI(ctx context.Context, client *http.Client, prompt string) (string, error) {
-	baseURL := s.BaseURL
-	if baseURL == "" {
-		baseURL = "https://api.openai.com"
+	baseURL, err := OpenAIBaseURL(s.BaseURL)
+	if err != nil {
+		return "", err
 	}
 
 	body := map[string]any{

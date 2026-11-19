@@ -353,17 +353,24 @@ func TestCLIBDefaultSummarizerConfig(t *testing.T) {
 		t.Errorf("without saved config = %+v", cfg)
 	}
 
-	// Saved config: provider/model come from it; OLLAMA_HOST still wins for the host.
+	// Saved config: provider/model come from it. openai gets openai_base_url
+	// (empty: the summarizer fails, never OpenAI's cloud by default), never
+	// the Ollama host or OLLAMA_HOST.
 	bWriteConfig(t, e, map[string]any{"llm_provider": "openai", "llm_model": "gpt-x", "openai_api_key": "sk-1", "ollama_host": "http://saved:1"})
 	cfg = defaultSummarizerConfig()
-	if cfg.Provider != "openai" || cfg.Model != "gpt-x" || cfg.APIKey != "sk-1" || cfg.BaseURL != e.Ollama.URL {
+	if cfg.Provider != "openai" || cfg.Model != "gpt-x" || cfg.APIKey != "sk-1" || cfg.BaseURL != "" {
 		t.Errorf("openai saved config = %+v", cfg)
 	}
+	bWriteConfig(t, e, map[string]any{"llm_provider": "openai", "llm_model": "gpt-x", "openai_api_key": "sk-1", "openai_base_url": "http://vllm:8000/v1", "ollama_host": "http://saved:1"})
+	if cfg = defaultSummarizerConfig(); cfg.BaseURL != "http://vllm:8000/v1" || cfg.APIKey != "sk-1" {
+		t.Errorf("openai with base url = %+v", cfg)
+	}
 
+	// anthropic: its own default endpoint and key, not the Ollama host.
 	t.Setenv("OLLAMA_HOST", "")
 	bWriteConfig(t, e, map[string]any{"llm_provider": "anthropic", "anthropic_api_key": "ak-1", "ollama_host": "http://saved:1"})
 	cfg = defaultSummarizerConfig()
-	if cfg.Provider != "anthropic" || cfg.APIKey != "ak-1" || cfg.BaseURL != "http://saved:1" {
+	if cfg.Provider != "anthropic" || cfg.APIKey != "ak-1" || cfg.BaseURL != "" {
 		t.Errorf("anthropic saved config = %+v", cfg)
 	}
 

@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
+	"log"
 	"math"
 	"net/http"
 	"net/url"
@@ -498,12 +500,39 @@ func (s *Server) retrieveProxyContext(
 	indexNames []string,
 	searchOpts []gleann.SearchOption,
 ) (string, []proxySource, error) {
-	return s.retrieveProxyContextLimited(ctx, query, indexNames, searchOpts, 0, nil)
+	block, sources, _, err := s.retrieveProxyContextLimited(ctx, query, indexNames, searchOpts, 0, nil)
+	return block, sources, err
+}
+
+// proxySkip is an index left out of a multi-index proxy search, with a short
+// reason for the client (X-Gleann-Skipped-Indexes); the full error is logged.
+type proxySkip struct {
+	Index  string `json:"index"`
+	Reason string `json:"reason"`
+}
+
+// skipReason is the client-facing reason for a failed index: short, without
+// file paths.
+func skipReason(err error, searching bool) string {
+	switch {
+	case errors.Is(err, gleann.ErrOldStoreFormat):
+		return "old store format; run: gleann index migrate"
+	case errors.Is(err, errSearcherBusy):
+		return "busy; retry"
+	case searching:
+		return "search failed"
+	case errors.Is(err, fs.ErrNotExist):
+		return "not found"
+	default:
+		return "could not be loaded"
+	}
 }
 
 // retrieveProxyContextLimited is retrieveProxyContext keeping the best passages up to maxChars characters of
 // passage text (at least one passage; 0 = no limit). With cover set, an index whose best passage is close to the
-// overall best keeps it among several indexes' passages (selectProxyHits).
+// overall best keeps it among several indexes' passages (selectProxyHits). With several indexes, one that cannot
+// be loaded or searched is left out and listed in skipped (and logged), so the answer does not silently miss it;
+// a private index is left out and only logged, so its name is not confirmed to the client.
 func (s *Server) retrieveProxyContextLimited(
 	ctx context.Context,
 	query string,
@@ -511,18 +540,18 @@ func (s *Server) retrieveProxyContextLimited(
 	searchOpts []gleann.SearchOption,
 	maxChars int,
 	cover *coverConfig,
-) (string, []proxySource, error) {
+) (block string, sources []proxySource, skipped []proxySkip, err error) {
 	if query == "" || len(indexNames) == 0 {
-		return "", nil, nil
+		return "", nil, nil, nil
 	}
 
 	// Expand any @tag references into public matching indexes.
 	resolvedNames, err := s.expandProxyIndexNames(indexNames)
 	if err != nil {
-		return "", nil, err
+		return "", nil, nil, err
 	}
 	if len(resolvedNames) == 0 {
-		return "", nil, nil
+		return "", nil, nil, nil
 	}
 
 	single := len(resolvedNames) == 1
@@ -531,30 +560,34 @@ func (s *Server) retrieveProxyContextLimited(
 		// Governance: a private index is refused when asked for alone and skipped in multi-index queries.
 		if meta, err := gleann.GetIndexMeta(s.cfg().IndexDir, name); err == nil && !meta.IsMCPExposed() {
 			if single {
-				return "", nil, fmt.Errorf("index %q is private and not exposed via proxy", name)
+				return "", nil, nil, fmt.Errorf("index %q is private and not exposed via proxy", name)
 			}
+			log.Printf("proxy: index %q skipped: private", name)
 			continue
 		}
 		searcher, release, err := s.acquireSearcher(ctx, name)
 		if err != nil {
 			if single {
-				return "", nil, fmt.Errorf("load index %q: %w", name, err)
+				return "", nil, nil, fmt.Errorf("load index %q: %w", name, err)
 			}
-			continue // skip unavailable indexes
+			log.Printf("proxy: index %q skipped: %v", name, err)
+			skipped = append(skipped, proxySkip{Index: name, Reason: skipReason(err, false)})
+			continue
 		}
 		results, err := searcher.Search(ctx, query, searchOpts...)
 		release()
 		if err != nil {
 			if single {
-				return "", nil, fmt.Errorf("search: %w", err)
+				return "", nil, nil, fmt.Errorf("search: %w", err)
 			}
+			log.Printf("proxy: index %q skipped: search: %v", name, err)
+			skipped = append(skipped, proxySkip{Index: name, Reason: skipReason(err, true)})
 			continue
 		}
 		perIndex[name] = results
 	}
 
 	var contextParts []string
-	var sources []proxySource
 	k := 0 // one index: its own top-k as searched
 	if !single {
 		k = proxyTopK(searchOpts)
@@ -581,7 +614,7 @@ func (s *Server) retrieveProxyContextLimited(
 		sources = append(sources, proxySource{Index: h.index, Source: source, Score: h.result.Score})
 	}
 
-	return strings.Join(contextParts, "\n\n"), sources, nil
+	return strings.Join(contextParts, "\n\n"), sources, skipped, nil
 }
 
 // lastUserContent returns the content of the last user message.
@@ -598,40 +631,20 @@ func lastUserContent(messages []oaiMessage) string {
 func (s *Server) proxyLLMConfig() gleann.ChatConfig {
 	cfg := gleann.DefaultChatConfig()
 
-	// Apply saved user config with provider precedence.
-	if s.cfg().LLMProvider != "" {
-		switch strings.ToLower(s.cfg().LLMProvider) {
-		case "ollama":
-			cfg.Provider = gleann.LLMOllama
-			if s.cfg().OllamaHost != "" && !strings.Contains(s.cfg().OllamaHost, "(auto-scan") {
-				cfg.BaseURL = s.cfg().OllamaHost
-			}
-			cfg.APIKey = s.cfg().APIKeyForProvider("ollama")
-		case "openai":
-			cfg.Provider = gleann.LLMOpenAI
-			if s.cfg().OpenAIBaseURL != "" {
-				cfg.BaseURL = s.cfg().OpenAIBaseURL
-			}
-			if s.cfg().OpenAIAPIKey != "" {
-				cfg.APIKey = s.cfg().OpenAIAPIKey
-			}
-		}
-	} else {
-		if s.cfg().OllamaHost != "" && !strings.Contains(s.cfg().OllamaHost, "(auto-scan") {
-			cfg.BaseURL = s.cfg().OllamaHost
-		}
-		if s.cfg().OpenAIAPIKey != "" {
-			cfg.APIKey = s.cfg().OpenAIAPIKey
-			cfg.Provider = gleann.LLMOpenAI
-		}
-		if s.cfg().OpenAIBaseURL != "" {
-			cfg.BaseURL = s.cfg().OpenAIBaseURL
-			cfg.Provider = gleann.LLMOpenAI
-		}
-		if cfg.Provider == gleann.LLMOllama {
-			cfg.APIKey = s.cfg().APIKeyForProvider("ollama")
-		}
+	// Provider: the configured one; without it, an explicit OpenAI-compatible
+	// URL selects openai, otherwise Ollama. A stored OpenAI key alone never
+	// switches the provider: that used to send chats to api.openai.com when
+	// a key was left in the config.
+	sc := s.cfg()
+	switch {
+	case sc.LLMProvider != "":
+		cfg.Provider = gleann.LLMProvider(strings.ToLower(sc.LLMProvider))
+	case sc.OpenAIBaseURL != "":
+		cfg.Provider = gleann.LLMOpenAI
+	default:
+		cfg.Provider = gleann.LLMOllama
 	}
+	sc.ApplyChatEndpoint(&cfg)
 
 	if s.cfg().LLMModel != "" {
 		cfg.Model = s.cfg().LLMModel

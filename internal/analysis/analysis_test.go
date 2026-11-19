@@ -127,7 +127,9 @@ func stripCJK(text string) string {
 func TestTurkishProseProbeQueries(t *testing.T) {
 	a := New("tr")
 	doc := "İstanbul'un ışıkları nöbetçi"
-	want := []string{"istanbul", "un", "ışıkları", "isiklari", "nöbetçi", "nobetci"}
+	// The case suffix after the apostrophe ("'un") is not a token
+	// (TestTurkishApostropheSuffix).
+	want := []string{"istanbul", "ışıkları", "isiklari", "nöbetçi", "nobetci"}
 	tokens := a.Tokens(doc, KindProse)
 	if !reflect.DeepEqual(tokens, want) {
 		t.Fatalf("Tokens(%q, prose) = %q, want %q", doc, tokens, want)
@@ -392,5 +394,53 @@ func TestTurkishOneCharacterDrop(t *testing.T) {
 	// Code in a Turkish index and the base rules are unchanged.
 	if got := New("").Tokens("ö ab", KindProse); !reflect.DeepEqual(got, []string{"ö", "ab"}) {
 		t.Errorf("base rules changed: %q", got)
+	}
+}
+
+// Turkish writes a case suffix after an apostrophe on proper nouns,
+// abbreviations and numbers. It used to become a term of its own ("na",
+// "ya"), so "İş Kanunu'na göre" searched for "na" and matched unrelated
+// passages. Turkish prose and Turkish queries now drop it; English keeps
+// the base rules.
+func TestTurkishApostropheSuffix(t *testing.T) {
+	for in, want := range map[string]string{
+		"Kanunu'na":            "Kanunu",
+		"Anayasa’ya göre":      "Anayasa göre",
+		"AB'ye ve 2023'te":     "AB ve 2023",
+		"Türkiye'nin başkenti": "Türkiye başkenti",
+		"O'Brien":              "O'Brien", // uppercase after the apostrophe: a name, kept
+		"'alıntı' bitti":       "'alıntı' bitti",
+		"kelime' ":             "kelime' ",
+		"yok":                  "yok",
+	} {
+		if got := dropApostropheSuffixes(in); got != want {
+			t.Errorf("dropApostropheSuffixes(%q) = %q, want %q", in, got, want)
+		}
+	}
+
+	tr := New("tr")
+	if got := tr.Tokens("İş Kanunu'na göre", KindProse); !reflect.DeepEqual(got, []string{"iş", "is", "kanunu", "göre", "gore"}) {
+		t.Errorf("tr prose tokens = %q", got)
+	}
+	if got := tr.QueryTokens("Kanunu'na göre"); !reflect.DeepEqual(got, [][]string{{"kanunu"}, {"göre"}}) {
+		t.Errorf("tr query = %q", got)
+	}
+	// Code passages and other languages keep the base rules.
+	if got := tr.Tokens("it's x'y", KindCode); !reflect.DeepEqual(got, New("").Tokens("it's x'y", KindCode)) {
+		t.Errorf("tr code tokens = %q", got)
+	}
+	if got := New("").QueryTokens("Kanunu'na"); !reflect.DeepEqual(got, [][]string{{"kanunu"}, {"na"}}) {
+		t.Errorf("base query = %q", got)
+	}
+}
+
+// Only Turkish indexes change analyzer identity, so only they rebuild their
+// lexical table after the upgrade.
+func TestAnalyzerIdentity(t *testing.T) {
+	if New("tr").Identity() != IDTurkish || New("").Identity() != ID || New("en").Identity() != ID {
+		t.Errorf("identities: tr %q, base %q, en %q", New("tr").Identity(), New("").Identity(), New("en").Identity())
+	}
+	if ID == IDTurkish {
+		t.Error("the Turkish rules changed; their identity must differ from the base")
 	}
 }

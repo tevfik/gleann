@@ -45,7 +45,7 @@ Useful for Docker, CI/CD, and environments where editing config files is impract
 | `GLEANN_RERANK_MODEL` | — | — | Reranker model for the MCP server, used when the config names none (read only by MCP server) |
 | `GLEANN_RERANK_PROVIDER` | — | config | Reranker provider for the MCP server, overriding the config (read only by MCP server) |
 | `OPENAI_API_KEY` | `openai_api_key` | — | OpenAI API key |
-| `OPENAI_BASE_URL` | `openai_base_url` | — | OpenAI-compatible API base URL |
+| `OPENAI_BASE_URL` | `openai_base_url` | — | OpenAI-compatible API base URL, used when `openai_base_url` is not set. No default: with neither set the `openai` provider fails instead of using api.openai.com |
 
 ## API Keys (Rerankers & Providers)
 
@@ -186,7 +186,7 @@ When the auto-probe succeeds, affected commands print a `(via running server)` t
 
 ## Index Format and Incremental Updates
 
-Every index is format 2: one SQLite database `<index_dir>/<name>/<name>.db` with the passages, the persisted FTS5 lexical index (AND-first queries with a document-frequency cut of 0.2), the manifest and the code graph. `GLEANN_STORE_FORMAT`, `GLEANN_LEXICAL` and `GLEANN_LEXICAL_OPTS` were removed in v1.20: a value still set is ignored and gleann prints a one-line notice. Indexes built by gleann v1.9 or earlier are converted with `gleann index migrate <name>` (or rebuilt with `gleann index rebuild <name>`).
+Every index is format 2: one SQLite database `<index_dir>/<name>/<name>.db` with the passages, the persisted FTS5 lexical index (AND-first queries; in indexes of 10,000 passages or more, query words found in over 20% of the passages are dropped), the manifest and the code graph. `GLEANN_STORE_FORMAT`, `GLEANN_LEXICAL` and `GLEANN_LEXICAL_OPTS` were removed in v1.20: a value still set is ignored and gleann prints a one-line notice. Indexes built by gleann v1.9 or earlier are converted with `gleann index migrate <name>` (or rebuilt with `gleann index rebuild <name>`).
 
 | Variable | Default | Description |
 |----------|---------|-------------|

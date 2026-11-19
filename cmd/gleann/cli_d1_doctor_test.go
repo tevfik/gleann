@@ -237,8 +237,12 @@ func TestCLID1DoctorCheckModelsProviders(t *testing.T) {
 
 	oks, _, _ = collect(map[string]any{"llm_provider": "openai", "llm_model": "gpt", "openai_base_url": "http://x"})
 	mustContain(t, "openai", join(oks), "LLM model 'gpt' via OpenAI-compatible endpoint (http://x, no API key)")
-	oks, _, _ = collect(map[string]any{"llm_provider": "openai", "llm_model": "gpt", "openai_api_key": "k"})
-	mustContain(t, "openai key", join(oks), "(https://api.openai.com, API key configured)")
+	// No endpoint: an error, not an implicit api.openai.com.
+	t.Setenv("OPENAI_BASE_URL", "")
+	_, _, fails = collect(map[string]any{"llm_provider": "openai", "llm_model": "gpt", "openai_api_key": "k"})
+	mustContain(t, "openai no endpoint", join(fails), "LLM provider openai has no endpoint")
+	oks, _, _ = collect(map[string]any{"llm_provider": "openai", "llm_model": "gpt", "openai_api_key": "k", "openai_base_url": "https://api.openai.com/v1"})
+	mustContain(t, "openai cloud", join(oks), "(https://api.openai.com — OpenAI cloud: documents and questions leave this machine, API key configured)")
 	oks, warns, _ = collect(map[string]any{"llm_provider": "anthropic", "llm_model": "claude", "rerank_enabled": true, "rerank_model": "nope"})
 	mustContain(t, "anthropic", join(oks), "LLM model 'claude' via Anthropic API")
 	mustContain(t, "rerank missing", join(warns), "Reranker model 'nope' not found")

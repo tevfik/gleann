@@ -220,9 +220,9 @@ func (s *Summarizer) callOllama(ctx context.Context, client *http.Client, prompt
 }
 
 func (s *Summarizer) callOpenAI(ctx context.Context, client *http.Client, prompt string) (string, error) {
-	baseURL := s.config.BaseURL
-	if baseURL == "" {
-		baseURL = "https://api.openai.com"
+	baseURL, err := conversations.OpenAIBaseURL(s.config.BaseURL)
+	if err != nil {
+		return "", err
 	}
 
 	body := map[string]any{

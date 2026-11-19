@@ -15,7 +15,8 @@ import (
 //   - query: the query vector
 //   - topK: number of results to return
 //   - searchL: candidate list size (beam width)
-//   - rerankK: how many PQ candidates to rerank (0 = 2*topK)
+//   - rerankK: how many PQ candidates to rerank with exact distances
+//     (0 = DefaultRerankK: all searchL candidates)
 //   - getVector: callback to fetch raw embedding (from mmap/disk/recompute)
 func SearchDiskIndex(idx *DiskIndex, query []float32, topK, searchL, rerankK int, distFunc DistanceFunc, getVector func(int64) []float32) []Candidate {
 	if idx.NumNodes == 0 {
@@ -24,12 +25,7 @@ func SearchDiskIndex(idx *DiskIndex, query []float32, topK, searchL, rerankK int
 	if searchL < topK {
 		searchL = topK
 	}
-	if rerankK <= 0 {
-		rerankK = topK * 2
-	}
-	if rerankK < topK {
-		rerankK = topK
-	}
+	rerankK = DefaultRerankK(rerankK, topK, searchL)
 
 	// Precompute PQ distance table for this query: O(M*K) = fast.
 	pqTable := idx.Codebook.BuildDistanceTable(query, distFunc)
@@ -120,10 +116,36 @@ func beamSearchPQ(idx *DiskIndex, query []float32, l int, pqTable [][]float32) [
 	return candidates
 }
 
+// DefaultRerankK is the number of PQ candidates reranked with exact distances:
+// the configured value, or else all searchL candidates of the beam search.
+// It is at least topK.
+//
+// The old default, 2*topK, capped recall@10 at about 0.91 whatever searchL
+// was: PQ distances misorder close neighbours, and only the first 20 by PQ
+// distance got an exact distance. Reranking the whole list costs searchL
+// exact distance computations, which is small next to the beam search
+// (bench/vectordb, 10K x 384: 0.919 -> 0.998 at searchL 100).
+func DefaultRerankK(configured, topK, searchL int) int {
+	k := configured
+	if k <= 0 {
+		k = searchL
+	}
+	if k < topK {
+		k = topK
+	}
+	return k
+}
+
 // SearchExact performs beam search with exact distances (from in-memory or mmap embeddings).
 func SearchExact(idx *DiskIndex, query []float32, topK, searchL int, distFunc DistanceFunc) []Candidate {
+	return SearchExactRerank(idx, query, topK, searchL, 0, distFunc)
+}
+
+// SearchExactRerank is SearchExact with an explicit rerank width (0 =
+// DefaultRerankK).
+func SearchExactRerank(idx *DiskIndex, query []float32, topK, searchL, rerankK int, distFunc DistanceFunc) []Candidate {
 	getVector := func(id int64) []float32 {
 		return idx.GetVector(id)
 	}
-	return SearchDiskIndex(idx, query, topK, searchL, 0, distFunc, getVector)
+	return SearchDiskIndex(idx, query, topK, searchL, rerankK, distFunc, getVector)
 }

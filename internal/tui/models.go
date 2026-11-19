@@ -118,8 +118,11 @@ type openAIModel struct {
 }
 
 func fetchOpenAIModels(host, apiKey string) ([]ModelInfo, error) {
+	// No endpoint means no request: listing models must not contact (and
+	// send a key to) OpenAI's cloud unless its URL was set explicitly.
+	host = gleann.ResolveOpenAIBaseURL(host)
 	if host == "" {
-		host = "https://api.openai.com"
+		return nil, gleann.ErrOpenAIEndpointUnset
 	}
 	if apiKey == "" {
 		apiKey = os.Getenv("OPENAI_API_KEY")

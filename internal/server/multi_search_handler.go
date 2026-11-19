@@ -19,7 +19,7 @@ type multiSearchRequest struct {
 	Project      string                  `json:"project,omitempty"` // project target shorthand
 	Query        string                  `json:"query"`
 	TopK         int                     `json:"top_k,omitempty"`
-	HybridAlpha  float32                 `json:"hybrid_alpha,omitempty"`
+	HybridAlpha  *float32                `json:"hybrid_alpha,omitempty"` // nil: configured weight; 0: lexical only
 	MinScore     float32                 `json:"min_score,omitempty"`
 	Rerank       bool                    `json:"rerank,omitempty"`
 	RerankModel  string                  `json:"rerank_model,omitempty"`
@@ -50,6 +50,10 @@ func (s *Server) handleMultiSearch(w http.ResponseWriter, r *http.Request) {
 
 	if req.Query == "" {
 		writeError(w, http.StatusBadRequest, "query is required")
+		return
+	}
+	if err := validHybridAlpha(req.HybridAlpha); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
@@ -201,8 +205,8 @@ func (s *Server) handleMultiSearch(w http.ResponseWriter, r *http.Request) {
 	if req.TopK > 0 {
 		opts = append(opts, gleann.WithTopK(req.TopK))
 	}
-	if req.HybridAlpha > 0 {
-		opts = append(opts, gleann.WithHybridAlpha(req.HybridAlpha))
+	if o, ok := hybridAlphaRequest(req.HybridAlpha); ok {
+		opts = append(opts, o)
 	}
 	if req.MinScore > 0 {
 		opts = append(opts, gleann.WithMinScore(req.MinScore))

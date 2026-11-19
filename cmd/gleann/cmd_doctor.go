@@ -206,10 +206,12 @@ func checkModels(cfg *tui.OnboardResult, host string, ok, warn, fail func(string
 		} else {
 			fail(fmt.Sprintf("LLM model file not found at %s", path))
 		}
+	} else if cfg != nil && cfg.LLMProvider == "openai" && gleann.ResolveOpenAIBaseURL(cfg.OpenAIBaseURL) == "" {
+		fail(fmt.Sprintf("LLM provider openai has no endpoint: %v", gleann.ErrOpenAIEndpointUnset))
 	} else if cfg != nil && cfg.LLMProvider == "openai" {
-		endpoint := "https://api.openai.com"
-		if cfg.OpenAIBaseURL != "" {
-			endpoint = cfg.OpenAIBaseURL
+		endpoint := gleann.ResolveOpenAIBaseURL(cfg.OpenAIBaseURL)
+		if gleann.IsOpenAICloud(endpoint) {
+			endpoint += " — OpenAI cloud: documents and questions leave this machine"
 		}
 		if cfg.OpenAIKey != "" {
 			ok(fmt.Sprintf("LLM model '%s' via OpenAI-compatible endpoint (%s, API key configured)", llmModel, endpoint))

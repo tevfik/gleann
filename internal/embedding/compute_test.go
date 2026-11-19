@@ -286,10 +286,11 @@ func TestResolveOllamaHost(t *testing.T) {
 }
 
 func TestResolveOpenAIBaseURL(t *testing.T) {
-	// Default.
+	// No default: OpenAI's cloud is never chosen implicitly.
+	t.Setenv("OPENAI_BASE_URL", "")
 	url := resolveOpenAIBaseURL()
-	if url != "https://api.openai.com" {
-		t.Errorf("expected default URL, got %s", url)
+	if url != "" {
+		t.Errorf("expected no default URL, got %s", url)
 	}
 
 	// From env.

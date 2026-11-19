@@ -210,7 +210,7 @@ func (b *LeannBuilder) buildPassagesFormat2(ctx context.Context, basePath, name 
 		return nil, err
 	}
 	for _, kv := range [][2]string{
-		{"analyzer", analysis.ID},
+		{"analyzer", analyzer.Identity()},
 		{"language", analyzer.Language},
 	} {
 		if err := st.SetMeta(ctx, kv[0], kv[1]); err != nil {
@@ -270,7 +270,7 @@ func (b *LeannBuilder) replacePassagesInPlace(ctx context.Context, basePath, nam
 		return nil, err
 	}
 	for _, kv := range [][2]string{
-		{"analyzer", analysis.ID},
+		{"analyzer", analyzer.Identity()},
 		{"language", analyzer.Language},
 		{"vector_generation", strconv.Itoa(nextGen)},
 		// Every slot is NULL now; the next vector publication assigns 0..n-1.

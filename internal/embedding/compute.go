@@ -107,9 +107,16 @@ func NewComputer(opts Options) *Computer {
 	} else if opts.Provider == ProviderLlamaCPP && (strings.Contains(opts.BaseURL, "11434") || strings.Contains(opts.BaseURL, "(auto-scan")) {
 		// Prevent cross-contamination from shared Config.OllamaHost defaults in callers
 		opts.BaseURL = gleann.DefaultLlamaCPPHost
-	} else if opts.Provider == ProviderOpenAI && opts.APIKey != "gleann-embedded" && (strings.Contains(opts.BaseURL, "11434") || strings.Contains(opts.BaseURL, "(auto-scan")) {
-		// Prevent accidental contamination from Config.OllamaHost in OpenAI provider
+	} else if opts.Provider == ProviderOpenAI && strings.Contains(opts.BaseURL, "(auto-scan") {
+		// The onboarding placeholder is not an endpoint.
 		opts.BaseURL = resolveOpenAIBaseURL()
+	}
+	// An OpenAI-compatible URL on port 11434 is kept: it is Ollama's own
+	// /v1 API. It used to be rewritten to api.openai.com, which sent the
+	// whole corpus to OpenAI's cloud. Callers pass openai_base_url for this
+	// provider (gleann.Config.EmbeddingEndpoint), never the Ollama host.
+	if opts.Provider == ProviderOpenAI {
+		opts.BaseURL = gleann.NormalizeOpenAIBaseURL(opts.BaseURL)
 	}
 
 	if opts.APIKey == "" {
@@ -549,6 +556,9 @@ type openAIEmbedResponse struct {
 }
 
 func (c *Computer) computeOpenAI(ctx context.Context, texts []string) ([][]float32, error) {
+	if c.baseURL == "" {
+		return nil, gleann.ErrOpenAIEndpointUnset
+	}
 	reqBody := openAIEmbedRequest{
 		Model: c.model,
 		Input: texts,
@@ -631,11 +641,10 @@ func resolveOllamaHost() string {
 	return gleann.DefaultOllamaHost
 }
 
+// resolveOpenAIBaseURL returns OPENAI_BASE_URL or "": OpenAI's cloud is never
+// a default (see gleann.ErrOpenAIEndpointUnset).
 func resolveOpenAIBaseURL() string {
-	if url := os.Getenv("OPENAI_BASE_URL"); url != "" {
-		return url
-	}
-	return "https://api.openai.com"
+	return gleann.ResolveOpenAIBaseURL("")
 }
 
 // --- Gemini Provider ---

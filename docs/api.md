@@ -142,8 +142,10 @@ timing metrics, errors). The only change is the retrieved context, which is appe
 sentence that is configurable (`proxy_context_intro` / `GLEANN_PROXY_CONTEXT_INTRO`, English by default) and always
 ends with the instruction to answer in the language of the user's question. Indexes can also be given
 in an `X-Gleann-Index` header (`docs,code`, `@tag`). The reply carries `X-Gleann-Sources`, the passages' sources in
-order as a percent-encoded JSON list of `{index, source, score}`. `POST /stop` is forwarded to the LLM server in
-this mode. Optional headers in this mode:
+order as a percent-encoded JSON list of `{index, source, score}`. With several indexes, one that cannot be loaded
+or searched (for example an index in the old store format) is left out and logged, and the reply lists it in
+`X-Gleann-Skipped-Indexes`, a percent-encoded JSON list of `{index, reason}`. `POST /stop` is forwarded to the LLM
+server in this mode. Optional headers in this mode:
 
 | Header | Effect |
 |---|---|
@@ -339,6 +341,11 @@ curl -X POST http://localhost:8080/api/indexes/my-code/search \
     "graph_context": true
   }'
 ```
+
+`hybrid_alpha` weighs the vector leg against the lexical (BM25) leg: `1` is
+vectors only, `0` is lexical only (the query is not embedded), and an absent
+field keeps the configured weight. A value outside `[0, 1]` is `400`. The same
+holds for `POST /api/search`.
 
 The response carries `results`, `count` and `query_ms`. When the index is known
 to be damaged (passage IDs with gaps, left by versions before v1.8.6), it also

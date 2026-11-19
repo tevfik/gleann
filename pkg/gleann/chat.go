@@ -195,14 +195,16 @@ func NewChat(searcher Searcher, config ChatConfig) *LeannChat {
 				config.BaseURL = DefaultOllamaHost
 			}
 		case LLMOpenAI:
-			if url := os.Getenv("OPENAI_BASE_URL"); url != "" {
-				config.BaseURL = url
-			} else {
-				config.BaseURL = "https://api.openai.com"
-			}
+			// Never default to OpenAI's cloud: without an explicit endpoint
+			// BaseURL stays empty and every request fails with
+			// ErrOpenAIEndpointUnset before anything is sent.
+			config.BaseURL = ResolveOpenAIBaseURL("")
 		case LLMAnthropic:
 			config.BaseURL = "https://api.anthropic.com"
 		}
+	}
+	if config.Provider == LLMOpenAI {
+		config.BaseURL = NormalizeOpenAIBaseURL(config.BaseURL)
 	}
 	if config.APIKey == "" {
 		switch config.Provider {
@@ -907,6 +909,9 @@ func toOpenAIMultimodalMessages(messages []ChatMessage) []interface{} {
 }
 
 func (c *LeannChat) chatOpenAI(ctx context.Context, messages []ChatMessage) (string, error) {
+	if c.config.BaseURL == "" {
+		return "", ErrOpenAIEndpointUnset
+	}
 	var body []byte
 	var err error
 
@@ -1245,6 +1250,9 @@ type openAIStreamChunk struct {
 }
 
 func (c *LeannChat) chatOpenAIStream(ctx context.Context, messages []ChatMessage, callback StreamCallback) error {
+	if c.config.BaseURL == "" {
+		return ErrOpenAIEndpointUnset
+	}
 	var msgs interface{} = messages
 	if hasImages(messages) {
 		msgs = toOpenAIMultimodalMessages(messages)

@@ -150,8 +150,11 @@ func (s *Server) a2aAskHandler(ctx a2a.SkillContext) (string, error) {
 	if model, ok := ctx.Metadata["llm_model"].(string); ok && model != "" {
 		chatCfg.Model = model
 	}
-	if provider, ok := ctx.Metadata["llm_provider"].(string); ok && provider != "" {
+	if provider, ok := ctx.Metadata["llm_provider"].(string); ok && provider != "" && gleann.LLMProvider(provider) != chatCfg.Provider {
+		// A client-chosen provider gets that provider's configured endpoint
+		// and key, not the ones resolved for the configured provider.
 		chatCfg.Provider = gleann.LLMProvider(provider)
+		s.cfg().ApplyChatEndpoint(&chatCfg)
 	}
 
 	chat := gleann.NewChat(searcher, chatCfg)

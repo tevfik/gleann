@@ -90,13 +90,7 @@ func (s *Server) chatConfig() gleann.ChatConfig {
 	if s.config.LLMProvider != "" {
 		chatConfig.Provider = gleann.LLMProvider(s.config.LLMProvider)
 	}
-	if s.config.OllamaHost != "" {
-		chatConfig.BaseURL = s.config.OllamaHost
-	}
-	chatConfig.APIKey = s.config.APIKeyForProvider(string(chatConfig.Provider))
-	if s.config.OpenAIBaseURL != "" && chatConfig.Provider == gleann.LLMOpenAI {
-		chatConfig.BaseURL = s.config.OpenAIBaseURL
-	}
+	s.config.ApplyChatEndpoint(&chatConfig)
 	return chatConfig
 }
 
@@ -166,16 +160,7 @@ func NewServer(cfg Config) *Server {
 		glCfg.SearcherCacheBudget = cfg.SearcherCacheBudget
 	}
 
-	baseURL := cfg.OllamaHost
-	apiKey := ""
-	if cfg.EmbeddingProvider == "" || cfg.EmbeddingProvider == "ollama" {
-		apiKey = glCfg.APIKeyForProvider(cfg.EmbeddingProvider)
-	} else if cfg.EmbeddingProvider == "openai" {
-		if cfg.OpenAIBaseURL != "" {
-			baseURL = cfg.OpenAIBaseURL
-		}
-		apiKey = cfg.OpenAIAPIKey
-	}
+	baseURL, apiKey := glCfg.EmbeddingEndpoint()
 	embedder := embedding.NewComputer(embedding.Options{
 		Provider: embedding.Provider(cfg.EmbeddingProvider),
 		Model:    cfg.EmbeddingModel,
@@ -481,16 +466,7 @@ func (s *Server) acquireSearcher(name string) (*gleann.LeannSearcher, func(), er
 	if meta, err := gleann.GetIndexMeta(s.config.IndexDir, name); err == nil && meta.EmbeddingModel != "" {
 		if embedder == nil || embedder.ModelName() != meta.EmbeddingModel {
 			// Auto-adapt to the index's embedding model using the configured provider
-			baseURL := s.config.OllamaHost
-			apiKey := ""
-			if s.config.EmbeddingProvider == "" || s.config.EmbeddingProvider == "ollama" {
-				apiKey = s.config.APIKeyForProvider(s.config.EmbeddingProvider)
-			} else if s.config.EmbeddingProvider == "openai" {
-				if s.config.OpenAIBaseURL != "" {
-					baseURL = s.config.OpenAIBaseURL
-				}
-				apiKey = s.config.OpenAIAPIKey
-			}
+			baseURL, apiKey := s.config.EmbeddingEndpoint()
 			embedder = embedding.NewComputer(embedding.Options{
 				Provider:    embedding.Provider(s.config.EmbeddingProvider),
 				Model:       meta.EmbeddingModel,

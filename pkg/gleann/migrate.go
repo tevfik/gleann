@@ -2,6 +2,7 @@ package gleann
 
 import (
 	"context"
+	"database/sql"
 	"encoding/binary"
 	"encoding/json"
 	"errors"
@@ -290,7 +291,7 @@ func MigrateIndex(indexDir, name string, opts MigrateOptions) (*MigrateResult, e
 			}
 		}
 	}
-	for _, kv := range [][2]string{{"analyzer", analysis.ID}, {"language", analyzer.Language}} {
+	for _, kv := range [][2]string{{"analyzer", analyzer.Identity()}, {"language", analyzer.Language}} {
 		if err := st.SetMeta(ctx, kv[0], kv[1]); err != nil {
 			return fail(fmt.Errorf("setting store meta %q: %w", kv[0], err))
 		}
@@ -506,7 +507,9 @@ func chunkIndexOf(p Passage) int {
 
 // verifyMigration checks the copied store: the passage count matches and
 // sampled passages are their own lexical top-10 hit (RFC 003 section 6.4
-// step 3).
+// step 3). A passage outranked on its own words by ten or more near-copies
+// (a PDF's chart tick labels: "1 2 3 ... 64 Layer 9", "... Layer 10", ...)
+// is copied right but not in its top 10; it passes when copiedIntact holds.
 func verifyMigration(ctx context.Context, st *store.Store, analyzer analysis.Analyzer, passages []Passage, slotOf map[int64]int64, n int) error {
 	cnt, err := st.Count(ctx)
 	if err != nil {
@@ -516,7 +519,8 @@ func verifyMigration(ctx context.Context, st *store.Store, analyzer analysis.Ana
 		return fmt.Errorf("verify: copied %d passages, expected %d", cnt, n)
 	}
 	for _, p := range samplePassages(passages, analyzer, 20) {
-		hits, err := st.Search(ctx, store.LexQuery{Text: p.Text, Analyzer: analyzer}, 10)
+		q := store.LexQuery{Text: p.Text, Analyzer: analyzer}
+		hits, err := st.Search(ctx, q, 10)
 		if err != nil {
 			return fmt.Errorf("verify lexical search: %w", err)
 		}
@@ -529,10 +533,50 @@ func verifyMigration(ctx context.Context, st *store.Store, analyzer analysis.Ana
 			}
 		}
 		if !found {
-			return fmt.Errorf("verify: passage %d is not its own top-10 lexical hit", p.ID)
+			ok, err := copiedIntact(ctx, st, q, want, p.Text)
+			if err != nil {
+				return fmt.Errorf("verify passage %d: %w", p.ID, err)
+			}
+			if !ok {
+				return fmt.Errorf("verify: passage %d is not its own top-10 lexical hit", p.ID)
+			}
 		}
 	}
 	return nil
+}
+
+// copiedIntact reports whether row id of the store holds text and its
+// lexical row holds every query term that text yields: the passage went to
+// the right row and can be found by all of its words, whatever its rank
+// among similar passages. Requiring every term (not just one, as an OR query
+// would) refuses a lexical row that belongs to another passage sharing a
+// few words.
+func copiedIntact(ctx context.Context, st *store.Store, q store.LexQuery, id int64, text string) (bool, error) {
+	row, err := st.Get(ctx, id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("reading row %d: %w", id, err)
+	}
+	if row.Text != text {
+		return false, nil
+	}
+	terms, err := st.ExplainTerms(ctx, q, id)
+	if err != nil {
+		return false, fmt.Errorf("scoring row %d: %w", id, err)
+	}
+	matched := 0
+	for _, t := range terms {
+		if t.TF == 0 {
+			continue // a query form the passage's own tokens do not contain
+		}
+		if t.Score <= 0 {
+			return false, nil
+		}
+		matched++
+	}
+	return matched > 0, nil
 }
 
 // verifyVectorFile loads the vector backend to confirm the file the migrated

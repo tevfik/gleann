@@ -48,11 +48,19 @@ func TestNewChatDefaultBaseURL(t *testing.T) {
 	}
 }
 
+// OpenAI's cloud is never a default: without an endpoint the base URL stays
+// empty (the request paths then fail with ErrOpenAIEndpointUnset);
+// OPENAI_BASE_URL is honoured and normalised.
 func TestNewChatOpenAIDefaultBaseURL(t *testing.T) {
-	cfg := ChatConfig{Provider: LLMOpenAI, Model: "test"}
-	c := NewChat(nil, cfg)
-	if c.config.BaseURL == "" {
-		t.Error("BaseURL should be defaulted for openai")
+	t.Setenv("OPENAI_BASE_URL", "")
+	c := NewChat(nil, ChatConfig{Provider: LLMOpenAI, Model: "test"})
+	if c.config.BaseURL != "" {
+		t.Errorf("BaseURL = %q, want empty (no implicit api.openai.com)", c.config.BaseURL)
+	}
+	t.Setenv("OPENAI_BASE_URL", "http://vllm:8000/v1/")
+	c = NewChat(nil, ChatConfig{Provider: LLMOpenAI, Model: "test"})
+	if c.config.BaseURL != "http://vllm:8000" {
+		t.Errorf("BaseURL from env = %q, want http://vllm:8000", c.config.BaseURL)
 	}
 }
 

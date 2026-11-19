@@ -2,6 +2,7 @@ package memory
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -94,7 +95,8 @@ func TestCallProviders_Failures(t *testing.T) {
 		{"openai", func(s *Summarizer, ctx context.Context, c *http.Client) (string, error) {
 			return s.callOpenAI(ctx, c, "p")
 		},
-			"Authorization", "Bearer k", "https://api.openai.com/v1/chat/completions", `{"choices":[{"message":{"content":"hi"}}]}`, "hi"},
+			// No default endpoint: OpenAI's cloud is never chosen implicitly.
+			"Authorization", "Bearer k", "", `{"choices":[{"message":{"content":"hi"}}]}`, "hi"},
 		{"anthropic", func(s *Summarizer, ctx context.Context, c *http.Client) (string, error) {
 			return s.callAnthropic(ctx, c, "p")
 		},
@@ -131,6 +133,16 @@ func TestCallProviders_Failures(t *testing.T) {
 				got = r
 				return stubResponse(p.goodBody), nil
 			})}
+			if p.defaultURL == "" {
+				t.Setenv("OPENAI_BASE_URL", "")
+				if _, err := p.call(NewSummarizer(SummarizerConfig{APIKey: "k"}), ctx, client); !errors.Is(err, conversations.ErrOpenAIEndpointUnset) {
+					t.Fatalf("no endpoint: err = %v, want ErrOpenAIEndpointUnset", err)
+				}
+				if got != nil {
+					t.Fatalf("a request was sent to %s without a configured endpoint", got.URL)
+				}
+				return
+			}
 			out, err := p.call(NewSummarizer(SummarizerConfig{APIKey: "k"}), ctx, client)
 			if err != nil || out != p.want {
 				t.Fatalf("call = %q, %v; want %q", out, err, p.want)

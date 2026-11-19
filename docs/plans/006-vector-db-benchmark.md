@@ -1,6 +1,6 @@
 # RFC 006: Vector database benchmark (bench/vectordb)
 
-Status: approved by the maintainer (2026-11-17); not implemented yet
+Status: approved by the maintainer (2026-11-17); step 1 implemented (bench/vectordb, 2026-11-19), steps 2-7 open
 Builds on: RFC 004 section 5 (bench/graphdb, the pluggable graph benchmark), RFC 005 (incremental vectors)
 Release: none. This is a measurement tool; it changes nothing in gleann. A decision to adopt a candidate would be a separate RFC.
 

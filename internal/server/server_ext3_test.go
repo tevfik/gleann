@@ -374,7 +374,7 @@ func TestHandleSearchWithOptionsExt3(t *testing.T) {
 	reqBody := searchRequest{
 		Query:       "test",
 		TopK:        5,
-		HybridAlpha: 0.5,
+		HybridAlpha: ptrF32(0.5),
 		MinScore:    0.1,
 		Rerank:      true,
 		MetadataFilters: []gleann.MetadataFilter{

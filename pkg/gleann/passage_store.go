@@ -270,7 +270,7 @@ func (s *LeannSearcher) openFormat2Scorer(ctx context.Context) (*FTSScorer, erro
 	if !ok {
 		return nil, fmt.Errorf("index %q has no format-2 passage store", s.meta.Name)
 	}
-	if an, err := sp.st.Meta(ctx, "analyzer"); err != nil || an != analysis.ID {
+	if an, err := sp.st.Meta(ctx, "analyzer"); err != nil || an != sp.analyzer.Identity() {
 		if err := sp.st.Rebuild(ctx, sp.analyzer); err != nil {
 			return nil, fmt.Errorf("rebuilding the lexical table of %q: %w", s.meta.Name, err)
 		}

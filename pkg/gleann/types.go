@@ -472,7 +472,8 @@ type DiskANNConfig struct {
 	// SearchL is the candidate list size during search. Default: 100.
 	SearchL int `json:"search_l,omitempty"`
 
-	// SearchPQRerank is how many PQ candidates to rerank. Default: 2*TopK.
+	// SearchPQRerank is how many PQ candidates to rerank with exact
+	// distances. Default: 0 = all SearchL candidates.
 	SearchPQRerank int `json:"search_pq_rerank,omitempty"`
 
 	// DistanceMetric selects distance function ("l2" or "cosine"). Default: "l2".

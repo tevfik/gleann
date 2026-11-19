@@ -7,7 +7,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -249,16 +248,19 @@ func runChatFlow() error {
 		if savedCfg.LLMModel != "" {
 			chatCfg.Model = savedCfg.LLMModel
 		}
-		if savedCfg.OllamaHost != "" && !strings.Contains(savedCfg.OllamaHost, "(auto-scan") {
-			chatCfg.BaseURL = savedCfg.OllamaHost
-		}
-		if chatCfg.Provider == gleann.LLMOllama {
-			chatCfg.APIKey = gleann.ResolveOllamaAPIKey(savedCfg.OllamaAPIKey)
-		} else if savedCfg.OpenAIKey != "" {
-			chatCfg.APIKey = savedCfg.OpenAIKey
-		}
 		if savedCfg.RepeatPenalty > 0 {
 			chatCfg.RepeatPenalty = savedCfg.RepeatPenalty
+		}
+	}
+	// Endpoint and key follow the provider: openai gets openai_base_url and
+	// the OpenAI key (empty fails on the first message, never OpenAI's cloud
+	// by default), ollama the Ollama host and key, anthropic its own key.
+	// The Ollama host used to be applied to every provider, so an openai
+	// chat went to Ollama with the OpenAI key.
+	cfg.ApplyChatEndpoint(&chatCfg)
+	if savedCfg != nil {
+		if chatCfg.Provider == gleann.LLMAnthropic {
+			chatCfg.APIKey = savedCfg.AnthropicKey
 		}
 
 		if savedCfg.LLMProvider == "llamacpp" {
@@ -277,9 +279,6 @@ func runChatFlow() error {
 			chatCfg.Provider = gleann.LLMEIF
 		}
 	}
-	if chatCfg.Provider == gleann.LLMOllama && chatCfg.BaseURL == "" {
-		chatCfg.BaseURL = cfg.OllamaHost
-	}
 
 	// Pure LLM mode — no index selected.
 	if skipped || indexName == "" {
@@ -289,10 +288,6 @@ func runChatFlow() error {
 	}
 
 	// RAG mode — load the selected index.
-	embHost := cfg.OllamaHost
-	if strings.Contains(embHost, "(auto-scan") {
-		embHost = ""
-	}
 
 	if cfg.EmbeddingProvider == "llamacpp" {
 		fmt.Printf("🚀 Starting embedded llama.cpp server for embedding model %s\n", cfg.EmbeddingModel)
@@ -303,20 +298,15 @@ func runChatFlow() error {
 		defer embedRunner.Stop()
 
 		cfg.EmbeddingProvider = "openai"
-		embHost = embedRunner.BaseURL()
+		cfg.OpenAIBaseURL = embedRunner.BaseURL()
 		cfg.OpenAIAPIKey = "gleann-embedded"
-		fmt.Printf("✅ Embedded llama-server is ready at %s\n", embHost)
+		fmt.Printf("✅ Embedded llama-server is ready at %s\n", cfg.OpenAIBaseURL)
 	}
 
-	apiKey := ""
-	if cfg.EmbeddingProvider == "" || cfg.EmbeddingProvider == "ollama" {
-		apiKey = cfg.APIKeyForProvider(cfg.EmbeddingProvider)
-	} else if cfg.EmbeddingProvider == "openai" {
-		apiKey = cfg.OpenAIAPIKey
-		if cfg.OpenAIBaseURL != "" && (embHost == "" || embHost == cfg.OllamaHost) {
-			embHost = cfg.OpenAIBaseURL
-		}
-	}
+	// Same rule as the chat endpoint: the openai provider gets
+	// openai_base_url, never the Ollama host (which the embedding package
+	// used to rewrite to api.openai.com).
+	embHost, apiKey := cfg.EmbeddingEndpoint()
 
 	embedder := embedding.NewComputer(embedding.Options{
 		Provider: embedding.Provider(cfg.EmbeddingProvider),

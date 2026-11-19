@@ -13,6 +13,7 @@ import (
 	"io"
 	"io/fs"
 	"log"
+	"math"
 	"net/http"
 	"os"
 	"path"
@@ -125,13 +126,7 @@ func (s *Server) queryExpander(cfg gleann.Config) *gleann.LLMQueryExpander {
 	if cfg.LLMProvider != "" {
 		cc.Provider = gleann.LLMProvider(cfg.LLMProvider)
 	}
-	if cfg.OllamaHost != "" {
-		cc.BaseURL = cfg.OllamaHost
-	}
-	cc.APIKey = cfg.APIKeyForProvider(string(cc.Provider))
-	if cfg.OpenAIBaseURL != "" && cc.Provider == gleann.LLMOpenAI {
-		cc.BaseURL = cfg.OpenAIBaseURL
-	}
+	cfg.ApplyChatEndpoint(&cc)
 	cc.MaxTokens = 120
 	key := string(cc.Provider) + "|" + cc.BaseURL + "|" + cc.Model
 	s.expanderMu.Lock()
@@ -205,15 +200,12 @@ func (s *Server) publish(topic string, payload map[string]any) {
 // version is the build-time version string (injected via -ldflags).
 func NewServer(config gleann.Config, addr, version string) *Server {
 	_ = config.ApplyStorageMode()
-	baseURL := config.OllamaHost
-	if config.EmbeddingProvider == "openai" && config.OpenAIBaseURL != "" {
-		baseURL = config.OpenAIBaseURL
-	}
+	baseURL, apiKey := config.EmbeddingEndpoint()
 	embedder := embedding.NewComputer(embedding.Options{
 		Provider: embedding.Provider(config.EmbeddingProvider),
 		Model:    config.EmbeddingModel,
 		BaseURL:  baseURL,
-		APIKey:   config.APIKeyForProvider(config.EmbeddingProvider),
+		APIKey:   apiKey,
 	})
 
 	if version == "" {
@@ -733,9 +725,11 @@ func (s *Server) handlePatchIndex(w http.ResponseWriter, r *http.Request) {
 }
 
 type searchRequest struct {
-	Query               string                  `json:"query"`
-	TopK                int                     `json:"top_k,omitempty"`
-	HybridAlpha         float32                 `json:"hybrid_alpha,omitempty"`
+	Query string `json:"query"`
+	TopK  int    `json:"top_k,omitempty"`
+	// HybridAlpha is a pointer so that 0 (lexical only) differs from absent
+	// (the configured weight).
+	HybridAlpha         *float32                `json:"hybrid_alpha,omitempty"`
 	MinScore            float32                 `json:"min_score,omitempty"`
 	EfSearch            int                     `json:"ef_search,omitempty"`
 	RecomputeEmbeddings bool                    `json:"recompute_embeddings,omitempty"`
@@ -750,6 +744,24 @@ type searchRequest struct {
 	// Expand enables HyDE query expansion: the LLM sketches code for the
 	// question and the search uses it too (+1-3 s; ignored for identifiers).
 	Expand bool `json:"expand,omitempty"`
+}
+
+// validHybridAlpha refuses a request weight outside [0, 1].
+func validHybridAlpha(a *float32) error {
+	if a != nil && (math.IsNaN(float64(*a)) || *a < 0 || *a > 1) {
+		return fmt.Errorf("hybrid_alpha must be between 0 and 1, got %v", *a)
+	}
+	return nil
+}
+
+// hybridAlphaRequest is the search option for a request's hybrid_alpha:
+// none when it is absent (the configured weight applies), else the weight,
+// including 0 (lexical only), which used to be ignored.
+func hybridAlphaRequest(a *float32) (gleann.SearchOption, bool) {
+	if a == nil {
+		return nil, false
+	}
+	return gleann.WithHybridAlpha(*a), true
 }
 
 type searchResponse struct {
@@ -784,6 +796,10 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "query is required")
 		return
 	}
+	if err := validHybridAlpha(req.HybridAlpha); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 
 	searcher, release, err := s.acquireSearcher(r.Context(), name)
 	if err != nil {
@@ -798,8 +814,8 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 	if req.TopK > 0 {
 		opts = append(opts, gleann.WithTopK(req.TopK))
 	}
-	if req.HybridAlpha > 0 {
-		opts = append(opts, gleann.WithHybridAlpha(req.HybridAlpha))
+	if o, ok := hybridAlphaRequest(req.HybridAlpha); ok {
+		opts = append(opts, o)
 	}
 	if req.MinScore > 0 {
 		opts = append(opts, gleann.WithMinScore(req.MinScore))
@@ -942,9 +958,6 @@ func (s *Server) handleAsk(w http.ResponseWriter, r *http.Request) {
 	if cfg.LLMProvider != "" {
 		chatConfig.Provider = gleann.LLMProvider(cfg.LLMProvider)
 	}
-	if cfg.OllamaHost != "" {
-		chatConfig.BaseURL = cfg.OllamaHost
-	}
 
 	if req.LLMModel != "" {
 		chatConfig.Model = req.LLMModel
@@ -971,9 +984,10 @@ func (s *Server) handleAsk(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if chatConfig.Provider == gleann.LLMOllama {
-		chatConfig.APIKey = s.cfg().APIKeyForProvider("ollama")
-	}
+	// Endpoint and key follow the final provider: a request that switches
+	// to openai gets openai_base_url and the OpenAI key (or fails when no
+	// endpoint is set), never the Ollama host.
+	cfg.ApplyChatEndpoint(&chatConfig)
 	chat := gleann.NewChat(searcher, chatConfig)
 
 	// Restore conversation history if continuing.
@@ -1893,15 +1907,12 @@ func (s *Server) handleUpdateConfig(w http.ResponseWriter, r *http.Request) {
 // after saving.
 func (s *Server) ApplyConfig(cfg gleann.Config) {
 	_ = cfg.ApplyStorageMode()
-	baseURL := cfg.OllamaHost
-	if cfg.EmbeddingProvider == "openai" && cfg.OpenAIBaseURL != "" {
-		baseURL = cfg.OpenAIBaseURL
-	}
+	baseURL, apiKey := cfg.EmbeddingEndpoint()
 	embedder := embedding.NewComputer(embedding.Options{
 		Provider: embedding.Provider(cfg.EmbeddingProvider),
 		Model:    cfg.EmbeddingModel,
 		BaseURL:  baseURL,
-		APIKey:   cfg.APIKeyForProvider(cfg.EmbeddingProvider),
+		APIKey:   apiKey,
 	})
 	s.cfgMu.Lock()
 	s.config = cfg

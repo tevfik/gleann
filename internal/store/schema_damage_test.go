@@ -32,17 +32,17 @@ func TestLexicalOperationsReportDamagedSchema(t *testing.T) {
 		want  string
 	}{
 		{"doc-freq cut without lex", func(t *testing.T, s *Store) { execW(t, s, `DROP TABLE lex`) },
-			func(s *Store) error { _, err := s.filterDocFreq(ctx, [][]string{{"apple"}}, 0.5); return err },
+			func(s *Store) error { _, err := s.filterDocFreq(ctx, [][]string{{"apple"}}, 0.5, 0); return err },
 			"counting lexical rows"},
 		{"doc-freq cut without lex_vocab", func(t *testing.T, s *Store) { execW(t, s, `DROP TABLE lex_vocab`) },
-			func(s *Store) error { _, err := s.filterDocFreq(ctx, [][]string{{"apple"}}, 0.5); return err },
+			func(s *Store) error { _, err := s.filterDocFreq(ctx, [][]string{{"apple"}}, 0.5, 0); return err },
 			"preparing lex_vocab query"},
 		{"doc-freq cut with a damaged term frequency", func(t *testing.T, s *Store) {
 			execW(t, s, `DROP TABLE lex_vocab`)
 			execW(t, s, `CREATE TABLE lex_vocab (term TEXT, doc TEXT)`)
 			execW(t, s, `INSERT INTO lex_vocab VALUES ('apple', 'many')`)
 		},
-			func(s *Store) error { _, err := s.filterDocFreq(ctx, [][]string{{"apple"}}, 0.5); return err },
+			func(s *Store) error { _, err := s.filterDocFreq(ctx, [][]string{{"apple"}}, 0.5, 0); return err },
 			`querying term doc frequency for "apple"`},
 		{"explain with the doc-freq cut and no lex_vocab", func(t *testing.T, s *Store) { execW(t, s, `DROP TABLE lex_vocab`) },
 			func(s *Store) error {
@@ -104,13 +104,13 @@ func TestFilterDocFreqSkipsEmptyForms(t *testing.T) {
 	ctx := context.Background()
 	applyTexts(t, s, "a.txt", []string{"apple banana", "apple cherry"})
 
-	if got, err := s.filterDocFreq(ctx, nil, 0.5); err != nil || got != nil {
+	if got, err := s.filterDocFreq(ctx, nil, 0.5, 0); err != nil || got != nil {
 		t.Fatalf("no groups = %v, %v", got, err)
 	}
-	if got, err := s.filterDocFreq(ctx, [][]string{{"apple"}}, 0); err != nil || len(got) != 1 {
+	if got, err := s.filterDocFreq(ctx, [][]string{{"apple"}}, 0, 0); err != nil || len(got) != 1 {
 		t.Fatalf("a zero cut must keep every group, got %v, %v", got, err)
 	}
-	got, err := s.filterDocFreq(ctx, [][]string{{"", "banana"}, {""}}, 0.9)
+	got, err := s.filterDocFreq(ctx, [][]string{{"", "banana"}, {""}}, 0.9, 0)
 	if err != nil {
 		t.Fatal(err)
 	}

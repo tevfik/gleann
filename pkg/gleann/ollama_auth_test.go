@@ -68,11 +68,15 @@ func TestConfigAPIKeyForProvider(t *testing.T) {
 	t.Setenv(OllamaAPIKeyEnv, "")
 	cfg := Config{OllamaAPIKey: "ollama-k", OpenAIAPIKey: "sk-openai"}
 	cases := map[string]string{
-		"":          "ollama-k",
-		"ollama":    "ollama-k",
-		"openai":    "sk-openai",
-		"anthropic": "sk-openai", // unchanged legacy behaviour
-		"gemini":    "sk-openai",
+		"":         "ollama-k",
+		"ollama":   "ollama-k",
+		"openai":   "sk-openai",
+		"llamacpp": "sk-openai",
+		// The OpenAI key used to be returned for every other provider, so it
+		// was sent to Anthropic and Gemini.
+		"anthropic": "",
+		"gemini":    "",
+		"eif":       "",
 	}
 	for prov, want := range cases {
 		if got := cfg.APIKeyForProvider(prov); got != want {

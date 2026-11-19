@@ -20,28 +20,7 @@ import (
 // NewEmbedder initializes an embedding.Computer from cfg, routing the base
 // URL and API key based on the configured provider.
 func NewEmbedder(cfg gleann.Config) *embedding.Computer {
-	baseURL := cfg.OllamaHost
-	apiKey := ""
-
-	switch cfg.EmbeddingProvider {
-	case "", "ollama":
-		apiKey = gleann.ResolveOllamaAPIKey(cfg.OllamaAPIKey)
-	case "openai":
-		if cfg.OpenAIBaseURL != "" {
-			baseURL = cfg.OpenAIBaseURL
-		}
-		apiKey = cfg.OpenAIAPIKey
-	case "llamacpp":
-		if cfg.OpenAIBaseURL != "" {
-			baseURL = cfg.OpenAIBaseURL
-		}
-		apiKey = cfg.OpenAIAPIKey
-	case "eif":
-		baseURL = ""
-		apiKey = ""
-	case "gemini":
-		apiKey = cfg.OpenAIAPIKey
-	}
+	baseURL, apiKey := cfg.EmbeddingEndpoint()
 
 	return embedding.NewComputer(embedding.Options{
 		Provider:    embedding.Provider(cfg.EmbeddingProvider),

@@ -130,7 +130,7 @@ func (s *Searcher) Search(ctx context.Context, query []float32, topK int) ([]int
 	}
 
 	// Use the PQ-prefiltered search with in-memory embeddings for reranking.
-	candidates := SearchExact(s.idx, query, topK, searchL, distFunc)
+	candidates := SearchExactRerank(s.idx, query, topK, searchL, cfg.SearchPQRerank, distFunc)
 
 	ids := make([]int64, len(candidates))
 	distances := make([]float32, len(candidates))
@@ -158,10 +158,7 @@ func (s *Searcher) SearchWithRecompute(ctx context.Context, query []float32, top
 	if searchL <= 0 {
 		searchL = 100
 	}
-	rerankK := cfg.SearchPQRerank
-	if rerankK <= 0 {
-		rerankK = topK * 2
-	}
+	rerankK := DefaultRerankK(cfg.SearchPQRerank, topK, searchL)
 
 	// Reranking fetches embeddings via in-memory/mmap first, then recompute callback (=disk read).
 	var recomputeErr error

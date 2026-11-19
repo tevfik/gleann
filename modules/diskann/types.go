@@ -54,7 +54,7 @@ type DiskANNConfig struct {
 	SearchL int `json:"search_l"`
 
 	// SearchPQRerank is how many PQ candidates to rerank with full vectors.
-	// Default: 2 * TopK.
+	// Default: 0 = all SearchL candidates (see DefaultRerankK).
 	SearchPQRerank int `json:"search_pq_rerank"`
 
 	// DistanceMetric selects distance function. Default: "l2".

@@ -14,11 +14,21 @@ import (
 
 // LexicalQueryOptions returns the query options of the FTS5 lexical leg:
 // AND-first query construction (RFC 003 step 2) and a document-frequency cut
-// of 0.2 (step 3). They are fixed since v1.20 (RFC 004 B1); the former
-// GLEANN_LEXICAL_OPTS switch is gone.
+// of 0.2 (step 3) in indexes of at least DocFreqCutMinRows passages. They are
+// fixed since v1.20 (RFC 004 B1); the former GLEANN_LEXICAL_OPTS switch is
+// gone.
 func LexicalQueryOptions() store.LexQueryOptions {
-	return store.LexQueryOptions{ANDFirst: true, DocFreqCut: 0.2}
+	return store.LexQueryOptions{ANDFirst: true, DocFreqCut: 0.2, DocFreqCutMinRows: DocFreqCutMinRows}
 }
+
+// DocFreqCutMinRows is the index size from which the document-frequency cut
+// applies. Below it the cut cost more than it gained: in an index of one
+// document it dropped the document's own subject words, which questions name
+// (18 PDFs, one index each, 34 questions: the cut lost 1 to 3 answers that
+// reached the LLM without it), while a query without the cut stays fast (synthetic
+// corpus, p95: 20 ms at 10K passages, 40 ms at 20K; 200 ms at 100K, where
+// the cut brings it to 22 ms).
+const DocFreqCutMinRows = 10_000
 
 // NoticeRemovedEnv writes one line to w when an environment variable that
 // v1.20 no longer reads is still set (RFC 004 B1: format 2 and the FTS5

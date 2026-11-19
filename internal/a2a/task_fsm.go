@@ -63,16 +63,27 @@ func NewTaskFSM(initialState TaskState) *stateless.StateMachine {
 // TaskFSMTransition fires the appropriate trigger for moving to targetState.
 // Returns an error if the transition is invalid from the current state.
 func TaskFSMTransition(sm *stateless.StateMachine, targetState TaskState) error {
-	trigger, err := triggerForA2ATarget(targetState)
+	current, err := sm.State(context.Background())
+	if err != nil {
+		return fmt.Errorf("reading task state: %w", err)
+	}
+	trigger, err := triggerForA2ATarget(current.(TaskState), targetState)
 	if err != nil {
 		return err
 	}
 	return sm.Fire(trigger)
 }
 
-func triggerForA2ATarget(target TaskState) (string, error) {
+// triggerForA2ATarget picks the trigger that moves a task from current to
+// target. WORKING is reached by "start" from SUBMITTED and by "resume" from
+// INPUT_REQUIRED; mapping it to "start" alone made a task waiting for input
+// impossible to resume.
+func triggerForA2ATarget(current, target TaskState) (string, error) {
 	switch target {
 	case TaskStateWorking:
+		if current == TaskStateInputRequired {
+			return triggerResume, nil
+		}
 		return triggerStart, nil
 	case TaskStateCompleted:
 		return triggerComplete, nil

@@ -25,6 +25,13 @@ type LexQueryOptions struct {
 	// For example 0.05, 0.1, 0.2. <= 0 disables the cut. It never drops all
 	// terms: at least the rarest term is kept (RFC 003 section 4.2 step 3).
 	DocFreqCut float64
+
+	// DocFreqCutMinRows applies DocFreqCut only to a lexical index with at
+	// least this many rows (0: any size). In a small index the most frequent
+	// words are its subject (one document's index: the law's or the model's
+	// name), which a question names and the cut would drop; and a query over
+	// a small index is fast without the cut.
+	DocFreqCutMinRows int64
 }
 
 // LexQuery is one lexical query: the raw query text plus the analyzer that
@@ -66,11 +73,12 @@ type Lexical interface {
 var _ Lexical = (*Store)(nil)
 
 // filterDocFreq drops query term groups whose document frequency exceeds
-// cut * N, where N is the total row count of the lexical index. It queries
+// cut * N, where N is the total row count of the lexical index; it keeps them
+// all when N < minRows. It queries
 // the fts5vocab table lex_vocab for term document frequencies. It never
 // drops all terms: if every term exceeds the cut, it keeps the rarest term
 // (RFC 003 section 4.2 step 3).
-func (s *Store) filterDocFreq(ctx context.Context, groups [][]string, cut float64) ([][]string, error) {
+func (s *Store) filterDocFreq(ctx context.Context, groups [][]string, cut float64, minRows int64) ([][]string, error) {
 	if cut <= 0 || len(groups) == 0 {
 		return groups, nil
 	}
@@ -83,6 +91,9 @@ func (s *Store) filterDocFreq(ctx context.Context, groups [][]string, cut float6
 	}
 	if n == 0 {
 		return nil, nil
+	}
+	if n < minRows {
+		return groups, nil
 	}
 	threshold := cut * float64(n)
 
@@ -187,7 +198,7 @@ func (s *Store) Search(ctx context.Context, q LexQuery, k int) ([]ScoredID, erro
 
 	if q.Options.DocFreqCut > 0 {
 		var err error
-		groups, err = s.filterDocFreq(ctx, groups, q.Options.DocFreqCut)
+		groups, err = s.filterDocFreq(ctx, groups, q.Options.DocFreqCut, q.Options.DocFreqCutMinRows)
 		if err != nil {
 			return nil, fmt.Errorf("lexical search: %w", err)
 		}
@@ -275,7 +286,7 @@ func (s *Store) ScoreIDs(ctx context.Context, q LexQuery, ids []int64) (map[int6
 	groups := q.Analyzer.QueryTokens(q.Text)
 	if q.Options.DocFreqCut > 0 {
 		var err error
-		groups, err = s.filterDocFreq(ctx, groups, q.Options.DocFreqCut)
+		groups, err = s.filterDocFreq(ctx, groups, q.Options.DocFreqCut, q.Options.DocFreqCutMinRows)
 		if err != nil {
 			return nil, fmt.Errorf("scoring passage ids: %w", err)
 		}
@@ -338,7 +349,7 @@ func (s *Store) ExplainTerms(ctx context.Context, q LexQuery, id int64) ([]TermS
 	}
 	groups := q.Analyzer.QueryTokens(q.Text)
 	if q.Options.DocFreqCut > 0 {
-		groups, err = s.filterDocFreq(ctx, groups, q.Options.DocFreqCut)
+		groups, err = s.filterDocFreq(ctx, groups, q.Options.DocFreqCut, q.Options.DocFreqCutMinRows)
 		if err != nil {
 			return nil, fmt.Errorf("explaining terms: %w", err)
 		}
@@ -437,7 +448,7 @@ func (s *Store) Rebuild(ctx context.Context, an analysis.Analyzer) error {
 	if err := rows.Err(); err != nil {
 		return fmt.Errorf("rebuilding lexical index: reading passages: %w", err)
 	}
-	for k, v := range map[string]string{"analyzer": analysis.ID, "language": an.Language} {
+	for k, v := range map[string]string{"analyzer": an.Identity(), "language": an.Language} {
 		if _, err := tx.ExecContext(ctx, `INSERT INTO meta (key, value) VALUES (?, ?)
   ON CONFLICT(key) DO UPDATE SET value = excluded.value`, k, v); err != nil {
 			return fmt.Errorf("rebuilding lexical index: writing meta %q: %w", k, err)

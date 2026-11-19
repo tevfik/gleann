@@ -1,6 +1,9 @@
 package analysis
 
-import "strings"
+import (
+	"strings"
+	"unicode"
+)
 
 // turkishLower lowercases with the Turkish dot rules: İ→i and I→ı happen
 // before general lowercasing, because plain strings.ToLower maps both I and
@@ -43,4 +46,34 @@ func asciiFold(s string) string {
 		}
 		return r
 	}, s)
+}
+
+// dropApostropheSuffixes removes the case suffix Turkish writes after an
+// apostrophe on proper nouns, abbreviations and numbers: "Kanunu'na",
+// "Anayasa'ya", "AB'ye", "2023'te" become "Kanunu", "Anayasa", "AB", "2023".
+// Without it the suffix became a query term of its own ("na", "ya"), which
+// matches unrelated passages. A suffix is the lowercase letters after an
+// apostrophe (' or U+2019) that follows a letter or digit; an apostrophe
+// followed by an uppercase letter ("O'Brien") is left alone, and so is one at
+// a word edge.
+func dropApostropheSuffixes(text string) string {
+	if !strings.ContainsAny(text, "'\u2019") {
+		return text
+	}
+	runes := []rune(text)
+	out := make([]rune, 0, len(runes))
+	for i := 0; i < len(runes); i++ {
+		r := runes[i]
+		if (r == '\'' || r == '\u2019') && i > 0 && i+1 < len(runes) &&
+			(unicode.IsLetter(runes[i-1]) || unicode.IsDigit(runes[i-1])) && unicode.IsLower(runes[i+1]) {
+			j := i + 1
+			for j < len(runes) && unicode.IsLower(runes[j]) {
+				j++
+			}
+			i = j - 1 // skip the apostrophe and the suffix
+			continue
+		}
+		out = append(out, r)
+	}
+	return string(out)
 }

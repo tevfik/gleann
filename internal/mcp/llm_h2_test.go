@@ -187,9 +187,10 @@ func TestH2BatchAsk_RunsEveryQuestionAndReportsErrors(t *testing.T) {
 	srv, llm := h2LLMServer(t, func(c *Config) {
 		c.LLMProvider = "openai"
 		c.OpenAIAPIKey = "sk-batch"
+		// The fake answers on both protocols; with provider openai it is
+		// reached through openai_base_url, never through the Ollama host.
+		c.OpenAIBaseURL = c.OllamaHost
 	})
-	// With provider openai and no OpenAIBaseURL the base URL stays the
-	// configured Ollama host: the fake answers on both protocols.
 	res := h2Call(t, srv.handleBatchAsk, map[string]any{
 		"index":       "idx",
 		"questions":   []any{"first?", "second?", "third?"},

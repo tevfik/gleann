@@ -111,10 +111,12 @@ func TestBuildChatConfig_ProviderEndpointsAndKeys(t *testing.T) {
 
 func TestBuildChatConfig_EffectiveEndpointAfterNewChat(t *testing.T) {
 	isolateHome(t)
+	// No endpoint configured: neither the Ollama host nor OpenAI's cloud.
+	t.Setenv("OPENAI_BASE_URL", "")
 	cc := buildChatConfig(nil, gleann.Config{LLMProvider: "openai", OllamaHost: "http://localhost:11434"})
 	chat := gleann.NewChat(nil, cc)
-	if got := chat.Config().BaseURL; got != "https://api.openai.com" {
-		t.Fatalf("effective OpenAI endpoint = %q", got)
+	if got := chat.Config().BaseURL; got != "" {
+		t.Fatalf("effective OpenAI endpoint = %q, want none", got)
 	}
 	cc = buildChatConfig(nil, gleann.Config{LLMProvider: "anthropic", OllamaHost: "http://localhost:11434"})
 	if got := gleann.NewChat(nil, cc).Config().BaseURL; got != "https://api.anthropic.com" {

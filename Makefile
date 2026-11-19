@@ -404,6 +404,15 @@ GRAPHDB_PIN   ?=
 bench-graphdb:
 	cd bench/graphdb && $(GRAPHDB_PIN) go run $(if $(GRAPHDB_TAGS),-tags "$(GRAPHDB_TAGS)",) ./cmd/graphbench -edges $(GRAPHDB_EDGES)
 
+# ── Vector database benchmark (nested module, see bench/vectordb/README.md) ──
+VECTORDB_SIZES ?= 10000
+VECTORDB_DIMS  ?= 384
+VECTORDB_TAGS  ?=
+VECTORDB_PIN   ?=
+.PHONY: bench-vectordb
+bench-vectordb:
+	cd bench/vectordb && $(VECTORDB_PIN) go run $(if $(VECTORDB_TAGS),-tags "$(VECTORDB_TAGS)",) ./cmd/vectorbench -sizes $(VECTORDB_SIZES) -dims $(VECTORDB_DIMS)
+
 # Exporter of v1.9 Kùzu memory stores (own module, CGo; see docs/memory_engine.md, "Upgrading entities from v1.9").
 .PHONY: kuzu-memory-export
 kuzu-memory-export:

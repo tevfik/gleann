@@ -210,3 +210,59 @@ func TestFormat2_UpdateWhileSearcherOpen(t *testing.T) {
 		t.Fatalf("removed source still searchable through the open searcher: %+v (%v)", rs, err)
 	}
 }
+
+// v1.20.1 changed the Turkish analyzer (the case suffix after an apostrophe
+// is dropped). A Turkish index stamped with the v1.20.0 identity rebuilds its
+// lexical table once from the stored texts on Load; an index in another
+// language keeps its stamp and its table.
+func TestFormat2_AnalyzerUpgradeRebuildsOnlyTurkish(t *testing.T) {
+	ctx := context.Background()
+	// stamp builds an index, sets its language and analyzer stamp, and wipes
+	// the lex rows, so a rebuild is visible as search hits coming back.
+	stamp := func(t *testing.T, lang, analyzer string) string {
+		t.Helper()
+		dir := t.TempDir()
+		buildFormat2Lexical(t, dir, format2LexItems())
+		db, err := sql.Open("sqlite", filepath.Join(dir, "idx", "idx.db"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer db.Close()
+		for _, q := range []string{
+			`DELETE FROM lex`,
+			`INSERT INTO meta (key, value) VALUES ('language', '` + lang + `') ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+			`INSERT INTO meta (key, value) VALUES ('analyzer', '` + analyzer + `') ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+		} {
+			if _, err := db.Exec(q); err != nil {
+				t.Fatalf("%s: %v", q, err)
+			}
+		}
+		return dir
+	}
+	load := func(t *testing.T, dir string) (hits int, stamp string) {
+		t.Helper()
+		s := NewSearcher(Config{IndexDir: dir, Backend: "hnsw"}, nil)
+		if err := s.Load(ctx, "idx"); err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		rs, err := s.SearchBM25(ctx, "banana", 5)
+		s.Close()
+		if err != nil {
+			t.Fatal(err)
+		}
+		st, err := store.Open(filepath.Join(dir, "idx", "idx.db"), store.Options{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer st.Close()
+		an, _ := st.Meta(ctx, "analyzer")
+		return len(rs), an
+	}
+
+	if hits, an := load(t, stamp(t, "tr", "gleann-tok/1")); hits == 0 || an != "gleann-tok/2" {
+		t.Errorf("Turkish index stamped gleann-tok/1: %d hits, stamp %q; want a rebuild to gleann-tok/2", hits, an)
+	}
+	if hits, an := load(t, stamp(t, "", "gleann-tok/1")); hits != 0 || an != "gleann-tok/1" {
+		t.Errorf("base index stamped gleann-tok/1: %d hits, stamp %q; want no rebuild", hits, an)
+	}
+}

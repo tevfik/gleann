@@ -576,6 +576,12 @@ func cmdChat(args []string) {
 		if savedCfg.OllamaAPIKey != "" && cfg.OllamaAPIKey == "" {
 			cfg.OllamaAPIKey = savedCfg.OllamaAPIKey
 		}
+		if savedCfg.OpenAIBaseURL != "" && cfg.OpenAIBaseURL == "" {
+			cfg.OpenAIBaseURL = savedCfg.OpenAIBaseURL
+		}
+		if savedCfg.OpenAIKey != "" && cfg.OpenAIAPIKey == "" {
+			cfg.OpenAIAPIKey = savedCfg.OpenAIKey
+		}
 	}
 
 	// If no index given, launch index picker.
@@ -630,15 +636,9 @@ func cmdChat(args []string) {
 		if savedCfg.LLMModel != "" {
 			chatCfg.Model = savedCfg.LLMModel
 		}
-		if savedCfg.OllamaHost != "" {
-			chatCfg.BaseURL = savedCfg.OllamaHost
-		}
 		if savedCfg.RepeatPenalty > 0 {
 			chatCfg.RepeatPenalty = savedCfg.RepeatPenalty
 		}
-	}
-	if chatCfg.Provider == gleann.LLMOllama && chatCfg.BaseURL == "" {
-		chatCfg.BaseURL = cfg.OllamaHost
 	}
 
 	// Override from CLI flags.
@@ -657,8 +657,18 @@ func cmdChat(args []string) {
 			chatCfg.RepeatPenalty = val
 		}
 	}
-	if chatCfg.Provider == gleann.LLMOllama {
-		chatCfg.APIKey = cfg.APIKeyForProvider(string(chatCfg.Provider))
+	// Endpoint and key follow the final provider (saved config, then
+	// --llm-provider): openai gets openai_base_url, never the Ollama host,
+	// and fails without an endpoint instead of falling back to OpenAI's cloud.
+	cfg.ApplyChatEndpoint(&chatCfg)
+	if chatCfg.Provider == gleann.LLMAnthropic && savedCfg != nil {
+		chatCfg.APIKey = savedCfg.AnthropicKey
+	}
+	if u := getFlag(args, "--base-url"); u != "" {
+		chatCfg.BaseURL = u
+	}
+	if u := getFlag(args, "--openai-base-url"); u != "" && chatCfg.Provider == gleann.LLMOpenAI {
+		chatCfg.BaseURL = u
 	}
 	if apiKey := getFlag(args, "--api-key"); apiKey != "" {
 		chatCfg.APIKey = apiKey

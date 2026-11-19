@@ -151,13 +151,7 @@ func (s *Server) handleBatchAsk(ctx context.Context, req mcpsdk.CallToolRequest)
 			if s.config.LLMProvider != "" {
 				chatCfg.Provider = gleann.LLMProvider(s.config.LLMProvider)
 			}
-			if s.config.OllamaHost != "" {
-				chatCfg.BaseURL = s.config.OllamaHost
-			}
-			chatCfg.APIKey = s.config.APIKeyForProvider(string(chatCfg.Provider))
-			if s.config.OpenAIBaseURL != "" && chatCfg.Provider == gleann.LLMOpenAI {
-				chatCfg.BaseURL = s.config.OpenAIBaseURL
-			}
+			s.config.ApplyChatEndpoint(&chatCfg)
 			chat := gleann.NewChat(searcher, chatCfg)
 
 			opts := []gleann.SearchOption{gleann.WithTopK(topK)}

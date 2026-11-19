@@ -19,10 +19,25 @@ import (
 	"unicode"
 )
 
-// ID identifies this analyzer version. It is stored in meta.analyzer; a
-// mismatch with a stored index makes the lexical index rebuild from the
-// stored passage text (RFC 003 section 4.1 item 1).
+// ID identifies the analyzer version of the base rules. Analyzer.Identity
+// is stored in meta.analyzer; a mismatch with a stored index makes the
+// lexical index rebuild from the stored passage text (RFC 003 section 4.1
+// item 1).
 const ID = "gleann-tok/1"
+
+// IDTurkish identifies the Turkish rules: version 2 drops the suffix after an
+// apostrophe ("Kanunu'na" -> "kanunu"). Only Turkish indexes rebuild their
+// lexical table for it.
+const IDTurkish = "gleann-tok/2"
+
+// Identity is the analyzer version an index built with a stores in
+// meta.analyzer: IDTurkish for "tr", ID otherwise.
+func (a Analyzer) Identity() string {
+	if a.Language == "tr" {
+		return IDTurkish
+	}
+	return ID
+}
 
 // Kind selects which rules apply to a passage. It mirrors passages.kind in
 // the store schema (RFC 003 section 3.4): the indexer sets it from the source
@@ -56,6 +71,9 @@ func New(language string) Analyzer {
 // bigrams in every language and kind.
 func (a Analyzer) Tokens(text string, kind Kind) []string {
 	turkish := a.Language == "tr" && kind == KindProse
+	if turkish {
+		text = dropApostropheSuffixes(text)
+	}
 	words := strings.FieldsFunc(text, func(r rune) bool {
 		return !unicode.IsLetter(r) && !unicode.IsDigit(r)
 	})
@@ -83,6 +101,9 @@ func (a Analyzer) Tokens(text string, kind Kind) []string {
 // match every passage that contains any common character of it.
 func (a Analyzer) QueryTokens(text string) [][]string {
 	turkish := a.Language == "tr"
+	if turkish {
+		text = dropApostropheSuffixes(text)
+	}
 	words := strings.FieldsFunc(text, func(r rune) bool {
 		return !unicode.IsLetter(r) && !unicode.IsDigit(r)
 	})

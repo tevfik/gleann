@@ -137,6 +137,17 @@ func TestTaskFSMTransitions(t *testing.T) {
 		if err := TaskFSMTransition(sm, TaskStateInputRequired); err != nil {
 			t.Fatalf("require input: %v", err)
 		}
+		// The follow-up message resumes the task (it used to fire "start",
+		// which INPUT_REQUIRED refuses).
+		if err := TaskFSMTransition(sm, TaskStateWorking); err != nil {
+			t.Fatalf("resume: %v", err)
+		}
+		if err := TaskFSMTransition(sm, TaskStateCompleted); err != nil {
+			t.Fatalf("complete after resume: %v", err)
+		}
+		if err := TaskFSMTransition(sm, TaskStateWorking); err == nil {
+			t.Fatal("a completed task is terminal")
+		}
 	})
 	t.Run("unknown target", func(t *testing.T) {
 		sm := NewTaskFSM(TaskStateSubmitted)

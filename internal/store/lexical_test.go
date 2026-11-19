@@ -128,6 +128,9 @@ func TestLexicalRebuildAfterLanguageChange(t *testing.T) {
 	if lang, err := s.Meta(ctx, "language"); err != nil || lang != "" {
 		t.Fatalf("meta language = %q, %v; want empty", lang, err)
 	}
+	if an, err := s.Meta(ctx, "analyzer"); err != nil || an != analysis.ID {
+		t.Fatalf("base meta analyzer = %q, %v; want %q", an, err, analysis.ID)
+	}
 
 	// Switch to Turkish: prose folding adds the ASCII variant, so the ASCII
 	// query now matches. Rebuild needs no embedding, only the stored text.
@@ -139,11 +142,37 @@ func TestLexicalRebuildAfterLanguageChange(t *testing.T) {
 	if err != nil || len(hits) != 1 {
 		t.Fatalf("tr Search(isiklari) = %v, %v; want one match", hits, err)
 	}
-	if an, err := s.Meta(ctx, "analyzer"); err != nil || an != analysis.ID {
-		t.Fatalf("meta analyzer = %q, %v; want %q", an, err, analysis.ID)
+	if an, err := s.Meta(ctx, "analyzer"); err != nil || an != analysis.IDTurkish {
+		t.Fatalf("meta analyzer = %q, %v; want %q", an, err, analysis.IDTurkish)
 	}
 	if lang, err := s.Meta(ctx, "language"); err != nil || lang != "tr" {
 		t.Fatalf("meta language = %q, %v; want tr", lang, err)
+	}
+}
+
+// In a Turkish index the case suffix after an apostrophe is neither indexed
+// nor queried: "Kanunu'na" finds the passage about "Kanunu'nun" and no longer
+// matches a passage through the stray term "na".
+func TestLexicalTurkishApostropheSuffix(t *testing.T) {
+	s := openTestStore(t)
+	ctx := context.Background()
+	tr := analysis.New("tr")
+	law, other := int64(1), int64(2)
+	if _, err := s.ApplySource(ctx, SourceDelta{Source: "kanun.txt", Passages: []NewPassage{
+		{ID: &law, Text: "İş Kanunu'nun hükümleri", Kind: "prose"},
+		{ID: &other, Text: "na ve ya kısaltmaları", Kind: "prose"},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Rebuild(ctx, tr); err != nil {
+		t.Fatal(err)
+	}
+	hits, err := s.Search(ctx, LexQuery{Text: "Kanunu'na", Analyzer: tr}, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(hits) != 1 || hits[0].ID != law {
+		t.Errorf("Search(Kanunu'na) = %v, want only passage %d", hits, law)
 	}
 }
 
@@ -390,5 +419,31 @@ func TestLexicalSearchDocFreqCut(t *testing.T) {
 	}
 	if len(hitsCombined) != 2 {
 		t.Fatalf("hits combined = %d, want 2", len(hitsCombined))
+	}
+
+	// DocFreqCutMinRows above the index size (10 rows) turns the cut off:
+	// "common" stays in the query, and the OR query also finds the passages
+	// that have only "common". At the index size the cut applies again.
+	for _, tc := range []struct {
+		minRows int64
+		want    int
+	}{{11, 8}, {10, 2}, {0, 2}} {
+		q := LexQuery{Text: "common rare", Analyzer: analysis.New(""),
+			Options: LexQueryOptions{DocFreqCut: 0.5, DocFreqCutMinRows: tc.minRows}}
+		hits, err := s.Search(ctx, q, 10)
+		if err != nil {
+			t.Fatalf("Search min rows %d: %v", tc.minRows, err)
+		}
+		if len(hits) != tc.want {
+			t.Errorf("min rows %d: %d hits, want %d", tc.minRows, len(hits), tc.want)
+		}
+		// ScoreIDs and ExplainTerms use the same groups as Search.
+		scores, err := s.ScoreIDs(ctx, q, []int64{ids[2]})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, scored := scores[ids[2]]; scored != (tc.want == 8) {
+			t.Errorf("min rows %d: ScoreIDs of a common-only passage scored=%v", tc.minRows, scored)
+		}
 	}
 }

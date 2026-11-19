@@ -93,7 +93,7 @@ Location: `~/.gleann/config.json`
 | `ollama_host` | `http://localhost:11434` | Ollama server URL |
 | `ollama_api_key` | — | Optional API key for Ollama, sent as `Authorization: Bearer <key>` on every Ollama request (chat, embeddings, reranker, model listing, multimodal). Only needed when Ollama sits behind an auth proxy or is a hosted Ollama endpoint. Falls back to the `OLLAMA_API_KEY` environment variable. Never sent to OpenAI/Anthropic |
 | `openai_api_key` | — | OpenAI API key (if using openai provider). Never sent to Ollama |
-| `openai_base_url` | — | Custom OpenAI-compatible API base URL |
+| `openai_base_url` | — | OpenAI-compatible API base URL (vLLM, LM Studio, llama-server, Ollama's `/v1`, ...); `http://host:8000` and `http://host:8000/v1` are the same. **Required for the `openai` provider** (chat and embeddings): without it (or `OPENAI_BASE_URL`) gleann refuses to send anything and never falls back to OpenAI's cloud. Set `https://api.openai.com/v1` to use OpenAI's cloud, which sends your documents and questions there. The Ollama host is never used as an OpenAI endpoint |
 | `index_dir` | `~/.gleann/indexes` | Root directory for all index data. Each named index `<name>` is a directory `<name>/` holding one SQLite database `<name>.db` (passages, FTS5 lexical index, manifest, code and document graph), the vector files and the metadata, plus the index lock file `<name>.lock` next to it; a memory namespace's vector index is the index `<name>_memory_vectors`. Memory entities live in `memory.sqlite` in the gleann home, not here |
 | `backend` | `diskann` | Vector search backend: `diskann`, `hnsw`, `faiss`, `faiss-hybrid` |
 | `use_mmap` | unset | `true`: memory-map the vector index for every backend; `false`: load it into RAM. Unset: the per-backend keys decide; both default to memory-mapped. The old keys `hnsw_config.use_mmap` and `diskann_config.use_mmap` are still read when `use_mmap` is unset. On Windows the "mapped" mode reads the file into memory and closes it (Windows cannot rename a new generation over a mapped or open file, which every incremental update and merge does while `serve` keeps the old searcher), so an open index costs its file size in RAM there. CLI flag: `--no-mmap`, env: `GLEANN_MMAP` |
@@ -293,10 +293,10 @@ gleann index storage docs --set store                       # convert in place (
 --no-mmap               # Disable memory-mapped access
 
 # DiskANN & Product Quantization (PQ) Options
---pq-dim <n>            # PQ sub-vector dimension (default: 32)
+--pq-dim <n>            # PQ sub-quantizers (default: dims/4)
 --pq-centroids <k>      # Centroids per sub-vector (default: 256)
---search-l <n>          # Search list size for Vamana graph (default: 64)
---search-pq-rerank      # Enable PQ pre-filtering with exact reranking
+--search-l <n>          # Search list size for Vamana graph (default: 100)
+--search-pq-rerank <n>  # PQ candidates reranked with exact distances (default: all search-l)
 --diskann-r <n>         # Vamana max out-degree (default: 64)
 --diskann-l <n>         # Vamana build search list size (default: 100)
 --diskann-alpha <f>     # Vamana graph pruning parameter alpha (default: 1.2)

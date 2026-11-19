@@ -141,7 +141,9 @@ func settingsFields() []settings.Field[OnboardResult] {
 			Help: "Optional bearer key for Ollama behind an auth proxy or a hosted Ollama.",
 			Bind: func(c *OnboardResult) any { return &c.OllamaAPIKey }},
 		{Key: "openai_base_url", Label: "OpenAI-compatible URL", Type: settings.Text, Group: groupProviders,
-			Help:        "Base URL of an OpenAI-compatible API (vLLM, LM Studio, llama-server, ...). Empty = api.openai.com.",
+			Help: "Base URL of an OpenAI-compatible API (vLLM, LM Studio, llama-server, Ollama's /v1, ...). " +
+				"Required for the openai provider: empty is an error, never OpenAI's cloud. " +
+				"Enter https://api.openai.com/v1 to send your documents and questions to OpenAI.",
 			Placeholder: func(*OnboardResult) string { return "https://api.openai.com/v1" },
 			Bind:        func(c *OnboardResult) any { return &c.OpenAIBaseURL }},
 		{Key: "openai_api_key", Label: "OpenAI API key", Type: settings.Secret, Group: groupProviders,

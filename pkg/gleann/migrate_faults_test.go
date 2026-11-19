@@ -295,6 +295,77 @@ func TestVerifyMigrationRefusals(t *testing.T) {
 	})
 }
 
+// A passage outranked on its own words by ten or more near-copies (a PDF's
+// chart tick labels) is copied right and must pass; a passage mapped to
+// another row, or whose lexical row belongs to another passage that shares
+// a few of its words, must still be refused.
+func TestVerifyMigrationNearCopies(t *testing.T) {
+	ctx := context.Background()
+	an := analysis.New("")
+	target := "aux loss free layer wikipedia github mathematics 1 2 3 4 5 6 7 8"
+	other := "layer of elderberry cordial"
+	tokens := func(text string) string { return strings.Join(an.Tokens(text, analysis.Kind("text")), " ") }
+	// setup stores the target as rowid 1 with the given lexical tokens, the
+	// other passage as rowid 2, and 15 near-copies of the target that hold
+	// its words twice and so outrank it.
+	setup := func(t *testing.T, targetTokens string) *store.Store {
+		t.Helper()
+		st, err := store.Open(filepath.Join(t.TempDir(), "n.db"), store.Options{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { st.Close() })
+		var nps []store.NewPassage
+		add := func(text, toks string) {
+			id := int64(len(nps) + 1)
+			nps = append(nps, store.NewPassage{ID: &id, Text: text, Kind: "text", Tokens: toks})
+		}
+		add(target, targetTokens)
+		add(other, tokens(other))
+		for i := 0; i < 15; i++ {
+			add(target+" "+target, tokens(target+" "+target))
+		}
+		if _, err := st.ApplySource(ctx, store.SourceDelta{Source: "chart.pdf", Passages: nps}); err != nil {
+			t.Fatal(err)
+		}
+		return st
+	}
+	ps := []Passage{{ID: 0, Text: target, Metadata: map[string]any{"source": "chart.pdf"}}}
+
+	t.Run("near-copies outrank the passage", func(t *testing.T) {
+		st := setup(t, tokens(target))
+		hits, err := st.Search(ctx, store.LexQuery{Text: target, Analyzer: an}, 10)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, h := range hits {
+			if h.ID == 1 {
+				t.Fatal("the target is in its own top 10: the test does not exercise near-copies")
+			}
+		}
+		if err := verifyMigration(ctx, st, an, ps, map[int64]int64{0: 0}, 17); err != nil {
+			t.Fatalf("a correct copy was refused: %v", err)
+		}
+	})
+	t.Run("mapped to another row", func(t *testing.T) {
+		st := setup(t, tokens(target))
+		err := verifyMigration(ctx, st, an, ps, map[int64]int64{0: 1}, 17)
+		if err == nil || !strings.Contains(err.Error(), "not its own top-10 lexical hit") {
+			t.Fatalf("err = %v", err)
+		}
+	})
+	t.Run("lexical row of another passage", func(t *testing.T) {
+		// The text is right, but the lexical row holds the other passage's
+		// tokens, which share "layer" with the target: one matching word
+		// is not enough.
+		st := setup(t, tokens(other))
+		err := verifyMigration(ctx, st, an, ps, map[int64]int64{0: 0}, 17)
+		if err == nil || !strings.Contains(err.Error(), "not its own top-10 lexical hit") {
+			t.Fatalf("err = %v", err)
+		}
+	})
+}
+
 // verifyVectorFile names the step that fails.
 func TestVerifyVectorFileFailures(t *testing.T) {
 	ctx := context.Background()

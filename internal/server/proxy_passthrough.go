@@ -28,7 +28,9 @@ import (
 // at the start. The model name is replaced by llm_model when it named indexes. X-Gleann-Top-K and
 // X-Gleann-Min-Score work as in the default mode; with several indexes the passages are ranked together by score
 // and the best top-k kept. The reply carries X-Gleann-Sources, the passages in order as a percent-encoded JSON list
-// of {"index", "source", "score"}. The passages follow an intro sentence (proxy_context_intro, default English)
+// of {"index", "source", "score"}. With several indexes, one that cannot be loaded or searched (for example an
+// index in the old store format) is left out, logged, and listed in X-Gleann-Skipped-Indexes, a percent-encoded
+// JSON list of {"index", "reason"}. The passages follow an intro sentence (proxy_context_intro, default English)
 // that always ends with the instruction to answer in the language of the question. Optional headers:
 //   - X-Gleann-Context: user puts the passages into the last user message (before its text) instead of the first
 //     system message, so the conversation before it stays the same from turn to turn and the LLM server can reuse
@@ -75,10 +77,21 @@ func (s *Server) proxyPassthrough() bool {
 	return strings.EqualFold(s.cfg().ProxyMode, "passthrough")
 }
 
-// passthroughUpstream returns the LLM server's base URL (without /v1) and API key.
-func (s *Server) passthroughUpstream() (string, string) {
+// passthroughUpstream returns the LLM server's base URL (without /v1) and API
+// key. For the openai provider without a configured endpoint it falls back to
+// OPENAI_BASE_URL only and otherwise fails: OpenAI's cloud is never a default.
+func (s *Server) passthroughUpstream() (string, string, error) {
 	cfg := s.proxyLLMConfig()
-	return strings.TrimSuffix(strings.TrimRight(cfg.BaseURL, "/"), "/v1"), cfg.APIKey
+	if cfg.Provider == gleann.LLMOpenAI && cfg.BaseURL == "" {
+		cfg.BaseURL = gleann.ResolveOpenAIBaseURL("")
+		if cfg.BaseURL == "" {
+			return "", "", gleann.ErrOpenAIEndpointUnset
+		}
+	}
+	if cfg.BaseURL == "" {
+		return "", "", fmt.Errorf("proxy_mode passthrough: no endpoint for provider %q", cfg.Provider)
+	}
+	return gleann.NormalizeOpenAIBaseURL(cfg.BaseURL), cfg.APIKey, nil
 }
 
 func (s *Server) passthroughChatCompletions(w http.ResponseWriter, r *http.Request) {
@@ -142,11 +155,16 @@ func (s *Server) passthroughChatCompletions(w http.ResponseWriter, r *http.Reque
 			}
 		}
 		maxChars, _ := strconv.Atoi(r.Header.Get("X-Gleann-Max-Context-Chars"))
-		block, sources, err := s.retrieveProxyContextLimited(r.Context(), lastUserText(messages), indexNames, searchOpts, maxChars,
-			coverFromRequest(s.cfg(), r))
+		block, sources, skipped, err := s.retrieveProxyContextLimited(r.Context(), lastUserText(messages), indexNames,
+			searchOpts, maxChars, coverFromRequest(s.cfg(), r))
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "RAG retrieval failed: "+err.Error())
 			return
+		}
+		if len(skipped) > 0 {
+			if list, err := json.Marshal(skipped); err == nil {
+				w.Header().Set("X-Gleann-Skipped-Indexes", url.QueryEscape(string(list)))
+			}
 		}
 		if block != "" {
 			intro := s.passthroughIntro()
@@ -171,7 +189,11 @@ func (s *Server) passthroughChatCompletions(w http.ResponseWriter, r *http.Reque
 	}
 	out, _ := json.Marshal(req)
 
-	base, apiKey := s.passthroughUpstream()
+	base, apiKey, err := s.passthroughUpstream()
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, err.Error())
+		return
+	}
 	s.forwardPassthrough(w, r, base+"/v1/chat/completions", out, apiKey)
 }
 
@@ -181,7 +203,11 @@ func (s *Server) handleProxyStop(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "POST /stop is forwarded in proxy_mode passthrough only")
 		return
 	}
-	base, apiKey := s.passthroughUpstream()
+	base, apiKey, err := s.passthroughUpstream()
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, err.Error())
+		return
+	}
 	s.forwardPassthrough(w, r, base+"/stop", nil, apiKey)
 }
 

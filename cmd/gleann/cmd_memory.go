@@ -639,16 +639,23 @@ func defaultSummarizerConfig() memory.SummarizerConfig {
 		if savedCfg.LLMModel != "" {
 			sumCfg.Model = savedCfg.LLMModel
 		}
-		if savedCfg.OllamaHost != "" && os.Getenv("OLLAMA_HOST") == "" {
-			sumCfg.BaseURL = savedCfg.OllamaHost
-		}
-		if sumCfg.Provider == "ollama" {
+		// Each provider gets only its own endpoint and key: openai uses
+		// openai_base_url (empty fails in the summarizer, never OpenAI's
+		// cloud by default), anthropic its default endpoint and key.
+		switch sumCfg.Provider {
+		case "ollama":
+			if savedCfg.OllamaHost != "" && os.Getenv("OLLAMA_HOST") == "" {
+				sumCfg.BaseURL = savedCfg.OllamaHost
+			}
 			sumCfg.APIKey = gleann.ResolveOllamaAPIKey(savedCfg.OllamaAPIKey)
-		} else if savedCfg.OpenAIKey != "" {
+		case "openai":
+			sumCfg.BaseURL = savedCfg.OpenAIBaseURL
 			sumCfg.APIKey = savedCfg.OpenAIKey
-		}
-		if savedCfg.AnthropicKey != "" && savedCfg.LLMProvider == "anthropic" {
+		case "anthropic":
+			sumCfg.BaseURL = ""
 			sumCfg.APIKey = savedCfg.AnthropicKey
+		default:
+			sumCfg.APIKey = ""
 		}
 	}
 	return sumCfg

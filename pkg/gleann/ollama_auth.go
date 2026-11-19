@@ -23,14 +23,18 @@ func ResolveOllamaAPIKey(key string) string {
 
 // APIKeyForProvider returns the API key that should be sent to the given
 // LLM or embedding provider: the Ollama key (or OLLAMA_API_KEY) for "ollama"
-// and the empty/default provider, and OpenAIAPIKey for everything else.
-// This keeps an OpenAI key from ever being sent to an Ollama endpoint.
+// and the empty/default provider, OpenAIAPIKey for "openai" and "llamacpp"
+// (an OpenAI-compatible server), and "" for every other provider. This keeps
+// an OpenAI key from ever being sent to an Ollama, Anthropic or Gemini
+// endpoint; those providers read their own keys.
 func (c Config) APIKeyForProvider(provider string) string {
 	switch provider {
 	case "", string(LLMOllama):
 		return ResolveOllamaAPIKey(c.OllamaAPIKey)
-	default:
+	case string(LLMOpenAI), "llamacpp":
 		return c.OpenAIAPIKey
+	default:
+		return ""
 	}
 }
 
