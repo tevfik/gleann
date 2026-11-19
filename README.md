@@ -1,7 +1,7 @@
 # gleann
 
 [![CI](https://github.com/tevfik/gleann/actions/workflows/ci.yml/badge.svg)](https://github.com/tevfik/gleann/actions/workflows/ci.yml)
-[![Go Report Card](https://goreportcard.com/badge/github.com/tevfik/gleann)](https://goreportcard.com/report/github.com/tevfik/gleann)
+[![Mentioned in Awesome Go](https://awesome.re/mentioned-badge.svg)](https://github.com/avelino/awesome-go#artificial-intelligence)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Go Reference](https://pkg.go.dev/badge/github.com/tevfik/gleann.svg)](https://pkg.go.dev/github.com/tevfik/gleann)
 [![codecov](https://codecov.io/gh/tevfik/gleann/branch/main/graph/badge.svg)](https://codecov.io/gh/tevfik/gleann)
