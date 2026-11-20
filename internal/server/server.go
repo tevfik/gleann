@@ -1852,12 +1852,39 @@ func configToMap(c gleann.Config) map[string]any {
 }
 
 func (s *Server) handleUpdateConfig(w http.ResponseWriter, r *http.Request) {
-	var newConfig gleann.Config
-	if err := json.NewDecoder(r.Body).Decode(&newConfig); err != nil {
+	body, err := io.ReadAll(r.Body)
+	if err != nil || !json.Valid(body) {
 		writeError(w, http.StatusBadRequest, "invalid config JSON")
 		return
 	}
-	if newConfig.MultimodalModel != "" {
+
+	// Serialise concurrent updates so the merge below always sees the config
+	// it is replacing.
+	configUpdateMu.Lock()
+	defer configUpdateMu.Unlock()
+
+	// The body is applied on top of the running config: a field it leaves
+	// out keeps its value. It used to be decoded into a zero Config, so a
+	// partial update reset everything else, the HNSW settings included (a
+	// zero HNSWConfig builds without the neighbour heuristic). The running
+	// config is copied through JSON so that decoding never writes into maps
+	// or slices it shares.
+	prev := s.cfg()
+	base, err := json.Marshal(prev)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "encoding the current config: "+err.Error())
+		return
+	}
+	var newConfig gleann.Config
+	if err := json.Unmarshal(base, &newConfig); err != nil {
+		writeError(w, http.StatusInternalServerError, "copying the current config: "+err.Error())
+		return
+	}
+	if err := json.Unmarshal(body, &newConfig); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid config JSON")
+		return
+	}
+	if newConfig.MultimodalModel != "" && newConfig.MultimodalModel != prev.MultimodalModel {
 		caps := multimodal.DetectCapabilities(newConfig.OllamaHost, newConfig.MultimodalModel)
 		if !caps.Vision {
 			writeError(w, http.StatusBadRequest, fmt.Sprintf("Model '%s' does not support vision capabilities. Please select a valid multimodal model (e.g., minicpm-v, llava).", newConfig.MultimodalModel))
@@ -1865,14 +1892,8 @@ func (s *Server) handleUpdateConfig(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Serialise concurrent updates so the sentinel merge below always sees
-	// the config it is replacing.
-	configUpdateMu.Lock()
-	defer configUpdateMu.Unlock()
-
 	// The web UI round-trips redacted secrets: the sentinel means "keep the
 	// current value", an empty string means "clear".
-	prev := s.cfg()
 	newConfig.RestoreRedactedSecrets(prev)
 	if err := newConfig.ApplyStorageMode(); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())

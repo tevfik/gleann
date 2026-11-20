@@ -45,6 +45,7 @@ func (b *LeannBuilder) DatabaseRecreated() bool { return b.dbRecreated }
 
 // NewBuilder creates a new LeannBuilder.
 func NewBuilder(config Config, embedder EmbeddingComputer) (*LeannBuilder, error) {
+	config = withIndexDefaults(config)
 	factory, err := GetBackend(config.Backend)
 	if err != nil {
 		return nil, fmt.Errorf("get backend: %w", err)

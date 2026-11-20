@@ -308,7 +308,7 @@ new version into the packs directory and call `POST /api/packs/reload`.
 | Method | Path | Description |
 |--------|------|-------------|
 | GET | `/api/config` | Get server configuration |
-| POST | `/api/config` | Update server configuration |
+| POST | `/api/config` | Update server configuration: the body is applied on top of the running config, so fields it leaves out keep their value (`""` clears a string) |
 | GET | `/api/logs` | Retrieve recent server logs |
 | GET | `/api/proxy/models` | List available models from configured provider |
 | GET | `/api/settings` | gleann's settings form: the fields the TUI settings screen edits, with their values and a `revision` (only when the server was started by the CLI) |

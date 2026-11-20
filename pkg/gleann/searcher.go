@@ -100,6 +100,7 @@ func (s *LeannSearcher) SetEstimatedSize(size int64) {
 
 // NewSearcher creates a new LeannSearcher.
 func NewSearcher(config Config, embedder EmbeddingComputer) *LeannSearcher {
+	config = withIndexDefaults(config)
 	return &LeannSearcher{
 		config:           config,
 		embedder:         embedder,

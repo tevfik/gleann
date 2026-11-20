@@ -267,3 +267,41 @@ func TestNewLogBuffer_KeepsNewestLines(t *testing.T) {
 		t.Error("GetLogs must return a copy")
 	}
 }
+
+// POST /api/config applies the body on top of the running config. It used to
+// decode into a zero Config, so a body with one field reset every other
+// setting, the HNSW graph settings included (heuristic off).
+func TestHandleUpdateConfig_PartialBodyKeepsTheRest(t *testing.T) {
+	isolateHome(t)
+	cfg := gleann.DefaultConfig()
+	cfg.IndexDir = t.TempDir()
+	cfg.OllamaHost = "http://ollama.test:11434"
+	cfg.OpenAIAPIKey = "sk-keep"
+	s := &Server{config: cfg, searchers: map[string]*gleann.LeannSearcher{}}
+
+	if w := postConfig(s, `{"llm_model":"m2"}`); w.Code != http.StatusOK {
+		t.Fatalf("status %d %s", w.Code, w.Body.String())
+	}
+	got := s.cfg()
+	if got.LLMModel != "m2" {
+		t.Errorf("llm_model = %q", got.LLMModel)
+	}
+	if got.HNSWConfig != cfg.HNSWConfig || !got.HNSWConfig.UseHeuristic {
+		t.Errorf("hnsw config changed: %+v", got.HNSWConfig)
+	}
+	if got.IndexDir != cfg.IndexDir || got.OllamaHost != cfg.OllamaHost || got.OpenAIAPIKey != "sk-keep" {
+		t.Errorf("other settings changed: index_dir %q ollama %q key %q", got.IndexDir, got.OllamaHost, got.OpenAIAPIKey)
+	}
+
+	// An explicit value still replaces, an explicit "" still clears.
+	if w := postConfig(s, `{"openai_api_key":"","hnsw_config":{"m":16,"ef_construction":100,"ef_search":64,"use_heuristic":false}}`); w.Code != http.StatusOK {
+		t.Fatalf("status %d %s", w.Code, w.Body.String())
+	}
+	got = s.cfg()
+	if got.OpenAIAPIKey != "" || got.HNSWConfig.M != 16 || got.HNSWConfig.UseHeuristic {
+		t.Errorf("explicit values not applied: key %q hnsw %+v", got.OpenAIAPIKey, got.HNSWConfig)
+	}
+	if got.LLMModel != "m2" {
+		t.Errorf("an earlier update was lost: llm_model %q", got.LLMModel)
+	}
+}

@@ -316,9 +316,22 @@ func TestConfigSecretsRoundTrip(t *testing.T) {
 		t.Fatal("sentinel was persisted to disk")
 	}
 
-	// Empty string clears (in memory and on disk).
-	got.OpenAIAPIKey = ""
-	post(got)
+	// Empty string clears (in memory and on disk). The key has to be in the
+	// body: the body is applied on top of the running config, and a field it
+	// leaves out keeps its value (marshalling gleann.Config drops the empty
+	// omitempty field, so a client like the web UI sends the key itself).
+	b, _ := json.Marshal(got)
+	var body map[string]any
+	if err := json.Unmarshal(b, &body); err != nil {
+		t.Fatal(err)
+	}
+	body["openai_api_key"] = ""
+	b, _ = json.Marshal(body)
+	w = httptest.NewRecorder()
+	h.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/api/config", bytes.NewReader(b)))
+	if w.Code != http.StatusOK {
+		t.Fatalf("POST config: %d %s", w.Code, w.Body.String())
+	}
 	if s.cfg().OpenAIAPIKey != "" {
 		t.Fatal("empty value should clear the secret")
 	}

@@ -600,6 +600,41 @@ func DefaultConfig() Config {
 	}
 }
 
+// withIndexDefaults fills the index-structure settings a caller left at
+// their zero value: the backend, the HNSW graph and the DiskANN parameters.
+// A zero HNSWConfig used to build with plain neighbour selection (the
+// heuristic is a bool, so zero means off) and to search with ef equal to the
+// number of results, which gave a much poorer index than DefaultConfig.
+//
+// An HNSWConfig that is entirely zero gets the DefaultConfig values; one the
+// caller set in part keeps its choices (an explicit use_heuristic false
+// stays false) and only zero M, efConstruction and efSearch are filled. The
+// same holds for DiskANNConfig. Search settings (top-k, hybrid alpha) are
+// not touched: hybrid alpha 0 is a valid choice (lexical only).
+func withIndexDefaults(c Config) Config {
+	def := DefaultConfig()
+	if c.Backend == "" {
+		c.Backend = def.Backend
+	}
+	if c.HNSWConfig == (HNSWConfig{}) {
+		c.HNSWConfig = def.HNSWConfig
+	} else {
+		if c.HNSWConfig.M <= 0 {
+			c.HNSWConfig.M = def.HNSWConfig.M
+		}
+		if c.HNSWConfig.EfConstruction <= 0 {
+			c.HNSWConfig.EfConstruction = def.HNSWConfig.EfConstruction
+		}
+		if c.HNSWConfig.EfSearch <= 0 {
+			c.HNSWConfig.EfSearch = def.HNSWConfig.EfSearch
+		}
+	}
+	if c.DiskANNConfig == (DiskANNConfig{}) {
+		c.DiskANNConfig = def.DiskANNConfig
+	}
+	return c
+}
+
 // MmapEnabled reports whether memory-mapping is enabled for vector indexes (default: true).
 // Top-level UseMmap takes precedence when set. When UseMmap is nil, it falls back
 // to the backend-specific setting (HNSWConfig.UseMmap or DiskANNConfig.UseMmap).
