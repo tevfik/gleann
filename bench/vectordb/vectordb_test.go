@@ -272,3 +272,58 @@ func TestFvecsIvecsRoundTrip(t *testing.T) {
 		}
 	}
 }
+
+// AddNearDuplicates replaces the requested share with near-copies of a few
+// base vectors, keeps them unit length, and changes the ground-truth cache
+// key so a plain dataset's cached truth is not reused.
+func TestAddNearDuplicates(t *testing.T) {
+	ds := vectordb.GenerateDataset(1000, 16, 5, 42)
+	plain := vectordb.GenerateDataset(1000, 16, 5, 42)
+	vectordb.AddNearDuplicates(ds, 0.3, 20, 7)
+	if ds.DupFraction != 0.3 {
+		t.Fatalf("DupFraction = %v", ds.DupFraction)
+	}
+	bases := map[int]bool{}
+	for i := 0; i < 300; i++ {
+		var norm float64
+		for _, x := range ds.Vectors[i] {
+			norm += float64(x) * float64(x)
+		}
+		if norm < 0.999 || norm > 1.001 {
+			t.Fatalf("vector %d has norm² %v", i, norm)
+		}
+		// each near-copy is within a tiny distance of one of the last 20 vectors
+		found := false
+		for b := 0; b < 20; b++ {
+			base := ds.Vectors[999-b]
+			var d float64
+			for j := range base {
+				diff := float64(base[j] - ds.Vectors[i][j])
+				d += diff * diff
+			}
+			if d < 1e-5 {
+				found, bases[b] = true, true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("vector %d is not a near-copy of a base vector", i)
+		}
+	}
+	if len(bases) < 10 {
+		t.Errorf("near-copies use only %d of 20 base vectors", len(bases))
+	}
+	if &ds.Vectors[300][0] == &plain.Vectors[300][0] || ds.Vectors[300][0] != plain.Vectors[300][0] {
+		t.Errorf("vectors after the replaced share must be unchanged")
+	}
+	dir := t.TempDir()
+	if _, err := vectordb.LoadOrComputeGroundTruth(dir, plain, "cosine"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := vectordb.LoadOrComputeGroundTruth(dir, ds, "cosine"); err != nil {
+		t.Fatal(err)
+	}
+	if files, _ := filepath.Glob(filepath.Join(dir, "truth_*")); len(files) != 2 {
+		t.Errorf("want separate truth caches for the plain and near-copy datasets, got %v", files)
+	}
+}

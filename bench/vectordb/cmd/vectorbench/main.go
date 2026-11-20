@@ -28,6 +28,7 @@ func main() {
 		results  = flag.String("results", "results", "directory for the JSON and markdown report")
 		workdir  = flag.String("workdir", "", "parent directory of the scratch databases (default: system temp)")
 		list     = flag.Bool("list", false, "list the registered stores and exit")
+		dup      = flag.Float64("dup", 0, "share of vectors replaced by near-copies of 20 base vectors (0-1), e.g. 0.3")
 	)
 	flag.Parse()
 
@@ -54,13 +55,14 @@ func main() {
 	}
 
 	cfg := vectordb.Config{
-		Sizes:   sizes,
-		Dims:    *dims,
-		Queries: *queries,
-		K:       *k,
-		Metric:  "cosine",
-		Stores:  names,
-		WorkDir: *workdir,
+		Sizes:       sizes,
+		Dims:        *dims,
+		Queries:     *queries,
+		K:           *k,
+		Metric:      "cosine",
+		Stores:      names,
+		WorkDir:     *workdir,
+		DupFraction: *dup,
 		Log: func(f string, a ...any) {
 			fmt.Fprintf(os.Stderr, f+"\n", a...)
 		},

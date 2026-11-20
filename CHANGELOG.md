@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+- **`bench/vectordb -dup`** replaces a share of the vectors with near-copies of 20 base vectors, the data on which graph indexes starve (license headers, boilerplate, repeated table text).
+
+### Fixed
+- **HNSW: nodes among near-duplicate vectors kept too few neighbours.** When the diversity heuristic picks fewer than M neighbours, the slots are meant to be filled with the closest remaining candidates, but that top-up required leftover candidates, which the heuristic never leaves when it stops short of M, so it never ran. Among near-copies (boilerplate, license headers, repeated table or chart text) the heuristic rejects almost every candidate: on 10K × 384 vectors with 60% near-copies of 20 base vectors, 79% of nodes had fewer than 32 level-0 neighbours, some only one, and recall@10 was 0.681 at ef 16. With the top-up every node keeps at least 32 and recall@10 is 0.911 (0.952 → 0.992 with 30% near-copies). Data without near-copies is barely affected: on 10K × 384 vectors the graph is the same; on 100K × 768, recall@10 rose from 0.828 to 0.849 at ef 16 and from 0.958 to 0.966 at ef 32, for 1.2% more build time and 0.3% more disk (bench/vectordb). On near-copy data the build takes about twice as long, because the graph is no longer starved of edges (`vectorbench -dup 0.3`: recall@10 0.920 → 0.963 at ef 16). Nodes added from now on get the top-up; `gleann index rebuild <name>` rebuilds an existing HNSW graph with it.
+- **HNSW: `SearchWithRecompute` could crash on a neighbour missing from the graph.** The upper-level greedy step moved to such a neighbour and then read its nil node. Missing neighbours are now skipped at every level, as `Search` does, and are not recomputed.
+
 ## [v1.20.1] — 2026-11-20
 
 See [docs/releases/v1.20.1.md](docs/releases/v1.20.1.md).

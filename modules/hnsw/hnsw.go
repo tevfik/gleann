@@ -361,13 +361,17 @@ func (g *Graph) SearchWithRecompute(query []float32, topK, ef int, recompute fun
 			changed = false
 			if lc < len(node.Neighbors) {
 				for _, neighborID := range node.Neighbors[lc] {
+					next, ok := g.nodes[neighborID]
+					if !ok {
+						continue // a neighbour without a node (removed): skip it, like Search
+					}
 					nVec := getEmbedding(neighborID)
 					if nVec == nil {
 						continue
 					}
 					if g.distFunc(query, nVec) < g.distFunc(query, epVec) {
 						ep = neighborID
-						node = g.nodes[ep]
+						node = next
 						epVec = nVec
 						changed = true
 					}
@@ -546,6 +550,11 @@ func (g *Graph) searchLevelWithRecompute(query []float32, entryID int64, ef, lev
 			}
 			visited[neighborID] = true
 
+			// A neighbour without a node (removed) is neither a result nor
+			// recomputed, as in searchLevel.
+			if _, ok := g.nodes[neighborID]; !ok {
+				continue
+			}
 			nVec := getEmbedding(neighborID)
 			if nVec == nil {
 				continue
@@ -624,8 +633,11 @@ func (g *Graph) selectNeighborsHeuristic(candidates []Candidate, m int) []Candid
 		}
 	}
 
-	// If we couldn't fill M slots with heuristic, fall back to closest remaining.
-	if len(selected) < m && len(remaining) > 0 {
+	// If the heuristic picked fewer than M, top up with the closest candidates
+	// not yet selected (keepPrunedConnections in the HNSW paper). The loop
+	// above only stops short of M once remaining is empty, so this must not
+	// require remaining candidates: it did, and never ran.
+	if len(selected) < m {
 		for _, c := range candidates {
 			if len(selected) >= m {
 				break

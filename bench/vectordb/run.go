@@ -21,7 +21,10 @@ type Config struct {
 	Metric  string   // distance metric (default "cosine")
 	Stores  []string // registered stores to benchmark
 	WorkDir string   // scratch directory; "" = os.TempDir
-	Log     func(format string, args ...any)
+	// DupFraction replaces this share of the vectors with near-copies of 20
+	// base vectors (AddNearDuplicates); 0 = plain Gaussian mixture.
+	DupFraction float64
+	Log         func(format string, args ...any)
 }
 
 func (c *Config) defaults() {
@@ -83,6 +86,10 @@ func Run(ctx context.Context, cfg Config) (*Report, error) {
 		// 1. Generate synthetic dataset
 		cfg.Log("Generating dataset (size=%d, dims=%d, queries=%d)...", size, cfg.Dims, cfg.Queries)
 		ds := GenerateDataset(size, cfg.Dims, cfg.Queries, 42)
+		if cfg.DupFraction > 0 {
+			cfg.Log("Replacing %.0f%% of the vectors with near-copies of 20 base vectors...", cfg.DupFraction*100)
+			AddNearDuplicates(ds, cfg.DupFraction, 20, 7)
+		}
 
 		// 2. Load or compute exact ground truth
 		cfg.Log("Computing/loading exact ground truth...")
@@ -92,10 +99,11 @@ func Run(ctx context.Context, cfg Config) (*Report, error) {
 		}
 
 		sizeRun := SizeRun{
-			Size:    size,
-			Dims:    cfg.Dims,
-			Queries: cfg.Queries,
-			K:       cfg.K,
+			Size:        size,
+			Dims:        cfg.Dims,
+			Queries:     cfg.Queries,
+			K:           cfg.K,
+			DupFraction: cfg.DupFraction,
 		}
 
 		for _, name := range cfg.Stores {

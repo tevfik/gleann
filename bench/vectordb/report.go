@@ -81,11 +81,13 @@ type StoreResult struct {
 
 // SizeRun groups results across stores for a given vector count.
 type SizeRun struct {
-	Size    int            `json:"size"`
-	Dims    int            `json:"dims"`
-	Queries int            `json:"queries"`
-	K       int            `json:"k"`
-	Results []*StoreResult `json:"results"`
+	Size    int `json:"size"`
+	Dims    int `json:"dims"`
+	Queries int `json:"queries"`
+	K       int `json:"k"`
+	// DupFraction is the share of near-copy vectors (0 = plain dataset).
+	DupFraction float64        `json:"dup_fraction,omitempty"`
+	Results     []*StoreResult `json:"results"`
 }
 
 // Report records the entire benchmark run.
@@ -133,7 +135,11 @@ func (r *Report) Markdown() string {
 	}
 
 	for _, sz := range r.Sizes {
-		fmt.Fprintf(&sb, "\n## %d vectors · %d dims · %d queries · k=%d\n", sz.Size, sz.Dims, sz.Queries, sz.K)
+		dup := ""
+		if sz.DupFraction > 0 {
+			dup = fmt.Sprintf(" · %.0f%% near-copies", sz.DupFraction*100)
+		}
+		fmt.Fprintf(&sb, "\n## %d vectors · %d dims · %d queries · k=%d%s\n", sz.Size, sz.Dims, sz.Queries, sz.K, dup)
 
 		cols := func(cell func(*StoreResult) string) string {
 			var s strings.Builder

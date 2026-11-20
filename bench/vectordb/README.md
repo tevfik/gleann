@@ -49,6 +49,7 @@ make bench-vectordb [VECTORDB_SIZES=10000] [VECTORDB_DIMS=384] [VECTORDB_TAGS=<a
 - `-k`: top-k nearest neighbors (default: `10`).
 - `-results`: output directory for JSON and Markdown reports (default: `results/`).
 - `-workdir`: parent directory for scratch databases (default: system temp).
+- `-dup`: share of vectors (0-1) replaced by near-copies of 20 base vectors, as in real corpora with license headers, boilerplate or repeated table text (default: `0`). Graph indexes whose neighbour selection rejects candidates that are closer to each other than to the node can starve on such data; `-dup 0.3` or `0.6` shows it.
 - `-list`: list registered stores and exit.
 
 ## What is measured

@@ -17,6 +17,33 @@ type Dataset struct {
 	Vectors [][]float32
 	Metas   []Meta
 	Queries [][]float32
+	// DupFraction is the share of vectors replaced by near-copies
+	// (AddNearDuplicates); 0 for a plain dataset.
+	DupFraction float64
+}
+
+// AddNearDuplicates replaces the first frac of the vectors with near-copies
+// of a few base vectors taken from the end of the set (tiny Gaussian noise,
+// renormalised). Real corpora hold such near-copies (license headers,
+// boilerplate, repeated table or chart text); they starve graph indexes
+// whose neighbour selection rejects candidates closer to each other than to
+// the node. Deterministic for a given seed; the metadata is kept.
+func AddNearDuplicates(ds *Dataset, frac float64, bases int, seed int64) {
+	n := int(frac * float64(len(ds.Vectors)))
+	if n <= 0 || bases <= 0 || bases >= len(ds.Vectors) {
+		return
+	}
+	r := rand.New(rand.NewSource(seed))
+	for i := 0; i < n; i++ {
+		base := ds.Vectors[len(ds.Vectors)-1-r.Intn(bases)]
+		v := make([]float32, len(base))
+		for j := range v {
+			v[j] = base[j] + float32(r.NormFloat64()*1e-4)
+		}
+		unitNormalize(v)
+		ds.Vectors[i] = v
+	}
+	ds.DupFraction = frac
 }
 
 // GenerateDataset creates a synthetic dataset using a deterministic seeded

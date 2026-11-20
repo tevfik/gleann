@@ -255,3 +255,72 @@ func TestAddVectorsToFloat16IndexMixesStorage(t *testing.T) {
 		}
 	}
 }
+
+// When the diversity heuristic picks fewer than M neighbours, the remaining
+// slots are filled with the closest candidates not yet chosen. The top-up
+// used to require leftover candidates, which the heuristic loop never leaves
+// when it stops short of M, so it never ran and nodes kept fewer than M.
+func TestSelectNeighborsHeuristicTopsUpToM(t *testing.T) {
+	g := NewGraphWithOptions(3, 10, 2, L2DistanceSquared, true)
+	g.nodes[1] = &Node{ID: 1, Vector: []float32{1, 0}}
+	g.nodes[2] = &Node{ID: 2, Vector: []float32{1.1, 0}}
+	g.nodes[3] = &Node{ID: 3, Vector: []float32{1.2, 0}}
+	g.nodes[10] = &Node{ID: 10, Vector: []float32{10, 0}}
+	// 2 and 3 are nearer to 1 than to the query: the heuristic keeps 1 and 10.
+	cands := []Candidate{{ID: 1, Distance: 1}, {ID: 2, Distance: 1.21}, {ID: 3, Distance: 1.44}, {ID: 10, Distance: 81}}
+
+	got := g.selectNeighbors(cands, 3)
+	if len(got) != 3 {
+		t.Fatalf("selectNeighbors(M=3) = %v, want 3 neighbours", got)
+	}
+	seen := map[int64]bool{}
+	for _, c := range got {
+		if seen[c.ID] {
+			t.Fatalf("duplicate neighbour %d in %v", c.ID, got)
+		}
+		seen[c.ID] = true
+	}
+	if !seen[1] || !seen[10] || !seen[2] {
+		t.Errorf("got %v, want the heuristic's 1 and 10 plus the closest leftover 2", got)
+	}
+}
+
+// An upper-level neighbour of the entry point that is missing from the node
+// table must be skipped by SearchWithRecompute. It used to become the new
+// entry point (the recompute callback still had a vector for it), and the
+// next step dereferenced its nil node.
+func TestSearchWithRecomputeSkipsVanishedUpperNode(t *testing.T) {
+	g := NewGraph(4, 40, 2)
+	vec := func(id int64) []float32 { return []float32{float32(id % 17), float32(id * 3 % 11)} }
+	for i := int64(0); i < 300; i++ {
+		g.Insert(i, vec(i))
+	}
+	ep, _ := g.GetNode(g.GetEntryPoint())
+	var victim int64 = -1
+	for lc := g.MaxLevel(); lc > 0 && victim < 0; lc-- {
+		if lc < len(ep.Neighbors) && len(ep.Neighbors[lc]) > 0 {
+			victim = ep.Neighbors[lc][0]
+		}
+	}
+	if victim < 0 {
+		t.Skip("test setup: the entry point has no upper-level neighbour")
+	}
+	delete(g.nodes, victim)
+	recompute := func(ids []int64) [][]float32 {
+		out := make([][]float32, len(ids))
+		for i, id := range ids {
+			out[i] = vec(id)
+		}
+		return out
+	}
+	// Query at the vanished node: the greedy step would move to it.
+	got := g.SearchWithRecompute(vec(victim), 5, 20, recompute)
+	if len(got) == 0 {
+		t.Fatal("SearchWithRecompute found nothing")
+	}
+	for _, c := range got {
+		if c.ID == victim {
+			t.Fatalf("returned the vanished node %d", victim)
+		}
+	}
+}
