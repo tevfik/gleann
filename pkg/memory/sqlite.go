@@ -503,7 +503,7 @@ func blockSeqTx(tx *sql.Tx, id string) (int64, error) {
 // getBlockTx reads a block inside a write transaction, so Add's deduplication
 // sees the same snapshot it writes (RFC 003 section 3.5). It returns nil when
 // the block is absent.
-func getBlockTx(tx *sql.Tx, id string) (*Block, int64, error) {
+func getBlockTx(tx rowQuerier, id string) (*Block, int64, error) {
 	var sc blockScan
 	var seq int64
 	err := tx.QueryRow(`SELECT seq, `+blockCols+` FROM blocks WHERE id = ?`, id).

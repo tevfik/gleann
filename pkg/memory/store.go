@@ -1,7 +1,6 @@
 package memory
 
 import (
-	"crypto/sha256"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -140,14 +139,32 @@ func (s *Store) Path() string {
 
 // Add stores a new memory block. Short-term blocks are kept in-memory;
 // medium and long-term blocks are persisted to SQLite.
-// If an identical block already exists (same content, scope, tier), it is deduplicated
-// by reinforcing confidence (Confirms++) and merging any tags or provenance.
+// If an identical block already exists (same content up to case, whitespace
+// and surrounding punctuation, same scope and tier), or a near-identical one
+// (token Jaccard above a conservative threshold, see nearThreshold), it is
+// deduplicated by reinforcing confidence (Confirms++) and merging any tags or
+// provenance; *block is then overwritten with the existing block, so callers
+// see its ID. When the new text is the old text plus extra words, the longer
+// new text replaces the content (the ID is kept), so added detail is not lost. Negations, differing numbers and failure blocks are never merged
+// as near duplicates. GLEANN_MEMORY_NEAR_DEDUP=off disables the similarity
+// step. Blocks stored under an older ID formula are still found.
 // For persisted blocks the read-then-write runs inside one BEGIN IMMEDIATE
 // transaction, so several agent processes writing concurrently cannot
 // interleave the deduplication (RFC 003 section 3.5).
 func (s *Store) Add(block *Block) error {
 	if block.ID == "" {
 		block.ID = generateBlockID(block)
+	}
+	if block.Tier == TierShort {
+		if i, sup := s.findDuplicateShort(block); i >= 0 && s.shortTerm[i].ID != block.ID {
+			existing := &s.shortTerm[i]
+			mergeDuplicate(existing, block)
+			if sup {
+				existing.Content = block.Content
+			}
+			*block = *existing
+			return nil
+		}
 	}
 
 	// Check if block already exists with this ID in the same tier for deduplication.
@@ -183,8 +200,23 @@ func (s *Store) Add(block *Block) error {
 		if err != nil {
 			return err
 		}
+		supersede := false
+		if existing == nil || existing.Tier != block.Tier {
+			// No ID hit: look for the same fact under the legacy ID formula
+			// or with different wording (RFC: no migration of stored IDs).
+			dup, dseq, sup, err := findDuplicateQ(tx, block)
+			if err != nil {
+				return err
+			}
+			if dup != nil {
+				existing, seq, supersede = dup, dseq, sup
+			}
+		}
 		if existing != nil && existing.Tier == block.Tier {
 			mergeDuplicate(existing, block)
+			if supersede {
+				existing.Content = block.Content
+			}
 			*block = *existing
 			if err := updateBlockTx(tx, existing); err != nil {
 				return err
@@ -740,17 +772,6 @@ func (s *Store) BuildContext() (*ContextWindow, error) {
 }
 
 // ── Helpers ───────────────────────────────────────────────────────
-
-func generateBlockID(block *Block) string {
-	h := sha256.New()
-	norm := strings.ToLower(strings.TrimSpace(block.Content))
-	h.Write([]byte(norm))
-	h.Write([]byte("|"))
-	h.Write([]byte(block.Scope))
-	h.Write([]byte("|"))
-	h.Write([]byte(string(block.Tier)))
-	return fmt.Sprintf("%x", h.Sum(nil))[:16]
-}
 
 // MarkSuspect flags any stored memory blocks whose Paths or Symbols intersect
 // with the provided changed files or changed symbols. Returns the number of blocks marked suspect.

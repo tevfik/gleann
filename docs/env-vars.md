@@ -109,6 +109,8 @@ Rate-limited requests receive `429 Too Many Requests` with a `Retry-After: 1` he
 |----------|---------|-------------|
 | `GLEANN_BLOCK_CHAR_LIMIT` | `0` (unlimited) | Default character limit for memory blocks. When set, new blocks are auto-truncated if they exceed this limit |
 | `GLEANN_MEMORY_MAX_TOKENS` | `4000` | Cap on the memory injected into prompts and compiled context windows, in estimated tokens (~4 chars/token). `0` disables the cap. Over budget, whole blocks drop lowest-priority first (short, then medium, then long; older and less-accessed first). Also settable as `MaxContextTokens` on `memory.Manager` |
+| `GLEANN_MEMORY_SEARCH_FLOOR` | on | Retrieval floor of memory search (`gleann memory search`, REST `/api/blocks/search`, MCP `memory_search`, `Manager.Search`/`SearchScoped`). On, a block matches only if it contains the query verbatim or at least `min(2, ceil(0.35 * n))` of the `n` topic words of the query (a one-word query needs that word), and hits scoring below 25% of the best non-phrase hit are dropped, so unrelated queries return nothing instead of loose one-word matches. `off`, `0` or `false` restores the old any-word matching |
+| `GLEANN_MEMORY_NEAR_DEDUP` | on | Near-duplicate merging when a memory is written (`Remember`, REST `POST /api/blocks`, MCP `memory_remember`). On, a new block whose words overlap an existing block of the same scope and tier (token Jaccard 1.0 up to 3 distinct words, 0.8 up to 6, 0.7 above; never across differing negations or numbers) reinforces that block (`Confirms`+1) and the existing block is returned. Memories that are the same up to case, whitespace and surrounding punctuation are always merged. `off`, `0` or `false` disables only the similarity step |
 
 ## MCP Server Settings
 

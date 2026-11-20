@@ -274,12 +274,17 @@ func (e *SleepTimeEngine) Reflect(ctx context.Context, dryRun bool) (*ChangeSet,
 				}
 			}
 
-			// Check if this is a newly added block or deduplicated on existing.
-			var existing *Block
+			// A block is new only if the store holds nothing it would merge
+			// into: neither the same ID nor an exact or near duplicate (Add
+			// folds those into the existing block). Recording a merged block
+			// as added would let RevertReflection delete the user's own block.
+			origID := blocks[i].ID
+			isNew := true
 			if e.manager != nil && e.manager.Store() != nil {
-				existing, _ = e.manager.Store().Get(blocks[i].ID)
+				if existing, err := e.manager.Store().FindDuplicate(&blocks[i]); err != nil || existing != nil {
+					isNew = false
+				}
 			}
-			isNew := (existing == nil)
 
 			if !dryRun && e.manager != nil {
 				saved, err := e.manager.RememberBlock(&blocks[i])
@@ -287,7 +292,9 @@ func (e *SleepTimeEngine) Reflect(ctx context.Context, dryRun bool) (*ChangeSet,
 					log.Printf("sleep-time: remember block: %v", err)
 					continue
 				}
-				if isNew {
+				// Add rewrites the block to the one it merged into, so a
+				// merge shows up as a different ID than the one computed above.
+				if isNew && saved.ID == origID {
 					cs.BlocksAdded = append(cs.BlocksAdded, saved.ID)
 					cs.AddedDetails = append(cs.AddedDetails, *saved)
 				}

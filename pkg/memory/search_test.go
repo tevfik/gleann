@@ -80,7 +80,9 @@ func TestSearch_Ranked(t *testing.T) {
 			name:   "more matching terms first",
 			blocks: []Block{{Content: "deploy notes"}, {Content: "deploy staging notes only"}, {Content: "deploy staging database notes"}},
 			query:  "deploy staging database",
-			want:   []string{"deploy staging database notes", "deploy staging notes only", "deploy notes"},
+			// "deploy notes" shares one of three query tokens: below the
+			// retrieval floor (it used to be returned last).
+			want: []string{"deploy staging database notes", "deploy staging notes only"},
 		},
 		{
 			name:   "phrase match outranks denser non-phrase match",
