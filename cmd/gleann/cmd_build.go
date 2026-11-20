@@ -533,6 +533,7 @@ Options:
 	}
 
 	watcher.Start(ctx)
+	watchReady()
 
 	// Rate-limited rebuilder loop
 	for {
@@ -589,6 +590,12 @@ Options:
 var watchNotify = func(stop chan<- os.Signal) {
 	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
 }
+
+// watchReady is called once `index watch` has finished its initial sync and
+// watches the directory. Tests replace it to change files only from then on:
+// a file written during the initial sync is indexed by that sync, not by the
+// watcher, and a test waiting for the watcher would then race it.
+var watchReady = func() {}
 
 // cmdSync performs an on-demand incremental synchronization of an index.
 // It checks which files have been modified, added, or deleted in the workspace,

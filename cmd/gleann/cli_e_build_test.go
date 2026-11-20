@@ -225,13 +225,21 @@ func TestCLIEWatchUpdatesOnChange(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	orig := watchNotify
-	t.Cleanup(func() { watchNotify = orig })
-	// Once the watcher runs, keep writing new files until the index grows,
-	// then stop it. The deadline only guards against a watcher that never
-	// reacts; the assertions below then fail.
+	orig, origReady := watchNotify, watchReady
+	t.Cleanup(func() { watchNotify, watchReady = orig, origReady })
+	// Once the watcher watches (after its initial sync), keep writing new
+	// files until the index grows, then stop it. Writing earlier raced the
+	// initial sync, which then indexed the file itself (seen on Windows).
+	// The deadline only guards against a watcher that never reacts; the
+	// assertions below then fail.
+	ready := make(chan struct{})
+	watchReady = func() { close(ready) }
 	watchNotify = func(stop chan<- os.Signal) {
 		go func() {
+			select {
+			case <-ready:
+			case <-time.After(60 * time.Second):
+			}
 			deadline := time.Now().Add(60 * time.Second)
 			tick := time.NewTicker(150 * time.Millisecond)
 			defer tick.Stop()
