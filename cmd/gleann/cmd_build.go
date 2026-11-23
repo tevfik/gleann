@@ -115,9 +115,9 @@ Examples:
 }
 
 func cmdBuild(args []string) {
-	if len(args) < 1 || hasFlag(args, "--help") || hasFlag(args, "-h") {
+	if len(args) < 1 || wantsHelpIn(args, buildFlags) {
 		printBuildUsage()
-		if hasFlag(args, "--help") || hasFlag(args, "-h") {
+		if wantsHelpIn(args, buildFlags) {
 			return
 		}
 		exitFunc(1)
@@ -364,8 +364,8 @@ func dualPassArgs(args []string, name, passName, passMode, passModel string) []s
 // are kept unless a flag overrides them. It also replaces an index in the old
 // store format (RFC 004 B3).
 func cmdRebuild(args []string) {
-	if len(args) < 1 || hasFlag(args, "--help") || hasFlag(args, "-h") {
-		if hasFlag(args, "--help") || hasFlag(args, "-h") {
+	if len(args) < 1 || wantsHelpIn(args, buildFlags) {
+		if wantsHelpIn(args, buildFlags) {
 			fmt.Println(`Usage: gleann index rebuild <name> [--docs <dir>] [options]
 
 Remove and completely rebuild an index from scratch (re-embeds every passage).
@@ -452,8 +452,8 @@ func rebuildArgs(args []string, indexDir, name string) []string {
 }
 
 func cmdWatch(args []string) {
-	if len(args) < 1 || hasFlag(args, "--help") || hasFlag(args, "-h") {
-		if hasFlag(args, "--help") || hasFlag(args, "-h") {
+	if len(args) < 1 || wantsHelpIn(args, indexFlagSets["watch"]) {
+		if wantsHelpIn(args, indexFlagSets["watch"]) {
 			fmt.Println(`Usage: gleann index watch <name> --docs <dir> [options]
 
 Watch a source directory and automatically re-index on file changes.
@@ -673,9 +673,9 @@ var watchReady = func() {}
 //
 //	gleann index sync <name> [--docs <dir>] [--files <file1,file2>] [--graph]
 func cmdSync(args []string) {
-	if len(args) < 1 || hasFlag(args, "--help") || hasFlag(args, "-h") {
+	if len(args) < 1 || wantsHelpIn(args, indexFlagSets["sync"]) {
 		fmt.Fprintln(os.Stderr, "usage: gleann index sync <name> [--docs <dir>] [--files <file1,file2>] [--graph] [--mode code|docs|all] [--no-plugins] [--progress plain|json|none]")
-		if hasFlag(args, "--help") || hasFlag(args, "-h") {
+		if wantsHelpIn(args, indexFlagSets["sync"]) {
 			return
 		}
 		exitFunc(1)

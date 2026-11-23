@@ -12,8 +12,8 @@ import (
 )
 
 func cmdRemove(args []string) {
-	if len(args) < 1 || hasFlag(args, "--help") || hasFlag(args, "-h") {
-		if hasFlag(args, "--help") || hasFlag(args, "-h") {
+	if len(args) < 1 || wantsHelpIn(args, indexFlagSets["remove"]) {
+		if wantsHelpIn(args, indexFlagSets["remove"]) {
 			fmt.Println(`Usage: gleann index remove <name1> [name2] ... or gleann index remove "<prefix>*"
 
 Remove one or more indexes and all associated vector and graph storage.
@@ -130,9 +130,9 @@ func cmdTUI() {
 
 // cmdTag manages index tags: gleann index tag <name> [--add <tags>] [--remove <tags>] [--set <tags>] [--clear]
 func cmdTag(args []string) {
-	if len(args) < 1 || hasFlag(args, "--help") || hasFlag(args, "-h") {
+	if len(args) < 1 || wantsHelpIn(args, indexFlagSets["tag"]) {
 		fmt.Fprintln(os.Stderr, "usage: gleann index tag <name> [--add <tags>] [--remove <tags>] [--set <tags>] [--clear]")
-		if hasFlag(args, "--help") || hasFlag(args, "-h") {
+		if wantsHelpIn(args, indexFlagSets["tag"]) {
 			return
 		}
 		exitFunc(1)
@@ -226,9 +226,9 @@ func cmdTag(args []string) {
 
 // cmdSet updates index properties: gleann index set <name> [--public | --private] [--mcp=true|false] [--desc "description"]
 func cmdSet(args []string) {
-	if len(args) < 1 || hasFlag(args, "--help") || hasFlag(args, "-h") {
+	if len(args) < 1 || wantsHelpIn(args, indexFlagSets["set"]) {
 		fmt.Fprintln(os.Stderr, "usage: gleann index set <name> [--public | --private] [--mcp=true|false] [--desc <text>]")
-		if hasFlag(args, "--help") || hasFlag(args, "-h") {
+		if wantsHelpIn(args, indexFlagSets["set"]) {
 			return
 		}
 		exitFunc(1)

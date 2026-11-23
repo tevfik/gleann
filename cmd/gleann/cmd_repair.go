@@ -42,7 +42,7 @@ Options:
 
 // cmdRepair implements `gleann index repair <name>|--all [--check]`.
 func cmdRepair(args []string) {
-	if hasFlag(args, "--help") || hasFlag(args, "-h") {
+	if wantsHelpIn(args, indexFlagSets["repair"]) {
 		printRepairUsage()
 		return
 	}

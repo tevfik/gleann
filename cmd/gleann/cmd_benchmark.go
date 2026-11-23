@@ -27,6 +27,10 @@ import (
 // 2. Token reduction analysis (--docs <dir> without --suite)
 func cmdBenchmark(args []string) {
 	rejectUnknownFlags("benchmark", args, benchFlags)
+	if wantsHelpIn(args, benchFlags) {
+		printBenchmarkUsage()
+		return
+	}
 	config := getConfig(args)
 	applySavedConfig(&config, args)
 

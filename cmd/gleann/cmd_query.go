@@ -31,7 +31,7 @@ var (
 )
 
 func cmdList(args []string) {
-	if hasFlag(args, "--help") || hasFlag(args, "-h") {
+	if wantsHelpIn(args, indexFlagSets["list"]) {
 		fmt.Println(`Usage: gleann index list [options]
 
 List all available vector indexes with stats, tags, and MCP status.
@@ -130,8 +130,8 @@ Options:
 }
 
 func cmdInfo(args []string) {
-	if len(args) < 1 || hasFlag(args, "--help") || hasFlag(args, "-h") {
-		if hasFlag(args, "--help") || hasFlag(args, "-h") {
+	if len(args) < 1 || wantsHelpIn(args, indexFlagSets["info"]) {
+		if wantsHelpIn(args, indexFlagSets["info"]) {
 			fmt.Println(`Usage: gleann index info <name> [--json]
 
 Show detailed metadata, backend, and passage count for an index.

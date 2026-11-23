@@ -238,3 +238,83 @@ func TestGraphHookSilentWithoutIndex(t *testing.T) {
 		t.Errorf("hook without a gleann binary printed:\n%s", out)
 	}
 }
+
+// helpSweepCases lists every command whose help check is wantsHelpIn with the
+// command's own flag set. pos are the positional arguments the command takes
+// (so that "<cmd> <pos> -h" is checked); valueFlag is a value-taking flag of
+// the command ("" when the command has none).
+var helpSweepCases = []struct {
+	name      string
+	cmd       []string
+	pos       []string
+	valueFlag string
+}{
+	{"agents", []string{"agents"}, []string{"dump"}, "--dir"},
+	{"index build", []string{"index", "build"}, []string{"idx"}, "--docs"},
+	{"index rebuild", []string{"index", "rebuild"}, []string{"idx"}, "--docs"},
+	{"index watch", []string{"index", "watch"}, []string{"idx"}, "--interval"},
+	{"index sync", []string{"index", "sync"}, []string{"idx"}, "--files"},
+	{"def", []string{"def"}, []string{"Sym"}, "--index"},
+	{"install", []string{"install"}, []string{"uninstall"}, "--dir"},
+	{"index remove", []string{"index", "remove"}, []string{"idx"}, "--index-dir"},
+	{"index tag", []string{"index", "tag"}, []string{"idx"}, "--add"},
+	{"index set", []string{"index", "set"}, []string{"idx"}, "--desc"},
+	{"index migrate", []string{"index", "migrate"}, []string{"idx"}, "--language"},
+	{"multimodal analyze", []string{"multimodal", "analyze"}, []string{"x.png"}, "--model"},
+	{"index list", []string{"index", "list"}, nil, "--tag"},
+	{"index info", []string{"index", "info"}, []string{"idx"}, "--index-dir"},
+	{"index repair", []string{"index", "repair"}, []string{"idx"}, "--progress"},
+	{"search", []string{"search"}, []string{"idx", "query"}, "--kind"},
+	// --quiet skips the model pull and the closed port makes the Ollama
+	// probe fail at once, so no real service is contacted.
+	{"serve", []string{"serve"}, []string{"--quiet", "--host", "http://127.0.0.1:1"}, "--port"},
+	{"benchmark", []string{"benchmark"}, []string{"--quiet", "--host", "http://127.0.0.1:1"}, "--index"},
+	{"index storage", []string{"index", "storage"}, []string{"idx"}, "--set"},
+	// No value-taking flag: only the help requests are checked.
+	{"uninstall", []string{"uninstall"}, nil, ""},
+	{"completion", []string{"completion"}, []string{"bash"}, ""},
+	{"tokens", []string{"tokens"}, []string{"."}, ""},
+}
+
+// TestHelpSweepValueIsNotHelp: for every command that checks help with
+// wantsHelpIn, "-h" and "--help" print the usage (also after a positional),
+// and "-h" as the value of the command's own value-taking flag does not.
+func TestHelpSweepValueIsNotHelp(t *testing.T) {
+	for _, tc := range helpSweepCases {
+		t.Run(tc.name, func(t *testing.T) {
+			// A command that runs on after "--flag -h" finds an empty home and
+			// working directory and reaches no real service (OLLAMA_HOST is the harness fake; serve and benchmark also get a closed --host).
+			newCLIEnv(t)
+			run := func(extra ...string) string {
+				args := append(append([]string{}, tc.cmd...), extra...)
+				return captureHelp(t, mainWith(args...))
+			}
+
+			help := run("-h")
+			marker := ""
+			for _, l := range strings.Split(help, "\n") {
+				if strings.TrimSpace(l) != "" {
+					marker = strings.TrimSpace(l)
+					break
+				}
+			}
+			if marker == "" {
+				t.Fatalf("%s -h printed nothing", tc.name)
+			}
+			if out := run("--help"); !strings.Contains(out, marker) {
+				t.Errorf("%s --help: want usage %q, got:\n%s", tc.name, marker, out)
+			}
+			if len(tc.pos) > 0 {
+				if out := run(append(append([]string{}, tc.pos...), "-h")...); !strings.Contains(out, marker) {
+					t.Errorf("%s %v -h: want usage %q, got:\n%s", tc.name, tc.pos, marker, out)
+				}
+			}
+			if tc.valueFlag != "" {
+				args := append(append([]string{}, tc.pos...), tc.valueFlag, "-h")
+				if out := run(args...); strings.Contains(out, marker) {
+					t.Errorf("%s %s -h printed the usage although -h is the flag's value:\n%s", tc.name, tc.valueFlag, out)
+				}
+			}
+		})
+	}
+}

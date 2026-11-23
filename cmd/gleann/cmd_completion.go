@@ -8,10 +8,10 @@ import (
 )
 
 func cmdCompletion(args []string) {
-	if !wantsHelp(args) {
+	if !wantsHelpIn(args, flagSet{}) {
 		rejectUnknownFlags("completion", args, flagSet{})
 	}
-	if len(args) == 0 || wantsHelp(args) {
+	if len(args) == 0 || wantsHelpIn(args, flagSet{}) {
 		out := os.Stderr
 		if len(args) > 0 {
 			out = os.Stdout

@@ -42,7 +42,7 @@ func cmdMultimodal(args []string) {
 
 func cmdMultimodalAnalyze(args []string) {
 	rejectUnknownFlags("multimodal analyze", args, configFlags)
-	if hasFlag(args, "--help") || hasFlag(args, "-h") {
+	if wantsHelpIn(args, configFlags) {
 		printMultimodalUsage()
 		return
 	}

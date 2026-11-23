@@ -38,7 +38,7 @@ Options:
 // cmdMigrate implements `gleann index migrate <name>|--all [--graph]
 // [--cleanup]` (RFC 004 B3).
 func cmdMigrate(args []string) {
-	if hasFlag(args, "--help") || hasFlag(args, "-h") {
+	if wantsHelpIn(args, indexFlagSets["migrate"]) {
 		printMigrateUsage()
 		return
 	}

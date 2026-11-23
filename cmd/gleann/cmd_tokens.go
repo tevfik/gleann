@@ -14,7 +14,7 @@ import (
 )
 
 func cmdTokens(args []string) {
-	if wantsHelp(args) {
+	if wantsHelpIn(args, flagSet{}) {
 		printTokensUsage()
 		return
 	}

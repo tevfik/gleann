@@ -14,7 +14,7 @@ var runUninstall = tui.RunUninstall
 
 func cmdUninstall(args []string) {
 	rejectUnknownFlags("uninstall", args, uninstallFlags)
-	if hasFlag(args, "--help") || hasFlag(args, "-h") {
+	if wantsHelpIn(args, uninstallFlags) {
 		printUninstallUsage()
 		return
 	}

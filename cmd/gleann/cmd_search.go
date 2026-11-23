@@ -109,8 +109,8 @@ Examples:
 }
 
 func cmdSearch(args []string) {
-	if len(args) < 2 || hasFlag(args, "--help") || hasFlag(args, "-h") {
-		if hasFlag(args, "--help") || hasFlag(args, "-h") {
+	if len(args) < 2 || wantsHelpIn(args, searchFlags) {
+		if wantsHelpIn(args, searchFlags) {
 			printSearchUsage()
 			return
 		}

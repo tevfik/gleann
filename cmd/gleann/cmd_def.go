@@ -34,9 +34,9 @@ Examples:
 
 func cmdDef(args []string) {
 	rejectUnknownFlags("def", args, defFlags)
-	if len(args) < 1 || hasFlag(args, "--help") || hasFlag(args, "-h") {
+	if len(args) < 1 || wantsHelpIn(args, defFlags) {
 		printDefUsage()
-		if hasFlag(args, "--help") || hasFlag(args, "-h") {
+		if wantsHelpIn(args, defFlags) {
 			return
 		}
 		exitFunc(1)

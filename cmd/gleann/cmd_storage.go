@@ -34,7 +34,7 @@ vectors and cannot be switched.
   gleann index storage docs --set store        # make it fast again`
 
 func cmdStorage(args []string) {
-	if hasFlag(args, "--help") || hasFlag(args, "-h") {
+	if wantsHelpIn(args, indexFlagSets["storage"]) {
 		fmt.Println(storageUsage)
 		return
 	}

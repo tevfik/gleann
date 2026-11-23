@@ -21,7 +21,7 @@ import (
 
 func cmdServe(args []string) {
 	rejectUnknownFlags("serve", args, serveFlags)
-	if hasFlag(args, "--help") || hasFlag(args, "-h") {
+	if wantsHelpIn(args, serveFlags) {
 		fmt.Println(`Usage: gleann serve [options]
 
 Start the Gleann REST API server, Swagger UI, OpenAI-compatible proxy, and A2A service.

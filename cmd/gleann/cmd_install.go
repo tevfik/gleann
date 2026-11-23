@@ -271,7 +271,7 @@ func platformByName(name string) *Platform {
 // cmdInstall implements `gleann install [--platform <name>] [--dir <path>] [uninstall] [--list]`
 func cmdInstall(args []string) {
 	rejectUnknownFlags("install", args, installFlags)
-	if hasFlag(args, "--help") || hasFlag(args, "-h") {
+	if wantsHelpIn(args, installFlags) {
 		printInstallUsage()
 		return
 	}

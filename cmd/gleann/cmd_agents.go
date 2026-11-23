@@ -100,7 +100,7 @@ func getAgentsMDContent(indexName string) string {
 //	gleann agents [dump] [--dir <dir>] [--index <name>] [--stdout] [--force]
 func cmdAgents(args []string) {
 	rejectUnknownFlags("agents", args, agentsFlags)
-	if hasFlag(args, "--help") || hasFlag(args, "-h") {
+	if wantsHelpIn(args, agentsFlags) {
 		printAgentsUsage()
 		return
 	}
