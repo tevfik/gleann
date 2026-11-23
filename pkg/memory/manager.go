@@ -106,6 +106,10 @@ func (m *Manager) RememberBlock(block *Block) (*Block, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
+	// Canonicalize scope identifiers before dedup/contradiction checks so
+	// padded spellings merge with their normalized siblings.
+	normalizeBlockScopes(block)
+
 	m.applyDefaults(block)
 
 	// Check for contradictions with existing long-term blocks.
@@ -273,6 +277,7 @@ func (m *Manager) AddScopedNote(scope string, tier Tier, label, content string, 
 		Tags:    tags,
 		Scope:   scope,
 	}
+	normalizeBlockScopes(block)
 
 	if tier == TierShort && m.ShortTermTTL > 0 {
 		exp := time.Now().Add(m.ShortTermTTL)
@@ -320,6 +325,11 @@ func (m *Manager) SearchScoped(scope, query string) ([]Block, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
+	scope = NormalizeScope(scope)
+	if IsAllScopesSentinel(scope) {
+		scope = ""
+	}
+
 	all, err := m.store.List("")
 	if err != nil {
 		return nil, err
@@ -342,6 +352,11 @@ func (m *Manager) List(tier Tier) ([]Block, error) {
 func (m *Manager) ListScoped(scope string, tier Tier) ([]Block, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
+
+	scope = NormalizeScope(scope)
+	if IsAllScopesSentinel(scope) {
+		scope = ""
+	}
 
 	all, err := m.store.List(tier)
 	if err != nil {
@@ -402,6 +417,11 @@ func (m *Manager) BuildRepoContext() (*ContextWindow, error) {
 func (m *Manager) BuildScopedContext(scope string) (*ContextWindow, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
+
+	scope = NormalizeScope(scope)
+	if IsAllScopesSentinel(scope) {
+		scope = ""
+	}
 
 	cw, err := m.buildContextLocked()
 	if err != nil {

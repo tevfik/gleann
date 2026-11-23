@@ -188,15 +188,24 @@ func (s *Server) handleMemoryRemember(ctx context.Context, req mcpsdk.CallToolRe
 
 	scope, _ := args["scope"].(string)
 	repo, _ := args["repo"].(string)
+	// Normalize before defaulting/comparing; a sentinel scope is global and
+	// must never be stored literally or trigger repo auto-detection (v3
+	// repair, finding 1).
+	scope = memory.NormalizeScope(scope)
+	repo = memory.NormalizeScope(repo)
 	if scope == "" {
-		if repo != "" {
-			scope = repo
-		} else {
-			scope = memory.DetectRepoScope()
-		}
+		scope = repo
+	}
+	if memory.IsAllScopesSentinel(scope) {
+		scope = ""
+	} else if scope == "" {
+		scope = memory.DetectRepoScope()
 	}
 	if repo == "" {
 		repo = scope
+	}
+	if memory.IsAllScopesSentinel(repo) {
+		repo = ""
 	}
 
 	var paths []string
@@ -360,7 +369,7 @@ func (s *Server) buildMemorySearchTool() mcpsdk.Tool {
 				},
 				"scope": map[string]interface{}{
 					"type":        "string",
-					"description": "Filter memories by scope (default: current git repository + global). Pass 'all' or '*' to search across all scopes.",
+					"description": "Filter memories by scope (default: current git repository + global). Pass 'all' or '*' (case-insensitive) to search across all scopes. Slash padding is normalized.",
 				},
 			},
 			Required: []string{"query"},
@@ -380,9 +389,10 @@ func (s *Server) handleMemorySearch(ctx context.Context, req mcpsdk.CallToolRequ
 	}
 
 	scope, _ := args["scope"].(string)
+	scope = memory.NormalizeScope(scope)
 	if scope == "" {
 		scope = memory.DetectRepoScope()
-	} else if scope == "all" || scope == "*" {
+	} else if memory.IsAllScopesSentinel(scope) {
 		scope = ""
 	}
 
@@ -449,7 +459,7 @@ func (s *Server) buildMemoryListTool() mcpsdk.Tool {
 				},
 				"scope": map[string]interface{}{
 					"type":        "string",
-					"description": "Filter memories by scope (default: current git repository + global). Pass 'all' or '*' to list all scopes.",
+					"description": "Filter memories by scope (default: current git repository + global). Pass 'all' or '*' (case-insensitive) to list all scopes. Slash padding is normalized.",
 				},
 			},
 		},
@@ -472,9 +482,10 @@ func (s *Server) handleMemoryList(ctx context.Context, req mcpsdk.CallToolReques
 		scope, _ = args["scope"].(string)
 	}
 
+	scope = memory.NormalizeScope(scope)
 	if scope == "" {
 		scope = memory.DetectRepoScope()
-	} else if scope == "all" || scope == "*" {
+	} else if memory.IsAllScopesSentinel(scope) {
 		scope = ""
 	}
 
@@ -560,7 +571,12 @@ func (s *Server) buildMemoryContextTool() mcpsdk.Tool {
 				"paths": map[string]interface{}{
 					"type":        "array",
 					"items":       map[string]interface{}{"type": "string"},
-					"description": "Files the current task touches; surfaces recorded failures overlapping these paths.",
+					"description": "Files the current task touches; surfaces recorded failures overlapping these paths. Also accepts a single comma-separated string.",
+				},
+				"symbols": map[string]interface{}{
+					"type":        "array",
+					"items":       map[string]interface{}{"type": "string"},
+					"description": "Symbols involved in the current task; surfaces recorded failures matching these symbols. Also accepts a single comma-separated string.",
 				},
 			},
 		},
@@ -573,16 +589,19 @@ func (s *Server) handleMemoryContext(ctx context.Context, req mcpsdk.CallToolReq
 	verbose := false
 	var command string
 	var paths []string
+	var symbols []string
 	if args != nil {
 		scope, _ = args["scope"].(string)
 		verbose, _ = args["verbose"].(bool)
 		command, _ = args["command"].(string)
 		paths = stringSliceArg(args, "paths")
+		symbols = stringSliceArg(args, "symbols")
 	}
 
+	scope = memory.NormalizeScope(scope)
 	if scope == "" {
 		scope = memory.DetectRepoScope()
-	} else if scope == "all" || scope == "*" {
+	} else if memory.IsAllScopesSentinel(scope) {
 		scope = ""
 	}
 
@@ -591,7 +610,7 @@ func (s *Server) handleMemoryContext(ctx context.Context, req mcpsdk.CallToolReq
 	var remoteDone bool
 	// Failures are looked up locally (the running server cannot pass its
 	// manager), so a task-scoped context always builds against the local store.
-	if command == "" && len(paths) == 0 {
+	if command == "" && len(paths) == 0 && len(symbols) == 0 {
 		if rc := remoteMemoryClient(); rc != nil {
 			r, err := rc.Context(scope)
 			if err == nil {
@@ -608,8 +627,8 @@ func (s *Server) handleMemoryContext(ctx context.Context, req mcpsdk.CallToolReq
 
 		s.checkStaleBlocks(mgr, scope)
 		var cw *memory.ContextWindow
-		if command != "" || len(paths) > 0 {
-			cw, err = mgr.BuildTaskContext(scope, command, paths)
+		if command != "" || len(paths) > 0 || len(symbols) > 0 {
+			cw, err = mgr.BuildTaskContextFor(scope, command, paths, symbols)
 		} else {
 			cw, err = mgr.BuildScopedContext(scope)
 		}
@@ -684,12 +703,16 @@ func (s *Server) buildMemoryFailureAddTool() mcpsdk.Tool {
 				"paths": map[string]interface{}{
 					"type":        "array",
 					"items":       map[string]interface{}{"type": "string"},
-					"description": "File paths involved in the failure",
+					"description": "File paths involved in the failure. Also accepts a single comma-separated string.",
 				},
 				"symbols": map[string]interface{}{
 					"type":        "array",
 					"items":       map[string]interface{}{"type": "string"},
-					"description": "Symbol names involved in the failure",
+					"description": "Symbol names involved in the failure. Also accepts a single comma-separated string.",
+				},
+				"scope": map[string]interface{}{
+					"type":        "string",
+					"description": "Isolate this failure to a specific scope (e.g. conversation ID). Empty = auto repo scope; 'all' or '*' = global (visible to every scope).",
 				},
 			},
 			Required: []string{"command", "error"},
@@ -712,13 +735,20 @@ func (s *Server) handleMemoryFailureAdd(ctx context.Context, req mcpsdk.CallTool
 	fix, _ := args["fix"].(string)
 	paths := stringSliceArg(args, "paths")
 	symbols := stringSliceArg(args, "symbols")
+	scope, _ := args["scope"].(string)
+	scope = memory.NormalizeScope(scope)
+	if memory.IsAllScopesSentinel(scope) {
+		scope = "" // "all"/"*" records a global failure, never a literal "all" scope
+	} else if scope == "" {
+		scope = memory.DetectRepoScope()
+	}
 
 	mgr, err := s.blockMem.get()
 	if err != nil {
 		return mcpsdk.NewToolResultError("open memory store: " + err.Error()), nil
 	}
 
-	saved, err := mgr.RecordFailure(memory.Failure{
+	saved, err := mgr.RecordFailureScoped(scope, "", memory.Failure{
 		Command: command,
 		Error:   errText,
 		Fix:     fix,
@@ -746,19 +776,33 @@ func (s *Server) buildMemoryFailureListTool() mcpsdk.Tool {
 		Name:        "memory_failure_list",
 		Description: "List recorded command failures (command, error and fix).",
 		InputSchema: mcpsdk.ToolInputSchema{
-			Type:       "object",
-			Properties: map[string]interface{}{},
+			Type: "object",
+			Properties: map[string]interface{}{
+				"scope": map[string]interface{}{
+					"type":        "string",
+					"description": "Filter failures by scope (default: current git repository + global). Pass 'all' or '*' for all scopes.",
+				},
+			},
 		},
 	}
 }
 
 func (s *Server) handleMemoryFailureList(ctx context.Context, req mcpsdk.CallToolRequest) (*mcpsdk.CallToolResult, error) {
+	args, _ := req.Params.Arguments.(map[string]any)
+	scope, _ := args["scope"].(string)
+	scope = memory.NormalizeScope(scope)
+	if scope == "" {
+		scope = memory.DetectRepoScope()
+	} else if memory.IsAllScopesSentinel(scope) {
+		scope = ""
+	}
+
 	mgr, err := s.blockMem.get()
 	if err != nil {
 		return mcpsdk.NewToolResultError("open memory store: " + err.Error()), nil
 	}
 
-	failures, err := mgr.ListFailures()
+	failures, err := mgr.ListFailuresScoped(scope)
 	if err != nil {
 		return mcpsdk.NewToolResultError("list failures: " + err.Error()), nil
 	}
@@ -782,11 +826,23 @@ func (s *Server) handleMemoryFailureList(ctx context.Context, req mcpsdk.CallToo
 }
 
 // stringSliceArg reads a string-array argument (marshalled back through JSON
-// so both []string and []interface{} arrive consistently).
+// so both []string and []interface{} arrive consistently). A scalar string is
+// also accepted and parsed as a comma-separated list (trimmed, non-empty
+// entries), matching the REST API's comma-separated convention — agents
+// commonly pass {"symbols": "Alpha"} or {"paths": "pkg/a.go, pkg/b.go"}.
 func stringSliceArg(args map[string]any, key string) []string {
 	raw, ok := args[key]
 	if !ok || raw == nil {
 		return nil
+	}
+	if str, ok := raw.(string); ok {
+		var out []string
+		for _, p := range strings.Split(str, ",") {
+			if p = strings.TrimSpace(p); p != "" {
+				out = append(out, p)
+			}
+		}
+		return out
 	}
 	if slice, ok := raw.([]interface{}); ok {
 		out := make([]string, 0, len(slice))

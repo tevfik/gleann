@@ -13,13 +13,17 @@
 //	GET    /api/blocks/search?q=   full-text search
 //	GET    /api/blocks/context     compiled <memory_context> window
 //	GET    /api/blocks/stats       storage statistics
+//	POST   /api/blocks/failures    record a command failure and its fix
+//	GET    /api/blocks/failures    list recorded command failures
 package server
 
 import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/tevfik/gleann/pkg/memory"
@@ -45,17 +49,38 @@ type blockAddRequest struct {
 	StaleReason string            `json:"stale_reason,omitempty"` // reason for staleness/suspicion
 }
 
-// resolveTargetScope extracts scope from ?scope=, ?target=, or X-Gleann-Target header.
-// If both header and query target are specified and mismatch, it returns an error.
+// resolveTargetScope extracts scope from ?scope=, ?target=, or X-Gleann-Target
+// header. All spellings are normalized (memory.NormalizeScope), so "repo-a",
+// "repo-a/" and "/repo-a" name the same target. If both header and query target
+// are specified and mismatch, it returns an error.
+//
+// The "all"/"*" scope sentinel may never bypass a restricted target: when a
+// non-wildcard X-Gleann-Target or ?target= pins a repo, a sentinel ?scope= is
+// rejected. A wildcard header/target counts as unrestricted. When unrestricted,
+// the sentinel is mapped to the empty (all-scope) scope here, so header and
+// query sentinels behave identically on every block route (v3 repair,
+// finding 4).
 func resolveTargetScope(r *http.Request) (string, error) {
 	headerTarget := r.Header.Get("X-Gleann-Target")
 	if headerTarget == "" {
 		headerTarget = r.Header.Get("X-Gleann-Index")
 	}
+	headerTarget = memory.NormalizeScope(headerTarget)
+	if memory.IsAllScopesSentinel(headerTarget) {
+		headerTarget = "" // wildcard header = unrestricted
+	}
 
-	scope := r.URL.Query().Get("scope")
+	q := r.URL.Query()
+	scope := memory.NormalizeScope(q.Get("scope"))
+	queryTarget := memory.NormalizeScope(q.Get("target"))
 	if scope == "" {
-		scope = r.URL.Query().Get("target")
+		scope = queryTarget
+	}
+
+	if memory.IsAllScopesSentinel(scope) &&
+		(headerTarget != "" || (queryTarget != "" && !memory.IsAllScopesSentinel(queryTarget))) {
+		return "", fmt.Errorf("access denied: scope %q cannot bypass restricted target (header %q, target %q)",
+			q.Get("scope"), headerTarget, queryTarget)
 	}
 
 	if headerTarget != "" {
@@ -65,6 +90,11 @@ func resolveTargetScope(r *http.Request) (string, error) {
 		if scope == "" {
 			scope = headerTarget
 		}
+	}
+	if memory.IsAllScopesSentinel(scope) {
+		// Unrestricted (the guard above rejected every restricted case):
+		// the sentinel selects every scope, exactly like a wildcard header.
+		scope = ""
 	}
 	return scope, nil
 }
@@ -170,8 +200,28 @@ func (s *Server) handleAddBlock(w http.ResponseWriter, r *http.Request) {
 	if headerTarget == "" {
 		headerTarget = r.Header.Get("X-Gleann-Index")
 	}
+	// Normalize both sides before comparing so padded spellings agree, and a
+	// sentinel header imposes no restriction (same semantics as the read
+	// routes). A sentinel body scope is global when unrestricted and can
+	// never bypass a restricted header (v3 repair, finding 1).
+	headerTarget = memory.NormalizeScope(headerTarget)
+	if memory.IsAllScopesSentinel(headerTarget) {
+		headerTarget = ""
+	}
 	if req.Scope == "" && req.Target != "" {
 		req.Scope = req.Target
+	}
+	req.Scope = memory.NormalizeScope(req.Scope)
+	if memory.IsAllScopesSentinel(req.Scope) {
+		if headerTarget != "" {
+			writeError(w, http.StatusForbidden, fmt.Sprintf("access denied: scope %q cannot bypass restricted target %q", req.Scope, headerTarget))
+			return
+		}
+		req.Scope = ""
+	}
+	req.Repo = memory.NormalizeScope(req.Repo)
+	if memory.IsAllScopesSentinel(req.Repo) {
+		req.Repo = ""
 	}
 	if headerTarget != "" {
 		if req.Scope != "" && req.Scope != headerTarget {
@@ -359,6 +409,11 @@ func (s *Server) handleSearchBlocks(w http.ResponseWriter, r *http.Request) {
 //	GET /api/blocks/context                      — returns JSON with context + rendered XML
 //	GET /api/blocks/context?format=xml           — returns raw <memory_context> XML
 //	GET /api/blocks/context?scope=conversation_id — filter by scope
+//	GET /api/blocks/context?command=...          — include failures matching command
+//	GET /api/blocks/context?paths=a,b            — include failures matching files (comma-separated)
+//	GET /api/blocks/context?path=...             — repeatable singular alias of paths
+//	GET /api/blocks/context?symbols=X,Y          — include failures matching symbols (comma-separated)
+//	GET /api/blocks/context?symbol=...           — repeatable singular alias of symbols
 func (s *Server) handleBlockContext(w http.ResponseWriter, r *http.Request) {
 	mgr, err := s.blockManager()
 	if err != nil {
@@ -372,8 +427,15 @@ func (s *Server) handleBlockContext(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	q := r.URL.Query()
+	command := q.Get("command")
+	paths := csvQueryParam(q, "paths", "path")
+	symbols := csvQueryParam(q, "symbols", "symbol")
+
 	var cw *memory.ContextWindow
-	if scope != "" {
+	if command != "" || len(paths) > 0 || len(symbols) > 0 {
+		cw, err = mgr.BuildTaskContextFor(scope, command, paths, symbols)
+	} else if scope != "" {
 		cw, err = mgr.BuildScopedContext(scope)
 	} else {
 		cw, err = mgr.BuildContext()
@@ -414,6 +476,161 @@ func (s *Server) handleBlockStats(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, stats)
+}
+
+// ── POST /api/blocks/failures ────────────────────────────────────────────────
+
+// handleAddFailure records a command failure and its fix to failure memory.
+// POST /api/blocks/failures
+// Body: { "command": "...", "error": "...", "fix": "...", "paths": [...], "symbols": [...], "scope": "...", "repo": "..." }
+//
+// The target scope resolves from ?scope= / ?target= / X-Gleann-Target and must
+// agree with any body scope after normalization (403 on mismatch). The "all"/"*"
+// sentinel records a global block when unrestricted and is rejected (403)
+// against a restricted target. Recording is admin-only (the security middleware
+// classifies POST /api/blocks/failures as ScopeAdmin). The saved block is
+// returned: 201 on first recording, 200 when the same failure is confirmed again
+// (Confirms > 1), mirroring RecordFailure deduplication.
+func (s *Server) handleAddFailure(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Command string   `json:"command"`
+		Error   string   `json:"error"`
+		Fix     string   `json:"fix"`
+		Paths   []string `json:"paths,omitempty"`
+		Symbols []string `json:"symbols,omitempty"`
+		Scope   string   `json:"scope,omitempty"`
+		Repo    string   `json:"repo,omitempty"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
+		return
+	}
+	if strings.TrimSpace(req.Command) == "" || strings.TrimSpace(req.Error) == "" {
+		writeError(w, http.StatusBadRequest, "command and error are required")
+		return
+	}
+
+	scope, err := resolveTargetScope(r)
+	if err != nil {
+		writeError(w, http.StatusForbidden, err.Error())
+		return
+	}
+	// Compare normalized targets: the body scope (falling back to repo) and
+	// the resolved header/query target must agree after normalization.
+	reqTarget := req.Scope
+	if reqTarget == "" {
+		reqTarget = req.Repo
+	}
+	reqTarget = memory.NormalizeScope(reqTarget)
+	if memory.IsAllScopesSentinel(reqTarget) {
+		if scope != "" {
+			writeError(w, http.StatusForbidden, fmt.Sprintf("access denied: scope %q cannot bypass restricted target %q", reqTarget, scope))
+			return
+		}
+		reqTarget = "" // unrestricted: record a global block, never a literal "all"
+	}
+	if reqTarget != "" {
+		if scope != "" && scope != reqTarget {
+			writeError(w, http.StatusForbidden, fmt.Sprintf("access denied: target mismatch between header (%q) and body (%q)", scope, reqTarget))
+			return
+		}
+		scope = reqTarget
+	}
+
+	mgr, err := s.blockManager()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "open memory store: "+err.Error())
+		return
+	}
+
+	// Sanitize the provenance repo as well: it must not carry padding or the
+	// sentinel into storage (v3 repair, finding 2).
+	reqRepo := memory.NormalizeScope(req.Repo)
+	if memory.IsAllScopesSentinel(reqRepo) {
+		reqRepo = ""
+	}
+	saved, err := mgr.RecordFailureScoped(scope, reqRepo, memory.Failure{
+		Command: req.Command,
+		Error:   req.Error,
+		Fix:     req.Fix,
+		Paths:   req.Paths,
+		Symbols: req.Symbols,
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "record failure: "+err.Error())
+		return
+	}
+
+	if saved.Confirms > 1 {
+		writeJSON(w, http.StatusOK, saved)
+		return
+	}
+	writeJSON(w, http.StatusCreated, saved)
+}
+
+// handleListFailures lists recorded command failures visible to a scope.
+// GET /api/blocks/failures                       — all failures in scope
+// GET /api/blocks/failures?scope=...             — resolve scope (?scope= / ?target= / X-Gleann-Target)
+// GET /api/blocks/failures?command=...           — filter by command
+// GET /api/blocks/failures?paths=a,b&path=c      — filter by file paths
+// GET /api/blocks/failures?symbols=X,Y&symbol=Z  — filter by symbols
+//
+// With no command/paths/symbols filter it lists every failure in the scope;
+// otherwise it returns only the failures matching the task query. When
+// unrestricted, ?scope=all / ?scope=* explicitly selects every scope; against a
+// restricted target the sentinel is rejected (403). Read access requires the
+// query auth scope (the middleware classifies GET /api/blocks* as ScopeQuery).
+func (s *Server) handleListFailures(w http.ResponseWriter, r *http.Request) {
+	scope, err := resolveTargetScope(r)
+	if err != nil {
+		writeError(w, http.StatusForbidden, err.Error())
+		return
+	}
+
+	q := r.URL.Query()
+	command := q.Get("command")
+	paths := csvQueryParam(q, "paths", "path")
+	symbols := csvQueryParam(q, "symbols", "symbol")
+
+	mgr, err := s.blockManager()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "open memory store: "+err.Error())
+		return
+	}
+
+	var failures []memory.Block
+	if command != "" || len(paths) > 0 || len(symbols) > 0 {
+		failures, err = mgr.FailuresForScoped(scope, command, paths, symbols)
+	} else {
+		failures, err = mgr.ListFailuresScoped(scope)
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "list failures: "+err.Error())
+		return
+	}
+
+	if failures == nil {
+		failures = []memory.Block{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"failures": failures,
+		"count":    len(failures),
+	})
+}
+
+// csvQueryParam collects a list query parameter given either as a
+// comma-separated plural (?paths=a,b) or as a repeated singular
+// (?path=a&path=b), merging both forms. Empty entries are dropped, matching the
+// splitList convention used elsewhere in the server.
+func csvQueryParam(q url.Values, plural, singular string) []string {
+	var out []string
+	for _, v := range q[plural] {
+		out = append(out, splitList(v)...)
+	}
+	for _, v := range q[singular] {
+		out = append(out, splitList(v)...)
+	}
+	return out
 }
 
 // ── POST /api/blocks/compact ──────────────────────────────────────────────────

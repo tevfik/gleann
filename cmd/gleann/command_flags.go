@@ -67,7 +67,7 @@ var indexFlagSets = map[string]flagSet{
 
 // memoryFlagSets maps each `gleann memory` subcommand to its flags.
 var memoryFlagSets = map[string]flagSet{
-	"remember":     {"--tag": true, "--label": true},
+	"remember":     {"--tag": true, "--label": true, "--scope": true},
 	"add":          {"--tag": true, "--label": true},
 	"forget":       {},
 	"list":         {"--tier": true, "--json": false},
@@ -77,13 +77,13 @@ var memoryFlagSets = map[string]flagSet{
 	"summarize":    {"--last": false, "--id": true, "--extract": false},
 	"prune":        {"--age": true},
 	"compact":      {"--min-validity": true},
-	"context":      {"--json": false, "--verbose": false, "--path": true, "--command": true},
+	"context":      {"--json": false, "--verbose": false, "--path": true, "--command": true, "--symbol": true, "--scope": true},
 	"maintain":     {},
 	"export":       {"--dir": true},
 	"import":       {"--dir": true},
 	"import-graph": {},
 	"reflect":      {"--dry-run": false, "--revert": true},
-	"failure":      {"--command": true, "--error": true, "--fix": true, "--path": true, "--symbol": true, "--json": false},
+	"failure":      {"--command": true, "--error": true, "--fix": true, "--path": true, "--symbol": true, "--scope": true, "--json": false},
 }
 
 // serviceFlagSets maps each `gleann service` subcommand to its flags.

@@ -78,6 +78,44 @@ func NormalizeGitRemote(remote string) string {
 	return s
 }
 
+// NormalizeScope canonicalizes a memory scope identifier: it trims surrounding
+// whitespace and slashes so "/github.com/org/repo/" and "github.com/org/repo"
+// name the same scope. Case is preserved (scopes are matched exactly by
+// filterScope). An empty scope stays empty and means "global".
+func NormalizeScope(scope string) string {
+	return strings.Trim(strings.TrimSpace(scope), "/")
+}
+
+// IsAllScopesSentinel reports whether scope is the cross-scope sentinel "all"
+// or "*" (case-insensitive, surrounding whitespace trimmed). Read paths map the
+// sentinel to the empty (unrestricted) scope; failure add paths map it to a
+// global block. The sentinel is never a recordable scope name, and it must
+// never bypass a restricted target (callers enforce that before mapping).
+func IsAllScopesSentinel(scope string) bool {
+	switch strings.ToLower(strings.TrimSpace(scope)) {
+	case "all", "*":
+		return true
+	default:
+		return false
+	}
+}
+
+// normalizeBlockScopes canonicalizes a block's scope/repo identifiers before
+// persistence: slash/whitespace padding is stripped and the all-scopes
+// sentinel is never recordable — it becomes the global scope "". Every write
+// path applies it so normalized reads always match stored rows (v3 repair,
+// finding 1).
+func normalizeBlockScopes(b *Block) {
+	b.Scope = NormalizeScope(b.Scope)
+	if IsAllScopesSentinel(b.Scope) {
+		b.Scope = ""
+	}
+	b.Repo = NormalizeScope(b.Repo)
+	if IsAllScopesSentinel(b.Repo) {
+		b.Repo = ""
+	}
+}
+
 // MemoryContextSetter is implemented by chat sessions that accept injected
 // memory context (pkg/gleann.LeannChat satisfies it).
 type MemoryContextSetter interface {

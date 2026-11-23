@@ -590,7 +590,7 @@ func openAPIPathsBlocks() map[string]any {
 			"get": map[string]any{
 				"tags":        []string{"blocks"},
 				"summary":     "List memory blocks",
-				"description": "Returns all persisted memory blocks. Use `tier` to filter by storage tier.",
+				"description": "Returns all persisted memory blocks. Use `tier` to filter by storage tier and `scope`/`target`/`X-Gleann-Target` to filter by scope (global blocks are always included).",
 				"operationId": "listBlocks",
 				"parameters": []map[string]any{
 					{
@@ -599,6 +599,27 @@ func openAPIPathsBlocks() map[string]any {
 						"required":    false,
 						"description": "Filter by memory tier",
 						"schema":      map[string]any{"type": "string", "enum": []string{"short", "medium", "long"}},
+					},
+					{
+						"name":        "scope",
+						"in":          "query",
+						"required":    false,
+						"description": "Scope filter (alias: target; also X-Gleann-Target), normalized. When unrestricted, 'all'/'*' selects all scopes — identically in the query string and the header; against a restricted target the sentinel is rejected (403). Omitted lists every block.",
+						"schema":      map[string]any{"type": "string"},
+					},
+					{
+						"name":        "target",
+						"in":          "query",
+						"required":    false,
+						"description": "Alias of scope (used when scope is absent).",
+						"schema":      map[string]any{"type": "string"},
+					},
+					{
+						"name":        "X-Gleann-Target",
+						"in":          "header",
+						"required":    false,
+						"description": "Target scope header; must agree with the query scope (403 on mismatch). A wildcard ('all'/'*') header is unrestricted.",
+						"schema":      map[string]any{"type": "string"},
 					},
 				},
 				"responses": map[string]any{
@@ -616,13 +637,23 @@ func openAPIPathsBlocks() map[string]any {
 							},
 						},
 					},
+					"403": map[string]any{"description": "Target scope mismatch between header and query, or an 'all'/'*' sentinel against a restricted target"},
 				},
 			},
 			"post": map[string]any{
 				"tags":        []string{"blocks"},
 				"summary":     "Add a memory block",
-				"description": "Stores a new memory block in the specified tier. Short-term blocks are in-memory (session-scoped), medium and long-term are persisted to BBolt.",
+				"description": "Stores a new memory block in the specified tier. Short-term blocks are in-memory (session-scoped), medium and long-term are persisted. Scopes are normalized on write; a body scope of 'all'/'*' stores a global block when unrestricted and is rejected (403) against a restricted X-Gleann-Target header.",
 				"operationId": "addBlock",
+				"parameters": []map[string]any{
+					{
+						"name":        "X-Gleann-Target",
+						"in":          "header",
+						"required":    false,
+						"description": "Target scope header; must agree with the body scope/target after normalization (403 on mismatch). A wildcard ('all'/'*') header is unrestricted.",
+						"schema":      map[string]any{"type": "string"},
+					},
+				},
 				"requestBody": map[string]any{
 					"required": true,
 					"content": map[string]any{
@@ -641,6 +672,7 @@ func openAPIPathsBlocks() map[string]any {
 						},
 					},
 					"400": map[string]any{"description": "Invalid request"},
+					"403": map[string]any{"description": "Target scope mismatch between header and body, or an 'all'/'*' body sentinel against a restricted target"},
 					"500": map[string]any{"description": "Internal server error"},
 				},
 			},
@@ -711,7 +743,7 @@ func openAPIPathsBlocks() map[string]any {
 			"get": map[string]any{
 				"tags":        []string{"blocks"},
 				"summary":     "Search memory blocks",
-				"description": "Full-text search across all memory tiers. Matches content, label, and tags.",
+				"description": "Full-text search across all memory tiers. Matches content, label, and tags. Scope resolves like listing: a sentinel in the query string or the header alike selects all scopes when unrestricted.",
 				"operationId": "searchBlocks",
 				"parameters": []map[string]any{
 					{
@@ -719,6 +751,27 @@ func openAPIPathsBlocks() map[string]any {
 						"in":          "query",
 						"required":    true,
 						"description": "Search query",
+						"schema":      map[string]any{"type": "string"},
+					},
+					{
+						"name":        "scope",
+						"in":          "query",
+						"required":    false,
+						"description": "Scope filter (alias: target; also X-Gleann-Target), normalized. When unrestricted, 'all'/'*' selects all scopes — identically in the query string and the header; against a restricted target the sentinel is rejected (403).",
+						"schema":      map[string]any{"type": "string"},
+					},
+					{
+						"name":        "target",
+						"in":          "query",
+						"required":    false,
+						"description": "Alias of scope (used when scope is absent).",
+						"schema":      map[string]any{"type": "string"},
+					},
+					{
+						"name":        "X-Gleann-Target",
+						"in":          "header",
+						"required":    false,
+						"description": "Target scope header; must agree with the query scope (403 on mismatch). A wildcard ('all'/'*') header is unrestricted.",
 						"schema":      map[string]any{"type": "string"},
 					},
 				},
@@ -739,6 +792,7 @@ func openAPIPathsBlocks() map[string]any {
 						},
 					},
 					"400": map[string]any{"description": "Missing q parameter"},
+					"403": map[string]any{"description": "Target scope mismatch between header and query, or an 'all'/'*' sentinel against a restricted target"},
 				},
 			},
 		},
@@ -755,6 +809,62 @@ func openAPIPathsBlocks() map[string]any {
 						"required":    false,
 						"description": "Response format: json (default) or xml",
 						"schema":      map[string]any{"type": "string", "enum": []string{"json", "xml"}},
+					},
+					{
+						"name":        "scope",
+						"in":          "query",
+						"required":    false,
+						"description": "Scope to build the context for (alias: target; also X-Gleann-Target). Empty uses the token/header target, or the global context when omitted. When unrestricted, 'all'/'*' explicitly selects all scopes; against a restricted target the sentinel is rejected (403).",
+						"schema":      map[string]any{"type": "string"},
+					},
+					{
+						"name":        "target",
+						"in":          "query",
+						"required":    false,
+						"description": "Alias of scope (used when scope is absent).",
+						"schema":      map[string]any{"type": "string"},
+					},
+					{
+						"name":        "X-Gleann-Target",
+						"in":          "header",
+						"required":    false,
+						"description": "Target scope header; must agree with the query scope (403 on mismatch).",
+						"schema":      map[string]any{"type": "string"},
+					},
+					{
+						"name":        "command",
+						"in":          "query",
+						"required":    false,
+						"description": "The command the task is about to run; surfaces matching recorded failures (normalized prefix match in either direction)",
+						"schema":      map[string]any{"type": "string"},
+					},
+					{
+						"name":        "paths",
+						"in":          "query",
+						"required":    false,
+						"description": "Comma-separated file paths to match against failure provenance",
+						"schema":      map[string]any{"type": "string"},
+					},
+					{
+						"name":        "path",
+						"in":          "query",
+						"required":    false,
+						"description": "Repeatable singular alias of paths",
+						"schema":      map[string]any{"type": "string"},
+					},
+					{
+						"name":        "symbols",
+						"in":          "query",
+						"required":    false,
+						"description": "Comma-separated symbol names/FQNs to match against failure provenance",
+						"schema":      map[string]any{"type": "string"},
+					},
+					{
+						"name":        "symbol",
+						"in":          "query",
+						"required":    false,
+						"description": "Repeatable singular alias of symbols",
+						"schema":      map[string]any{"type": "string"},
 					},
 				},
 				"responses": map[string]any{
@@ -773,6 +883,7 @@ func openAPIPathsBlocks() map[string]any {
 							"text/xml": map[string]any{"schema": map[string]any{"type": "string"}},
 						},
 					},
+					"403": map[string]any{"description": "Target scope mismatch between header and query, or an 'all'/'*' sentinel against a restricted target"},
 				},
 			},
 		},
@@ -791,6 +902,133 @@ func openAPIPathsBlocks() map[string]any {
 							},
 						},
 					},
+				},
+			},
+		},
+		"/api/blocks/failures": map[string]any{
+			"post": map[string]any{
+				"tags":        []string{"blocks"},
+				"summary":     "Record a command failure and its fix",
+				"description": "Stores a failure memory block with the command, error, fix, and related file paths/symbols so future sessions surface it instead of repeating the mistake. Recording the same failure again reinforces the existing block (Confirms++). Admin scope required. The target scope resolves from ?scope= / ?target= / X-Gleann-Target and must agree with any body scope after normalization (403 on mismatch). Body scope 'all'/'*' records a global block when unrestricted, and is rejected (403) against a restricted target.",
+				"operationId": "addFailure",
+				"parameters": []map[string]any{
+					{
+						"name":        "scope",
+						"in":          "query",
+						"required":    false,
+						"description": "Target scope (alias: target). Must match the body scope and X-Gleann-Target if present, after normalization. 'all'/'*' means global when unrestricted; against a restricted target it is rejected (403).",
+						"schema":      map[string]any{"type": "string"},
+					},
+					{
+						"name":        "X-Gleann-Target",
+						"in":          "header",
+						"required":    false,
+						"description": "Target scope header; must agree with the query/body scope (403 on mismatch).",
+						"schema":      map[string]any{"type": "string"},
+					},
+				},
+				"requestBody": map[string]any{
+					"required": true,
+					"content": map[string]any{
+						"application/json": map[string]any{
+							"schema": refSchema("FailureAddRequest"),
+						},
+					},
+				},
+				"responses": map[string]any{
+					"201": map[string]any{
+						"description": "Failure recorded (first observation); returns the saved failure block.",
+						"content": map[string]any{
+							"application/json": map[string]any{
+								"schema": refSchema("Failure"),
+							},
+						},
+					},
+					"200": map[string]any{
+						"description": "Failure confirmed (repeat recording, Confirms > 1); returns the reinforced failure block.",
+						"content": map[string]any{
+							"application/json": map[string]any{
+								"schema": refSchema("Failure"),
+							},
+						},
+					},
+					"400": map[string]any{"description": "Missing command or error, or invalid body"},
+					"403": map[string]any{"description": "Target scope mismatch between header/query and body"},
+				},
+			},
+			"get": map[string]any{
+				"tags":        []string{"blocks"},
+				"summary":     "List recorded command failures",
+				"description": "Returns the failure blocks visible to a scope (global + the scope and its ancestors). With no command/paths/symbols filter it lists every failure in the scope; otherwise it returns only the failures matching the task query. Requires query auth scope (`ScopeQuery`). Target scope filter is optional (defaults to token/header target, or lists all scopes when omitted; `?scope=all` / `*` explicitly selects all scopes when unrestricted).",
+				"operationId": "listFailures",
+				"parameters": []map[string]any{
+					{
+						"name":        "scope",
+						"in":          "query",
+						"required":    false,
+						"description": "Scope to list (alias: target; also X-Gleann-Target). Empty defaults to the token/header target, or lists all scopes when unrestricted. 'all'/'*' explicitly selects all scopes when unrestricted; against a restricted target the sentinel is rejected (403).",
+						"schema":      map[string]any{"type": "string"},
+					},
+					{
+						"name":        "target",
+						"in":          "query",
+						"required":    false,
+						"description": "Alias of scope (used when scope is absent).",
+						"schema":      map[string]any{"type": "string"},
+					},
+					{
+						"name":        "X-Gleann-Target",
+						"in":          "header",
+						"required":    false,
+						"description": "Target scope header; must agree with the query scope (403 on mismatch).",
+						"schema":      map[string]any{"type": "string"},
+					},
+					{
+						"name":        "command",
+						"in":          "query",
+						"required":    false,
+						"description": "Filter by command (normalized prefix match in either direction)",
+						"schema":      map[string]any{"type": "string"},
+					},
+					{
+						"name":        "paths",
+						"in":          "query",
+						"required":    false,
+						"description": "Comma-separated file paths to match against failure provenance",
+						"schema":      map[string]any{"type": "string"},
+					},
+					{
+						"name":        "path",
+						"in":          "query",
+						"required":    false,
+						"description": "Repeatable singular alias of paths",
+						"schema":      map[string]any{"type": "string"},
+					},
+					{
+						"name":        "symbols",
+						"in":          "query",
+						"required":    false,
+						"description": "Comma-separated symbol names/FQNs to match against failure provenance",
+						"schema":      map[string]any{"type": "string"},
+					},
+					{
+						"name":        "symbol",
+						"in":          "query",
+						"required":    false,
+						"description": "Repeatable singular alias of symbols",
+						"schema":      map[string]any{"type": "string"},
+					},
+				},
+				"responses": map[string]any{
+					"200": map[string]any{
+						"description": "List of failures",
+						"content": map[string]any{
+							"application/json": map[string]any{
+								"schema": refSchema("FailureListResponse"),
+							},
+						},
+					},
+					"403": map[string]any{"description": "Target scope mismatch between header and query, or an 'all'/'*' sentinel against a restricted target"},
 				},
 			},
 		},

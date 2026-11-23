@@ -517,6 +517,8 @@ func (s *Store) Import(dir string) (*ImportStats, error) {
 		if err != nil {
 			return nil, fmt.Errorf("parsing block file %s: %w", fpath, err)
 		}
+		// Import is a scope write path: canonicalize front-matter scopes.
+		normalizeBlockScopes(b)
 		incomingBlocks = append(incomingBlocks, b)
 		stats.BlocksTotal++
 	}

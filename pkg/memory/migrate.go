@@ -284,6 +284,9 @@ func migrateFromBbolt(legacyPath, sqlitePath string, notify func(int)) error {
 				if err := json.Unmarshal(v, &block); err != nil {
 					return fmt.Errorf("legacy block %s is corrupt: %w", k, err)
 				}
+				// Legacy stores may hold padded/sentinel scopes; the
+				// copy is a scope write path (v3 repair, finding 1).
+				normalizeBlockScopes(&block)
 				seq, err := insertBlockTx(tx, &block)
 				if err != nil {
 					return err

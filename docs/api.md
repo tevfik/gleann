@@ -127,9 +127,11 @@ Hierarchical memory store (SQLite, `memory.sqlite`) with three tiers (short, med
 | DELETE | `/api/blocks` | Clear blocks (optional `?tier=` filter) |
 | DELETE | `/api/blocks/{id}` | Delete a specific block by ID |
 | GET | `/api/blocks/search?q=` | Full-text search across all tiers (optional `?scope=`) |
-| GET | `/api/blocks/context` | Compiled memory context (optional `?scope=`, `?format=xml`) |
+| GET | `/api/blocks/context` | Compiled memory context (optional `?scope=`, `?format=xml`, `?command=`, `?paths=`, `?symbols=`) |
 | GET | `/api/blocks/stats` | Storage statistics per tier |
 | POST | `/api/blocks/compact` | Trigger memory compaction |
+| POST | `/api/blocks/failures` | Record a command failure and its fix (admin; optional `scope`/`repo`) |
+| GET | `/api/blocks/failures` | List recorded command failures (optional `?scope=`, `?command=`, `?paths=`/`?path=`, `?symbols=`/`?symbol=`) |
 
 ### OpenAI-Compatible Proxy
 
@@ -951,6 +953,13 @@ curl -X POST http://localhost:8080/api/blocks \
 
 ### Store a scoped block (conversation-isolated)
 
+Scopes are normalized on every write path (slash/whitespace padding is
+stripped, so `repo-a/`, `/repo-a` and `repo-a` store the same scope). A body
+`scope` of `all` / `*` stores a **global** block when unrestricted (never a
+literal scope named `all`); against a restricted `X-Gleann-Target` header the
+sentinel is rejected with `403`, as is any header/body target mismatch after
+normalization.
+
 ```bash
 curl -X POST http://localhost:8080/api/blocks \
   -H 'Content-Type: application/json' \
@@ -977,6 +986,13 @@ curl -X POST http://localhost:8080/api/blocks \
 
 ### List all blocks
 
+The scope filter resolves from `?scope=` / `?target=` / the `X-Gleann-Target`
+header (normalized; mismatch returns `403`). A sentinel (`all` / `*`,
+case-insensitive) selects **all scopes** when unrestricted — the same
+behaviour whether it arrives in the query string or the header; against a
+restricted target the sentinel is rejected with `403`. With no scope filter
+every block is listed.
+
 ```bash
 # All tiers
 curl http://localhost:8080/api/blocks
@@ -986,9 +1002,17 @@ curl http://localhost:8080/api/blocks?tier=long
 
 # Scoped to a conversation (global + conversation-specific)
 curl 'http://localhost:8080/api/blocks?scope=conv-abc123'
+
+# Explicit all-scope sentinel (equivalent to no filter when unrestricted)
+curl 'http://localhost:8080/api/blocks?scope=all'
+curl -H 'X-Gleann-Target: all' http://localhost:8080/api/blocks
 ```
 
 ### Search blocks
+
+Same scope resolution as listing: `?scope=` / `?target=` / `X-Gleann-Target`,
+normalized, and a sentinel in the query string or the header alike selects all
+scopes when unrestricted (`403` against a restricted target).
 
 ```bash
 # All scopes
@@ -996,9 +1020,20 @@ curl 'http://localhost:8080/api/blocks/search?q=architecture'
 
 # Scoped search
 curl 'http://localhost:8080/api/blocks/search?q=architecture&scope=conv-abc123'
+
+# Explicit all-scope sentinel (query or header — identical behaviour)
+curl 'http://localhost:8080/api/blocks/search?q=architecture&scope=all'
+curl -H 'X-Gleann-Target: all' 'http://localhost:8080/api/blocks/search?q=architecture'
 ```
 
 ### Show compiled context (what the LLM receives)
+
+The scope resolves from `?scope=` / `?target=` / the `X-Gleann-Target` header
+(normalized; mismatch returns `403`). When unrestricted, `?scope=all` /
+`?scope=*` selects all scopes — a wildcard header behaves identically; against
+a restricted target the sentinel is rejected with `403`. Any of `?command=` /
+`?paths=` (`?path=`) / `?symbols=` (`?symbol=`) activates the task-failure
+section (see below).
 
 ```bash
 # Global context
@@ -1009,12 +1044,100 @@ curl 'http://localhost:8080/api/blocks/context?scope=conv-abc123'
 
 # XML format
 curl 'http://localhost:8080/api/blocks/context?format=xml'
+
+# Task-scoped context: surface recorded failures matching a command, files or
+# symbols. Any of command / paths / symbols activates the failure section; with
+# none of them the plain (scoped) context is returned unchanged.
+curl 'http://localhost:8080/api/blocks/context?command=go%20test&scope=github.com/org/repo'
+curl 'http://localhost:8080/api/blocks/context?paths=pkg/a.go,pkg/b.go'
+curl 'http://localhost:8080/api/blocks/context?symbols=pkg.Foo&symbol=pkg.Bar'
 ```
 
 ### Delete a specific block
 
 ```bash
 curl -X DELETE http://localhost:8080/api/blocks/abc123
+```
+
+### Record a command failure
+
+Records a failure memory (command + error + fix) so future sessions surface it
+via the task-scoped context instead of repeating the mistake. **Admin scope
+required.** Recording the same failure again reinforces the existing block
+(`confirms` increments) rather than adding a duplicate.
+
+The target scope resolves from `?scope=` / `?target=` / the `X-Gleann-Target`
+header and must agree with any `scope` in the body **after normalization** (a
+mismatch returns `403`; `repo-a` and `repo-a/` are the same target). When
+`scope` is empty but `repo` is set, the scope defaults to `repo`. A body or
+query `scope` of `all` / `*` records a **global** block when unrestricted
+(never a literal scope named `all`); against a restricted target the sentinel
+is rejected with `403`. A sentinel `repo` is treated the same way: it never
+creates a literal `all` scope.
+
+Returns the saved failure block: **`201 Created`** on first recording, **`200 OK`**
+when the same failure is confirmed again (`confirms > 1`).
+
+```bash
+curl -X POST http://localhost:8080/api/blocks/failures \
+  -H 'Content-Type: application/json' \
+  -H 'Authorization: Bearer <admin-token>' \
+  -d '{
+    "command": "go test ./pkg/memory/",
+    "error": "undefined: SomeUndefinedVar",
+    "fix": "changed SomeUndefinedVar to SomeDefinedVar",
+    "paths": ["pkg/memory/test.go"],
+    "symbols": ["github.com/org/repo/pkg/memory.TestExample"],
+    "scope": "github.com/org/repo"
+  }'
+
+# Scope via the target header instead of the body
+curl -X POST http://localhost:8080/api/blocks/failures \
+  -H 'Content-Type: application/json' \
+  -H 'X-Gleann-Target: conv-abc123' \
+  -d '{"command":"make lint","error":"SA1019","fix":"use the new API"}'
+```
+
+### List recorded failures
+
+Returns the failure blocks visible to a scope (global + the scope and its
+ancestors). **Requires query auth scope (`ScopeQuery`).** The target scope
+filter is optional: it resolves from `?scope=` / `?target=` / the
+`X-Gleann-Target` header (normalized, so `repo-a`, `repo-a/` and `/repo-a` name
+the same scope), defaults to the token/header target, and lists **all scopes**
+when omitted. `?scope=all` / `?scope=*` explicitly selects all scopes when
+unrestricted; against a restricted `X-Gleann-Target` / `?target=` the sentinel
+is rejected with `403`, as is any header/query target mismatch (same rule as
+the POST above). With no `command` / `paths` / `symbols` filter it lists every
+failure in the scope; otherwise it returns only the failures matching the task
+query. `paths`/`symbols` are comma-separated; `path` and `symbol` are repeatable
+singular aliases. The response is `{"failures": [...], "count": N}` (`failures`
+is always an array).
+
+```bash
+# All failures (every scope)
+curl http://localhost:8080/api/blocks/failures
+
+# Explicit all-scope sentinel (equivalent when unrestricted)
+curl 'http://localhost:8080/api/blocks/failures?scope=all'
+
+# Failures visible to a repository scope
+curl 'http://localhost:8080/api/blocks/failures?scope=github.com/org/repo'
+
+# Scope via ?target= or the target header (must agree with ?scope=)
+curl 'http://localhost:8080/api/blocks/failures?target=github.com/org/repo'
+curl -H 'X-Gleann-Target: github.com/org/repo' http://localhost:8080/api/blocks/failures
+
+# Failures matching a command
+curl 'http://localhost:8080/api/blocks/failures?command=go%20test'
+
+# Failures matching file paths (comma-separated or repeated)
+curl 'http://localhost:8080/api/blocks/failures?paths=pkg/a.go,pkg/b.go'
+curl 'http://localhost:8080/api/blocks/failures?path=pkg/a.go&path=pkg/b.go'
+
+# Failures matching symbols (FQN or trailing segment)
+curl 'http://localhost:8080/api/blocks/failures?symbols=pkg.Foo'
+curl 'http://localhost:8080/api/blocks/failures?symbol=TestExample'
 ```
 
 ## Examples: OpenAI-Compatible Proxy

@@ -80,7 +80,7 @@ gleann memory stores knowledge across three tiers that persist between sessions.
 All stored memory is automatically injected into every LLM query (ask, chat, mcp).
 
 Usage:
-  gleann memory remember <text>                  Store fact in long-term memory
+  gleann memory remember <text> [--tag <tags>] [--label <label>] [--scope <scope>]  Store fact in long-term memory
   gleann memory forget   <query-or-id>           Remove memory by content match or ID
   gleann memory list     [--tier <tier>]          List memories (all tiers or specific)
   gleann memory search   <query>                 Full-text search across all tiers
@@ -96,8 +96,9 @@ Usage:
   gleann memory maintain                          Full maintenance pass
   gleann memory context                           Show compiled context sent to LLM
   gleann memory context --path <p> --command <c>  Show context + failures matching files/command
-  gleann memory failure add --command <c> --error <text> --fix <text> [--path <p>]... [--symbol <s>]...
-  gleann memory failure list                       List recorded failures
+  gleann memory context --symbol <s> [--scope <s>]  Show context + failures matching symbols
+  gleann memory failure add --command <c> --error <text> --fix <text> [--path <p>]... [--symbol <s>]... [--scope <s>]
+  gleann memory failure list [--scope <s>]        List recorded failures (default: repo scope; --scope all = all scopes)
   gleann memory export   --dir <dir>             Export memory blocks and summaries to markdown
   gleann memory import   --dir <dir>             Import memory blocks and summaries from markdown
   gleann memory import-graph <file.json|dir>     Import entities exported from a v1.9 Kùzu store (kuzu-memory-export)
@@ -116,6 +117,7 @@ Options:
   --tag <tags>            Comma-separated tags (e.g. "preference,project")
   --label <label>         Semantic label (default: "note" or "user_memory")
   --age <duration>        Duration for prune (e.g. 30d, 90d, 2w, 24h)
+  --scope <scope>         Block/failure/context scope. remember: default global; failure/context: default detected repo. --scope all = global on add, all scopes on list/context
   --json                  Output as JSON (memory context includes the budget report)
   --verbose               Print the injection budget report to stderr (memory context)
   --extract               Also extract individual facts (with summarize)
@@ -186,12 +188,13 @@ func openMemoryManager() *memory.Manager {
 
 func cmdMemoryRemember(args []string) {
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "usage: gleann memory remember <text> [--tag <tags>] [--label <label>]")
+		fmt.Fprintln(os.Stderr, "usage: gleann memory remember <text> [--tag <tags>] [--label <label>] [--scope <scope>]")
 		exitFunc(1)
 	}
 
 	var tags []string
 	label := ""
+	rawScope := ""
 
 	// Parse content (everything that's not a flag).
 	var contentParts []string
@@ -211,6 +214,11 @@ func cmdMemoryRemember(args []string) {
 				i++
 				label = args[i]
 			}
+		case "--scope":
+			if i+1 < len(args) {
+				i++
+				rawScope = args[i]
+			}
 		default:
 			contentParts = append(contentParts, args[i])
 		}
@@ -222,12 +230,28 @@ func cmdMemoryRemember(args []string) {
 		exitFunc(1)
 	}
 
+	// Normalize the scope; a sentinel means global, never a literal "all"
+	// block. Without --scope, remember stays global (v3 repair, finding 1).
+	scope := memory.NormalizeScope(rawScope)
+	if memory.IsAllScopesSentinel(scope) {
+		scope = ""
+	}
+
 	// Prefer running server (avoids bbolt lock collision with `gleann serve`).
 	if rc := remoteMemoryClient(); rc != nil {
 		if label == "" {
 			label = "note"
 		}
-		block, err := rc.Add(memory.TierLong, label, content, tags)
+		var block *memory.Block
+		var err error
+		if scope != "" {
+			block, err = rc.AddBlock(&memory.Block{
+				Tier: memory.TierLong, Label: label, Content: content,
+				Tags: tags, Source: "cli", Scope: scope,
+			})
+		} else {
+			block, err = rc.Add(memory.TierLong, label, content, tags)
+		}
 		if err == nil {
 			fmt.Printf("✅ Remembered [%s]: %s  (via running server)\n", block.ID[:8], truncateStr(content, 80))
 			printContradictionWarning(block)
@@ -239,7 +263,16 @@ func cmdMemoryRemember(args []string) {
 	mgr := openMemoryManager()
 	defer mgr.Close()
 
-	block, err := mgr.Remember(content, tags...)
+	var block *memory.Block
+	var err error
+	if scope != "" {
+		block, err = mgr.RememberBlock(&memory.Block{
+			Tier: memory.TierLong, Label: "user_memory", Content: content,
+			Source: "user", Tags: tags, Scope: scope,
+		})
+	} else {
+		block, err = mgr.Remember(content, tags...)
+	}
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		exitFunc(1)
@@ -808,8 +841,13 @@ func cmdMemoryContext(args []string) {
 	verbose := hasFlag(args, "--verbose")
 	command := getFlag(args, "--command")
 	paths := getAllFlags(args, "--path")
-	if rc := remoteMemoryClient(); rc != nil && command == "" && len(paths) == 0 {
-		rendered, err := rc.Context("")
+	symbols := getAllFlags(args, "--symbol")
+	scope := memory.NormalizeScope(getFlag(args, "--scope"))
+	if memory.IsAllScopesSentinel(scope) {
+		scope = ""
+	}
+	if rc := remoteMemoryClient(); rc != nil && command == "" && len(paths) == 0 && len(symbols) == 0 {
+		rendered, err := rc.Context(scope)
 		if err == nil {
 			if rendered == "" {
 				fmt.Println("(empty memory context)")
@@ -829,8 +867,10 @@ func cmdMemoryContext(args []string) {
 
 	var cw *memory.ContextWindow
 	var err error
-	if command != "" || len(paths) > 0 {
-		cw, err = mgr.BuildTaskContext("", command, paths)
+	if command != "" || len(paths) > 0 || len(symbols) > 0 {
+		cw, err = mgr.BuildTaskContextFor(scope, command, paths, symbols)
+	} else if scope != "" {
+		cw, err = mgr.BuildScopedContext(scope)
 	} else {
 		cw, err = mgr.BuildContext()
 	}
@@ -880,16 +920,24 @@ func cmdMemoryFailureAdd(args []string) {
 	fix := getFlag(args, "--fix")
 	paths := getAllFlags(args, "--path")
 	symbols := getAllFlags(args, "--symbol")
+	scope := getFlag(args, "--scope")
 
 	if command == "" || errText == "" {
-		fmt.Fprintln(os.Stderr, "usage: gleann memory failure add --command <c> --error <text> --fix <text> [--path <p>]... [--symbol <s>]...")
+		fmt.Fprintln(os.Stderr, "usage: gleann memory failure add --command <c> --error <text> --fix <text> [--path <p>]... [--symbol <s>]... [--scope <s>]")
 		exitFunc(1)
+	}
+
+	scope = memory.NormalizeScope(scope)
+	if memory.IsAllScopesSentinel(scope) {
+		scope = "" // --scope all records a global failure, never a literal "all" scope
+	} else if scope == "" {
+		scope = memory.DetectRepoScope()
 	}
 
 	mgr := openMemoryManager()
 	defer mgr.Close()
 
-	block, err := mgr.RecordFailure(memory.Failure{
+	block, err := mgr.RecordFailureScoped(scope, "", memory.Failure{
 		Command: command,
 		Error:   errText,
 		Fix:     fix,
@@ -910,11 +958,18 @@ func cmdMemoryFailureAdd(args []string) {
 
 func cmdMemoryFailureList(args []string) {
 	asJSON := hasFlag(args, "--json")
+	scope := memory.NormalizeScope(getFlag(args, "--scope"))
+
+	if scope == "" {
+		scope = memory.DetectRepoScope()
+	} else if memory.IsAllScopesSentinel(scope) {
+		scope = ""
+	}
 
 	mgr := openMemoryManager()
 	defer mgr.Close()
 
-	failures, err := mgr.ListFailures()
+	failures, err := mgr.ListFailuresScoped(scope)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		exitFunc(1)

@@ -387,8 +387,9 @@ func openAPISchemasBlocks() map[string]any {
 				"tags":       map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
 				"metadata":   map[string]any{"type": "object", "additionalProperties": map[string]any{"type": "string"}},
 				"expires_in": map[string]any{"type": "string", "example": "24h", "description": "Go duration string (e.g. 24h, 7d). Omit for no expiry."},
-				"scope":      map[string]any{"type": "string", "description": "Isolation scope (e.g. conversation or project ID)"},
+				"scope":      map[string]any{"type": "string", "description": "Isolation scope (e.g. conversation or project ID). Normalized on write (slash padding stripped); 'all'/'*' stores a global block when unrestricted and is rejected (403) against a restricted X-Gleann-Target header."},
 				"target":     map[string]any{"type": "string", "description": "Client target isolation (alias for scope)"},
+				"repo":       map[string]any{"type": "string", "description": "Provenance repository identifier (normalized on write)"},
 			},
 		},
 		"MemoryStats": map[string]any{
@@ -424,6 +425,57 @@ func openAPISchemasBlocks() map[string]any {
 				"index_names":     map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
 				"model":           map[string]any{"type": "string"},
 				"created_at":      map[string]any{"type": "string", "format": "date-time"},
+			},
+		},
+		"Failure": map[string]any{
+			"type":        "object",
+			"description": "A recorded command failure with its fix.",
+			"properties": map[string]any{
+				"id":         map[string]any{"type": "string", "description": "Unique block identifier (command+error signature derived hash)"},
+				"tier":       map[string]any{"type": "string", "enum": []string{"long"}, "description": "Storage tier (failures are always long-term)"},
+				"label":      map[string]any{"type": "string", "description": "Label: always 'failure'"},
+				"content":    map[string]any{"type": "string", "description": "The error text"},
+				"source":     map[string]any{"type": "string", "description": "Origin: failure"},
+				"created_at": map[string]any{"type": "string", "format": "date-time"},
+				"updated_at": map[string]any{"type": "string", "format": "date-time"},
+				"confirms":   map[string]any{"type": "integer", "description": "Number of times this failure was confirmed"},
+				"metadata": map[string]any{
+					"type":        "object",
+					"description": "Structured failure metadata",
+					"properties": map[string]any{
+						"failure.command":   map[string]any{"type": "string", "description": "The command that failed"},
+						"failure.error":     map[string]any{"type": "string", "description": "The error text"},
+						"failure.fix":       map[string]any{"type": "string", "description": "The fix that resolved the failure"},
+						"failure.signature": map[string]any{"type": "string", "description": "Normalized error signature for deduplication"},
+					},
+				},
+				"paths":   map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "File paths involved in the failure"},
+				"symbols": map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Symbol names involved in the failure"},
+				"scope":   map[string]any{"type": "string", "description": "Isolation scope"},
+				"repo":    map[string]any{"type": "string", "description": "Repository identifier"},
+			},
+		},
+		"FailureAddRequest": map[string]any{
+			"type":     "object",
+			"required": []string{"command", "error"},
+			"properties": map[string]any{
+				"command": map[string]any{"type": "string", "description": "The command that failed"},
+				"error":   map[string]any{"type": "string", "description": "The error text produced by the failing command"},
+				"fix":     map[string]any{"type": "string", "description": "The fix that resolved the failure"},
+				"paths":   map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "File paths involved in the failure"},
+				"symbols": map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Symbol names/FQNs involved in the failure"},
+				"scope":   map[string]any{"type": "string", "description": "Isolation scope (e.g. repository or conversation ID). Empty records a global failure. Must agree with ?scope= / X-Gleann-Target."},
+				"repo":    map[string]any{"type": "string", "description": "Provenance repository identifier. When scope is empty, scope defaults to repo. A sentinel ('all'/'*') repo never creates a literal 'all' scope."},
+			},
+		},
+		"FailureListResponse": map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"failures": map[string]any{
+					"type":  "array",
+					"items": refSchema("Failure"),
+				},
+				"count": map[string]any{"type": "integer"},
 			},
 		},
 	}

@@ -302,6 +302,8 @@ func (s *Server) buildMux() *http.ServeMux {
 	mux.HandleFunc("GET /api/blocks/stats", s.handleBlockStats)
 	mux.HandleFunc("GET /api/blocks", s.handleListBlocks)
 	mux.HandleFunc("POST /api/blocks", s.handleAddBlock)
+	mux.HandleFunc("POST /api/blocks/failures", s.handleAddFailure)
+	mux.HandleFunc("GET /api/blocks/failures", s.handleListFailures)
 	mux.HandleFunc("POST /api/blocks/compact", s.handleCompactBlocks)
 	mux.HandleFunc("DELETE /api/blocks/{id}", s.handleDeleteBlock)
 	mux.HandleFunc("DELETE /api/blocks", s.handleClearBlocks)
