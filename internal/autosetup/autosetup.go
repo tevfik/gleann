@@ -15,6 +15,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/tevfik/gleann/internal/fsretry"
 	"github.com/tevfik/gleann/pkg/gleann"
 )
 
@@ -213,7 +214,7 @@ func EnsureConfig(ollamaHost string, quiet bool) (bool, error) {
 	if err := tmp.Close(); err != nil {
 		return false, err
 	}
-	if err := os.Rename(tmp.Name(), cfgPath); err != nil {
+	if err := fsretry.Rename(tmp.Name(), cfgPath); err != nil {
 		return false, err
 	}
 

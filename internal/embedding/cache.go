@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/maypok86/otter/v2"
+	"github.com/tevfik/gleann/internal/fsretry"
 	gleann "github.com/tevfik/gleann/pkg/gleann"
 )
 
@@ -314,7 +315,7 @@ func (c *CachedComputer) saveToDisk(key string, vec []float32) error {
 		_ = os.Remove(tmpPath)
 		return fmt.Errorf("closing cache temp file: %w", err)
 	}
-	if err := os.Rename(tmpPath, path); err != nil {
+	if err := fsretry.Rename(tmpPath, path); err != nil {
 		_ = os.Remove(tmpPath)
 		return fmt.Errorf("renaming cache file into place: %w", err)
 	}

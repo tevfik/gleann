@@ -11,6 +11,7 @@ import (
 	"runtime"
 	"strings"
 
+	"github.com/tevfik/gleann/internal/fsretry"
 	"github.com/tevfik/gleann/pkg/configpath"
 )
 
@@ -271,7 +272,7 @@ func writeSecretFile(path string, data []byte) error {
 	if err := tmp.Close(); err != nil {
 		return err
 	}
-	return os.Rename(tmp.Name(), path)
+	return fsretry.Rename(tmp.Name(), path)
 }
 
 // UpdateConfig reads the existing config, applies the mutator function,

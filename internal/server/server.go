@@ -28,6 +28,7 @@ import (
 
 	"github.com/tevfik/gleann/internal/background"
 	"github.com/tevfik/gleann/internal/embedding"
+	"github.com/tevfik/gleann/internal/fsretry"
 	"github.com/tevfik/gleann/internal/indexing"
 	"github.com/tevfik/gleann/internal/modelcatalog"
 	"github.com/tevfik/gleann/internal/multimodal"
@@ -2095,7 +2096,7 @@ func writeFileAtomic(path string, data []byte, perm os.FileMode) error {
 	if err := tmp.Close(); err != nil {
 		return fmt.Errorf("close temp file: %w", err)
 	}
-	if err := os.Rename(tmpName, path); err != nil {
+	if err := fsretry.Rename(tmpName, path); err != nil {
 		return fmt.Errorf("replace %s: %w", path, err)
 	}
 	return nil

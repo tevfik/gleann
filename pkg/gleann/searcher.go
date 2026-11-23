@@ -15,6 +15,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/tevfik/gleann/internal/fsretry"
 	"github.com/tevfik/gleann/internal/graphstore"
 	"github.com/tevfik/gleann/internal/metafault"
 )
@@ -1140,7 +1141,7 @@ func UpdateIndexMeta(indexDir, name string, updateFn func(*IndexMeta)) error {
 		_ = os.Remove(tmpPath)
 		return fmt.Errorf("write temp metadata: %w", err)
 	}
-	if err := os.Rename(tmpPath, metaPath); err != nil {
+	if err := fsretry.Rename(tmpPath, metaPath); err != nil {
 		_ = os.Remove(tmpPath)
 		return fmt.Errorf("replace index metadata: %w", err)
 	}

@@ -21,6 +21,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/tevfik/gleann/internal/fsretry"
 )
 
 // Scope limits what a token may do.
@@ -128,7 +130,7 @@ func writeFileAtomic(path string, data []byte, perm os.FileMode) error {
 	if err := tmp.Close(); err != nil {
 		return err
 	}
-	return os.Rename(tmp.Name(), path)
+	return fsretry.Rename(tmp.Name(), path)
 }
 
 // Create adds a token and returns the raw value (shown only once).
