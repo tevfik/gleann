@@ -23,7 +23,7 @@ func (s *Server) handleListPlugins(w http.ResponseWriter, r *http.Request) {
 
 	type pluginResponse struct {
 		gleann.PluginMeta
-		Status string `json:"status"` // "not_installed", "installed", "running"
+		Status string `json:"status"` // "not_installed" or "installed"
 	}
 
 	var response []pluginResponse

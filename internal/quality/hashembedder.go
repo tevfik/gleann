@@ -98,3 +98,26 @@ func splitCamel(s string) []string {
 	}
 	return append(parts, string(rs[start:]))
 }
+
+// ── Exported fixture surface (RFC 008 step 0a) ───────────────────────────
+//
+// Moved here from embedder_test.go so the parity fixtures of RFC 008
+// (internal/paritytest, decision D12) can reuse the exact scheme the
+// quality gate measures with. The unexported names above are unchanged;
+// the exports below are additive.
+
+// HashEmbedder is the exported name of hashEmbedder, the deterministic
+// hashed bag-of-words embedder the quality gate builds its corpus with.
+// Indexes built through the paritytest HTTP fake and searches run with a
+// direct HashEmbedder produce identical vectors, because the fake serves
+// EmbedText.
+type HashEmbedder = hashEmbedder
+
+// EmbedDims is the vector length HashEmbedder produces.
+const EmbedDims = embedDims
+
+// EmbedText returns the deterministic unit vector HashEmbedder computes
+// for text: a signed, hashed bag of lower-cased identifier parts (see
+// hashEmbedder). It needs no model, network or CGo, and two calls with
+// the same text return equal vectors.
+func EmbedText(text string) []float32 { return embedText(text) }

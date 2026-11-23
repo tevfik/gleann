@@ -43,7 +43,7 @@ func openAPIPathsPlugins() map[string]any {
 												"settings_cmd":        map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
 												"requires_markitdown": map[string]any{"type": "boolean"},
 												"version":             map[string]any{"type": "string", "description": "Latest version available"},
-												"status":              map[string]any{"type": "string", "enum": []string{"not_installed", "installed", "running"}},
+												"status":              map[string]any{"type": "string", "enum": []string{"not_installed", "installed"}},
 											},
 										}},
 									},

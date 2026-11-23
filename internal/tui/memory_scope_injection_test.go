@@ -68,29 +68,35 @@ func memoryScopeFixture(t *testing.T) *memory.Manager {
 
 // capturingOllama returns a fake Ollama server and a function that reports the
 // system messages of the last chat request, which is where injected memory goes.
+// Only /api/chat requests are captured: the agent-chat path also probes
+// /api/show in the background to learn the model's context window, and such a
+// probe carries no messages — capturing it would overwrite the chat prompt
+// with an empty string and flake the memory assertions under load.
 func capturingOllama(t *testing.T) (*httptest.Server, func() string) {
 	t.Helper()
 	var mu sync.Mutex
 	var captured string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var req struct {
-			Messages []struct {
-				Role    string `json:"role"`
-				Content string `json:"content"`
-			} `json:"messages"`
-		}
-		_ = json.NewDecoder(r.Body).Decode(&req)
-
-		var system strings.Builder
-		for _, m := range req.Messages {
-			if m.Role == "system" {
-				system.WriteString(m.Content)
-				system.WriteString("\n")
+		if r.URL.Path == "/api/chat" {
+			var req struct {
+				Messages []struct {
+					Role    string `json:"role"`
+					Content string `json:"content"`
+				} `json:"messages"`
 			}
+			_ = json.NewDecoder(r.Body).Decode(&req)
+
+			var system strings.Builder
+			for _, m := range req.Messages {
+				if m.Role == "system" {
+					system.WriteString(m.Content)
+					system.WriteString("\n")
+				}
+			}
+			mu.Lock()
+			captured = system.String()
+			mu.Unlock()
 		}
-		mu.Lock()
-		captured = system.String()
-		mu.Unlock()
 
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
@@ -164,6 +170,44 @@ func TestAgentChatStreamInjectsOnlyCurrentRepoMemory(t *testing.T) {
 
 	if _, err := ac.stream(context.Background(), "what is the rule?", func(agenttui.Event) {}); err != nil {
 		t.Fatal(err)
+	}
+
+	assertCurrentRepoMemory(t, captured())
+}
+
+// TestAgentChatContextProbeKeepsCapturedMemory is a deterministic reproduction
+// of the CI flake in TestAgentChatStreamInjectsOnlyCurrentRepoMemory: when the
+// context limit is unknown, stream spawns refreshContextLimit in the background
+// and that probe POSTs /api/show to the same server. The capture must keep
+// reporting the chat request's system prompt, not the probe's empty one.
+func TestAgentChatContextProbeKeepsCapturedMemory(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("GLEANN_CONTEXT_TOKENS", "")
+	t.Setenv("GLEANN_OLLAMA_NUM_CTX", "")
+	t.Chdir(initMemoryRepo(t, "https://github.com/org/repo-a.git"))
+	mgr := memoryScopeFixture(t)
+	srv, captured := capturingOllama(t)
+
+	ac := newTestAgentChat(nil)
+	ac.cm.chat = gleann.NewChat(fakeSearcher{}, gleann.ChatConfig{
+		Provider: gleann.LLMOllama,
+		Model:    "test-model",
+		BaseURL:  srv.URL,
+	})
+	ac.cm.memoryMgr = mgr
+
+	if _, err := ac.stream(context.Background(), "what is the rule?", func(agenttui.Event) {}); err != nil {
+		t.Fatal(err)
+	}
+	// stream spawned `go ac.refreshContextLimit()` because contextLimit is 0.
+	// Run the same probe synchronously so the ordering is deterministic.
+	ac.refreshContextLimit()
+	ac.mu.Lock()
+	limit := ac.cm.contextLimit
+	ac.mu.Unlock()
+	if limit == 0 {
+		t.Fatal("context probe did not run; the test would pass vacuously")
 	}
 
 	assertCurrentRepoMemory(t, captured())

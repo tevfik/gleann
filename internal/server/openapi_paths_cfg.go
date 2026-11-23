@@ -20,6 +20,7 @@ func openAPIPathsConfig() map[string]any {
 							},
 						},
 					},
+					"500": map[string]any{"description": "Failed to encode the configuration"},
 				},
 			},
 			"post": map[string]any{

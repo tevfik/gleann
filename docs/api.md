@@ -30,6 +30,10 @@ authorization to **Bearer Token** with a token from `gleann token create`. The
 spec declares that scheme once at the top level, and the four public routes
 (`GET /health`, `GET /.well-known/agent-card.json`, `GET /api/docs`,
 `GET /api/openapi.json`) override it with an empty list.
+`TestSpecSecurityMatchesPublicRoutes` fails the build when a route the server
+serves without a token inherits `bearerAuth` in the spec (or a protected route
+is marked public). The embedded web UI's static files are also served without
+a token, but they are deliberately outside the spec.
 
 ## Endpoints
 
@@ -49,7 +53,7 @@ spec declares that scheme once at the top level, and the four public routes
 | GET | `/api/indexes/{name}/sections` | List document sections grouped from passage metadata (`section_id`, `section_title`, `section_path`, `section_summary`, falling back to `heading`/`title`) with `passage_count` and the chunk and passage-ID ranges of each section. Passages without section metadata are not listed. Same `?limit=`/`?offset=` bounds and status codes as `/passages` |
 | GET | `/api/storage` | Disk space of the index directory: `index_dir`, `indexes`, `passages`, `bytes` (every file under it) and the file system's `disk_total_bytes` / `disk_free_bytes` (0 where the platform does not report it); also the whole gleann data folder (`GLEANN_CONFIG_DIR`, default `~/.gleann`): `data_dir`, `data_bytes` and `data_folders` (bytes per top-level entry, e.g. `models`). The data-folder walk is cached for 60 s |
 | POST | `/api/indexes/{name}/storage` | Convert the index between `store` and `recompute` vector storage (body `{"mode":"store"\|"recompute"}`); `202 {"task_id"}` while it re-indexes in the background (see Background Tasks), `200 {"unchanged":true}` when it already uses that mode, `409` when the index cannot be switched, `501` when the server was started without the converter |
-| PATCH | `/api/indexes/{name}` | Update index governance (`tags`, `description`, `mcp_exposed`) |
+| PATCH | `/api/indexes/{name}` | Update index governance (`tags`, `description`, `mcp_exposed`); only fields present in the body change. `400` invalid name/body, `500` metadata update failure — a missing index answers `500`, not `404` |
 | POST | `/api/indexes/{name}/build` | Build index from texts/items |
 | POST | `/api/indexes/{name}/update` | Remove the passages of some sources and/or add items |
 | POST | `/api/indexes/{name}/index-path` | Index a directory on the server (must be inside `allowed_roots`, default: home) |

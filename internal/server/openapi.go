@@ -53,8 +53,10 @@ func (s *Server) openAPISpec() map[string]any {
 		"paths": s.openAPIPaths(),
 		// Bearer auth is declared once here so importing /api/openapi.json into
 		// Postman surfaces a single security scheme that every operation
-		// inherits. Public routes (health, the agent card) override it with an
-		// empty list.
+		// inherits. The four public routes (health, the agent card, the Swagger
+		// UI and the spec itself) override it with an empty list;
+		// TestSpecSecurityMatchesPublicRoutes checks the overrides against the
+		// routes security.go serves without a token.
 		"security": []map[string]any{{"bearerAuth": []string{}}},
 		"components": map[string]any{
 			"schemas": openAPISchemas(),

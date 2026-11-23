@@ -484,6 +484,26 @@ func openAPISchemasBlocks() map[string]any {
 // openAPISchemasConversations returns conversation-related component schemas.
 func openAPISchemasConversations() map[string]any {
 	return map[string]any{
+		// Conversation mirrors pkg/conversations.Conversation, the full object
+		// GET and PUT /api/conversations/{id} return.
+		"Conversation": map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"id":      map[string]any{"type": "string", "description": "Full conversation ID (SHA-1)"},
+				"title":   map[string]any{"type": "string", "description": "Conversation title"},
+				"indexes": map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "gleann index names (one or more)"},
+				"model":   map[string]any{"type": "string", "description": "LLM model used"},
+				"messages": map[string]any{"type": "array", "items": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"role":    map[string]any{"type": "string", "enum": []string{"system", "user", "assistant"}},
+						"content": map[string]any{"type": "string"},
+					},
+				}},
+				"created_at": map[string]any{"type": "string", "format": "date-time"},
+				"updated_at": map[string]any{"type": "string", "format": "date-time"},
+			},
+		},
 		"ConversationSummary": map[string]any{
 			"type": "object",
 			"properties": map[string]any{

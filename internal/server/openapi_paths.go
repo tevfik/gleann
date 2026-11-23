@@ -8,6 +8,8 @@ func openAPIPathsHealth() map[string]any {
 				"tags":        []string{"health"},
 				"summary":     "Health check",
 				"operationId": "healthCheck",
+				// Public: security.go serves /health without a token.
+				"security": []map[string]any{},
 				"responses": map[string]any{
 					"200": map[string]any{
 						"description": "Server is healthy",
@@ -113,7 +115,7 @@ func openAPIPathsIndexes() map[string]any {
 			"patch": map[string]any{
 				"tags":        []string{"indexes"},
 				"summary":     "Update an index (metadata only)",
-				"description": "Updates the metadata of an existing index. The request body contains the fields to update (title, description).",
+				"description": "Updates the metadata of an existing index. Only the fields present in the request body are changed (tags, description, mcp_exposed); fields left out keep their value. A missing index answers 500, not 404.",
 				"operationId": "patchIndex",
 				"parameters":  []map[string]any{paramName()},
 				"requestBody": map[string]any{
@@ -124,17 +126,18 @@ func openAPIPathsIndexes() map[string]any {
 								"type":        "object",
 								"description": "Index metadata fields to update",
 								"properties": map[string]any{
-									"title":       map[string]any{"type": "string", "description": "Human-readable title"},
+									"tags":        map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Replaces the index's tag list"},
 									"description": map[string]any{"type": "string", "description": "Description of the index contents"},
+									"mcp_exposed": map[string]any{"type": "boolean", "description": "Whether the index is exposed to MCP clients"},
 								},
 							},
 						},
 					},
 				},
 				"responses": map[string]any{
-					"200": map[string]any{"description": "Index updated"},
-					"400": map[string]any{"description": "Invalid JSON body"},
-					"404": map[string]any{"description": "Index not found"},
+					"200": map[string]any{"description": "Index updated; returns the updated index metadata"},
+					"400": map[string]any{"description": "Invalid index name or JSON body"},
+					"500": map[string]any{"description": "Failed to update or read the index metadata (a missing index answers 500, not 404)"},
 				},
 			},
 		},
@@ -1167,7 +1170,17 @@ func openAPIPathsConversations() map[string]any {
 				"description": "Permanently deletes all saved conversations.",
 				"operationId": "clearConversations",
 				"responses": map[string]any{
-					"200": map[string]any{"description": "All conversations cleared"},
+					"200": map[string]any{
+						"description": "All conversations cleared",
+						"content": map[string]any{"application/json": map[string]any{"schema": map[string]any{
+							"type": "object",
+							"properties": map[string]any{
+								"status": map[string]any{"type": "string", "example": "deleted"},
+								"count":  map[string]any{"type": "integer", "description": "Number of conversations deleted"},
+							},
+						}}},
+					},
+					"500": map[string]any{"description": "Failed to list the conversations"},
 				},
 			},
 		},
@@ -1181,7 +1194,7 @@ func openAPIPathsConversations() map[string]any {
 					{"name": "id", "in": "path", "required": true, "schema": map[string]any{"type": "string"}, "description": "Conversation ID or prefix"},
 				},
 				"responses": map[string]any{
-					"200": map[string]any{"description": "Full conversation with messages"},
+					"200": map[string]any{"description": "Full conversation with messages", "content": map[string]any{"application/json": map[string]any{"schema": refSchema("Conversation")}}},
 					"404": map[string]any{"description": "Conversation not found"},
 				},
 			},
@@ -1221,8 +1234,10 @@ func openAPIPathsConversations() map[string]any {
 					},
 				},
 				"responses": map[string]any{
-					"200": map[string]any{"description": "Conversation updated"},
+					"200": map[string]any{"description": "Conversation updated; returns the full conversation", "content": map[string]any{"application/json": map[string]any{"schema": refSchema("Conversation")}}},
+					"400": map[string]any{"description": "Missing conversation ID or invalid JSON body"},
 					"404": map[string]any{"description": "Conversation not found"},
+					"500": map[string]any{"description": "Failed to save the conversation"},
 				},
 			},
 		},
@@ -1289,6 +1304,8 @@ func openAPIPathsA2A() map[string]any {
 				"summary":     "A2A Agent Card (discovery)",
 				"description": "Returns the A2A Agent Card describing gleann's capabilities and skills. Used by other agents and orchestrators to discover this agent.",
 				"operationId": "getAgentCard",
+				// Public: security.go serves the agent card without a token.
+				"security": []map[string]any{},
 				"responses": map[string]any{
 					"200": map[string]any{
 						"description": "Agent Card",
