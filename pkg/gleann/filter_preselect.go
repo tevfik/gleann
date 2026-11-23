@@ -6,6 +6,7 @@ import (
 	"math"
 	"sort"
 	"strings"
+	"unicode/utf8"
 )
 
 // filterPoolCap bounds the widen-until-k candidate pool (WP-2.5). With
@@ -45,16 +46,21 @@ const filterExactMax = 12000
 const filterExactSelectivity = 5
 
 // filterExactScanMax bounds the index size for which a filter with few matches
-// is scored exactly although the loop already found k results. The SQL
-// pre-selection evaluates the filter on every row (json_extract over the meta
-// column has no index), so its cost grows with the index, not with the
-// matches: about 60 ms at 100K passages (filtbench, 100K x 768). Above this
-// size the loop's result stands, as before; the cap fallback (fewer than k
+// may cost a pass over the passages table although the loop already found k
+// results. Without a filter index (preselectIndexed) the SQL pre-selection
+// evaluates the filter on every row, so its cost grows with the index, not
+// with the matches: about 60 ms at 100K passages (filtbench, 100K x 768).
+// Up to this size a missing filter index is created on demand (one pass, once
+// per field) and a filter the indexes cannot answer is evaluated on every
+// row. Above it only the filter indexes that already exist are used and the
+// loop's result stands otherwise, as before; the cap fallback (fewer than k
 // results after filterPoolCap) still pre-selects at any size.
 const filterExactScanMax = 200_000
 
 // preselectFilterIDs answers a metadata filter from the format-2 record store
-// (WP-2.5): it compiles the filters to a SQL WHERE clause over the passages
+// (WP-2.5). It first asks the filter indexes (preselectIndexed), whose cost
+// follows the number of matches. When they cannot answer, it compiles the
+// filters to a SQL WHERE clause over the passages
 // table, reads the matching rows (id, vec_slot, source, kind, meta — never text)
 // up to filterPreselectCap+1 and verifies each against the authoritative filter
 // engine. The returned map is therefore EXACT: it maps each matching passage's
@@ -68,16 +74,34 @@ const filterExactScanMax = 200_000
 // more than filterPreselectCap rows (not selective — the widen loop's result
 // stands), and on any store error; the caller then keeps the loop's results.
 func (s *LeannSearcher) preselectFilterIDs(ctx context.Context, engine *MetadataFilterEngine) (map[int64]int64, bool) {
-	return s.preselectFilterIDsLimit(ctx, engine, filterPreselectCap)
+	return s.preselectFilterIDsLimit(ctx, engine, filterPreselectCap, true)
 }
 
 // preselectFilterIDsLimit is preselectFilterIDs with an explicit row limit:
-// a filter matching more than limit rows reports ran=false.
-func (s *LeannSearcher) preselectFilterIDsLimit(ctx context.Context, engine *MetadataFilterEngine, limit int) (map[int64]int64, bool) {
+// a filter matching more than limit rows reports ran=false. tablePass says
+// whether a pass over the whole passages table is acceptable: to create a
+// missing filter index, or to evaluate a filter the indexes cannot answer.
+// Without it only existing filter indexes answer.
+func (s *LeannSearcher) preselectFilterIDsLimit(ctx context.Context, engine *MetadataFilterEngine, limit int, tablePass bool) (map[int64]int64, bool) {
 	sp, ok := s.passages.(*storePassages)
 	if !ok {
 		return nil, false
 	}
+	switch allowed, outcome := s.preselectIndexed(ctx, sp, engine, limit, tablePass); outcome {
+	case preselectDone:
+		return allowed, true
+	case preselectNotSelective:
+		return nil, false
+	}
+	if !tablePass {
+		return nil, false
+	}
+	return s.preselectScan(ctx, sp, engine, limit)
+}
+
+// preselectScan is the pre-selection without filter indexes: the compiled
+// WHERE clause is evaluated on every row of the passages table.
+func (s *LeannSearcher) preselectScan(ctx context.Context, sp *storePassages, engine *MetadataFilterEngine, limit int) (map[int64]int64, bool) {
 	where, args, ok := compileFilterSQL(engine.Filters, engine.Logic)
 	if !ok {
 		return nil, false
@@ -129,9 +153,12 @@ func filterResolutionChain(field string) []filterCandidate {
 	case "":
 		return nil
 	case "source":
-		return []filterCandidate{{column: true}, {metaKey: "file"}}
+		// A passage without a source column keeps a "source" key of its meta
+		// JSON as metadata["source"] (storePassageToGleann overrides it only
+		// with a non-empty column), so the key comes right after the column.
+		return []filterCandidate{{column: true}, {metaKey: "source"}, {metaKey: "file"}}
 	case "file":
-		return []filterCandidate{{metaKey: "file"}, {column: true}}
+		return []filterCandidate{{metaKey: "file"}, {column: true}, {metaKey: "source"}}
 	case "type":
 		return []filterCandidate{{metaKey: "type"}, {metaKey: "kind"}}
 	case "kind":
@@ -236,10 +263,15 @@ func compileFilterBranch(f MetadataFilter) (string, []any, bool) {
 		} else {
 			e, ea := candidateExpr(c)
 			t, ta := candidateIsText(c)
-			ps, psa := pred(e, ea)
-			b.WriteString(" AND (" + t + " = 0 OR " + ps + ")")
-			bargs = append(bargs, ta...)
-			bargs = append(bargs, psa...)
+			if valueNeedlesDecodeApart(f.Value) {
+				// every text value of the key is verified
+				b.WriteString(" AND 1")
+			} else {
+				ps, psa := pred(e, ea)
+				b.WriteString(" AND (" + t + " = 0 OR " + ps + ")")
+				bargs = append(bargs, ta...)
+				bargs = append(bargs, psa...)
+			}
 		}
 		parts = append(parts, "("+b.String()+")")
 		args = append(args, bargs...)
@@ -262,11 +294,44 @@ func candidateExpr(c filterCandidate) (string, []any) {
 	return "json_extract(meta, ?)", []any{c.path()}
 }
 
-// candidateIsText is 1 when the candidate's value is a JSON string. The
-// engine's fmt.Sprint of a string is the string itself, so text values compare
-// exactly in SQL; every other JSON type goes to engine verification.
+// candidateIsText is 1 when the candidate's value is a JSON string that SQL
+// reads as the engine does. The engine's fmt.Sprint of a string is the string
+// itself, so text values compare exactly in SQL; every other JSON type goes to
+// engine verification, and so does a key that occurs twice in the object (Go
+// keeps the last value, json_type and json_extract the first; json_remove
+// deletes the first occurrence only).
 func candidateIsText(c filterCandidate) (string, []any) {
-	return "(json_type(meta, ?) = 'text')", []any{c.path()}
+	p := c.path()
+	return "(json_type(meta, ?) = 'text' AND json_type(json_remove(meta, ?), ?) IS NULL)", []any{p, p, p}
+}
+
+// needleDecodesApart reports whether a needle can tell SQL's reading of a JSON
+// string from Go's apart: Go reads a byte that is not UTF-8 as U+FFFD, SQLite
+// keeps it. Such a needle makes the text comparison unreliable on the rows
+// that have such bytes (and there is no telling which), so the rows of the key
+// go to engine verification.
+func needleDecodesApart(s string) bool {
+	return !utf8.ValidString(s) || strings.ContainsRune(s, utf8.RuneError)
+}
+
+// valueNeedlesDecodeApart applies needleDecodesApart to the needles of a
+// filter value: the value itself, or the items of an in/nin list.
+func valueNeedlesDecodeApart(value any) bool {
+	switch v := value.(type) {
+	case []any:
+		for _, it := range v {
+			if needleDecodesApart(fmt.Sprint(it)) {
+				return true
+			}
+		}
+	case []string:
+		for _, it := range v {
+			if needleDecodesApart(it) {
+				return true
+			}
+		}
+	}
+	return needleDecodesApart(fmt.Sprint(value))
 }
 
 // compileStringPred returns a predicate builder over a SQL value expression
@@ -398,20 +463,21 @@ func topScores(scores map[int64]float32, n int) map[int64]float32 {
 // filterFewMatches reports whether the filter is estimated to match at most
 // filterExactMax passages (see filterExactMatches) on a format-2 index, so that
 // exact scoring of the pre-selected matches is cheaper and more accurate than
-// widening the approximate pool further.
-func (s *LeannSearcher) filterFewMatches(passed, examined int) bool {
+// widening the approximate pool further. tablePass says whether the index is
+// small enough for the pre-selection to cost a pass over the passages table
+// (filterExactScanMax); a larger index is pre-selected from its existing
+// filter indexes only.
+func (s *LeannSearcher) filterFewMatches(passed, examined int) (few, tablePass bool) {
 	if s.storeFormat != 2 {
-		return false
+		return false, false
 	}
-	return filterExactWorthIt(passed, examined, s.passages.Count())
+	total := s.passages.Count()
+	return filterExactWorthIt(passed, examined, total), total <= filterExactScanMax
 }
 
 // filterExactWorthIt is the decision behind filterFewMatches: passed of
 // examined candidates matched in an index of total passages.
 func filterExactWorthIt(passed, examined, total int) bool {
-	if total > filterExactScanMax {
-		return false // the full-table pre-selection scan costs more than it saves
-	}
 	// No candidate passed yet: assume one did. A filter whose matches rank
 	// deep (or are rare) then goes to exact scoring after the first round
 	// instead of widening to filterPoolCap; if the estimate is off, the

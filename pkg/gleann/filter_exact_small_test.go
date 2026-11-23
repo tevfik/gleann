@@ -148,7 +148,11 @@ func TestFilterExactWorthIt(t *testing.T) {
 		{"no pass yet counts as one", 0, 50, 100_000, true},
 		{"a fifth or more is not restrictive", 25, 100, 10_000, false},
 		{"more than filterExactMax matches", 15, 100, 100_000, false},
-		{"index too large for the scan", 1, 1000, 1_000_000, false},
+		// The size of the index no longer decides whether few matches are
+		// scored exactly: a filter index answers at any size. Whether a pass
+		// over the table is acceptable is filterFewMatches' second result.
+		{"1 of 1000 in a large index", 1, 1000, 1_000_000, true},
+		{"more than filterExactMax matches in a large index", 2, 100, 1_000_000, false},
 		{"nothing examined", 0, 0, 100_000, false},
 	} {
 		if got := filterExactWorthIt(tc.passed, tc.examined, tc.total); got != tc.want {

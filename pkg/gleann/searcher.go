@@ -658,11 +658,13 @@ func (s *LeannSearcher) search(ctx context.Context, query string, opts ...Search
 		// necessarily the true top-k among them, so score the matches
 		// exactly (once). When that cannot run (pruned embeddings, more rows
 		// than estimated) the loop goes on as before.
-		if canScoreExact && !exactTried && s.filterFewMatches(passedCount, preFilterCount) {
-			exactTried = true
-			if pre, _, ok := s.searchPreselectedLimit(ctx, query, rq, queryEmb, searchOpts, topK, filterEngine, normDist, 2*filterExactMax, true); ok {
-				results, scoredExactly = pre, true
-				break
+		if canScoreExact && !exactTried {
+			if few, tablePass := s.filterFewMatches(passedCount, preFilterCount); few {
+				exactTried = true
+				if pre, _, ok := s.searchPreselectedLimit(ctx, query, rq, queryEmb, searchOpts, topK, filterEngine, normDist, 2*filterExactMax, true, tablePass); ok {
+					results, scoredExactly = pre, true
+					break
+				}
 			}
 		}
 		if len(results) >= topK {
@@ -1561,15 +1563,16 @@ func (s *LeannSearcher) buildBoostedResults(query, rq string, searchOpts SearchC
 // stand-in: the caller keeps its own results and only fills up with it
 // (mergeLexicalFill), never replacing vector-scored results by BM25 ones.
 func (s *LeannSearcher) searchPreselected(ctx context.Context, query, rq string, queryEmb []float32, searchOpts SearchConfig, topK int, engine *MetadataFilterEngine, normDist float32) (results []SearchResult, exact, ok bool) {
-	return s.searchPreselectedLimit(ctx, query, rq, queryEmb, searchOpts, topK, engine, normDist, filterPreselectCap, false)
+	return s.searchPreselectedLimit(ctx, query, rq, queryEmb, searchOpts, topK, engine, normDist, filterPreselectCap, false, true)
 }
 
 // searchPreselectedLimit is searchPreselected reading at most limit matching
 // rows. With vectorOnly it reports ok only when the matches were scored by
 // vector distance (tier 1): the few-matches path replaces k results the loop
-// already holds, which a lexical-only ranking must not do.
-func (s *LeannSearcher) searchPreselectedLimit(ctx context.Context, query, rq string, queryEmb []float32, searchOpts SearchConfig, topK int, engine *MetadataFilterEngine, normDist float32, limit int, vectorOnly bool) (results []SearchResult, exact, ok bool) {
-	allowed, ran := s.preselectFilterIDsLimit(ctx, engine, limit)
+// already holds, which a lexical-only ranking must not do. tablePass allows
+// the pre-selection a pass over the passages table (preselectFilterIDsLimit).
+func (s *LeannSearcher) searchPreselectedLimit(ctx context.Context, query, rq string, queryEmb []float32, searchOpts SearchConfig, topK int, engine *MetadataFilterEngine, normDist float32, limit int, vectorOnly, tablePass bool) (results []SearchResult, exact, ok bool) {
+	allowed, ran := s.preselectFilterIDsLimit(ctx, engine, limit, tablePass)
 	if !ran {
 		return nil, false, false
 	}

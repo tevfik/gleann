@@ -194,7 +194,7 @@ func TestFilteredSearch_DiskANNPreselectScoresExactly(t *testing.T) {
 			normDist := diskann.L2DistanceSquared(queryEmb, vecOf(49))
 
 			engine := NewMetadataFilterEngine([]MetadataFilter{{Field: "lang", Operator: OpEqual, Value: "go"}})
-			rs, exact, ok := s.searchPreselectedLimit(ctx, rq, rq, queryEmb, SearchConfig{HybridAlpha: 1.0}, 3, engine, normDist, 2*filterExactMax, true)
+			rs, exact, ok := s.searchPreselectedLimit(ctx, rq, rq, queryEmb, SearchConfig{HybridAlpha: 1.0}, 3, engine, normDist, 2*filterExactMax, true, true)
 			if !ok || !exact {
 				t.Fatalf("pre-selection did not score the matches by vector (ok=%v exact=%v): DiskANN filtered search has no exact path", ok, exact)
 			}

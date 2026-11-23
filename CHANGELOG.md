@@ -6,12 +6,16 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 - **`gleann index watch --quiet`.** Silences the status lines (start, initial sync, per-change updates, stop) and the embedded `llama-server` start, as `index build --quiet` and `index sync --quiet` do; errors and warnings stay on stderr. `--help` and `docs/configuration.md` list it.
+- Metadata filter indexes: the first eq/in/exists filter search on a meta key creates a SQLite expression index for it (on demand, up to 16 keys per index database, indexes up to 200K passages; `EnsureFilterIndexes` for larger ones), so filtered searches no longer scan the whole passages table. Values SQLite and Go decode differently (numbers beyond float64, duplicate keys, non-UTF-8 bytes, a raw NUL byte after valid JSON) are verified by the filter engine. No migration; older binaries keep the indexes exact on write and never read them. See docs/plans/010-filter-index.md.
 
 ### Fixed
 - **`gleann ask` honours `--`, and `ask` and `search` read no flag after it.** Everything after `--` is question text, verbatim: `ask idx -- --graph why` asks "--graph why" instead of dropping both `--` and `--graph`, and `search idx -- why --index-dir /x` no longer changes the index directory (the shared config flags `--model`, `--top-k`, `--index-dir`, ... stopped at `--` nowhere before).
 - **`--help` as the value of a value-taking flag is not a help request** in `ask`, `chat`, `setup`, `service` and `graph <subcommand>` (`ask --model -h`); the documented rule that `--help` after `--` is text is unchanged.
 - **`gleann graph hook --help` prints the hook usage** instead of the general graph usage, and names the `GLEANN_GRAPH_INDEX` variable the hook needs. The installed post-commit hook now checks that variable first and stays silent when it is unset and never ends the hook early, so lines after it in `post-commit` still run (it used to print "rebuilding graph index..." and then do nothing); reinstall the hook to get the new script.
 - **`gleann ask --help` no longer presents `--classic` as a working flag.** It is a `gleann chat` flag; `ask` only tolerates it, and the usage now says so.
+- Pre-selection of `source`/`file` filters resolves the meta `source` key of passages stored without a source column.
+- Exact scoring of few filter matches is no longer refused above 200K passages when a filter index can answer the pre-selection.
+- Filter pre-selection by table pass no longer disagrees with the filter engine on duplicate JSON keys and non-UTF-8 bytes in meta text; a meta text of `null` no longer panics.
 
 ## [v1.20.2] — 2026-11-23
 

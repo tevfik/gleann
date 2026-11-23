@@ -302,6 +302,10 @@ func storePassageToGleann(p store.Passage) Passage {
 	if p.Meta != "" && p.Meta != "{}" {
 		_ = json.Unmarshal([]byte(p.Meta), &md)
 	}
+	if md == nil {
+		// A meta text of "null" resets the map to nil.
+		md = make(map[string]any)
+	}
 	if p.Source != "" {
 		md["source"] = p.Source
 	}

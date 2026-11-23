@@ -6,6 +6,10 @@
 //
 //	cd bench/vectordb
 //	taskset -c 8-11 go run ./cmd/filtbench -size 10000 -dims 384 -dir /tmp/filt
+//
+// A filtered search creates the filter index of a field on demand on an index
+// of up to 200,000 passages; -filter-index creates them up front, which is
+// how a larger index gets them.
 package main
 
 import (
@@ -37,6 +41,7 @@ func main() {
 		only    = flag.String("only", "", "comma-separated rows to run: all,1%,10%,50% (default: every row)")
 	)
 	prof := flag.String("cpuprofile", "", "write a CPU profile of the query phase")
+	filterIndex := flag.Bool("filter-index", false, "create the filter indexes of t1, t10 and t50 before the queries (a search creates them on demand only up to 200,000 passages)")
 	vectors := flag.String("vectors", "", "real embedding vectors (.fvecs, see cmd/exportvecs) instead of synthetic data")
 	flag.Parse()
 	if *dir == "" {
@@ -63,6 +68,14 @@ func main() {
 	defer s.Close()
 	if built {
 		fmt.Fprintf(os.Stderr, "built %d in %s\n", *size, time.Since(t0).Round(time.Second))
+	}
+
+	if *filterIndex {
+		t0 := time.Now()
+		if err := s.EnsureFilterIndexes(ctx, "t1", "t10", "t50"); err != nil {
+			fatal("-filter-index: %v", err)
+		}
+		fmt.Fprintf(os.Stderr, "filter indexes ensured in %s\n", time.Since(t0).Round(time.Millisecond))
 	}
 
 	truth, err := vectordb.LoadOrComputeGroundTruth(*dir+"-truth", ds, "cosine")
