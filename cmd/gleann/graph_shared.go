@@ -28,6 +28,23 @@ func openGraphDBForCLI(config gleann.Config, indexName string) (gleann.GraphDB, 
 	return db, nil
 }
 
+// printGraphHookUsage prints `gleann graph hook --help`.
+func printGraphHookUsage() {
+	fmt.Println(`Usage: gleann graph hook <install|uninstall|status>
+
+Manage the git post-commit hook that syncs the index after a commit that
+changed code files. Run it inside a git repository. The hook syncs the index
+named by GLEANN_GRAPH_INDEX and does nothing while it is unset.
+
+Actions:
+  install      Add the gleann block to the post-commit hook (other hook content is kept)
+  uninstall    Remove the gleann block from the hook
+  status       Show whether the hook is installed
+
+Options:
+  -h, --help   Show this help message`)
+}
+
 // cmdGraph implements the `gleann graph <subcommand>` command.
 func cmdGraph(args []string) {
 	if len(args) < 1 {
@@ -36,7 +53,11 @@ func cmdGraph(args []string) {
 	}
 
 	subCmd := args[0]
-	if subCmd == "-h" || wantsHelp(args[1:]) {
+	if subCmd == "-h" || wantsHelpIn(args[1:], graphFlagSets[subCmd]) {
+		if subCmd == "hook" {
+			printGraphHookUsage()
+			return
+		}
 		printGraphUsage()
 		return
 	}

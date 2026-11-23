@@ -227,7 +227,7 @@ func indexFileSizes(indexDir, name string) []indexFileSize {
 }
 
 func cmdAsk(args []string) {
-	if wantsHelp(args) {
+	if wantsHelpIn(args, askFlags) {
 		printCmdAskUsage()
 		return
 	}
@@ -535,7 +535,7 @@ func cmdAsk(args []string) {
 }
 
 func cmdChat(args []string) {
-	if wantsHelp(args) {
+	if wantsHelpIn(args, chatFlags) {
 		fmt.Println(`Usage: gleann chat [index] [flags]
 
 Start an interactive chat session. Without an index name, an index picker opens.
@@ -772,7 +772,7 @@ func printCmdAskUsage() {
 	fmt.Fprintln(os.Stderr, "  --no-cache           Do not save conversation")
 	fmt.Fprintln(os.Stderr, "  --no-limit           Remove token limit (unlimited output)")
 	fmt.Fprintln(os.Stderr, "  --repeat-penalty N   Repetition penalty for LLM sampling (e.g. 1.1, 1.2)")
-	fmt.Fprintln(os.Stderr, "  --classic            Use the original chat interface (default: agenttui — cancel, thinking, sources, index picker)")
+	fmt.Fprintln(os.Stderr, "  --classic            Accepted for old scripts; no effect (it is a gleann chat flag)")
 	fmt.Fprintln(os.Stderr, "  --host URL           Ollama server address (default: saved config / OLLAMA_HOST)")
 	fmt.Fprintln(os.Stderr, "  --ollama-api-key KEY Optional Ollama API key (auth proxy / hosted Ollama; env: OLLAMA_API_KEY)")
 	fmt.Fprintln(os.Stderr, "  --api-key KEY        API key for the active LLM provider (overrides saved keys)")
@@ -791,6 +791,10 @@ func printCmdAskUsage() {
 	fmt.Fprintln(os.Stderr, "  --no-expand          Do not expand the query, even when the saved settings enable it")
 	fmt.Fprintln(os.Stderr, "  -h, --help           Show this help message")
 }
+
+// newAskSearcher builds the searcher of a single-index ask. Tests replace it
+// to see the config that reaches the searcher.
+var newAskSearcher = gleann.NewSearcher
 
 // createAskSearcher creates a Searcher based on the resolved index name and CLI args.
 func createAskSearcher(ctx context.Context, name string, args []string, config gleann.Config, quiet bool) gleann.Searcher {
@@ -841,7 +845,7 @@ func createAskSearcher(ctx context.Context, name string, args []string, config g
 	}
 
 	if len(indexNames) == 1 {
-		s := gleann.NewSearcher(config, embedder)
+		s := newAskSearcher(config, embedder)
 		if err := s.Load(ctx, indexNames[0]); err != nil {
 			fmt.Fprintf(os.Stderr, "error loading index: %v\n", err)
 			exitFunc(1)
@@ -867,11 +871,18 @@ func applyAskRerankPool(config *gleann.Config, args []string) {
 	}
 }
 
+// extractPositionalArgs splits the arguments of `gleann ask` into the words
+// (index name and question) and the attached files. Everything after a literal
+// "--" is question text, verbatim, as in `gleann search`.
 func extractPositionalArgs(args []string) ([]string, []string) {
 	var positional []string
 	var attachFiles []string
 	flagsWithValue := askFlags
 	for i := 0; i < len(args); i++ {
+		if args[i] == "--" {
+			positional = append(positional, args[i+1:]...)
+			break
+		}
 		if (args[i] == "--attach" || args[i] == "--image") && i+1 < len(args) {
 			i++
 			attachFiles = append(attachFiles, args[i])

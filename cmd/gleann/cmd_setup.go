@@ -21,7 +21,7 @@ import (
 // It handles the interactive TUI wizard by default.
 // Use `gleann setup --auto` for zero-friction onboarding (detect → confirm → index).
 func cmdSetup(args []string) {
-	if wantsHelp(args) {
+	if wantsHelpIn(args, setupFlags) {
 		printSetupUsage()
 		return
 	}

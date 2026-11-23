@@ -22,7 +22,7 @@ func cmdService(args []string) {
 	}
 
 	sub := args[0]
-	if sub == "help" || wantsHelp(args) {
+	if sub == "help" || wantsHelpIn(args, serviceFlagSets[sub]) {
 		printServiceUsage()
 		return
 	}

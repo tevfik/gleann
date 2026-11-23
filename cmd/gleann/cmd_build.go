@@ -464,10 +464,12 @@ Options:
   --storage <store|recompute>  Keep vectors in the index (default, fast search) or recompute them per search (small index, slow search; HNSW only)
   --mode <code|docs|all>  Index mode: code, docs, all (default: all)
   --interval <seconds>    Polling interval (default: 5)
+  --quiet                 Suppress status lines and the embedded llama-server start
+                          (errors and warnings stay on stderr).
   -h, --help              Show this help message`)
 			return
 		}
-		fmt.Fprintln(os.Stderr, "usage: gleann index watch <name> --docs <dir> [--graph] [--interval 5]")
+		fmt.Fprintln(os.Stderr, "usage: gleann index watch <name> --docs <dir> [--graph] [--interval 5] [--quiet]")
 		exitFunc(1)
 	}
 
@@ -499,14 +501,22 @@ Options:
 	config := getConfig(args)
 	applySavedConfig(&config, args)
 
-	if err := initLlamaCPPQuiet(context.Background(), &config, hasFlag(args, "--quiet")); err != nil {
+	// --quiet silences the status lines and the embedded llama-server start,
+	// as on `index sync`; warnings and errors keep going to stderr.
+	quiet := hasFlag(args, "--quiet")
+	out := io.Writer(os.Stdout)
+	if quiet {
+		out = io.Discard
+	}
+
+	if err := initLlamaCPPQuiet(context.Background(), &config, quiet); err != nil {
 		fmt.Fprintf(os.Stderr, "error initializing llamacpp: %v\n", err)
 		exitFunc(1)
 	}
 
-	fmt.Printf("👁️  Watching %s for changes via fsnotify (debounce: %s)\n", docsDir, interval)
-	fmt.Printf("   Index: %s\n", name)
-	fmt.Println("   Press Ctrl+C to stop.")
+	fmt.Fprintf(out, "👁️  Watching %s for changes via fsnotify (debounce: %s)\n", docsDir, interval)
+	fmt.Fprintf(out, "   Index: %s\n", name)
+	fmt.Fprintln(out, "   Press Ctrl+C to stop.")
 
 	// Graceful shutdown.
 	stop := make(chan os.Signal, 1)
@@ -533,6 +543,7 @@ Options:
 	defer cancel()
 
 	opts := stdOptions(config, mode, noPlugins, includeSubmodules)
+	opts.Stdout = out
 	// No preset embedder: Sync uses the model the index was built with
 	// (reconcileModel) and builds the embedder for that model.
 	opts.Tracker = tracker
@@ -550,14 +561,22 @@ Options:
 	// Initial build. An existing index is brought up to date with an
 	// incremental sync instead of being deleted and re-embedded (N-04).
 	if _, statErr := os.Stat(filepath.Join(config.IndexDir, name, name+".meta.json")); statErr == nil {
-		fmt.Printf("📂 Index %q exists, syncing instead of rebuilding...\n", name)
+		fmt.Fprintf(out, "📂 Index %q exists, syncing instead of rebuilding...\n", name)
 		if _, err := indexing.Sync(ctx, syncOpts); err != nil {
 			fmt.Fprintf(os.Stderr, "error: initial sync failed: %v\n(run `gleann index rebuild %s` to rebuild from scratch)\n", err, name)
 		}
 	} else {
 		pluginDocs := rebuild()
 		if buildGraph {
-			buildGraphIndex(name, docsDir, config.IndexDir, pluginDocs, nil, includeSubmodules)
+			indexing.BuildGraphIndex(indexing.GraphOptions{
+				Name:              name,
+				DocsDir:           docsDir,
+				IndexDir:          config.IndexDir,
+				PluginDocs:        pluginDocs,
+				IncludeSubmodules: includeSubmodules,
+				Stdout:            out,
+				Stderr:            os.Stderr,
+			})
 		}
 	}
 
@@ -588,7 +607,7 @@ Options:
 	for {
 		select {
 		case <-stop:
-			fmt.Println("\nStopping watcher...")
+			fmt.Fprintln(out, "\nStopping watcher...")
 			return
 		case <-buildRequested:
 			// Wait for debounce interval to coalesce changes
@@ -603,7 +622,7 @@ Options:
 			changedFiles = make(map[string]bool) // reset
 			changedMu.Unlock()
 
-			fmt.Printf("🔄 %d file(s) changed, updating index %q...\n", len(files), name)
+			fmt.Fprintf(out, "🔄 %d file(s) changed, updating index %q...\n", len(files), name)
 			start := time.Now()
 			// Same path as `index sync`: model check, rollback of a failed
 			// rebuild and the graph update all happen inside.
@@ -622,7 +641,7 @@ Options:
 					fmt.Fprintf(os.Stderr, "error: %v\n", err)
 				}
 			} else {
-				fmt.Printf("⚡ Update complete in %s\n", time.Since(start).Round(time.Millisecond))
+				fmt.Fprintf(out, "⚡ Update complete in %s\n", time.Since(start).Round(time.Millisecond))
 			}
 
 			// drain any queued up builds during sleep

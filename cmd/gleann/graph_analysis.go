@@ -581,39 +581,33 @@ func cmdGraphHook(args []string, config gleann.Config) {
 # Installed by: gleann graph hook install
 # Remove with:  gleann graph hook uninstall
 
-GLEANN_BIN=$(command -v gleann || echo "")
-if [ -z "$GLEANN_BIN" ]; then
-    # Try common build locations
-    for p in ./build/gleann-full ./build/gleann gleann; do
-        if [ -x "$p" ]; then
-            GLEANN_BIN="$p"
-            break
-        fi
-    done
-fi
-
-if [ -z "$GLEANN_BIN" ]; then
-    echo "gleann: binary not found, skipping graph rebuild"
-    exit 0
-fi
-
-# Get changed files in last commit
-CHANGED=$(git diff-tree --no-commit-id --name-only -r HEAD 2>/dev/null)
-if [ -z "$CHANGED" ]; then
-    exit 0
-fi
-
-# Check if any code files changed
-CODE_CHANGED=$(echo "$CHANGED" | grep -E '\.(go|py|ts|js|tsx|jsx|rs|java|c|cpp|rb|cs|kt|scala|php|swift|lua|ex|exs|zig|ps1|jl|m|mm|vue|svelte)$' || true)
-if [ -z "$CODE_CHANGED" ]; then
-    exit 0
-fi
-
-echo "gleann: rebuilding graph index ($(echo "$CODE_CHANGED" | wc -l | tr -d ' ') code files changed)..."
-# Note: user should set GLEANN_GRAPH_INDEX in their env or hook will be a no-op
+# Nothing to sync without an index name: stay silent. The block never
+# calls exit, so hook lines after it still run.
 INDEX="${GLEANN_GRAPH_INDEX:-}"
 if [ -n "$INDEX" ]; then
-    $GLEANN_BIN index sync "$INDEX" 2>/dev/null &
+    GLEANN_BIN=$(command -v gleann || echo "")
+    if [ -z "$GLEANN_BIN" ]; then
+        # Try common build locations
+        for p in ./build/gleann-full ./build/gleann gleann; do
+            if [ -x "$p" ]; then
+                GLEANN_BIN="$p"
+                break
+            fi
+        done
+    fi
+
+    if [ -z "$GLEANN_BIN" ]; then
+        echo "gleann: binary not found, skipping graph rebuild"
+    else
+        # Get changed files in last commit
+        CHANGED=$(git diff-tree --no-commit-id --name-only -r HEAD 2>/dev/null)
+        # Check if any code files changed
+        CODE_CHANGED=$(echo "$CHANGED" | grep -E '\.(go|py|ts|js|tsx|jsx|rs|java|c|cpp|rb|cs|kt|scala|php|swift|lua|ex|exs|zig|ps1|jl|m|mm|vue|svelte)$' || true)
+        if [ -n "$CODE_CHANGED" ]; then
+            echo "gleann: syncing index $INDEX ($(echo "$CODE_CHANGED" | wc -l | tr -d ' ') code files changed)..."
+            $GLEANN_BIN index sync "$INDEX" 2>/dev/null &
+        fi
+    fi
 fi
 ` + hookMarkerEnd
 

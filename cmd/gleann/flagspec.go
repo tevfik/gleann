@@ -158,13 +158,26 @@ func rejectUnknownFlags(cmd string, args []string, known flagSet) {
 
 // wantsHelp reports whether args ask for the command's usage: "--help" or
 // "-h" (also with "=value", which checkFlags accepts) before a literal "--".
+// It does not know the command's flags; use wantsHelpIn where they are known.
 func wantsHelp(args []string) bool {
-	for _, a := range args {
+	return wantsHelpIn(args, nil)
+}
+
+// wantsHelpIn is wantsHelp for a command whose flags are known: the argument
+// after a value-taking flag of known ("--model -h") is that flag's value, not
+// a help request. "--flag=value" is one token, and a flag that is not in known
+// is treated as boolean.
+func wantsHelpIn(args []string, known flagSet) bool {
+	for i := 0; i < len(args); i++ {
+		a := args[i]
 		if a == "--" {
 			return false
 		}
 		if a == "--help" || a == "-h" || strings.HasPrefix(a, "--help=") || strings.HasPrefix(a, "-h=") {
 			return true
+		}
+		if strings.HasPrefix(a, "--") && !strings.Contains(a, "=") && known[a] {
+			i++ // the next argument is the flag's value
 		}
 	}
 	return false

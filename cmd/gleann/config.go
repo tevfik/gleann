@@ -70,6 +70,9 @@ func getConfig(args []string) gleann.Config {
 	}
 
 	for i := 0; i < len(args); i++ {
+		if args[i] == "--" {
+			break // the rest is question text, not flags
+		}
 		switch args[i] {
 		case "--model":
 			if i+1 < len(args) {
