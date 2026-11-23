@@ -227,6 +227,10 @@ func indexFileSizes(indexDir, name string) []indexFileSize {
 }
 
 func cmdAsk(args []string) {
+	if wantsHelp(args) {
+		printCmdAskUsage()
+		return
+	}
 	tui.PrintSetupHint()
 	if len(args) == 0 {
 		printCmdAskUsage()
@@ -531,6 +535,27 @@ func cmdAsk(args []string) {
 }
 
 func cmdChat(args []string) {
+	if wantsHelp(args) {
+		fmt.Println(`Usage: gleann chat [index] [flags]
+
+Start an interactive chat session. Without an index name, an index picker opens.
+
+Options:
+  --list                 List conversations
+  --pick                 Pick a conversation interactively
+  --show-last            Show the last conversation
+  --show ID              Show conversation by ID
+  --delete ID            Delete a conversation (repeatable)
+  --delete-older-than D  Delete conversations older than D (e.g. 7d, 30d)
+  --classic              Use the classic chat interface
+  --modular              Accepted for old scripts; no effect
+  --repeat-penalty N     Repetition penalty for LLM sampling
+  --repetition-penalty N Alias for --repeat-penalty
+  --api-key KEY          API key for the active LLM provider
+  --session FILE         Load session from FILE
+  -h, --help             Show this help message`)
+		return
+	}
 	rejectUnknownFlags("chat", args, chatFlags)
 	// Conversation management flags route to the conversation handler.
 	if hasFlag(args, "--list") || hasFlag(args, "--pick") || hasFlag(args, "--show-last") ||
@@ -751,6 +776,20 @@ func printCmdAskUsage() {
 	fmt.Fprintln(os.Stderr, "  --host URL           Ollama server address (default: saved config / OLLAMA_HOST)")
 	fmt.Fprintln(os.Stderr, "  --ollama-api-key KEY Optional Ollama API key (auth proxy / hosted Ollama; env: OLLAMA_API_KEY)")
 	fmt.Fprintln(os.Stderr, "  --api-key KEY        API key for the active LLM provider (overrides saved keys)")
+	fmt.Fprintln(os.Stderr, "  --base-url URL       LLM endpoint (overrides the saved endpoint)")
+	fmt.Fprintln(os.Stderr, "  --repetition-penalty N  Alias for --repeat-penalty")
+	fmt.Fprintln(os.Stderr, "  --modular            Accepted for old scripts; no effect")
+	fmt.Fprintln(os.Stderr, "  --smart-context      Compress the context sent to the LLM")
+	fmt.Fprintln(os.Stderr, "  --compress-context   Alias for --smart-context")
+	fmt.Fprintln(os.Stderr, "  --graph              Add code-graph context (callers/callees) to the retrieved passages")
+	fmt.Fprintln(os.Stderr, "  --rerank             Rerank retrieved passages with a cross-encoder")
+	fmt.Fprintln(os.Stderr, "  --no-rerank          Do not rerank, even when the saved settings enable it")
+	fmt.Fprintln(os.Stderr, "  --rerank-model M     Reranker model (default: saved reranker settings)")
+	fmt.Fprintln(os.Stderr, "  --rerank-url URL     Rerank through a /v1/rerank server")
+	fmt.Fprintln(os.Stderr, "  --rerank-pool N      Candidates sent to the reranker")
+	fmt.Fprintln(os.Stderr, "  --rerank-provider P  Reranker provider: auto, eif, llamacpp, ollama, jina, cohere, voyage")
+	fmt.Fprintln(os.Stderr, "  --no-expand          Do not expand the query, even when the saved settings enable it")
+	fmt.Fprintln(os.Stderr, "  -h, --help           Show this help message")
 }
 
 // createAskSearcher creates a Searcher based on the resolved index name and CLI args.
@@ -792,6 +831,7 @@ func createAskSearcher(ctx context.Context, name string, args []string, config g
 		config.SearchConfig.UseReranker = true
 		config.SearchConfig.CustomReranker = gleann.NewReranker(rerankerConfigFromFlags(config, args))
 	}
+	applyAskRerankPool(&config, args)
 	if hasFlag(args, "--graph") {
 		config.SearchConfig.UseGraphContext = true
 	}
@@ -817,20 +857,20 @@ func createAskSearcher(ctx context.Context, name string, args []string, config g
 	return ms
 }
 
+// applyAskRerankPool sets how many candidates reach the reranker from
+// --rerank-pool N (the same flag `gleann search` reads); invalid values are ignored.
+func applyAskRerankPool(config *gleann.Config, args []string) {
+	if v := getFlag(args, "--rerank-pool"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			config.SearchConfig.RerankPool = n
+		}
+	}
+}
+
 func extractPositionalArgs(args []string) ([]string, []string) {
 	var positional []string
 	var attachFiles []string
-	flagsWithValue := map[string]bool{
-		"--continue": true, "--title": true, "--role": true, "--format": true,
-		"--word-wrap": true, "--llm-model": true, "--llm-provider": true,
-		"--rerank-model": true, "--top-k": true, "--metric": true,
-		"--model": true, "--provider": true, "--host": true, "--openai-base-url": true,
-		"--api-key": true, "--ollama-api-key": true,
-		"--attach": true, "--image": true,
-		"--repeat-penalty": true, "--repetition-penalty": true,
-		"--expand-model": true,
-		"--rerank-url":   true, "--rerank-pool": true, "--rerank-provider": true,
-	}
+	flagsWithValue := askFlags
 	for i := 0; i < len(args); i++ {
 		if (args[i] == "--attach" || args[i] == "--image") && i+1 < len(args) {
 			i++
@@ -838,7 +878,7 @@ func extractPositionalArgs(args []string) ([]string, []string) {
 			continue
 		}
 		if strings.HasPrefix(args[i], "--") {
-			if flagsWithValue[args[i]] && i+1 < len(args) {
+			if flagsWithValue[args[i]] && i+1 < len(args) { // value-taking flag of askFlags
 				i++ // skip flag value
 			}
 			continue

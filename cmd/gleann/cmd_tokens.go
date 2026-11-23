@@ -14,6 +14,10 @@ import (
 )
 
 func cmdTokens(args []string) {
+	if wantsHelp(args) {
+		printTokensUsage()
+		return
+	}
 	rejectUnknownFlags("tokens", args, flagSet{})
 	if len(args) < 1 {
 		printTokensUsage()

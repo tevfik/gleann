@@ -267,7 +267,7 @@ Gleann supports scoping the MCP surface to prevent token bloat in client context
 # Core profile (default, 11 essential tools for fast coding agent loops)
 gleann mcp --tools core
 
-# Full profile (all tools registered)
+# Full profile (all tools registered; `all` is an alias)
 gleann mcp --tools full
 
 # Custom comma-separated list or aliases (e.g. search, recall, symbol, sync)

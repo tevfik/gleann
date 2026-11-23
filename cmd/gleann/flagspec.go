@@ -156,6 +156,20 @@ func rejectUnknownFlags(cmd string, args []string, known flagSet) {
 	}
 }
 
+// wantsHelp reports whether args ask for the command's usage: "--help" or
+// "-h" (also with "=value", which checkFlags accepts) before a literal "--".
+func wantsHelp(args []string) bool {
+	for _, a := range args {
+		if a == "--" {
+			return false
+		}
+		if a == "--help" || a == "-h" || strings.HasPrefix(a, "--help=") || strings.HasPrefix(a, "-h=") {
+			return true
+		}
+	}
+	return false
+}
+
 // stripDoubleDash returns args without the first "--" so the text after it
 // reaches code that does not know the separator.
 func stripDoubleDash(args []string) []string {

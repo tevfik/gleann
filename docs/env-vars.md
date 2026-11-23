@@ -36,7 +36,7 @@ Useful for Docker, CI/CD, and environments where editing config files is impract
 | Variable | Config Key | Default | Description |
 |----------|-----------|---------|-------------|
 | `GLEANN_LLM_PROVIDER` | `llm_provider` | `ollama` | LLM provider: `ollama`, `openai`, `anthropic`, `eif` (requires a `-tags eif` build) (read only by MCP server) |
-| `GLEANN_LLM_MODEL` | `llm_model` | `nemotron-3-nano:4b` | LLM model for ask/chat (read only by MCP server) |
+| `GLEANN_LLM_MODEL` | `llm_model` | `llama3.2:3b` | LLM model for ask/chat (read only by MCP server) |
 | `GLEANN_THINK` | — | off | `1` or `true` asks reasoning models to think; unset or anything else keeps thinking off |
 | `GLEANN_REPEAT_PENALTY` | — | `1.1` | Repetition penalty of the chat (a positive number). With the embedded EIF runtime it defaults to `1.0` unless this or `GLEANN_REPETITION_PENALTY` is set |
 | `GLEANN_REPETITION_PENALTY` | — | `1.1` | Alias for `GLEANN_REPEAT_PENALTY` (used when that one is unset) |
@@ -128,7 +128,7 @@ Rate-limited requests receive `429 Too Many Requests` with a `Retry-After: 1` he
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `GLEANN_A2A_ENABLED` | `true` | Enable A2A protocol endpoints (`false` or `0` to disable) |
-| `GLEANN_A2A_BASE_URL` | auto-detected | Base URL for the A2A Agent Card (e.g. `https://my-host:8080`) |
+| `GLEANN_A2A_BASE_URL` | `a2a_base_url`, else derived from the server address | Base URL for the A2A Agent Card (e.g. `https://my-host:8443`); gleann appends `/a2a/v1`. Overrides the `a2a_base_url` config key (settings screen, Services). Read when `gleann serve` starts: restart after a change |
 
 ## Multimodal Processing
 
@@ -161,6 +161,7 @@ Rate-limited requests receive `429 Too Many Requests` with a `Retry-After: 1` he
 | `GLEANN_GITHUB_API` | `https://api.github.com` | Root of the GitHub REST API used to look up plugin releases (GitHub Enterprise, a mirror or a test server) |
 | `GLEANN_PLUGIN_STOP_GRACE` | `10s` | How long an auto-started plugin may take to exit after SIGINT before gleann kills it (a Go duration such as `30s` or `500ms`); invalid or non-positive values keep the default. The same value bounds the wait for the process to be reaped |
 | `GLEANN_LAUNCHER` | — | Set by the self-extracting launcher of the full build to its own path; `gleann update` replaces that file and `gleann install` installs it. Do not set it by hand |
+| `GLEANN_PLUGIN_TOKEN` | generated per plugin | Set by gleann in the environment of every plugin process it launches: the plugin's bearer token (the `token` configured in plugins.json, else the per-plugin token stored in `<gleann home>/auth/plugins/<name>.token`, created on first launch and shared by all gleann processes). The plugin must require `Authorization: Bearer <token>` on every route except `/health`. Do not set it by hand |
 
 ## Benchmarks
 

@@ -296,6 +296,7 @@ func openAPIPathsSearch() map[string]any {
 		},
 		"/api/search": map[string]any{
 			"post": map[string]any{
+				"tags":        []string{"search"},
 				"description": "Search across multiple indexes simultaneously. Results are merged by score, each tagged with the source index. Omit 'indexes' to search all available indexes.",
 				"operationId": "multiIndexSearch",
 				"requestBody": map[string]any{

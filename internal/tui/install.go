@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+
+	"github.com/tevfik/gleann/pkg/gleann"
 )
 
 // InstallBinary copies the current executable into targetDir.
@@ -340,12 +342,12 @@ func RunInstall(result *OnboardResult) {
 	if result.ServerEnabled {
 		addr := result.ServerAddr
 		if addr == "" {
-			addr = ":8080"
+			addr = gleann.DefaultServerAddr
 		}
 		fmt.Println("🌐 REST API Server enabled")
 		fmt.Printf("  ▶  Start with:    gleann serve --addr %s\n", addr)
 		fmt.Printf("  ℹ️  Background:    nohup gleann serve --addr %s > ~/.gleann/serve.log 2>&1 &\n", addr)
-		fmt.Printf("  ℹ️  Check health:  curl http://localhost%s/health\n", addr)
+		fmt.Printf("  ℹ️  Check health:  curl %s/health\n", gleann.AdvertisedBaseURL(addr))
 	}
 
 	fmt.Println()

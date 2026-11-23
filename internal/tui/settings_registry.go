@@ -278,6 +278,14 @@ func settingsFields() []settings.Field[OnboardResult] {
 				}
 				return c.A2AEnabled
 			}},
+		{Key: "a2a_base_url", Label: "A2A agent card base URL", Type: settings.Text, Group: groupServices, Apply: settings.Restart,
+			Help: "Base URL the A2A agent card advertises (e.g. https://my-gleann.example.com); gleann appends /a2a/v1. " +
+				"Empty: derived from the server address. GLEANN_A2A_BASE_URL overrides it.",
+			Bind: func(c *OnboardResult) any { return &c.A2ABaseURL },
+			Check: func(_ *OnboardResult, v any) (any, error) {
+				s, _ := v.(string)
+				return gleann.NormalizeA2ABaseURL(s)
+			}},
 
 		// ── Command line ──
 		{Key: "quiet", Label: "Quiet output", Type: settings.Bool, Group: groupCLI,

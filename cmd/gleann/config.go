@@ -434,6 +434,10 @@ func applySavedConfig(config *gleann.Config, args []string) {
 		v := *savedCfg.A2AEnabled
 		config.A2AEnabled = &v
 	}
+	// The documented a2a_base_url key was never copied, so it had no effect.
+	if savedCfg.A2ABaseURL != "" {
+		config.A2ABaseURL = savedCfg.A2ABaseURL
+	}
 	// Embedded llama.cpp engine settings (model storage directory, HF repos)
 	// were persisted by the wizard but never read back by the CLI/serve path.
 	applySavedLlamaCPP(config, savedCfg.LlamaCPPConfig)

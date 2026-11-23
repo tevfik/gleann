@@ -22,6 +22,10 @@ func cmdService(args []string) {
 	}
 
 	sub := args[0]
+	if sub == "help" || wantsHelp(args) {
+		printServiceUsage()
+		return
+	}
 	if fs, ok := serviceFlagSets[sub]; ok {
 		rejectUnknownFlags("service "+sub, args[1:], fs)
 	}
@@ -108,6 +112,7 @@ Commands:
 
 Options:
   --addr <host:port>   Server address (default: :8080)
+  --port <n>           Server port (install/start/restart; shorthand for --addr :<n>)
   --bin  <path>        Path to gleann binary (default: auto-detect)
   --lines <n>          Number of log lines to show (default: 50)
 

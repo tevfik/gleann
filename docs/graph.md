@@ -239,11 +239,11 @@ cfg.Iterations        = 30
 
 ## Repository Map (Repo Map)
 
-Generates a compact, token-budgeted text summary of the most important symbols in the codebase, ranked by PageRank. Designed for LLM context injection — gives the model a high-level overview of the codebase structure without consuming the full context window.
+Generates a compact text summary of the most important symbols in the codebase, ranked by PageRank. Designed for LLM context injection — gives the model a high-level overview of the codebase structure without consuming the full context window. `--top` sets how many symbols are shown (default 20); there is no token-budget flag.
 
 ```bash
 # CLI
-gleann graph map --index my-code --top-k 30 --max-tokens 2000
+gleann graph map --index my-code --top 30
 ```
 
 Output example:

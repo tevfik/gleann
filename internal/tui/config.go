@@ -148,6 +148,9 @@ func mergeConfig(existing, incoming *OnboardResult) OnboardResult {
 	if incoming.ServerAddr != "" {
 		merged.ServerAddr = incoming.ServerAddr
 	}
+	if incoming.A2ABaseURL != "" {
+		merged.A2ABaseURL = incoming.A2ABaseURL
+	}
 	if incoming.InstallPath != "" {
 		merged.InstallPath = incoming.InstallPath
 	}

@@ -178,3 +178,15 @@ func TestDownloadChosenModels(t *testing.T) {
 		t.Errorf("failure must explain how to download manually:\n%s", s)
 	}
 }
+
+// TestMergeConfig_A2ABaseURL: a set a2a_base_url wins, an unset one keeps the
+// saved value (wizard and settings saves must not drop a hand-written key).
+func TestMergeConfig_A2ABaseURL(t *testing.T) {
+	existing := &OnboardResult{A2ABaseURL: "https://old.example"}
+	if got := mergeConfig(existing, &OnboardResult{LLMModel: "m"}); got.A2ABaseURL != "https://old.example" {
+		t.Errorf("unset incoming must keep a2a_base_url: %q", got.A2ABaseURL)
+	}
+	if got := mergeConfig(existing, &OnboardResult{A2ABaseURL: "https://new.example"}); got.A2ABaseURL != "https://new.example" {
+		t.Errorf("incoming a2a_base_url must win: %q", got.A2ABaseURL)
+	}
+}

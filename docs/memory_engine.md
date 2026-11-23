@@ -358,15 +358,19 @@ blocks stored under `org/repo`. Sibling scopes never see each other's blocks.
 
 ```bash
 # Add a project-wide convention (visible to every sub-scope below it)
-gleann memory add long "We use conventional commits" --scope "myorg"
+gleann memory remember "We use conventional commits" --scope "myorg"
 
 # Add a feature-specific note
-gleann memory add short "Issue #42 needs Turkish translation" \
+gleann memory remember "Issue #42 needs Turkish translation" \
   --scope "myorg/backend/auth"
 
 # Build context for the feature scope -> sees BOTH facts
-gleann memory context --scope "myorg/backend/auth" --query "commit message?"
+gleann memory context --scope "myorg/backend/auth"
 ```
+
+Scoped writes go through `memory remember --scope`: `memory add <tier>` takes
+only `--tag` and `--label`, and `memory context` filters by `--scope`,
+`--command`, `--path` and `--symbol` (it has no `--query` flag).
 
 Flat (single-segment) scopes still behave exactly as before — the change
 is fully backwards-compatible. The hierarchy is implemented at the filter

@@ -28,7 +28,7 @@ func (s *Server) openAPISpec() map[string]any {
 			},
 		},
 		"servers": []map[string]any{
-			{"url": fmt.Sprintf("http://localhost%s", s.addr), "description": "Local development server"},
+			{"url": gleann.AdvertisedBaseURL(s.addr), "description": "Local development server"},
 		},
 		"tags": []map[string]any{
 			{"name": "health", "description": "Health check"},

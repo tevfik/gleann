@@ -148,7 +148,7 @@ jobs:
           ollama pull bge-m3
       
       - name: Build Index
-        run: gleann index build ${{ github.repository }} --docs ./ --embedding-model bge-m3
+        run: gleann index build ${{ github.repository }} --docs ./ --model bge-m3
       
       - name: Verify Index
         run: gleann search ${{ github.repository }} "main entry point" --top-k 1
@@ -213,7 +213,7 @@ When source files change, rebuild the index to keep search results current:
 
 ```bash
 # Full rebuild
-gleann index build myproject --docs ./ --force
+gleann index rebuild myproject --docs ./
 
 # Watch mode — automatically re-indexes on file changes (incremental)
 # Only re-embeds changed files; deletions and an emptied index are applied as

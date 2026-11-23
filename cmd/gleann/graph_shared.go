@@ -36,6 +36,10 @@ func cmdGraph(args []string) {
 	}
 
 	subCmd := args[0]
+	if subCmd == "-h" || wantsHelp(args[1:]) {
+		printGraphUsage()
+		return
+	}
 	if fs, ok := graphFlagSets[subCmd]; ok {
 		rejectUnknownFlags("graph "+subCmd, args[1:], fs)
 	}

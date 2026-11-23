@@ -11,7 +11,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"os"
 	"sync"
 	"time"
 
@@ -498,18 +497,15 @@ func writeA2AError(w http.ResponseWriter, status int, code, msg string) {
 	})
 }
 
-// DefaultAgentCard creates a standard agent card for gleann.
+// DefaultAgentCard creates a standard agent card for gleann. baseURL is used
+// as given; the caller resolves it (internal/server applies
+// GLEANN_A2A_BASE_URL, the a2a_base_url config key and the bound address).
 func DefaultAgentCard(version, baseURL string) AgentCard {
 	if baseURL == "" {
 		baseURL = "http://localhost:8080"
 	}
 	if version == "" {
 		version = "dev"
-	}
-
-	// Allow override via env var.
-	if envURL := os.Getenv("GLEANN_A2A_BASE_URL"); envURL != "" {
-		baseURL = envURL
 	}
 
 	return AgentCard{

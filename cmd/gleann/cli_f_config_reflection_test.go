@@ -253,6 +253,9 @@ func savedConfigSentinelChecks() map[string]func(*testing.T, tui.OnboardResult, 
 		"A2AEnabled": func(t *testing.T, s tui.OnboardResult, c gleann.Config) {
 			eq(t, "A2AEnabled", c.A2AEnabled, s.A2AEnabled)
 		},
+		"A2ABaseURL": func(t *testing.T, s tui.OnboardResult, c gleann.Config) {
+			eq(t, "A2ABaseURL", c.A2ABaseURL, s.A2ABaseURL)
+		},
 		"Auth": func(t *testing.T, s tui.OnboardResult, c gleann.Config) {
 			eq(t, "Auth", c.Auth, s.Auth)
 		},

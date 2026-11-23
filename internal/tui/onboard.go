@@ -116,6 +116,9 @@ type OnboardResult struct {
 
 	// A2A Protocol integration.
 	A2AEnabled *bool `json:"a2a_enabled,omitempty"`
+	// A2ABaseURL overrides the agent card base URL derived from the server
+	// address (GLEANN_A2A_BASE_URL still wins over it).
+	A2ABaseURL string `json:"a2a_base_url,omitempty"`
 
 	// MCP server integration.
 	MCPEnabled bool `json:"mcp_enabled,omitempty"`

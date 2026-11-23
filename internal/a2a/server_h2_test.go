@@ -108,14 +108,21 @@ func TestRouteSkill_ScoringSkipsUnregisteredSkills(t *testing.T) {
 	}
 }
 
-func TestDefaultAgentCard_DefaultsAndEnvOverride(t *testing.T) {
+// TestDefaultAgentCard_DefaultsIgnoreEnv: DefaultAgentCard uses the base URL
+// it is given. GLEANN_A2A_BASE_URL is resolved (and normalised) by the
+// caller, internal/server, together with the a2a_base_url config key.
+func TestDefaultAgentCard_DefaultsIgnoreEnv(t *testing.T) {
 	t.Setenv("GLEANN_A2A_BASE_URL", "https://agents.example/gleann")
 	card := DefaultAgentCard("", "")
 	if card.Version != "dev" {
 		t.Errorf("version = %q, want dev", card.Version)
 	}
-	if len(card.SupportedInterfaces) != 1 || !strings.HasPrefix(card.SupportedInterfaces[0].URL, "https://agents.example/gleann") {
-		t.Errorf("interfaces = %+v, want the env base URL", card.SupportedInterfaces)
+	if len(card.SupportedInterfaces) != 1 || card.SupportedInterfaces[0].URL != "http://localhost:8080/a2a/v1" {
+		t.Errorf("interfaces = %+v, want the default base URL", card.SupportedInterfaces)
+	}
+	card = DefaultAgentCard("", "https://given.example")
+	if got := card.SupportedInterfaces[0].URL; got != "https://given.example/a2a/v1" {
+		t.Errorf("url = %q, want the given base URL", got)
 	}
 }
 

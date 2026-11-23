@@ -4,7 +4,10 @@ Gleann uses a layered configuration system. Settings are loaded in this order (l
 
 1. **Built-in defaults** (in source code)
 2. **Config file** (`~/.gleann/config.json`, created by `gleann setup`)
-3. **CLI flags** (highest priority)
+3. **Environment variables** (`GLEANN_*`, `OLLAMA_HOST`, … — see [Environment Variables](env-vars.md))
+4. **CLI flags** (highest priority)
+
+A few settings have their own documented precedence: `GLEANN_MMAP` overrides even `--no-mmap`, `OLLAMA_HOST` and `OLLAMA_API_KEY` are fallbacks *below* the config file (used only when it has no value), and the `task_eviction_age_hours` config key wins over `GLEANN_TASK_EVICTION_AGE_H`.
 
 ## Setup Wizard
 
@@ -70,7 +73,7 @@ Location: `~/.gleann/config.json`
   "index_dir": "~/.gleann/indexes",
   "backend": "diskann",
   "llm_provider": "ollama",
-  "llm_model": "nemotron-3-nano:4b",
+  "llm_model": "llama3.2:3b",
   "quiet": false,
   "word_wrap": 0,
   "roles": {
@@ -90,20 +93,28 @@ Location: `~/.gleann/config.json`
 |-------|---------|-------------|
 | `embedding_provider` | `ollama` | Provider for embeddings: `ollama`, `openai`, `llamacpp`, `eif` (requires `-tags eif`), `gemini`, `native` (requires `-tags native`) |
 | `embedding_model` | `bge-m3` | Embedding model name |
+| `code_embedding_model` | — (embedding model) | Embedding model for source code in mixed indexes. Empty uses `embedding_model`. CLI: `--code-model` |
+| `doc_embedding_model` | — (embedding model) | Embedding model for documents in mixed indexes. Empty uses `embedding_model`. CLI: `--doc-model` |
 | `ollama_host` | `http://localhost:11434` | Ollama server URL |
 | `ollama_api_key` | — | Optional API key for Ollama, sent as `Authorization: Bearer <key>` on every Ollama request (chat, embeddings, reranker, model listing, multimodal). Only needed when Ollama sits behind an auth proxy or is a hosted Ollama endpoint. Falls back to the `OLLAMA_API_KEY` environment variable. Never sent to OpenAI/Anthropic |
 | `openai_api_key` | — | OpenAI API key (if using openai provider). Never sent to Ollama |
 | `openai_base_url` | — | OpenAI-compatible API base URL (vLLM, LM Studio, llama-server, Ollama's `/v1`, ...); `http://host:8000` and `http://host:8000/v1` are the same. **Required for the `openai` provider** (chat and embeddings): without it (or `OPENAI_BASE_URL`) gleann refuses to send anything and never falls back to OpenAI's cloud. Set `https://api.openai.com/v1` to use OpenAI's cloud, which sends your documents and questions there. The Ollama host is never used as an OpenAI endpoint |
+| `anthropic_api_key` | — | Anthropic API key (if using the `anthropic` LLM provider). Never sent to Ollama |
 | `index_dir` | `~/.gleann/indexes` | Root directory for all index data. Each named index `<name>` is a directory `<name>/` holding one SQLite database `<name>.db` (passages, FTS5 lexical index, manifest, code and document graph), the vector files and the metadata, plus the index lock file `<name>.lock` next to it; a memory namespace's vector index is the index `<name>_memory_vectors`. Memory entities live in `memory.sqlite` in the gleann home, not here |
 | `backend` | `hnsw` | Vector search backend: `hnsw`, `diskann`, `faiss`, `faiss-hybrid` |
 | `use_mmap` | unset | `true`: memory-map the vector index for every backend; `false`: load it into RAM. Unset: the per-backend keys decide; both default to memory-mapped. The old keys `hnsw_config.use_mmap` and `diskann_config.use_mmap` are still read when `use_mmap` is unset. On Windows the "mapped" mode reads the file into memory and closes it (Windows cannot rename a new generation over a mapped or open file, which every incremental update and merge does while `serve` keeps the old searcher), so an open index costs its file size in RAM there. CLI flag: `--no-mmap`, env: `GLEANN_MMAP` |
 | `searcher_cache_budget` | `0` (unlimited) | Memory budget for cached index searchers in `gleann serve` and the MCP server (e.g. `500MB`, `1GB`, `100MiB`, or bytes as an integer). Evicts least-recently-used searchers when total estimated resident size exceeds the budget. Env: `GLEANN_SEARCHER_CACHE_BUDGET` |
 | `llm_provider` | `ollama` | Provider for ask/chat: `ollama`, `openai`, `anthropic`, `eif` (requires `-tags eif`: the `gleann-full` and `gleann-eif` builds) |
-| `llm_model` | `nemotron-3-nano:4b` | LLM model for ask/chat commands |
+| `llm_model` | `llama3.2:3b` | LLM model for ask/chat commands when the config sets none. The interactive `gleann setup` wizard saves the model you pick, or `nemotron-3-nano:4b` when it lists no models; `setup --bootstrap` picks a model from the ones it detects on your LLM server (`gemma3:4b` when none are reachable) |
+| `temperature` | `0.7` | Sampling temperature for the interactive chat, `gleann chat` (0.05–2): 0 = focused and repeatable, higher = more creative |
+| `repeat_penalty` | `1.1` | Repeat penalty (1–2): 1.0 = off, higher discourages the model from repeating itself. Read by `gleann ask` and the interactive chat |
+| `max_tokens` | `2048` | Upper limit on the length of one answer in the interactive chat (64–131072) |
+| `system_prompt` | — (gleann default) | Instructions given to the model before every conversation in the interactive chat. Empty uses gleann's built-in system prompt |
 | `rerank_enabled` | `false` | Rerank search results (CLI `search`/`ask`, REST, MCP, chat). `--rerank` turns it on for one command, `--no-rerank` off |
 | `rerank_provider` | `auto` | Reranker engine: `auto`, `eif` (built-in bitllm.c cross-encoder), `ollama`, `llamacpp`, `jina`, `cohere`, `voyage`. `auto` uses the built-in engine when the build has it and the model is a local GGUF, otherwise the embedding provider |
 | `rerank_model` | built-in: `ms-marco-minilm-l6` for mostly-code results when downloaded, else `mmarco-mMiniLMv2-L12-H384-v1-Q8_0.gguf`; server: `bge-reranker-v2-m3` | Reranker model: a catalog id, a GGUF in `~/.gleann/models` or a path for the built-in engine, a model name for a server |
-| `expand` / `expand_model` | `false` / chat model | HyDE query expansion by default (see Query expansion); `--no-expand` turns it off for one command |
+| `expand` / `expand_model` | `false` / chat model | HyDE query expansion (see Query expansion), off by default. `--expand` turns it on for one command, `--no-expand` off; save `expand: true` to enable it for every search |
+| `top_k` | `10` | Passages retrieved per question (1–100). CLI: `--top-k` |
 | `storage_mode` | `store` | Vector storage of new indexes: `store` or `recompute` (see below) |
 | `proxy_cover` | `false` | Pass-through answers over several indexes: an index whose best passage is close to the overall best keeps it in the context (`X-Gleann-Cover` per request). See [REST API](api.md) |
 | `proxy_cover_margin` | `0.1` (0 = default) | Cover: largest vector distance gap to the overall best that still counts as close. A starting point, tune it for your embedding model (`X-Gleann-Cover-Margin`) |
@@ -115,12 +126,15 @@ Location: `~/.gleann/config.json`
 | `cors_origins` | — | Origins whose web pages may call the API, e.g. `["https://app.example.com"]`. `GLEANN_CORS_ORIGINS` adds more |
 | `allowed_roots` | home directory | Directories a REST client may have the server index or read: `index-path`, `update` `docs_root`, `watch` `dir`, graph `docs_dir`. Other paths get `403`. `GLEANN_ALLOWED_ROOTS` (path-list separated) overrides it. The command line is not restricted. See [REST API](api.md) |
 | `rate_limit` / `rate_burst` | `60` / `120` | Requests per second / burst per client address (loopback clients are not limited). `GLEANN_RATE_LIMIT` / `GLEANN_RATE_BURST` override them |
-
-Every field above is also editable from `gleann setup` → All Settings and from the web UI (System → Settings); both are built from the same list, so they offer the same values and checks.
-| `quiet` | `false` | Suppress status messages globally |
+| `server_enabled` | `false` | Include the REST API server in the installation: `gleann setup` prints the start command for `gleann serve` (web UI and REST API) with `server_addr`. Install-time choice (`gleann setup` → All Settings, Services) |
+| `server_addr` | `127.0.0.1:8081` | host:port that `gleann serve` binds when neither `--addr` nor `--port` is given; the service unit and the remote memory client use it too. `0.0.0.0` exposes it to the network (a token is required). CLI: `serve --addr` / `--port` |
+| `mcp_enabled` | `false` | Register gleann's MCP server with supported editors (Claude Code, Cursor, …) during installation so AI agents can use gleann's tools. `setup --bootstrap` saves `true`. Install-time choice like `server_enabled` |
+| `quiet` | `false` | TUI settings key ("Quiet output"): stored in `config.json` and editable in the settings screen (`gleann setup` → All Settings, web UI System → Settings, `GET/PUT /api/settings`), but no command reads it — it suppresses nothing. To silence command output, use the `--quiet` flag of `index build`/`index sync`, `serve`, `search`, `ask` and `chat` (see CLI Flags below) |
 | `word_wrap` | `0` | Wrap output at N columns (0 = terminal width) |
 | `roles` | — | Custom named roles (map of name → system prompt lines) |
 | `format_text` | — | Custom format instructions (map of format name → instruction) |
+
+Every field above is also editable from `gleann setup` → All Settings and from the web UI (System → Settings); both are built from the same list, so they offer the same values and checks.
 
 ## CLI Flags
 
@@ -342,7 +356,7 @@ Gleann supports four vector search backends, selectable via config (`backend` fi
 | Backend | Default | CGo Required | Description |
 |---------|---------|-------------|-------------|
 | `hnsw` | **Yes** | No | Pure-Go HNSW. Fast in-memory search, good for datasets up to large corpora. |
-| `diskann` | No | No | Pure-Go Vamana graph with PQ prefiltering. Disk-resident search using ~2.7x less RAM than HNSW for large datasets. |
+| `diskann` | No | No | Pure-Go Vamana graph with PQ prefiltering. Disk-resident search designed to use less RAM than HNSW for large datasets (the ~2.7x figure is unmeasured). |
 | `faiss` | No | Yes | C FAISS via CGo. SIMD-accelerated with IVF_FLAT, IVF_PQ, and IVF_SQ8 index types. Best throughput with GPU/AVX2 hardware. |
 | `faiss-hybrid` | No | Build only | FAISS builds the index (requires CGo at build time), but search is pure Go. No CGo needed at query time. |
 
@@ -419,7 +433,8 @@ HNSW parameters can be tuned in the config file under `hnsw_config`:
 
 | Model | VRAM | Quality | Notes |
 |-------|------|---------|-------|
-| `nemotron-3-nano:4b` | 4GB | Good | Fast, default |
+| `llama3.2:3b` | ~3GB | Good | Built-in default; small and fast |
+| `nemotron-3-nano:4b` | 4GB | Good | Fast |
 | `phi-4:14b` | 10GB | Excellent | Best balance |
 | `qwen2.5:32b` | 20GB+ | Outstanding | If you have the VRAM |
 
@@ -453,11 +468,13 @@ Each request gets a context deadline based on its endpoint. Timed-out requests r
 
 A background scheduler periodically promotes medium-term memory blocks to long-term, prunes expired entries, and cleans up completed/failed background tasks.
 
-| Variable | Config Key | Default | Description |
-|----------|------------|---------|-------------|
-| `GLEANN_MAINTENANCE_ENABLED` | `maintenance_enabled` | `true` | Set to `false` or `0` to disable maintenance |
-| `GLEANN_MAINTENANCE_INTERVAL_H` | `maintenance_interval_h` | `24` | Hours between maintenance runs |
-| `GLEANN_TASK_EVICTION_AGE_H` | `task_eviction_age_hours` | `24` | Hours before finished background tasks are evicted from memory history |
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `GLEANN_MAINTENANCE_ENABLED` | `true` | Set to `false` or `0` to disable maintenance |
+| `GLEANN_MAINTENANCE_INTERVAL_H` | `24` | Hours between maintenance runs |
+| `GLEANN_TASK_EVICTION_AGE_H` | `24` | Hours before finished background tasks are evicted from memory history |
+
+Maintenance is controlled by these environment variables only — there are no `maintenance_enabled` / `maintenance_interval_h` config keys. Task eviction also reads the `task_eviction_age_hours` config key, which wins over the environment variable when set.
 
 ### Sleep-Time Compute (Letta-inspired)
 
@@ -497,7 +514,7 @@ Config file settings for the Agent-to-Agent protocol. These can also be set via 
 | Config Key | Env Var | Default | Description |
 |-----------|---------|---------|-------------|
 | `a2a_enabled` | `GLEANN_A2A_ENABLED` | `true` | Enable A2A endpoints |
-| `a2a_base_url` | `GLEANN_A2A_BASE_URL` | auto | Base URL for Agent Card |
+| `a2a_base_url` | `GLEANN_A2A_BASE_URL` | derived from the server address | Base URL advertised in the Agent Card; gleann appends `/a2a/v1`. Precedence: `GLEANN_A2A_BASE_URL` > this key > derived from the bound address. Restart `gleann serve` after a change. Also in the settings screen (Services) |
 
 See [A2A Protocol](a2a.md) for full documentation.
 

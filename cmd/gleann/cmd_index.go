@@ -91,7 +91,7 @@ func printIndexUsage() {
 Usage:
   gleann index list                         List all indexes
   gleann index build  <name> --docs <dir>   Build index from documents
-  gleann index sync   <name> [--docs <dir>] Sync index incrementally with workspace changes
+  gleann index sync   <name> [--docs <dir>] [--quiet] Sync index incrementally with workspace changes
   gleann index remove <name>                Remove an index
   gleann index repair <name>|--all [--check] [--force]  Check an index for damage and rebuild its vectors from stored passages
   gleann index migrate <name>|--all [--graph] [--cleanup]  Convert an index built by gleann v1.9 or earlier
@@ -109,7 +109,8 @@ Options:
   --no-plugins            Disable external document extraction plugins
   --docs <dir>            Source directory (required for build/rebuild/watch)
   --index-dir <dir>       Index storage directory (default: ~/.gleann/indexes)
-  --prune                 Prune unchanged files during incremental builds
+  --prune <fraction>      Keep this fraction (0-1) of the HNSW embeddings and enable storage-saving
+                          pruning (see --storage); 0 keeps none
   --multimodal-model <m>  Model for media file indexing (images/audio/video)
                           Auto-detects if GLEANN_MULTIMODAL_MODEL is set
 

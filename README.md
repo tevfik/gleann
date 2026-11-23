@@ -178,7 +178,7 @@ gleann graph explain "HandleRequest" --index my-code      # Full blast radius co
 gleann memory remember "JWT secrets are rotated every 90 days"
 gleann memory search "rotation"
 gleann install                 # Auto-configure AI editors
-gleann token create --name ci --scope query   # API token for the REST server (gleann serve prints the admin token path)
+gleann token create ci --scope query          # API token for the REST server (gleann serve prints the admin token path)
 gleann index storage           # Show / switch vector storage (store | recompute)
 gleann mcp                     # Launch stdio MCP server
 ```

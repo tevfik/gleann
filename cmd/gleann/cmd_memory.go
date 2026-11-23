@@ -93,6 +93,7 @@ Usage:
   gleann memory reflect  [--dry-run]              Run sleep-time reflection cycle
   gleann memory reflect  --revert <run-id>        Revert a reflection run change set
   gleann memory prune    [--age <duration>]       Remove old entries
+  gleann memory compact  [--min-validity <0-1>]   Prune stale/unreliable blocks (default min validity: 0.2)
   gleann memory maintain                          Full maintenance pass
   gleann memory context                           Show compiled context sent to LLM
   gleann memory context --path <p> --command <c>  Show context + failures matching files/command

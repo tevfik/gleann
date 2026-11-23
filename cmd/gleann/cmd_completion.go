@@ -8,9 +8,15 @@ import (
 )
 
 func cmdCompletion(args []string) {
-	rejectUnknownFlags("completion", args, flagSet{})
-	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, `Usage: gleann completion <shell>
+	if !wantsHelp(args) {
+		rejectUnknownFlags("completion", args, flagSet{})
+	}
+	if len(args) == 0 || wantsHelp(args) {
+		out := os.Stderr
+		if len(args) > 0 {
+			out = os.Stdout
+		}
+		fmt.Fprintln(out, `Usage: gleann completion <shell>
 
 Generate shell completion script.
 
@@ -28,7 +34,10 @@ Examples:
 
   # Fish: save to completions dir
   gleann completion fish > ~/.config/fish/completions/gleann.fish`)
-		exitFunc(1)
+		if len(args) == 0 {
+			exitFunc(1)
+		}
+		return
 	}
 
 	switch args[0] {

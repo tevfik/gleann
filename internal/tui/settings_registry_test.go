@@ -125,6 +125,34 @@ func TestSettingsA2ADefaultsOn(t *testing.T) {
 	}
 }
 
+// TestSettingsA2ABaseURLCheck: a2a_base_url must be an http(s) URL with a
+// host; it is stored without a trailing slash or "/a2a/v1" (gleann appends
+// that), and an empty value clears it.
+func TestSettingsA2ABaseURLCheck(t *testing.T) {
+	reg := Settings()
+	for _, bad := range []string{"foo", "host:8081", "ftp://x.example", "https://", "/a2a/v1"} {
+		c := &OnboardResult{}
+		if err := reg.Set(c, "a2a_base_url", bad); err == nil {
+			t.Errorf("%q must be refused, stored %q", bad, c.A2ABaseURL)
+		}
+	}
+	for in, want := range map[string]string{
+		"https://x.example/":              "https://x.example",
+		"https://x.example/gleann/a2a/v1": "https://x.example/gleann",
+		"http://10.0.0.5:8081/a2a/v1/":    "http://10.0.0.5:8081",
+		"":                                "",
+	} {
+		c := &OnboardResult{A2ABaseURL: "https://old.example"}
+		if err := reg.Set(c, "a2a_base_url", in); err != nil {
+			t.Errorf("%q: %v", in, err)
+			continue
+		}
+		if c.A2ABaseURL != want {
+			t.Errorf("%q stored as %q, want %q", in, c.A2ABaseURL, want)
+		}
+	}
+}
+
 func TestSettingsEmbeddingListsHideRerankers(t *testing.T) {
 	settingsHome(t)
 	opts, _ := modelOptions(&OnboardResult{}, "eif", "embedding")

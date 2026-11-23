@@ -109,6 +109,66 @@ func TestHandleOpenAPISpec(t *testing.T) {
 			t.Errorf("missing schema %q", s)
 		}
 	}
+
+	// Every operation must carry at least one tag so generated clients
+	// (Postman, swagger-codegen) group it instead of dropping it into an
+	// untagged bucket.
+	for path, item := range paths {
+		fields, ok := item.(map[string]any)
+		if !ok {
+			t.Errorf("path %q is not an object", path)
+			continue
+		}
+		for key, op := range fields {
+			if !isSpecMethod(key) {
+				continue
+			}
+			operation, ok := op.(map[string]any)
+			if !ok {
+				t.Errorf("%s %s is not an operation object", key, path)
+				continue
+			}
+			// The spec here is JSON-decoded, so a tags array arrives as
+			// []any rather than the []string the Go map holds.
+			var tagCount int
+			switch tv := operation["tags"].(type) {
+			case []string:
+				tagCount = len(tv)
+			case []any:
+				tagCount = len(tv)
+			}
+			if tagCount == 0 {
+				t.Errorf("%s %s has no tags", key, path)
+			}
+		}
+	}
+}
+
+// TestOpenAPISpecServerURL checks the servers[0].url derived from the bound
+// address: a bare ":port" binds every interface and must resolve to localhost,
+// while a bound host:port must be used verbatim. Prefixing "localhost"
+// unconditionally produced http://localhost127.0.0.1:8081 for a bound IP.
+func TestOpenAPISpecServerURL(t *testing.T) {
+	cases := []struct {
+		addr string
+		want string
+	}{
+		{":8081", "http://localhost:8081"},
+		{"127.0.0.1:8081", "http://127.0.0.1:8081"},
+		{"localhost:8081", "http://localhost:8081"},
+		{":9090", "http://localhost:9090"},
+	}
+	for _, c := range cases {
+		t.Run(c.addr, func(t *testing.T) {
+			s := newTestServer()
+			s.addr = c.addr
+			spec := s.openAPISpec()
+			servers := spec["servers"].([]map[string]any)
+			if got := servers[0]["url"]; got != c.want {
+				t.Errorf("servers[0].url = %v, want %q", got, c.want)
+			}
+		})
+	}
 }
 
 func TestHandleOpenAPISpecCacheable(t *testing.T) {

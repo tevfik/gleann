@@ -21,6 +21,10 @@ import (
 // It handles the interactive TUI wizard by default.
 // Use `gleann setup --auto` for zero-friction onboarding (detect → confirm → index).
 func cmdSetup(args []string) {
+	if wantsHelp(args) {
+		printSetupUsage()
+		return
+	}
 	rejectUnknownFlags("setup", args, setupFlags)
 	// ── Check if user wants zero-friction onboarding ───────────────────
 	if hasFlag(args, "--auto") || hasFlag(args, "--quick") {
@@ -290,4 +294,26 @@ func printNextSteps(indexName string) {
 	fmt.Println("  Customize settings:")
 	fmt.Println("    gleann setup              # Full configuration wizard")
 	fmt.Println("    gleann doctor             # Health check")
+}
+
+// printSetupUsage prints the help of `gleann setup`.
+func printSetupUsage() {
+	fmt.Println(`Usage: gleann setup [flags]
+
+Interactive onboarding wizard (models, providers, first index).
+
+Flags:
+  --auto               Zero-friction onboarding: detect, confirm, index the current directory
+  --quick              Alias for --auto
+  --check              Exit 0 when setup is complete, 1 otherwise
+  --bootstrap          Pull the configured embedding models without the wizard
+  --yes, -y            Accept the detected defaults without asking (with --auto)
+  --docs <dir>         Directory to index (with --auto; default: current directory)
+  --name <name>        Index name (with --auto; default: the directory name)
+  --graph              Also build the code graph (with --auto)
+  --host <url>         Ollama server URL
+  --ollama-api-key <k> Optional Ollama API key
+  --model, --provider, --code-model, --doc-model, --index-dir ...
+                       Embedding settings shared with gleann index build
+  -h, --help           Show this help message`)
 }

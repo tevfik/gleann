@@ -44,9 +44,11 @@ The Agent Card at `/.well-known/agent-card.json` advertises four built-in skills
 
 ## Sending Messages
 
+The examples use the default address of `gleann serve`, `127.0.0.1:8081`; change it if you serve elsewhere.
+
 ```bash
 # Ask gleann a question (auto-routed to ask-rag skill)
-curl -X POST http://localhost:8080/a2a/v1/message:send \
+curl -X POST http://127.0.0.1:8081/a2a/v1/message:send \
   -H 'Content-Type: application/json' \
   -H "Authorization: Bearer $GLEANN_API_TOKEN" \
   -d '{
@@ -57,7 +59,7 @@ curl -X POST http://localhost:8080/a2a/v1/message:send \
   }'
 
 # Explicitly target a specific skill
-curl -X POST http://localhost:8080/a2a/v1/message:send \
+curl -X POST http://127.0.0.1:8081/a2a/v1/message:send \
   -H 'Content-Type: application/json' \
   -H "Authorization: Bearer $GLEANN_API_TOKEN" \
   -d '{
@@ -69,7 +71,7 @@ curl -X POST http://localhost:8080/a2a/v1/message:send \
   }'
 
 # Store a memory (requires an admin token; a query token may only recall/search)
-curl -X POST http://localhost:8080/a2a/v1/message:send \
+curl -X POST http://127.0.0.1:8081/a2a/v1/message:send \
   -H 'Content-Type: application/json' \
   -H "Authorization: Bearer $GLEANN_API_TOKEN" \
   -d '{
@@ -96,7 +98,7 @@ You can bypass auto-routing by setting `metadata.skill` in the message.
 | Setting | Config Key | Env Var | Default |
 |---------|-----------|---------|---------|
 | Enable/disable A2A | `a2a_enabled` | `GLEANN_A2A_ENABLED` | `true` |
-| Agent Card base URL | `a2a_base_url` | `GLEANN_A2A_BASE_URL` | auto-detected from server address |
+| Agent Card base URL | `a2a_base_url` | `GLEANN_A2A_BASE_URL` | derived from the server address |
 
 ```json
 // ~/.gleann/config.json
@@ -106,6 +108,19 @@ You can bypass auto-routing by setting `metadata.skill` in the message.
 }
 ```
 
+The Agent Card base URL is where other agents reach gleann, for example behind a reverse proxy:
+
+- **Precedence:** `GLEANN_A2A_BASE_URL` > `a2a_base_url` in `config.json` > a URL derived from the address
+  `gleann serve` is bound to. `127.0.0.1:8081` is advertised as `http://127.0.0.1:8081`; a bare `:8081` or a
+  wildcard bind (`0.0.0.0`, `[::]`) as `http://localhost:8081`.
+- **It is a base URL:** an `http://` or `https://` URL with a host and an optional path prefix, without a user or password (the card is public). gleann appends
+  `/a2a/v1`, so `https://my-gleann.example.com/gleann` is advertised as
+  `https://my-gleann.example.com/gleann/a2a/v1`. A trailing `/` or `/a2a/v1` is removed. An invalid value is
+  ignored with a warning in the server log and the next source is used.
+- **Restart required:** the card is built when `gleann serve` starts; restart it after a change.
+- `a2a_base_url` is also in the settings screen (`gleann tui` settings and the web UI Settings, under Services),
+  which refuses a value that is not an http(s) URL.
+
 ## Integration with AI Orchestrators
 
 Any A2A-compatible orchestrator can discover and use gleann:
@@ -114,13 +129,13 @@ Any A2A-compatible orchestrator can discover and use gleann:
 # Python example — discover gleann
 import requests
 
-card = requests.get("http://localhost:8080/.well-known/agent-card.json").json()
+card = requests.get("http://127.0.0.1:8081/.well-known/agent-card.json").json()
 print(f"Agent: {card['name']} v{card['version']}")
 for skill in card['skills']:
     print(f"  - {skill['id']}: {skill['description']}")
 
 # Send a search query
-resp = requests.post("http://localhost:8080/a2a/v1/message:send", json={
+resp = requests.post("http://127.0.0.1:8081/a2a/v1/message:send", json={
     "message": {
         "role": "user",
         "parts": [{"text": "find all authentication-related code"}]

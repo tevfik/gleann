@@ -96,7 +96,8 @@ func TestRunInstall_DefaultServerAddrAndFailure(t *testing.T) {
 	out := captureStdout(t, func() {
 		RunInstall(&OnboardResult{InstallPath: filepath.Join(home, "bin"), ServerEnabled: true})
 	})
-	if !strings.Contains(out, "serve --addr :8080") {
+	// An empty address falls back to the real default bind, not ":8080".
+	if !strings.Contains(out, "serve --addr 127.0.0.1:8081") || !strings.Contains(out, "curl http://127.0.0.1:8081/health") {
 		t.Errorf("default address expected:\n%s", out)
 	}
 
@@ -111,6 +112,30 @@ func TestRunInstall_DefaultServerAddrAndFailure(t *testing.T) {
 	})
 	if !strings.Contains(out, "Install failed") || strings.Contains(out, "Binary installed") || strings.Contains(out, "MCP") {
 		t.Errorf("failure must stop the flow:\n%s", out)
+	}
+}
+
+// TestRunInstall_ServerHealthHint checks the printed health-check URL for a
+// bound address and for a bare ":port". It used to prefix "localhost"
+// unconditionally: curl http://localhost127.0.0.1:8081/health.
+func TestRunInstall_ServerHealthHint(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	fakeLauncher(t)
+
+	cases := []struct{ addr, want string }{
+		{"127.0.0.1:8081", "curl http://127.0.0.1:8081/health"},
+		{"localhost:9000", "curl http://localhost:9000/health"},
+		{":8080", "curl http://localhost:8080/health"},
+	}
+	for _, c := range cases {
+		out := captureStdout(t, func() {
+			RunInstall(&OnboardResult{InstallPath: filepath.Join(home, "bin"), ServerEnabled: true, ServerAddr: c.addr})
+		})
+		if !strings.Contains(out, c.want) {
+			t.Errorf("addr %q: want %q in:\n%s", c.addr, c.want, out)
+		}
 	}
 }
 

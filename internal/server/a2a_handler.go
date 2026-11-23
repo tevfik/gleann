@@ -3,7 +3,9 @@ package server
 import (
 	"context"
 	"fmt"
+	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -27,12 +29,7 @@ func (s *Server) mountA2A(mux *http.ServeMux) {
 		return
 	}
 
-	baseURL := fmt.Sprintf("http://localhost%s", s.addr)
-	if !strings.Contains(s.addr, ":") {
-		baseURL = "http://localhost:" + s.addr
-	}
-
-	card := a2a.DefaultAgentCard(s.version, baseURL)
+	card := a2a.DefaultAgentCard(s.version, s.a2aBaseURL())
 	srv := a2a.NewServer(card)
 
 	// Register skill handlers backed by real gleann engines.
@@ -46,6 +43,48 @@ func (s *Server) mountA2A(mux *http.ServeMux) {
 	srv.RegisterSkill("multimodal-analyze", s.a2aMultimodalHandler)
 
 	srv.Mount(mux)
+}
+
+// a2aBaseURL resolves the base URL the agent card advertises (the card
+// appends /a2a/v1). Precedence: GLEANN_A2A_BASE_URL > config a2a_base_url >
+// the URL derived from the bound address. Both explicit values go through
+// gleann.NormalizeA2ABaseURL; an invalid one is skipped with a warning that
+// names it and the base URL used instead.
+func (s *Server) a2aBaseURL() string {
+	type source struct{ name, val string }
+	var ignored []string
+	used, usedFrom := "", ""
+	for _, src := range []source{
+		{"GLEANN_A2A_BASE_URL", os.Getenv("GLEANN_A2A_BASE_URL")},
+		{"config a2a_base_url", s.cfg().A2ABaseURL},
+	} {
+		u, err := gleann.NormalizeA2ABaseURL(src.val)
+		if err != nil {
+			ignored = append(ignored, fmt.Sprintf("%s %q: %v", src.name, redactURL(src.val), err))
+			continue
+		}
+		if u != "" {
+			used, usedFrom = u, src.name
+			break
+		}
+	}
+	if used == "" {
+		used = gleann.AdvertisedBaseURL(s.addr)
+		usedFrom = "derived from the server address " + s.addr
+	}
+	for _, msg := range ignored {
+		log.Printf("warning: A2A agent card: ignoring %s; using %s (%s)", msg, used, usedFrom)
+	}
+	return used
+}
+
+// redactURL hides the password of a URL with userinfo, so a rejected value
+// does not leak it into the log.
+func redactURL(raw string) string {
+	if u, err := url.Parse(strings.TrimSpace(raw)); err == nil && u.User != nil {
+		return u.Redacted()
+	}
+	return raw
 }
 
 // a2aSearchHandler performs semantic search across targeted or accessible indexes.
