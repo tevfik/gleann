@@ -93,8 +93,9 @@ Options:
   --approve <action>      Decision approval: proceed, fast, or cancel
   --yes, -y               Auto-approve decision gate (proceed); also needed to index a home directory or /
   --progress <surface>    Progress reporting surface: plain (default), json, none
-  --quiet                 Suppress embedded llama-server bootstrap status
-                          messages (pair with --progress none to silence progress)
+  --quiet                 Suppress status lines and progress (errors stay on stderr).
+                          An explicit --progress <surface> still reports progress;
+                          --dry-run estimates and decision-gate JSON are kept.
   --include-submodules    Include Git submodule directories (default: excluded)
   --tag <tag>             Assign governance tag(s) (comma-separated or multiple)
   --desc <description>    Human-readable description for semantic MCP routing
@@ -140,6 +141,7 @@ func cmdBuild(args []string) {
 	mode, noPlugins := parseIndexMode(args)
 
 	dryRun := hasFlag(args, "--dry-run")
+	quiet := hasFlag(args, "--quiet")
 
 	codeModel := getFlag(args, "--code-model")
 	if codeModel == "" {
@@ -157,20 +159,26 @@ func cmdBuild(args []string) {
 	// automatically build <name>-code and <name>-docs in two targeted passes.
 	// Each pass goes through the full CLI flow (estimate, decision gate, ...).
 	if !dryRun && mode == IndexModeAll && codeModel != "" && docModel != "" {
-		fmt.Printf("⚡ Dual-model mode active:\n")
-		fmt.Printf("   💻 Code model: %s\n", codeModel)
-		fmt.Printf("   📄 Docs model: %s\n\n", docModel)
+		if !quiet {
+			fmt.Printf("⚡ Dual-model mode active:\n")
+			fmt.Printf("   💻 Code model: %s\n", codeModel)
+			fmt.Printf("   📄 Docs model: %s\n\n", docModel)
 
-		fmt.Printf("📦 Step 1/2: Building code index %q...\n", name+"-code")
+			fmt.Printf("📦 Step 1/2: Building code index %q...\n", name+"-code")
+		}
 		cmdBuild(dualPassArgs(args, name, name+"-code", "code", codeModel))
 
-		fmt.Printf("\n📦 Step 2/2: Building docs index %q...\n", name+"-docs")
+		if !quiet {
+			fmt.Printf("\n📦 Step 2/2: Building docs index %q...\n", name+"-docs")
+		}
 		cmdBuild(dualPassArgs(args, name, name+"-docs", "docs", docModel))
 
-		fmt.Printf("\n🎉 Dual-index build complete for %q!\n", name)
-		fmt.Printf("   💻 Code index: %s-code\n", name)
-		fmt.Printf("   📄 Docs index: %s-docs\n", name)
-		fmt.Printf("   🔍 Search both concurrently: gleann search %s \"<query>\"\n", name)
+		if !quiet {
+			fmt.Printf("\n🎉 Dual-index build complete for %q!\n", name)
+			fmt.Printf("   💻 Code index: %s-code\n", name)
+			fmt.Printf("   📄 Docs index: %s-docs\n", name)
+			fmt.Printf("   🔍 Search both concurrently: gleann search %s \"<query>\"\n", name)
+		}
 		return
 	}
 
@@ -200,8 +208,13 @@ func cmdBuild(args []string) {
 		return
 	}
 	jsonOutput := hasFlag(args, "--json")
-	progressSurface := gleann.ProgressSurface(getFlag(args, "--progress"))
-	pacer := gleann.NewPacer(progressSurface, os.Stderr)
+	// --quiet defaults the progress surface to none; an explicit --progress
+	// wins over --quiet, the same precedence as `index sync`.
+	progressSurface := getFlag(args, "--progress")
+	if quiet && progressSurface == "" {
+		progressSurface = string(gleann.SurfaceNone)
+	}
+	pacer := gleann.NewPacer(gleann.ProgressSurface(progressSurface), os.Stderr)
 
 	// Pre-flight job estimation using Graham (1969) list scheduling bounds
 	est, err := gleann.EstimateJobWalk(docsDir, runtime.NumCPU(),
@@ -238,12 +251,16 @@ func cmdBuild(args []string) {
 	}
 
 	if gate.Action == gleann.GateActionCancel {
-		fmt.Println("Indexing cancelled by approval flag.")
+		if !quiet {
+			fmt.Println("Indexing cancelled by approval flag.")
+		}
 		return
 	}
 
 	if gate.Action == gleann.GateActionFast {
-		fmt.Println("⚡ Approval mode 'fast' selected: switching to code-only indexing.")
+		if !quiet {
+			fmt.Println("⚡ Approval mode 'fast' selected: switching to code-only indexing.")
+		}
 		mode = IndexModeCode
 		noPlugins = true
 	}
@@ -284,6 +301,11 @@ func cmdBuild(args []string) {
 		Estimate:    est,
 	}
 	opts.MultimodalModel = getFlag(args, "--multimodal-model")
+	if quiet {
+		// --quiet discards the pipeline's status lines, as on index sync;
+		// warnings and errors keep going to stderr.
+		opts.Stdout = io.Discard
+	}
 	opts.Progress = func(p indexing.Progress) {
 		pacer.Tick(p.Phase, p.ItemsDone, p.TotalItems, p.BytesDone, p.TotalBytes, p.Force)
 	}
@@ -302,7 +324,13 @@ func cmdBuild(args []string) {
 	if hasFlag(args, "--agents") || hasFlag(args, "--write-agents") {
 		agentsPath := filepath.Join(docsDir, "AGENTS.md")
 		content := getAgentsMDContent(name)
-		if err := appendOrCreateFile(agentsPath, content, "gleann: Code Intelligence"); err == nil {
+		// Under --quiet the "already configured" notice is dropped, but the
+		// symlink-skip warning keeps going to stderr (install keeps stdout).
+		info, warn := io.Writer(os.Stdout), io.Writer(os.Stdout)
+		if quiet {
+			info, warn = io.Discard, os.Stderr
+		}
+		if err := appendOrCreateFileTo(info, warn, agentsPath, content, "gleann: Code Intelligence"); err == nil && !quiet {
 			fmt.Printf("🤖 AGENTS.md generated/updated in %s\n", agentsPath)
 		}
 	}
@@ -372,15 +400,22 @@ Options:
 	}
 
 	// Step 1: Remove existing index (ignore error if it doesn't exist)
-	fmt.Printf("🗑️  Removing existing index %q...\n", name)
+	quiet := hasFlag(args, "--quiet")
+	if !quiet {
+		fmt.Printf("🗑️  Removing existing index %q...\n", name)
+	}
 	if err := gleann.RemoveIndex(config.IndexDir, name); err != nil {
-		fmt.Printf("   (no existing index to remove: %v)\n", err)
-	} else {
+		if !quiet {
+			fmt.Printf("   (no existing index to remove: %v)\n", err)
+		}
+	} else if !quiet {
 		fmt.Printf("   ✅ Removed.\n")
 	}
 
 	// Step 2: Build fresh
-	fmt.Printf("🔨 Rebuilding index %q from %s...\n", name, getFlag(args, "--docs"))
+	if !quiet {
+		fmt.Printf("🔨 Rebuilding index %q from %s...\n", name, getFlag(args, "--docs"))
+	}
 	cmdBuild(args)
 }
 

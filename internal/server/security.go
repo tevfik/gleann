@@ -86,6 +86,9 @@ func requiredScope(method, path string) (auth.Scope, bool) {
 	case isGet && (strings.HasPrefix(path, "/api/indexes") || strings.HasPrefix(path, "/api/graph/") ||
 		strings.HasPrefix(path, "/api/blocks") || strings.HasPrefix(path, "/api/conversations")):
 		return auth.ScopeQuery, false
+	// POST /api/graph/{name}/query is read-only (callers, callees, symbols_in_file, impact, toc).
+	case method == http.MethodPost && strings.HasSuffix(path, "/query") && strings.HasPrefix(path, "/api/graph/"):
+		return auth.ScopeQuery, false
 	}
 	return auth.ScopeAdmin, false
 }

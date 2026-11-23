@@ -291,6 +291,10 @@ gleann index storage docs --set store                       # convert in place (
 --graph                 # Build AST code graph
 --prune                 # Prune unchanged files
 --no-mmap               # Disable memory-mapped access
+--progress <surface>    # Progress reporting surface: plain (default), json, none
+--quiet                 # No status lines or progress (errors stay on stderr);
+                        # an explicit --progress still reports progress.
+                        # --dry-run estimates and decision-gate JSON are kept.
 
 # DiskANN & Product Quantization (PQ) Options
 --pq-dim <n>            # PQ sub-quantizers (default: dims/4)

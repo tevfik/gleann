@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 
@@ -176,7 +177,20 @@ func cmdGraphBuild(args []string, config gleann.Config) {
 		exitFunc(1)
 	}
 	includeSubmodules := hasFlag(args, "--include-submodules")
-	buildGraphIndex(indexName, docsDir, config.IndexDir, nil, nil, includeSubmodules)
+	// --quiet discards the graph build's status lines, as on index build/sync;
+	// warnings keep going to stderr.
+	stdout := io.Writer(os.Stdout)
+	if hasFlag(args, "--quiet") {
+		stdout = io.Discard
+	}
+	indexing.BuildGraphIndex(indexing.GraphOptions{
+		Name:              indexName,
+		DocsDir:           docsDir,
+		IndexDir:          config.IndexDir,
+		IncludeSubmodules: includeSubmodules,
+		Stdout:            stdout,
+		Stderr:            os.Stderr,
+	})
 }
 
 // cmdGraphExplain shows full context for a symbol: edges, community, impact.
@@ -554,8 +568,8 @@ Usage:
   gleann graph toc     [doc_path] --index <name> [--json]
       Inspect hierarchical Table of Contents (TOC) & heading tree for documents
 
-  gleann graph build   <name> [--docs <dir>] [--include-submodules]
-      Rebuild the graph of an existing index
+  gleann graph build   <name> [--docs <dir>] [--include-submodules] [--quiet]
+      Rebuild the graph of an existing index (--quiet: no status output)
 
   gleann graph viz         --index <name> [--output <file.html>]
       Generate interactive HTML graph visualization (vis.js)

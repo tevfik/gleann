@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -738,16 +739,27 @@ curl -X POST http://localhost:8080/a2a/v1/message:send \
 `
 
 // appendOrCreateFile appends content to a file, creating it if absent.
-// It avoids duplicate sections by checking for the sentinel.
+// It avoids duplicate sections by checking for the sentinel. Status lines
+// (including the symlink-skip warning) go to stdout, as `gleann install`
+// and friends have always printed them.
 func appendOrCreateFile(path, content, sentinel string) error {
+	return appendOrCreateFileTo(os.Stdout, os.Stdout, path, content, sentinel)
+}
+
+// appendOrCreateFileTo is appendOrCreateFile with explicit status sinks:
+// info receives the informational "already configured" notice, warn the
+// symlink-skip warning. Callers running under --quiet pass io.Discard for
+// info and os.Stderr for warn, so the warning survives on stderr while
+// informational stdout stays empty.
+func appendOrCreateFileTo(info, warn io.Writer, path, content, sentinel string) error {
 	sym, target, _ := isSymlink(path)
 	if sym && !followSymlinkFlag {
-		fmt.Printf("  ⚠ Skipped %s (points to symlink %s; use --follow-symlink to modify)\n", path, target)
+		fmt.Fprintf(warn, "  ⚠ Skipped %s (points to symlink %s; use --follow-symlink to modify)\n", path, target)
 		return nil
 	}
 	existing, err := os.ReadFile(path)
 	if err == nil && strings.Contains(string(existing), sentinel) {
-		fmt.Printf("  (already configured in %s)\n", filepath.Base(path))
+		fmt.Fprintf(info, "  (already configured in %s)\n", filepath.Base(path))
 		return nil
 	}
 	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o644)
