@@ -7,6 +7,7 @@ package server
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -16,6 +17,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/tevfik/gleann/internal/auth"
@@ -104,8 +106,8 @@ func sortedKeys(m map[string]any) []string {
 // TestPatchIndexSpecMatchesHandler (review F1): PATCH /api/indexes/{name} must
 // document the fields patchIndexRequest decodes (tags, description,
 // mcp_exposed — there is no title field) and exactly the status codes
-// handlePatchIndex answers: 200, 400 and 500. A missing index answers 500
-// (UpdateIndexMeta fails), never 404.
+// handlePatchIndex answers: 200, 400, 403 (restricted client), 404 (missing index) and 500 (any other
+// metadata failure, exercised below with an unreadable metadata file).
 func TestPatchIndexSpecMatchesHandler(t *testing.T) {
 	dir := t.TempDir()
 	cfg := gleann.DefaultConfig()
@@ -133,12 +135,10 @@ func TestPatchIndexSpecMatchesHandler(t *testing.T) {
 	// the codes it can answer.
 	mux := http.NewServeMux()
 	mux.HandleFunc("PATCH /api/indexes/{name}", s.handlePatchIndex)
-	call := func(name, body string) int {
-		req := httptest.NewRequest(http.MethodPatch, "/api/indexes/"+name, strings.NewReader(body))
-		w := httptest.NewRecorder()
-		mux.ServeHTTP(w, req)
-		return w.Code
+	callHdr := func(name, body string, hdr map[string]string) int {
+		return serve(mux, http.MethodPatch, "/api/indexes/"+name, body, hdr).Code
 	}
+	call := func(name, body string) int { return callHdr(name, body, nil) }
 	observed := map[string]bool{}
 	record := func(what string, code, want int) {
 		if code != want {
@@ -146,7 +146,8 @@ func TestPatchIndexSpecMatchesHandler(t *testing.T) {
 		}
 		observed[strconv.Itoa(code)] = true
 	}
-	record("missing index", call("no-such-index", `{}`), http.StatusInternalServerError)
+	record("missing index", call("no-such-index", `{}`), http.StatusNotFound)
+	record("restricted client", callHdr("okindex", `{}`, map[string]string{"X-Gleann-Target": "other"}), http.StatusForbidden)
 	record("undecodable body", call("no-such-index", `{`), http.StatusBadRequest)
 
 	idxDir := filepath.Join(dir, "okindex")
@@ -157,6 +158,14 @@ func TestPatchIndexSpecMatchesHandler(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(idxDir, "okindex.meta.json"), meta, 0o644); err != nil {
 		t.Fatal(err)
 	}
+	badDir := filepath.Join(dir, "badindex")
+	if err := os.MkdirAll(badDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(badDir, "badindex.meta.json"), []byte("{"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	record("corrupt metadata", call("badindex", `{}`), http.StatusInternalServerError)
 	record("valid patch", call("okindex", `{"tags":["review"],"mcp_exposed":true}`), http.StatusOK)
 
 	responses, ok := op["responses"].(map[string]any)
@@ -329,5 +338,136 @@ func TestSpecConversationAndConfigContracts(t *testing.T) {
 	sort.Strings(sorted)
 	if strings.Join(sorted, ",") != "installed,not_installed" {
 		t.Errorf("GET /api/plugins: status enum %v; handleListPlugins only emits not_installed or installed", enum)
+	}
+}
+
+// patchTestServer builds a server over a temp index dir holding one index
+// ("okindex") and a plain file named "afile", with the PATCH and GET routes.
+func patchTestServer(t *testing.T) (*Server, *http.ServeMux, string) {
+	t.Helper()
+	dir := t.TempDir()
+	cfg := gleann.DefaultConfig()
+	cfg.IndexDir = dir
+	s := &Server{config: cfg, searchers: make(map[string]*gleann.LeannSearcher)}
+	idxDir := filepath.Join(dir, "okindex")
+	if err := os.MkdirAll(idxDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	meta, _ := json.Marshal(gleann.IndexMeta{Name: "okindex"})
+	if err := os.WriteFile(filepath.Join(idxDir, "okindex.meta.json"), meta, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "afile"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	mux := http.NewServeMux()
+	mux.HandleFunc("PATCH /api/indexes/{name}", s.handlePatchIndex)
+	mux.HandleFunc("GET /api/indexes/{name}", s.handleGetIndex)
+	return s, mux, dir
+}
+
+func serve(mux *http.ServeMux, method, path, body string, hdr map[string]string) *httptest.ResponseRecorder {
+	req := httptest.NewRequest(method, path, strings.NewReader(body))
+	for k, v := range hdr {
+		req.Header.Set(k, v)
+	}
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+	return w
+}
+
+// Concurrent PATCHes of one index must all answer 200 and leave valid metadata.
+func TestPatchIndexConcurrent(t *testing.T) {
+	_, mux, dir := patchTestServer(t)
+	const n = 100
+	var wg sync.WaitGroup
+	codes := make(chan int, n)
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			codes <- serve(mux, http.MethodPatch, "/api/indexes/okindex", fmt.Sprintf(`{"description":"d%d"}`, i), nil).Code
+		}(i)
+	}
+	wg.Wait()
+	close(codes)
+	got := map[int]int{}
+	for c := range codes {
+		got[c]++
+	}
+	if got[http.StatusOK] != n {
+		t.Fatalf("status codes of %d concurrent PATCHes: %v, want all 200", n, got)
+	}
+	m, err := gleann.GetIndexMeta(dir, "okindex")
+	if err != nil {
+		t.Fatalf("metadata invalid after concurrent PATCHes: %v", err)
+	}
+	if !strings.HasPrefix(m.Description, "d") {
+		t.Errorf("final description %q is none of the patches", m.Description)
+	}
+}
+
+// A plain file named like the index answers 404, as GET does.
+func TestPatchIndexPlainFileIs404(t *testing.T) {
+	_, mux, _ := patchTestServer(t)
+	if c := serve(mux, http.MethodGet, "/api/indexes/afile", "", nil).Code; c != http.StatusNotFound {
+		t.Fatalf("GET premise: %d", c)
+	}
+	if c := serve(mux, http.MethodPatch, "/api/indexes/afile", `{}`, nil).Code; c != http.StatusNotFound {
+		t.Errorf("PATCH on a plain file: %d, want 404", c)
+	}
+}
+
+// PATCH enforces the same access restriction as GET, before the existence
+// check, so a restricted client learns nothing about other indexes.
+func TestPatchIndexChecksAccess(t *testing.T) {
+	_, mux, _ := patchTestServer(t)
+	hdr := map[string]string{"X-Gleann-Target": "other"}
+	for _, name := range []string{"okindex", "ghost"} {
+		if c := serve(mux, http.MethodPatch, "/api/indexes/"+name, `{"description":"x"}`, hdr).Code; c != http.StatusForbidden {
+			t.Errorf("PATCH %s with foreign target: %d, want 403", name, c)
+		}
+	}
+	if c := serve(mux, http.MethodPatch, "/api/indexes/okindex", `{"description":"x"}`, map[string]string{"X-Gleann-Target": "okindex"}).Code; c != http.StatusOK {
+		t.Errorf("PATCH with matching target: %d, want 200", c)
+	}
+}
+
+// Pins the GLEANN_TAGS behaviour PATCH shares with GET (checkIndexAccess): an
+// index with another tag is 403, a missing one 404 (so existence is visible to
+// a tag-restricted client; a follow-up), an allowed one 200, a corrupt one 500.
+func TestPatchIndexGleannTags(t *testing.T) {
+	t.Setenv("GLEANN_TAGS", "team")
+	_, mux, dir := patchTestServer(t)
+	write := func(name string, m gleann.IndexMeta) {
+		if err := os.MkdirAll(filepath.Join(dir, name), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		b, _ := json.Marshal(m)
+		if err := os.WriteFile(filepath.Join(dir, name, name+".meta.json"), b, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("mine", gleann.IndexMeta{Name: "mine", Tags: []string{"team"}})
+	write("secret", gleann.IndexMeta{Name: "secret", Tags: []string{"other"}})
+	if err := os.WriteFile(filepath.Join(dir, "okindex", "okindex.meta.json"), []byte("{"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name string
+		want int
+	}{{"mine", 200}, {"secret", 403}, {"ghost", 404}, {"okindex", 500}} {
+		patch := serve(mux, http.MethodPatch, "/api/indexes/"+tc.name, `{"description":"x"}`, nil).Code
+		if patch != tc.want {
+			t.Errorf("PATCH %s: %d, want %d", tc.name, patch, tc.want)
+		}
+	}
+	for _, tc := range []struct {
+		name string
+		want int
+	}{{"secret", 403}, {"ghost", 404}} {
+		if got := serve(mux, http.MethodGet, "/api/indexes/"+tc.name, "", nil).Code; got != tc.want {
+			t.Errorf("GET %s: %d, want %d (PATCH must match GET)", tc.name, got, tc.want)
+		}
 	}
 }

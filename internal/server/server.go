@@ -21,6 +21,7 @@ import (
 	"reflect"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/tevfik/gleann/internal/auth"
@@ -688,6 +689,13 @@ type patchIndexRequest struct {
 	MCPExposed  *bool     `json:"mcp_exposed,omitempty"`
 }
 
+// indexMissing reports whether err from reading an index's metadata means the
+// index does not exist: no metadata file, or a plain file where the index
+// directory should be (GET answers 404 for both).
+func indexMissing(err error) bool {
+	return errors.Is(err, fs.ErrNotExist) || errors.Is(err, syscall.ENOTDIR)
+}
+
 func (s *Server) handlePatchIndex(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	if err := gleann.ValidateName(name); err != nil {
@@ -695,9 +703,25 @@ func (s *Server) handlePatchIndex(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if err := s.checkIndexAccess(r, name); err != nil {
+		writeError(w, http.StatusForbidden, err.Error())
+		return
+	}
+
 	var req patchIndexRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
+		return
+	}
+
+	// Only this initial read decides 404: a not-exist error from the write
+	// below is a server fault, not a missing index.
+	if _, err := gleann.GetIndexMeta(s.cfg().IndexDir, name); err != nil {
+		if indexMissing(err) {
+			writeError(w, http.StatusNotFound, fmt.Sprintf("index %q not found", name))
+		} else {
+			writeError(w, http.StatusInternalServerError, "failed to read index metadata: "+err.Error())
+		}
 		return
 	}
 

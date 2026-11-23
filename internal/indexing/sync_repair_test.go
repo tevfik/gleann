@@ -14,6 +14,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/tevfik/gleann/internal/metafault"
 	"github.com/tevfik/gleann/pkg/gleann"
 )
 
@@ -257,12 +258,9 @@ func TestSyncEmptyCorpusRebuildRestoresTheIndex(t *testing.T) {
 		if _, err := Build(context.Background(), BuildOptions{Options: env.options(nil), Name: "mw", DocsDir: docs}); err != nil {
 			t.Fatal(err)
 		}
-		base := filepath.Join(env.cfg.IndexDir, "mw", "mw")
-		// A directory at <name>.meta.json.tmp makes the atomic metadata write
-		// fail with EISDIR after the store has already been emptied.
-		if err := os.MkdirAll(filepath.Join(base+".meta.json.tmp", "x"), 0o755); err != nil {
-			t.Fatal(err)
-		}
+		// The metadata write fails once the store is open and emptied (the
+		// injected failure cannot hit the store open, unlike a read-only dir).
+		t.Cleanup(metafault.Set(func(string) error { return errors.New("injected metadata write failure") }))
 		if err := os.Remove(notes); err != nil {
 			t.Fatal(err)
 		}
@@ -280,6 +278,9 @@ func TestSyncEmptyCorpusRebuildRestoresTheIndex(t *testing.T) {
 		}
 		if _, statErr := os.Stat(filepath.Join(env.cfg.IndexDir, "mw", "mw.meta.json")); statErr != nil {
 			t.Fatalf("the index was destroyed: %v", statErr)
+		}
+		if got := out.String(); !strings.Contains(got, "updating index metadata") || !strings.Contains(got, "injected metadata write failure") {
+			t.Errorf("the rollback path was not reached (want the metadata write failure in the sync trace):\n%s", got)
 		}
 		if HasSyncBackup(env.cfg.IndexDir, "mw") {
 			t.Error("the rollback copy was left behind")

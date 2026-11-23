@@ -161,6 +161,7 @@ func TestAgentChatStreamInjectsOnlyCurrentRepoMemory(t *testing.T) {
 	srv, captured := capturingOllama(t)
 
 	ac := newTestAgentChat(nil)
+	t.Cleanup(ac.close)
 	ac.cm.chat = gleann.NewChat(fakeSearcher{}, gleann.ChatConfig{
 		Provider: gleann.LLMOllama,
 		Model:    "test-model",
@@ -190,6 +191,7 @@ func TestAgentChatContextProbeKeepsCapturedMemory(t *testing.T) {
 	srv, captured := capturingOllama(t)
 
 	ac := newTestAgentChat(nil)
+	t.Cleanup(ac.close)
 	ac.cm.chat = gleann.NewChat(fakeSearcher{}, gleann.ChatConfig{
 		Provider: gleann.LLMOllama,
 		Model:    "test-model",
@@ -200,9 +202,9 @@ func TestAgentChatContextProbeKeepsCapturedMemory(t *testing.T) {
 	if _, err := ac.stream(context.Background(), "what is the rule?", func(agenttui.Event) {}); err != nil {
 		t.Fatal(err)
 	}
-	// stream spawned `go ac.refreshContextLimit()` because contextLimit is 0.
+	// stream spawned `go ac.refreshContextLimit(context.Background())` because contextLimit is 0.
 	// Run the same probe synchronously so the ordering is deterministic.
-	ac.refreshContextLimit()
+	ac.refreshContextLimit(context.Background())
 	ac.mu.Lock()
 	limit := ac.cm.contextLimit
 	ac.mu.Unlock()

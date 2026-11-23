@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/tevfik/gleann/internal/graphstore"
+	"github.com/tevfik/gleann/internal/metafault"
 )
 
 // LeannSearcher performs search on built indexes.
@@ -1077,11 +1078,36 @@ func GetIndexMeta(indexDir, name string) (*IndexMeta, error) {
 	return &meta, nil
 }
 
+// metaLocks serialises read-modify-write cycles of one index's metadata file
+// within the process (keyed by the file path).
+var metaLocks sync.Map // string -> *sync.Mutex
+
+// canonicalLockKey names a metadata file the same way however the index
+// directory is spelled (relative, absolute, through a symlink). The file's
+// directory is resolved, not the file, which always exists for a valid update.
+func canonicalLockKey(metaPath string) string {
+	dir, base := filepath.Split(metaPath)
+	if d, err := filepath.EvalSymlinks(dir); err == nil {
+		dir = d
+	}
+	if abs, err := filepath.Abs(dir); err == nil {
+		dir = abs
+	}
+	return filepath.Join(dir, base)
+}
+
 // UpdateIndexMeta atomically updates the metadata file of an existing index.
+// Concurrent updates of one index are serialised so none is lost, and each
+// writes through its own temporary file, so they cannot clobber each other.
 func UpdateIndexMeta(indexDir, name string, updateFn func(*IndexMeta)) error {
 	if err := checkPathName(name); err != nil {
 		return err
 	}
+	metaPath := filepath.Join(indexDir, name, name+".meta.json")
+	mu, _ := metaLocks.LoadOrStore(canonicalLockKey(metaPath), &sync.Mutex{})
+	mu.(*sync.Mutex).Lock()
+	defer mu.(*sync.Mutex).Unlock()
+
 	meta, err := GetIndexMeta(indexDir, name)
 	if err != nil {
 		return err
@@ -1094,12 +1120,31 @@ func UpdateIndexMeta(indexDir, name string, updateFn func(*IndexMeta)) error {
 		return fmt.Errorf("marshal index metadata: %w", err)
 	}
 
-	metaPath := filepath.Join(indexDir, name, name+".meta.json")
-	tmpPath := metaPath + ".tmp"
-	if err := os.WriteFile(tmpPath, data, 0o644); err != nil {
+	if err := metafault.Check(metaPath); err != nil {
 		return fmt.Errorf("write temp metadata: %w", err)
 	}
-	return os.Rename(tmpPath, metaPath)
+	tmp, err := os.CreateTemp(filepath.Dir(metaPath), name+".meta.json.*.tmp")
+	if err != nil {
+		return fmt.Errorf("write temp metadata: %w", err)
+	}
+	tmpPath := tmp.Name()
+	_, werr := tmp.Write(data)
+	if cerr := tmp.Close(); werr == nil {
+		werr = cerr
+	}
+	if werr != nil {
+		_ = os.Remove(tmpPath)
+		return fmt.Errorf("write temp metadata: %w", werr)
+	}
+	if err := os.Chmod(tmpPath, 0o644); err != nil {
+		_ = os.Remove(tmpPath)
+		return fmt.Errorf("write temp metadata: %w", err)
+	}
+	if err := os.Rename(tmpPath, metaPath); err != nil {
+		_ = os.Remove(tmpPath)
+		return fmt.Errorf("replace index metadata: %w", err)
+	}
+	return nil
 }
 
 // ListIndexesByTag returns all indexes containing the given tag.

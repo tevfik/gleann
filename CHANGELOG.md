@@ -16,6 +16,10 @@ All notable changes to this project will be documented in this file.
 - Pre-selection of `source`/`file` filters resolves the meta `source` key of passages stored without a source column.
 - Exact scoring of few filter matches is no longer refused above 200K passages when a filter index can answer the pre-selection.
 - Filter pre-selection by table pass no longer disagrees with the filter engine on duplicate JSON keys and non-UTF-8 bytes in meta text; a meta text of `null` no longer panics.
+- **`PATCH /api/indexes/{name}` answers `404` for an unknown index** instead of `500` (detected with `errors.Is(err, fs.ErrNotExist)`); the OpenAPI response set and `docs/api.md` follow.
+- **`PATCH /api/indexes/{name}` enforces index access restrictions (security).** It now applies the same `X-Gleann-Target` / `GLEANN_TAGS` check as `GET`, before the existence check, so a client restricted by `X-Gleann-Target` can neither modify nor probe other indexes. Under `GLEANN_TAGS` it behaves exactly like `GET`: an index with another tag answers `403` and a missing one `404`. A plain file named like the index answers `404`, as `GET` does.
+- **Concurrent index metadata updates no longer fail or lose data.** `UpdateIndexMeta` serialises updates of one index and writes through a unique temporary file (previously parallel `PATCH`es shared one `.tmp` file and produced spurious `404`/`500` and lost updates).
+- **Agent chat TUI:** the context-window limit is read under the chat lock (data race with the background probe); the probe is cancelled and awaited when the chat exits; a failure to build the repository memory context is shown as a failed `memory` card instead of being dropped silently (the answer still runs). New `memory.InjectRepoContextErr` reports the failure.
 
 ## [v1.20.2] — 2026-11-23
 

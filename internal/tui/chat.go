@@ -2393,7 +2393,12 @@ func truncStr(s string, maxLen int) string {
 
 // lookupContextLimit asks the provider for the model's context window (0 = unknown).
 func lookupContextLimit(cfg gleann.ChatConfig) int {
-	n, _ := gleann.ChatContextWindow(context.Background(), cfg)
+	return lookupContextLimitCtx(context.Background(), cfg)
+}
+
+// lookupContextLimitCtx is lookupContextLimit that gives up when ctx is cancelled.
+func lookupContextLimitCtx(ctx context.Context, cfg gleann.ChatConfig) int {
+	n, _ := gleann.ChatContextWindow(ctx, cfg)
 	return n
 }
 

@@ -9,16 +9,18 @@ import (
 	"testing"
 
 	"github.com/tevfik/gleann/internal/analysis"
+	"github.com/tevfik/gleann/internal/metafault"
 	"github.com/tevfik/gleann/internal/store"
 )
 
-// blockMetaWrites makes every later UpdateIndexMeta of the index fail: a
-// directory sits where the temporary meta file is written.
-func blockMetaWrites(t *testing.T, dir, name string) {
+// blockMetaWrites makes every later UpdateIndexMeta fail (through the metafault
+// seam, so the store of the index stays usable). It returns the function that
+// undoes it.
+func blockMetaWrites(t *testing.T) (unblock func()) {
 	t.Helper()
-	if err := os.MkdirAll(filepath.Join(dir, name, name+".meta.json.tmp", "x"), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	unblock = metafault.Set(func(string) error { return errors.New("injected metadata write failure") })
+	t.Cleanup(unblock)
+	return unblock
 }
 
 // Cleanup fails fast while another process builds or syncs the index.
@@ -50,7 +52,7 @@ func TestMigrateCannotRecordTheStoreFormat(t *testing.T) {
 		if err := UpdateIndexMeta(dir, "flagless", func(m *IndexMeta) { m.StoreFormat = 0 }); err != nil {
 			t.Fatal(err)
 		}
-		blockMetaWrites(t, dir, "flagless")
+		blockMetaWrites(t)
 		_, err := MigrateIndex(dir, "flagless", MigrateOptions{})
 		if err == nil || !strings.Contains(err.Error(), "recording store format") {
 			t.Fatalf("err = %v", err)
@@ -61,7 +63,7 @@ func TestMigrateCannotRecordTheStoreFormat(t *testing.T) {
 		oldFixture(t, dir, "half", []int64{0, 1, 2}, false, false)
 		sp := testPassageStore(filepath.Join(dir, "half", "half"))
 		sp.Close()
-		blockMetaWrites(t, dir, "half")
+		blockMetaWrites(t)
 		_, err := MigrateIndex(dir, "half", MigrateOptions{})
 		if err == nil || !strings.Contains(err.Error(), "recording store format") {
 			t.Fatalf("err = %v", err)
@@ -70,9 +72,10 @@ func TestMigrateCannotRecordTheStoreFormat(t *testing.T) {
 	t.Run("after the switch", func(t *testing.T) {
 		dir := t.TempDir()
 		oldFixture(t, dir, "late", []int64{0, 1, 2}, false, false)
+		var unblock func()
 		_, err := MigrateIndex(dir, "late", MigrateOptions{crashHook: func(point string) error {
 			if point == migrateAfterDBRename {
-				blockMetaWrites(t, dir, "late")
+				unblock = blockMetaWrites(t)
 			}
 			return nil
 		}})
@@ -80,9 +83,7 @@ func TestMigrateCannotRecordTheStoreFormat(t *testing.T) {
 			t.Fatalf("err = %v", err)
 		}
 		// The database is switched already: the re-run only records the flag.
-		if err := os.RemoveAll(filepath.Join(dir, "late", "late.meta.json.tmp")); err != nil {
-			t.Fatal(err)
-		}
+		unblock()
 		if _, err := MigrateIndex(dir, "late", MigrateOptions{}); err != nil {
 			t.Fatalf("re-run: %v", err)
 		}

@@ -82,7 +82,7 @@ func TestIndexMetaEndpoints_Errors(t *testing.T) {
 		{"get forbidden for foreign target", "GET", "/api/indexes/idx", "", map[string]string{"X-Gleann-Target": "other"}, http.StatusForbidden},
 		{"get unknown index", "GET", "/api/indexes/ghost", "", nil, http.StatusNotFound},
 		{"patch bad json", "PATCH", "/api/indexes/idx", "{", nil, http.StatusBadRequest},
-		{"patch unknown index", "PATCH", "/api/indexes/ghost", `{"description":"x"}`, nil, http.StatusInternalServerError},
+		{"patch unknown index", "PATCH", "/api/indexes/ghost", `{"description":"x"}`, nil, http.StatusNotFound},
 		{"patch invalid name", "PATCH", "/api/indexes/bad%20name", `{}`, nil, http.StatusBadRequest},
 	}
 	for _, tc := range tests {

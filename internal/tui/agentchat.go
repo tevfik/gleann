@@ -36,6 +36,50 @@ type agentChat struct {
 	// prompt answers the questions and forms of slash commands; nil means
 	// the running app. Tests set it to answer without a terminal.
 	prompt prompter
+
+	// Background work (the context-window probe) hangs off bgCtx, which close
+	// cancels; bgWG lets close wait until every such goroutine has returned.
+	// The zero value works: the context is created on first use.
+	bgMu     sync.Mutex
+	bgCtx    context.Context
+	bgCancel context.CancelFunc
+	bgWG     sync.WaitGroup
+	bgClosed bool
+}
+
+// goBackground runs fn on a goroutine tracked by close. fn must return when
+// ctx is cancelled. After close it does nothing.
+func (ac *agentChat) goBackground(fn func(ctx context.Context)) {
+	ac.bgMu.Lock()
+	defer ac.bgMu.Unlock()
+	if ac.bgClosed {
+		return
+	}
+	if ac.bgCtx == nil {
+		ac.bgCtx, ac.bgCancel = context.WithCancel(context.Background())
+	}
+	ctx := ac.bgCtx
+	ac.bgWG.Add(1)
+	go func() {
+		defer ac.bgWG.Done()
+		fn(ctx)
+	}()
+}
+
+// close stops the goroutines started by goBackground (the stream's context
+// probe) and waits for them, so nothing touches the chat state or the app
+// afterwards. It is idempotent. The settings handler's probe is synchronous, runs on
+// the context the app hands to command handlers (context.Background() in
+// agenttui) and is not cancelled or tracked here; it is bounded by the
+// provider's own 4 s timeout.
+func (ac *agentChat) close() {
+	ac.bgMu.Lock()
+	ac.bgClosed = true
+	if ac.bgCancel != nil {
+		ac.bgCancel()
+	}
+	ac.bgMu.Unlock()
+	ac.bgWG.Wait()
 }
 
 // prompter is the part of *agenttui.App that asks the user something.
@@ -57,6 +101,7 @@ func (ac *agentChat) prompter(a *agenttui.App) prompter {
 func RunAgentChat(chat *gleann.LeannChat, indexName, modelName string) error {
 	ac := newAgentChat(chat, indexName, modelName)
 	err := ac.app.Run(context.Background())
+	ac.close()
 
 	// Same wrap-up as the classic chat: end memory session, save the transcript.
 	if memMgr, memErr := memory.DefaultManager(); memErr == nil {
@@ -285,7 +330,12 @@ func (ac *agentChat) stream(ctx context.Context, prompt string, emit func(agentt
 	cm.tokensSent += len(prompt) / 4
 	ac.mu.Unlock()
 
-	memory.InjectRepoContext(chat, memMgr)
+	if err := memory.InjectRepoContextErr(chat, memMgr); err != nil {
+		// Non-fatal: the answer goes ahead without the (refreshed) memory,
+		// and a failed tool card tells the user why.
+		emit(agenttui.Event{Kind: agenttui.EventToolStart, ToolID: "memory-context", ToolName: "memory", ToolArgs: "inject repository memory"})
+		emit(agenttui.Event{Kind: agenttui.EventToolEnd, ToolID: "memory-context", ToolOutput: "memory not injected: " + err.Error(), ToolOK: false})
+	}
 	question := prompt + attachedFilesContext(attached)
 
 	chat.SetThinkingHandler(func(tok string) {
@@ -319,22 +369,27 @@ func (ac *agentChat) stream(ctx context.Context, prompt string, emit func(agentt
 	ac.mu.Lock()
 	cm.tokensReceived += answered / 4
 	total := cm.tokensSent + cm.tokensReceived
+	limit := cm.contextLimit
 	ac.mu.Unlock()
-	ac.app.SetContextTokens(total, cm.contextLimit)
-	if cm.contextLimit == 0 {
+	ac.app.SetContextTokens(total, limit)
+	if limit == 0 {
 		// The model is loaded now, so the server can report the window it actually uses.
-		go ac.refreshContextLimit()
+		ac.goBackground(ac.refreshContextLimit)
 	}
 
 	return total, err
 }
 
-// refreshContextLimit re-reads the model's real context window from the provider.
-func (ac *agentChat) refreshContextLimit() {
+// refreshContextLimit re-reads the model's real context window from the
+// provider. A cancelled ctx abandons the probe without touching any state.
+func (ac *agentChat) refreshContextLimit(ctx context.Context) {
 	ac.mu.Lock()
 	cfg := ac.cm.chat.Config()
 	ac.mu.Unlock()
-	n := lookupContextLimit(cfg)
+	n := lookupContextLimitCtx(ctx, cfg)
+	if ctx.Err() != nil {
+		return
+	}
 	ac.mu.Lock()
 	ac.cm.contextLimit = n
 	total := ac.cm.tokensSent + ac.cm.tokensReceived
@@ -394,7 +449,10 @@ func (ac *agentChat) commands() []agenttui.SlashCommand {
 					return ""
 				})
 				a.ClearMessages()
-				a.SetContextTokens(0, ac.cm.contextLimit)
+				ac.mu.Lock()
+				limit := ac.cm.contextLimit
+				ac.mu.Unlock()
+				a.SetContextTokens(0, limit)
 				return "New conversation started.", true, nil
 			},
 		},
@@ -633,7 +691,7 @@ func (ac *agentChat) editSettings(ctx context.Context, a *agenttui.App) (string,
 		return "", true, err
 	}
 
-	defer ac.refreshContextLimit() // model or max tokens may have changed the window
+	defer ac.refreshContextLimit(ctx) // model or max tokens may have changed the window
 	return ac.withState(func(cm *ChatModel) string {
 		cm.llmModelIdx = indexOf(cm.llmModels, vals[0], cm.llmModelIdx)
 		if v, e := strconv.ParseFloat(vals[1], 64); e == nil {

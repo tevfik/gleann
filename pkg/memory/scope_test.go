@@ -179,3 +179,26 @@ func (r *recordingSetter) SetMemoryContext(v string) {
 	r.value = v
 	r.calls++
 }
+
+func TestInjectRepoContextErr_ReportsBuildFailureAndKeepsContext(t *testing.T) {
+	store, err := OpenStore(filepath.Join(t.TempDir(), "memory.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	mgr := NewManager(store)
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := &recordingSetter{value: "previous memory"}
+	err = InjectRepoContextErr(rec, mgr)
+	if err == nil || !strings.Contains(err.Error(), "building repository memory context") {
+		t.Fatalf("err = %v, want the build failure", err)
+	}
+	if rec.calls != 0 || rec.value != "previous memory" {
+		t.Errorf("a failed build must leave the context alone, calls=%d value=%q", rec.calls, rec.value)
+	}
+	if err := InjectRepoContextErr(nil, nil); err != nil {
+		t.Errorf("nil inputs: %v", err)
+	}
+}

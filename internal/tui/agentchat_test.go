@@ -31,6 +31,7 @@ func TestAgentChat_StreamEmitsTextAndSources(t *testing.T) {
 		{Text: "alpha doc", Score: 0.9, Metadata: map[string]any{"source": "docs/a.md"}},
 		{Text: "beta passage with no source", Score: 0.5},
 	})
+	t.Cleanup(ac.close)
 	var events []agenttui.Event
 	tok, err := ac.stream(context.Background(), "what is alpha?", func(e agenttui.Event) { events = append(events, e) })
 	if err != nil {
@@ -59,6 +60,7 @@ func TestAgentChat_StreamEmitsTextAndSources(t *testing.T) {
 
 func TestAgentChat_StreamHonoursCancelledContext(t *testing.T) {
 	ac := newTestAgentChat(nil)
+	t.Cleanup(ac.close)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	// Must return promptly without panicking; mock provider ignores ctx but search path must not hang.

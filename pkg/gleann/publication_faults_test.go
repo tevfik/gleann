@@ -338,14 +338,11 @@ func TestSyncPublishedMetaFailures(t *testing.T) {
 		}
 	})
 	t.Run("meta.json cannot be written", func(t *testing.T) {
-		dir, base, _ := fxBuilt(t)
-		// A directory where the temporary meta file goes makes the write fail.
-		tmp := filepath.Join(dir, "idx", "idx.meta.json.tmp")
-		if err := os.MkdirAll(filepath.Join(tmp, "x"), 0o755); err != nil {
-			t.Fatal(err)
-		}
+		_, base, _ := fxBuilt(t)
+		// An unwritable index directory makes the metadata write fail.
+		blockMetaWrites(t)
 		err := syncPublishedMeta(ctx, fxOpen(t, base), base, 5)
-		if err == nil || !strings.Contains(err.Error(), "syncing meta.json after recovery") {
+		if err == nil || !strings.Contains(err.Error(), "syncing meta.json after recovery") || !strings.Contains(err.Error(), "injected metadata write failure") {
 			t.Fatalf("err = %v", err)
 		}
 	})

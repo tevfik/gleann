@@ -1,6 +1,7 @@
 package memory
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -128,14 +129,22 @@ type MemoryContextSetter interface {
 // context cannot be built. A successful build with no blocks clears the
 // previously injected context, so forgotten memories stop being injected.
 func InjectRepoContext(target MemoryContextSetter, mgr *Manager) {
+	_ = InjectRepoContextErr(target, mgr)
+}
+
+// InjectRepoContextErr is InjectRepoContext that also reports why the context
+// could not be built, so an interactive caller can tell the user. On error the
+// target keeps its previous memory context.
+func InjectRepoContextErr(target MemoryContextSetter, mgr *Manager) error {
 	if isNilSetter(target) || mgr == nil {
-		return
+		return nil
 	}
 	cw, err := mgr.BuildRepoContext()
 	if err != nil {
-		return
+		return fmt.Errorf("building repository memory context: %w", err)
 	}
 	target.SetMemoryContext(cw.Render())
+	return nil
 }
 
 func isNilSetter(target MemoryContextSetter) bool {

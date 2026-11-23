@@ -115,7 +115,7 @@ func openAPIPathsIndexes() map[string]any {
 			"patch": map[string]any{
 				"tags":        []string{"indexes"},
 				"summary":     "Update an index (metadata only)",
-				"description": "Updates the metadata of an existing index. Only the fields present in the request body are changed (tags, description, mcp_exposed); fields left out keep their value. A missing index answers 500, not 404.",
+				"description": "Updates the metadata of an existing index. Only the fields present in the request body are changed (tags, description, mcp_exposed); fields left out keep their value. A missing index answers 404; a client restricted by target or tags gets 403.",
 				"operationId": "patchIndex",
 				"parameters":  []map[string]any{paramName()},
 				"requestBody": map[string]any{
@@ -137,7 +137,9 @@ func openAPIPathsIndexes() map[string]any {
 				"responses": map[string]any{
 					"200": map[string]any{"description": "Index updated; returns the updated index metadata"},
 					"400": map[string]any{"description": "Invalid index name or JSON body"},
-					"500": map[string]any{"description": "Failed to update or read the index metadata (a missing index answers 500, not 404)"},
+					"403": map[string]any{"description": "Access denied (client target or tag isolation)"},
+					"404": map[string]any{"description": "Index not found"},
+					"500": map[string]any{"description": "Failed to update or read the index metadata"},
 				},
 			},
 		},

@@ -454,6 +454,7 @@ func TestH2cAgentHeaderAndInfoRows(t *testing.T) {
 
 func TestH2cAgentStreamWithMemoryAndImages(t *testing.T) {
 	ac := newTestAgentChat([]gleann.SearchResult{{Text: "alpha", Metadata: map[string]any{"source": "a.md", "_index": "docs"}}})
+	t.Cleanup(ac.close)
 	mgr := withMemory(t, ac)
 	if _, err := mgr.Remember("user prefers short answers"); err != nil {
 		t.Fatal(err)
