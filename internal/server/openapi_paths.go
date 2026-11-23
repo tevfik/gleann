@@ -110,6 +110,33 @@ func openAPIPathsIndexes() map[string]any {
 					"404": map[string]any{"description": "Index not found"},
 				},
 			},
+			"patch": map[string]any{
+				"tags":        []string{"indexes"},
+				"summary":     "Update an index (metadata only)",
+				"description": "Updates the metadata of an existing index. The request body contains the fields to update (title, description).",
+				"operationId": "patchIndex",
+				"parameters":  []map[string]any{paramName()},
+				"requestBody": map[string]any{
+					"required": true,
+					"content": map[string]any{
+						"application/json": map[string]any{
+							"schema": map[string]any{
+								"type":        "object",
+								"description": "Index metadata fields to update",
+								"properties": map[string]any{
+									"title":       map[string]any{"type": "string", "description": "Human-readable title"},
+									"description": map[string]any{"type": "string", "description": "Description of the index contents"},
+								},
+							},
+						},
+					},
+				},
+				"responses": map[string]any{
+					"200": map[string]any{"description": "Index updated"},
+					"400": map[string]any{"description": "Invalid JSON body"},
+					"404": map[string]any{"description": "Index not found"},
+				},
+			},
 		},
 		"/api/indexes/{name}/passages": map[string]any{
 			"get": map[string]any{
@@ -896,6 +923,15 @@ func openAPIPathsConversations() map[string]any {
 					},
 				},
 			},
+			"delete": map[string]any{
+				"tags":        []string{"conversations"},
+				"summary":     "Clear all conversations",
+				"description": "Permanently deletes all saved conversations.",
+				"operationId": "clearConversations",
+				"responses": map[string]any{
+					"200": map[string]any{"description": "All conversations cleared"},
+				},
+			},
 		},
 		"/api/conversations/{id}": map[string]any{
 			"get": map[string]any{
@@ -921,6 +957,33 @@ func openAPIPathsConversations() map[string]any {
 				},
 				"responses": map[string]any{
 					"200": map[string]any{"description": "Conversation deleted"},
+					"404": map[string]any{"description": "Conversation not found"},
+				},
+			},
+			"put": map[string]any{
+				"tags":        []string{"conversations"},
+				"summary":     "Update a conversation title",
+				"description": "Updates the title of a saved conversation.",
+				"operationId": "updateConversation",
+				"parameters": []map[string]any{
+					{"name": "id", "in": "path", "required": true, "schema": map[string]any{"type": "string"}, "description": "Conversation ID or prefix"},
+				},
+				"requestBody": map[string]any{
+					"required": true,
+					"content": map[string]any{
+						"application/json": map[string]any{
+							"schema": map[string]any{
+								"type":     "object",
+								"required": []string{"title"},
+								"properties": map[string]any{
+									"title": map[string]any{"type": "string", "description": "New conversation title"},
+								},
+							},
+						},
+					},
+				},
+				"responses": map[string]any{
+					"200": map[string]any{"description": "Conversation updated"},
 					"404": map[string]any{"description": "Conversation not found"},
 				},
 			},

@@ -225,7 +225,7 @@ Once installed, AI agents gain access to three additional utility tools:
 |----------|---------|
 | `gleann_shell` | Compress noisy CLI output (git, npm, go, docker) by 60–95% before injecting into context |
 | `gleann_read` | Read files in smart modes: `map`, `signatures`, `entropy`, `diff`, `auto`, etc. Saves 60–90% tokens |
-| `gleann_gain` | Report total token savings accumulated in the current session |
+| `gleann_gain` | Report total estimated token savings accumulated by `gleann_shell` and `gleann_read` since the MCP server started (or the last reset); per server process, not persisted |
 
 ## Step 9: Explore Further
 

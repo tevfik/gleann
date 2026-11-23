@@ -1,5 +1,7 @@
 # Multimodal Processing
 
+> **Status: experimental.** Multimodal processing depends on an external multimodal model or plugin, and its results are not part of gleann's retrieval quality gates. Options and output may change between minor versions.
+
 Gleann can detect and use multimodal Ollama models to process images, audio, and video files. When a multimodal model is available, gleann can describe, analyze, and extract information from media files.
 
 ## Supported Media Types

@@ -15,7 +15,7 @@ Measured in gleann-rag-test `results/scale/phase2-ecc1036/README.md` (fake 64-d 
 | 100K | 89.6 s | 73.0 s | 4.5 s |
 | 1M | 1132 s | 937 s (5.5 GB RSS) | 57 s |
 
-Callers that pay it on every event: `gleann index watch`, `POST /api/indexes/{name}/update` (`handleUpdateIndex` → `UpdateIndexWithStats`), uploads, and the memory vector syncer, which publishes once per entity (`LeannSyncer.AddContent` → `AddToIndex`).
+Callers that pay it on every event: `gleann index watch`, `POST /api/indexes/{name}/update` (`handleUpdateIndex` → `UpdateIndexWithStats`), uploads, and the memory vector syncer publishing one entity at a time (`LeannSyncer.AddContent` → `AddToIndex`). Since the audit entry of 2026-11-22, `EntityService.InjectEntities` hands a whole inject request to the syncer in one publication through the optional `gleann.VectorBatchSyncer` extension (`LeannSyncer.AddContents`).
 
 Format 1 had `appendInPlace` (`pkg/gleann/builder.go`), which only appended and still rewrote the whole HNSW file through `Builder.AddVectors` (`modules/hnsw/backend.go`: `ReadCSR` → `ToGraphWithDistance` → `Insert` → `ConvertToCSR` → `WriteTo`).
 
@@ -111,7 +111,7 @@ New indexes: none. Existing format-2 indexes: no `.delta` = empty; `vector_slots
 - Distance mismatch between the legs (DiskANN PQ vs exact delta): merge on the backend's full-precision distance (DiskANN reranks with full vectors); a unit test compares the merged order with brute force.
 - The fixed per-sync cost (directory walk, manifest diff, opening the db) may already exceed 5 % at 1M: the no-op floor is measured first; if it alone breaks the budget, that is a separate item.
 - Recall loss from dead nodes in pruned indexes: 10 % compaction limit and the drift test in recompute mode.
-- Frequent publications (watch, memory syncer) cause frequent reader reloads: delta-only reloads; the memory syncer batches entities per tick.
+- Frequent publications (watch, memory syncer) cause frequent reader reloads: delta-only reloads; the memory syncer publishes a whole inject request in one batch (`EntityService.InjectEntities` → `gleann.VectorBatchSyncer`), so N entities injected together cost one reload, not N.
 - DiskANN/faiss renumber on merge: correct only with the freshness check; step 9 lands before B1 and the cross-process test runs per backend.
 - The merge sync is O(N): reported separately, deferrable to idle or `index compact`, bounded by the limits.
 
@@ -123,3 +123,4 @@ New indexes: none. Existing format-2 indexes: no `.delta` = empty; `vector_slots
   - Faiss and pruned (recompute) indexes take the full re-embedding path, because they cannot return stored vectors.
   - Merge and compaction cost about 87 % of a full build with a 0 ms embedder (109.6 s and 110.3 s against 126.2 s at 100K); they save only the embedding calls. Inserting the delta into the existing graph (`AddVectorsWithIDs`) is left as a later optimisation.
   - Measured at 100K (gleann-rag-test `results/scale/rfc005-README.md`): one-file add 0.349 s, change 0.334 s, delete 0.320 s, no-op 0.087 s (G1 target 4.5 s; before: 73 s). The 1M run belongs to the v1.20 test campaign.
+- 2026-11-22: `EntityService.InjectEntities` now publishes one inject request in ONE vector publication instead of one per entity: it calls the optional `gleann.VectorBatchSyncer` (`LeannSyncer.AddContents`) when the configured syncer implements it and keeps the per-entity `AddContent` loop otherwise, so existing `VectorSyncer` implementations and mocks are unaffected. A node repeated in one batch keeps its last content (matching the database upsert); an entity whose content is cleared still leaves its old passage in the index (unchanged from before). Measured in `internal/memsync/entity_inject_batch_test.go`: 1000 entities injected in one request, 1000 → 1 publication (`vector_generation`) and 71.7 s → 9.8 s with the test's 8-dimensional embedder.

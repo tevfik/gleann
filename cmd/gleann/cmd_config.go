@@ -136,6 +136,7 @@ func cmdConfigValidate() {
 		}
 		fmt.Fprintf(os.Stderr, "error reading config: %v\n", err)
 		exitFunc(1)
+		return
 	}
 
 	// Parse as OnboardResult; a syntax or type error names line and column.
@@ -143,10 +144,12 @@ func cmdConfigValidate() {
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "❌ Invalid config: %v\n", err)
 		exitFunc(1)
+		return
 	}
 	if cfg == nil {
 		fmt.Fprintf(os.Stderr, "❌ Config file %s is empty.\n", p)
 		exitFunc(1)
+		return
 	}
 
 	fmt.Println("✅ Config is valid.")

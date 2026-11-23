@@ -147,13 +147,29 @@ Add to `claude_desktop_config.json`:
 }
 ```
 
+## Server Instructions & Routing (gleann vs grep)
+
+The `initialize` response includes server instructions that clients show to the
+model before the first tool call. They describe the intended routing:
+
+| Question | Use | Not |
+|----------|-----|-----|
+| "How does auth work?", "where are retries handled?" | `gleann_search` (or `gleann_search_ids` → `gleann_fetch`) | keyword grep |
+| Exact literal, regex or identifier occurrences | grep/ripgrep, then `gleann_def`/graph tools on the hits | — |
+| You know a symbol name | `gleann_def` | `grep "func X"` |
+| Callers, callees, change impact | `gleann_graph_neighbors`, `gleann_impact`, `gleann_navigate_symbol` | text search over references |
+| Read a file cheaply | `gleann_read` (`signatures`/`map`/`task`/`lines`) | dumping the whole file |
+| Durable project facts, conventions, lessons | `memory_search` / `memory_context`, then `memory_remember` | re-asking the user |
+| A command failed and was fixed | `memory_failure_add` | — |
+| The workspace changed | `gleann_sync` | stale search results |
+
 ## Available Tools
 
 ### RAG & Search Tools
 
 | Tool | Description |
 |------|-------------|
-| `gleann_search` | Semantic vector search across indexes |
+| `gleann_search` | Hybrid semantic + lexical search; prefer it over grep for conceptual or cross-file questions |
 | `gleann_search_multi` | Fan-out search across multiple indexes |
 | `gleann_def` | Go-to-definition for symbols (functions, methods, types, structs) |
 | `gleann_list` | List all available indexes |
@@ -209,7 +225,7 @@ relationships.
 
 | Tool | Description |
 |------|-------------|
-| `inject_knowledge_graph` | Atomically upsert Entity nodes and RELATES_TO edges (idempotent) |
+| `inject_knowledge_graph` | Atomically upsert Entity nodes and RELATES_TO edges (rows merged; previous versions archived per call) |
 | `delete_graph_entity` | Remove an entity and all its incident edges |
 | `traverse_knowledge_graph` | Walk the graph N hops from a start node |
 
@@ -262,6 +278,50 @@ The `core` profile exposes: `gleann_search`, `gleann_read`, `gleann_def`, `glean
 
 You can also set the default profile using the `GLEANN_TOOLS` environment variable. Passing `--clean-names` strips the `gleann_` prefix (e.g. `search`, `read`, `impact`).
 
+### Tool Annotations
+
+Every advertised tool carries MCP annotations (`title`, `readOnlyHint`,
+`destructiveHint`, `idempotentHint`, `openWorldHint`). Definition, graph,
+document, read and pure memory-query tools are read-only. `memory_context` is a
+non-destructive write (it flags stale blocks as suspect) and `gleann_gain` is a
+non-destructive write (`reset: true` zeroes the counters). `memory_remember`,
+`memory_failure_add`, `inject_knowledge_graph`, the session tools and
+`gleann_sync` are non-destructive writes; `memory_remember`,
+`memory_failure_add` and `inject_knowledge_graph` are **not** idempotent:
+repeating an identical remember/failure reinforces confidence and refreshes the
+timestamp, while an identical re-inject archives the previous node versions and
+re-embeds their content. Only `memory_forget`, `delete_graph_entity` and
+`gleann_session_end` are destructive — the last one prunes expired short-term
+blocks when it closes the session.
+
+The open-world tools come in two groups. Eight reach the configured embedder
+or LLM over HTTP: `gleann_ask` and `gleann_batch_ask` (the configured LLM),
+`gleann_search` and `gleann_search_ids` (the embedder on every query, plus a
+configured LLM/reranker endpoint when passed `expand: true` or `rerank: true`),
+and every tool that computes embeddings through the configured embedder:
+`gleann_search_multi` (query embedding), `gleann_def` (its passage search
+fallback when the code graph has no match), `gleann_sync` (source contents are
+embedded to build or refresh the index) and `inject_knowledge_graph` (entity
+content is re-embedded for the vector store). With the default provider these
+are HTTP calls to the configured Ollama `/api/embed` endpoint
+(`http://localhost:11434` by default); a saved config can point the embedder at
+a remote host.
+
+Seven more tools forward memory and session I/O over HTTP REST (`/api/blocks*`)
+whenever a healthy `gleann` server answers: `memory_search`, `memory_list`,
+`memory_context`, `memory_remember`, `memory_forget`, `gleann_session_start`
+and `gleann_session_end`. The client uses `GLEANN_REMOTE_ADDR` when set;
+otherwise it probes a saved `server_addr` in `~/.gleann/config.json`, the
+address in `~/.gleann/server.pid`, then `http://localhost:8081`. Set
+`GLEANN_REMOTE_ADDR=off` to disable that REST forwarding path (the embedder
+and LLM tools still use their configured endpoint). This lets a running
+`gleann serve` and the MCP server share one memory store. The remaining 22 tools — including `memory_failure_add`,
+`memory_failure_list`, `gleann_session_status`, the code and document graph
+tools, `gleann_fetch`/`gleann_get`/`gleann_list`, `gleann_read`/`gleann_shell`/
+`gleann_gain` and `delete_graph_entity` — work against the local index, files
+and SQLite stores only. Clients can use these hints to auto-approve reads while
+asking for confirmation on deletes.
+
 ### Context-Intelligence Tools
 
 Token-saving utilities that help agents work smarter with large codebases.
@@ -270,11 +330,11 @@ Token-saving utilities that help agents work smarter with large codebases.
 |------|-------------|
 | `gleann_shell` | Compress noisy CLI output (git, npm, go, docker, cargo) before injecting into context. Reports compression ratio and token savings. |
 | `gleann_read` | Read a file using one of 10 context-aware modes (`full`, `map`, `signatures`, `diff`, `entropy`, `lines:N`, `task`, `reference`, `aggressive`, `auto`). Saves 60–90% of tokens vs. raw cat. |
-| `gleann_gain` | Report accumulated token gain across the current MCP session — useful for budget tracking. |
+| `gleann_gain` | Report cumulative estimated token savings recorded by this server's `gleann_shell` and `gleann_read` calls since the server started (or the last `reset`). Gain per call = estimated tokens of the raw input (shell output, or whole file) minus estimated tokens of the compressed payload returned (~4 characters per token heuristic; metadata wrappers not counted). The counter lives in one MCP server process and is not persisted across restarts — useful for budget tracking. |
 
 **Example: compress git log output**
 ```json
-{ "cmd": "git log --stat -20", "output": "<long git log here>" }
+{ "command": "git log --stat -20", "output": "<long git log here>" }
 ```
 
 **Example: read only function signatures from a Go file**
@@ -302,9 +362,12 @@ Search an index with optional filters and graph context:
 
 `filters` (with `filter_logic`: `and`, the default, or `or`) are applied
 during retrieval: a selective filter still returns `top_k` results when that
-many passages match. The candidate pool widens until k pass (capped at 4096);
-only if it stops at the cap short does a format-2 index pre-select the matching
-IDs in SQL and score just those. A filter nothing matches returns 0.
+many passages match. The candidate pool widens until k pass (capped at 4096).
+A format-2 index also pre-selects the matching IDs in SQL and scores just
+those when the filter is estimated to match only a small fraction of the
+index, or when the loop stops at the cap short; HNSW and DiskANN (loaded in
+RAM or memory-mapped) score that set by exact vector distance. A filter
+nothing matches returns 0.
 
 ### Index Governance, Scoping & Federated Search
 
@@ -412,7 +475,10 @@ Retrieve the complete text of an indexed document using its virtual or relative 
 ### inject_knowledge_graph
 
 Inject Entity nodes and RELATES_TO edges in a single atomic transaction.
-Re-submitting the same payload is safe (upsert — no duplicates created).
+Entity and relation rows are merged (upsert), so no duplicate entities are
+created; each call still archives the prior version of every updated node in
+`entity_archive` and re-embeds node content in the vector store, so repeating an
+identical payload has additional side effects.
 
 ```json
 {
@@ -506,7 +572,7 @@ subsequent LLM query as part of the `<memory_context>` system message.
 ```json
 {
   "content": "This project uses hexagonal architecture with ports and adapters",
-  "tags": "architecture,convention"
+  "tags": ["architecture", "convention"]
 }
 ```
 
@@ -516,7 +582,7 @@ Delete a memory block by ID or by content match:
 
 ```json
 {
-  "query": "hexagonal architecture"
+  "id_or_query": "hexagonal architecture"
 }
 ```
 
@@ -543,7 +609,9 @@ List all memory blocks, optionally filtered by tier:
 ### memory_context
 
 Returns the compiled memory context string — exactly what the LLM currently
-receives as a system message. No arguments required.
+receives as a system message. No arguments required. The call is a
+non-destructive write: blocks whose files or symbols changed since they were
+stored are flagged as suspect (and later shown in `<suspect_memory>`).
 
 ```json
 {}
@@ -604,19 +672,19 @@ Typical token savings: **5–10× vs `gleann_search`** because full passage text
 
 ### gleann_fetch
 
-Hydrate full passage content for one or more refs returned by `gleann_search_ids`.
+Hydrate full passage content for one or more passage IDs returned by `gleann_search_ids`.
 
 ```json
 {
-  "refs": ["my-code:42", "my-code:57"],
+  "ids": [42, 57],
   "index": "my-code"
 }
 ```
 
 | Field | Required | Description |
 |-------|----------|-------------|
-| `refs` | ✅ | Array of `"indexname:id"` strings from `gleann_search_ids` |
-| `index` | optional | Override the index in refs (rarely needed) |
+| `ids` | ✅ | Array of integer passage IDs from `gleann_search_ids` |
+| `index` | optional | Override the index that `gleann_search_ids` used (rarely needed) |
 
 ### gleann_get
 
@@ -640,14 +708,14 @@ calls are automatically logged to this session.
 
 ```json
 {
-  "name": "auth-refactor",
-  "description": "Auditing the JWT authentication module"
+  "name": "auth-refactor"
 }
 ```
 
 ### gleann_session_end
 
-Close the active session. Optionally record a summary to long-term memory.
+Close the active session. Optionally record a summary of your own to long-term
+memory. Closing also prunes expired short-term blocks.
 
 ```json
 {
@@ -655,7 +723,8 @@ Close the active session. Optionally record a summary to long-term memory.
 }
 ```
 
-Pass `"summary": ""` to close without recording.
+Omit `summary` to close without a user-written note; the generated session line
+(name, duration and event count) is still recorded.
 
 ### gleann_session_status
 

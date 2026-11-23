@@ -2,7 +2,19 @@
 
 gleann includes an optional FAISS backend via CGo for significantly faster HNSW operations. The FAISS backend uses the same `BackendFactory` interface — just change `config.Backend = "faiss"`.
 
-## Prerequisites
+## Quick local build
+
+`make full` looks for FAISS in `deps/faiss_install` (not tracked in git). One script builds it there, static, with the C API:
+
+```bash
+sudo apt-get install cmake g++ libopenblas-dev libomp-dev   # Debian/Ubuntu
+scripts/build-faiss.sh        # FAISS v1.13.2 -> deps/faiss_install
+make full
+```
+
+To use another location, pass it to the script and set `FAISS_LIB_DIR` and `FAISS_INC_DIR` for `make`.
+
+## Prerequisites (system-wide install)
 
 ```bash
 # Ubuntu/Debian

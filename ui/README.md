@@ -1,32 +1,18 @@
-# React + TypeScript + Vite
+# gleann web UI
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+The browser interface served by `gleann serve`: chat, index list, code and knowledge graph views, memory, model catalog, plugin and general settings. React, TypeScript and Vite.
 
-Currently, two official plugins are available:
+**Status: experimental.** The CLI and the TUI are gleann's main interfaces; this UI covers a subset of them and may change between minor versions.
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+## Development
 
-## React Compiler
-
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
-
-## Expanding the Oxlint configuration
-
-If you are developing a production application, we recommend enabling type-aware lint rules by installing `oxlint-tsgolint` and editing `.oxlintrc.json`:
-
-```json
-{
-  "$schema": "./node_modules/oxlint/configuration_schema.json",
-  "plugins": ["react", "typescript", "oxc"],
-  "options": {
-    "typeAware": true
-  },
-  "rules": {
-    "react/rules-of-hooks": "error",
-    "react/only-export-components": ["warn", { "allowConstantExport": true }]
-  }
-}
+```bash
+cd ui
+npm install
+npm run dev      # Vite dev server
+npm run test     # unit tests (node --test)
+npm run lint     # oxlint
+npm run build    # writes ui/dist
 ```
 
-See the [Oxlint rules documentation](https://oxc.rs/docs/guide/usage/linter/rules) for the full list of rules and categories.
+`make build` builds the UI when `ui/dist` is missing and copies it to `internal/server/dist`, where the Go server embeds it (`//go:embed dist/*`). `SKIP_WEB=1 make build` embeds a placeholder page instead (API-only build).

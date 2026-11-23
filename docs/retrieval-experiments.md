@@ -13,7 +13,7 @@ left out. Use it before re-running an idea that was already measured.
   | Set | Tasks | Kind |
   |---|---|---|
   | `bench/tasks/gleann_nl.json` | 121 | natural-language questions |
-  | `bench/tasks/gleann.json` | 20 | symbol lookups |
+  | `bench/tasks/gleann.json` | 19 | symbol lookups |
   | `gen_doc` | 150 | queries paraphrased from Go doc comments |
   | `gen_sym` | 100 | symbol-name queries |
 

@@ -227,9 +227,31 @@ type VectorSyncer interface {
 }
 ```
 
+A syncer that can write several entities in one index publication also
+implements the optional extension below. `InjectEntities` then calls
+`AddContents` once for the whole inject request instead of `AddContent` per
+entity (one publication per request, RFC 005):
+
+```go
+type VectorBatchSyncer interface {
+    AddContents(ctx context.Context, contents []VectorContent) error
+}
+```
+
+The built-in `memsync.LeannSyncer` implements both; a syncer that implements
+only `VectorSyncer` keeps the per-entity path. In both paths an entity repeated
+within one inject request is published with its **last** content only, matching
+the last-wins database upsert; if that last occurrence has empty content, the
+entity is not published at all (an earlier text from the same request is never
+resurrected). Clearing an entity in a later request still leaves its previously
+published passage in the index, as before.
+
 Pass `nil` when constructing a `MemoryService` to disable vector sync entirely
-(graph-only mode). The REST and MCP layers currently use `nil` (no syncer) by
-default; a future release will wire in a `LeannBuilder`-backed syncer.
+(graph-only mode). The REST layer (`internal/server/memory_syncer.go`,
+`initMemorySyncer`) and the MCP layer (`internal/mcp/memory_syncer.go`,
+`wireMemorySyncer`) wire a `memsync.LeannSyncer` into every memory pool
+whenever an embedding model is configured; the syncer is `nil` only when no
+embedding model is available or the builder cannot be created.
 
 ## Transaction Safety
 
@@ -325,6 +347,13 @@ ancestor scope plus global memories**:
 query never pulls in descendant blocks (so a project-wide review is not
 polluted by feature-specific notes).
 
+**Conflict marking follows the same visibility rule.** When a new block is
+written, contradiction checks run only against blocks the writer can see:
+global blocks, the writer's own scope and its path ancestors. A write never
+lowers the validity of a block in a scope the writer cannot see — a global
+write conflicts only with global blocks, and an `org` write never flags
+blocks stored under `org/repo`. Sibling scopes never see each other's blocks.
+
 ### Example
 
 ```bash
@@ -343,6 +372,18 @@ Flat (single-segment) scopes still behave exactly as before — the change
 is fully backwards-compatible. The hierarchy is implemented at the filter
 layer (`scopeAncestors`) so no schema migration is needed.
 
+### Automatic repository scope
+
+`gleann ask` (including `--interactive` and `--agent`), the chat TUI, its agent
+view, and the MCP `memory_context`, `memory_search`, `memory_list` and
+`memory_remember` tools default to the current repository's scope. The scope is
+detected from the process working directory: the normalized git remote origin
+(`github.com/org/repo`), else the repository root name, else the directory
+basename, else `"global"` for filesystem roots. Global blocks and path-style
+ancestors stay visible; sibling repositories do not. `gleann memory context` and
+`GET /api/blocks/context` without a scope remain intentionally global for
+scripting and API compatibility.
+
 ---
 
 ## Memory Compaction & Bayesian Pruning (`gleann memory compact`)
@@ -351,11 +392,13 @@ As conversations and autonomous agent interactions accumulate, memory blocks may
 
 - **Confirmations**: Incremented when a fact is observed again without contradiction.
 - **Conflicts**: Incremented when an agent observes opposing statements.
-- **Recency Decay**: Temporal half-life decay discounts very old, unreferenced memories.
+- **Recency Decay**: Temporal half-life decay (90-day half-life) discounts very old, unreferenced **short- and medium-term** memories.
+
+**Long-term facts never decay or expire by age.** A `long` block keeps its confidence at any age — an unconfirmed fact holds its 0.5 prior after 130 days, a year, or a decade — and is never reported stale by age. The long tier stays changeable, not immortal: facts can still be edited or merged (`gleann memory add` of the same fact confirms it), deleted (`gleann memory forget`), marked suspect when referenced code changes, or drop below the prune threshold when contradicted (`conflicts` outweigh `confirms`). An explicitly set `expires_at` is honored in every tier, including long; it is caller intent, not age. Short- and medium-term lifetime policy (per-fact TTL, user setting, fixed default) is drafted in [RFC 009](plans/009-memory-tier-lifetime.md).
 
 ### Automated Context Filtering & Compaction
 
-1. **At Retrieval Time**: Memories with a validity score $< 0.20$ are automatically omitted during `BuildContext()`, preventing hallucinations and context pollution.
+1. **At Retrieval Time**: Memories with a validity score $< 0.20$ are automatically omitted during `BuildContext()` / `BuildScopedContext()`, preventing hallucinations and context pollution. Long-term blocks reach that threshold only through conflicts or an explicit expiry, never through age.
 2. **On-Demand Compaction**: Run `gleann memory compact` to permanently purge blocks below a threshold:
 
 ```bash
@@ -401,8 +444,9 @@ Reflection writes memories through the standard manager path (`RememberBlock`), 
 - **Timestamp**: Time of execution.
 - **Blocks Added**: IDs of newly created memory blocks.
 - **Blocks Superseded**: IDs of existing memory blocks contradicted by new information.
+- **Blocks Confirmed**: the confirmations the run made to pre-existing blocks (each records the block ID and its prior confirmation count and timestamp), so a revert can undo exactly those confirmations.
 
-The cursor tracking processed conversations (`sleeptime_last_run`) is persisted in `memory_meta` across server restarts.
+The cursor tracking processed conversations (`sleeptime_last_run`) is persisted in `memory_meta` across server restarts, alongside a per-conversation progress record (`sleeptime_conv_progress`: attempts made and the version last resolved). Conversations are processed oldest-first (by update time); each cycle handles at most `GLEANN_SLEEPTIME_MAX_CONVS` of them. A conversation is eligible when it is at or after the cursor, when it has a retry still pending, or when it was updated since it was last resolved — so a failed conversation tied with the cursor timestamp, or older than it after the clock went backwards, is still retried instead of stranded. A conversation whose summarization or extraction fails is retried on later cycles and abandoned after **3 attempts in total**; the attempt count is persisted, so repeated `gleann memory reflect` runs (each a fresh engine) cannot reset it, and a permanently failing conversation cannot block the queue forever. A failure does **not** stop the rest of the cycle: the other conversations are still processed, because retry eligibility is tracked per conversation rather than gated on the cursor. A duplicate of an existing block only confirms that block — reflection never replaces its text. Only one reflection cycle runs at a time: a concurrent `reflect` call (REST, CLI or the background cycle) returns an "already running" answer instead of racing on shared state.
 
 ### Commands
 
@@ -413,7 +457,8 @@ gleann memory reflect
 # Preview changes without modifying the database (dry-run)
 gleann memory reflect --dry-run
 
-# Revert a reflection run by ID (removes added blocks, leaves originals untouched)
+# Revert a reflection run by ID (removes added blocks and undoes the run's
+# confirmations; leaves original blocks otherwise untouched)
 gleann memory reflect --revert <run-id>
 ```
 

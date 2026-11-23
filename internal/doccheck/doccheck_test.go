@@ -5,6 +5,8 @@
 package doccheck
 
 import (
+	"encoding/json"
+	"fmt"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -204,6 +206,102 @@ func TestRoutesMatchAPIDoc(t *testing.T) {
 	diff(t, "routes", code, docs, "docs/api.md")
 }
 
+// --------------------------------------------------------------- OpenAPI
+
+// specNotCovered lists registered routes the OpenAPI spec leaves out on
+// purpose: the embedded web UI's static file server is not REST API surface.
+// It is the route-side twin of internalRoutes above, so the two lists cannot
+// drift apart.
+var specNotCovered = internalRoutes
+
+// isHTTPMethod reports whether k is one of the OpenAPI operation keys.
+func isHTTPMethod(k string) bool {
+	switch strings.ToLower(k) {
+	case "get", "put", "post", "delete", "patch", "head", "options", "trace", "connect":
+		return true
+	}
+	return false
+}
+
+// collectSpecRoutes reads the operations of one paths map literal. Keys
+// starting with "/" are path items; the keys of a path item that name an HTTP
+// method are the operations the route answers. OpenAPI 3.0 paths do not nest,
+// so one level below a path key is enough.
+func collectSpecRoutes(lit *ast.CompositeLit, out map[string]bool) {
+	for _, e := range lit.Elts {
+		kv, ok := e.(*ast.KeyValueExpr)
+		if !ok {
+			continue
+		}
+		k, ok := stringArg(kv.Key)
+		if !ok {
+			continue
+		}
+		cl, ok := kv.Value.(*ast.CompositeLit)
+		if !ok {
+			continue
+		}
+		if !strings.HasPrefix(k, "/") {
+			collectSpecRoutes(cl, out)
+			continue
+		}
+		for _, op := range cl.Elts {
+			okv, ok := op.(*ast.KeyValueExpr)
+			if !ok {
+				continue
+			}
+			method, ok := stringArg(okv.Key)
+			if !ok || !isHTTPMethod(method) {
+				continue
+			}
+			out[normRoute(method, k)] = true
+		}
+	}
+}
+
+// specRoutesInCode reads the operations the OpenAPI builders declare in
+// internal/server (openapi.go and openapi_paths*.go). The spec is built from
+// Go map literals, so the parity check needs no running server.
+func specRoutesInCode(t *testing.T, root string) map[string]bool {
+	t.Helper()
+	routes := map[string]bool{}
+	for _, file := range goFiles(t, filepath.Join(root, "internal/server")) {
+		if !strings.Contains(filepath.Base(file), "openapi") {
+			continue
+		}
+		ast.Inspect(parseFile(t, file), func(n ast.Node) bool {
+			lit, ok := n.(*ast.CompositeLit)
+			if !ok {
+				return true
+			}
+			collectSpecRoutes(lit, routes)
+			return true
+		})
+	}
+	return routes
+}
+
+// TestOpenAPIMatchesRegisteredRoutes keeps the machine-readable contract in
+// step with the router: every route registered in the three HTTP packages must
+// appear in the OpenAPI spec, and the spec must not promise routes the server
+// does not answer. Postman collections are imported from /api/openapi.json, so
+// a route missing from the spec is invisible to every API client.
+func TestOpenAPIMatchesRegisteredRoutes(t *testing.T) {
+	root := repoRoot(t)
+	code := routesInCode(t, root)
+	for r := range specNotCovered {
+		delete(code, r)
+	}
+	if len(code) < 20 {
+		t.Fatalf("found only %d routes in code; the scanner is broken", len(code))
+	}
+	spec := specRoutesInCode(t, root)
+	if len(spec) < 20 {
+		t.Fatalf("found only %d operations in the OpenAPI spec; the scanner is broken", len(spec))
+	}
+	diff(t, "routes", code, spec, "the OpenAPI spec (internal/server/openapi_paths*.go)")
+}
+
 // ------------------------------------------------------------ environment
 
 // envNotDocumented lists GLEANN_* variables that are read on purpose without
@@ -399,5 +497,191 @@ func TestCLICommandsAreDocumented(t *testing.T) {
 	sort.Strings(missing)
 	if len(missing) > 0 {
 		t.Errorf("commands in code but undocumented (no `gleann <command>` in README.md or docs/):\n  %s", strings.Join(missing, "\n  "))
+	}
+}
+
+// ----------------------------------------------------------- DiskANN config
+
+func diskannConfigKeysInCode(t *testing.T, root string) map[string]bool {
+	t.Helper()
+	keys := map[string]bool{}
+	f := parseFile(t, filepath.Join(root, "pkg/gleann/types.go"))
+	ast.Inspect(f, func(n ast.Node) bool {
+		ts, ok := n.(*ast.TypeSpec)
+		if !ok || ts.Name.Name != "DiskANNConfig" {
+			return true
+		}
+		st, ok := ts.Type.(*ast.StructType)
+		if !ok {
+			return true
+		}
+		for _, field := range st.Fields.List {
+			if field.Tag == nil {
+				continue
+			}
+			tagVal, err := strconv.Unquote(field.Tag.Value)
+			if err != nil {
+				continue
+			}
+			for _, part := range strings.Fields(tagVal) {
+				if strings.HasPrefix(part, `json:"`) {
+					val := strings.TrimPrefix(part, `json:"`)
+					val = strings.TrimSuffix(val, `"`)
+					key := strings.Split(val, ",")[0]
+					if key != "" && key != "-" {
+						keys[key] = true
+					}
+				}
+			}
+		}
+		return false
+	})
+	return keys
+}
+
+var diskannDocTableKey = regexp.MustCompile(`\|\s*` + "`([a-z0-9_]+)`" + `\s*\|`)
+
+func diskannConfigKeysInDocs(t *testing.T, root string) map[string]bool {
+	t.Helper()
+	text := readFile(t, filepath.Join(root, "docs/configuration.md"))
+	start := strings.Index(text, "### DiskANN Configuration")
+	if start < 0 {
+		t.Fatal("### DiskANN Configuration section not found in docs/configuration.md")
+	}
+	end := strings.Index(text[start:], "### HNSW Configuration")
+	if end < 0 {
+		end = len(text) - start
+	}
+	section := text[start : start+end]
+	keys := map[string]bool{}
+	for _, m := range diskannDocTableKey.FindAllStringSubmatch(section, -1) {
+		keys[m[1]] = true
+	}
+	return keys
+}
+
+func TestDiskANNConfigMatchesDocs(t *testing.T) {
+	root := repoRoot(t)
+	codeKeys := diskannConfigKeysInCode(t, root)
+	if len(codeKeys) == 0 {
+		t.Fatal("found no DiskANNConfig keys in pkg/gleann/types.go")
+	}
+	docKeys := diskannConfigKeysInDocs(t, root)
+	diff(t, "DiskANN config keys", codeKeys, docKeys, "docs/configuration.md")
+}
+
+// defaultHybridAlphaFromSource reads the shipped default from
+// pkg/gleann/types.go (DefaultConfig's SearchConfig.HybridAlpha), so a doc
+// check cannot pass with a label that drifted from the code.
+func defaultHybridAlphaFromSource(t *testing.T, root string) float64 {
+	t.Helper()
+	f := parseFile(t, filepath.Join(root, "pkg/gleann/types.go"))
+	var (
+		found bool
+		alpha float64
+	)
+	for _, d := range f.Decls {
+		fn, ok := d.(*ast.FuncDecl)
+		if !ok || fn.Name.Name != "DefaultConfig" || fn.Body == nil {
+			continue
+		}
+		ast.Inspect(fn.Body, func(n ast.Node) bool {
+			cl, ok := n.(*ast.CompositeLit)
+			if !ok {
+				return true
+			}
+			name := ""
+			switch typ := cl.Type.(type) {
+			case *ast.Ident:
+				name = typ.Name
+			case *ast.SelectorExpr:
+				name = typ.Sel.Name
+			}
+			if name != "SearchConfig" {
+				return true
+			}
+			for _, e := range cl.Elts {
+				kv, ok := e.(*ast.KeyValueExpr)
+				if !ok {
+					continue
+				}
+				key, ok := kv.Key.(*ast.Ident)
+				if !ok || key.Name != "HybridAlpha" {
+					continue
+				}
+				lit, ok := kv.Value.(*ast.BasicLit)
+				if !ok || lit.Kind != token.FLOAT {
+					continue
+				}
+				v, err := strconv.ParseFloat(lit.Value, 64)
+				if err != nil {
+					t.Fatalf("parsing DefaultConfig HybridAlpha %q: %v", lit.Value, err)
+				}
+				alpha, found = v, true
+			}
+			return true
+		})
+	}
+	if !found {
+		t.Fatal("SearchConfig{HybridAlpha: …} not found in DefaultConfig (pkg/gleann/types.go)")
+	}
+	return alpha
+}
+
+// TestHybridAlphaDocsMatchCode: --hybrid-alpha is the vector weight, and the
+// measured benchmark table labels each hybrid row with the weight it used.
+// The task counts quoted in the docs match the task files.
+func TestHybridAlphaDocsMatchCode(t *testing.T) {
+	root := repoRoot(t)
+	def := defaultHybridAlphaFromSource(t, root)
+
+	cfg := readFile(t, filepath.Join(root, "docs/configuration.md"))
+	if !strings.Contains(cfg, "0.0 = BM25 only") || !strings.Contains(cfg, "1.0 = vector only") {
+		t.Error("docs/configuration.md must describe --hybrid-alpha as the vector weight (0.0 = BM25 only, 1.0 = vector only)")
+	}
+	if strings.Contains(cfg, "BM25 hybrid weight") {
+		t.Error("docs/configuration.md still calls --hybrid-alpha the BM25 hybrid weight")
+	}
+	if !strings.Contains(cfg, fmt.Sprintf("(default: %g)", def)) {
+		t.Errorf("docs/configuration.md must state the shipped default (%g) for --hybrid-alpha", def)
+	}
+
+	bench := readFile(t, filepath.Join(root, "docs/benchmarks.md"))
+	if strings.Contains(bench, "| **Hybrid** |") {
+		t.Error("docs/benchmarks.md has a bare **Hybrid** row: it hid whether the row measured the default or α=0.5")
+	}
+	for _, want := range []string{
+		fmt.Sprintf("Hybrid (default, α=%g)", def),
+		"Hybrid (α=0.5)",
+		"Hybrid (α=0.3)",
+	} {
+		if !strings.Contains(bench, want) {
+			t.Errorf("docs/benchmarks.md lacks the measured row label %q", want)
+		}
+	}
+
+	countTasks := func(rel string) int {
+		t.Helper()
+		var tasks []struct {
+			ID string `json:"id"`
+		}
+		if err := json.Unmarshal([]byte(readFile(t, filepath.Join(root, rel))), &tasks); err != nil {
+			t.Fatalf("%s: %v", rel, err)
+		}
+		return len(tasks)
+	}
+	for _, c := range []struct{ file, heading string }{
+		{"bench/tasks/gleann_nl.json", "%d natural-language tasks"},
+		{"bench/tasks/gleann.json", "%d keyword tasks"},
+	} {
+		n := countTasks(c.file)
+		if want := fmt.Sprintf(c.heading, n); !strings.Contains(bench, want) {
+			t.Errorf("docs/benchmarks.md must say %q (%s has %d tasks)", want, c.file, n)
+		}
+	}
+
+	exp := readFile(t, filepath.Join(root, "docs/retrieval-experiments.md"))
+	if want := fmt.Sprintf("| `bench/tasks/gleann.json` | %d |", countTasks("bench/tasks/gleann.json")); !strings.Contains(exp, want) {
+		t.Errorf("docs/retrieval-experiments.md must list the real task count: want row %q", want)
 	}
 }

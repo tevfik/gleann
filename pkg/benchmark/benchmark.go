@@ -130,11 +130,6 @@ func (r *Runner) RegisterUnavailable(name, reason string) {
 	r.unavailable[name] = reason
 }
 
-// TaskRecords returns per-task evaluation records collected during the last run.
-func (r *Runner) TaskRecords() []PerTaskRecord {
-	return r.records
-}
-
 // Compare computes paired statistics between two strategies executed in this run.
 func (r *Runner) Compare(baseName, candName string) (*ComparisonResult, error) {
 	var baseRecs, candRecs []PerTaskRecord

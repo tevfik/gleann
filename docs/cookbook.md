@@ -216,7 +216,8 @@ When source files change, rebuild the index to keep search results current:
 gleann index build myproject --docs ./ --force
 
 # Watch mode — automatically re-indexes on file changes (incremental)
-# Only re-embeds changed files; falls back to full rebuild for deletions
+# Only re-embeds changed files; deletions and an emptied index are applied as
+# an incremental delta (not a full rebuild)
 gleann index watch myproject --docs ./
 
 # Check index status

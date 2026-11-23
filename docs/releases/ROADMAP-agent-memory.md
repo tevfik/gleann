@@ -1,3 +1,11 @@
+> **Historical archive (2026-09-23, pre-v1.20 era) — superseded by the v1.20 SQLite architecture (`docs/plans/003-storage.md`, `004-v1.20-sqlite-only.md`) and current memory docs (`docs/memory_engine.md`). Kùzu, BBolt memory storage, and the memory daemon auto-spawn described below were removed/replaced in v1.20.**
+>
+> **Tarihsel arşiv (2026-09-23, v1.20 öncesi dönem) — yerini v1.20 SQLite mimarisine (`docs/plans/003-storage.md`, `004-v1.20-sqlite-only.md`) ve güncel bellek belgelerine (`docs/memory_engine.md`) bıraktı. Aşağıda anlatılan Kùzu, BBolt bellek deposu ve bellek daemon'ının otomatik başlatılması v1.20'de kaldırıldı/değiştirildi.**
+>
+> This document is kept for history only. It is **not** a description of the current architecture and **not** a list of current plans: every item below is closed (`[x]`) as of 2026-09-23, and the file/line references point at code that has since been moved or deleted (the Kùzu graph store, the bbolt memory store and the auto-spawned memory daemon are gone). For the current design read `docs/memory_engine.md`, `docs/graph.md` and `docs/decisions/kuzu-to-sqlite.md`.
+
+---
+
 # gleann — Agent Memory Layer Roadmap
 
 Hedef: gleann, coding agent'lar için **güvenilir bir memory layer** olmalı:

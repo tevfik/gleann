@@ -83,7 +83,7 @@ Connect Gleann directly to **Claude Code**, **Cursor**, **Windsurf**, **Cline**,
 - **1-Click Setup**: Run `gleann install` to automatically register the Model Context Protocol (MCP) server across 17+ AI platforms.
 - **Context Field Theory (Φ Scoring)**: Dynamic re-ranking prioritizes recency, frequency, and code proximity.
 - **Shell Output Compression**: 95+ regex patterns collapse verbose Git, Go, NPM, and Docker logs before they reach the LLM context window.
-- **Token Gain Tracking**: Monitor cumulative token savings across sessions with `gleann_gain`.
+- **Token Gain Tracking**: `gleann_gain` reports the tokens saved by `gleann_shell` and `gleann_read` since the MCP server started.
 - 👉 Read the [MCP Setup Guide](docs/mcp.md) & [Agent Integration](docs/a2a.md).
 
 ---
@@ -188,6 +188,25 @@ gleann mcp                     # Launch stdio MCP server
 gleann completion bash         # Generate shell completion (bash, zsh, fish)
 gleann tokens ./src            # Estimate token consumption across read modes
 ```
+
+---
+
+## 🧭 Feature Status
+
+gleann covers a lot of ground. This table says what is measured in CI on every change and what is still young.
+
+| Area | Status | Notes |
+|---|---|---|
+| Index build and sync, hybrid search (HNSW, DiskANN, FTS5), metadata filters | **Core** | Recall gate (`bench/vectordb/gate`) and retrieval quality gate (`internal/quality`) run in CI |
+| Code graph (Go AST; other languages with `-tags treesitter`) | **Core** | Stored in the index's SQLite database |
+| MCP server, CLI, REST API | **Core** | |
+| Long-term memory (blocks, tiers, failure memory) | **Core** | Retrieval floor and duplicate merge measured on a small evaluation set |
+| A2A protocol | **Experimental** | Single-turn tasks only, no streaming; multi-turn is [RFC 007](docs/plans/007-a2a-multi-turn.md) |
+| Multimodal (images, audio, video) | **Experimental** | Needs an external multimodal model or plugin; not covered by the quality gates |
+| Web UI (`gleann serve`) | **Experimental** | Settings, chat and graph views; the CLI and TUI are the main interfaces |
+| FAISS backend (`-tags faiss`), Rust core (`-tags native`) | **Optional builds** | Not in the release binaries' default path |
+
+Experimental features work, but their interfaces may change between minor versions.
 
 ---
 

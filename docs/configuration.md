@@ -88,17 +88,17 @@ Location: `~/.gleann/config.json`
 
 | Field | Default | Description |
 |-------|---------|-------------|
-| `embedding_provider` | `ollama` | Provider for embeddings: `ollama`, `openai`, `mock` (for testing) |
+| `embedding_provider` | `ollama` | Provider for embeddings: `ollama`, `openai`, `llamacpp`, `eif` (requires `-tags eif`), `gemini`, `native` (requires `-tags native`) |
 | `embedding_model` | `bge-m3` | Embedding model name |
 | `ollama_host` | `http://localhost:11434` | Ollama server URL |
 | `ollama_api_key` | — | Optional API key for Ollama, sent as `Authorization: Bearer <key>` on every Ollama request (chat, embeddings, reranker, model listing, multimodal). Only needed when Ollama sits behind an auth proxy or is a hosted Ollama endpoint. Falls back to the `OLLAMA_API_KEY` environment variable. Never sent to OpenAI/Anthropic |
 | `openai_api_key` | — | OpenAI API key (if using openai provider). Never sent to Ollama |
 | `openai_base_url` | — | OpenAI-compatible API base URL (vLLM, LM Studio, llama-server, Ollama's `/v1`, ...); `http://host:8000` and `http://host:8000/v1` are the same. **Required for the `openai` provider** (chat and embeddings): without it (or `OPENAI_BASE_URL`) gleann refuses to send anything and never falls back to OpenAI's cloud. Set `https://api.openai.com/v1` to use OpenAI's cloud, which sends your documents and questions there. The Ollama host is never used as an OpenAI endpoint |
 | `index_dir` | `~/.gleann/indexes` | Root directory for all index data. Each named index `<name>` is a directory `<name>/` holding one SQLite database `<name>.db` (passages, FTS5 lexical index, manifest, code and document graph), the vector files and the metadata, plus the index lock file `<name>.lock` next to it; a memory namespace's vector index is the index `<name>_memory_vectors`. Memory entities live in `memory.sqlite` in the gleann home, not here |
-| `backend` | `diskann` | Vector search backend: `diskann`, `hnsw`, `faiss`, `faiss-hybrid` |
+| `backend` | `hnsw` | Vector search backend: `hnsw`, `diskann`, `faiss`, `faiss-hybrid` |
 | `use_mmap` | unset | `true`: memory-map the vector index for every backend; `false`: load it into RAM. Unset: the per-backend keys decide; both default to memory-mapped. The old keys `hnsw_config.use_mmap` and `diskann_config.use_mmap` are still read when `use_mmap` is unset. On Windows the "mapped" mode reads the file into memory and closes it (Windows cannot rename a new generation over a mapped or open file, which every incremental update and merge does while `serve` keeps the old searcher), so an open index costs its file size in RAM there. CLI flag: `--no-mmap`, env: `GLEANN_MMAP` |
 | `searcher_cache_budget` | `0` (unlimited) | Memory budget for cached index searchers in `gleann serve` and the MCP server (e.g. `500MB`, `1GB`, `100MiB`, or bytes as an integer). Evicts least-recently-used searchers when total estimated resident size exceeds the budget. Env: `GLEANN_SEARCHER_CACHE_BUDGET` |
-| `llm_provider` | `ollama` | Provider for ask/chat: `ollama`, `openai`, `anthropic` |
+| `llm_provider` | `ollama` | Provider for ask/chat: `ollama`, `openai`, `anthropic`, `eif` (requires `-tags eif`: the `gleann-full` and `gleann-eif` builds) |
 | `llm_model` | `nemotron-3-nano:4b` | LLM model for ask/chat commands |
 | `rerank_enabled` | `false` | Rerank search results (CLI `search`/`ask`, REST, MCP, chat). `--rerank` turns it on for one command, `--no-rerank` off |
 | `rerank_provider` | `auto` | Reranker engine: `auto`, `eif` (built-in bitllm.c cross-encoder), `ollama`, `llamacpp`, `jina`, `cohere`, `voyage`. `auto` uses the built-in engine when the build has it and the model is a local GGUF, otherwise the embedding provider |
@@ -130,7 +130,7 @@ CLI flags override both defaults and config file values.
 
 ```bash
 --model <model>         # Embedding model (default: bge-m3)
---provider <provider>   # Embedding provider: ollama, openai, mock
+--provider <provider>   # Embedding provider: ollama (default), openai, llamacpp, eif (-tags eif), gemini, native (-tags native)
 --host <url>            # Ollama host URL
 --ollama-api-key <key>  # Optional Ollama API key (auth proxy / hosted Ollama; env: OLLAMA_API_KEY)
 --batch-size <n>        # Embedding batch size
@@ -150,7 +150,7 @@ CLI flags override both defaults and config file values.
 --rerank-pool <n>       # Candidates sent to the reranker (default: 20 for the built-in reranker, max(4*top-k, 50) for a server)
 --rerank-url <url>      # Rerank through a llama-server --reranking endpoint (/v1/rerank), e.g. http://127.0.0.1:8791
 --no-hybrid             # Disable BM25 hybrid scoring (vector only)
---hybrid-alpha <float>  # BM25 hybrid weight (default: 0.7)
+--hybrid-alpha <float>  # Vector weight in hybrid scoring: 0.0 = BM25 only, 1.0 = vector only (default: 0.7)
 --graph                 # Enrich results with AST and/or hierarchical document context
 --kind <code|docs|all>  # Filter search results by content kind
 --one-per-file          # Return at most one result per file
@@ -285,7 +285,7 @@ gleann index storage docs --set store                       # convert in place (
 
 ```bash
 --index-dir <dir>       # Index storage directory
---backend <backend>     # Vector backend: diskann (default), hnsw, faiss, faiss-hybrid
+--backend <backend>     # Vector backend: hnsw (default), diskann, faiss, faiss-hybrid
 --chunk-size <n>        # Chunk size in tokens (default: 512)
 --chunk-overlap <n>     # Chunk overlap in tokens (default: 50)
 --graph                 # Build AST code graph
@@ -337,10 +337,14 @@ Gleann supports four vector search backends, selectable via config (`backend` fi
 
 | Backend | Default | CGo Required | Description |
 |---------|---------|-------------|-------------|
-| `diskann` | **Yes** | No | Pure-Go Vamana graph with PQ prefiltering. Disk-resident search using ~2.7x less RAM than HNSW for large datasets. Recommended for production and large corpora. |
-| `hnsw` | No | No | Pure-Go HNSW. Fast in-memory search, good for smaller datasets (<100k vectors). |
+| `hnsw` | **Yes** | No | Pure-Go HNSW. Fast in-memory search, good for datasets up to large corpora. |
+| `diskann` | No | No | Pure-Go Vamana graph with PQ prefiltering. Disk-resident search using ~2.7x less RAM than HNSW for large datasets. |
 | `faiss` | No | Yes | C FAISS via CGo. SIMD-accelerated with IVF_FLAT, IVF_PQ, and IVF_SQ8 index types. Best throughput with GPU/AVX2 hardware. |
 | `faiss-hybrid` | No | Build only | FAISS builds the index (requires CGo at build time), but search is pure Go. No CGo needed at query time. |
+
+#### When to choose DiskANN
+
+Choose DiskANN (`--backend diskann`) for very large indexes where vectors should stay on disk rather than being kept in RAM. Note that this memory advantage has not been measured yet.
 
 ### DiskANN Configuration
 
@@ -353,9 +357,11 @@ DiskANN parameters can be tuned in the config file under `diskann_config`:
     "r": 64,
     "l": 100,
     "alpha": 1.2,
-    "pq_dim": 32,
-    "pq_train_size": 10000,
-    "l_search": 100
+    "pq_dim": 0,
+    "pq_centroids": 256,
+    "search_l": 0,
+    "search_pq_rerank": 0,
+    "distance_metric": "l2"
   }
 }
 ```
@@ -365,9 +371,12 @@ DiskANN parameters can be tuned in the config file under `diskann_config`:
 | `r` | `64` | Max out-degree of the Vamana graph |
 | `l` | `100` | Candidate list size during build |
 | `alpha` | `1.2` | Pruning parameter (>1.0 = denser graph, higher recall) |
-| `pq_dim` | `32` | Number of PQ sub-quantizers for prefiltering |
-| `pq_train_size` | `10000` | Vectors sampled for PQ codebook training |
-| `l_search` | `100` | Candidate list size during search (higher = better recall, slower) |
+| `pq_dim` | `0` (auto) | Number of PQ sub-quantizers for prefiltering (`0` = auto, `dims/4`) |
+| `pq_centroids` | `256` | Centroids per sub-quantizer (≤256) |
+| `search_l` | `0` (auto) | Candidate list size during search (`0` = auto: 100 up to 25K vectors, then 100 × sqrt(N / 25,000), capped at 512; a positive value is used as given) |
+| `search_pq_rerank` | `0` (all) | Number of PQ candidates to rerank with full vectors (`0` = all `search_l` candidates) |
+| `distance_metric` | `l2` | Distance metric: `l2` or `cosine` |
+| `use_mmap` | `true` | Memory-map raw vectors. Deprecated: use the top-level `use_mmap` key instead |
 
 ### HNSW Configuration
 
@@ -454,7 +463,7 @@ When enabled, a background "sleep-time" agent periodically reflects on recent co
 |----------|---------|-------------|
 | `GLEANN_SLEEPTIME_ENABLED` | `false` | Set to `true` or `1` to enable |
 | `GLEANN_SLEEPTIME_INTERVAL` | `30m` | Go duration between reflection cycles |
-| `GLEANN_SLEEPTIME_MAX_CONVS` | `5` | Max recent conversations per cycle |
+| `GLEANN_SLEEPTIME_MAX_CONVS` | `5` | Max conversations per cycle (oldest unprocessed first) |
 
 The engine uses the server's configured LLM (model/provider) to summarize conversations and extract memories tagged with `sleep_time` source. The conversation cursor persists across restarts in `memory_meta`, and changes can be previewed or reverted using `gleann memory reflect [--dry-run] [--revert <run-id>]`.
 

@@ -160,9 +160,11 @@ field, and the MCP search tool prints it above the results.
    `gleann index rebuild <name> --docs <dir>`.
 
 Limits of the check: it finds gaps in the passage IDs, a stale passage count and
-a missing vector file. A damaged vector file whose passage IDs happen to be
-contiguous cannot be told apart from a healthy one. If you suspect one, rebuild
-it regardless of what the check says:
+a vector file that is missing or cannot be read at all - wrong permissions, or
+something that is not a file (a leftover directory in its place) is reported the
+same way, because the searcher cannot open it either. A damaged vector file that
+opens but whose passage IDs happen to be contiguous cannot be told apart from a
+healthy one. If you suspect one, rebuild it regardless of what the check says:
 
 ```bash
 gleann index repair my-docs --force

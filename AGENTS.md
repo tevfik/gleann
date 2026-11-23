@@ -18,7 +18,7 @@ All agents modifying this codebase must adhere strictly to the following fundame
    - Docker is permitted only as an optional deployment convenience for users, never as a build or runtime prerequisite.
 
 3. **Build Tags Discipline & Pure-Go Graceful Degradation:**
-   - **Pure Go (Default):** Must build with `CGO_ENABLED=0` without any tags. Uses pure-Go vector indexing (DiskANN), the pure-Go SQLite driver (`modernc.org/sqlite`) for the index database `<name>/<name>.db` (passages, FTS5 lexical index, manifest and code graph, `internal/store` + `internal/graphstore`), and in-memory caches.
+   - **Pure Go (Default):** Must build with `CGO_ENABLED=0` without any tags. Uses pure-Go vector indexing (HNSW, DiskANN), the pure-Go SQLite driver (`modernc.org/sqlite`) for the index database `<name>/<name>.db` (passages, FTS5 lexical index, manifest and code graph, `internal/store` + `internal/graphstore`), and in-memory caches.
    - **`-tags "eif"`:** Activates embedded C-runtime (`ext/bitllm.c`) for CPU-native BERT and BitNet quantized model inference.
    - **`-tags "treesitter"`:** Activates the Tree-sitter AST parsers only (symbols and CALLS edges for non-Go languages). The code graph itself is SQLite in every build.
    - **`-tags "native"`:** Activates embedded Rust core acceleration (`ext/gleann-core-rs`).

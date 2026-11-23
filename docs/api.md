@@ -22,6 +22,15 @@ When the server is running, interactive Swagger UI documentation is available at
 - **Swagger UI**: `GET /api/docs`
 - **OpenAPI 3.0 JSON**: `GET /api/openapi.json`
 
+Both documentation endpoints are public, and `internal/doccheck` fails the build
+if a route registered by the server is missing from the specification, so the
+JSON is also the file to import into an API client. In Postman: **File → Import
+→ `http://localhost:8080/api/openapi.json`**, then set the collection's
+authorization to **Bearer Token** with a token from `gleann token create`. The
+spec declares that scheme once at the top level, and the four public routes
+(`GET /health`, `GET /.well-known/agent-card.json`, `GET /api/docs`,
+`GET /api/openapi.json`) override it with an empty list.
+
 ## Endpoints
 
 ### Health
@@ -36,6 +45,8 @@ When the server is running, interactive Swagger UI documentation is available at
 |--------|------|-------------|
 | GET | `/api/indexes` | List all indexes |
 | GET | `/api/indexes/{name}` | Get index metadata |
+| GET | `/api/indexes/{name}/passages` | List stored passages in internal ID order (`?limit=`, default 100, max 1000; `?offset=`). One SQLite page per request (`ORDER BY id LIMIT/OFFSET`); no vector file or embedder is loaded. `id` is the internal passage ID (the sort key), `vec_slot` the ID search results carry (null for a lexical-only passage). `400` invalid name/limit/offset, `403` client-target or tag isolation, `404` missing index, `409` old store format (run `gleann index migrate <name>`) |
+| GET | `/api/indexes/{name}/sections` | List document sections grouped from passage metadata (`section_id`, `section_title`, `section_path`, `section_summary`, falling back to `heading`/`title`) with `passage_count` and the chunk and passage-ID ranges of each section. Passages without section metadata are not listed. Same `?limit=`/`?offset=` bounds and status codes as `/passages` |
 | GET | `/api/storage` | Disk space of the index directory: `index_dir`, `indexes`, `passages`, `bytes` (every file under it) and the file system's `disk_total_bytes` / `disk_free_bytes` (0 where the platform does not report it); also the whole gleann data folder (`GLEANN_CONFIG_DIR`, default `~/.gleann`): `data_dir`, `data_bytes` and `data_folders` (bytes per top-level entry, e.g. `models`). The data-folder walk is cached for 60 s |
 | POST | `/api/indexes/{name}/storage` | Convert the index between `store` and `recompute` vector storage (body `{"mode":"store"\|"recompute"}`); `202 {"task_id"}` while it re-indexes in the background (see Background Tasks), `200 {"unchanged":true}` when it already uses that mode, `409` when the index cannot be switched, `501` when the server was started without the converter |
 | PATCH | `/api/indexes/{name}` | Update index governance (`tags`, `description`, `mcp_exposed`) |
@@ -172,6 +183,11 @@ Google's Agent-to-Agent protocol for agent discovery and inter-agent communicati
 
 **Built-in skills**: `semantic-search`, `ask-rag`, `code-analysis`, `memory-management`.
 
+A2A routes accept a query token, but privileged skill operations require an **admin** token:
+storing memory blocks (`memory-management`) and analyzing a server-local file path
+(`multimodal-analyze`). With a query token those tasks fail with an admin-scope message;
+memory recall/search and file attachments stay available. See [a2a.md](a2a.md#authentication-and-scopes).
+
 ### Unified Memory API
 
 Orchestrates all memory layers (block storage, knowledge graph, vector search) through a single interface. Simplifies agent integration by eliminating the need to call individual memory APIs.
@@ -203,15 +219,18 @@ Orchestrates all memory layers (block storage, knowledge graph, vector search) t
 | Field | Type | Description |
 |-------|------|-------------|
 | `query` | string | **Required.** Search text |
+| `index` | string | Index namespace for the `vector` and `graph` layers; must be accessible or those layers are omitted |
+| `project` | string | Project scoping shorthand: sets block scope to `project:{name}` and targets the matching index |
+| `target` | string | Alias for `project`; pins recall to a specific target index and scope |
 | `layers` | string[] | `blocks`, `graph`, `vector` (default: all) |
-| `top_k` | int | Max results per layer (default: 5) |
+| `top_k` | int | Max results per layer (default: 5; graph hard cap: 256 nodes and 512 edges) |
 | `tier` | string | Filter blocks by tier |
 | `tags` | string[] | Filter blocks by tags (AND logic) |
 | `after` | string | Filter blocks created after (RFC3339 or duration like `24h`, `7d`) |
 | `before` | string | Filter blocks created before |
-| `relations` | string[] | Filter graph edges by relation types |
+| `relations` | string[] | Exact, case-insensitive graph relation-type filter; empty/whitespace entries are ignored, and a filter left empty allows every relation type |
 | `scope` | string | Filter blocks by scope |
-| `depth` | int | Graph traversal depth (default: 2) |
+| `depth` | int | Graph traversal hops (default: 2; hard cap: 10; values ≤ 0 mean the default) |
 | `format` | string | `json` (default) or `context` (LLM-ready XML) |
 
 #### Unified Memory Examples
@@ -265,6 +284,27 @@ curl -X POST http://localhost:8080/api/memory/recall \
     "format": "context"
   }'
 
+# Graph-layer recall: every whitespace token in the query must substring-match
+# an entity ID, type, or content (AND of ORs, case-insensitive with Unicode
+# folding), or a relation type. top_k bounds returned entities (default 5, hard
+# cap 256); edges are capped at 2x entities (hard cap 512) and depth at 10 hops
+# (default 2). When top_k >= 2 and depth > 0, about half the node budget is
+# reserved for neighbours: the seeds' own incoming/outgoing relations are
+# expanded first, remaining seed slots are backfilled, and only then are
+# relation-type matches admitted (and only when both endpoints fit the node
+# budget, since an edge whose endpoint is over budget would be dropped).
+# relations is an exact case-insensitive type filter; empty entries are ignored.
+# Private or unknown indexes return no graph data.
+curl -X POST http://localhost:8080/api/memory/recall \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "index": "myapp",
+    "query": "auth",
+    "layers": ["graph"],
+    "top_k": 10,
+    "depth": 2
+  }'
+
 # Full multi-layer recall in LLM-ready format
 curl -X POST http://localhost:8080/api/memory/recall \
   -H 'Content-Type: application/json' \
@@ -273,7 +313,8 @@ curl -X POST http://localhost:8080/api/memory/recall \
     "format": "context",
     "top_k": 10
   }'
-# Returns XML with <facts>, <relationships>, <relevant_documents>
+# Returns XML with <facts>, <relationships>, <relevant_documents>, and
+# <entities> when a graph layer has matching nodes but no surviving edges.
 ```
 
 ### Background Tasks
@@ -361,13 +402,17 @@ conditions (`filter_logic`: `and`, the default, or `or`). Each condition is
 derive `ext` from the file path. Filters are applied during retrieval, not
 after it: a selective filter still returns `top_k` results when that many
 passages match — the candidate pool widens until k pass (sized from the
-observed pass rate), capped at 4096 candidates. Only when the loop stops at that cap with fewer than k
-results does the index fall back to an exact
-SQL pre-selection of the matching IDs (reading `id`/`vec_slot`/`source`/`kind`/
-`meta`, never passage text, capped at 50,000 rows) and score just those. A
-filter nothing matches returns 0. A passage's score is the same with and
-without a filter that keeps it, and the pre-selected fallback applies the same
-`min_score`, `kind` and ranking boosts as the main path.
+observed pass rate), capped at 4096 candidates. When the filter is estimated
+to match only a small fraction of the index (at most a fifth, and at most
+12,000 passages), or when the loop stops at that cap with fewer than k results, the
+index pre-selects the matching IDs in SQL (reading `id`/`vec_slot`/`source`/
+`kind`/`meta`, never passage text, capped at 50,000 rows) and scores just
+those. Backends that store the raw vectors (HNSW and DiskANN, loaded in RAM
+or memory-mapped) score the pre-selected set by exact vector distance, so a
+selective filter bypasses the approximate search entirely. A filter nothing
+matches returns 0. A passage's score is the same with and without a filter
+that keeps it, and the pre-selected path applies the same `min_score`, `kind`
+and ranking boosts as the main path.
 
 ### Ask (RAG)
 
@@ -387,7 +432,7 @@ curl -X POST http://localhost:8080/api/indexes/my-code/ask \
 | `question` | string | *(required)* | Question to answer using RAG |
 | `top_k` | integer | 10 | Number of context passages to retrieve |
 | `llm_model` | string | — | LLM model name |
-| `llm_provider` | string | — | LLM provider (`ollama`, `openai`, `anthropic`) |
+| `llm_provider` | string | — | LLM provider (`ollama`, `openai`, `anthropic`, `eif`; `eif` requires a `-tags eif` build) |
 | `system_prompt` | string | — | Custom system prompt for the LLM |
 | `role` | string | — | Named role (e.g. `code`, `shell`). Resolves to a system prompt from the role registry. |
 | `conversation_id` | string | — | Continue an existing conversation by ID. Restores message history. |
@@ -477,6 +522,12 @@ curl -X POST http://localhost:8080/api/graph/my-code/query \
     "max_depth": 3
   }'
 ```
+
+The `callees`, `callers` and `impact` responses carry an optional `notice`
+field when the graph was built without tree-sitter and the queried symbol
+resolves to non-Go code (`use a build with tree-sitter: the 'full' release
+artifact`). The field is omitted for Go symbols and in a `-tags treesitter`
+build, so their JSON is unchanged.
 
 ### Memory Engine — Inject Knowledge
 
@@ -808,8 +859,9 @@ curl -H "Authorization: Bearer $GLEANN_API_TOKEN" http://127.0.0.1:8081/api/inde
   prints a web UI URL with `?token=`; the server turns it into an `HttpOnly; SameSite=Strict` cookie.
 - `gleann token create <name> [--scope query|admin]`, `list`, `revoke`, `rotate`, `show`.
   Tokens are shown once; only SHA-256 hashes are stored (`~/.gleann/auth/tokens.json`).
-- Scopes: `query` = search, ask, `/v1/*`, `/a2a/*`, read-only index/graph/memory/conversation routes;
-  `admin` = everything else (config, build, delete, plugins, memory writes, ...).
+- Scopes: `query` = search, ask, `/v1/*`, read-only `/a2a/*` skills, read-only index/graph/memory/conversation routes;
+  `admin` = everything else (config, build, delete, plugins, memory writes — including A2A memory
+  writes and A2A analysis of server-local file paths, ...).
 - The CLI and stdio MCP memory tools read `GLEANN_API_TOKEN` or `~/.gleann/auth/admin.token` automatically.
 - OpenAI-compatible clients: set `api_key` to a token. A2A clients: the agent card advertises `gleannBearer`.
 - `401` = missing/invalid token, `403` = scope too low, wrong `Host`, or cross-origin cookie request.

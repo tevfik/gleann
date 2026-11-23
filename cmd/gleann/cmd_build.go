@@ -93,6 +93,8 @@ Options:
   --approve <action>      Decision approval: proceed, fast, or cancel
   --yes, -y               Auto-approve decision gate (proceed); also needed to index a home directory or /
   --progress <surface>    Progress reporting surface: plain (default), json, none
+  --quiet                 Suppress embedded llama-server bootstrap status
+                          messages (pair with --progress none to silence progress)
   --include-submodules    Include Git submodule directories (default: excluded)
   --tag <tag>             Assign governance tag(s) (comma-separated or multiple)
   --desc <description>    Human-readable description for semantic MCP routing

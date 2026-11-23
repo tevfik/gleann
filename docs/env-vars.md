@@ -35,7 +35,7 @@ Useful for Docker, CI/CD, and environments where editing config files is impract
 
 | Variable | Config Key | Default | Description |
 |----------|-----------|---------|-------------|
-| `GLEANN_LLM_PROVIDER` | `llm_provider` | `ollama` | LLM provider: `ollama`, `openai`, `anthropic` (read only by MCP server) |
+| `GLEANN_LLM_PROVIDER` | `llm_provider` | `ollama` | LLM provider: `ollama`, `openai`, `anthropic`, `eif` (requires a `-tags eif` build) (read only by MCP server) |
 | `GLEANN_LLM_MODEL` | `llm_model` | `nemotron-3-nano:4b` | LLM model for ask/chat (read only by MCP server) |
 | `GLEANN_THINK` | — | off | `1` or `true` asks reasoning models to think; unset or anything else keeps thinking off |
 | `GLEANN_REPEAT_PENALTY` | — | `1.1` | Repetition penalty of the chat (a positive number). With the embedded EIF runtime it defaults to `1.0` unless this or `GLEANN_REPETITION_PENALTY` is set |
@@ -101,7 +101,7 @@ Rate-limited requests receive `429 Too Many Requests` with a `Retry-After: 1` he
 |----------|---------|-------------|
 | `GLEANN_SLEEPTIME_ENABLED` | `false` | Enable sleep-time engine — background agent that reflects on conversations and extracts memories (`true` or `1` to enable) |
 | `GLEANN_SLEEPTIME_INTERVAL` | `30m` | Go duration between reflection cycles (e.g. `15m`, `1h`) |
-| `GLEANN_SLEEPTIME_MAX_CONVS` | `5` | Maximum recent conversations to process per cycle |
+| `GLEANN_SLEEPTIME_MAX_CONVS` | `5` | Maximum conversations to process per cycle (oldest unprocessed first) |
 
 ## Memory Block Limits
 
@@ -159,6 +159,7 @@ Rate-limited requests receive `429 Too Many Requests` with a `Retry-After: 1` he
 |----------|---------|-------------|
 | `GLEANN_PLUGIN_OWNER` | — | Default GitHub owner for plugin downloads |
 | `GLEANN_GITHUB_API` | `https://api.github.com` | Root of the GitHub REST API used to look up plugin releases (GitHub Enterprise, a mirror or a test server) |
+| `GLEANN_PLUGIN_STOP_GRACE` | `10s` | How long an auto-started plugin may take to exit after SIGINT before gleann kills it (a Go duration such as `30s` or `500ms`); invalid or non-positive values keep the default. The same value bounds the wait for the process to be reaped |
 | `GLEANN_LAUNCHER` | — | Set by the self-extracting launcher of the full build to its own path; `gleann update` replaces that file and `gleann install` installs it. Do not set it by hand |
 
 ## Benchmarks
@@ -200,7 +201,7 @@ Every index is format 2: one SQLite database `<index_dir>/<name>/<name>.db` with
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `GLEANN_OLLAMA_NUM_CTX` | `32768` (only when `--no-limit` / `max_tokens=0`) | Force the `num_ctx` value sent to Ollama. When the user requests unbounded generation (`--no-limit`), Gleann widens the context window to avoid silent truncation of large RAG payloads. Set to a smaller value to cap VRAM usage; setting it in budgeted mode (`max_tokens>0`) also overrides the model default |
-| `GLEANN_GRAPH_EXACT` | — | on | `0`/`false`/`off`/`no` turns off exact `go/types` call resolution in format-2 full graph builds (syntactic `go/ast` only) |
+| `GLEANN_GRAPH_EXACT` | — | on | `0`/`false`/`off`/`no` turns off exact `go/types` call resolution in format-2 graph builds and incremental syncs (syntactic `go/ast` only) |
 
 ## Docker Example
 

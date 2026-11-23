@@ -262,7 +262,7 @@ External Agent (e.g. Cursor, Claude)
 | Scoped Memory Blocks | — | ✅ (conversation/session isolation) |
 | OpenAI-Compatible Proxy | — | ✅ (`/v1/chat/completions`) |
 | File Sync (incremental) | ✅ | ✅ |
-| Hybrid Search (BM25) | — | ✅ (BM25 + DiskANN RRF $k=60$ + symbol boost) |
+| Hybrid Search (BM25) | — | ✅ (BM25 + vector (HNSW/DiskANN) RRF $k=60$ + symbol boost) |
 | REST API Server | — | ✅ |
 | DiskANN Backend | ✅ | ✅ (native pure Go Vamana graph + PQ) |
 | IVF Backend | ✅ | — |
@@ -295,7 +295,7 @@ In alignment with the core mission of `gleann` as a lean, reliable agent memory 
 - **A2A Protocol** (`internal/a2a`): Agent-to-Agent protocol frozen.
 - **Webhooks & Event Bus consumers** (`internal/eventbus` peripheral consumers): Frozen.
 - **OpenAI-Compatible Proxy** (`/v1/chat/completions`): Frozen.
-- **Plugins & Packs** (`internal/plugins`): Dynamic plugin system frozen.
+- **Plugins & Packs** (`pkg/gleann` plugin runtime, `internal/packs`): Dynamic plugin system frozen.
 - **System Service Management** (`internal/service`): Background daemon/service helpers frozen.
 - **Vault / Secret Management** (`internal/vault`): Secret tracking frozen.
 

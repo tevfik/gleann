@@ -43,10 +43,28 @@ func (s *Server) openAPISpec() map[string]any {
 			{"name": "webhooks", "description": "Webhook notification management"},
 			{"name": "metrics", "description": "Prometheus-compatible metrics"},
 			{"name": "proxy", "description": "OpenAI-compatible RAG proxy (model: \"gleann/<index>\")"},
+			{"name": "conversations", "description": "Saved chat conversations (list, get, update title, delete)"},
+			{"name": "config", "description": "Server configuration (redacted GET) and the editable settings registry (GET/PUT /api/settings)"},
+			{"name": "plugins", "description": "Language-plugin catalog: list, install, uninstall, settings, and plugin-provided models"},
+			{"name": "models", "description": "Local GGUF models and the model catalog (list, download, catalog state)"},
+			{"name": "system", "description": "Server control and observability: logs, proxy stop, and proxy provider model discovery"},
 			{"name": "packs", "description": "Knowledge Packs — domain-specific readonly datasets (crops, pests, varieties, …) served as versioned YAML bundles"},
 		},
-		"paths":      s.openAPIPaths(),
-		"components": map[string]any{"schemas": openAPISchemas()},
+		"paths": s.openAPIPaths(),
+		// Bearer auth is declared once here so importing /api/openapi.json into
+		// Postman surfaces a single security scheme that every operation
+		// inherits. Public routes (health, the agent card) override it with an
+		// empty list.
+		"security": []map[string]any{{"bearerAuth": []string{}}},
+		"components": map[string]any{
+			"schemas": openAPISchemas(),
+			"securitySchemes": map[string]any{
+				"bearerAuth": map[string]any{
+					"type":   "http",
+					"scheme": "bearer",
+				},
+			},
+		},
 	}
 }
 
@@ -57,17 +75,22 @@ func (s *Server) openAPIPaths() map[string]any {
 		openAPIPathsHealth(),
 		openAPIPathsIndexes(),
 		openAPIPathsSearch(),
-		openAPIPathsGraph(),
 		openAPIPathsMemory(),
+		openAPIPathsGraph(),
+		openAPIPathsConversations(),
 		openAPIPathsBlocks(),
+		openAPIPathsBlockCompact(),
 		openAPIPathsWebhooks(),
 		openAPIPathsMetrics(),
-		openAPIPathsConversations(),
 		openAPIPathsProxy(),
 		openAPIPathsA2A(),
 		openAPIPathsUnifiedMemory(),
 		openAPIPathsTasks(),
 		openAPIPathsPacks(),
+		openAPIPathsSystem(),
+		openAPIPathsConfig(),
+		openAPIPathsPlugins(),
+		openAPIPathsModels(),
 	}
 	for _, g := range groups {
 		for k, v := range g {

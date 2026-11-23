@@ -1,5 +1,7 @@
 # A2A Protocol (Agent-to-Agent)
 
+> **Status: experimental.** Tasks are single-turn (one message in, one result out) and there is no streaming. Multi-turn tasks (`input-required` and resume) are specified in [RFC 007](plans/007-a2a-multi-turn.md) and not implemented yet. The endpoints may change between minor versions.
+
 Gleann implements [Google's A2A protocol](https://google.github.io/A2A/) for agent discovery and inter-agent communication. This allows other AI agents, orchestrators, and tools to discover gleann's capabilities and send it tasks via a standard HTTP+JSON interface.
 
 ## Overview
@@ -11,6 +13,23 @@ When `gleann serve` starts, three A2A endpoints become available:
 | `GET /.well-known/agent-card.json` | Agent Card — describes gleann's skills and capabilities |
 | `POST /a2a/v1/message:send` | Send a task to gleann (auto-routed to the best skill) |
 | `GET /a2a/v1/tasks/{id}` | Check task status and retrieve results |
+
+## Authentication and scopes
+
+A2A endpoints use the same bearer tokens as the REST API (see [api.md](api.md#authentication)):
+send `Authorization: Bearer <token>` on every `message:send` call (the agent card advertises
+the `gleannBearer` scheme).
+
+- A **query** token can use the read-only skills: semantic search, RAG ask, code graph
+  analysis, memory recall/search, and multimodal analysis of *attached* files.
+- An **admin** token is additionally required to **store memory blocks**
+  (`memory-management` messages containing `remember`, `hatırla` or `store`) and to
+  **analyze a server-local file path** with `multimodal-analyze` (the query is then a path
+  on the server, held to `allowed_roots`).
+
+With a query token these privileged operations fail the task (`TASK_STATE_FAILED`) with a
+message naming the admin scope; nothing is written and no local file is read. When the
+server runs with `auth: off` (loopback only), all skills are available.
 
 ## Agent Card
 
@@ -29,6 +48,7 @@ The Agent Card at `/.well-known/agent-card.json` advertises four built-in skills
 # Ask gleann a question (auto-routed to ask-rag skill)
 curl -X POST http://localhost:8080/a2a/v1/message:send \
   -H 'Content-Type: application/json' \
+  -H "Authorization: Bearer $GLEANN_API_TOKEN" \
   -d '{
     "message": {
       "role": "user",
@@ -39,6 +59,7 @@ curl -X POST http://localhost:8080/a2a/v1/message:send \
 # Explicitly target a specific skill
 curl -X POST http://localhost:8080/a2a/v1/message:send \
   -H 'Content-Type: application/json' \
+  -H "Authorization: Bearer $GLEANN_API_TOKEN" \
   -d '{
     "message": {
       "role": "user",
@@ -47,9 +68,10 @@ curl -X POST http://localhost:8080/a2a/v1/message:send \
     }
   }'
 
-# Store a memory
+# Store a memory (requires an admin token; a query token may only recall/search)
 curl -X POST http://localhost:8080/a2a/v1/message:send \
   -H 'Content-Type: application/json' \
+  -H "Authorization: Bearer $GLEANN_API_TOKEN" \
   -d '{
     "message": {
       "role": "user",
