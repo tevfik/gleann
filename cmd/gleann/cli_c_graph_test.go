@@ -1,15 +1,20 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/tevfik/gleann/internal/graph/analysisgolden"
 	"github.com/tevfik/gleann/internal/graphstore"
+	"github.com/tevfik/gleann/internal/indexing"
+	"github.com/tevfik/gleann/internal/store"
+	"github.com/tevfik/gleann/modules/chunking"
 	"github.com/tevfik/gleann/pkg/gleann"
 )
 
@@ -310,13 +315,171 @@ func TestCLICGraphHook(t *testing.T) {
 	r = e.run("graph", "hook", "uninstall")
 	wantExit(t, r, 0)
 	mustContain(t, "uninstall", r.Out, "hook removed")
-	if _, err := os.Stat(hook); !os.IsNotExist(err) {
-		t.Errorf("hook still present after uninstall: %v", err)
+	b, err := os.ReadFile(hook)
+	if err != nil {
+		t.Fatalf("foreign hook was deleted by uninstall: %v", err)
 	}
+	mustContain(t, "foreign hook preserved", string(b), "echo mine")
+	mustNotContain(t, "gleann hook removed", string(b), "gleann: auto-rebuild graph index")
 
 	r = e.run("graph", "hook", "frob")
 	wantExit(t, r, 1)
 	mustContain(t, "hook unknown action", r.Err, "Usage: gleann graph hook")
+}
+
+func TestCLICGraphHookMarkersAndSync(t *testing.T) {
+	e := newCLIEnv(t)
+	if err := os.MkdirAll(filepath.Join(".git", "hooks"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	hook := filepath.Join(".git", "hooks", "post-commit")
+
+	// Fresh install: no pre-existing hook file.
+	r := e.run("graph", "hook", "install")
+	wantExit(t, r, 0)
+	mustContain(t, "install", r.Out, "Git post-commit hook installed")
+
+	b, err := os.ReadFile(hook)
+	if err != nil {
+		t.Fatalf("hook not written: %v", err)
+	}
+	content := string(b)
+	mustContain(t, "hook markers and sync", content,
+		"# BEGIN GLEANN HOOK",
+		"# END GLEANN HOOK",
+		"index sync",
+	)
+	mustNotContain(t, "no full build in hook", content, "index build")
+
+	r = e.run("graph", "hook", "status")
+	wantExit(t, r, 0)
+	mustContain(t, "status installed", r.Out, "hook is installed")
+
+	// Uninstall on a fresh install removes the file completely.
+	r = e.run("graph", "hook", "uninstall")
+	wantExit(t, r, 0)
+	mustContain(t, "uninstall", r.Out, "hook removed")
+	if _, err := os.Stat(hook); !os.IsNotExist(err) {
+		t.Errorf("expected hook file to be deleted on fresh install uninstall, got %v", err)
+	}
+}
+
+func TestCLICGraphHookLegacyUninstall(t *testing.T) {
+	e := newCLIEnv(t)
+	if err := os.MkdirAll(filepath.Join(".git", "hooks"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	hook := filepath.Join(".git", "hooks", "post-commit")
+
+	legacyHook := `#!/bin/sh
+echo "user foreign pre-commit"
+
+#!/bin/sh
+# gleann: auto-rebuild graph index after commit
+# Installed by: gleann graph hook install
+# Remove with:  gleann graph hook uninstall
+
+GLEANN_BIN=$(command -v gleann || echo "")
+if [ -z "$GLEANN_BIN" ]; then
+    echo "gleann: binary not found, skipping graph rebuild"
+    exit 0
+fi
+
+CHANGED=$(git diff-tree --no-commit-id --name-only -r HEAD 2>/dev/null)
+if [ -z "$CHANGED" ]; then
+    exit 0
+fi
+
+CODE_CHANGED=$(echo "$CHANGED" | grep -E '\.(go|py)$' || true)
+if [ -z "$CODE_CHANGED" ]; then
+    exit 0
+fi
+
+echo "gleann: rebuilding graph index..."
+INDEX="${GLEANN_GRAPH_INDEX:-}"
+if [ -n "$INDEX" ]; then
+    $GLEANN_BIN index build "$INDEX" --docs . --graph 2>/dev/null &
+fi
+`
+	if err := os.WriteFile(hook, []byte(legacyHook), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Status recognises legacy hook.
+	r := e.run("graph", "hook", "status")
+	wantExit(t, r, 0)
+	mustContain(t, "legacy status", r.Out, "hook is installed")
+
+	// Uninstall removes legacy section and keeps user content.
+	r = e.run("graph", "hook", "uninstall")
+	wantExit(t, r, 0)
+	mustContain(t, "legacy uninstall", r.Out, "hook removed")
+
+	b, err := os.ReadFile(hook)
+	if err != nil {
+		t.Fatalf("legacy foreign hook deleted by uninstall: %v", err)
+	}
+	mustContain(t, "user content kept", string(b), "echo \"user foreign pre-commit\"")
+	mustNotContain(t, "legacy gleann removed", string(b), "gleann: auto-rebuild graph index")
+}
+
+func TestCLICGraphHookWorktreeAndSubdir(t *testing.T) {
+	e := newCLIEnv(t)
+
+	// Initialize real git repo
+	if out, err := exec.Command("git", "init").CombinedOutput(); err != nil {
+		t.Fatalf("git init failed: %v (%s)", err, string(out))
+	}
+	_ = exec.Command("git", "config", "user.email", "test@test.local").Run()
+	_ = exec.Command("git", "config", "user.name", "test").Run()
+
+	sub := filepath.Join(e.Home, "sub")
+	if err := os.MkdirAll(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Running from a subdirectory must succeed via git rev-parse --git-path hooks
+	t.Chdir(sub)
+	r := e.run("graph", "hook", "status")
+	wantExit(t, r, 0)
+	mustContain(t, "subdir status", r.Out, "is not installed")
+
+	r = e.run("graph", "hook", "install")
+	wantExit(t, r, 0)
+	mustContain(t, "subdir install", r.Out, "Git post-commit hook installed")
+
+	// Verify hook was installed in the repo's hooks directory
+	hooksDirCmd := exec.Command("git", "rev-parse", "--git-path", "hooks")
+	out, err := hooksDirCmd.Output()
+	if err != nil {
+		t.Fatalf("git rev-parse failed: %v", err)
+	}
+	hookPath := filepath.Join(strings.TrimSpace(string(out)), "post-commit")
+	if _, err := os.Stat(hookPath); err != nil {
+		t.Fatalf("hook not created at %s: %v", hookPath, err)
+	}
+
+	// Worktree test: commit so worktree can be created
+	t.Chdir(filepath.Dir(e.Home)) // root of repo
+	if err := os.WriteFile("dummy.txt", []byte("hello"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := exec.Command("git", "add", "dummy.txt").CombinedOutput(); err != nil {
+		t.Fatalf("git add: %v (%s)", err, string(out))
+	}
+	if out, err := exec.Command("git", "commit", "-m", "init").CombinedOutput(); err != nil {
+		t.Fatalf("git commit: %v (%s)", err, string(out))
+	}
+
+	wtDir := filepath.Join(t.TempDir(), "wt")
+	if out, err := exec.Command("git", "worktree", "add", wtDir).CombinedOutput(); err != nil {
+		t.Fatalf("git worktree add: %v (%s)", err, string(out))
+	}
+
+	t.Chdir(wtDir)
+	r = e.run("graph", "hook", "status")
+	wantExit(t, r, 0)
+	mustContain(t, "worktree status", r.Out, "hook is installed")
 }
 
 func TestCLICGraphBuildAndTOC(t *testing.T) {
@@ -347,10 +510,12 @@ func TestCLICGraphBuildAndTOC(t *testing.T) {
 	wantExit(t, r, 0)
 	mustContain(t, "deps after graph build", r.Out, "auth.checkSignature")
 
-	// An index without documents lists none.
+	// graph build reads the source documents and rebuilds the document
+	// graph: the fixture's README.md and docs/guide.md stay listed (it used
+	// to wipe them by replacing doc_nodes with an empty list).
 	r = e.run("graph", "toc", "--index", "proj")
 	wantExit(t, r, 0)
-	mustContain(t, "graph toc of an index without documents", r.Out, `Indexed Documents in "proj" (0 total)`, "No documents found")
+	mustContain(t, "graph toc after graph build", r.Out, `Indexed Documents in "proj" (2 total)`, "README.md", "docs/guide.md")
 }
 
 // cSeedDocuments writes a document tree (folder, two documents, nested
@@ -418,4 +583,252 @@ func TestCLICGraphTOC(t *testing.T) {
 	r = e.graph("toc", "no/such/doc.md")
 	wantExit(t, r, 1)
 	mustContain(t, "graph toc unknown doc", r.Err, "error getting document TOC")
+}
+
+func TestCLICGraphNonGoNotice(t *testing.T) {
+	e := newCGraphEnv(t)
+
+	// Explain on a non-Go symbol (Python)
+	r := e.graph("explain", "example.com/fixture/py.clean")
+	wantExit(t, r, 0)
+	// Callers on a non-Go symbol (Python)
+	rCallers := e.graph("callers", "example.com/fixture/py.clean")
+	wantExit(t, rCallers, 0)
+	// Deps on a non-Go symbol (Python)
+	rDeps := e.graph("deps", "example.com/fixture/py.clean")
+	wantExit(t, rDeps, 0)
+
+	wantNotice := "note: non-Go code was extracted without tree-sitter (use a build with tree-sitter: the 'full' release artifact)"
+	if chunking.TreeSitterAvailable() {
+		if strings.Contains(r.Out, "without tree-sitter") {
+			t.Errorf("treesitter build must not include notice in explain, got:\n%s", r.Out)
+		}
+		if strings.Contains(rCallers.Out, "without tree-sitter") {
+			t.Errorf("treesitter build must not include notice in callers, got:\n%s", rCallers.Out)
+		}
+		if strings.Contains(rDeps.Out, "without tree-sitter") {
+			t.Errorf("treesitter build must not include notice in deps, got:\n%s", rDeps.Out)
+		}
+	} else {
+		if !strings.Contains(r.Out, wantNotice) {
+			t.Errorf("explain on non-Go symbol missing notice in:\n%s", r.Out)
+		}
+		if !strings.Contains(rCallers.Out, wantNotice) {
+			t.Errorf("callers on non-Go symbol missing notice in:\n%s", rCallers.Out)
+		}
+		if !strings.Contains(rDeps.Out, wantNotice) {
+			t.Errorf("deps on non-Go symbol missing notice in:\n%s", rDeps.Out)
+		}
+	}
+
+	// Go symbol must not include the notice.
+	rGo := e.graph("explain", cSvcLoad)
+	wantExit(t, rGo, 0)
+	if strings.Contains(rGo.Out, "without tree-sitter") {
+		t.Errorf("Go symbol must not include notice, got:\n%s", rGo.Out)
+	}
+}
+
+func TestCLICGraphTreeSitterNoticeCrossVariant(t *testing.T) {
+	e := newCGraphEnv(t)
+	dbPath := filepath.Join(e.gdir, analysisgolden.IndexName, analysisgolden.IndexName+".db")
+
+	st, err := store.Open(dbPath, store.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Case 1: graph has graph_treesitter = "1" (treesitter-built graph)
+	if err := graphstore.New(st).SetMeta(context.Background(), store.MetaGraphTreeSitter, "1"); err != nil {
+		t.Fatal(err)
+	}
+	st.Close()
+
+	rExp := e.graph("explain", "example.com/fixture/py.clean")
+	wantExit(t, rExp, 0)
+	if strings.Contains(rExp.Out, "without tree-sitter") {
+		t.Errorf("graph with graph_treesitter=1 must not show notice in explain, got:\n%s", rExp.Out)
+	}
+	rCallers := e.graph("callers", "example.com/fixture/py.clean")
+	wantExit(t, rCallers, 0)
+	if strings.Contains(rCallers.Out, "without tree-sitter") {
+		t.Errorf("graph with graph_treesitter=1 must not show notice in callers, got:\n%s", rCallers.Out)
+	}
+
+	// Case 2: graph has graph_treesitter = "0" (lite-built graph)
+	st2, err := store.Open(dbPath, store.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := graphstore.New(st2).SetMeta(context.Background(), store.MetaGraphTreeSitter, "0"); err != nil {
+		t.Fatal(err)
+	}
+	st2.Close()
+
+	if !chunking.TreeSitterAvailable() {
+		rExp0 := e.graph("explain", "example.com/fixture/py.clean")
+		wantExit(t, rExp0, 0)
+		if !strings.Contains(rExp0.Out, "without tree-sitter") {
+			t.Errorf("graph with graph_treesitter=0 must show notice in explain under lite, got:\n%s", rExp0.Out)
+		}
+		rCallers0 := e.graph("callers", "example.com/fixture/py.clean")
+		wantExit(t, rCallers0, 0)
+		if !strings.Contains(rCallers0.Out, "without tree-sitter") {
+			t.Errorf("graph with graph_treesitter=0 must show notice in callers under lite, got:\n%s", rCallers0.Out)
+		}
+	}
+}
+
+func TestCLICallersShortNameFalseNotice(t *testing.T) {
+	docsDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(docsDir, "go.mod"), []byte("module example.com/m\n\ngo 1.22\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(docsDir, "a.py"), []byte("def clean():\n    pass\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(docsDir, "svc"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(docsDir, "svc", "z.go"), []byte("package svc\nfunc Run() { clean() }\nfunc clean() {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	indexDir := t.TempDir()
+	idxPath := filepath.Join(indexDir, "zz2")
+	if err := os.MkdirAll(idxPath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(idxPath, "zz2.meta.json"), []byte(`{"store_format":2}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var outBuf bytes.Buffer
+	indexing.BuildGraphIndex(indexing.GraphOptions{
+		Name:     "zz2",
+		DocsDir:  docsDir,
+		IndexDir: indexDir,
+		Stdout:   &outBuf,
+		Stderr:   &outBuf,
+	})
+
+	e := newCLIEnv(t)
+	r := e.run("graph", "callers", "clean", "--index", "zz2", "--index-dir", indexDir)
+	wantExit(t, r, 0)
+	if !strings.Contains(r.Out, "example.com/m/svc.Run") {
+		t.Fatalf("expected caller svc.Run, got:\n%s", r.Out)
+	}
+	if strings.Contains(r.Out, "without tree-sitter") {
+		t.Fatalf("BUG: callers of the Go symbol svc.clean carry a non-Go notice (resolution mismatch):\n%s", r.Out)
+	}
+}
+
+func TestCLIDepsShortNameClean_NoNoticeOnGo(t *testing.T) {
+	docsDir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(docsDir, "svc"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(docsDir, "go.mod"), []byte("module example.com/m\n\ngo 1.22\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(docsDir, "a.py"), []byte("def clean(): pass\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(docsDir, "svc", "z.go"), []byte("package svc\nfunc clean() { helper() }\nfunc helper() {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	indexDir := t.TempDir()
+	idxPath := filepath.Join(indexDir, "zz3")
+	if err := os.MkdirAll(idxPath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(idxPath, "zz3.meta.json"), []byte(`{"store_format":2}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var outBuf bytes.Buffer
+	indexing.BuildGraphIndex(indexing.GraphOptions{
+		Name:     "zz3",
+		DocsDir:  docsDir,
+		IndexDir: indexDir,
+		Stdout:   &outBuf,
+		Stderr:   &outBuf,
+	})
+
+	e := newCLIEnv(t)
+	r := e.run("graph", "deps", "clean", "--index", "zz3", "--index-dir", indexDir)
+	wantExit(t, r, 0)
+	if !strings.Contains(r.Out, "example.com/m/svc.helper") {
+		t.Fatalf("expected callee svc.helper, got:\n%s", r.Out)
+	}
+	if strings.Contains(r.Out, "without tree-sitter") {
+		t.Fatalf("BUG: deps of the Go symbol svc.clean carry a non-Go notice (DirectionCallees mismatch):\n%s", r.Out)
+	}
+}
+
+// TestCLICGraphPath_NoPathNonGoNotice pins the advisory on the error branch of
+// `graph path`: graphstore returns the no-path error (not an empty path) when
+// the endpoints are distinct, so the notice must be emitted there, not only in
+// the from==to branch (v3 review Finding 3).
+func TestCLICGraphPath_NoPathNonGoNotice(t *testing.T) {
+	e := newCLIEnv(t)
+
+	docsDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(docsDir, "go.mod"), []byte("module example.com/m\n\ngo 1.22\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(docsDir, "a.py"), []byte("def clean():\n    pass\n\ndef build():\n    pass\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(docsDir, "svc"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(docsDir, "svc", "z.go"), []byte("package svc\nfunc alpha() {}\nfunc beta() {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	indexDir := t.TempDir()
+	idxPath := filepath.Join(indexDir, "pathlite")
+	if err := os.MkdirAll(idxPath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(idxPath, "pathlite.meta.json"), []byte(`{"store_format":2}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var outBuf bytes.Buffer
+	indexing.BuildGraphIndex(indexing.GraphOptions{
+		Name:     "pathlite",
+		DocsDir:  docsDir,
+		IndexDir: indexDir,
+		Stdout:   &outBuf,
+		Stderr:   &outBuf,
+	})
+	if _, err := os.Stat(filepath.Join(idxPath, "pathlite.db")); err != nil {
+		t.Fatalf("graph index not built: %v\n%s", err, outBuf.String())
+	}
+
+	graph := func(args ...string) cliResult {
+		full := append([]string{"graph"}, args...)
+		full = append(full, "--index", "pathlite", "--index-dir", indexDir)
+		return e.run(full...)
+	}
+
+	// Distinct lite non-Go symbols with no route: the error branch must carry
+	// the advisory.
+	r := graph("path", "example.com/m.clean", "example.com/m.build")
+	wantExit(t, r, 1)
+	mustContain(t, "distinct no-path Python symbols", r.Err, "no path within 10 hops")
+	if chunking.TreeSitterAvailable() {
+		if strings.Contains(r.Err, "without tree-sitter") {
+			t.Fatalf("treesitter build must not include the notice, got:\n%s", r.Err)
+		}
+	} else if !strings.Contains(r.Err, indexing.NonGoNoticeMessage) {
+		t.Fatalf("BUG: distinct no-path Python symbols carry no non-Go notice on stderr:\n%s", r.Err)
+	}
+
+	// Distinct Go symbols with no route: no notice.
+	rGo := graph("path", "example.com/m/svc.alpha", "example.com/m/svc.beta")
+	wantExit(t, rGo, 1)
+	mustContain(t, "distinct no-path Go symbols", rGo.Err, "no path within 10 hops")
+	if strings.Contains(rGo.Err, "without tree-sitter") {
+		t.Fatalf("BUG: distinct no-path Go symbols carry a non-Go notice:\n%s", rGo.Err)
+	}
 }

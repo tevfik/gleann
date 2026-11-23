@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+
+	"github.com/tevfik/gleann/pkg/gleann"
 )
 
 // openAPISpec returns the OpenAPI 3.0 specification as a Go map.
@@ -115,6 +117,35 @@ func paramName() map[string]any {
 // refSchema returns a $ref to a component schema.
 func refSchema(name string) map[string]any {
 	return map[string]any{"$ref": "#/components/schemas/" + name}
+}
+
+// paramListLimit returns the ?limit= query parameter of the passage/section
+// listing routes (default gleann.DefaultPassageListLimit, at most
+// gleann.MaxPassageListLimit), so the spec cannot drift from the validation.
+func paramListLimit() map[string]any {
+	return map[string]any{
+		"name":        "limit",
+		"in":          "query",
+		"required":    false,
+		"description": fmt.Sprintf("Page size (default %d, maximum %d)", gleann.DefaultPassageListLimit, gleann.MaxPassageListLimit),
+		"schema": map[string]any{
+			"type":    "integer",
+			"minimum": 1,
+			"maximum": gleann.MaxPassageListLimit,
+			"default": gleann.DefaultPassageListLimit,
+		},
+	}
+}
+
+// paramListOffset returns the ?offset= query parameter of the listing routes.
+func paramListOffset() map[string]any {
+	return map[string]any{
+		"name":        "offset",
+		"in":          "query",
+		"required":    false,
+		"description": "Rows to skip before the page (default 0)",
+		"schema":      map[string]any{"type": "integer", "minimum": 0, "default": 0},
+	}
 }
 
 // handleOpenAPISpec serves the OpenAPI 3.0 JSON specification.

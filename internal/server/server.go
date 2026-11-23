@@ -92,8 +92,9 @@ type Server struct {
 	autoIndexer *background.AutoIndexer
 	aiMu        sync.Mutex // guards autoIndexer
 
-	bus    *eventbus.Bus // In-process pub/sub for lifecycle events
-	stopCh chan struct{} // closed on Stop() to signal background goroutines
+	bus      *eventbus.Bus // In-process pub/sub for lifecycle events
+	stopCh   chan struct{} // closed on Stop() to signal background goroutines
+	stopOnce sync.Once
 
 	sec *securityConfig // resolved by PrepareAuth
 
@@ -250,6 +251,8 @@ func (s *Server) buildMux() *http.ServeMux {
 	mux.HandleFunc("GET /api/indexes", s.handleListIndexes)
 	mux.HandleFunc("GET /api/storage", s.handleStorage)
 	mux.HandleFunc("GET /api/indexes/{name}", s.handleGetIndex)
+	mux.HandleFunc("GET /api/indexes/{name}/passages", s.handleListPassages)
+	mux.HandleFunc("GET /api/indexes/{name}/sections", s.handleListSections)
 	mux.HandleFunc("POST /api/indexes/{name}/search", s.handleSearch)
 	mux.HandleFunc("POST /api/indexes/{name}/ask", s.handleAsk)
 	mux.HandleFunc("POST /api/indexes/{name}/build", s.handleBuild)
@@ -463,9 +466,11 @@ func (s *Server) Stop(ctx context.Context) error {
 
 	// Signal background goroutines to stop and cancel lifetime-bound work
 	// (self-exec'd builds, downloads, searcher loads).
-	if s.stopCh != nil {
-		close(s.stopCh)
-	}
+	s.stopOnce.Do(func() {
+		if s.stopCh != nil {
+			close(s.stopCh)
+		}
+	})
 	s.lifetime()
 	s.lifeCancel()
 
@@ -1232,6 +1237,7 @@ type buildRequest struct {
 	Tags        []string       `json:"tags,omitempty"`
 	Description string         `json:"description,omitempty"`
 	MCPExposed  *bool          `json:"mcp_exposed,omitempty"`
+	Backend     string         `json:"backend,omitempty"`
 }
 
 func (s *Server) handleBuild(w http.ResponseWriter, r *http.Request) {
@@ -1245,6 +1251,13 @@ func (s *Server) handleBuild(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
 		return
+	}
+
+	if req.Backend != "" {
+		if _, err := gleann.GetBackend(req.Backend); err != nil {
+			writeError(w, http.StatusBadRequest, "unknown backend: "+req.Backend)
+			return
+		}
 	}
 
 	// Build items from texts or use provided items.
@@ -1262,6 +1275,9 @@ func (s *Server) handleBuild(w http.ResponseWriter, r *http.Request) {
 	}
 
 	cfg, emb := s.cfgAndEmbedder()
+	if req.Backend != "" {
+		cfg.Backend = req.Backend
+	}
 	if meta, err := gleann.GetIndexMeta(cfg.IndexDir, name); err == nil {
 		if meta.EmbeddingModel != "" && meta.EmbeddingModel != emb.ModelName() {
 			writeError(w, http.StatusBadRequest, fmt.Sprintf("model mismatch: index uses '%s', current is '%s'. please delete index first", meta.EmbeddingModel, emb.ModelName()))
@@ -1457,7 +1473,7 @@ func (s *Server) removeIndexRetrying(name string) error {
 	deadline := time.Now().Add(removeIndexTimeout)
 	for {
 		err := gleann.RemoveIndex(s.cfg().IndexDir, name)
-		if err == nil || time.Now().After(deadline) {
+		if err == nil || errors.Is(err, gleann.ErrNotAnIndex) || time.Now().After(deadline) {
 			return err
 		}
 		time.Sleep(25 * time.Millisecond)

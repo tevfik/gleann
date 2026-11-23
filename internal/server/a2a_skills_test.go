@@ -142,7 +142,7 @@ func TestA2AMultimodal_PathMustBeInAllowedRoots(t *testing.T) {
 	if err := os.WriteFile(f, []byte("png"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	_, err := s.a2aMultimodalHandler(a2a.SkillContext{Query: f})
+	_, err := s.a2aMultimodalHandler(a2a.SkillContext{Query: f, Scope: "admin"})
 	if err == nil || !strings.Contains(err.Error(), "allowed_roots") {
 		t.Fatalf("want allowed_roots refusal, got %v", err)
 	}
@@ -160,7 +160,7 @@ func TestA2AMultimodal_DescribesImageThroughVisionModel(t *testing.T) {
 	s.config.MultimodalModel = "vision-x"
 	s.cfgMu.Unlock()
 
-	out, err := s.a2aMultimodalHandler(a2a.SkillContext{Query: "  " + img + " "})
+	out, err := s.a2aMultimodalHandler(a2a.SkillContext{Query: "  " + img + " ", Scope: "admin"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -174,7 +174,7 @@ func TestA2AMultimodal_DescribesImageThroughVisionModel(t *testing.T) {
 	rec.status = http.StatusInternalServerError
 	img2 := filepath.Join(dir, "other.png")
 	_ = os.WriteFile(img2, []byte("different bytes"), 0o644)
-	if _, err := s.a2aMultimodalHandler(a2a.SkillContext{Query: img2}); err == nil || !strings.Contains(err.Error(), "analysis failed") {
+	if _, err := s.a2aMultimodalHandler(a2a.SkillContext{Query: img2, Scope: "admin"}); err == nil || !strings.Contains(err.Error(), "analysis failed") {
 		t.Errorf("vision model failure: %v", err)
 	}
 }

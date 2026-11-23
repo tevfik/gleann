@@ -11,10 +11,8 @@ import (
 
 func (s *Server) buildDefTool() mcp.Tool {
 	return mcp.Tool{
-		Name: "gleann_def",
-		Description: "Go-to-definition for symbols (functions, methods, types, classes, structs). " +
-			"Returns file:line, signature, and documentation in a compact format (~500 tokens). " +
-			"Fastest way to understand an API without reading entire files.",
+		Name:        "gleann_def",
+		Description: "Go-to-definition for symbols (functions, methods, types, classes, structs). PREFER this over grep \"func X\" / \"type X\" when you know a symbol name: it uses the indexed code graph (falling back to semantic search), so it finds the real declaration, not every textual mention. Returns file:line, signature, and documentation in a compact format (~500 tokens). Fastest way to understand an API without reading entire files. Use gleann_search for behavior and graph tools for callers.",
 		InputSchema: mcp.ToolInputSchema{
 			Type: "object",
 			Properties: map[string]interface{}{

@@ -27,10 +27,11 @@ import (
 func (s *Server) buildSearchIDsTool() mcp.Tool {
 	return mcp.Tool{
 		Name: "gleann_search_ids",
-		Description: "Compact semantic search — returns only passage IDs, scores, and metadata " +
-			"(no full text).  Use this to discover relevant passages at low token cost, then " +
-			"call gleann_fetch with the IDs you actually want to read.  " +
-			"This two-step pattern uses 5-10x fewer tokens than gleann_search for large indexes.",
+		Description: "Compact semantic search for the progressive-disclosure workflow — returns " +
+			"only passage IDs, scores, and metadata (no full text). Use this instead of " +
+			"gleann_search when a large index would flood context: discover relevant passages " +
+			"cheaply, then call gleann_fetch with only the IDs you need. Prefer this over grep " +
+			"for conceptual/cross-file discovery. 5-10x fewer tokens than gleann_search.",
 		InputSchema: mcp.ToolInputSchema{
 			Type: "object",
 			Properties: map[string]interface{}{

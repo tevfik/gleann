@@ -21,7 +21,7 @@ func canonicalREST(t *testing.T, env *analysisgolden.Env, status int, body []byt
 			sort.Slice(arr, func(i, j int) bool { return arr[i].(string) < arr[j].(string) })
 		}
 	}
-	for _, k := range []string{"direct_callers", "transitive_callers", "affected_files"} {
+	for _, k := range []string{"direct_callers", "transitive_callers", "test_callers", "affected_files"} {
 		sortStrings(k)
 	}
 	if arr, ok := v["results"].([]any); ok {

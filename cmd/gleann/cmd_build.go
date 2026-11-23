@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -24,6 +25,7 @@ import (
 	"github.com/tevfik/gleann/internal/indexing"
 	"github.com/tevfik/gleann/internal/vault"
 	"github.com/tevfik/gleann/pkg/gleann"
+	"github.com/tevfik/gleann/pkg/walker"
 )
 
 var exitFunc = os.Exit
@@ -89,7 +91,7 @@ Options:
   --dry-run               Estimate workload & Graham makespan bounds without indexing
   --max-minutes <n>       Maximum acceptable minutes before halting for decision gate (Exit 4)
   --approve <action>      Decision approval: proceed, fast, or cancel
-  --yes, -y               Auto-approve decision gate (proceed)
+  --yes, -y               Auto-approve decision gate (proceed); also needed to index a home directory or /
   --progress <surface>    Progress reporting surface: plain (default), json, none
   --include-submodules    Include Git submodule directories (default: excluded)
   --tag <tag>             Assign governance tag(s) (comma-separated or multiple)
@@ -186,12 +188,22 @@ func cmdBuild(args []string) {
 	if approve == "" && (hasFlag(args, "--yes") || hasFlag(args, "-y")) {
 		approve = "proceed"
 	}
+	// A home directory or a file system root is almost never what should be
+	// indexed (`--docs .` typed in the wrong directory); reading it can take
+	// hours. Stop before any work unless the user approved.
+	if what := broadDocsTarget(docsDir); what != "" && approve == "" && !dryRun {
+		fmt.Fprintf(os.Stderr, "error: --docs %s is %s; a build would read every file below it.\n", docsDir, what)
+		fmt.Fprintln(os.Stderr, "Run the command from the project directory or pass its path, or add --yes to index this directory anyway.")
+		exitFunc(2)
+		return
+	}
 	jsonOutput := hasFlag(args, "--json")
 	progressSurface := gleann.ProgressSurface(getFlag(args, "--progress"))
 	pacer := gleann.NewPacer(progressSurface, os.Stderr)
 
 	// Pre-flight job estimation using Graham (1969) list scheduling bounds
-	est, err := gleann.EstimateJob(docsDir, runtime.NumCPU())
+	est, err := gleann.EstimateJobWalk(docsDir, runtime.NumCPU(),
+		walker.Options{IncludeSubmodules: hasFlag(args, "--include-submodules"), FollowSymlinks: true})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error estimating job: %v\n", err)
 		exitFunc(1)
@@ -237,7 +249,7 @@ func cmdBuild(args []string) {
 	config := getConfig(args)
 	applySavedConfig(&config, args)
 
-	if err := initLlamaCPP(context.Background(), &config); err != nil {
+	if err := initLlamaCPPQuiet(context.Background(), &config, hasFlag(args, "--quiet")); err != nil {
 		fmt.Fprintf(os.Stderr, "error initializing llamacpp: %v\n", err)
 		exitFunc(1)
 		return
@@ -450,7 +462,7 @@ Options:
 	config := getConfig(args)
 	applySavedConfig(&config, args)
 
-	if err := initLlamaCPP(context.Background(), &config); err != nil {
+	if err := initLlamaCPPQuiet(context.Background(), &config, hasFlag(args, "--quiet")); err != nil {
 		fmt.Fprintf(os.Stderr, "error initializing llamacpp: %v\n", err)
 		exitFunc(1)
 	}
@@ -638,7 +650,19 @@ func cmdSync(args []string) {
 
 	stdOpts := stdOptions(config, mode, noPlugins, hasFlag(args, "--include-submodules"))
 	stdOpts.ModelExplicit = modelExplicit(args)
-	stdOpts.Progress = embedProgress(getFlag(args, "--progress"), name)
+
+	// --quiet silences the sync status lines and the embedded llama-server
+	// startup, which both go through opts.Stdout. Progress goes to stderr; a
+	// bare --quiet also silences it unless --progress names a surface.
+	quiet := hasFlag(args, "--quiet")
+	progressSurface := getFlag(args, "--progress")
+	if quiet {
+		stdOpts.Stdout = io.Discard
+		if progressSurface == "" {
+			progressSurface = string(gleann.SurfaceNone)
+		}
+	}
+	stdOpts.Progress = embedProgress(progressSurface, name)
 	opts := indexing.SyncOptions{
 		Options:     stdOpts,
 		Name:        name,
@@ -680,4 +704,21 @@ func buildGraphIndex(name, docsDir, indexDir string, pluginDocs []*PluginDoc, ch
 // generateGraphReportFile generates a Markdown graph report to outputPath.
 func generateGraphReportFile(indexName, indexDir, docsDir, outputPath string) error {
 	return indexing.GenerateGraphReport(indexName, indexDir, docsDir, outputPath)
+}
+
+// broadDocsTarget says what dir is when it is too broad to index by accident:
+// "your home directory" or "the file system root"; "" otherwise.
+func broadDocsTarget(dir string) string {
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		return ""
+	}
+	abs = filepath.Clean(abs)
+	if abs == filepath.VolumeName(abs)+string(filepath.Separator) {
+		return "the file system root"
+	}
+	if home, err := os.UserHomeDir(); err == nil && home != "" && abs == filepath.Clean(home) {
+		return "your home directory"
+	}
+	return ""
 }

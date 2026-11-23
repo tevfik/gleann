@@ -93,9 +93,26 @@ type PluginManager struct {
 // auto-started plugin to become healthy. Variable so tests can shorten it.
 var pluginStartTimeout = 10 * time.Second
 
+// defaultPluginStopGrace leaves a plugin time to finish an in-flight document
+// conversion after SIGINT; the old 2s cut large conversions short.
+const defaultPluginStopGrace = 10 * time.Second
+
 // pluginStopGrace is how long a plugin gets to exit after SIGINT before it
-// is killed, and how long we then wait for the kill to be reaped.
-var pluginStopGrace = 2 * time.Second
+// is killed, and how long we then wait for the kill to be reaped. It is a
+// variable so tests can shorten it; GLEANN_PLUGIN_STOP_GRACE overrides it.
+var pluginStopGrace = defaultPluginStopGrace
+
+// pluginStopGraceValue returns the configured grace period: a positive Go
+// duration in GLEANN_PLUGIN_STOP_GRACE (for example "30s" or "500ms"),
+// otherwise pluginStopGrace. Invalid and non-positive values are ignored.
+func pluginStopGraceValue() time.Duration {
+	if v := os.Getenv("GLEANN_PLUGIN_STOP_GRACE"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil && d > 0 {
+			return d
+		}
+	}
+	return pluginStopGrace
+}
 
 // pluginStartedHook, when non-nil, is called after a plugin process has been
 // spawned with the channel that is closed once it is reaped. Test-only.
@@ -143,56 +160,21 @@ func NewPluginManager() (*PluginManager, error) {
 }
 
 // Close gracefully stops any plugins that were spawned by this manager.
-// Each process is sent SIGINT, given pluginStopGrace to exit, then killed;
-// Close waits (bounded) for the processes to be reaped.
+// Every process is sent SIGINT, all of them get the same grace period to
+// exit, then the stragglers are killed and reaped. Waiting for the whole set
+// at once keeps shutdown bounded when several plugins are running.
 func (m *PluginManager) Close() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	type running struct {
-		proc *os.Process
-		done chan struct{}
-	}
-	var procs []running
+	procs := make([]pluginProcess, 0, len(m.activeCmds))
 	for _, cmd := range m.activeCmds {
 		if cmd == nil || cmd.Process == nil {
 			continue
 		}
-		done := m.exited[cmd]
-		if done == nil {
-			// Not started by EnsurePluginRunning (no reaper goroutine);
-			// nothing to wait on, just make sure it is gone.
-			_ = cmd.Process.Kill()
-			continue
-		}
-		_ = cmd.Process.Signal(os.Interrupt)
-		procs = append(procs, running{cmd.Process, done})
+		procs = append(procs, pluginProcess{proc: cmd.Process, exited: m.exited[cmd]})
 	}
-
-	deadline := time.After(pluginStopGrace)
-	for _, p := range procs {
-		select {
-		case <-p.done:
-		case <-deadline:
-			deadline = nil // expired: stop waiting for the rest gracefully
-		}
-		if deadline == nil {
-			break
-		}
-	}
-	killWait := time.After(pluginStopGrace)
-	for _, p := range procs {
-		select {
-		case <-p.done:
-			continue
-		default:
-		}
-		_ = p.proc.Kill()
-		select {
-		case <-p.done:
-		case <-killWait:
-		}
-	}
+	stopPlugins(procs, pluginStopGraceValue())
 
 	for _, f := range m.logFiles {
 		if f != nil {
@@ -207,23 +189,81 @@ func (m *PluginManager) Close() {
 	m.tokMu.Unlock()
 }
 
+// pluginProcess is a spawned plugin and the channel its reaper goroutine
+// closes once cmd.Wait has returned. exited is nil for a process this manager
+// did not spawn; such a process has no reaper to wait for.
+type pluginProcess struct {
+	proc   *os.Process
+	exited <-chan struct{}
+}
+
+// stopPlugins shuts processes down as one batch: SIGINT to every live process
+// first, one shared grace period for all of them to exit, then SIGKILL and one
+// shared period to reap. A process without a reaper is killed outright, and a
+// SIGINT that cannot be delivered (notably on Windows) skips the graceful
+// wait. A nil or already-exited process is ignored.
+func stopPlugins(procs []pluginProcess, grace time.Duration) {
+	graceful := make([]pluginProcess, 0, len(procs))
+	var survivors []pluginProcess
+	for _, p := range procs {
+		if p.proc == nil {
+			continue
+		}
+		if p.exited == nil {
+			// Not started by EnsurePluginRunning (no reaper goroutine):
+			// nothing to wait on, just make sure it is gone.
+			_ = p.proc.Kill()
+			continue
+		}
+		select {
+		case <-p.exited: // already exited and reaped
+			continue
+		default:
+		}
+		if err := p.proc.Signal(os.Interrupt); err != nil {
+			// Windows does not support os.Interrupt; a process that just
+			// exited fails here too. Either way there is no graceful window.
+			survivors = append(survivors, p)
+			continue
+		}
+		graceful = append(graceful, p)
+	}
+
+	deadline := time.Now().Add(grace)
+	for _, p := range graceful {
+		if !waitExited(p.exited, deadline) {
+			survivors = append(survivors, p)
+		}
+	}
+	killDeadline := time.Now().Add(grace)
+	for _, p := range survivors {
+		_ = p.proc.Kill()
+	}
+	for _, p := range survivors {
+		waitExited(p.exited, killDeadline)
+	}
+}
+
+// waitExited reports whether done was closed before deadline. A process with
+// no reaper channel cannot be waited for, so it counts as gone.
+func waitExited(done <-chan struct{}, deadline time.Time) bool {
+	if done == nil {
+		return true
+	}
+	select {
+	case <-done:
+		return true
+	case <-time.After(time.Until(deadline)):
+		return false
+	}
+}
+
 // stopPluginLocked stops (if still running) and forgets the process tracked
 // for name, and closes its log file. Caller must hold m.mu.
 func (m *PluginManager) stopPluginLocked(name string) {
 	if cmd := m.activeCmds[name]; cmd != nil {
 		if cmd.Process != nil {
-			done := m.exited[cmd]
-			select {
-			case <-done: // already exited and reaped (nil done never matches)
-			default:
-				_ = cmd.Process.Kill()
-				if done != nil {
-					select {
-					case <-done:
-					case <-time.After(pluginStopGrace):
-					}
-				}
-			}
+			stopPlugins([]pluginProcess{{proc: cmd.Process, exited: m.exited[cmd]}}, pluginStopGraceValue())
 		}
 		delete(m.exited, cmd)
 	}

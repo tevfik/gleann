@@ -156,7 +156,7 @@ func settingsFields() []settings.Field[OnboardResult] {
 			Apply: settings.Restart,
 			Bind:  func(c *OnboardResult) any { return &c.IndexDir }},
 		{Key: "backend", Label: "Vector backend", Type: settings.Select, Group: groupIndex, Default: gleann.DefaultConfig().Backend,
-			Help:    "Engine for new indexes. DiskANN keeps RAM low; HNSW is in memory; FAISS needs the full build.",
+			Help:    "Engine for new indexes. HNSW is in memory (fast); DiskANN keeps RAM low; FAISS needs the full build.",
 			Options: backendOptions(),
 			Bind:    func(c *OnboardResult) any { return &c.Backend }},
 		{Key: "storage_mode", Label: "Vector storage", Type: settings.Select, Group: groupIndex, Default: string(gleann.StorageStore),
@@ -423,8 +423,8 @@ func rerankProviderOptions() []settings.Option {
 
 func backendOptions() []settings.Option {
 	opts := settings.Opts(
-		"diskann", "DiskANN — disk-efficient, low RAM",
-		"hnsw", "HNSW — in memory, fast")
+		"hnsw", "HNSW — in memory, fast",
+		"diskann", "DiskANN — disk-efficient, low RAM")
 	if gleann.IsFaissSupported() {
 		opts = append(opts, settings.Opts(
 			"faiss", "FAISS — SIMD-accelerated",

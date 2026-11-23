@@ -281,9 +281,12 @@ func TestRecallVector_IndexSelection(t *testing.T) {
 	}
 }
 
-func TestRecallGraphImpl_IsNilByDesign(t *testing.T) {
+func TestRecallGraph_EmptyRequestIsNil(t *testing.T) {
 	s := unifiedServer(t)
-	if s.recallGraphImpl() != nil || s.recallGraph(t.Context(), UnifiedRecallRequest{}) != nil {
-		t.Error("recall graph is a documented no-op returning nil")
+	// No query and no accessible index: the graph layer stays nil so
+	// multi-layer recall answers cleanly. Positive graph-layer behaviour is
+	// covered in unified_memory_graph_test.go.
+	if s.recallGraph(t.Context(), UnifiedRecallRequest{}) != nil {
+		t.Error("empty recall request must yield a nil graph")
 	}
 }

@@ -50,8 +50,9 @@ var rerankExpandFlags = flagSet{
 	"--expand": false, "--no-expand": false, "--expand-model": true,
 }
 
-// searchFlags is every flag `gleann search` understands. "--top" and
-// "--base-url" are accepted for old scripts although nothing reads them.
+// searchFlags is every flag `gleann search` understands. "--top" is accepted
+// for old scripts although nothing reads it. "--base-url" and "--api-key" are
+// read by the LLM client of --expand (buildChatConfig).
 var searchFlags = configFlags.union(rerankExpandFlags, flagSet{
 	"--all": false, "--json": false, "--no-hybrid": false, "--hybrid-alpha": true,
 	"--graph": false, "--one-per-file": false, "--include-tests": false,

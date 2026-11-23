@@ -2,10 +2,53 @@ package main
 
 import (
 	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
+
+// TestMCPUsageStatesCoreToolCount pins the help text to the real core profile:
+// toolEnabledForProfile registers 11 essentials, and docs/mcp.md says 11.
+func TestMCPUsageStatesCoreToolCount(t *testing.T) {
+	src, err := os.ReadFile("cmd_mcp.go")
+	if err != nil {
+		t.Fatalf("read cmd_mcp.go: %v", err)
+	}
+	if !strings.Contains(string(src), "core (default, 11 essential tools)") {
+		t.Errorf("--tools flag help does not state the 11-tool core count")
+	}
+	if strings.Contains(string(src), "~9") {
+		t.Errorf("--tools flag help still contains the stale ~9 count")
+	}
+
+	old := os.Stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+	os.Stdout = w
+	defer func() { os.Stdout = old }()
+	printMCPUsage()
+	if err := w.Close(); err != nil {
+		t.Fatalf("close pipe: %v", err)
+	}
+	os.Stdout = old
+	out, err := io.ReadAll(r)
+	if err != nil {
+		t.Fatalf("read usage: %v", err)
+	}
+	_ = r.Close()
+
+	usage := string(out)
+	if !strings.Contains(usage, "core (default, 11 tools)") {
+		t.Errorf("usage text does not state the 11-tool core count:\n%s", usage)
+	}
+	if strings.Contains(usage, "~9") {
+		t.Errorf("usage text still contains the stale ~9 count:\n%s", usage)
+	}
+}
 
 func TestMergeMCPServerConfig_NewFile(t *testing.T) {
 	tmpDir := t.TempDir()

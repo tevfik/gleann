@@ -2,8 +2,11 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
+	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -71,5 +74,56 @@ func TestCmdRemoveFlagEqualsAndDoubleDash(t *testing.T) {
 	}
 	if !indexExists(indexDir, "bar") {
 		t.Error("index bar must not be removed")
+	}
+}
+
+func runRemove(t *testing.T, args ...string) (stdout, stderr string, exitCode int) {
+	t.Helper()
+	origExit, origOut, origErr := exitFunc, os.Stdout, os.Stderr
+	defer func() { exitFunc, os.Stdout, os.Stderr = origExit, origOut, origErr }()
+
+	rOut, wOut, _ := os.Pipe()
+	rErr, wErr, _ := os.Pipe()
+	os.Stdout, os.Stderr = wOut, wErr
+	exitFunc = func(code int) {
+		exitCode = code
+		panic(fmt.Sprintf("exit_%d", code))
+	}
+	func() {
+		defer func() {
+			if r := recover(); r != nil && !strings.HasPrefix(fmt.Sprint(r), "exit_") {
+				panic(r)
+			}
+		}()
+		cmdRemove(args)
+	}()
+	wOut.Close()
+	wErr.Close()
+	o, _ := io.ReadAll(rOut)
+	e, _ := io.ReadAll(rErr)
+	return string(o), string(e), exitCode
+}
+
+func TestCmdRemoveUnmatchedLiteralNameDoesNotDeleteDirectory(t *testing.T) {
+	indexDir := t.TempDir()
+	createTestIndex(t, indexDir, "valid")
+	userDir := filepath.Join(indexDir, "src")
+	if err := os.MkdirAll(userDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(userDir, "main.go"), []byte("package main"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, stderr, _ := runRemove(t, "src", "--index-dir", indexDir)
+
+	if !strings.Contains(stderr, "not a gleann index") {
+		t.Errorf("stderr = %q, want 'not a gleann index'", stderr)
+	}
+	if !indexExists(indexDir, "src") {
+		t.Fatal("non-index directory src was deleted by cmdRemove!")
+	}
+	if _, err := os.Stat(filepath.Join(userDir, "main.go")); err != nil {
+		t.Fatalf("src/main.go was lost: %v", err)
 	}
 }

@@ -41,9 +41,25 @@ func FetchLatestRelease(ctx context.Context, owner, repo string) (*Release, erro
 
 var versionRe = regexp.MustCompile(`v?(\d+)\.(\d+)\.(\d+)`)
 
+var pseudoVersionRe = regexp.MustCompile(`^v?\d+\.(0\.0-|\d+\.\d+-([^+]*\.)?0\.)\d{14}-[0-9a-fA-F]+`)
+
+// IsPseudoVersion reports whether s is a Go module pseudo-version
+// (e.g. "v0.0.0-20261120000000-abcdef123456" or
+// "v1.2.4-0.20261120000000-abcdef123456").
+func IsPseudoVersion(s string) bool {
+	s = strings.TrimSpace(s)
+	s = strings.TrimPrefix(s, "gleann ")
+	return pseudoVersionRe.MatchString(s)
+}
+
 // ParseVersion reads the first MAJOR.MINOR.PATCH in s ("v1.8.6",
-// "gleann v1.8.6-arm64-ab12"). ok is false for "dev" and other strings.
+// "gleann v1.8.6-arm64-ab12"). ok is false for "dev", pseudo-versions,
+// builds of a modified tree ("v1.8.6+dirty", as the go command stamps a
+// local build) and other strings.
 func ParseVersion(s string) (v [3]int, ok bool) {
+	if IsPseudoVersion(s) || strings.Contains(s, "+dirty") {
+		return v, false
+	}
 	m := versionRe.FindStringSubmatch(s)
 	if m == nil {
 		return v, false

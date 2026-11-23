@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -442,18 +443,127 @@ func cmdGraphWiki(args []string, config gleann.Config) {
 	fmt.Printf("✅ Wiki generated: %d articles in %s/\n", len(result.Communities)+1, output)
 }
 
+const (
+	hookMarkerStart = "# BEGIN GLEANN HOOK"
+	hookMarkerEnd   = "# END GLEANN HOOK"
+)
+
+// gitHooksDir locates the git hooks directory using git rev-parse --git-path hooks,
+// which correctly resolves worktrees, repository subdirectories, and core.hooksPath.
+// If the git command is unavailable or fails, it falls back to .git/hooks if .git is a directory.
+func gitHooksDir() (string, error) {
+	cmd := exec.Command("git", "rev-parse", "--git-path", "hooks")
+	out, err := cmd.Output()
+	if err == nil {
+		p := filepath.Clean(strings.TrimSpace(string(out)))
+		if p != "" {
+			return p, nil
+		}
+	}
+	// Fallback when git CLI is unavailable or in mock test environments
+	if fi, err := os.Stat(".git"); err == nil && fi.IsDir() {
+		return filepath.Join(".git", "hooks"), nil
+	}
+	return "", fmt.Errorf("not in a git repository")
+}
+
+// hasGleannHook reports whether a post-commit hook holds gleann's section:
+// the marked one, or the unmarked one older versions wrote. A hook of the
+// user's that merely mentions gleann is not ours.
+func hasGleannHook(content string) bool {
+	return strings.Contains(content, hookMarkerStart) ||
+		strings.Contains(content, "gleann: auto-rebuild graph index")
+}
+
+func removeGleannHook(content string) (string, bool) {
+	if start := strings.Index(content, hookMarkerStart); start != -1 {
+		end := strings.Index(content, hookMarkerEnd)
+		if end != -1 && end >= start {
+			end += len(hookMarkerEnd)
+			before := strings.TrimRight(content[:start], "\r\n")
+			after := strings.TrimLeft(content[end:], "\r\n")
+			if before != "" && after != "" {
+				return before + "\n" + after, true
+			}
+			if before != "" {
+				return before, true
+			}
+			return after, true
+		}
+	}
+
+	// Legacy hook without markers
+	lines := strings.Split(content, "\n")
+	startLine := -1
+	endLine := -1
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if startLine == -1 {
+			if strings.Contains(trimmed, "gleann: auto-rebuild graph index") {
+				startLine = i
+				if i > 0 && strings.HasPrefix(strings.TrimSpace(lines[i-1]), "#!") {
+					startLine = i - 1
+				}
+			}
+		} else {
+			if strings.Contains(trimmed, "index build") || strings.Contains(trimmed, "index sync") || strings.Contains(trimmed, "GLEANN_GRAPH_INDEX") {
+				for j := i; j < len(lines); j++ {
+					if strings.TrimSpace(lines[j]) == "fi" {
+						endLine = j
+						break
+					}
+				}
+			}
+		}
+	}
+	if startLine != -1 {
+		if endLine == -1 {
+			endLine = len(lines) - 1
+		}
+		var kept []string
+		kept = append(kept, lines[:startLine]...)
+		if endLine+1 < len(lines) {
+			kept = append(kept, lines[endLine+1:]...)
+		}
+		return strings.Join(kept, "\n"), true
+	}
+
+	return content, false
+}
+
+func isHookEmpty(content string) bool {
+	lines := strings.Split(content, "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#!") {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
 // cmdGraphHook manages git hooks for automatic graph rebuild on commit.
 func cmdGraphHook(args []string, config gleann.Config) {
 	if len(args) < 1 {
 		fmt.Fprintln(os.Stderr, "Usage: gleann graph hook <install|uninstall|status>")
 		exitFunc(1)
+		return
 	}
 
-	// Find git root
-	gitDir := ".git/hooks"
-	if _, err := os.Stat(".git"); os.IsNotExist(err) {
+	switch args[0] {
+	case "install", "uninstall", "status":
+	default:
+		fmt.Fprintln(os.Stderr, "Usage: gleann graph hook <install|uninstall|status>")
+		exitFunc(1)
+		return
+	}
+
+	gitDir, err := gitHooksDir()
+	if err != nil {
 		fmt.Fprintln(os.Stderr, "error: not in a git repository")
 		exitFunc(1)
+		return
 	}
 
 	hookPath := filepath.Join(gitDir, "post-commit")
@@ -463,9 +573,10 @@ func cmdGraphHook(args []string, config gleann.Config) {
 		if err := os.MkdirAll(gitDir, 0o755); err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 			exitFunc(1)
+			return
 		}
 
-		hookScript := `#!/bin/sh
+		hookScript := hookMarkerStart + `
 # gleann: auto-rebuild graph index after commit
 # Installed by: gleann graph hook install
 # Remove with:  gleann graph hook uninstall
@@ -502,20 +613,37 @@ echo "gleann: rebuilding graph index ($(echo "$CODE_CHANGED" | wc -l | tr -d ' '
 # Note: user should set GLEANN_GRAPH_INDEX in their env or hook will be a no-op
 INDEX="${GLEANN_GRAPH_INDEX:-}"
 if [ -n "$INDEX" ]; then
-    $GLEANN_BIN index build "$INDEX" --docs . --graph 2>/dev/null &
+    $GLEANN_BIN index sync "$INDEX" 2>/dev/null &
 fi
-`
-		// Check if hook exists and is not ours
+` + hookMarkerEnd
+
+		var fullScript string
 		if data, err := os.ReadFile(hookPath); err == nil {
-			if !strings.Contains(string(data), "gleann:") {
-				// Append to existing hook
-				hookScript = string(data) + "\n" + hookScript
+			content := string(data)
+			if hasGleannHook(content) {
+				cleaned, _ := removeGleannHook(content)
+				cleaned = strings.TrimSpace(cleaned)
+				if cleaned == "" || isHookEmpty(cleaned) {
+					fullScript = "#!/bin/sh\n" + hookScript + "\n"
+				} else {
+					fullScript = cleaned + "\n\n" + hookScript + "\n"
+				}
+			} else {
+				existing := strings.TrimSpace(content)
+				if existing == "" {
+					fullScript = "#!/bin/sh\n" + hookScript + "\n"
+				} else {
+					fullScript = existing + "\n\n" + hookScript + "\n"
+				}
 			}
+		} else {
+			fullScript = "#!/bin/sh\n" + hookScript + "\n"
 		}
 
-		if err := os.WriteFile(hookPath, []byte(hookScript), 0o755); err != nil {
+		if err := os.WriteFile(hookPath, []byte(fullScript), 0o755); err != nil {
 			fmt.Fprintf(os.Stderr, "error writing hook: %v\n", err)
 			exitFunc(1)
+			return
 		}
 		fmt.Println("✅ Git post-commit hook installed")
 		fmt.Println("   Set GLEANN_GRAPH_INDEX=<name> to specify the index to rebuild")
@@ -527,27 +655,39 @@ fi
 			return
 		}
 		content := string(data)
-		if !strings.Contains(content, "gleann:") {
+		if !hasGleannHook(content) {
 			fmt.Println("No gleann hook found in post-commit")
 			return
 		}
-		// Remove our section
-		if err := os.Remove(hookPath); err != nil {
-			fmt.Fprintf(os.Stderr, "error: %v\n", err)
-			exitFunc(1)
+		cleaned, found := removeGleannHook(content)
+		if !found {
+			fmt.Println("No gleann hook found in post-commit")
+			return
+		}
+
+		if isHookEmpty(cleaned) {
+			// Remove our section
+			if err := os.Remove(hookPath); err != nil {
+				fmt.Fprintf(os.Stderr, "error: %v\n", err)
+				exitFunc(1)
+				return
+			}
+		} else {
+			cleaned = strings.TrimRight(cleaned, "\n") + "\n"
+			if err := os.WriteFile(hookPath, []byte(cleaned), 0o755); err != nil {
+				fmt.Fprintf(os.Stderr, "error: %v\n", err)
+				exitFunc(1)
+				return
+			}
 		}
 		fmt.Println("✅ Git post-commit hook removed")
 
 	case "status":
-		if data, err := os.ReadFile(hookPath); err == nil && strings.Contains(string(data), "gleann:") {
+		if data, err := os.ReadFile(hookPath); err == nil && hasGleannHook(string(data)) {
 			fmt.Println("✅ gleann post-commit hook is installed")
 		} else {
 			fmt.Println("❌ gleann post-commit hook is not installed")
 		}
-
-	default:
-		fmt.Fprintln(os.Stderr, "Usage: gleann graph hook <install|uninstall|status>")
-		exitFunc(1)
 	}
 }
 

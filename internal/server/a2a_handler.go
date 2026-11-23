@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"github.com/tevfik/gleann/internal/a2a"
+	"github.com/tevfik/gleann/internal/auth"
+	"github.com/tevfik/gleann/internal/indexing"
 	"github.com/tevfik/gleann/internal/multimodal"
 	"github.com/tevfik/gleann/internal/pathpolicy"
 	"github.com/tevfik/gleann/pkg/gleann"
@@ -195,6 +197,11 @@ func (s *Server) a2aMemoryHandler(ctx a2a.SkillContext) (string, error) {
 	// Detect intent: remember vs recall.
 	lq := strings.ToLower(query)
 	if strings.Contains(lq, "remember") || strings.Contains(lq, "hatırla") || strings.Contains(lq, "store") {
+		// Writing memory is an admin operation on every surface; a query
+		// token must not plant blocks that later get injected into agents.
+		if ctx.Scope != string(auth.ScopeAdmin) {
+			return "", fmt.Errorf("storing memory requires an admin token; scope %q may only read memory", ctx.Scope)
+		}
 		// Store as a memory block.
 		// Remove the "remember" prefix for cleaner storage.
 		content := query
@@ -303,12 +310,16 @@ func (s *Server) a2aCodeHandler(ctx a2a.SkillContext) (string, error) {
 			if ierr != nil {
 				return "", fmt.Errorf("impact analysis failed: %v", ierr)
 			}
-			return fmt.Sprintf(
+			msg := fmt.Sprintf(
 				"Impact of %q (index: %s):\n  Direct callers: %d\n  Transitive callers: %d\n  Affected files: %d\n  Depth searched: %d",
 				symbol, indexName,
 				len(impact.DirectCallers), len(impact.TransitiveCallers),
 				len(impact.AffectedFiles), impact.Depth,
-			), nil
+			)
+			if notice := a2aNotice(symbol, db, gleann.DirectionCallers); notice != "" {
+				msg += "\n" + notice
+			}
+			return msg, nil
 		}
 		nodes, err = db.Callees(symbol)
 		queryType = "callees"
@@ -323,16 +334,36 @@ func (s *Server) a2aCodeHandler(ctx a2a.SkillContext) (string, error) {
 		return "", fmt.Errorf("graph query (%s %q) failed: %v", queryType, symbol, err)
 	}
 
+	dir := gleann.DirectionCallees
+	if queryType == "callers" {
+		dir = gleann.DirectionCallers
+	}
+
 	if len(nodes) == 0 {
-		return fmt.Sprintf("No %s found for symbol %q in index %q.", queryType, symbol, indexName), nil
+		msg := fmt.Sprintf("No %s found for symbol %q in index %q.", queryType, symbol, indexName)
+		if notice := a2aNotice(symbol, db, dir); notice != "" {
+			msg += " " + notice
+		}
+		return msg, nil
 	}
 
 	var lines []string
 	for _, n := range nodes {
 		lines = append(lines, fmt.Sprintf("  - %s (%s)", n.FQN, n.Kind))
 	}
-	return fmt.Sprintf("%s of %q (index: %s):\n%s",
-		titleASCII(queryType), symbol, indexName, strings.Join(lines, "\n")), nil
+	res := fmt.Sprintf("%s of %q (index: %s):\n%s",
+		titleASCII(queryType), symbol, indexName, strings.Join(lines, "\n"))
+	if notice := a2aNotice(symbol, db, dir); notice != "" {
+		res += "\n" + notice
+	}
+	return res, nil
+}
+
+func a2aNotice(symbol string, db graphDBHandle, dir int) string {
+	if sh, ok := db.(interface{ GraphDB() gleann.GraphDB }); ok {
+		return indexing.NonGoSymbolNotice(symbol, sh.GraphDB(), dir)
+	}
+	return ""
 }
 
 // titleASCII upper-cases the first byte of an ASCII string. Replaces the
@@ -375,6 +406,13 @@ func (s *Server) a2aMultimodalHandler(ctx a2a.SkillContext) (string, error) {
 
 	// Otherwise, treat query as a file path.
 	filePath := strings.TrimSpace(ctx.Query)
+
+	// Reading a server-local file by path is an admin operation: a query
+	// token must not have local media read and summarised through the model.
+	// Attachments above carry their own bytes and stay query-allowed.
+	if ctx.Scope != string(auth.ScopeAdmin) {
+		return "", fmt.Errorf("analyzing a local file path requires an admin token; scope %q may only attach files", ctx.Scope)
+	}
 
 	// The query names a file the server reads and sends to the model, so it
 	// is held to allowed_roots like any other client-supplied path.

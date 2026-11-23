@@ -97,7 +97,9 @@ func (s *Server) buildInjectKGTool() mcpsdk.Tool {
 	return mcpsdk.Tool{
 		Name: "inject_knowledge_graph",
 		Description: "Inject Entity nodes and RELATES_TO edges into gleann's generic " +
-			"Knowledge Graph Memory Engine. The operation is idempotent (MERGE semantics). " +
+			"Knowledge Graph Memory Engine. Entity and relation rows are merged (no duplicate " +
+			"rows), but each call archives the previous node versions and re-embeds node " +
+			"content in the vector store, so repeating a payload has additional side effects. " +
 			"Nodes with non-empty 'content' are also indexed in the HNSW vector store.",
 		InputSchema: mcpsdk.ToolInputSchema{
 			Type: "object",

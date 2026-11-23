@@ -71,6 +71,8 @@ func TestHandleOpenAPISpec(t *testing.T) {
 		"/api/indexes/{name}/search",
 		"/api/indexes/{name}/ask",
 		"/api/indexes/{name}/build",
+		"/api/indexes/{name}/passages",
+		"/api/indexes/{name}/sections",
 		"/api/graph/{name}",
 		"/api/graph/{name}/toc",
 		"/api/graph/{name}/documents",
@@ -97,6 +99,8 @@ func TestHandleOpenAPISpec(t *testing.T) {
 		"SearchRequest", "SearchResponse", "SearchResult",
 		"AskRequest", "AskResponse",
 		"BuildRequest", "BuildItem",
+		"StoredPassage", "PassageListResponse",
+		"IndexSection", "SectionListResponse",
 		"GraphQueryRequest", "GraphQueryResponse", "GraphNode",
 		"GraphStatsResponse", "GraphIndexRequest", "Error",
 	}
@@ -264,5 +268,73 @@ func TestOpenAPISpec_BlocksTag(t *testing.T) {
 	}
 	if !found {
 		t.Error("missing 'blocks' tag in OpenAPI spec")
+	}
+}
+
+// TestOpenAPISpec_PassageListing documents GET /api/indexes/{name}/passages
+// and /sections: an operation with the {name} path parameter plus the
+// limit/offset query parameters, answering with a component schema.
+func TestOpenAPISpec_PassageListing(t *testing.T) {
+	s := newTestServer()
+	spec := s.openAPISpec()
+	paths := spec["paths"].(map[string]any)
+	schemas := spec["components"].(map[string]any)["schemas"].(map[string]any)
+
+	for _, c := range []struct{ path, schema string }{
+		{"/api/indexes/{name}/passages", "PassageListResponse"},
+		{"/api/indexes/{name}/sections", "SectionListResponse"},
+	} {
+		item, ok := paths[c.path].(map[string]any)
+		if !ok {
+			t.Errorf("missing path %q", c.path)
+			continue
+		}
+		get, ok := item["get"].(map[string]any)
+		if !ok {
+			t.Errorf("%s has no GET operation", c.path)
+			continue
+		}
+		if got, _ := get["operationId"].(string); got == "" {
+			t.Errorf("%s has no operationId", c.path)
+		}
+
+		params := map[string]bool{}
+		list, _ := get["parameters"].([]map[string]any)
+		for _, p := range list {
+			name, _ := p["name"].(string)
+			params[name] = true
+		}
+		for _, want := range []string{"name", "limit", "offset"} {
+			if !params[want] {
+				t.Errorf("%s: missing %q parameter", c.path, want)
+			}
+		}
+
+		resp, _ := get["responses"].(map[string]any)
+		ok200, _ := resp["200"].(map[string]any)
+		schema := ok200["content"].(map[string]any)["application/json"].(map[string]any)["schema"].(map[string]any)
+		if ref, _ := schema["$ref"].(string); ref != "#/components/schemas/"+c.schema {
+			t.Errorf("%s: 200 schema = %v, want %s", c.path, schema, c.schema)
+		}
+		if _, ok := schemas[c.schema]; !ok {
+			t.Errorf("missing schema %q", c.schema)
+		}
+	}
+
+	// The element schemas are referenced by the list responses.
+	for _, c := range []struct{ list, key, elem string }{
+		{"PassageListResponse", "passages", "StoredPassage"},
+		{"SectionListResponse", "sections", "IndexSection"},
+	} {
+		obj, _ := schemas[c.list].(map[string]any)
+		props, _ := obj["properties"].(map[string]any)
+		if props == nil {
+			t.Errorf("schema %q has no properties", c.list)
+			continue
+		}
+		items, _ := props[c.key].(map[string]any)["items"].(map[string]any)
+		if ref, _ := items["$ref"].(string); ref != "#/components/schemas/"+c.elem {
+			t.Errorf("%s.%s items = %v, want %s", c.list, c.key, items, c.elem)
+		}
 	}
 }

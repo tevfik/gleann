@@ -110,7 +110,7 @@ func TestOnboardAdvancedWizardWalkthrough(t *testing.T) {
 	if m.phase != phaseIndexDir || m.rerankEnabled {
 		t.Fatalf("phase=%d rerank=%v", m.phase, m.rerankEnabled)
 	}
-	m, _ = step(t, m, "enter", "enter") // index dir, backend (diskann)
+	m, _ = step(t, m, "enter", "enter") // index dir, backend (hnsw)
 	if m.phase != phaseMCP {
 		t.Fatalf("phase=%d", m.phase)
 	}
@@ -385,7 +385,7 @@ func TestOnboardOptionToggleHandlers(t *testing.T) {
 	if m.phase != phaseMenu {
 		t.Fatal("menu mode returns")
 	}
-	for i, want := range []string{"diskann", "hnsw", "faiss", "faiss-hybrid", "diskann"} {
+	for i, want := range []string{"hnsw", "diskann", "faiss", "faiss-hybrid", "hnsw"} {
 		m.backendOptionIdx = i
 		if got := m.selectedBackend(); got != want {
 			t.Errorf("backend %d = %q, want %q", i, got, want)

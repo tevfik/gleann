@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"runtime/debug"
 
 	_ "github.com/tevfik/gleann/pkg/backends"
 	"github.com/tevfik/gleann/pkg/gleann"
@@ -10,6 +11,29 @@ import (
 
 // version is set at build time via -ldflags "-X main.version=..."
 var version = "dev"
+
+// resolveVersion returns the effective version of the binary.
+// When v is "dev", it falls back to debug.ReadBuildInfo().Main.Version
+// (e.g. for binaries installed via 'go install ...@vX').
+// Local builds ('(devel)' or empty) stay "dev".
+func resolveVersion(v string, readInfo func() (*debug.BuildInfo, bool)) string {
+	if v != "dev" || readInfo == nil {
+		return v
+	}
+	info, ok := readInfo()
+	if !ok || info == nil {
+		return v
+	}
+	mv := info.Main.Version
+	if mv == "" || mv == "(devel)" {
+		return v
+	}
+	return mv
+}
+
+func init() {
+	version = resolveVersion(version, debug.ReadBuildInfo)
+}
 
 func main() {
 	gleann.CurrentVersion = version

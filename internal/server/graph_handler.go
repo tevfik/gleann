@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/tevfik/gleann/internal/indexing"
 	"github.com/tevfik/gleann/pkg/gleann"
 )
 
@@ -28,11 +29,14 @@ type GraphQueryRequest struct {
 	MaxDepth int    `json:"max_depth,omitempty"` // max traversal depth for impact (default 5)
 }
 
-// GraphQueryResponse is the response for graph queries.
+// GraphQueryResponse is the response for graph queries. Notice is the optional
+// non-Go/tree-sitter advisory (see indexing.NonGoSymbolNotice); it is omitted
+// for Go symbols and in a treesitter build, so their JSON is unchanged.
 type GraphQueryResponse struct {
 	Results []GraphNode `json:"results"`
 	Count   int         `json:"count"`
 	QueryMs int64       `json:"query_ms"`
+	Notice  string      `json:"notice,omitempty"`
 }
 
 // GraphNode is a generic graph result item.
@@ -61,15 +65,21 @@ type GraphStatsResponse struct {
 	DeclCount  int    `json:"declares_count,omitempty"`
 }
 
-// ImpactResponse is the response for impact analysis queries.
+// ImpactResponse is the response for impact analysis queries. TestCallers lists
+// the callers that live in test files: they are reported for context but stay
+// outside the blast radius, so TotalAffected counts only DirectCallers and
+// TransitiveCallers. Notice carries the optional non-Go/tree-sitter advisory
+// (omitted when empty).
 type ImpactResponse struct {
 	Symbol            string   `json:"symbol"`
 	DirectCallers     []string `json:"direct_callers"`
 	TransitiveCallers []string `json:"transitive_callers"`
+	TestCallers       []string `json:"test_callers"`
 	AffectedFiles     []string `json:"affected_files"`
 	Depth             int      `json:"depth"`
 	TotalAffected     int      `json:"total_affected"`
 	QueryMs           int64    `json:"query_ms"`
+	Notice            string   `json:"notice,omitempty"`
 }
 
 // graphDBPool caches open code graph handles per index name (the SQLite graph
@@ -201,6 +211,7 @@ func (s *Server) handleGraphQuery(w http.ResponseWriter, r *http.Request) {
 
 	start := time.Now()
 	var results []GraphNode
+	var notice string
 
 	switch req.Query {
 	case "callees":
@@ -209,6 +220,7 @@ func (s *Server) handleGraphQuery(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		results, err = db.Callees(req.Symbol)
+		notice = graphQueryNotice(db, req.Symbol, gleann.DirectionCallees)
 
 	case "callers":
 		if req.Symbol == "" {
@@ -216,6 +228,7 @@ func (s *Server) handleGraphQuery(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		results, err = db.Callers(req.Symbol)
+		notice = graphQueryNotice(db, req.Symbol, gleann.DirectionCallers)
 
 	case "symbols_in_file":
 		if req.File == "" {
@@ -242,10 +255,12 @@ func (s *Server) handleGraphQuery(w http.ResponseWriter, r *http.Request) {
 			Symbol:            impact.Symbol,
 			DirectCallers:     impact.DirectCallers,
 			TransitiveCallers: impact.TransitiveCallers,
+			TestCallers:       impact.TestCallers,
 			AffectedFiles:     impact.AffectedFiles,
 			Depth:             impact.Depth,
 			TotalAffected:     len(impact.DirectCallers) + len(impact.TransitiveCallers),
 			QueryMs:           time.Since(start).Milliseconds(),
+			Notice:            graphQueryNotice(db, req.Symbol, gleann.DirectionCallers),
 		})
 		return
 
@@ -310,7 +325,22 @@ func (s *Server) handleGraphQuery(w http.ResponseWriter, r *http.Request) {
 		Results: results,
 		Count:   len(results),
 		QueryMs: time.Since(start).Milliseconds(),
+		Notice:  notice,
 	})
+}
+
+// graphQueryNotice returns the non-Go/tree-sitter advisory for a symbol-based
+// REST query. Handles without a GraphDB() view (test doubles) and a treesitter
+// build degrade to the empty string, which omitempty keeps out of the JSON.
+func graphQueryNotice(db graphDBHandle, symbol string, dir int) string {
+	if symbol == "" {
+		return ""
+	}
+	h, ok := db.(interface{ GraphDB() gleann.GraphDB })
+	if !ok {
+		return ""
+	}
+	return indexing.NonGoSymbolNotice(symbol, h.GraphDB(), dir)
 }
 
 // handleGraphStats handles GET /api/graph/{name}.

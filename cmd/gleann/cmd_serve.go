@@ -99,7 +99,7 @@ Options:
 	}
 
 	configAsLoaded := config
-	if err := initLlamaCPP(context.Background(), &config); err != nil {
+	if err := initLlamaCPPQuiet(context.Background(), &config, quiet); err != nil {
 		fmt.Fprintf(os.Stderr, "⚠️  warning: failed to start embedded llamacpp: %v\n", err)
 		fmt.Fprintf(os.Stderr, "   Falling back to Ollama provider for missing models...\n")
 		if config.EmbeddingProvider == "llamacpp" {

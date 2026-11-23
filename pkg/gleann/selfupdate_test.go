@@ -29,6 +29,11 @@ func TestIsNewer(t *testing.T) {
 		{"gleann v1.2.3", "v1.2.3", false, true},
 		{"dev", "v1.8.7", false, false},
 		{"", "v1.8.7", false, false},
+		{"v0.0.0-20261120000000-abcdef123456", "v1.8.7", false, false},
+		{"v1.2.4-0.20261120000000-abcdef123456", "v1.8.7", false, false},
+		{"v1.2.4-pre.0.20261120000000-abcdef123456", "v1.8.7", false, false},
+		{"v1.8.6+dirty", "v1.8.7", false, false},
+		{"v1.2.4-0.20261120000000-abcdef123456+dirty", "v1.8.7", false, false},
 	}
 	for _, c := range cases {
 		n, ok := IsNewer(c.cur, c.latest)

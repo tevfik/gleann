@@ -19,12 +19,25 @@ type llamaRunner interface {
 
 var globalLlamaRunner llamaRunner
 
+// llamaRunnerQuiet remembers whether the runner was started under --quiet, so
+// the deferred cleanup prints the shutdown status line only in loud commands.
+var llamaRunnerQuiet bool
+
 // newLlamaRunner creates the embedded llama-server runner; a seam for tests.
 var newLlamaRunner = func(model string) llamaRunner { return llamacpp.NewRunner(model) }
 
 // initLlamaCPP intercepts the configuration. If llamacpp is requested, it starts
 // the embedded server and rewrites the config to use the standard "openai" provider.
+// It keeps the historical loud behaviour; commands that support --quiet use
+// initLlamaCPPQuiet.
 func initLlamaCPP(ctx context.Context, config *gleann.Config) error {
+	return initLlamaCPPQuiet(ctx, config, false)
+}
+
+// initLlamaCPPQuiet is initLlamaCPP with --quiet handling: the startup status
+// lines are suppressed, but a server that fails to start still returns an
+// error for the caller to print.
+func initLlamaCPPQuiet(ctx context.Context, config *gleann.Config, quiet bool) error {
 	if config.EmbeddingProvider != "llamacpp" {
 		return nil
 	}
@@ -33,8 +46,11 @@ func initLlamaCPP(ctx context.Context, config *gleann.Config) error {
 		return fmt.Errorf("llamacpp provider requires a .gguf model (a path, or a file name in ~/.gleann/models) as --model")
 	}
 
-	fmt.Fprintf(os.Stderr, "🚀 Starting embedded llama.cpp server for model %s\n", config.EmbeddingModel)
+	if !quiet {
+		fmt.Fprintf(os.Stderr, "🚀 Starting embedded llama.cpp server for model %s\n", config.EmbeddingModel)
+	}
 	globalLlamaRunner = newLlamaRunner(config.EmbeddingModel)
+	llamaRunnerQuiet = quiet
 	globalLlamaRunner.SetEmbedding(true)
 
 	if err := globalLlamaRunner.Start(ctx); err != nil {
@@ -53,15 +69,23 @@ func initLlamaCPP(ctx context.Context, config *gleann.Config) error {
 		config.Concurrency = 2
 	}
 
-	fmt.Fprintf(os.Stderr, "✅ Embedded llama-server is ready at %s\n", config.OpenAIBaseURL)
+	if !quiet {
+		fmt.Fprintf(os.Stderr, "✅ Embedded llama-server is ready at %s\n", config.OpenAIBaseURL)
+	}
 	return nil
 }
 
-// cleanupLlamaCPP ensures the server is stopped when the command exits.
+// cleanupLlamaCPP ensures the server is stopped when the command exits. The
+// shutdown status line honours the quiet state of the init that started it;
+// the runner is stopped and forgotten either way.
 func cleanupLlamaCPP() {
 	if globalLlamaRunner != nil {
-		fmt.Fprintf(os.Stderr, "\nShutting down embedded llama-server...\n")
+		if !llamaRunnerQuiet {
+			fmt.Fprintf(os.Stderr, "\nShutting down embedded llama-server...\n")
+		}
 		globalLlamaRunner.Stop()
+		globalLlamaRunner = nil
+		llamaRunnerQuiet = false
 	}
 }
 

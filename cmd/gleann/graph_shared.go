@@ -6,6 +6,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/tevfik/gleann/internal/indexing"
 	"github.com/tevfik/gleann/pkg/gleann"
 	"github.com/tevfik/gleann/pkg/memory"
 )
@@ -113,6 +114,9 @@ func runGraphSymbolCommand(subCmd string, args []string, symbol string, db glean
 		for _, c := range callees {
 			fmt.Printf("  → [%s] %s\n", c.Kind, c.FQN)
 		}
+		if notice := indexing.NonGoSymbolNotice(symbol, db, gleann.DirectionCallees); notice != "" {
+			fmt.Printf("  %s\n", notice)
+		}
 	case "callers":
 		callers, err := db.Callers(symbol)
 		if err != nil {
@@ -122,6 +126,9 @@ func runGraphSymbolCommand(subCmd string, args []string, symbol string, db glean
 		fmt.Printf("🕸️  Callers of %s (%d):\n", symbol, len(callers))
 		for _, c := range callers {
 			fmt.Printf("  ← [%s] %s\n", c.Kind, c.FQN)
+		}
+		if notice := indexing.NonGoSymbolNotice(symbol, db, gleann.DirectionCallers); notice != "" {
+			fmt.Printf("  %s\n", notice)
 		}
 	case "explain":
 		cmdGraphExplain(symbol, db)
@@ -236,14 +243,19 @@ func cmdGraphExplain(fqn string, db gleann.GraphDB) {
 	for _, c := range callers {
 		fmt.Printf("    ← [%s] %s\n", c.Kind, c.FQN)
 	}
+	if notice := indexing.NonGoFileNotice(target.File, db); notice != "" {
+		fmt.Printf("  %s\n", notice)
+	}
 
-	// Impact
+	// Impact: the blast radius counts production callers, but a symbol whose
+	// only callers live in test files still has an impact worth reporting.
 	impact, err := db.Impact(target.FQN, 3)
-	if err == nil && len(impact.AffectedFiles) > 0 {
+	if err == nil && (len(impact.AffectedFiles) > 0 || len(impact.TestCallers) > 0) {
 		fmt.Printf("\n  Impact (blast radius, depth=3):\n")
 		fmt.Printf("    Direct callers:     %d\n", len(impact.DirectCallers))
 		fmt.Printf("    Transitive callers: %d\n", len(impact.TransitiveCallers))
 		fmt.Printf("    Affected files:     %d\n", len(impact.AffectedFiles))
+		fmt.Printf("    Test callers:       %d\n", len(impact.TestCallers))
 		maxShow := 20
 		for i, f := range impact.AffectedFiles {
 			if i >= maxShow {
@@ -251,6 +263,13 @@ func cmdGraphExplain(fqn string, db gleann.GraphDB) {
 				break
 			}
 			fmt.Printf("      📄 %s\n", f)
+		}
+		for i, c := range impact.TestCallers {
+			if i >= maxShow {
+				fmt.Printf("      ... and %d more test callers\n", len(impact.TestCallers)-maxShow)
+				break
+			}
+			fmt.Printf("      🧪 %s\n", c)
 		}
 	}
 
@@ -297,7 +316,14 @@ func cmdGraphPath(from, to string, db gleann.GraphDB) {
 	path, err := db.ShortestPath(from, to)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		// graphstore.Path returns the no-path error (not an empty path) for
+		// distinct symbols, so the advisory must be emitted on this branch as
+		// well; otherwise the real lite blind spot never gets an explanation.
+		if notice := graphPathNotice(from, to, db); notice != "" {
+			fmt.Fprintf(os.Stderr, "%s\n", notice)
+		}
 		exitFunc(1)
+		return
 	}
 
 	fmt.Printf("🛤️  Shortest path: %s → %s (%d hops)\n\n", from, to, len(path))
@@ -308,6 +334,22 @@ func cmdGraphPath(from, to string, db gleann.GraphDB) {
 		}
 		fmt.Printf("  %d. %s %s [%s] %s\n", i+1, step.From, arrow, step.Relation, step.To)
 	}
+	if len(path) == 0 {
+		if notice := graphPathNotice(from, to, db); notice != "" {
+			fmt.Printf("  %s\n", notice)
+		}
+	}
+}
+
+// graphPathNotice returns at most one non-Go advisory for the endpoints of a
+// path query: the source is resolved as a dependency-side (callees) lookup and
+// the target as a caller-side lookup. The two checks can name the same symbol
+// (from == to), so only the first message is returned.
+func graphPathNotice(from, to string, db gleann.GraphDB) string {
+	if notice := indexing.NonGoSymbolNotice(from, db, gleann.DirectionCallees); notice != "" {
+		return notice
+	}
+	return indexing.NonGoSymbolNotice(to, db, gleann.DirectionCallers)
 }
 
 // cmdGraphQuery searches for symbols and shows their neighborhood.
@@ -337,6 +379,9 @@ func cmdGraphQuery(pattern string, depth int, db gleann.GraphDB) {
 			for _, e := range edges {
 				fmt.Printf("    %s -[%s]-> %s\n", shortFQN(e.From), e.Relation, shortFQN(e.To))
 			}
+		}
+		if notice := indexing.NonGoFileNotice(target.File, db); notice != "" {
+			fmt.Printf("  %s\n", notice)
 		}
 	}
 }

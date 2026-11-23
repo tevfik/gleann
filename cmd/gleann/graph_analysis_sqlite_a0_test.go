@@ -46,9 +46,10 @@ func goGraph(text string) (nodes map[string]string, edges map[string]bool) {
 // of the fixture with the A0 golden of the Kùzu path, for the Go part (the
 // non-Go extractors differ: see the README of analysis_golden). The Go
 // symbols and their kinds and files are identical; every Kùzu edge between
-// two Go symbols is present; the SQLite graph has the four method-call edges
-// the Kùzu extractor missed (calls through a receiver or field), and has no
-// phantom symbol for built-ins and library calls (AGENTS.md section 2).
+// two Go symbols is present; the SQLite graph also has the exact go/types
+// method-call edges the Kùzu extractor missed (calls through a receiver,
+// field, interface, or `_test.go` test method), and has no phantom symbol
+// for built-ins and library calls (AGENTS.md section 2).
 func TestGraphAnalysisSQLiteMatchesKuzuGolden(t *testing.T) {
 	c := newSQLiteCLI(t)
 	path := filepath.Join(c.out, "e.graphml")
@@ -88,10 +89,15 @@ func TestGraphAnalysisSQLiteMatchesKuzuGolden(t *testing.T) {
 		"example.com/fixture.main -- example.com/fixture/service.Service.Save",
 		"example.com/fixture.run -- example.com/fixture/service.Service.Load",
 		"example.com/fixture/service.Service.Load -- example.com/fixture/service.Service.Report",
+		// Exact go/types resolution also covers _test.go receiver calls.
+		"example.com/fixture/service.Service.Load -- example.com/fixture/service.TestSaveLoad",
 		// Calls through the store.Store interface (s.st.Get/Put/Keys) are
 		// bound to the interface (#12); the Kùzu graph had no edge for them.
 		"example.com/fixture/service.Service.Load -- example.com/fixture/store.Store",
+		"example.com/fixture/service.Service.Report -- example.com/fixture/service.TestReport",
 		"example.com/fixture/service.Service.Report -- example.com/fixture/store.Store",
+		"example.com/fixture/service.Service.Save -- example.com/fixture/service.TestReport",
+		"example.com/fixture/service.Service.Save -- example.com/fixture/service.TestSaveLoad",
 		"example.com/fixture/service.Service.Save -- example.com/fixture/store.Store",
 	}
 	if strings.Join(extra, "\n") != strings.Join(wantExtra, "\n") {

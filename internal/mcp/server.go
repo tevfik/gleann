@@ -79,6 +79,10 @@ type Server struct {
 	// expander is the shared HyDE query expander (created on first use).
 	expandOnce sync.Once
 	expander   *gleann.LLMQueryExpander
+	// gain tracks cumulative token savings from gleann_shell and gleann_read
+	// calls in this server process (reported by gleann_gain); guarded by gainMu.
+	gainMu sync.Mutex
+	gain   gleann.TokenGain
 }
 
 // chatConfig returns the LLM settings of the server configuration.
@@ -168,26 +172,27 @@ func NewServer(cfg Config) *Server {
 		APIKey:   apiKey,
 	})
 
-	s := server.NewMCPServer("gleann-mcp", version, server.WithRoots())
+	// Resolve the effective profile before the SDK server is built: the
+	// initialize instructions must describe the tools this server actually
+	// registers, including when the profile comes from GLEANN_TOOLS.
+	toolsProfile := effectiveToolsProfile(cfg.ToolsProfile)
+
+	s := server.NewMCPServer("gleann-mcp", version,
+		server.WithRoots(),
+		server.WithInstructions(serverInstructionsFor(toolsProfile)),
+	)
 
 	srv := &Server{
 		mcpServer:      s,
 		config:         glCfg,
 		cleanToolNames: cfg.CleanToolNames,
-		toolsProfile:   cfg.ToolsProfile,
+		toolsProfile:   toolsProfile,
 		embedder:       embedder,
 		searchers:      make(map[string]*gleann.LeannSearcher),
 		memPool:        newMCPMemoryPool(cfg.IndexDir),
 		blockMem:       &blockMemPool{},
 		syncTasks:      make(map[string]*syncTask),
 		buildConfig:    cfg.BuildConfig,
-	}
-	if srv.toolsProfile == "" {
-		if envProfile := os.Getenv("GLEANN_TOOLS"); envProfile != "" {
-			srv.toolsProfile = envProfile
-		} else {
-			srv.toolsProfile = "core"
-		}
 	}
 
 	// Wire the VectorSyncer factory (every build).
@@ -275,7 +280,26 @@ func NewServer(cfg Config) *Server {
 
 // isToolEnabled checks whether a tool belongs to the active tools profile.
 func (s *Server) isToolEnabled(name string) bool {
-	profile := strings.TrimSpace(strings.ToLower(s.toolsProfile))
+	return toolEnabledForProfile(s.toolsProfile, name)
+}
+
+// effectiveToolsProfile resolves the configured tools profile, falling back to
+// GLEANN_TOOLS and then to "core". It runs before the SDK server (and therefore
+// the initialize instructions) is built.
+func effectiveToolsProfile(profile string) string {
+	if p := strings.TrimSpace(profile); p != "" {
+		return p
+	}
+	if env := strings.TrimSpace(os.Getenv("GLEANN_TOOLS")); env != "" {
+		return env
+	}
+	return "core"
+}
+
+// toolEnabledForProfile reports whether name is registered for profile. An
+// empty profile means the default "core" set.
+func toolEnabledForProfile(profile, name string) bool {
+	profile = strings.TrimSpace(strings.ToLower(profile))
 	if profile == "full" || profile == "all" {
 		return true
 	}
@@ -314,6 +338,9 @@ func (s *Server) addTool(tool mcp.Tool, handler server.ToolHandlerFunc) {
 	if !s.isToolEnabled(tool.Name) {
 		return
 	}
+	// Annotations are keyed by the canonical name, so attach them before
+	// --clean-names strips a prefix.
+	annotateTool(&tool)
 	if s.cleanToolNames {
 		tool.Name = strings.TrimPrefix(tool.Name, "gleann_")
 	}
@@ -797,7 +824,7 @@ func (s *Server) handleReadResource(ctx context.Context, request mcp.ReadResourc
 func (s *Server) buildSearchTool() mcp.Tool {
 	return mcp.Tool{
 		Name:        "gleann_search",
-		Description: "Semantic search across indexed code and documents. Returns ranked text passages with their source file paths. Each result shows the file path in a 'Source:' line — use gleann_read with that path to read the full source file. Workflow: search → identify relevant file from results → gleann_read to get complete code.",
+		Description: "Hybrid semantic + lexical search across indexed code and documents. PREFER this over grep/ripgrep for conceptual, behavioral or cross-file questions (\"how does auth work\", \"where are failed charges retried\"): it matches meaning, spans files and returns ranked passages with Source: paths. Use grep only for exact literal/regex occurrences. Returns ranked passages with source paths; follow with gleann_def for a symbol, gleann_graph_neighbors/gleann_impact for callers, or gleann_read (mode=signatures|map|task) for the full file. For large indexes use gleann_search_ids -> gleann_fetch to keep tokens low.",
 		InputSchema: mcp.ToolInputSchema{
 			Type: "object",
 			Properties: map[string]interface{}{
@@ -1245,7 +1272,7 @@ func (s *Server) handleAsk(ctx context.Context, request mcp.CallToolRequest) (*m
 func (s *Server) buildGraphNeighborsTool() mcp.Tool {
 	return mcp.Tool{
 		Name:        "gleann_graph_neighbors",
-		Description: "Find caller/callee relationships for a code symbol in the AST graph. Input a fully-qualified name (e.g. 'MyClass::method') or partial name. Returns who calls this symbol and what it calls. Use gleann_search first to discover symbol names if you don't know the exact FQN.",
+		Description: "Find caller/callee relationships for a code symbol in the AST graph. PREFER this over grep \"symbol(\" to find call sites or dependencies: graph edges are language-aware and span files without matching comments or strings. Input a fully-qualified name (e.g. 'MyClass::method') or partial name. Returns who calls this symbol and what it calls. Use gleann_def or gleann_search first to discover the exact FQN, then gleann_impact for transitive blast radius.",
 		InputSchema: mcp.ToolInputSchema{
 			Type: "object",
 			Properties: map[string]interface{}{
@@ -1381,6 +1408,10 @@ func (s *Server) handleGraphNeighbors(ctx context.Context, request mcp.CallToolR
 				sb.WriteString(fmt.Sprintf("  - %s (%s)\n", m.FQN, m.Kind))
 			}
 		}
+	}
+
+	if notice := indexing.NonGoSymbolNotice(nodeFqn, db, gleann.DirectionBoth); notice != "" {
+		sb.WriteString(fmt.Sprintf("\n%s\n", notice))
 	}
 
 	return mcp.NewToolResultText(sb.String()), nil
@@ -1647,7 +1678,7 @@ func formatHeadingsOutline(sb *strings.Builder, headings []gleann.DocumentHeadin
 func (s *Server) buildImpactTool() mcp.Tool {
 	return mcp.Tool{
 		Name:        "gleann_impact",
-		Description: "Analyze blast radius of changing a code symbol. Returns direct callers, transitive callers (BFS), and affected files ranked by relevance (core files first, submodules last). Use gleann_search or gleann_graph_neighbors first to find the exact symbol FQN.",
+		Description: "Analyze the blast radius of changing a code symbol. PREFER this over grepping every reference: it walks transitive callers in the AST graph and ranks affected files (core files first, submodules last). Returns direct callers, transitive callers (BFS), the test callers that exercise the symbol (listed separately and never counted in the blast radius), and affected files. Use gleann_def or gleann_search first to find the exact symbol FQN, then gleann_graph_neighbors for one-hop detail.",
 		InputSchema: mcp.ToolInputSchema{
 			Type: "object",
 			Properties: map[string]interface{}{
@@ -1733,6 +1764,21 @@ func (s *Server) handleImpact(ctx context.Context, request mcp.CallToolRequest) 
 		}
 	}
 
+	// Test callers are reported but never counted in the blast radius below:
+	// changing the symbol breaks its tests, not the shipped call graph.
+	sb.WriteString(fmt.Sprintf("\n=== Test Callers (%d total) ===\n", len(impact.TestCallers)))
+	if len(impact.TestCallers) == 0 {
+		sb.WriteString("None found.\n")
+	} else {
+		for i, c := range impact.TestCallers {
+			if i >= maxItems {
+				sb.WriteString(fmt.Sprintf("... and %d more test callers\n", len(impact.TestCallers)-maxItems))
+				break
+			}
+			sb.WriteString(fmt.Sprintf("- %s\n", c))
+		}
+	}
+
 	// Partition affected files so core project files appear before noise/submodule files
 	var cleanFiles, noiseFiles []string
 	for _, f := range impact.AffectedFiles {
@@ -1758,10 +1804,16 @@ func (s *Server) handleImpact(ctx context.Context, request mcp.CallToolRequest) 
 		}
 	}
 
+	// Blast radius = production callers; the test callers listed above are
+	// deliberately not part of it.
 	total := len(impact.DirectCallers) + len(impact.TransitiveCallers)
 	sb.WriteString(fmt.Sprintf("\nTotal blast radius: %d affected symbols across %d files\n", total, len(impact.AffectedFiles)))
 
-	if total == 0 {
+	if notice := indexing.NonGoSymbolNotice(symbol, db, gleann.DirectionCallers); notice != "" {
+		sb.WriteString(fmt.Sprintf("\n%s\n", notice))
+	}
+
+	if total == 0 && len(impact.TestCallers) == 0 {
 		if matches, err := db.SymbolSearch(symbol); err == nil && len(matches) > 0 {
 			sb.WriteString("\nTip: No callers found for this exact name. Did you mean one of these symbols in the graph?\n")
 			limit := len(matches)
@@ -1903,7 +1955,7 @@ func (s *Server) handleSymbolsInFile(ctx context.Context, request mcp.CallToolRe
 
 func (s *Server) buildSyncTool() mcp.Tool {
 	return mcp.NewTool("gleann_sync",
-		mcp.WithDescription("Synchronize, update, or initialize a Gleann index (vector search passages, AST code graph, and document outlines) with workspace files. Defaults to fast 'code' mode. For large repositories, synchronization runs asynchronously in the background. If in_progress is returned, DO NOT sleep or block in a loop; immediately inform the user that background synchronization is in progress and continue."),
+		mcp.WithDescription("Synchronize, update, or initialize a Gleann index (vector search passages, AST code graph, and document outlines) with workspace files. Run this after editing code so gleann_search, gleann_def and the graph tools see the new state; it is incremental, so a repeated call with no changes is cheap. Defaults to fast 'code' mode. For large repositories, synchronization runs asynchronously in the background. If in_progress is returned, DO NOT sleep or block in a loop; immediately inform the user that background synchronization is in progress and continue."),
 		mcp.WithString("index",
 			mcp.Description("Name of the index to synchronize or create. If omitted, automatically inferred from the workspace directory name."),
 		),

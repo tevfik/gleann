@@ -53,6 +53,7 @@ func (s *Server) handleShell(ctx context.Context, request mcp.CallToolRequest) (
 
 	compressor := gleann.NewShellCompressor()
 	result := compressor.Compress(command, output)
+	s.recordGain(result.RawTokens, result.CompTokens)
 
 	response := map[string]interface{}{
 		"output":            result.Output,
@@ -74,7 +75,7 @@ func (s *Server) handleShell(ctx context.Context, request mcp.CallToolRequest) (
 func (s *Server) buildReadTool() mcp.Tool {
 	return mcp.Tool{
 		Name: "gleann_read",
-		Description: "Read a file with mode-aware compression. Supports 10 modes: " +
+		Description: "Read a file with mode-aware compression. PREFER this over cat/sed or dumping whole files: pick map/signatures first, then lines/task for the relevant part. Supports 10 modes: " +
 			"full (entire file), map (structural overview), signatures (function/class sigs only), " +
 			"diff (git-modified hunks), entropy (high-information lines), lines (specific ranges like '10:50'), " +
 			"task (lines relevant to a query), reference (imports/exports/types), " +
@@ -161,6 +162,14 @@ func (s *Server) handleRead(ctx context.Context, request mcp.CallToolRequest) (*
 		return mcp.NewToolResultError(fmt.Sprintf("read error: %v", err)), nil
 	}
 
+	// Record the gain: whole-file tokens vs the mode-filtered payload (the
+	// metadata header below is not counted). The baseline needs the
+	// unmodified file; if it cannot be re-read, the event is not measurable
+	// and is skipped. On success path holds the resolved full path.
+	if raw, rErr := os.ReadFile(path); rErr == nil {
+		s.recordGain(gleann.EstimateTokens(string(raw)), gleann.EstimateTokens(content))
+	}
+
 	rawTokens := gleann.EstimateTokens(content)
 
 	// Wrap with metadata header
@@ -174,33 +183,48 @@ func (s *Server) handleRead(ctx context.Context, request mcp.CallToolRequest) (*
 func (s *Server) buildGainTool() mcp.Tool {
 	return mcp.Tool{
 		Name: "gleann_gain",
-		Description: "Report cumulative token savings from shell compression and mode-aware reads. " +
-			"Shows raw vs compressed token counts and the overall compression ratio.",
+		Description: "Report cumulative estimated token savings recorded by this server's gleann_shell and gleann_read calls " +
+			"since the server started (or the last reset). Gain per call = estimated tokens of the raw input " +
+			"(the shell output, or the whole file for reads) minus estimated tokens of the compressed payload returned " +
+			"(the compressed output, or the mode-filtered file content); metadata wrappers (JSON stats, read header) " +
+			"are not counted. Estimates use the ~4 characters per token heuristic. Shows raw vs compressed token counts, " +
+			"the call count and the overall savings ratio. The counter lives in this MCP server process only; " +
+			"it is not persisted across restarts.",
 		InputSchema: mcp.ToolInputSchema{
 			Type: "object",
 			Properties: map[string]interface{}{
 				"reset": map[string]interface{}{
 					"type":        "boolean",
-					"description": "If true, reset the gain tracker to zero.",
+					"description": "If true, reset this server's gain tracker to zero.",
 				},
 			},
 		},
 	}
 }
 
-// sessionGain tracks cumulative token savings within a session.
-var sessionGain gleann.TokenGain
+// recordGain adds one compression event (raw vs delivered payload tokens)
+// to the server's cumulative gain tracker.
+func (s *Server) recordGain(rawTokens, compTokens int) {
+	s.gainMu.Lock()
+	defer s.gainMu.Unlock()
+	s.gain.Add(rawTokens, compTokens)
+}
 
 func (s *Server) handleGain(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	args, ok := request.Params.Arguments.(map[string]interface{})
 	if ok {
 		if reset, ok := args["reset"].(bool); ok && reset {
-			sessionGain = gleann.TokenGain{}
+			s.gainMu.Lock()
+			s.gain = gleann.TokenGain{}
+			s.gainMu.Unlock()
 			return mcp.NewToolResultText(`{"status": "reset", "message": "Token gain tracker reset to zero."}`), nil
 		}
 	}
 
-	data, _ := json.MarshalIndent(sessionGain, "", "  ")
+	s.gainMu.Lock()
+	gain := s.gain
+	s.gainMu.Unlock()
+	data, _ := json.MarshalIndent(gain, "", "  ")
 	return mcp.NewToolResultText(string(data)), nil
 }
 

@@ -63,10 +63,17 @@ func (h *storeHandle) Impact(fqn string, maxDepth int) (*ImpactResponse, error) 
 		Symbol:            res.Symbol,
 		DirectCallers:     nonNil(res.DirectCallers),
 		TransitiveCallers: nonNil(res.TransitiveCallers),
+		TestCallers:       nonNil(res.TestCallers),
 		AffectedFiles:     nonNil(res.AffectedFiles),
 		Depth:             res.Depth,
-		TotalAffected:     len(res.DirectCallers) + len(res.TransitiveCallers),
+		// The blast radius counts production callers only: the test callers in
+		// res.TestCallers are reported alongside, never folded into the total.
+		TotalAffected: len(res.DirectCallers) + len(res.TransitiveCallers),
 	}, nil
+}
+
+func (h *storeHandle) GraphDB() gleann.GraphDB {
+	return h.db
 }
 
 func (h *storeHandle) DocumentTOC(path string) (*gleann.DocumentTOCInfo, error) {

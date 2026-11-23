@@ -273,7 +273,7 @@ func cmdAsk(args []string) {
 	convStore := conversations.DefaultStore()
 	name = resolveIndexName(name, args, config, quiet, convStore)
 
-	if err := initLlamaCPP(context.Background(), &config); err != nil {
+	if err := initLlamaCPPQuiet(context.Background(), &config, quiet); err != nil {
 		fmt.Fprintf(os.Stderr, "error initializing llamacpp: %v\n", err)
 		exitFunc(1)
 	}
@@ -288,14 +288,10 @@ func cmdAsk(args []string) {
 	applyLlamaChatOverride(&chatConfig)
 	chat := gleann.NewChat(searcher, chatConfig)
 
-	// Inject memory context.
+	// Inject the current repository's memory context (global + repo scope).
 	if memMgr, err := memory.DefaultManager(); err == nil {
 		defer memMgr.Close()
-		if cw, err := memMgr.BuildContext(); err == nil {
-			if rendered := cw.Render(); rendered != "" {
-				chat.SetMemoryContext(rendered)
-			}
-		}
+		memory.InjectRepoContext(chat, memMgr)
 	}
 
 	// Apply --no-limit: remove token limit for unlimited output.
@@ -594,7 +590,7 @@ func cmdChat(args []string) {
 	}
 
 	// Direct chat with given index (supports comma-separated multi-index).
-	if err := initLlamaCPP(context.Background(), &cfg); err != nil {
+	if err := initLlamaCPPQuiet(context.Background(), &cfg, hasFlag(args, "--quiet")); err != nil {
 		fmt.Fprintf(os.Stderr, "error initializing llamacpp: %v\n", err)
 		exitFunc(1)
 	}

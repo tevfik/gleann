@@ -13,10 +13,11 @@ import (
 	"github.com/tevfik/gleann/pkg/gleann"
 )
 
-func cmdSearch(args []string) {
-	if len(args) < 2 || hasFlag(args, "--help") || hasFlag(args, "-h") {
-		if hasFlag(args, "--help") || hasFlag(args, "-h") {
-			fmt.Printf(`Usage: gleann search <name[,name2,...]|--all> <query> [options]
+// printSearchUsage prints `gleann search --help`. Every flag of searchFlags
+// appears here: a flag the parser accepts but the help hides is undiscoverable.
+// TestSearchHelpCoversAllFlags fails when the two drift apart.
+func printSearchUsage() {
+	fmt.Printf(`Usage: gleann search <name[,name2,...]|--all> <query> [options]
 
 Semantic vector search across one or more indexes.
 
@@ -27,23 +28,90 @@ Arguments:
 Options:
   --all                   Search across all existing indexes
   --top-k <N>             Number of top results to return (default: %d)
-  --rerank                Rerank results with cross-encoder
-  --rerank-url <url>      Rerank through a /v1/rerank server (e.g. llama-server --reranking)
-  --rerank-pool <N>       Candidates sent to the reranker (default: 20 for the built-in reranker,
-                          max(4*top-k, 50) for a server)
-  --expand                HyDE: an LLM sketches the code for the question and the
-                          search uses it too (+1-3 s; best for "how/where" questions)
-  --expand-model <m>      LLM for --expand (default: expand_model setting or chat model)
+  --graph                 Enrich results with callers/callees and document context
+  --one-per-file          Return at most one result per file
+  --include-tests         Include tests and fixtures in the results
+  --kind <kind>           Only results of this content kind: code, docs, or all (default)
   --explain               Show why each result matched: most important segments
                           and BM25 term weights (~70 ms per result)
   --json                  Output results as JSON
+
+Hybrid ranking:
+  --no-hybrid             Disable BM25 lexical scoring (hybrid search is on by default)
+  --hybrid <alpha>        Vector vs BM25 weight: 0 = lexical only, 1 = vector only
+                          (default: 0.7)
+  --hybrid-alpha <alpha>  Alias of --hybrid for one request
+
+Reranking:
+  --rerank                Rerank results with a cross-encoder
+  --no-rerank             Do not rerank, even when the saved settings enable it
+  --rerank-model <m>      Reranker model (default: saved reranker settings)
+  --rerank-url <url>      Rerank through a /v1/rerank server (e.g. llama-server --reranking)
+  --rerank-provider <p>   Reranker provider: auto, eif, llamacpp, ollama, jina, cohere, voyage
+  --rerank-pool <N>       Candidates sent to the reranker (default: 20 for the built-in
+                          reranker, max(4*top-k, 50) for a server)
+
+Query expansion (HyDE):
+  --expand                HyDE: an LLM sketches the code for the question and the
+                          search uses it too (+1-3 s; best for "how/where" questions)
+  --no-expand             Do not expand, even when the saved settings enable it
+  --expand-model <m>      LLM for --expand (default: expand_model setting or chat model)
+
+Embeddings (must match the index):
+  --model <m>             Embedding model (default: bge-m3 or the saved config)
+  --code-model, --code-embedding-model <m>
+                          Code embedding model
+  --doc-model, --docs-model, --doc-embedding-model <m>
+                          Documentation embedding model
+  --provider <p>          Embedding provider: ollama (default), openai, llamacpp, eif (-tags eif), gemini, native (-tags native)
+  --host <url>            Ollama server URL (default: saved config / OLLAMA_HOST)
+  --ollama-api-key <key>  Optional Ollama API key (env: OLLAMA_API_KEY)
+  --openai-base-url <url> OpenAI-compatible endpoint for --provider openai and --expand
+  --llm-provider <p>      LLM provider for --expand: ollama (default), openai, anthropic, eif (-tags eif)
+  --llm-model <m>         LLM for --expand (default: saved chat model)
+  --api-key <key>         API key for the --expand LLM (overrides saved keys)
+  --base-url <url>        LLM endpoint for --expand (overrides the saved endpoint)
+
+Index settings (shared with gleann index build):
+  --index-dir <dir>       Index directory (default: ~/.gleann/indexes)
+  --backend <name>        Vector backend to open the index with: hnsw, diskann, faiss
+  --storage <mode>        How vectors are kept: store (fast search, default) or
+                          recompute (small index, slower search; HNSW only)
+  --no-mmap               Read index files without memory mapping
+  --metric <m>            Distance metric: l2 (default), cosine, ip
+  --ef-search <N>         HNSW search breadth (default: 128)
+  --search-l <N>          DiskANN search list size
+  --search-pq-rerank <N>  DiskANN PQ rerank candidates
+  --pq-dim <N>            DiskANN product-quantization dimensions
+  --pq-centroids <N>      DiskANN product-quantization centroids
+  --diskann-r <N>         DiskANN graph out-degree
+  --diskann-l <N>         DiskANN graph build breadth
+  --diskann-alpha <a>     DiskANN graph pruning factor
+  --signatures, --signatures-only
+                          Index-time: embed only code signatures and docstrings
+  --chunk-size <N>        Index-time chunk size in characters
+  --chunk-overlap <N>     Index-time chunk overlap in characters
+  --batch-size <N>        Index-time embedding batch size
+  --concurrency <N>       Index-time embedding parallelism
+  --prune <fraction>      Index-time: keep this fraction of HNSW vectors and
+                          recompute the rest per search
+
+Other:
+  --quiet                 Suppress status messages
+  --top <N>               Accepted for old scripts; use --top-k (ignored)
   -h, --help              Show this help message
 
 Examples:
   gleann search core "auth middleware"
-  gleann search px4,core "ekf estimation" --rerank
-  gleann search --all "PID controller"
+  gleann search px4,core "ekf estimation" --rerank --no-expand
+  gleann search --all "PID controller" --one-per-file --graph
 `, gleann.DefaultConfig().SearchConfig.TopK)
+}
+
+func cmdSearch(args []string) {
+	if len(args) < 2 || hasFlag(args, "--help") || hasFlag(args, "-h") {
+		if hasFlag(args, "--help") || hasFlag(args, "-h") {
+			printSearchUsage()
 			return
 		}
 		fmt.Fprintln(os.Stderr, "usage: gleann search <name[,name2,...]|--all> <query>")
@@ -62,7 +130,7 @@ Examples:
 	applySavedConfig(&config, args)
 	config.EmbedderResolver = defaultEmbedderResolver(config)
 
-	if err := initLlamaCPP(context.Background(), &config); err != nil {
+	if err := initLlamaCPPQuiet(context.Background(), &config, hasFlag(args, "--quiet")); err != nil {
 		fmt.Fprintf(os.Stderr, "error initializing llamacpp: %v\n", err)
 		exitFunc(1)
 	}
@@ -148,7 +216,7 @@ Examples:
 		// indexNames == nil means "all indexes"
 
 		if hasFlag(args, "--explain") {
-			fmt.Fprintln(os.Stderr, "note: --explain works for a single index only; showing results without explanations")
+			stderrf(args, "note: --explain works for a single index only; showing results without explanations\n")
 		}
 		start := time.Now()
 		multiResults, err := gleann.SearchMultiple(ctx, config, embedder, indexNames, query, searchOpts...)

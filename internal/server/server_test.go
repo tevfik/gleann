@@ -164,6 +164,44 @@ func TestHandleDeleteIndexNotFound(t *testing.T) {
 	}
 }
 
+func TestHandleDeleteIndexRefusesNonIndexDirectory(t *testing.T) {
+	dir := t.TempDir()
+	config := gleann.DefaultConfig()
+	config.IndexDir = dir
+
+	s := &Server{
+		config:    config,
+		searchers: make(map[string]*gleann.LeannSearcher),
+	}
+
+	srcDir := filepath.Join(dir, "src")
+	if err := os.MkdirAll(srcDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	mainGo := filepath.Join(srcDir, "main.go")
+	if err := os.WriteFile(mainGo, []byte("package main"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("DELETE /api/indexes/{name}", s.handleDeleteIndex)
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/indexes/src", nil)
+	w := httptest.NewRecorder()
+
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusInternalServerError {
+		t.Errorf("expected 500, got %d", w.Code)
+	}
+	if !strings.Contains(w.Body.String(), "not a gleann index") {
+		t.Errorf("body = %q, want 'not a gleann index'", w.Body.String())
+	}
+	if _, err := os.Stat(mainGo); err != nil {
+		t.Fatalf("main.go was deleted: %v", err)
+	}
+}
+
 func TestHandleBuildBadRequest(t *testing.T) {
 	s := &Server{
 		config:    gleann.DefaultConfig(),

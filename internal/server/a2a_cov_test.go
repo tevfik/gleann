@@ -189,7 +189,7 @@ func newA2AServerWithMem(t *testing.T) *Server {
 
 func TestA2AMemoryHandler_Remember(t *testing.T) {
 	s := newA2AServerWithMem(t)
-	ctx := a2a.SkillContext{Query: "remember that gleann uses HNSW backend"}
+	ctx := a2a.SkillContext{Query: "remember that gleann uses HNSW backend", Scope: "admin"}
 	result, err := s.a2aMemoryHandler(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -204,7 +204,7 @@ func TestA2AMemoryHandler_Remember(t *testing.T) {
 
 func TestA2AMemoryHandler_RememberTurkish(t *testing.T) {
 	s := newA2AServerWithMem(t)
-	ctx := a2a.SkillContext{Query: "hatırla gleann hnsw kullanır"}
+	ctx := a2a.SkillContext{Query: "hatırla gleann hnsw kullanır", Scope: "admin"}
 	result, err := s.a2aMemoryHandler(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -216,7 +216,7 @@ func TestA2AMemoryHandler_RememberTurkish(t *testing.T) {
 
 func TestA2AMemoryHandler_Store(t *testing.T) {
 	s := newA2AServerWithMem(t)
-	ctx := a2a.SkillContext{Query: "store some important fact"}
+	ctx := a2a.SkillContext{Query: "store some important fact", Scope: "admin"}
 	result, err := s.a2aMemoryHandler(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -229,7 +229,7 @@ func TestA2AMemoryHandler_Store(t *testing.T) {
 func TestA2AMemoryHandler_Recall(t *testing.T) {
 	s := newA2AServerWithMem(t)
 	// First store a memory.
-	ctx := a2a.SkillContext{Query: "remember gleann is awesome"}
+	ctx := a2a.SkillContext{Query: "remember gleann is awesome", Scope: "admin"}
 	_, err := s.a2aMemoryHandler(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -260,7 +260,7 @@ func TestA2AMemoryHandler_RecallNoResults(t *testing.T) {
 func TestA2AMemoryHandler_RecallWithPrefix(t *testing.T) {
 	s := newA2AServerWithMem(t)
 	// Store then recall with prefix.
-	storeCtx := a2a.SkillContext{Query: "remember specific fact about memory"}
+	storeCtx := a2a.SkillContext{Query: "remember specific fact about memory", Scope: "admin"}
 	_, _ = s.a2aMemoryHandler(storeCtx)
 
 	ctx := a2a.SkillContext{Query: "what do you know about memory"}
@@ -274,7 +274,7 @@ func TestA2AMemoryHandler_RecallWithPrefix(t *testing.T) {
 func TestA2AMemoryHandler_MemorySearch(t *testing.T) {
 	s := newA2AServerWithMem(t)
 	// Store then search with prefix.
-	storeCtx := a2a.SkillContext{Query: "remember facts about search"}
+	storeCtx := a2a.SkillContext{Query: "remember facts about search", Scope: "admin"}
 	_, _ = s.a2aMemoryHandler(storeCtx)
 
 	ctx := a2a.SkillContext{Query: "memory search search"}

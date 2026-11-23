@@ -251,21 +251,26 @@ func getFlag(args []string, flag string) string {
 	return ""
 }
 
-// hasFlag returns true if flag appears in args, as "--flag" or "--flag=true"
-// ("--flag=false" counts as absent). Nothing after a literal "--" is a flag.
+// hasFlag reports whether the boolean flag is set in args: true for a bare
+// "--flag" or a "--flag=<true-ish value>", false for a "--flag=<false-ish
+// value>" (see parseBoolFlag). Nothing after a literal "--" is a flag. When the
+// flag is repeated with contradictory spellings the last one wins, so
+// "--quiet=false --quiet" is quiet and "--quiet --quiet=false" is not.
 func hasFlag(args []string, flag string) bool {
+	set := false
 	for _, a := range args {
 		if a == "--" {
-			return false
+			break
 		}
 		if a == flag {
-			return true
+			set = true
+			continue
 		}
 		if v, ok := strings.CutPrefix(a, flag+"="); ok {
-			return parseBoolFlag(v)
+			set = parseBoolFlag(v)
 		}
 	}
-	return false
+	return set
 }
 
 // getAllFlags returns every value of a repeatable --flag in args, in order.
@@ -343,10 +348,14 @@ func applySavedConfig(config *gleann.Config, args []string) {
 		config.OllamaAPIKey = savedCfg.OllamaAPIKey
 	}
 	if savedCfg.OpenAIBaseURL != "" && config.OpenAIBaseURL == "" {
-		config.OpenAIBaseURL = savedCfg.OpenAIBaseURL
+		// Same normalisation as --openai-base-url: a saved key ending in "/"
+		// must not produce "…/v1//embeddings".
+		config.OpenAIBaseURL = strings.TrimRight(savedCfg.OpenAIBaseURL, "/")
 	}
 	if getFlag(args, "--index-dir") == "" && os.Getenv("GLEANN_INDEX_DIR") == "" && savedCfg.IndexDir != "" {
-		config.IndexDir = savedCfg.IndexDir
+		// LoadSavedConfig already expands "~", but expanding here keeps the
+		// mapping honest if the value ever arrives from another loader.
+		config.IndexDir = tui.ExpandPath(savedCfg.IndexDir)
 	}
 	// LLM settings from saved config.
 	if getFlag(args, "--llm-provider") == "" && savedCfg.LLMProvider != "" {
@@ -417,6 +426,41 @@ func applySavedConfig(config *gleann.Config, args []string) {
 	}
 	if savedCfg.ProxyCoverFloor > 0 {
 		config.ProxyCoverFloor = float32(savedCfg.ProxyCoverFloor)
+	}
+	// A2A is a *bool so that "unset" keeps the server default (on) while an
+	// explicit false from the settings screen is honoured: a saved
+	// "a2a_enabled": false used to be dropped here, leaving the A2A routes on.
+	if savedCfg.A2AEnabled != nil {
+		v := *savedCfg.A2AEnabled
+		config.A2AEnabled = &v
+	}
+	// Embedded llama.cpp engine settings (model storage directory, HF repos)
+	// were persisted by the wizard but never read back by the CLI/serve path.
+	applySavedLlamaCPP(config, savedCfg.LlamaCPPConfig)
+}
+
+// applySavedLlamaCPP merges the saved local-engine settings into config. Only
+// non-zero saved values win, so a partial config.json keeps the
+// gleann.DefaultConfig defaults (in particular ModelStorageDir) instead of
+// blanking them.
+func applySavedLlamaCPP(config *gleann.Config, saved gleann.LlamaCPPConfig) {
+	if saved.AutoDownload {
+		config.LlamaCPPConfig.AutoDownload = true
+	}
+	if saved.ModelStorageDir != "" {
+		config.LlamaCPPConfig.ModelStorageDir = saved.ModelStorageDir
+	}
+	if saved.RerankerHFRepo != "" {
+		config.LlamaCPPConfig.RerankerHFRepo = saved.RerankerHFRepo
+	}
+	if saved.RerankerHFFile != "" {
+		config.LlamaCPPConfig.RerankerHFFile = saved.RerankerHFFile
+	}
+	if saved.LLMHFRepo != "" {
+		config.LlamaCPPConfig.LLMHFRepo = saved.LLMHFRepo
+	}
+	if saved.LLMHFFile != "" {
+		config.LlamaCPPConfig.LLMHFFile = saved.LLMHFFile
 	}
 }
 

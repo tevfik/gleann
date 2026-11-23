@@ -230,6 +230,7 @@ func cmdMemoryRemember(args []string) {
 		block, err := rc.Add(memory.TierLong, label, content, tags)
 		if err == nil {
 			fmt.Printf("✅ Remembered [%s]: %s  (via running server)\n", block.ID[:8], truncateStr(content, 80))
+			printContradictionWarning(block)
 			return
 		}
 		// Fallback to local store if remote call failed
@@ -255,6 +256,15 @@ func cmdMemoryRemember(args []string) {
 	}
 
 	fmt.Printf("✅ Remembered [%s]: %s\n", block.ID[:8], truncateStr(content, 80))
+	printContradictionWarning(block)
+}
+
+// printContradictionWarning tells the user which stored blocks a remembered
+// fact conflicts with, when the write was flagged as contradicting.
+func printContradictionWarning(block *memory.Block) {
+	if block != nil && block.Metadata["has_contradictions"] == "true" {
+		fmt.Printf("warning: contradicts existing memory [%s]\n", block.Metadata["contradicts"])
+	}
 }
 
 func cmdMemoryForget(args []string) {
@@ -679,7 +689,7 @@ func cmdMemoryReflect(args []string) {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 			exitFunc(1)
 		}
-		fmt.Printf("Reverted reflection run %s (removed %d blocks)\n", revertID, len(cs.BlocksAdded))
+		fmt.Printf("Reverted reflection run %s (removed %d blocks, undid %d confirmations)\n", revertID, len(cs.BlocksAdded), len(cs.BlocksConfirmed))
 		return
 	}
 
@@ -704,7 +714,7 @@ func cmdMemoryReflect(args []string) {
 	if dryRun {
 		fmt.Printf("Reflection change set (run id: %s):\n", cs.RunID)
 		fmt.Printf("  Timestamp: %s\n", cs.Timestamp.Format("2006-01-02 15:04:05"))
-		if len(cs.BlocksAdded) == 0 && len(cs.BlocksSuperseded) == 0 {
+		if len(cs.BlocksAdded) == 0 && len(cs.BlocksSuperseded) == 0 && len(cs.BlocksConfirmed) == 0 {
 			fmt.Println("  No changes to apply.")
 			return
 		}
@@ -720,10 +730,16 @@ func cmdMemoryReflect(args []string) {
 				fmt.Printf("    ~ [%s] %s (ID: %s)\n", b.Label, truncateStr(b.Content, 70), b.ID)
 			}
 		}
+		if len(cs.BlocksConfirmed) > 0 {
+			fmt.Printf("  Blocks to confirm (%d):\n", len(cs.BlocksConfirmed))
+			for _, c := range cs.BlocksConfirmed {
+				fmt.Printf("    = ID: %s (confirms %d -> %d)\n", c.ID, c.PriorConfirms, c.PriorConfirms+1)
+			}
+		}
 		return
 	}
 
-	if len(cs.BlocksAdded) == 0 && len(cs.BlocksSuperseded) == 0 {
+	if len(cs.BlocksAdded) == 0 && len(cs.BlocksSuperseded) == 0 && len(cs.BlocksConfirmed) == 0 {
 		fmt.Printf("Reflection run %s completed: no new memories found.\n", cs.RunID)
 		return
 	}
@@ -738,6 +754,12 @@ func cmdMemoryReflect(args []string) {
 		fmt.Printf("  Blocks superseded (%d):\n", len(cs.BlocksSuperseded))
 		for _, b := range cs.SupersededDetails {
 			fmt.Printf("    ~ [%s] %s (ID: %s)\n", b.Label, truncateStr(b.Content, 70), b.ID)
+		}
+	}
+	if len(cs.BlocksConfirmed) > 0 {
+		fmt.Printf("  Blocks confirmed (%d):\n", len(cs.BlocksConfirmed))
+		for _, c := range cs.BlocksConfirmed {
+			fmt.Printf("    = ID: %s (confirms %d -> %d)\n", c.ID, c.PriorConfirms, c.PriorConfirms+1)
 		}
 	}
 }

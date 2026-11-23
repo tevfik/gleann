@@ -125,15 +125,22 @@ func TestEstimateJobSkipsUnreadableSamples(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "real.txt"), []byte(strings.Repeat("x", 4096)), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	// A dangling symlink is not counted: the build's walk skips it too.
 	if err := os.Symlink(filepath.Join(dir, "nowhere"), filepath.Join(dir, "dangling.txt")); err != nil {
 		t.Skipf("symlinks unavailable: %v", err)
 	}
+	// A file that cannot be opened (where permissions apply) is counted, and
+	// skipped as a rate sample.
+	if err := os.WriteFile(filepath.Join(dir, "locked.txt"), []byte("secret"), 0o000); err != nil {
+		t.Fatal(err)
+	}
+	const want = 2
 	est, err := EstimateJob(dir, 0) // 0 workers = one per CPU
 	if err != nil {
 		t.Fatalf("EstimateJob: %v", err)
 	}
-	if est.FileCount != 2 || est.TotalBytes < 4096 {
-		t.Errorf("estimate = %+v", est)
+	if est.FileCount != want || est.TotalBytes < 4096 {
+		t.Errorf("estimate = %+v, want %d files", est, want)
 	}
 	if est.SampledRate <= 0 {
 		t.Errorf("the rate must come from the readable sample or the fallback, got %v", est.SampledRate)

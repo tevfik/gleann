@@ -111,6 +111,52 @@ func openAPIPathsIndexes() map[string]any {
 				},
 			},
 		},
+		"/api/indexes/{name}/passages": map[string]any{
+			"get": map[string]any{
+				"tags":        []string{"indexes"},
+				"summary":     "List stored passages",
+				"description": "Lists the passages of a format-2 index in internal ID order, one SQLite page per request (ORDER BY id LIMIT/OFFSET). It reads the record store only: no vector file or embedder is loaded. `id` is the internal passage ID (the sort key); `vec_slot` is the ID a search result carries and is null for a lexical-only passage.",
+				"operationId": "listIndexPassages",
+				"parameters":  []map[string]any{paramName(), paramListLimit(), paramListOffset()},
+				"responses": map[string]any{
+					"200": map[string]any{
+						"description": "One page of stored passages",
+						"content": map[string]any{
+							"application/json": map[string]any{
+								"schema": refSchema("PassageListResponse"),
+							},
+						},
+					},
+					"400": map[string]any{"description": "Invalid index name, limit or offset"},
+					"403": map[string]any{"description": "Access denied (client target or tag isolation)"},
+					"404": map[string]any{"description": "Index not found"},
+					"409": map[string]any{"description": "Index uses the old store format; run gleann index migrate"},
+				},
+			},
+		},
+		"/api/indexes/{name}/sections": map[string]any{
+			"get": map[string]any{
+				"tags":        []string{"indexes"},
+				"summary":     "List document sections",
+				"description": "Groups the stored passages of a format-2 index into document sections from their heading metadata (section_id, section_title, section_path, section_summary; falling back to heading/title), with the passage count and the chunk and passage-ID ranges of each section. Passages without section metadata are not listed.",
+				"operationId": "listIndexSections",
+				"parameters":  []map[string]any{paramName(), paramListLimit(), paramListOffset()},
+				"responses": map[string]any{
+					"200": map[string]any{
+						"description": "One page of sections",
+						"content": map[string]any{
+							"application/json": map[string]any{
+								"schema": refSchema("SectionListResponse"),
+							},
+						},
+					},
+					"400": map[string]any{"description": "Invalid index name, limit or offset"},
+					"403": map[string]any{"description": "Access denied (client target or tag isolation)"},
+					"404": map[string]any{"description": "Index not found"},
+					"409": map[string]any{"description": "Index uses the old store format; run gleann index migrate"},
+				},
+			},
+		},
 		"/api/indexes/{name}/build": map[string]any{
 			"post": map[string]any{
 				"tags":        []string{"indexes"},

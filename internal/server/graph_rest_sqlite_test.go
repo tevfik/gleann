@@ -11,6 +11,7 @@ import (
 
 	"github.com/tevfik/gleann/internal/a2a"
 	"github.com/tevfik/gleann/internal/graph/analysisgolden"
+	"github.com/tevfik/gleann/internal/indexing"
 	"github.com/tevfik/gleann/pkg/gleann"
 )
 
@@ -167,5 +168,100 @@ func TestA2AGraphSkillsSQLite(t *testing.T) {
 	}
 	if _, err := s.a2aRiskHandler(a2a.SkillContext{Metadata: map[string]interface{}{"index": "absent"}}); err == nil {
 		t.Error("absent index must fail")
+	}
+}
+
+func TestA2ACodeHandler_Format2RealStoreNotice(t *testing.T) {
+	s, env := newRESTServer(t)
+	name := analysisgolden.IndexName
+
+	// 1. Query non-Go symbol: example.com/fixture/py.clean
+	ctxPy := a2a.SkillContext{
+		Metadata: map[string]interface{}{"index": name, "symbol": "example.com/fixture/py.clean"},
+		Query:    "who calls example.com/fixture/py.clean",
+	}
+	resPy, err := s.a2aCodeHandler(ctxPy)
+	if err != nil {
+		t.Fatalf("a2aCodeHandler for py symbol: %v", err)
+	}
+
+	// 2. Query Go symbol: example.com/fixture/service.Service.validate
+	ctxGo := a2a.SkillContext{
+		Metadata: map[string]interface{}{"index": name, "symbol": "example.com/fixture/service.Service.validate"},
+		Query:    "who calls example.com/fixture/service.Service.validate",
+	}
+	resGo, err := s.a2aCodeHandler(ctxGo)
+	if err != nil {
+		t.Fatalf("a2aCodeHandler for Go symbol: %v", err)
+	}
+
+	// Go symbol must NEVER emit notice in either build variant
+	if strings.Contains(resGo, "without tree-sitter") {
+		t.Fatalf("BUG: Go symbol carries non-Go notice in A2A response:\n%s", resGo)
+	}
+
+	// For non-Go symbol: in pure-Go build without tree-sitter, notice MUST be present.
+	// In -tags treesitter build, tree-sitter call extraction is present, so notice must NOT be present.
+	if indexing.NonGoNoticeMessage != "" {
+		if !strings.Contains(resPy, indexing.NonGoNoticeMessage) {
+			t.Fatalf("BUG: A2A response for lite non-Go symbol missing notice:\n%s", resPy)
+		}
+	} else {
+		if strings.Contains(resPy, "without tree-sitter") {
+			t.Fatalf("BUG: A2A response in treesitter build contains non-Go notice:\n%s", resPy)
+		}
+	}
+	_ = env
+}
+
+// TestRESTGraphQuery_NonGoNotice pins REST notice parity: POST
+// /api/graph/{name}/query must carry the optional `notice` for the symbol-based
+// queries (callees/callers/impact) when the graph was built without tree-sitter
+// and the symbol resolves to non-Go code, and must omit it for Go symbols and
+// in a treesitter build (v3 review Finding 4).
+func TestRESTGraphQuery_NonGoNotice(t *testing.T) {
+	s, _ := newRESTServer(t)
+	name := analysisgolden.IndexName
+	pySym := "example.com/fixture/py.clean"
+	goSym := "example.com/fixture/service.Service.validate"
+
+	for _, q := range []GraphQueryRequest{
+		{Query: "callers", Symbol: pySym},
+		{Query: "callees", Symbol: pySym},
+		{Query: "impact", Symbol: pySym},
+	} {
+		rec := restQuery(s, name, q)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("REST %s on %s = %d %s", q.Query, pySym, rec.Code, rec.Body.String())
+		}
+		var body map[string]any
+		if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+			t.Fatalf("REST %s body is not JSON: %v\n%s", q.Query, err, rec.Body.String())
+		}
+		notice, _ := body["notice"].(string)
+		if indexing.NonGoNoticeMessage != "" {
+			if !strings.Contains(notice, "without tree-sitter") {
+				t.Errorf("BUG: REST %s response for lite non-Go symbol has no notice:\n%s", q.Query, rec.Body.String())
+			}
+		} else if notice != "" {
+			t.Errorf("treesitter build must omit the notice, got %q in:\n%s", notice, rec.Body.String())
+		}
+	}
+
+	for _, q := range []GraphQueryRequest{
+		{Query: "callers", Symbol: goSym},
+		{Query: "impact", Symbol: goSym},
+	} {
+		rec := restQuery(s, name, q)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("REST %s on %s = %d %s", q.Query, goSym, rec.Code, rec.Body.String())
+		}
+		var body map[string]any
+		if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+			t.Fatalf("REST %s body is not JSON: %v\n%s", q.Query, err, rec.Body.String())
+		}
+		if notice, ok := body["notice"]; ok {
+			t.Errorf("BUG: Go symbol REST %s response carries a notice %q:\n%s", q.Query, notice, rec.Body.String())
+		}
 	}
 }

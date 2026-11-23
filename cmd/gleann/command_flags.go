@@ -143,7 +143,7 @@ var tasksFlags = flagSet{"--json": false, "--status": true, "--addr": true}
 var benchFlags = configFlags.union(flagSet{
 	"--index": true, "--docs": true, "--tasks": true, "--suite": true,
 	"--output": true, "--json": false, "--gen-tasks": true, "--kind": true,
-	"--count": true, "--agent": false,
+	"--count": true, "--agent": false, "--compare": true, "--per-task": true,
 })
 
 var agentsFlags = configFlags.union(flagSet{

@@ -285,11 +285,7 @@ func (ac *agentChat) stream(ctx context.Context, prompt string, emit func(agentt
 	cm.tokensSent += len(prompt) / 4
 	ac.mu.Unlock()
 
-	if memMgr != nil {
-		if cw, err := memMgr.BuildContext(); err == nil {
-			chat.SetMemoryContext(cw.Render())
-		}
-	}
+	memory.InjectRepoContext(chat, memMgr)
 	question := prompt + attachedFilesContext(attached)
 
 	chat.SetThinkingHandler(func(tok string) {

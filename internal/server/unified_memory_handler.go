@@ -455,8 +455,8 @@ func (s *Server) recallBlocks(req UnifiedRecallRequest) []RecallBlock {
 }
 
 // recallGraph delegates to recallGraphImpl (unified_memory_graph.go).
-func (s *Server) recallGraph(_ context.Context, _ UnifiedRecallRequest) *RecallGraph {
-	return s.recallGraphImpl()
+func (s *Server) recallGraph(ctx context.Context, req UnifiedRecallRequest) *RecallGraph {
+	return s.recallGraphImpl(ctx, req)
 }
 
 func (s *Server) recallVector(ctx context.Context, req UnifiedRecallRequest) []RecallHit {
@@ -544,11 +544,31 @@ func buildRecallContext(resp UnifiedRecallResponse) string {
 	}
 
 	if resp.Graph != nil && len(resp.Graph.Nodes) > 0 {
-		b.WriteString("<relationships>\n")
-		for _, e := range resp.Graph.Edges {
-			fmt.Fprintf(&b, "- %s -[%s]-> %s\n", e.From, e.Relation, e.To)
+		if len(resp.Graph.Edges) > 0 {
+			b.WriteString("<relationships>\n")
+			for _, e := range resp.Graph.Edges {
+				fmt.Fprintf(&b, "- %s -[%s]-> %s\n", e.From, e.Relation, e.To)
+			}
+			b.WriteString("</relationships>\n")
+		} else {
+			// Node-only graph results (a matched entity without surviving
+			// edges) must still render what matched; never emit an empty
+			// <relationships> block into an LLM prompt.
+			b.WriteString("<entities>\n")
+			for _, n := range resp.Graph.Nodes {
+				switch {
+				case n.Type != "" && n.Content != "":
+					fmt.Fprintf(&b, "- %s (%s): %s\n", n.ID, n.Type, n.Content)
+				case n.Type != "":
+					fmt.Fprintf(&b, "- %s (%s)\n", n.ID, n.Type)
+				case n.Content != "":
+					fmt.Fprintf(&b, "- %s: %s\n", n.ID, n.Content)
+				default:
+					fmt.Fprintf(&b, "- %s\n", n.ID)
+				}
+			}
+			b.WriteString("</entities>\n")
 		}
-		b.WriteString("</relationships>\n")
 	}
 
 	if len(resp.Vector) > 0 {

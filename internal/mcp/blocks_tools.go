@@ -21,7 +21,6 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"sync"
 
@@ -72,44 +71,6 @@ func remoteMemoryClient() *memory.RemoteClient {
 	return memory.Remote()
 }
 
-// detectRepoScope returns the normalized git remote origin or root directory name as the memory scope.
-// E.g. "github.com/tevfik/gleann" or working dir basename.
-func detectRepoScope() string {
-	// 1. Try git remote get-url origin
-	cmd := exec.Command("git", "config", "--get", "remote.origin.url")
-	if out, err := cmd.Output(); err == nil {
-		raw := strings.TrimSpace(string(out))
-		if raw != "" {
-			return normalizeGitRemote(raw)
-		}
-	}
-	// 2. Try git rev-parse --show-toplevel
-	cmd = exec.Command("git", "rev-parse", "--show-toplevel")
-	if out, err := cmd.Output(); err == nil {
-		top := strings.TrimSpace(string(out))
-		if top != "" {
-			return filepath.Base(top)
-		}
-	}
-	// 3. Fallback to current working directory basename
-	if wd, err := os.Getwd(); err == nil {
-		return filepath.Base(wd)
-	}
-	return "global"
-}
-
-func normalizeGitRemote(remote string) string {
-	s := remote
-	s = strings.TrimPrefix(s, "git@")
-	s = strings.TrimPrefix(s, "https://")
-	s = strings.TrimPrefix(s, "http://")
-	s = strings.TrimPrefix(s, "ssh://")
-	s = strings.Replace(s, ":", "/", 1)
-	s = strings.TrimSuffix(s, ".git")
-	s = strings.Trim(s, "/")
-	return s
-}
-
 func detectGitCommit() string {
 	cmd := exec.Command("git", "rev-parse", "HEAD")
 	if out, err := cmd.Output(); err == nil {
@@ -123,10 +84,11 @@ func detectGitCommit() string {
 func (s *Server) buildMemoryRememberTool() mcpsdk.Tool {
 	return mcpsdk.Tool{
 		Name: "memory_remember",
-		Description: "Store an important fact, preference, or piece of knowledge in gleann's " +
-			"long-term persistent memory. Stored facts survive across sessions and are " +
-			"automatically injected into future LLM context windows. Use this to give the " +
-			"LLM infinite, persistent memory.",
+		Description: "Store an important fact, preference, decision, convention or lesson in gleann's " +
+			"long-term persistent memory. Use this for knowledge the next session should not have " +
+			"to rediscover (architecture decisions, gotchas, project conventions); use memory_search " +
+			"first to avoid duplicating an existing block. Stored facts survive across sessions and " +
+			"are automatically injected into future LLM context windows.",
 		InputSchema: mcpsdk.ToolInputSchema{
 			Type: "object",
 			Properties: map[string]interface{}{
@@ -230,7 +192,7 @@ func (s *Server) handleMemoryRemember(ctx context.Context, req mcpsdk.CallToolRe
 		if repo != "" {
 			scope = repo
 		} else {
-			scope = detectRepoScope()
+			scope = memory.DetectRepoScope()
 		}
 	}
 	if repo == "" {
@@ -294,7 +256,7 @@ func (s *Server) handleMemoryRemember(ctx context.Context, req mcpsdk.CallToolRe
 				dedupNotice = fmt.Sprintf(" (reinforced %dx)", created.Confirms+1)
 			}
 			return mcpsdk.NewToolResultText(fmt.Sprintf(
-				"Remembered (ID: %s, tier: %s%s): %s%s", created.ID, created.Tier, dedupNotice, created.Content, prov,
+				"Remembered (ID: %s, tier: %s%s): %s%s%s", created.ID, created.Tier, dedupNotice, created.Content, prov, contradictionNotice(created),
 			)), nil
 		}
 		// Remote call failed (e.g. server restarted or 404); fallback to local store below
@@ -316,8 +278,20 @@ func (s *Server) handleMemoryRemember(ctx context.Context, req mcpsdk.CallToolRe
 	}
 
 	return mcpsdk.NewToolResultText(fmt.Sprintf(
-		"Remembered (ID: %s, tier: %s%s): %s%s", saved.ID, saved.Tier, dedupNotice, saved.Content, prov,
+		"Remembered (ID: %s, tier: %s%s): %s%s%s", saved.ID, saved.Tier, dedupNotice, saved.Content, prov, contradictionNotice(saved),
 	)), nil
+}
+
+// contradictionNotice reports flagged contradictions in a remember answer,
+// so the caller sees which stored blocks the new fact conflicts with.
+func contradictionNotice(b *memory.Block) string {
+	if b == nil || b.Metadata == nil {
+		return ""
+	}
+	if b.Metadata["has_contradictions"] == "true" {
+		return fmt.Sprintf(" (contradicts: %s)", b.Metadata["contradicts"])
+	}
+	return ""
 }
 
 // ── Tool: memory_forget ───────────────────────────────────────────────────────
@@ -325,7 +299,7 @@ func (s *Server) handleMemoryRemember(ctx context.Context, req mcpsdk.CallToolRe
 func (s *Server) buildMemoryForgetTool() mcpsdk.Tool {
 	return mcpsdk.Tool{
 		Name:        "memory_forget",
-		Description: "Remove a memory block by its ID, or delete all blocks whose content matches the given query string.",
+		Description: "Remove a memory block by its ID, or delete all blocks whose content matches the given query string. Destructive: use this only when a remembered fact is wrong or obsolete, after checking memory_search to be sure you are deleting the right block.",
 		InputSchema: mcpsdk.ToolInputSchema{
 			Type: "object",
 			Properties: map[string]interface{}{
@@ -376,7 +350,7 @@ func (s *Server) handleMemoryForget(ctx context.Context, req mcpsdk.CallToolRequ
 func (s *Server) buildMemorySearchTool() mcpsdk.Tool {
 	return mcpsdk.Tool{
 		Name:        "memory_search",
-		Description: "Full-text search across memory blocks. Matches against content, label, and tags. Scoped by default to the current repository plus global memories.",
+		Description: "Full-text search across memory blocks. Matches against content, label, and tags. PREFER this over memory_list when you are looking for a fact: it ranks by relevance instead of dumping everything. Search before remembering to avoid duplicates. Scoped by default to the current repository plus global memories.",
 		InputSchema: mcpsdk.ToolInputSchema{
 			Type: "object",
 			Properties: map[string]interface{}{
@@ -407,7 +381,7 @@ func (s *Server) handleMemorySearch(ctx context.Context, req mcpsdk.CallToolRequ
 
 	scope, _ := args["scope"].(string)
 	if scope == "" {
-		scope = detectRepoScope()
+		scope = memory.DetectRepoScope()
 	} else if scope == "all" || scope == "*" {
 		scope = ""
 	}
@@ -499,7 +473,7 @@ func (s *Server) handleMemoryList(ctx context.Context, req mcpsdk.CallToolReques
 	}
 
 	if scope == "" {
-		scope = detectRepoScope()
+		scope = memory.DetectRepoScope()
 	} else if scope == "all" || scope == "*" {
 		scope = ""
 	}
@@ -565,7 +539,9 @@ func (s *Server) buildMemoryContextTool() mcpsdk.Tool {
 	return mcpsdk.Tool{
 		Name: "memory_context",
 		Description: "Build and return the compiled <memory_context> window — the exact string " +
-			"that gleann injects into LLM system prompts. Scoped by default to the current repository plus global memories.",
+			"that gleann injects into LLM system prompts. Call this at the start of a task to load " +
+			"project conventions, past decisions and known command failures before searching or " +
+			"asking the user. Scoped by default to the current repository plus global memories.",
 		InputSchema: mcpsdk.ToolInputSchema{
 			Type: "object",
 			Properties: map[string]interface{}{
@@ -605,7 +581,7 @@ func (s *Server) handleMemoryContext(ctx context.Context, req mcpsdk.CallToolReq
 	}
 
 	if scope == "" {
-		scope = detectRepoScope()
+		scope = memory.DetectRepoScope()
 	} else if scope == "all" || scope == "*" {
 		scope = ""
 	}
@@ -688,6 +664,7 @@ func (s *Server) buildMemoryFailureAddTool() mcpsdk.Tool {
 		Name: "memory_failure_add",
 		Description: "Record a command failure and the fix that resolved it, so future " +
 			"sessions surface it (via memory_context) instead of repeating the mistake. " +
+			"Call this after resolving a failing build/test/command. " +
 			"Recording the same failure again reinforces the existing block.",
 		InputSchema: mcpsdk.ToolInputSchema{
 			Type: "object",

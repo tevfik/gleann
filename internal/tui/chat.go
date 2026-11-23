@@ -2105,13 +2105,8 @@ func (m ChatModel) askLLMStreamWithMedia(question string, images []string) tea.C
 	attachedFiles := m.attachedFiles
 
 	return func() tea.Msg {
-		// Refresh memory context before each query.
-		if memMgr != nil {
-			if cw, err := memMgr.BuildContext(); err == nil {
-				rendered := cw.Render()
-				chat.SetMemoryContext(rendered)
-			}
-		}
+		// Refresh the current repository's memory context before each query.
+		memory.InjectRepoContext(chat, memMgr)
 
 		// Build context from attached files.
 		question += attachedFilesContext(attachedFiles)

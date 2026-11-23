@@ -163,7 +163,7 @@ func openAPISchemasIndex() map[string]any {
 				"backend": map[string]any{
 					"type":        "string",
 					"enum":        []string{"diskann", "hnsw", "faiss", "faiss-hybrid"},
-					"description": "Vector search backend (default: diskann)",
+					"description": "Vector search backend (default: hnsw)",
 				},
 			},
 		},
@@ -172,6 +172,58 @@ func openAPISchemasIndex() map[string]any {
 			"properties": map[string]any{
 				"text":     map[string]any{"type": "string"},
 				"metadata": map[string]any{"type": "object", "additionalProperties": true},
+			},
+		},
+		"StoredPassage": map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"id":          map[string]any{"type": "integer", "format": "int64", "description": "Internal passage ID (the listing's sort key)"},
+				"pid":         map[string]any{"type": "string", "description": "Stable passage ID across rebuilds"},
+				"source":      map[string]any{"type": "string", "description": "Source file of the passage"},
+				"chunk_index": map[string]any{"type": "integer", "description": "Position of the passage within its source"},
+				"vec_slot":    map[string]any{"type": "integer", "format": "int64", "nullable": true, "description": "Position in the vector file, the ID search results carry; null for a lexical-only passage"},
+				"kind":        map[string]any{"type": "string", "enum": []string{"code", "prose"}},
+				"text":        map[string]any{"type": "string"},
+				"metadata":    map[string]any{"type": "object", "additionalProperties": true, "description": "The passage metadata (section_id, section_title, section_path, lang, ...)"},
+			},
+		},
+		"PassageListResponse": map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"passages": map[string]any{
+					"type":  "array",
+					"items": refSchema("StoredPassage"),
+				},
+				"count":  map[string]any{"type": "integer", "description": "Number of passages in this page"},
+				"limit":  map[string]any{"type": "integer", "description": "Effective page size"},
+				"offset": map[string]any{"type": "integer"},
+			},
+		},
+		"IndexSection": map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"source":           map[string]any{"type": "string"},
+				"section_id":       map[string]any{"type": "string"},
+				"title":            map[string]any{"type": "string", "description": "section_title, falling back to heading/title"},
+				"path":             map[string]any{"type": "string", "description": "Heading breadcrumb, e.g. \"Introduction > Details\""},
+				"summary":          map[string]any{"type": "string"},
+				"passage_count":    map[string]any{"type": "integer"},
+				"first_chunk":      map[string]any{"type": "integer", "description": "First chunk_no of the section within its source"},
+				"last_chunk":       map[string]any{"type": "integer"},
+				"first_passage_id": map[string]any{"type": "integer", "format": "int64"},
+				"last_passage_id":  map[string]any{"type": "integer", "format": "int64"},
+			},
+		},
+		"SectionListResponse": map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"sections": map[string]any{
+					"type":  "array",
+					"items": refSchema("IndexSection"),
+				},
+				"count":  map[string]any{"type": "integer", "description": "Number of sections in this page"},
+				"limit":  map[string]any{"type": "integer", "description": "Effective page size"},
+				"offset": map[string]any{"type": "integer"},
 			},
 		},
 	}

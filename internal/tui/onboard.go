@@ -398,8 +398,8 @@ func NewOnboardModel() OnboardModel {
 
 func buildBackendOptions() []string {
 	opts := []string{
-		"DiskANN (recommended — disk-efficient, low RAM)",
-		"HNSW (in-memory, fast)",
+		"HNSW (default — in-memory, fast)",
+		"DiskANN (disk-efficient, low RAM)",
 	}
 	if gleann.IsFaissSupported() {
 		opts = append(opts, "FAISS (SIMD-accelerated, requires CGo)")
@@ -511,6 +511,13 @@ func NewOnboardModelWithConfig(cfg *OnboardResult) OnboardModel {
 	}
 	m.codeEmbeddingModel = cfg.CodeEmbeddingModel
 	m.docEmbeddingModel = cfg.DocEmbeddingModel
+
+	for i, b := range []string{"hnsw", "diskann", "faiss", "faiss-hybrid"} {
+		if b == cfg.Backend {
+			m.backendOptionIdx = i
+			break
+		}
+	}
 
 	return m
 }
@@ -2116,8 +2123,8 @@ func (m OnboardModel) renderSummary() string {
 	} else {
 		rows = append(rows, row{"Reranker", "disabled"})
 	}
-	backendNames := []string{"diskann", "hnsw", "faiss", "faiss-hybrid"}
-	backendName := "diskann"
+	backendNames := []string{"hnsw", "diskann", "faiss", "faiss-hybrid"}
+	backendName := "hnsw"
 	if m.backendOptionIdx < len(backendNames) {
 		backendName = backendNames[m.backendOptionIdx]
 	}
@@ -2193,11 +2200,11 @@ func (m OnboardModel) handleA2AKeys(key string) (tea.Model, tea.Cmd) {
 }
 
 func (m OnboardModel) selectedBackend() string {
-	names := []string{"diskann", "hnsw", "faiss", "faiss-hybrid"}
+	names := []string{"hnsw", "diskann", "faiss", "faiss-hybrid"}
 	if m.backendOptionIdx < len(names) {
 		return names[m.backendOptionIdx]
 	}
-	return "diskann"
+	return "hnsw"
 }
 
 func (m OnboardModel) installPath() string {

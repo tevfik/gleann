@@ -10,6 +10,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/tevfik/gleann/internal/a2a"
 	"github.com/tevfik/gleann/internal/auth"
 )
 
@@ -145,7 +146,9 @@ func securityMiddleware(sc *securityConfig, h http.Handler) http.Handler {
 		}
 
 		if sc.store == nil {
-			h.ServeHTTP(w, r)
+			// Auth disabled (loopback only): callers hold full privileges,
+			// so A2A skill handlers see the admin scope.
+			h.ServeHTTP(w, r.WithContext(a2a.WithScope(r.Context(), string(auth.ScopeAdmin))))
 			return
 		}
 
@@ -183,6 +186,8 @@ func securityMiddleware(sc *securityConfig, h http.Handler) http.Handler {
 			deny(w, http.StatusForbidden, "cross-origin request rejected")
 			return
 		}
-		h.ServeHTTP(w, r)
+		// Carry the verified scope to handlers that authorise per-operation,
+		// e.g. A2A skills (memory writes and local-file reads need admin).
+		h.ServeHTTP(w, r.WithContext(a2a.WithScope(r.Context(), string(have))))
 	})
 }

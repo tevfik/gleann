@@ -284,6 +284,234 @@ func TestProcessRawErrors(t *testing.T) {
 	})
 }
 
+// ── plugin stop grace ────────────────────────────────────────────────────
+
+// startShellPlugin runs script with `sh -c`, passing args as $1, $2, ….
+// It returns the command, a channel closed once the process has been reaped,
+// and a channel that receives cmd.Wait's error. The process is killed on
+// cleanup if the test leaves it running.
+func startShellPlugin(t *testing.T, script string, args ...string) (*exec.Cmd, chan struct{}, <-chan error) {
+	t.Helper()
+	cmd := exec.Command("sh", append([]string{"-c", script, "sh"}, args...)...)
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan struct{})
+	waitErr := make(chan error, 1)
+	go func() {
+		err := cmd.Wait()
+		waitErr <- err
+		close(done)
+	}()
+	t.Cleanup(func() { _ = cmd.Process.Kill() })
+	return cmd, done, waitErr
+}
+
+func waitForFile(t *testing.T, path string) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if _, err := os.Stat(path); err == nil {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("%s never appeared", path)
+}
+
+func managerForPlugin(cmd *exec.Cmd, done chan struct{}) *PluginManager {
+	return &PluginManager{
+		activeCmds: map[string]*exec.Cmd{"p": cmd},
+		exited:     map[*exec.Cmd]chan struct{}{cmd: done},
+	}
+}
+
+// TestStopPluginLockedLetsPluginFinish guards the restart path: a plugin that
+// traps SIGINT and needs a moment to finish its work must not be SIGKILLed the
+// instant stopPluginLocked is called.
+func TestStopPluginLockedLetsPluginFinish(t *testing.T) {
+	requireUnixTools(t, "sh", "sleep")
+	t.Setenv("GLEANN_PLUGIN_STOP_GRACE", "")
+	old := pluginStopGrace
+	pluginStopGrace = 5 * time.Second
+	defer func() { pluginStopGrace = old }()
+
+	dir := t.TempDir()
+	ready, marker := filepath.Join(dir, "ready"), filepath.Join(dir, "marker")
+	cmd, done, waitErr := startShellPlugin(t, `ready=$1; marker=$2
+trap 'sleep 0.3; : > "$marker"; exit 0' INT
+: > "$ready"
+while :; do sleep 0.05; done`, ready, marker)
+	waitForFile(t, ready)
+
+	m := managerForPlugin(cmd, done)
+	m.mu.Lock()
+	m.stopPluginLocked("p")
+	m.mu.Unlock()
+
+	if _, err := os.Stat(marker); err != nil {
+		t.Fatalf("plugin was killed before its SIGINT handler finished: %v", err)
+	}
+	select {
+	case err := <-waitErr:
+		if err != nil {
+			t.Fatalf("plugin exited uncleanly: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("plugin was not reaped")
+	}
+	if len(m.activeCmds) != 0 || len(m.exited) != 0 {
+		t.Error("stopped plugin must be forgotten")
+	}
+}
+
+// TestCloseLetsPluginFinishAfterLongGrace proves the shipped default grace is
+// no longer the 2s that cut off an in-flight conversion: Close must let a
+// plugin that needs 2.2s after SIGINT exit cleanly.
+func TestCloseLetsPluginFinishAfterLongGrace(t *testing.T) {
+	requireUnixTools(t, "sh", "sleep")
+	if pluginStopGrace <= 2*time.Second {
+		t.Fatalf("default plugin stop grace = %s, want more than the old 2s", pluginStopGrace)
+	}
+	t.Setenv("GLEANN_PLUGIN_STOP_GRACE", "")
+
+	dir := t.TempDir()
+	ready, marker := filepath.Join(dir, "ready"), filepath.Join(dir, "marker")
+	cmd, done, waitErr := startShellPlugin(t, `ready=$1; marker=$2
+trap 'sleep 2.2; : > "$marker"; exit 0' INT
+: > "$ready"
+while :; do sleep 0.05; done`, ready, marker)
+	waitForFile(t, ready)
+
+	m := managerForPlugin(cmd, done)
+	m.Close()
+
+	if _, err := os.Stat(marker); err != nil {
+		t.Fatalf("Close killed the plugin before its SIGINT handler finished: %v", err)
+	}
+	select {
+	case err := <-waitErr:
+		if err != nil {
+			t.Fatalf("plugin exited uncleanly: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("plugin was not reaped")
+	}
+	if len(m.activeCmds) != 0 || len(m.exited) != 0 {
+		t.Error("Close must forget every stopped plugin")
+	}
+}
+
+// stopShellPluginWithGrace starts the standard SIGINT-trapping fake plugin,
+// calls stopPluginLocked and reports the marker path, how long the stop took
+// and the exit error.
+func stopShellPluginWithGrace(t *testing.T, work string) (string, time.Duration, error) {
+	t.Helper()
+	dir := t.TempDir()
+	ready, marker := filepath.Join(dir, "ready"), filepath.Join(dir, "marker")
+	cmd, done, waitErr := startShellPlugin(t, `ready=$1; marker=$2; work=$3
+trap 'sleep "$work"; : > "$marker"; exit 0' INT
+: > "$ready"
+while :; do sleep 0.05; done`, ready, marker, work)
+	waitForFile(t, ready)
+
+	m := managerForPlugin(cmd, done)
+	start := time.Now()
+	m.mu.Lock()
+	m.stopPluginLocked("p")
+	m.mu.Unlock()
+	elapsed := time.Since(start)
+
+	select {
+	case err := <-waitErr:
+		return marker, elapsed, err
+	case <-time.After(10 * time.Second):
+		t.Fatal("plugin was not reaped")
+		return marker, elapsed, nil
+	}
+}
+
+// TestPluginStopGraceEnvOverride checks GLEANN_PLUGIN_STOP_GRACE: a longer
+// value gives the plugin time to finish, a tiny value force-kills it, and
+// invalid values fall back to the built-in grace.
+func TestPluginStopGraceEnvOverride(t *testing.T) {
+	requireUnixTools(t, "sh", "sleep")
+	old := pluginStopGrace
+	pluginStopGrace = 10 * time.Second // fallback must be long enough for 200ms
+	defer func() { pluginStopGrace = old }()
+
+	t.Run("long value lets the plugin finish", func(t *testing.T) {
+		t.Setenv("GLEANN_PLUGIN_STOP_GRACE", "2s")
+		marker, _, err := stopShellPluginWithGrace(t, "0.3")
+		if err != nil {
+			t.Errorf("plugin exited uncleanly under a 2s override: %v", err)
+		}
+		if _, statErr := os.Stat(marker); statErr != nil {
+			t.Errorf("plugin was killed before finishing under a 2s override: %v", statErr)
+		}
+	})
+	t.Run("short value force-kills", func(t *testing.T) {
+		t.Setenv("GLEANN_PLUGIN_STOP_GRACE", "100ms")
+		marker, _, err := stopShellPluginWithGrace(t, "1")
+		if err == nil {
+			t.Error("plugin should have been killed before its 1s of work finished")
+		}
+		if _, statErr := os.Stat(marker); statErr == nil {
+			t.Error("the SIGINT handler finished although the grace period was 100ms")
+		}
+	})
+	for _, bad := range []string{"bogus", "0s", "-1s"} {
+		t.Run("invalid "+bad+" falls back", func(t *testing.T) {
+			t.Setenv("GLEANN_PLUGIN_STOP_GRACE", bad)
+			marker, _, err := stopShellPluginWithGrace(t, "0.2")
+			if err != nil {
+				t.Errorf("invalid value %q must fall back to the built-in grace, exit: %v", bad, err)
+			}
+			if _, statErr := os.Stat(marker); statErr != nil {
+				t.Errorf("invalid value %q must fall back to the built-in grace: %v", bad, statErr)
+			}
+		})
+	}
+}
+
+// TestStopPluginLockedKillsStubbornPlugin keeps the force-kill safety net: a
+// plugin that ignores SIGINT is still killed and forgotten after the grace.
+func TestStopPluginLockedKillsStubbornPlugin(t *testing.T) {
+	requireUnixTools(t, "sh", "sleep")
+	t.Setenv("GLEANN_PLUGIN_STOP_GRACE", "")
+	old := pluginStopGrace
+	pluginStopGrace = 100 * time.Millisecond
+	defer func() { pluginStopGrace = old }()
+
+	dir := t.TempDir()
+	ready := filepath.Join(dir, "ready")
+	cmd, done, waitErr := startShellPlugin(t, `ready=$1
+trap '' INT
+: > "$ready"
+while :; do sleep 0.05; done`, ready)
+	waitForFile(t, ready)
+
+	m := managerForPlugin(cmd, done)
+	start := time.Now()
+	m.mu.Lock()
+	m.stopPluginLocked("p")
+	m.mu.Unlock()
+	if time.Since(start) < 100*time.Millisecond {
+		t.Errorf("stopPluginLocked returned before the grace period: %v", time.Since(start))
+	}
+	select {
+	case err := <-waitErr:
+		if err == nil {
+			t.Error("a plugin that ignores SIGINT must be killed")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("stubborn plugin survived stopPluginLocked")
+	}
+	if len(m.activeCmds) != 0 || len(m.exited) != 0 || len(m.logFiles) != 0 {
+		t.Error("stopped plugin must be forgotten")
+	}
+}
+
 // ── plugin tokens ─────────────────────────────────────────────────────────
 
 func TestPluginTokenErrors(t *testing.T) {

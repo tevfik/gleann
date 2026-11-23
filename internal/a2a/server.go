@@ -167,6 +167,10 @@ type SkillContext struct {
 	Query    string
 	Metadata map[string]interface{}
 	Files    []FilePart // Attached media files from A2A message parts
+	// Scope is the caller's authenticated token scope ("query" or "admin"),
+	// taken from the request context by the HTTP front end. Empty means
+	// unknown; handlers must treat it as unprivileged.
+	Scope string
 }
 
 // Server implements the A2A HTTP+JSON protocol binding.
@@ -262,6 +266,7 @@ func (s *Server) handleSendMessage(w http.ResponseWriter, r *http.Request) {
 		Query:    query,
 		Metadata: req.Metadata,
 		Files:    files,
+		Scope:    ScopeFromContext(r.Context()),
 	})
 
 	if err != nil {
@@ -562,7 +567,7 @@ func DefaultAgentCard(version, baseURL string) AgentCard {
 			{
 				ID:          "memory-management",
 				Name:        "Persistent Memory",
-				Description: "Store, retrieve, search, and manage long-term memory blocks with hierarchical tiers, scoping, and character limits",
+				Description: "Store, retrieve, search, and manage long-term memory blocks with hierarchical tiers, scoping, and character limits. Retrieval and search work with a query token; storing blocks requires an admin token",
 				Tags:        []string{"memory", "context", "persistence", "knowledge", "blocks"},
 				Examples: []string{
 					"Remember that the API uses JWT tokens",
@@ -602,7 +607,7 @@ func DefaultAgentCard(version, baseURL string) AgentCard {
 			{
 				ID:          "multimodal-analyze",
 				Name:        "Multimodal Analysis",
-				Description: "Analyze PDF documents, images, and video files using vision-capable LLMs. Extracts text, diagrams, and content descriptions",
+				Description: "Analyze PDF documents, images, and video files using vision-capable LLMs. Extracts text, diagrams, and content descriptions. Attached files work with a query token; analyzing a server-local file path requires an admin token",
 				Tags:        []string{"multimodal", "pdf", "video", "image", "vision"},
 				Examples: []string{
 					"Analyze this PDF document",

@@ -1,14 +1,19 @@
 package mcp
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/tevfik/gleann/internal/graph/analysisgolden"
 	"github.com/tevfik/gleann/internal/graphstore"
+	"github.com/tevfik/gleann/internal/indexing"
 	"github.com/tevfik/gleann/internal/store"
+	"github.com/tevfik/gleann/modules/chunking"
 	"github.com/tevfik/gleann/pkg/gleann"
 )
 
@@ -346,5 +351,179 @@ func TestReadFullDocument_GraphThenDiskThenNotFound(t *testing.T) {
 	res = callToolResult(t, s.handleReadFullDocument, map[string]interface{}{"index": "nope", "vpath": "x.md"})
 	if !res.IsError {
 		t.Errorf("unknown index must be an error, got %v", res.Content)
+	}
+}
+
+func TestImpact_NonGoNotice(t *testing.T) {
+	env := analysisgolden.BuildIndexFormat2(t)
+	s := NewServer(Config{IndexDir: env.IndexDir})
+	t.Cleanup(s.closeGraphPool)
+
+	out := callTool(t, s.handleImpact, map[string]interface{}{
+		"index":  analysisgolden.IndexName,
+		"symbol": "example.com/fixture/py.clean",
+	})
+	wantNotice := "note: non-Go code was extracted without tree-sitter (use a build with tree-sitter: the 'full' release artifact)"
+	if chunking.TreeSitterAvailable() {
+		if strings.Contains(out, "without tree-sitter") {
+			t.Errorf("treesitter build must not include notice, got:\n%s", out)
+		}
+	} else {
+		if !strings.Contains(out, wantNotice) {
+			t.Errorf("impact on non-Go symbol missing notice in:\n%s", out)
+		}
+	}
+
+	// Impact on Go symbol must not include notice.
+	outGo := callTool(t, s.handleImpact, map[string]interface{}{
+		"index":  analysisgolden.IndexName,
+		"symbol": "example.com/fixture/service.Service.Load",
+	})
+	if strings.Contains(outGo, "without tree-sitter") {
+		t.Errorf("Go symbol impact must not include notice, got:\n%s", outGo)
+	}
+}
+
+func TestImpact_ShortNameClean_NoNoticeOnGo(t *testing.T) {
+	docsDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(docsDir, "go.mod"), []byte("module example.com/m\n\ngo 1.22\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(docsDir, "a.py"), []byte("def clean():\n    pass\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(docsDir, "svc"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(docsDir, "svc", "z.go"), []byte("package svc\nfunc Run() { clean() }\nfunc clean() {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	indexDir := t.TempDir()
+	idxPath := filepath.Join(indexDir, "zz2")
+	if err := os.MkdirAll(idxPath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(idxPath, "zz2.meta.json"), []byte(`{"store_format":2}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var outBuf bytes.Buffer
+	indexing.BuildGraphIndex(indexing.GraphOptions{
+		Name:     "zz2",
+		DocsDir:  docsDir,
+		IndexDir: indexDir,
+		Stdout:   &outBuf,
+		Stderr:   &outBuf,
+	})
+
+	s := NewServer(Config{IndexDir: indexDir})
+	t.Cleanup(s.closeGraphPool)
+
+	out := callTool(t, s.handleImpact, map[string]interface{}{
+		"index":  "zz2",
+		"symbol": "clean",
+	})
+	if strings.Contains(out, "without tree-sitter") {
+		t.Fatalf("BUG: impact of Go symbol svc.clean carrying non-Go notice:\n%s", out)
+	}
+}
+
+func TestNeighbors_NonGoNotice(t *testing.T) {
+	env := analysisgolden.BuildIndexFormat2(t)
+	s := NewServer(Config{IndexDir: env.IndexDir})
+	t.Cleanup(s.closeGraphPool)
+
+	out := callTool(t, s.handleGraphNeighbors, map[string]interface{}{
+		"index":    analysisgolden.IndexName,
+		"node_fqn": "example.com/fixture/py.clean",
+	})
+	wantNotice := "note: non-Go code was extracted without tree-sitter (use a build with tree-sitter: the 'full' release artifact)"
+	if chunking.TreeSitterAvailable() {
+		if strings.Contains(out, "without tree-sitter") {
+			t.Errorf("treesitter build must not include notice, got:\n%s", out)
+		}
+	} else {
+		if !strings.Contains(out, wantNotice) {
+			t.Errorf("neighbors on non-Go symbol missing notice in:\n%s", out)
+		}
+	}
+
+	// Go symbol must not include notice.
+	outGo := callTool(t, s.handleGraphNeighbors, map[string]interface{}{
+		"index":    analysisgolden.IndexName,
+		"node_fqn": "example.com/fixture/service.Service.Load",
+	})
+	if strings.Contains(outGo, "without tree-sitter") {
+		t.Errorf("Go symbol neighbors must not include notice, got:\n%s", outGo)
+	}
+}
+
+// TestNeighbors_CalleeOnlyGoShortName_NoNotice pins the direction-aware notice
+// of gleann_graph_neighbors: it answers BOTH callers and callees, so the
+// notice must be resolved over both sides. A Go symbol with outgoing but no
+// incoming CALLS edges and a non-Go namesake must not carry the notice
+// (v3 review Finding 1, residual E on MCP neighbors).
+func TestNeighbors_CalleeOnlyGoShortName_NoNotice(t *testing.T) {
+	docsDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(docsDir, "go.mod"), []byte("module example.com/m\n\ngo 1.22\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(docsDir, "a.py"), []byte("def clean():\n    pass\n\ndef pyonly():\n    pass\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(docsDir, "svc"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(docsDir, "svc", "z.go"), []byte("package svc\nfunc clean() { helper() }\nfunc helper() {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	indexDir := t.TempDir()
+	idxPath := filepath.Join(indexDir, "zz3")
+	if err := os.MkdirAll(idxPath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(idxPath, "zz3.meta.json"), []byte(`{"store_format":2}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var outBuf bytes.Buffer
+	indexing.BuildGraphIndex(indexing.GraphOptions{
+		Name:     "zz3",
+		DocsDir:  docsDir,
+		IndexDir: indexDir,
+		Stdout:   &outBuf,
+		Stderr:   &outBuf,
+	})
+	if _, err := os.Stat(filepath.Join(idxPath, "zz3.db")); err != nil {
+		t.Fatalf("graph index not built: %v\n%s", err, outBuf.String())
+	}
+
+	s := NewServer(Config{IndexDir: indexDir})
+	t.Cleanup(s.closeGraphPool)
+
+	out := callTool(t, s.handleGraphNeighbors, map[string]interface{}{
+		"index":    "zz3",
+		"node_fqn": "clean",
+	})
+	if !strings.Contains(out, "example.com/m/svc.helper") {
+		t.Fatalf("neighbors of clean must list the Go callee svc.helper:\n%s", out)
+	}
+	if strings.Contains(out, "without tree-sitter") {
+		t.Fatalf("BUG: neighbors of the callee-only Go symbol carry a non-Go notice:\n%s", out)
+	}
+
+	// A non-Go symbol without a Go namesake still deserves the notice in a
+	// lite build: the direction-aware resolution must not silence the real
+	// blind spot.
+	outPy := callTool(t, s.handleGraphNeighbors, map[string]interface{}{
+		"index":    "zz3",
+		"node_fqn": "example.com/m.pyonly",
+	})
+	if chunking.TreeSitterAvailable() {
+		if strings.Contains(outPy, "without tree-sitter") {
+			t.Fatalf("treesitter build must not include the notice, got:\n%s", outPy)
+		}
+	} else if !strings.Contains(outPy, indexing.NonGoNoticeMessage) {
+		t.Fatalf("neighbors of the non-Go symbol must carry the notice in a lite build:\n%s", outPy)
 	}
 }
