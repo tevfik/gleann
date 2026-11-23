@@ -101,7 +101,7 @@ func TestCLIBenchFallbackToDefaultTasksNotice(t *testing.T) {
 
 	r := e.run("bench", "--index", "other", "--top-k", "3")
 	wantExit(t, r, 0)
-	mustContain(t, "fallback notice on stderr", r.Err, "note:", "falling back to default tasks", "bench/tasks/gleann.json")
+	mustContain(t, "fallback notice on stderr", r.Err, "note:", "falling back to default tasks", filepath.Join("bench", "tasks", "gleann.json"))
 }
 
 func TestCLICBenchContextSuite(t *testing.T) {
@@ -343,6 +343,16 @@ func TestCLICBenchAgentSuite(t *testing.T) {
 	mustContain(t, "agent report unwritable", r.Err, "error writing report")
 }
 
+// requireRipgrep skips the calling test when ripgrep is not on PATH. The
+// lexical baseline shells out to rg, so tests that exercise it for real
+// (rather than its "unavailable" reporting) can only run where rg exists.
+func requireRipgrep(t *testing.T) {
+	t.Helper()
+	if _, err := exec.LookPath("rg"); err != nil {
+		t.Skip("ripgrep (rg) not installed on PATH")
+	}
+}
+
 func TestCLICBenchHelpers(t *testing.T) {
 	for _, c := range []struct {
 		in   int64
@@ -362,7 +372,8 @@ func TestCLICBenchHelpers(t *testing.T) {
 	}
 
 	// The lexical baseline picks the longest query word and greps the
-	// working directory; an empty query finds nothing.
+	// working directory; an empty query finds nothing. Needs rg.
+	requireRipgrep(t)
 	dir := t.TempDir()
 	t.Chdir(dir)
 	if err := os.WriteFile(filepath.Join(dir, "a.txt"), []byte("the quicksilverword is here"), 0o644); err != nil {
@@ -384,6 +395,7 @@ func TestCLICBenchHelpers(t *testing.T) {
 }
 
 func TestCLIRipgrepBaselineFixtureRankingAndTokens(t *testing.T) {
+	requireRipgrep(t)
 	fixtureDir := t.TempDir()
 	// zzz.txt sorts alphabetically AFTER aaa.txt, but has 3 matching lines
 	zzzContent := "resolver line 1\nendpoint line 2\nresolver line 3\nother line 4\n"
@@ -422,6 +434,7 @@ func TestCLIRipgrepBaselineFixtureRankingAndTokens(t *testing.T) {
 }
 
 func TestCLIRipgrepGitignoreInNonGitDir(t *testing.T) {
+	requireRipgrep(t)
 	fixtureDir := t.TempDir()
 	// Ensure no .git exists in fixtureDir
 	if err := os.WriteFile(filepath.Join(fixtureDir, ".gitignore"), []byte("secret.md\n"), 0o644); err != nil {
@@ -616,6 +629,7 @@ func TestCLICBenchCompareStandaloneMultiStrategy(t *testing.T) {
 }
 
 func TestCLIRipgrepMissingSourceDirAndExit2(t *testing.T) {
+	requireRipgrep(t)
 	// 1. Missing source directory must return ErrStrategyUnavailable
 	missingDir := filepath.Join(t.TempDir(), "moved-away")
 	files, tokens, err := runRipgrepSearch(missingDir, "resolver endpoint", 5)
@@ -670,16 +684,24 @@ func TestCLIBenchMovedSourceDirReportsUnavailable(t *testing.T) {
 	r := e.run("bench", "--index", "demo", "--tasks", tasks, "--top-k", "3")
 	wantExit(t, r, 0)
 	// Must indicate Ripgrep is unavailable rather than reporting measured zeros
-	mustContain(t, "ripgrep unavailable", r.Out, "Ripgrep", "Unavailable")
+	// Without rg on PATH the baseline is unavailable for a different (earlier)
+	// reason; either way it must be reported as unavailable, not as zeros.
+	mustContain(t, "ripgrep unavailable", r.Out, "Ripgrep")
+	if _, err := exec.LookPath("rg"); err != nil {
+		mustContain(t, "ripgrep unavailable", r.Out, "ripgrep not installed")
+	} else {
+		mustContain(t, "ripgrep unavailable", r.Out, "Unavailable")
+	}
 	if strings.Contains(r.Out, "-100.0%") {
 		t.Errorf("benchmark output should not report fake -100.0%% tokens when source dir is moved: %s", r.Out)
 	}
 }
 
 func TestCLIRipgrepOlderVersionUnsupportedFlagRetryAndRealExit2(t *testing.T) {
+	requireRipgrep(t)
 	realRg, err := exec.LookPath("rg")
 	if err != nil {
-		t.Skip("rg not installed on host")
+		t.Fatal(err)
 	}
 
 	shimDir := t.TempDir()
@@ -738,9 +760,7 @@ exec %s "$@"
 }
 
 func TestCLIRipgrepIgnoresAncestorGitignoreWithNoIgnoreParent(t *testing.T) {
-	if _, err := exec.LookPath("rg"); err != nil {
-		t.Skip("rg not installed")
-	}
+	requireRipgrep(t)
 
 	// Create parent repo root with .git and .gitignore ignoring *.go
 	parentDir := t.TempDir()
@@ -803,5 +823,10 @@ func TestCLIBenchSourceDirIsFileReportsCleanReason(t *testing.T) {
 	if strings.Contains(r.Out, "<nil>") || strings.Contains(r.Err, "<nil>") {
 		t.Errorf("output or stderr contained <nil> for non-directory sourceDir:\nout:\n%s\nerr:\n%s", r.Out, r.Err)
 	}
-	mustContain(t, "not a directory reason", r.Out, "not a directory")
+	if _, err := exec.LookPath("rg"); err != nil {
+		// The rg lookup precedes the source-directory check.
+		mustContain(t, "rg missing reason", r.Out, "ripgrep not installed")
+	} else {
+		mustContain(t, "not a directory reason", r.Out, "not a directory")
+	}
 }

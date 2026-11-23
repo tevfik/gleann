@@ -112,7 +112,7 @@ func runContextBenchmark(config gleann.Config, indexName, tasksFile string, topK
 			defaultGleann := filepath.Join("bench", "tasks", "gleann.json")
 			if _, err := os.Stat(defaultGleann); err == nil {
 				tasksFile = defaultGleann
-				fmt.Fprintf(os.Stderr, "note: bench/tasks/%s.json not found; falling back to default tasks %s\n", indexName, tasksFile)
+				fmt.Fprintf(os.Stderr, "note: %s not found; falling back to default tasks %s\n", defaultTasks, tasksFile)
 			}
 		}
 	}

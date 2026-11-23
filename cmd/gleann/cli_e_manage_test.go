@@ -46,6 +46,7 @@ func TestCLIETUIRequiresTerminal(t *testing.T) {
 }
 
 func TestCLIERipgrepSearchTerms(t *testing.T) {
+	requireRipgrep(t)
 	dir := t.TempDir()
 	for _, q := range []string{"", "   ", `"" ()`} {
 		paths, tokens, err := runRipgrepSearch(dir, q, 3)

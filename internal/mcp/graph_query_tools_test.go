@@ -357,7 +357,9 @@ func TestReadFullDocument_GraphThenDiskThenNotFound(t *testing.T) {
 func TestImpact_NonGoNotice(t *testing.T) {
 	env := analysisgolden.BuildIndexFormat2(t)
 	s := NewServer(Config{IndexDir: env.IndexDir})
-	t.Cleanup(s.closeGraphPool)
+	// Close, not closeGraphPool: impact and neighbors borrow a cached searcher that
+	// also holds the index db (Windows cannot delete an open file).
+	t.Cleanup(s.Close)
 
 	out := callTool(t, s.handleImpact, map[string]interface{}{
 		"index":  analysisgolden.IndexName,
@@ -417,7 +419,7 @@ func TestImpact_ShortNameClean_NoNoticeOnGo(t *testing.T) {
 	})
 
 	s := NewServer(Config{IndexDir: indexDir})
-	t.Cleanup(s.closeGraphPool)
+	t.Cleanup(s.Close)
 
 	out := callTool(t, s.handleImpact, map[string]interface{}{
 		"index":  "zz2",
@@ -431,7 +433,7 @@ func TestImpact_ShortNameClean_NoNoticeOnGo(t *testing.T) {
 func TestNeighbors_NonGoNotice(t *testing.T) {
 	env := analysisgolden.BuildIndexFormat2(t)
 	s := NewServer(Config{IndexDir: env.IndexDir})
-	t.Cleanup(s.closeGraphPool)
+	t.Cleanup(s.Close)
 
 	out := callTool(t, s.handleGraphNeighbors, map[string]interface{}{
 		"index":    analysisgolden.IndexName,
@@ -499,7 +501,7 @@ func TestNeighbors_CalleeOnlyGoShortName_NoNotice(t *testing.T) {
 	}
 
 	s := NewServer(Config{IndexDir: indexDir})
-	t.Cleanup(s.closeGraphPool)
+	t.Cleanup(s.Close)
 
 	out := callTool(t, s.handleGraphNeighbors, map[string]interface{}{
 		"index":    "zz3",
