@@ -54,6 +54,9 @@ func (s *LeannSearcher) loadVectorFiles(ctx context.Context, basePath string) er
 	indexPath := basePath + suffixMain
 	for attempt := 0; ; attempt++ {
 		if s.backend == nil {
+			if s.meta.Backend != "" {
+				s.config.Backend = s.meta.Backend
+			}
 			factory, err := GetBackend(s.meta.Backend)
 			if err != nil {
 				return fmt.Errorf("get backend: %w", err)

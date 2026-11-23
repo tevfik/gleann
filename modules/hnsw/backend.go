@@ -239,8 +239,8 @@ func (s *Searcher) VectorDistances(ctx context.Context, query []float32, ids []i
 	}
 	out := make([]float32, len(ids))
 	for i, id := range ids {
-		n, ok := s.graph.nodes[id]
-		if !ok {
+		n := s.graph.nodes.get(id)
+		if n == nil {
 			return nil, fmt.Errorf("hnsw: passage %d not in graph", id)
 		}
 		if len(n.Vector) == 0 && len(n.VectorF16) == 0 {
@@ -263,8 +263,8 @@ func (s *Searcher) ExtractVectors(ctx context.Context, ids []int64) ([][]float32
 	}
 	out := make([][]float32, len(ids))
 	for i, id := range ids {
-		n, ok := s.graph.nodes[id]
-		if !ok {
+		n := s.graph.nodes.get(id)
+		if n == nil {
 			return nil, fmt.Errorf("hnsw: passage %d not in graph", id)
 		}
 		switch {
@@ -292,7 +292,7 @@ func (s *Searcher) Close() error {
 // neighbours are meaningless and rebuilding from it would silently drop nodes.
 // Callers fall back to a full rebuild.
 func requireFullVectors(g *Graph) error {
-	for id, n := range g.nodes {
+	for id, n := range g.nodes.all() {
 		if len(n.Vector) == 0 && len(n.VectorF16) == 0 {
 			return fmt.Errorf("hnsw: index has pruned embeddings (node %d); incremental edit unsupported, rebuild required", id)
 		}

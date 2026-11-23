@@ -1,6 +1,9 @@
 package hnsw
 
-import "math"
+import (
+	"math"
+	"math/rand"
+)
 
 // GraphTopology holds the raw graph structure for importing an
 // externally-constructed HNSW graph (e.g. from FAISS).
@@ -32,7 +35,6 @@ func NewGraphFromTopology(topo GraphTopology, distFunc DistanceFunc) *Graph {
 	}
 
 	g := &Graph{
-		nodes:          make(map[int64]*Node, topo.NumNodes),
 		entryPoint:     topo.EntryPoint,
 		maxLevel:       topo.MaxLevel,
 		m:              m,
@@ -41,9 +43,14 @@ func NewGraphFromTopology(topo GraphTopology, distFunc DistanceFunc) *Graph {
 		efConstruction: 200,
 		ml:             1.0 / math.Log(float64(m)),
 		distFunc:       distFunc,
+		distMetricName: detectMetric(distFunc),
+		batchL2:        isL2Func(distFunc),
+		nbrDistOK:      isBuiltinDist(distFunc),
 		useHeuristic:   true,
+		rng:            rand.New(rand.NewSource(42)),
 		dimensions:     topo.Dimensions,
 		nodeCount:      int64(topo.NumNodes),
+		vectorDType:    "f32",
 	}
 
 	for i := 0; i < topo.NumNodes; i++ {
@@ -56,7 +63,7 @@ func NewGraphFromTopology(topo GraphTopology, distFunc DistanceFunc) *Graph {
 		if i < len(topo.Embeddings) && len(topo.Embeddings[i]) > 0 {
 			node.Vector = topo.Embeddings[i]
 		}
-		g.nodes[id] = node
+		g.nodes.put(id, node)
 	}
 
 	return g

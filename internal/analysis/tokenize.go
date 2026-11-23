@@ -53,6 +53,11 @@ func splitCamelWords(s string) []string {
 	return words
 }
 
+// maxStopWordLen is the length in bytes of the longest stop word ("should").
+// TokenString skips the stop-word test for longer tokens: raise it when a
+// longer word joins the list in isStopWord.
+const maxStopWordLen = 6
+
 // isStopWord reports whether word is in the stop list copied from
 // modules/bm25 (stopWords). A switch keeps the list immutable: the analyzer
 // must have no package-level mutable state (AGENTS.md section 4).

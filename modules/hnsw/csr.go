@@ -125,7 +125,7 @@ func ConvertToCSR(g *Graph) *CSRGraph {
 
 	// Record per-node levels.
 	for i, id := range idMap {
-		csr.NodeLevels[i] = g.nodes[id].Level
+		csr.NodeLevels[i] = g.nodes.get(id).Level
 	}
 
 	// Convert each level.
@@ -133,7 +133,7 @@ func ConvertToCSR(g *Graph) *CSRGraph {
 		// Collect nodes that exist at this level.
 		var levelNodeIDs []int64
 		for _, id := range idMap {
-			node := g.nodes[id]
+			node := g.nodes.get(id)
 			if node.Level >= level {
 				levelNodeIDs = append(levelNodeIDs, id)
 			}
@@ -147,7 +147,7 @@ func ConvertToCSR(g *Graph) *CSRGraph {
 		offset := int64(0)
 		for i, id := range levelNodeIDs {
 			csrLevel.NodeOffsets[i] = offset
-			node := g.nodes[id]
+			node := g.nodes.get(id)
 			if level < len(node.Neighbors) {
 				neighbors := node.Neighbors[level]
 				csrLevel.Neighbors = append(csrLevel.Neighbors, neighbors...)
@@ -194,6 +194,7 @@ func PruneEmbeddings(g *Graph, csr *CSRGraph, keepFraction float64) {
 	clearNode := func(node *Node) {
 		node.Vector = nil
 		node.VectorF16 = nil
+		g.nbrDistOK = false // distances to a node without a vector are no longer the kept ones
 	}
 
 	hasVector := func(node *Node) bool {
@@ -202,7 +203,7 @@ func PruneEmbeddings(g *Graph, csr *CSRGraph, keepFraction float64) {
 
 	if keepFraction >= 1.0 {
 		// Keep all embeddings — store them all.
-		for id, node := range g.nodes {
+		for id, node := range g.nodes.all() {
 			if hasVector(node) {
 				storeNode(id, node)
 			}
@@ -211,13 +212,13 @@ func PruneEmbeddings(g *Graph, csr *CSRGraph, keepFraction float64) {
 	}
 
 	// Always keep entry point embedding.
-	if epNode, ok := g.nodes[g.entryPoint]; ok && hasVector(epNode) {
+	if epNode := g.nodes.get(g.entryPoint); epNode != nil && hasVector(epNode) {
 		storeNode(g.entryPoint, epNode)
 	}
 
 	if keepFraction <= 0 {
 		// Just keep entry point, prune everything else.
-		for id, node := range g.nodes {
+		for id, node := range g.nodes.all() {
 			if id != g.entryPoint {
 				clearNode(node)
 			}
@@ -230,8 +231,8 @@ func PruneEmbeddings(g *Graph, csr *CSRGraph, keepFraction float64) {
 		id     int64
 		degree int
 	}
-	degrees := make([]nodeDegree, 0, len(g.nodes))
-	for id, node := range g.nodes {
+	degrees := make([]nodeDegree, 0, g.nodes.len())
+	for id, node := range g.nodes.all() {
 		deg := 0
 		for _, neighbors := range node.Neighbors {
 			deg += len(neighbors)
@@ -243,7 +244,7 @@ func PruneEmbeddings(g *Graph, csr *CSRGraph, keepFraction float64) {
 		return degrees[i].degree > degrees[j].degree
 	})
 
-	keepCount := int(math.Ceil(float64(len(g.nodes)) * keepFraction))
+	keepCount := int(math.Ceil(float64(g.nodes.len()) * keepFraction))
 	if keepCount < 1 {
 		keepCount = 1
 	}
@@ -258,7 +259,7 @@ func PruneEmbeddings(g *Graph, csr *CSRGraph, keepFraction float64) {
 	}
 
 	// Store kept embeddings and prune the rest.
-	for id, node := range g.nodes {
+	for id, node := range g.nodes.all() {
 		if keepSet[id] && hasVector(node) {
 			storeNode(id, node)
 		} else {
@@ -685,7 +686,7 @@ func (csr *CSRGraph) ToGraphWithDistance(distFunc DistanceFunc) *Graph {
 				node.Vector = vec
 			}
 		}
-		g.nodes[id] = node
+		g.nodes.put(id, node)
 	}
 
 	// Reconstruct neighbor lists from CSR levels.
@@ -693,7 +694,7 @@ func (csr *CSRGraph) ToGraphWithDistance(distFunc DistanceFunc) *Graph {
 		// Collect nodes at this level (those with Level >= level).
 		nodesAtLevel := make([]int64, 0, csrLevel.NumNodes)
 		for _, id := range csr.IDMap {
-			node := g.nodes[id]
+			node := g.nodes.get(id)
 			if node.Level >= level {
 				nodesAtLevel = append(nodesAtLevel, id)
 			}
@@ -703,7 +704,7 @@ func (csr *CSRGraph) ToGraphWithDistance(distFunc DistanceFunc) *Graph {
 		}
 
 		for i, id := range nodesAtLevel {
-			node := g.nodes[id]
+			node := g.nodes.get(id)
 			// Ensure node has enough neighbor levels.
 			for len(node.Neighbors) <= level {
 				node.Neighbors = append(node.Neighbors, nil)

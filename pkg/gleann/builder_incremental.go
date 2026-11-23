@@ -109,12 +109,25 @@ func (b *LeannBuilder) updateIncremental(ctx context.Context, name, basePath str
 	if err != nil || meta.Dimensions == 0 || !meta.VectorReady || meta.LexicalOnly {
 		return false, nil
 	}
-	if _, statErr := os.Stat(basePath + suffixMain); statErr != nil {
+	// The delta path appends to the main vector file, so it only runs over a
+	// file that is really there and really readable. os.Stat (and os.Open)
+	// succeed on a directory, and a stat error other than "missing" (a
+	// permissions problem, an I/O error) is not an absence: both cases mean
+	// this index has no usable main vector file, and the full path below is
+	// the one that republishes it by rename.
+	mainPath := basePath + suffixMain
+	info, statErr := os.Stat(mainPath)
+	if statErr != nil || !info.Mode().IsRegular() {
 		return false, nil
+	}
+	if f, openErr := os.Open(mainPath); openErr != nil {
+		return false, nil
+	} else {
+		_ = f.Close()
 	}
 	count, _, slotless, err := storeDB.SlotSpan(ctx)
 	if err != nil {
-		return false, err
+		return false, requiresRebuild(fmt.Errorf("reading the vector slot span: %w", err))
 	}
 	if slotless != 0 || count == 0 {
 		return false, nil
@@ -127,7 +140,7 @@ func (b *LeannBuilder) updateIncremental(ctx context.Context, name, basePath str
 	var changed []string
 	seenChanged := map[string]bool{}
 	for _, it := range d.newItems {
-		src, _ := splitItemMeta(it.Metadata)
+		src := itemSource(it.Metadata)
 		if !drop[src] && !seenChanged[src] {
 			seenChanged[src] = true
 			changed = append(changed, src)
@@ -139,11 +152,11 @@ func (b *LeannBuilder) updateIncremental(ctx context.Context, name, basePath str
 	}
 	dropSlots, dropPassages, err := storeDB.SourceSlots(ctx, dropList)
 	if err != nil {
-		return false, err
+		return false, requiresRebuild(fmt.Errorf("listing slots of removed sources: %w", err))
 	}
 	changedSlots, changedPassages, err := storeDB.SourceSlots(ctx, changed)
 	if err != nil {
-		return false, err
+		return false, requiresRebuild(fmt.Errorf("listing slots of changed sources: %w", err))
 	}
 	removed := make(map[int64]bool, len(dropSlots)+len(changedSlots))
 	for _, s := range dropSlots {
@@ -170,7 +183,7 @@ func (b *LeannBuilder) updateIncremental(ctx context.Context, name, basePath str
 
 	vslots, err := currentVectorSlots(ctx, storeDB)
 	if err != nil {
-		return false, err
+		return false, requiresRebuild(fmt.Errorf("reading the vector slot high-water mark: %w", err))
 	}
 	oldDelta, err := readVectorDelta(basePath + suffixDelta)
 	if err != nil {
@@ -321,7 +334,7 @@ func (b *LeannBuilder) mergeVectors(ctx context.Context, name, basePath string, 
 
 	slots, err := storeDB.AllSlots(ctx)
 	if err != nil {
-		return false, err
+		return false, requiresRebuild(fmt.Errorf("listing the vector slots: %w", err))
 	}
 	kept := slots[:0:0]
 	for _, s := range slots {
@@ -395,24 +408,24 @@ func (b *LeannBuilder) mergeVectors(ctx context.Context, name, basePath string, 
 		}
 		for src := range p.drop {
 			if _, err := storeDB.RemoveSourceTx(ctx, tx, src); err != nil {
-				return fmt.Errorf("removing source %q: %w", src, err)
+				return requiresRebuild(fmt.Errorf("removing source %q: %w", src, err))
 			}
 		}
 		for _, src := range p.changed {
 			if _, err := storeDB.RemoveSourceTx(ctx, tx, src); err != nil {
-				return fmt.Errorf("removing source %q: %w", src, err)
+				return requiresRebuild(fmt.Errorf("removing source %q: %w", src, err))
 			}
 		}
 		if err := storeDB.ReassignSlotsTx(ctx, tx, reassign); err != nil {
-			return fmt.Errorf("reassigning slots: %w", err)
+			return requiresRebuild(fmt.Errorf("reassigning slots: %w", err))
 		}
 		deltas, _ := sourceDeltas(d.analyzer, d.newItems, newSlots, sourceDir)
 		for _, sd := range deltas {
 			if _, err := storeDB.ApplySourceTx(ctx, tx, sd); err != nil {
-				return fmt.Errorf("applying source %q: %w", sd.Source, err)
+				return requiresRebuild(fmt.Errorf("applying source %q: %w", sd.Source, err))
 			}
 		}
-		return storeDB.SetMetaTx(ctx, tx, metaVectorSlots, strconv.FormatInt(n, 10))
+		return requiresRebuild(storeDB.SetMetaTx(ctx, tx, metaVectorSlots, strconv.FormatInt(n, 10)))
 	})
 	if err != nil {
 		return false, err
@@ -451,16 +464,16 @@ func (b *LeannBuilder) applyIncrementalTx(ctx context.Context, tx *sql.Tx, d inc
 	}
 	for src := range drop {
 		if _, err := d.store.RemoveSourceTx(ctx, tx, src); err != nil {
-			return fmt.Errorf("removing source %q: %w", src, err)
+			return requiresRebuild(fmt.Errorf("removing source %q: %w", src, err))
 		}
 	}
 	for _, src := range changed {
 		if _, err := d.store.RemoveSourceTx(ctx, tx, src); err != nil {
-			return fmt.Errorf("removing source %q: %w", src, err)
+			return requiresRebuild(fmt.Errorf("removing source %q: %w", src, err))
 		}
 	}
 	if _, err := applySourceGroupsTx(ctx, tx, d.store, an, d.newItems, vslots, sourceDir); err != nil {
-		return err
+		return requiresRebuild(err)
 	}
-	return d.store.SetMetaTx(ctx, tx, metaVectorSlots, strconv.FormatInt(vslots+int64(len(d.newItems)), 10))
+	return requiresRebuild(d.store.SetMetaTx(ctx, tx, metaVectorSlots, strconv.FormatInt(vslots+int64(len(d.newItems)), 10)))
 }

@@ -437,7 +437,7 @@ func (s *Store) Rebuild(ctx context.Context, an analysis.Analyzer) error {
 		if err := rows.Scan(&id, &kind, &text); err != nil {
 			return fmt.Errorf("rebuilding lexical index: scanning passage: %w", err)
 		}
-		tokens := strings.Join(an.Tokens(text, analysis.Kind(kind)), " ")
+		tokens := an.TokenString(text, analysis.Kind(kind))
 		if tokens == "" {
 			continue
 		}

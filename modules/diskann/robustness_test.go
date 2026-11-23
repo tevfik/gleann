@@ -439,7 +439,7 @@ func TestAddVectorsKeepsIDsAndFindsNewVectors(t *testing.T) {
 func TestDefaults(t *testing.T) {
 	var c DiskANNConfig
 	c.Defaults(2)
-	if c.R != 64 || c.L != 100 || c.Alpha != 1.2 || c.PQDim != 1 || c.PQCentroids != 256 || c.SearchL != 100 {
+	if c.R != 64 || c.L != 100 || c.Alpha != 1.2 || c.PQDim != 1 || c.PQCentroids != 256 || c.SearchL != 0 {
 		t.Fatalf("Defaults(2) = %+v", c)
 	}
 	c = DiskANNConfig{PQDim: 32, PQCentroids: 1000}

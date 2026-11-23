@@ -88,8 +88,7 @@ func guessLanguage(n int, at func(i int) (source, text string)) string {
 // itemsLanguage is guessLanguage over the items of a build.
 func itemsLanguage(items []Item) string {
 	return guessLanguage(len(items), func(i int) (string, string) {
-		src, _ := splitItemMeta(items[i].Metadata)
-		return src, items[i].Text
+		return itemSource(items[i].Metadata), items[i].Text
 	})
 }
 

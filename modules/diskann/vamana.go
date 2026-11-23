@@ -143,7 +143,54 @@ func (g *VamanaGraph) Build(embeddings [][]float32) {
 		runPass(g.alpha)
 	}
 
+	// Reverse edges were allowed to take a node up to slackDegree; bring
+	// every node back to at most R.
+	g.pruneToR(numWorkers)
+
 	g.ensureConnected()
+}
+
+// graphSlack is how far over R a node's degree may grow from reverse edges
+// before it is pruned back to R (DiskANN's GRAPH_SLACK_FACTOR). Without slack
+// a full node is pruned again for every reverse edge it receives, and that
+// pruning was 59 % of the build (20,000 x 384, R 64). At 100,000 x 768 the
+// build went from 6,489 s to 1,773 s (4 threads) and recall@10 at search L 64
+// from 0.878 to 0.920: a node now chooses among up to 1.3 R candidates at once
+// instead of dropping one at a time.
+const graphSlack = 1.3
+
+// slackDegree is the degree above which a reverse edge triggers a prune.
+func (g *VamanaGraph) slackDegree() int {
+	return int(float64(g.r) * graphSlack)
+}
+
+// pruneToR prunes every node whose degree exceeds R down to R. It runs after
+// the insertion passes, with no concurrent inserts.
+func (g *VamanaGraph) pruneToR(workers int) {
+	jobs := make(chan int64, workers*4)
+	var wg sync.WaitGroup
+	for w := 0; w < workers; w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for id := range jobs {
+				// Only node id is written; the vectors are read-only.
+				nb := g.neighbors[id]
+				cands := make([]Candidate, len(nb))
+				for i, c := range nb {
+					cands[i] = Candidate{ID: c, Distance: g.distFunc(g.nodes[id], g.nodes[c])}
+				}
+				g.neighbors[id] = g.robustPrune(id, cands, g.alpha)
+			}
+		}()
+	}
+	for id := range g.neighbors {
+		if len(g.neighbors[id]) > g.r {
+			jobs <- int64(id)
+		}
+	}
+	close(jobs)
+	wg.Wait()
 }
 
 // ensureConnected links every node a search from the medoid cannot reach to
@@ -190,8 +237,8 @@ func (g *VamanaGraph) ensureConnected() {
 func (g *VamanaGraph) insertNode(id int64, alpha float64) {
 	vec := g.nodes[id]
 
-	// Greedy search from medoid to find L nearest candidates.
-	candidates := g.greedySearch(vec, g.l)
+	// Search from the medoid for the candidates to prune from.
+	candidates := g.buildCandidates(vec, g.l)
 
 	// Robust prune: select up to R diverse neighbors.
 	newNeighbors := g.robustPrune(id, candidates, alpha)
@@ -213,7 +260,7 @@ func (g *VamanaGraph) insertNode(id int64, alpha float64) {
 		}
 		if !found {
 			nNeighbors = append(nNeighbors, id)
-			if len(nNeighbors) > g.r {
+			if len(nNeighbors) > g.slackDegree() {
 				nCandidates := make([]Candidate, len(nNeighbors))
 				for i, cID := range nNeighbors {
 					nCandidates[i] = Candidate{ID: cID, Distance: g.distFunc(g.nodes[nID], g.nodes[cID])}
@@ -226,9 +273,22 @@ func (g *VamanaGraph) insertNode(id int64, alpha float64) {
 	}
 }
 
-// greedySearch performs beam search on the graph starting from medoid.
-// Returns up to L nearest candidates sorted by distance.
-func (g *VamanaGraph) greedySearch(query []float32, l int) []Candidate {
+// buildCandidates returns the up to L closest nodes an insertion found, for
+// robustPrune to pick the node's neighbours from.
+//
+// It is deliberately not a best-first search: it expands the candidates in
+// the order they were found and trims the list to the L closest whenever it
+// passes 2L, so it also expands nodes a best-first search would never reach
+// and sees a wider part of the graph for about the same number of
+// expansions. On data whose distances concentrate that width is what the
+// graph's quality rests on. Measured at 100,000 x 768 (bench/vectordb's
+// Gaussian mixture, R 64, L 100, where pruning removes nothing and every
+// node keeps its 64 nearest candidates), recall@10 at search L 64 / 128 /
+// 256: this walk 0.920 / 0.981 / 0.994; greedySearch with L 100: 0.512 /
+// 0.737 / 0.908, with L 400 (1.7 times the build time of the walk): 0.726 /
+// 0.927 / 0.991. On real embeddings (29,807 x 384) the two build equally
+// good graphs (0.992 and 0.993 at search L 64).
+func (g *VamanaGraph) buildCandidates(query []float32, l int) []Candidate {
 	if g.medoid < 0 || len(g.nodes) == 0 {
 		return nil
 	}
@@ -239,13 +299,12 @@ func (g *VamanaGraph) greedySearch(query []float32, l int) []Candidate {
 	medoidDist := g.distFunc(query, g.nodes[g.medoid])
 	candidates := []Candidate{{ID: g.medoid, Distance: medoidDist}}
 
-	// Best-first search with candidate list of size L.
+	var nIDs []int64
 	for i := 0; i < len(candidates); i++ {
 		current := candidates[i]
 
 		g.lockNode(current.ID)
-		nIDs := make([]int64, len(g.neighbors[current.ID]))
-		copy(nIDs, g.neighbors[current.ID])
+		nIDs = append(nIDs[:0], g.neighbors[current.ID]...)
 		g.unlockNode(current.ID)
 
 		for _, nID := range nIDs {
@@ -274,6 +333,78 @@ func (g *VamanaGraph) greedySearch(query []float32, l int) []Candidate {
 		candidates = candidates[:l]
 	}
 	return candidates
+}
+
+// greedySearch is the query search on the in-memory graph (Search): a beam
+// search from the medoid that returns up to L nearest candidates sorted by
+// distance.
+//
+// It always expands the closest candidate not expanded yet and stops when the
+// L closest are all expanded (DiskANN's GreedySearch). Until v1.20.1 Search
+// used the walk of buildCandidates, which can skip a close candidate that
+// sorts in behind the position it has reached and so miss the nearest node
+// (TestGreedySearchExpandsClosestCandidate). The build keeps that walk, for
+// the reason given there.
+func (g *VamanaGraph) greedySearch(query []float32, l int) []Candidate {
+	if g.medoid < 0 || len(g.nodes) == 0 {
+		return nil
+	}
+	if l < 1 {
+		l = 1
+	}
+
+	visited := make(map[int64]bool, 4*l)
+	visited[g.medoid] = true
+
+	// beam is sorted by distance and holds at most l candidates; expanded[i]
+	// belongs to beam[i].
+	beam := make([]Candidate, 1, l+1)
+	expanded := make([]bool, 1, l+1)
+	beam[0] = Candidate{ID: g.medoid, Distance: g.distFunc(query, g.nodes[g.medoid])}
+
+	var nIDs []int64
+	for {
+		next := -1
+		for i := range beam {
+			if !expanded[i] {
+				next = i
+				break
+			}
+		}
+		if next < 0 {
+			break // the l closest candidates are all expanded
+		}
+		expanded[next] = true
+		current := beam[next].ID
+
+		g.lockNode(current)
+		nIDs = append(nIDs[:0], g.neighbors[current]...)
+		g.unlockNode(current)
+
+		for _, nID := range nIDs {
+			if visited[nID] {
+				continue
+			}
+			visited[nID] = true
+
+			dist := g.distFunc(query, g.nodes[nID])
+			if len(beam) == l && dist >= beam[l-1].Distance {
+				continue // not among the l closest
+			}
+			// Insert in distance order, after equal distances.
+			pos := sort.Search(len(beam), func(i int) bool { return beam[i].Distance > dist })
+			beam = append(beam, Candidate{})
+			expanded = append(expanded, false)
+			copy(beam[pos+1:], beam[pos:])
+			copy(expanded[pos+1:], expanded[pos:])
+			beam[pos] = Candidate{ID: nID, Distance: dist}
+			expanded[pos] = false
+			if len(beam) > l {
+				beam, expanded = beam[:l], expanded[:l]
+			}
+		}
+	}
+	return beam
 }
 
 // robustPrune implements DiskANN's α-robust pruning (Algorithm 2).

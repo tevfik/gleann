@@ -10,6 +10,8 @@ import (
 	"runtime"
 	"strings"
 	"time"
+
+	"github.com/tevfik/gleann/pkg/walker"
 )
 
 // GateAction defines approved actions for long-running indexing runs.
@@ -69,8 +71,21 @@ func ComputeMakespanBounds(totalBytes, largestFileBytes int64, rateBytesPerSec f
 	return low, high
 }
 
-// EstimateJob walks dir, measures local extraction rate, and computes Graham makespan bounds.
+// EstimateJob walks dir, measures local extraction rate, and computes Graham
+// makespan bounds. It counts the files a default build would read (see
+// EstimateJobWalk).
 func EstimateJob(dir string, workers int) (*JobEstimate, error) {
+	return EstimateJobWalk(dir, workers, walker.Options{FollowSymlinks: true})
+}
+
+// EstimateJobWalk is EstimateJob with the walk options of the build it
+// estimates (e.g. IncludeSubmodules). The walk applies the same ignore rules
+// as indexing: default ignored directories (node_modules, build, ...),
+// .gitignore and .gleannignore, submodules, and hidden directories. A plain
+// directory walk counted build outputs and dependencies too: this repository
+// came out as 11,376 files / 1.5 GB where a build reads about 1,500 files, and
+// the --max-minutes decision gate acts on that estimate.
+func EstimateJobWalk(dir string, workers int, wopts walker.Options) (*JobEstimate, error) {
 	if workers <= 0 {
 		workers = runtime.NumCPU()
 	}
@@ -86,18 +101,24 @@ func EstimateJob(dir string, workers int) (*JobEstimate, error) {
 
 	sampleCap := int64(4 * 1024 * 1024) // 4 MB sample to measure read rate
 
-	err := filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
-		if err != nil {
+	absDir, absErr := filepath.Abs(dir)
+	if absErr != nil {
+		absDir = dir
+	}
+	err := walker.Walk(dir, wopts, func(p string, d fs.DirEntry, err error) error {
+		if err != nil || d == nil || d.IsDir() {
 			return nil
 		}
-		if d.IsDir() {
-			name := d.Name()
-			// Never skip the walk root itself: `--docs ./.github` or a checkout
-			// under a dot-directory must still be estimated.
-			if p != dir && strings.HasPrefix(name, ".") && name != "." {
-				return filepath.SkipDir
+		// Files under a hidden directory are not indexed. Only components
+		// below the walk root count: `--docs ./.github` or a checkout under a
+		// dot-directory must still be estimated.
+		if rel, relErr := filepath.Rel(absDir, p); relErr == nil {
+			parts := strings.Split(filepath.ToSlash(filepath.Dir(rel)), "/")
+			for _, part := range parts {
+				if strings.HasPrefix(part, ".") && part != "." && part != ".." {
+					return nil
+				}
 			}
-			return nil
 		}
 
 		info, err := d.Info()

@@ -207,7 +207,7 @@ func TestSearchWithRecompute(t *testing.T) {
 	}
 	// Keep entry point vector.
 	ep := g.GetEntryPoint()
-	g.nodes[ep].Vector = savedVectors[ep]
+	g.nodes.get(ep).Vector = savedVectors[ep]
 
 	recompute := func(ids []int64) [][]float32 {
 		vecs := make([][]float32, len(ids))
@@ -356,5 +356,30 @@ func BenchmarkSearch(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		g.Search(query, 10, 128)
+	}
+}
+
+func TestInsertReplacementSize(t *testing.T) {
+	g := NewGraph(4, 50, 3)
+	g.Insert(1, []float32{1.0, 0.0, 0.0})
+	if g.Size() != 1 {
+		t.Fatalf("Size after initial insert = %d, want 1", g.Size())
+	}
+	g.Insert(1, []float32{0.0, 1.0, 0.0})
+	if g.Size() != 1 {
+		t.Fatalf("Size after replacing ID 1 = %d, want 1", g.Size())
+	}
+}
+
+func TestRemoveNodeSize(t *testing.T) {
+	g := NewGraph(4, 50, 3)
+	g.Insert(1, []float32{1.0, 0.0, 0.0})
+	g.Insert(2, []float32{0.0, 1.0, 0.0})
+	if g.Size() != 2 {
+		t.Fatalf("Size = %d, want 2", g.Size())
+	}
+	g.removeNode(1)
+	if g.Size() != 1 {
+		t.Fatalf("Size after removeNode(1) = %d, want 1", g.Size())
 	}
 }

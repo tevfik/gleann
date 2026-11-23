@@ -1,6 +1,7 @@
 package hnsw
 
 import (
+	"math/rand"
 	"testing"
 )
 
@@ -109,5 +110,102 @@ func TestNewGraphFromTopology_CSRRoundTrip(t *testing.T) {
 	}
 	if csr1.MaxLevel != csr2.MaxLevel {
 		t.Errorf("MaxLevel mismatch: %d vs %d", csr1.MaxLevel, csr2.MaxLevel)
+	}
+}
+
+func TestNewGraphFromTopology_FieldsAndInsert(t *testing.T) {
+	topo := GraphTopology{
+		NumNodes:   2,
+		Dimensions: 3,
+		M:          4,
+		MaxLevel:   0,
+		EntryPoint: 0,
+		NodeLevels: []int{0, 0},
+		Embeddings: [][]float32{
+			{1, 0, 0},
+			{0, 1, 0},
+		},
+		Neighbors: [][][]int64{
+			{{1}},
+			{{0}},
+		},
+	}
+
+	// 1. Check fields for L2
+	gL2 := NewGraphFromTopology(topo, L2DistanceSquared)
+	if !gL2.batchL2 {
+		t.Errorf("L2: batchL2 = false, want true")
+	}
+	if !gL2.nbrDistOK {
+		t.Errorf("L2: nbrDistOK = false, want true")
+	}
+	if gL2.distMetricName != "l2" {
+		t.Errorf("L2: distMetricName = %q, want %q", gL2.distMetricName, "l2")
+	}
+
+	// 2. Check fields for Cosine
+	gCos := NewGraphFromTopology(topo, CosineDistance)
+	if gCos.batchL2 {
+		t.Errorf("Cosine: batchL2 = true, want false")
+	}
+	if !gCos.nbrDistOK {
+		t.Errorf("Cosine: nbrDistOK = false, want true")
+	}
+	if gCos.distMetricName != "cosine" {
+		t.Errorf("Cosine: distMetricName = %q, want %q", gCos.distMetricName, "cosine")
+	}
+
+	// 3. Check fields for nil (defaults to L2)
+	gNil := NewGraphFromTopology(topo, nil)
+	if !gNil.batchL2 {
+		t.Errorf("nil: batchL2 = false, want true")
+	}
+	if !gNil.nbrDistOK {
+		t.Errorf("nil: nbrDistOK = false, want true")
+	}
+	if gNil.distMetricName != "l2" {
+		t.Errorf("nil: distMetricName = %q, want %q", gNil.distMetricName, "l2")
+	}
+
+	// 4. Test insert into imported topology and compare with refGraph
+	for mName, dist := range map[string]DistanceFunc{
+		"l2":     L2DistanceSquared,
+		"cosine": CosineDistance,
+		"ip":     InnerProductDistance,
+	} {
+		t.Run(mName, func(t *testing.T) {
+			r := rand.New(rand.NewSource(42))
+			base := NewGraphWithOptions(4, 20, 8, dist, true)
+			for i := 0; i < 50; i++ {
+				base.Insert(int64(i), randVec(r, 8))
+			}
+			allIDs := base.AllNodeIDs()
+			topo := GraphTopology{
+				NumNodes:   len(allIDs),
+				Dimensions: base.Dimensions(),
+				M:          base.m,
+				MaxLevel:   base.MaxLevel(),
+				EntryPoint: base.GetEntryPoint(),
+				NodeLevels: make([]int, len(allIDs)),
+				Embeddings: make([][]float32, len(allIDs)),
+				Neighbors:  make([][][]int64, len(allIDs)),
+			}
+			for idx, id := range allIDs {
+				n, _ := base.GetNode(id)
+				topo.NodeLevels[idx] = n.Level
+				topo.Embeddings[idx] = n.Vector
+				topo.Neighbors[idx] = n.Neighbors
+			}
+			imported := NewGraphFromTopology(topo, dist)
+			imported.efConstruction = 20
+			ref := refFromGraph(imported, 20, dist)
+			for i := 50; i < 100; i++ {
+				v := randVec(r, 8)
+				imported.Insert(int64(i), v)
+				ref.insert(int64(i), v)
+			}
+			sameGraph(t, imported, ref)
+			keptDistancesHold(t, imported)
+		})
 	}
 }

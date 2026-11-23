@@ -223,6 +223,57 @@ func TestEmptyFormat2Failures(t *testing.T) {
 	})
 }
 
+// Emptying an index whose main vector file is already gone is a partial state:
+// a failing second removal must be reported as a rebuild requirement so the
+// caller restores/rebuilds instead of retrying a broken index forever.
+func TestEmptyFormat2PartialVectorState(t *testing.T) {
+	t.Run("main file missing and the delta cannot be removed", func(t *testing.T) {
+		_, base, b := fxBuilt(t)
+		st := fxOpen(t, base)
+		if err := os.Remove(base + suffixMain); err != nil {
+			t.Fatal(err)
+		}
+		_ = os.Remove(base + suffixDelta)
+		if err := os.MkdirAll(filepath.Join(base+suffixDelta, "x"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		err := b.emptyFormat2(context.Background(), "idx", base, st, &UpdateStats{})
+		if err == nil {
+			t.Fatal("emptyFormat2 succeeded with an unremovable delta")
+		}
+		if !errors.Is(err, ErrRebuildRequired) {
+			t.Fatalf("err = %v, want ErrRebuildRequired: the main vector file was already gone", err)
+		}
+	})
+
+	t.Run("both vector files missing is a consistent, empty state", func(t *testing.T) {
+		_, base, b := fxBuilt(t)
+		st := fxOpen(t, base)
+		if err := os.Remove(base + suffixMain); err != nil {
+			t.Fatal(err)
+		}
+		_ = os.Remove(base + suffixDelta)
+		if err := b.emptyFormat2(context.Background(), "idx", base, st, &UpdateStats{}); err != nil {
+			t.Fatalf("emptyFormat2 = %v, want nil: no vector file is left to remove", err)
+		}
+	})
+
+	t.Run("an unremovable main file is still transient", func(t *testing.T) {
+		_, base, b := fxBuilt(t)
+		st := fxOpen(t, base)
+		if err := os.Remove(base + suffixMain); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.MkdirAll(filepath.Join(base+suffixMain, "x"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		err := b.emptyFormat2(context.Background(), "idx", base, st, &UpdateStats{})
+		if err == nil || errors.Is(err, ErrRebuildRequired) {
+			t.Fatalf("err = %v, want a plain transient removal error (nothing was mutated)", err)
+		}
+	})
+}
+
 // A recorded vector generation that meta.json has not caught up with (a crash
 // between the finish step and the meta.json write) is synced on the next open.
 func TestRecoverSyncsStaleMetaJSON(t *testing.T) {
@@ -265,5 +316,48 @@ func TestSourceFate(t *testing.T) {
 		if got != tc.want {
 			t.Errorf("%s: sourceFate = %v, want %v", tc.name, got, tc.want)
 		}
+	}
+}
+
+// The delta path appends to the existing main vector file, so it must only run
+// over a file it can actually read. A directory left where <base>.index must be
+// (an interrupted rename, a stray collision, a mount point) passes a bare
+// existence check: os.Stat succeeds on directories, as does os.Open. The
+// delta path used to accept it and report an in-place update that added
+// passages to an index whose vector file the searcher cannot open. The update
+// has to be routed to the full path instead, which renames a freshly built
+// file into place - and fails with ENOTEMPTY over a non-empty directory, a
+// rebuild the caller can see and act on.
+func TestUpdateMainVectorFileReplacedByDirectory(t *testing.T) {
+	dir := t.TempDir()
+	// Default limits: one new passage stays inside the delta, so the update
+	// really does want the delta path.
+	b, _ := newFormat2Builder(t, dir, 8)
+	if err := b.Build(context.Background(), "idx", f2Items()); err != nil {
+		t.Fatal(err)
+	}
+	base := filepath.Join(dir, "idx", "idx")
+	if err := os.Remove(base + suffixMain); err != nil {
+		t.Fatal(err)
+	}
+	// Non-empty: a rename onto it fails with ENOTEMPTY, the way a real
+	// interrupted or hijacked publication leaves the slot occupied.
+	if err := os.MkdirAll(filepath.Join(base+suffixMain, "x"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	st, err := b.UpdateIndexWithStats(context.Background(), "idx",
+		[]Item{{Text: "zucchini loaf", Metadata: map[string]any{"source": "z.md", "chunk_index": 0}}}, nil)
+	if st.Mode == UpdateInPlace && err == nil {
+		t.Fatalf("update claimed success in-place over a directory at %s: %+v", base+suffixMain, st)
+	}
+	if !errors.Is(err, ErrRebuildRequired) {
+		t.Fatalf("err = %v, want ErrRebuildRequired: the main vector file is not a file", err)
+	}
+	if info, statErr := os.Stat(base + suffixMain); statErr != nil || !info.Mode().IsDir() {
+		t.Errorf("the failed update disturbed the directory: %v (%v)", info, statErr)
+	}
+	if got := f2Meta(t, base, "vector_generation"); got != "1" {
+		t.Errorf("vector_generation = %q after the refused update, want 1: nothing may have been published", got)
 	}
 }

@@ -91,23 +91,23 @@ func TestSelectNeighbors(t *testing.T) {
 	build := func(heuristic bool) *Graph {
 		g := NewGraphWithOptions(2, 10, 2, L2DistanceSquared, heuristic)
 		// Two tight clusters: 1, 2, 3 near x=1 and 10 near x=10.
-		g.nodes[1] = &Node{ID: 1, Vector: []float32{1, 0}}
-		g.nodes[2] = &Node{ID: 2, Vector: []float32{1.1, 0}}
-		g.nodes[3] = &Node{ID: 3, Vector: []float32{1.2, 0}}
-		g.nodes[10] = &Node{ID: 10, Vector: []float32{10, 0}}
+		g.nodes.put(1, &Node{ID: 1, Vector: []float32{1, 0}})
+		g.nodes.put(2, &Node{ID: 2, Vector: []float32{1.1, 0}})
+		g.nodes.put(3, &Node{ID: 3, Vector: []float32{1.2, 0}})
+		g.nodes.put(10, &Node{ID: 10, Vector: []float32{10, 0}})
 		return g
 	}
 	cands := []Candidate{{ID: 1, Distance: 1}, {ID: 2, Distance: 1.21}, {ID: 3, Distance: 1.44}, {ID: 10, Distance: 81}}
 
-	plain := build(false).selectNeighbors(cands, 2)
+	plain := build(false).selectNeighbors(cands, 2, 0)
 	if len(plain) != 2 || plain[0].ID != 1 || plain[1].ID != 2 {
 		t.Fatalf("without the heuristic: %v, want the two closest [1 2]", plain)
 	}
-	if got := build(false).selectNeighbors(cands[:2], 2); len(got) != 2 {
+	if got := build(false).selectNeighbors(cands[:2], 2, 0); len(got) != 2 {
 		t.Fatalf("at most M candidates are all kept, got %v", got)
 	}
 
-	div := build(true).selectNeighbors(cands, 2)
+	div := build(true).selectNeighbors(cands, 2, 0)
 	if len(div) != 2 || div[0].ID != 1 {
 		t.Fatalf("with the heuristic: %v", div)
 	}
@@ -115,8 +115,8 @@ func TestSelectNeighbors(t *testing.T) {
 	// A candidate that is no longer in the graph is still selectable: the
 	// diversity check just has nothing to compare it with.
 	g := build(true)
-	delete(g.nodes, 2)
-	if got := g.selectNeighbors(cands, 3); len(got) != 3 {
+	g.removeNode(2)
+	if got := g.selectNeighbors(cands, 3, 0); len(got) != 3 {
 		t.Fatalf("with a vanished node: %v", got)
 	}
 }
@@ -143,8 +143,8 @@ func TestTraversalSkipsVanishedNodes(t *testing.T) {
 	// point at them.
 	dropped := 0
 	for i := int64(0); i < 25; i += 2 {
-		if n := g.nodes[i]; n.Level == 0 && i != g.GetEntryPoint() {
-			delete(g.nodes, i)
+		if n := g.nodes.get(i); n.Level == 0 && i != g.GetEntryPoint() {
+			g.removeNode(i)
 			dropped++
 		}
 	}
@@ -262,14 +262,14 @@ func TestAddVectorsToFloat16IndexMixesStorage(t *testing.T) {
 // when it stops short of M, so it never ran and nodes kept fewer than M.
 func TestSelectNeighborsHeuristicTopsUpToM(t *testing.T) {
 	g := NewGraphWithOptions(3, 10, 2, L2DistanceSquared, true)
-	g.nodes[1] = &Node{ID: 1, Vector: []float32{1, 0}}
-	g.nodes[2] = &Node{ID: 2, Vector: []float32{1.1, 0}}
-	g.nodes[3] = &Node{ID: 3, Vector: []float32{1.2, 0}}
-	g.nodes[10] = &Node{ID: 10, Vector: []float32{10, 0}}
+	g.nodes.put(1, &Node{ID: 1, Vector: []float32{1, 0}})
+	g.nodes.put(2, &Node{ID: 2, Vector: []float32{1.1, 0}})
+	g.nodes.put(3, &Node{ID: 3, Vector: []float32{1.2, 0}})
+	g.nodes.put(10, &Node{ID: 10, Vector: []float32{10, 0}})
 	// 2 and 3 are nearer to 1 than to the query: the heuristic keeps 1 and 10.
 	cands := []Candidate{{ID: 1, Distance: 1}, {ID: 2, Distance: 1.21}, {ID: 3, Distance: 1.44}, {ID: 10, Distance: 81}}
 
-	got := g.selectNeighbors(cands, 3)
+	got := g.selectNeighbors(cands, 3, 0)
 	if len(got) != 3 {
 		t.Fatalf("selectNeighbors(M=3) = %v, want 3 neighbours", got)
 	}
@@ -305,7 +305,7 @@ func TestSearchWithRecomputeSkipsVanishedUpperNode(t *testing.T) {
 	if victim < 0 {
 		t.Skip("test setup: the entry point has no upper-level neighbour")
 	}
-	delete(g.nodes, victim)
+	g.removeNode(victim)
 	recompute := func(ids []int64) [][]float32 {
 		out := make([][]float32, len(ids))
 		for i, id := range ids {

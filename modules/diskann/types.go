@@ -11,6 +11,7 @@ package diskann
 
 import (
 	"context"
+	"math"
 	"time"
 )
 
@@ -49,8 +50,9 @@ type DiskANNConfig struct {
 	// Must be ≤ 256 (stored as uint8). Default: 256.
 	PQCentroids int `json:"pq_centroids"`
 
-	// SearchL is the candidate list size during search.
-	// Default: 100.
+	// SearchL is the candidate list size during search. Default: 0 = auto,
+	// scaled with the index size at search time (see ResolveSearchL). A
+	// positive value is used as is.
 	SearchL int `json:"search_l"`
 
 	// SearchPQRerank is how many PQ candidates to rerank with full vectors.
@@ -87,9 +89,31 @@ func (c *DiskANNConfig) Defaults(dims int) {
 	if c.PQCentroids <= 0 || c.PQCentroids > 256 {
 		c.PQCentroids = 256
 	}
-	if c.SearchL <= 0 {
-		c.SearchL = 100
+	// SearchL stays 0 (auto): ResolveSearchL needs the vector count, which
+	// is only known once an index is loaded.
+}
+
+// Search list size scaling, see ResolveSearchL.
+const (
+	baseSearchL   = 100
+	autoSearchLN  = 25000 // vectors up to which the base list size holds
+	maxAutoSearch = 512
+)
+
+// ResolveSearchL returns the beam width to search with: a configured
+// (positive) searchL as is, else baseSearchL for indexes up to 25K vectors
+// and baseSearchL*sqrt(n/25K) beyond, capped at 512. A fixed 100 left
+// recall@10 near 0.93 at 100K x 768 (0.968 at 128, 0.990 at 256, bench/vectordb)
+// while 10K x 384 already reached 0.998.
+func ResolveSearchL(configured, numVectors int) int {
+	if configured > 0 {
+		return configured
 	}
+	if numVectors <= autoSearchLN {
+		return baseSearchL
+	}
+	l := int(math.Round(baseSearchL * math.Sqrt(float64(numVectors)/autoSearchLN)))
+	return min(l, maxAutoSearch)
 }
 
 // Config is a minimal standalone config (mirrors gleann.Config pattern).
@@ -109,7 +133,6 @@ func DefaultConfig() Config {
 			L:              100,
 			Alpha:          1.2,
 			PQCentroids:    256,
-			SearchL:        100,
 			DistanceMetric: DistanceL2,
 			UseMmap:        true,
 		},

@@ -3,6 +3,8 @@ package gleann
 import (
 	"context"
 	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -153,4 +155,49 @@ func TestIDSpan(t *testing.T) {
 	if dense, _ := gpm.IsDense(); !dense {
 		t.Error("dead slots below the high-water mark are dense")
 	}
+}
+
+// A vector-ready index is only healthy if the main vector file is something
+// the searcher can actually open. A leftover directory (an interrupted rename
+// or a stray collision) and an unreadable file both pass a bare existence check:
+// os.Stat succeeds on a directory, and an EACCES open is not fs.ErrNotExist,
+// so neither used to be reported — the health check called a broken index
+// healthy and repair never ran. Both must demand repair.
+func TestCheckIndexHealth_MainVectorNotReadable(t *testing.T) {
+	t.Run("main_is_a_directory", func(t *testing.T) {
+		_, dir, base := buildFour(t)
+		if err := os.Remove(base + ".index"); err != nil {
+			t.Fatal(err)
+		}
+		// Non-empty: a subsequent rename of a rebuilt file onto it would also
+		// fail, so repair has to notice it before the rebuild does.
+		if err := os.MkdirAll(filepath.Join(base+".index", "leftover"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		h, err := CheckIndexHealth(dir, "idx")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !h.NeedsRepair() || !strings.Contains(strings.Join(h.Problems, "; "), "cannot be read") {
+			t.Errorf("health check accepted a directory where the vector file must be: %+v", h)
+		}
+	})
+
+	t.Run("main_is_unreadable", func(t *testing.T) {
+		if runtime.GOOS == "windows" || os.Geteuid() == 0 {
+			t.Skip("mode bits do not deny access to the test user") // ACLs, or root reads anything
+		}
+		_, dir, base := buildFour(t)
+		if err := os.Chmod(base+".index", 0); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = os.Chmod(base+".index", 0o644) })
+		h, err := CheckIndexHealth(dir, "idx")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !h.NeedsRepair() || !strings.Contains(strings.Join(h.Problems, "; "), "cannot be read") {
+			t.Errorf("health check accepted an unreadable vector file: %+v", h)
+		}
+	})
 }

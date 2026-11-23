@@ -4,7 +4,9 @@ import (
 	"fmt"
 	"math"
 	"math/rand"
+	"runtime"
 	"sort"
+	"sync"
 )
 
 // PQCodebook implements Product Quantization for approximate distance computation.
@@ -64,19 +66,40 @@ func TrainPQ(vectors [][]float32, m, k int) (*PQCodebook, error) {
 
 	rng := rand.New(rand.NewSource(42))
 
-	// Train each sub-quantizer independently.
-	for sq := 0; sq < m; sq++ {
-		// Extract sub-vectors.
+	subVectors := func(sq int) [][]float32 {
 		subVecs := make([][]float32, len(vectors))
 		offset := sq * subDim
 		for i, vec := range vectors {
 			subVecs[i] = vec[offset : offset+subDim]
 		}
-
-		// K-means clustering.
-		centroids := kmeansSubVectors(subVecs, k, subDim, rng)
-		pq.Centroids[sq] = centroids
+		return subVecs
 	}
+
+	// The sub-quantizers are independent. Their k-means++ starting centroids
+	// are drawn one sub-quantizer after the other from the shared generator,
+	// as before; the Lloyd iterations, which use no random numbers and are
+	// nearly all of the cost, then run in parallel. The codebook is identical
+	// to a sequential run.
+	for sq := 0; sq < m; sq++ {
+		pq.Centroids[sq] = kmeansPlusPlusInit(subVectors(sq), k, subDim, rng)
+	}
+	workers := min(runtime.GOMAXPROCS(0), m)
+	next := make(chan int)
+	var wg sync.WaitGroup
+	for w := 0; w < workers; w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for sq := range next {
+				pq.Centroids[sq] = kmeansLloyd(subVectors(sq), pq.Centroids[sq], subDim)
+			}
+		}()
+	}
+	for sq := 0; sq < m; sq++ {
+		next <- sq
+	}
+	close(next)
+	wg.Wait()
 
 	return pq, nil
 }
@@ -141,12 +164,11 @@ func (pq *PQCodebook) nearestCentroid(sq int, sub []float32) byte {
 	return byte(bestK)
 }
 
-// kmeansSubVectors runs k-means on sub-vectors and returns K centroids.
-func kmeansSubVectors(subVecs [][]float32, k, subDim int, rng *rand.Rand) [][]float32 {
+// kmeansLloyd refines the starting centroids with Lloyd iterations and returns
+// them. It is deterministic: no random numbers.
+func kmeansLloyd(subVecs [][]float32, centroids [][]float32, subDim int) [][]float32 {
 	n := len(subVecs)
-
-	// Initialize centroids with k-means++ for better convergence.
-	centroids := kmeansPlusPlusInit(subVecs, k, subDim, rng)
+	k := len(centroids)
 
 	assignments := make([]int, n)
 	maxIter := 25

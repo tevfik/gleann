@@ -91,3 +91,25 @@ func TestSearcherRerankWidth(t *testing.T) {
 		t.Errorf("SearchPQRerank=%d is ignored: recall %.3f, default %.3f", k, narrow, def)
 	}
 }
+
+// A fixed search list of 100 left recall@10 near 0.93 at 100K vectors. Unset,
+// the width grows with the index; a configured one always wins.
+func TestResolveSearchL(t *testing.T) {
+	for _, tc := range []struct{ configured, n, want int }{
+		{0, 0, 100},
+		{0, 10_000, 100},
+		{0, 25_000, 100},
+		{0, 100_000, 200},
+		{0, 10_000_000, 512}, // capped
+		{64, 100_000, 64},    // explicit wins, even below the default
+		{100, 100_000, 100},  // explicit 100 is not "the default"
+		{300, 1_000, 300},
+	} {
+		if got := ResolveSearchL(tc.configured, tc.n); got != tc.want {
+			t.Errorf("ResolveSearchL(%d, %d) = %d, want %d", tc.configured, tc.n, got, tc.want)
+		}
+	}
+	if c := DefaultConfig().DiskANNConfig; c.SearchL != 0 {
+		t.Errorf("default SearchL = %d, want 0 (auto)", c.SearchL)
+	}
+}

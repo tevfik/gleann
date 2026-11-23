@@ -102,6 +102,19 @@ func (s *diskannSearcherAdapter) ExtractVectors(ctx context.Context, ids []int64
 	return nil, fmt.Errorf("diskann backend does not support ExtractVectors")
 }
 
+// VectorDistances forwards exact scoring of explicit IDs to the inner
+// searcher when it supports it (the real DiskANN searcher does, on both the
+// RAM and the mmap load path). The mmap adapter embeds this adapter, so it
+// exposes the capability too.
+func (s *diskannSearcherAdapter) VectorDistances(ctx context.Context, query []float32, ids []int64) ([]float32, error) {
+	if vs, ok := s.inner.(interface {
+		VectorDistances(ctx context.Context, query []float32, ids []int64) ([]float32, error)
+	}); ok {
+		return vs.VectorDistances(ctx, query, ids)
+	}
+	return nil, fmt.Errorf("diskann backend does not support VectorDistances")
+}
+
 func (s *diskannSearcherAdapter) Close() error {
 	return s.inner.Close()
 }
@@ -122,3 +135,5 @@ var _ gleann.BackendBuilder = (*diskannBuilderAdapter)(nil)
 var _ gleann.BackendSearcher = (*diskannSearcherAdapter)(nil)
 var _ gleann.BackendFactory = (*diskannFactoryAdapter)(nil)
 var _ gleann.MmapBackendSearcher = (*diskannMmapSearcherAdapter)(nil)
+var _ gleann.VectorIDScorer = (*diskannSearcherAdapter)(nil)
+var _ gleann.VectorIDScorer = (*diskannMmapSearcherAdapter)(nil)

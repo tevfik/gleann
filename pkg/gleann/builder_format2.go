@@ -78,7 +78,7 @@ func sourceDeltas(an analysis.Analyzer, items []Item, slots []int64, sourceDir s
 	order := []string{}
 	groups := make(map[string][]int)
 	for i, it := range items {
-		src, _ := splitItemMeta(it.Metadata)
+		src := itemSource(it.Metadata)
 		if _, ok := groups[src]; !ok {
 			order = append(order, src)
 		}
@@ -96,7 +96,7 @@ func sourceDeltas(an analysis.Analyzer, items []Item, slots []int64, sourceDir s
 				Text:   it.Text,
 				Kind:   kind,
 				Meta:   metaJSON,
-				Tokens: strings.Join(an.Tokens(it.Text, analysis.Kind(kind)), " "),
+				Tokens: an.TokenString(it.Text, analysis.Kind(kind)),
 			}
 			if slots != nil {
 				s := slots[i]
@@ -138,15 +138,24 @@ func applySourceGroupsTx(ctx context.Context, tx *sql.Tx, st *store.Store, an an
 }
 
 // applyStagedSources writes the lexical-only staging of a build (BuildPassages
-// / BuildLexicalOnly): one ApplySource transaction per source, every passage
+// / BuildLexicalOnly): all sources in one transaction, every passage
 // slotless (vec_slot NULL) because no vector file exists yet. It returns the
 // INTERNAL IDs of the passages aligned to items, which BuildVectors uses to
 // assign slot i to item i when it publishes the first vector file.
 func applyStagedSources(ctx context.Context, st *store.Store, an analysis.Analyzer, items []Item, sourceDir string) ([]int64, error) {
 	deltas, idxs := sourceDeltas(an, items, nil, sourceDir)
 	ids := make([]int64, len(items))
+	// One transaction for the whole staging: a commit (and its fsync) per
+	// source dominated the lexical phase of a build with many small files.
+	// The rows and their IDs are the same as with a commit per source; a
+	// failing source now leaves no partial staging behind.
+	tx, err := st.BeginWrite(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("beginning passage staging: %w", err)
+	}
+	defer tx.Rollback()
 	for di, d := range deltas {
-		got, err := st.ApplySource(ctx, d)
+		got, err := st.ApplySourceTx(ctx, tx, d)
 		if err != nil {
 			return nil, fmt.Errorf("applying source %q: %w", d.Source, err)
 		}
@@ -154,11 +163,14 @@ func applyStagedSources(ctx context.Context, st *store.Store, an analysis.Analyz
 			ids[idxs[di][j]] = id
 		}
 	}
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("committing passage staging: %w", err)
+	}
 	return ids, nil
 }
 
 // buildPassagesFormat2 writes all items into the format-2 record store of the
-// index, one transaction per source for a new index, ONE transaction for the
+// index, in ONE transaction for a new index and ONE transaction for the
 // whole replacement of an existing one. The passages are stored slotless
 // (vec_slot NULL): this is the lexical-only staging, and no vector file exists
 // yet — BuildVectors assigns the slots when it publishes the first vector
@@ -458,28 +470,28 @@ func (b *LeannBuilder) publishVectorFormat2(ctx context.Context, st *store.Store
 
 	tx, err := st.BeginWrite(ctx)
 	if err != nil {
-		return fmt.Errorf("beginning vector publication: %w", err)
+		return requiresRebuild(fmt.Errorf("beginning vector publication: %w", err))
 	}
 	defer tx.Rollback()
 	if err := dbChanges(tx); err != nil {
 		return err
 	}
 	if err := st.SetMetaTx(ctx, tx, "pending_vector_file", joinPendingFiles(names)); err != nil {
-		return fmt.Errorf("recording pending vector file: %w", err)
+		return requiresRebuild(fmt.Errorf("recording pending vector file: %w", err))
 	}
 	if err := st.SetMetaTx(ctx, tx, "pending_vector_generation", strconv.Itoa(nextGen)); err != nil {
-		return fmt.Errorf("recording pending vector generation: %w", err)
+		return requiresRebuild(fmt.Errorf("recording pending vector generation: %w", err))
 	}
 	if hasMain {
 		if err := st.SetMetaTx(ctx, tx, metaVectorMainGeneration, strconv.Itoa(nextGen)); err != nil {
-			return fmt.Errorf("recording main vector generation: %w", err)
+			return requiresRebuild(fmt.Errorf("recording main vector generation: %w", err))
 		}
 	}
 	if err := b.crashPoint(crashBeforeCommit); err != nil {
 		return err
 	}
 	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("committing vector publication: %w", err)
+		return requiresRebuild(fmt.Errorf("committing vector publication: %w", err))
 	}
 
 	if err := b.crashPoint(crashAfterCommit); err != nil {
@@ -498,12 +510,15 @@ func (b *LeannBuilder) publishVectorFormat2(ctx context.Context, st *store.Store
 			// itself: the staging file is gone because it was renamed already.
 			// The finish step below is idempotent, so carry on.
 			if !errors.Is(err, fs.ErrNotExist) {
-				// Keep the staging files: the pending keys are committed, so
-				// recovery needs them to roll the publication forward.
-				return fmt.Errorf("publishing vector file %s: %w", filepath.Base(final), err)
+				// The database changes were committed already, so the store and
+				// the vector files no longer match; recovery may never be able
+				// to roll this forward (a directory in place, a persistent
+				// handle). Only a rebuild from the sources is guaranteed to
+				// settle it. Keep the staging files: recovery still needs them.
+				return requiresRebuild(fmt.Errorf("publishing vector file %s: %w", filepath.Base(final), err))
 			}
 			if _, statErr := os.Stat(final); statErr != nil {
-				return fmt.Errorf("publishing vector file %s: %w", filepath.Base(final), err)
+				return requiresRebuild(fmt.Errorf("publishing vector file %s: %w", filepath.Base(final), err))
 			}
 		}
 		if i == 0 && len(files) > 1 && f.Suffix == suffixMain {
@@ -517,7 +532,7 @@ func (b *LeannBuilder) publishVectorFormat2(ctx context.Context, st *store.Store
 		return err
 	}
 	if err := finishVectorPublication(ctx, st, nextGen); err != nil {
-		return err
+		return requiresRebuild(err)
 	}
 	return b.crashPoint(crashAfterFinish)
 }
@@ -684,13 +699,15 @@ func syncPublishedMeta(ctx context.Context, st *store.Store, basePath string, ge
 func (b *LeannBuilder) updateIndexFormat2(ctx context.Context, name, basePath string, newItems []Item, removeSources []string, st *UpdateStats, force bool) error {
 	storeDB, err := openFormat2Store(basePath)
 	if err != nil {
-		return err
+		// No readable record store: only a rebuild from the sources can
+		// produce one again.
+		return requiresRebuild(err)
 	}
 	defer storeDB.Close()
 	// Resolve an interrupted publication of a previous run before reading the
 	// passages, so this update starts from a published, consistent state.
 	if err := recoverVectorPublication(ctx, storeDB, basePath); err != nil {
-		return fmt.Errorf("recovering interrupted vector publication: %w", err)
+		return requiresRebuild(fmt.Errorf("recovering interrupted vector publication: %w", err))
 	}
 
 	analyzer := analysis.New("")
@@ -719,7 +736,7 @@ func (b *LeannBuilder) updateIndexFormat2(ctx context.Context, name, basePath st
 		all = append(all, p)
 		return nil
 	}); err != nil {
-		return fmt.Errorf("reading passages: %w", err)
+		return requiresRebuild(fmt.Errorf("reading passages: %w", err))
 	}
 	// Order by current vector slot so unchanged passages keep their relative
 	// order (nil slots sort first).
@@ -737,7 +754,7 @@ func (b *LeannBuilder) updateIndexFormat2(ctx context.Context, name, basePath st
 	}
 	newBySource := make(map[string]bool)
 	for _, it := range newItems {
-		src, _ := splitItemMeta(it.Metadata)
+		src := itemSource(it.Metadata)
 		newBySource[src] = true
 	}
 
@@ -836,30 +853,30 @@ func (b *LeannBuilder) updateIndexFormat2(ctx context.Context, name, basePath st
 		// changed/new sources at k..n-1.
 		for src := range drop {
 			if _, err := storeDB.RemoveSourceTx(ctx, tx, src); err != nil {
-				return fmt.Errorf("removing source %q: %w", src, err)
+				return requiresRebuild(fmt.Errorf("removing source %q: %w", src, err))
 			}
 		}
 		for src := range changedSources {
 			if _, err := storeDB.RemoveSourceTx(ctx, tx, src); err != nil {
-				return fmt.Errorf("removing source %q: %w", src, err)
+				return requiresRebuild(fmt.Errorf("removing source %q: %w", src, err))
 			}
 		}
 		if err := storeDB.ReassignSlotsTx(ctx, tx, reassign); err != nil {
-			return fmt.Errorf("reassigning slots: %w", err)
+			return requiresRebuild(fmt.Errorf("reassigning slots: %w", err))
 		}
 		// Passages without a slot are damage in a vector-ready index, and the
 		// rebuilt vector file carries a vector for every stored passage: give
 		// them their dense position too, or the repair leaves the index unhealthy.
 		if len(slotlessSources) > 0 {
 			if err := assignSlotlessSourcesTx(ctx, tx, storeDB, analyzer, unchanged, slotlessSources); err != nil {
-				return err
+				return requiresRebuild(err)
 			}
 		}
 		if _, err := applySourceGroupsTx(ctx, tx, storeDB, analyzer, newItems, k, sourceDir); err != nil {
-			return err
+			return requiresRebuild(err)
 		}
 		// The renumbering is dense: the high-water mark restarts at n.
-		return storeDB.SetMetaTx(ctx, tx, metaVectorSlots, strconv.FormatInt(n, 10))
+		return requiresRebuild(storeDB.SetMetaTx(ctx, tx, metaVectorSlots, strconv.FormatInt(n, 10)))
 	})
 	if err != nil {
 		return err
@@ -919,7 +936,7 @@ func assignSlotlessSourcesTx(ctx context.Context, tx *sql.Tx, st *store.Store, a
 				Kind:    p.Kind,
 				Meta:    p.Meta,
 				VecSlot: &s,
-				Tokens:  strings.Join(an.Tokens(p.Text, analysis.Kind(p.Kind)), " "),
+				Tokens:  an.TokenString(p.Text, analysis.Kind(p.Kind)),
 			})
 		}
 		if _, err := st.ApplySourceTx(ctx, tx, delta); err != nil {
@@ -932,25 +949,52 @@ func assignSlotlessSourcesTx(ctx context.Context, tx *sql.Tx, st *store.Store, a
 // emptyFormat2 leaves a format-2 index with no passages: every source is
 // removed (the empty database stays so readers can open it) and the vector
 // file is deleted, since the backends cannot represent an empty index.
+//
+// The vector files are removed before the store is mutated: removing a file
+// is the only step that can fail transiently (an open handle, a directory in
+// its place), and doing it last used to leave an emptied database with
+// meta.json and <name>.index still describing the old index, which the next
+// sync then reported up to date. A removal failure leaves the store and
+// meta.json untouched and is returned as a transient error (a retry can
+// succeed) — unless the main vector file was already missing at entry: the
+// index is then in a partial state that only a rebuild from the sources can
+// settle, and a failing second removal must be tagged rebuild-required.
 func (b *LeannBuilder) emptyFormat2(ctx context.Context, name, basePath string, storeDB *store.Store, st *UpdateStats) error {
 	st.Mode, st.Passages = UpdateEmptied, 0
 	files, err := storeDB.Files(ctx)
 	if err != nil {
-		return fmt.Errorf("listing files: %w", err)
+		return requiresRebuild(fmt.Errorf("listing files: %w", err))
+	}
+	removedVectorFile := false
+	mainMissing := false
+	for _, suffix := range []string{suffixMain, suffixDelta} {
+		if err := os.Remove(basePath + suffix); err != nil {
+			if errors.Is(err, fs.ErrNotExist) {
+				if suffix == suffixMain {
+					mainMissing = true
+				}
+				continue
+			}
+			if !removedVectorFile && !mainMissing {
+				// Nothing has been mutated: the index is still consistent and
+				// the next sync retries.
+				return fmt.Errorf("remove vector file %s: %w", suffix, err)
+			}
+			// An earlier vector file is already gone — removed here, or
+			// missing at entry — so the store cannot be left consistent
+			// without a rebuild from the sources.
+			return requiresRebuild(fmt.Errorf("remove vector file %s: %w", suffix, err))
+		}
+		removedVectorFile = true
 	}
 	for src := range files {
 		if _, err := storeDB.RemoveSource(ctx, src); err != nil {
-			return fmt.Errorf("removing source %q: %w", src, err)
+			return requiresRebuild(fmt.Errorf("removing source %q: %w", src, err))
 		}
 	}
 	// Sourceless passages (empty source bucket) are not in the files table.
 	if _, err := storeDB.RemoveSource(ctx, ""); err != nil {
-		return fmt.Errorf("removing sourceless passages: %w", err)
-	}
-	for _, suffix := range []string{suffixMain, suffixDelta} {
-		if err := os.Remove(basePath + suffix); err != nil && !errors.Is(err, fs.ErrNotExist) {
-			return fmt.Errorf("remove vector file %s: %w", suffix, err)
-		}
+		return requiresRebuild(fmt.Errorf("removing sourceless passages: %w", err))
 	}
 	// Bump the generation so a searcher that still holds the removed vector
 	// file sees the change on its next freshness check.
@@ -961,10 +1005,10 @@ func (b *LeannBuilder) emptyFormat2(ctx context.Context, name, basePath string, 
 		{metaVectorSlots, "0"},
 	} {
 		if err := storeDB.SetMeta(ctx, kv[0], kv[1]); err != nil {
-			return fmt.Errorf("setting %s: %w", kv[0], err)
+			return requiresRebuild(fmt.Errorf("setting %s: %w", kv[0], err))
 		}
 	}
-	return UpdateIndexMeta(b.config.IndexDir, name, func(m *IndexMeta) {
+	if err := UpdateIndexMeta(b.config.IndexDir, name, func(m *IndexMeta) {
 		m.VectorGeneration = nextGen
 		m.VectorMainGeneration = nextGen
 		m.VectorSlots = 0
@@ -972,5 +1016,10 @@ func (b *LeannBuilder) emptyFormat2(ctx context.Context, name, basePath string, 
 		m.VectorReady = false
 		m.LexicalOnly = true
 		m.UpdatedAt = time.Now()
-	})
+	}); err != nil {
+		// The store is already empty: an unsynchronised meta.json can only be
+		// repaired by rebuilding from the sources.
+		return requiresRebuild(fmt.Errorf("updating index metadata: %w", err))
+	}
+	return nil
 }

@@ -16,7 +16,7 @@ import (
 // linearBackend returns ids 0..min(topK,n)-1 with distance float32(i)*0.01,
 // so the first retrieveK=50 candidates have a known max distance
 // (float32(49)*0.01) and every score is exactly predictable. It does NOT
-// implement VectorIDScorer, like the mmap HNSW searcher.
+// implement VectorIDScorer, like the faiss searcher.
 type linearBackend struct{ n int }
 
 func (linearBackend) Load(ctx context.Context, indexData []byte, meta IndexMeta) error {
@@ -383,8 +383,8 @@ func TestPreselected_LexicalFallbackAppliesBoostedTail(t *testing.T) {
 }
 
 // TestFilteredSearch_DeepMatchesFallbackNoIDScorer is the reachability case of
-// audit finding 3: a backend without VectorIDScorer (mmap HNSW, diskann,
-// faiss, or pruned embeddings) must still return k deep matches through the
+// audit finding 3: a backend without VectorIDScorer (faiss, or pruned
+// embeddings) must still return k deep matches through the
 // lexical tier, on every leg.
 func TestFilteredSearch_DeepMatchesFallbackNoIDScorer(t *testing.T) {
 	s := newLinearSearcher(t, widenDeepMatchItems(5000, 10), linearBackend{n: 5000})

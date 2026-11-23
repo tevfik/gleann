@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"sort"
 	"strings"
 )
 
@@ -24,6 +25,34 @@ const filterPoolCap = 4096
 // pre-selection reads only id/vec_slot/source/kind/meta — never passage text.
 const filterPreselectCap = 50000
 
+// filterExactMax is the estimated number of matching passages up to which a
+// restrictive filter (see filterExactSelectivity) is answered by exact scoring
+// of the pre-selected matches, even when the widen-until-k loop already found k
+// results. Those k results come from an approximate graph search over a
+// widened pool, so they are not necessarily the true top-k among the matches:
+// on 100K x 768 default-config hnsw, recall@10 was 0.86 at 1% selectivity and
+// 0.93 at 10%, with the loop widening to 4096 candidates (336 ms p50 at 1%).
+// The estimate is the loop's observed pass rate times the passage count; the
+// loop scores the matches exactly as soon as it says "few" (at most once per
+// query), and a pre-selection that finds more than twice this many rows is
+// abandoned (the estimate was off): the loop then widens as before.
+const filterExactMax = 12000
+
+// filterExactSelectivity: exact scoring applies only to filters matching at
+// most 1/filterExactSelectivity of the passages. A less restrictive filter
+// leaves the widened pool holding the true top-k (recall >= 0.99 at 50%), and
+// the pre-selection scan would only add latency.
+const filterExactSelectivity = 5
+
+// filterExactScanMax bounds the index size for which a filter with few matches
+// is scored exactly although the loop already found k results. The SQL
+// pre-selection evaluates the filter on every row (json_extract over the meta
+// column has no index), so its cost grows with the index, not with the
+// matches: about 60 ms at 100K passages (filtbench, 100K x 768). Above this
+// size the loop's result stands, as before; the cap fallback (fewer than k
+// results after filterPoolCap) still pre-selects at any size.
+const filterExactScanMax = 200_000
+
 // preselectFilterIDs answers a metadata filter from the format-2 record store
 // (WP-2.5): it compiles the filters to a SQL WHERE clause over the passages
 // table, reads the matching rows (id, vec_slot, source, kind, meta — never text)
@@ -39,6 +68,12 @@ const filterPreselectCap = 50000
 // more than filterPreselectCap rows (not selective — the widen loop's result
 // stands), and on any store error; the caller then keeps the loop's results.
 func (s *LeannSearcher) preselectFilterIDs(ctx context.Context, engine *MetadataFilterEngine) (map[int64]int64, bool) {
+	return s.preselectFilterIDsLimit(ctx, engine, filterPreselectCap)
+}
+
+// preselectFilterIDsLimit is preselectFilterIDs with an explicit row limit:
+// a filter matching more than limit rows reports ran=false.
+func (s *LeannSearcher) preselectFilterIDsLimit(ctx context.Context, engine *MetadataFilterEngine, limit int) (map[int64]int64, bool) {
 	sp, ok := s.passages.(*storePassages)
 	if !ok {
 		return nil, false
@@ -47,13 +82,13 @@ func (s *LeannSearcher) preselectFilterIDs(ctx context.Context, engine *Metadata
 	if !ok {
 		return nil, false
 	}
-	ps, err := sp.st.SelectByPredicate(ctx, where, args, filterPreselectCap+1)
+	ps, err := sp.st.SelectByPredicate(ctx, where, args, limit+1)
 	if err != nil {
 		// A predicate the store cannot answer (e.g. malformed meta JSON)
 		// degrades to the loop, never to wrong results.
 		return nil, false
 	}
-	if len(ps) > filterPreselectCap {
+	if len(ps) > limit {
 		// The filter is not selective: reading every match would cost more
 		// than the loop already spent. Keep the loop's result.
 		return nil, false
@@ -325,4 +360,64 @@ func nextFilterPool(pool, passed, examined, k int) int {
 		next = int(math.Ceil(float64(k) * float64(examined) / float64(passed) * 1.5))
 	}
 	return min(max(next, pool*2), filterPoolCap)
+}
+
+// filterExactMatches estimates how many passages match the filter from the last
+// round of the widen-until-k loop: passed of examined candidates matched, in an
+// index of total passages. It returns -1 when no estimate is possible.
+func filterExactMatches(passed, examined, total int) int {
+	if examined <= 0 || total <= 0 {
+		return -1
+	}
+	return int(math.Ceil(float64(passed) / float64(examined) * float64(total)))
+}
+
+// topScores returns the n best scored entries of scores (the map itself when it
+// has at most n), ties broken by the lower ID so the cut is deterministic.
+func topScores(scores map[int64]float32, n int) map[int64]float32 {
+	if len(scores) <= n {
+		return scores
+	}
+	ids := make([]int64, 0, len(scores))
+	for id := range scores {
+		ids = append(ids, id)
+	}
+	sort.Slice(ids, func(i, j int) bool {
+		if scores[ids[i]] != scores[ids[j]] {
+			return scores[ids[i]] > scores[ids[j]]
+		}
+		return ids[i] < ids[j]
+	})
+	out := make(map[int64]float32, n)
+	for _, id := range ids[:n] {
+		out[id] = scores[id]
+	}
+	return out
+}
+
+// filterFewMatches reports whether the filter is estimated to match at most
+// filterExactMax passages (see filterExactMatches) on a format-2 index, so that
+// exact scoring of the pre-selected matches is cheaper and more accurate than
+// widening the approximate pool further.
+func (s *LeannSearcher) filterFewMatches(passed, examined int) bool {
+	if s.storeFormat != 2 {
+		return false
+	}
+	return filterExactWorthIt(passed, examined, s.passages.Count())
+}
+
+// filterExactWorthIt is the decision behind filterFewMatches: passed of
+// examined candidates matched in an index of total passages.
+func filterExactWorthIt(passed, examined, total int) bool {
+	if total > filterExactScanMax {
+		return false // the full-table pre-selection scan costs more than it saves
+	}
+	// No candidate passed yet: assume one did. A filter whose matches rank
+	// deep (or are rare) then goes to exact scoring after the first round
+	// instead of widening to filterPoolCap; if the estimate is off, the
+	// pre-selection finds too many rows and the loop widens as before.
+	est := filterExactMatches(max(passed, 1), examined, total)
+	// A filter matching a fifth of the index or more is not restrictive: the
+	// widened pool holds the true top-k (recall >= 0.99 at 50%).
+	return est >= 0 && est <= filterExactMax && est*filterExactSelectivity <= total
 }

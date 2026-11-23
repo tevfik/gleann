@@ -136,6 +136,12 @@ type IndexMeta struct {
 
 	// VectorDType records the storage data type of stored embeddings ("f32" or "f16").
 	VectorDType string `json:"vector_dtype,omitempty"`
+
+	// HasGraph is true when the index's SQLite database holds a code graph
+	// (or document hierarchy). It lets a sync tell "this index never had a
+	// graph" from "the database that held the graph was lost" after
+	// <name>.db disappeared, so the graph can be rebuilt from the sources.
+	HasGraph bool `json:"has_graph,omitempty"`
 }
 
 // CurrentVersion is optionally set by the entrypoint (e.g. cmd/gleann/main.go).
@@ -469,7 +475,9 @@ type DiskANNConfig struct {
 	// PQCentroids is centroids per sub-quantizer (≤256). Default: 256.
 	PQCentroids int `json:"pq_centroids,omitempty"`
 
-	// SearchL is the candidate list size during search. Default: 100.
+	// SearchL is the candidate list size during search. Default: 0 = auto,
+	// 100 up to 25K vectors and growing with the square root of the index
+	// size beyond (the diskann backend resolves it); positive values are used as is.
 	SearchL int `json:"search_l,omitempty"`
 
 	// SearchPQRerank is how many PQ candidates to rerank with exact
@@ -576,7 +584,6 @@ func DefaultConfig() Config {
 			L:              100,
 			Alpha:          1.2,
 			PQCentroids:    256,
-			SearchL:        100,
 			DistanceMetric: "l2",
 			UseMmap:        true,
 		},

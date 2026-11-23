@@ -10,7 +10,6 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/tevfik/gleann/internal/analysis"
 	"github.com/tevfik/gleann/internal/store"
@@ -229,6 +228,15 @@ func openStorePassages(basePath string, readOnly bool) (PassageStore, error) {
 		readOnly: readOnly,
 		analyzer: analysis.New(lang),
 	}, nil
+}
+
+// itemSource is the source path of an item's metadata: the first result of
+// splitItemMeta without marshalling the rest. Grouping items by source and
+// guessing the corpus language need only this; calling splitItemMeta there
+// marshalled every item's metadata to JSON and threw the result away.
+func itemSource(md map[string]any) string {
+	source, _ := md["source"].(string)
+	return source
 }
 
 // splitItemMeta separates the source path from the rest of an item's metadata
@@ -549,7 +557,7 @@ func (sp *storePassages) Add(items []Item) ([]int64, error) {
 	order := []string{}
 	groups := make(map[string][]int)
 	for i, it := range items {
-		src, _ := splitItemMeta(it.Metadata)
+		src := itemSource(it.Metadata)
 		if _, ok := groups[src]; !ok {
 			order = append(order, src)
 		}
@@ -569,7 +577,7 @@ func (sp *storePassages) Add(items []Item) ([]int64, error) {
 				Kind:    kind,
 				Meta:    metaJSON,
 				VecSlot: &s,
-				Tokens:  strings.Join(sp.analyzer.Tokens(it.Text, analysis.Kind(kind)), " "),
+				Tokens:  sp.analyzer.TokenString(it.Text, analysis.Kind(kind)),
 			})
 		}
 		if _, err := sp.st.ApplySource(ctx, delta); err != nil {

@@ -81,6 +81,14 @@ type Passages interface {
 	ForEach(ctx context.Context, fn func(Passage) error) error
 	Count(ctx context.Context) (int, error)
 
+	// ListPassages and ListSections are the bounded, read-only listing of the
+	// stored rows behind GET /api/indexes/{name}/passages and /sections (RFC
+	// 004 G8). They page with `ORDER BY id LIMIT ? OFFSET ?`, never read the
+	// whole table or the vector files, and leave the section metadata
+	// aggregation in SQLite (see their documentation).
+	ListPassages(ctx context.Context, limit, offset int) ([]Passage, error)
+	ListSections(ctx context.Context, limit, offset int) ([]Section, error)
+
 	Files(ctx context.Context) (map[string]FileRow, error)
 	Meta(ctx context.Context, key string) (string, error)
 	SetMeta(ctx context.Context, key, value string) error

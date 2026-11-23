@@ -241,6 +241,15 @@ type DocumentTOCInfo struct {
 	TotalNodes int                   `json:"total_nodes"`
 }
 
+// Direction selects which side of the CALLS graph a resolved seed symbol sits on.
+// The values mirror graphstore.Direction; DirectionBoth is the query-side union
+// used by surfaces that answer callers and callees together (MCP neighbors).
+const (
+	DirectionCallees = 0
+	DirectionCallers = 1
+	DirectionBoth    = 2
+)
+
 // GraphDB represents a graph database backend capable of querying AST and document relationships.
 type GraphDB interface {
 	Callees(callerFQN string) ([]Callee, error)
@@ -272,4 +281,21 @@ type MemoryService interface {
 type VectorSyncer interface {
 	AddContent(ctx context.Context, nodeID, content string, attrs map[string]any) error
 	DeleteContent(ctx context.Context, nodeID string) error
+}
+
+// VectorContent is one entity for VectorBatchSyncer.AddContents.
+type VectorContent struct {
+	NodeID  string
+	Content string
+	Attrs   map[string]any
+}
+
+// VectorBatchSyncer is an optional extension of VectorSyncer: a syncer that
+// writes several entities in ONE index publication. The Memory Engine calls it
+// once per inject request when the configured syncer implements it (RFC 005:
+// each publication bumps vector_generation, so one per entity makes every
+// cached searcher reload the delta) and falls back to AddContent per entity
+// otherwise, so existing VectorSyncer implementations keep working.
+type VectorBatchSyncer interface {
+	AddContents(ctx context.Context, contents []VectorContent) error
 }

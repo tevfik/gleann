@@ -182,3 +182,40 @@ func TestEvaluateDecisionGate_Table(t *testing.T) {
 		})
 	}
 }
+
+// TestEstimateJob_AppliesIndexingIgnoreRules: the estimate must count what a
+// build reads. A plain walk also counted ignored build outputs and
+// dependencies, which inflated the --max-minutes decision gate.
+func TestEstimateJob_AppliesIndexingIgnoreRules(t *testing.T) {
+	root := t.TempDir()
+	write := func(rel string, size int) {
+		t.Helper()
+		p := filepath.Join(root, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, make([]byte, size), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("main.go", 100)
+	write("pkg/a.go", 50)
+	write("node_modules/dep/index.js", 5000) // default ignored directory
+	write("out/big.bin", 7000)               // .gitignore
+	write("gen/report.txt", 9000)            // .gleannignore
+	if err := os.WriteFile(filepath.Join(root, ".gitignore"), []byte("out/\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".gleannignore"), []byte("gen/\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	est, err := EstimateJob(root, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// main.go and pkg/a.go; the ignore files are dotfiles, which the walk skips.
+	if est.FileCount != 2 || est.TotalBytes != 150 {
+		t.Fatalf("estimate = %d files / %d bytes, want 2 files / 150 bytes (ignored content was counted)", est.FileCount, est.TotalBytes)
+	}
+}

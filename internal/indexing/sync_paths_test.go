@@ -69,9 +69,10 @@ func flakyEnv(t *testing.T) (*testEnv, *flakyComputer, Options) {
 	return env, fc, opts
 }
 
-// When the incremental update fails the sync falls back to a full rebuild;
-// when that fails too, the previous index is restored untouched.
-func TestSyncFallsBackToFullRebuildAndRollsBack(t *testing.T) {
+// A transient failure of the incremental update is returned as it is: the
+// index is left untouched (nothing to roll back) and the next sync retries the
+// delta instead of re-embedding the whole corpus.
+func TestSyncIncrementalFailureKeepsTheIndexAndRetries(t *testing.T) {
 	env, fc, opts := flakyEnv(t)
 	docs := fixture(t)
 	if _, err := Build(context.Background(), BuildOptions{Options: opts, Name: "fb", DocsDir: docs}); err != nil {
@@ -79,42 +80,45 @@ func TestSyncFallsBackToFullRebuildAndRollsBack(t *testing.T) {
 	}
 	built, _ := gleann.GetIndexMeta(env.cfg.IndexDir, "fb")
 
-	// Embedder down for the whole sync: the rebuild fails and is rolled back.
+	// Embedder down for the whole sync: the incremental update fails, no
+	// rebuild is started and the previous index stays as it was.
 	writeFile(t, filepath.Join(docs, "extra.go"), "package main\n\nfunc PelicanBrief() int { return 9 }\n")
 	fc.down.Store(true)
 	var out bytes.Buffer
 	o := opts
 	w := &lockedBuffer{b: &out}
 	o.Stdout, o.Stderr = w, w
-	_, err := Sync(context.Background(), SyncOptions{Options: o, Name: "fb"})
-	if err == nil || !strings.Contains(err.Error(), "previous index restored") || !errors.Is(err, errEmbedderDown) {
-		t.Fatalf("err = %v, want the rolled-back rebuild error", err)
+	res, err := Sync(context.Background(), SyncOptions{Options: o, Name: "fb"})
+	if err == nil || !errors.Is(err, errEmbedderDown) {
+		t.Fatalf("err = %v, want the embedder error", err)
 	}
-	if !strings.Contains(out.String(), "falling back to full rebuild") {
-		t.Errorf("fallback not announced:\n%s", out.String())
+	if res != nil {
+		t.Fatalf("res = %+v, want nil: a failed sync reports no result", res)
+	}
+	if strings.Contains(out.String(), "falling back to full rebuild") {
+		t.Errorf("an embedder failure must not start a full rebuild:\n%s", out.String())
 	}
 	assertUntouched(t, env, "fb", *built)
 	if HasSyncBackup(env.cfg.IndexDir, "fb") {
 		t.Error("the rollback copy was left behind")
 	}
 
-	// The embedder fails once: the incremental update fails, the full
-	// rebuild succeeds and indexes the new file.
+	// The embedder is back: the retry applies the delta (no full rebuild) and
+	// indexes the new file, keeping the index identity.
 	fc.down.Store(false)
-	fc.failNext.Store(1)
-	res, err := Sync(context.Background(), SyncOptions{Options: opts, Name: "fb"})
+	res, err = Sync(context.Background(), SyncOptions{Options: opts, Name: "fb"})
 	if err != nil {
-		t.Fatalf("Sync after one failure: %v", err)
+		t.Fatalf("Sync after the outage: %v", err)
 	}
-	if !res.FullRebuild || res.Update != nil {
-		t.Fatalf("result = %+v, want a full rebuild", res)
+	if res.FullRebuild || res.Update == nil {
+		t.Fatalf("result = %+v, want an incremental update", res)
 	}
 	if got := passageSet(t, env.cfg, "fb"); !strings.Contains(strings.Join(got, "\n"), "PelicanBrief") {
-		t.Errorf("the rebuilt index lacks the new file: %v", got)
+		t.Errorf("the index lacks the new file after the retry: %v", got)
 	}
 	after, _ := gleann.GetIndexMeta(env.cfg.IndexDir, "fb")
 	if !after.CreatedAt.Equal(built.CreatedAt) || after.SourceDir != built.SourceDir {
-		t.Errorf("the rebuild lost the index identity: %+v -> %+v", built, after)
+		t.Errorf("the index lost its identity: %+v -> %+v", built, after)
 	}
 }
 

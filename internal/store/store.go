@@ -173,6 +173,7 @@ type migration struct {
 const (
 	MetaGraphSymbols     = "graph_count:symbols"
 	MetaGraphEdgesPrefix = "graph_count:edges:"
+	MetaGraphTreeSitter  = "graph_treesitter"
 )
 
 const migrationLexVocab = `CREATE VIRTUAL TABLE IF NOT EXISTS lex_vocab USING fts5vocab(lex, 'row');`

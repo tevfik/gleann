@@ -343,13 +343,15 @@ func (b *LeannBuilder) updateIndex(ctx context.Context, name string, newItems []
 	case StoreV2:
 		return b.updateIndexFormat2(ctx, name, basePath, newItems, removeSources, st, false)
 	case StoreOld:
-		return &OldFormatError{Name: name}
+		// Only `gleann index migrate` converts an old store; an update can at
+		// best start over from the sources.
+		return requiresRebuild(&OldFormatError{Name: name})
 	}
 	if len(newItems) == 0 {
 		// An index that does not exist has nothing to remove.
 		return nil
 	}
-	return fmt.Errorf("updating index %q: %w", name, ErrIndexNotFound)
+	return requiresRebuild(fmt.Errorf("updating index %q: %w", name, ErrIndexNotFound))
 }
 
 // Compact rebuilds the index's vector index from its passage store, renumbering
@@ -369,6 +371,26 @@ func (b *LeannBuilder) Compact(ctx context.Context, name string) (UpdateStats, e
 // embedding model. Mixing them would corrupt the index (or crash the backend),
 // so the index has to be rebuilt to change models.
 var ErrDimensionMismatch = errors.New("embedding dimension mismatch")
+
+// ErrRebuildRequired marks an index update failure that no retry and no delta
+// can repair: the passage store is missing, unreadable or damaged, or the index
+// is in a store format/state the update cannot edit in place. The caller has to
+// rebuild the index from its sources (`gleann index rebuild`, or Sync's
+// full-rebuild fallback), which recreates the store.
+//
+// A transient failure (embedder unreachable, source or plugin read error) is
+// NOT wrapped in it: rebuilding would repeat it or re-embed the whole corpus.
+var ErrRebuildRequired = errors.New("index update requires a rebuild from its sources")
+
+// requiresRebuild wraps a store-level update failure with ErrRebuildRequired,
+// keeping the original error (and any sentinel it carries) reachable through
+// errors.Is/As.
+func requiresRebuild(err error) error {
+	if err == nil {
+		return nil
+	}
+	return fmt.Errorf("%w: %w", ErrRebuildRequired, err)
+}
 
 // checkDimensions fails when got differs from the vector size recorded for the
 // index. An index without a recorded size is not checked.

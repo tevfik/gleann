@@ -38,6 +38,69 @@ type scopedPattern struct {
 	negate   bool
 	dirOnly  bool
 	glob     string
+
+	// Derived from scopeDir and glob by addPattern, so a walk does not
+	// recompute them for every path (see compile). The zero values mean "not
+	// derived": matchScopedPattern then works from scopeDir and glob alone.
+	scopePrefix string   // scopeDir + "/"
+	nameKind    nameKind // how a glob without a slash matches one path segment
+	nameLit     string   // the literal part of the glob for nameKind != nameGlob
+}
+
+// nameKind is the shape of a glob without a slash. Such a glob is tried on
+// every segment of every path of a walk, and most ignore patterns are a plain
+// name ("node_modules"), a suffix ("*.log") or a prefix ("coverage*"), which
+// need no pattern matching at all.
+type nameKind uint8
+
+const (
+	nameGlob    nameKind = iota // anything else: filepath.Match
+	nameLiteral                 // no metacharacter: the segment equals the glob
+	nameSuffix                  // "*" + literal: the segment ends with the literal
+	namePrefix                  // literal + "*": the segment starts with the literal
+)
+
+// globMeta are the characters filepath.Match gives a meaning to. The
+// backslash is one of them everywhere but on Windows; a glob holding one is
+// left to filepath.Match on every platform.
+const globMeta = `*?[\`
+
+// compile derives the fields that depend only on the pattern.
+func (p *scopedPattern) compile() {
+	if p.scopeDir != "" {
+		p.scopePrefix = p.scopeDir + "/"
+	}
+	p.nameKind, p.nameLit = nameGlob, ""
+	g := p.glob
+	if strings.Contains(g, "/") {
+		return // matched against the whole path, not per segment
+	}
+	switch {
+	case !strings.ContainsAny(g, globMeta):
+		p.nameKind, p.nameLit = nameLiteral, g
+	case g[0] == '*' && !strings.ContainsAny(g[1:], globMeta):
+		p.nameKind, p.nameLit = nameSuffix, g[1:]
+	case g[len(g)-1] == '*' && !strings.ContainsAny(g[:len(g)-1], globMeta):
+		p.nameKind, p.nameLit = namePrefix, g[:len(g)-1]
+	}
+}
+
+// matchName reports whether a glob without a slash matches one path segment
+// (a name without a separator): filepath.Match(p.glob, name) without its
+// error. For such a name "*lit" matches exactly the names ending in lit and
+// "lit*" those starting with it, because "*" matches any run of
+// non-separator characters, the empty one included.
+func (p *scopedPattern) matchName(name string) bool {
+	switch p.nameKind {
+	case nameLiteral:
+		return name == p.nameLit
+	case nameSuffix:
+		return strings.HasSuffix(name, p.nameLit)
+	case namePrefix:
+		return strings.HasPrefix(name, p.nameLit)
+	}
+	ok, _ := filepath.Match(p.glob, name)
+	return ok
 }
 
 // Matcher evaluates ignore rules across root and nested ignore files.
@@ -142,6 +205,7 @@ func (m *Matcher) addPattern(scopeDir, line string) {
 	}
 
 	p.glob = filepath.ToSlash(line)
+	p.compile()
 	m.patterns = append(m.patterns, p)
 }
 
@@ -238,10 +302,14 @@ func matchScopedPattern(p scopedPattern, relPath string, isDir bool) bool {
 	// The path must be within the pattern's scope
 	target := relPath
 	if p.scopeDir != "" {
-		if relPath != p.scopeDir && !strings.HasPrefix(relPath, p.scopeDir+"/") {
+		scopePrefix := p.scopePrefix
+		if scopePrefix == "" {
+			scopePrefix = p.scopeDir + "/"
+		}
+		if relPath != p.scopeDir && !strings.HasPrefix(relPath, scopePrefix) {
 			return false
 		}
-		target = strings.TrimPrefix(relPath, p.scopeDir+"/")
+		target = strings.TrimPrefix(relPath, scopePrefix)
 		if target == "" {
 			// Exactly the scope directory itself
 			target = filepath.Base(p.scopeDir)
@@ -271,6 +339,28 @@ func matchScopedPattern(p scopedPattern, relPath string, isDir bool) bool {
 	}
 
 	// No slash: matches filename/basename anywhere in scope
+	if p.nameKind != nameGlob {
+		// A plain name, suffix or prefix: the same test on the same names
+		// (every path segment, then the basename) without filepath.Match and
+		// without splitting the path.
+		rest := target
+		for {
+			seg, tail, more := strings.Cut(rest, "/")
+			if p.matchName(seg) {
+				return true
+			}
+			if !more {
+				// The basename is the last segment, except where
+				// filepath.Base strips more than directories (a volume name
+				// on Windows).
+				if base := filepath.Base(target); base != seg && p.matchName(base) {
+					return true
+				}
+				return false
+			}
+			rest = tail
+		}
+	}
 	base := filepath.Base(target)
 	if ok, _ := filepath.Match(pat, base); ok {
 		return true

@@ -515,8 +515,14 @@ func (s *LeannSearcher) search(ctx context.Context, query string, opts ...Search
 	// order are unchanged.
 	pool := retrieveK
 	var results []SearchResult
-	var candidateCount, preFilterCount int
+	var candidateCount, preFilterCount, passedCount int
 	hitCap := false
+	// Exact scoring of a filter's few matches (filterFewMatches) needs the
+	// query vector and a backend that scores explicit IDs; without them the
+	// loop widens as before.
+	_, idScorer := s.backend.(VectorIDScorer)
+	canScoreExact := idScorer && queryEmb != nil && searchOpts.HybridAlpha > 0
+	exactTried, scoredExactly := false, false
 	// Vector score normalizer, fixed at the first round (pool == retrieveK):
 	// the max distance among the first retrieveK candidates — exactly the
 	// normalizer the unfiltered search uses. Widening the pool must not
@@ -637,6 +643,9 @@ func (s *LeannSearcher) search(ctx context.Context, query string, opts ...Search
 		if filterEngine != nil {
 			results = filterEngine.FilterResults(results)
 		}
+		// Matches before the one-per-file collapse: the pass rate behind
+		// the few-matches estimate (filterFewMatches).
+		passedCount = len(results)
 
 		if searchOpts.OnePerFile {
 			results = onePerFile(results)
@@ -644,6 +653,17 @@ func (s *LeannSearcher) search(ctx context.Context, query string, opts ...Search
 
 		if filterEngine == nil {
 			break // unfiltered: one retrieval, exactly the previous behaviour
+		}
+		// Few matches: k approximate results from a widened pool are not
+		// necessarily the true top-k among them, so score the matches
+		// exactly (once). When that cannot run (pruned embeddings, more rows
+		// than estimated) the loop goes on as before.
+		if canScoreExact && !exactTried && s.filterFewMatches(passedCount, preFilterCount) {
+			exactTried = true
+			if pre, _, ok := s.searchPreselectedLimit(ctx, query, rq, queryEmb, searchOpts, topK, filterEngine, normDist, 2*filterExactMax, true); ok {
+				results, scoredExactly = pre, true
+				break
+			}
 		}
 		if len(results) >= topK {
 			break // k results pass the filter
@@ -663,7 +683,8 @@ func (s *LeannSearcher) search(ctx context.Context, query string, opts ...Search
 	// fewer than k results — a highly selective filter whose matches rank deep.
 	// On a format-2 index, pre-select the matching IDs in SQL and score only
 	// those; otherwise the loop's result stands.
-	if hitCap && len(results) < topK && filterEngine != nil && s.storeFormat == 2 {
+	// (A filter whose matches are few was already scored exactly in the loop.)
+	if !scoredExactly && hitCap && len(results) < topK && filterEngine != nil && s.storeFormat == 2 {
 		if pre, exact, ok := s.searchPreselected(ctx, query, rq, queryEmb, searchOpts, topK, filterEngine, normDist); ok {
 			if exact {
 				results = pre
@@ -1094,6 +1115,55 @@ func ListIndexesByTag(indexDir, tag string) ([]IndexMeta, error) {
 	return matched, nil
 }
 
+// ErrNotAnIndex is returned by RemoveIndex when the directory to be removed
+// does not hold gleann artefacts and is not empty.
+var ErrNotAnIndex = errors.New("not a gleann index")
+
+// isGleannArtefact reports whether entryName inside the directory of index
+// name is something gleann writes there: a known index file, or any other
+// entry named "<name>.<suffix>". The second rule covers what the list cannot
+// keep up with: SQLite's own companions (-journal on a network file system,
+// -wal and -shm of a staging database, vacuum files), lock files, CSR files
+// and the backups of an interrupted sync.
+func isGleannArtefact(entryName, name string) bool {
+	return isIndexFile(entryName, name) ||
+		strings.HasPrefix(entryName, name+".") ||
+		entryName == ".sync-bak" || entryName == "meta.json.tmp"
+}
+
+// isIndexFile reports whether entryName is one of the files that make a
+// directory an index of name. RemoveIndex wants at least one of them before
+// it deletes a directory: "<name>.<suffix>" alone also matches src/src.go.
+func isIndexFile(entryName, name string) bool {
+	if strings.HasPrefix(entryName, ".storage-bak-") {
+		return true
+	}
+	if strings.HasSuffix(entryName, ".index") ||
+		strings.HasSuffix(entryName, ".index.tmp") ||
+		strings.HasSuffix(entryName, ".index.v1") ||
+		strings.HasSuffix(entryName, ".index.migrate") {
+		return true
+	}
+	knownSuffixes := []string{
+		".meta.json", ".meta.json.tmp", ".meta.json.v1",
+		".db", ".db-wal", ".db-shm", ".db.tmp",
+		".passages.db", ".passages.db.v1", ".passages.jsonl",
+		".lex.db", ".lex.db-wal", ".lex.db-shm", ".lex.db.v1", ".lex.lock",
+		".manifest.json", ".manifest.json.v1",
+		".delta", ".delta.tmp",
+		".sync.json",
+	}
+	for _, suf := range knownSuffixes {
+		if entryName == name+suf {
+			return true
+		}
+	}
+	if entryName == "meta.json" || entryName == "passages.jsonl" || entryName == "manifest.json" {
+		return true
+	}
+	return false
+}
+
 // RemoveIndex removes an index and all its associated files (vector index, graph database, sync state).
 func RemoveIndex(indexDir, name string) error {
 	// Never let a crafted name (e.g. "..") escape indexDir: RemoveAll below
@@ -1102,15 +1172,56 @@ func RemoveIndex(indexDir, name string) error {
 		return err
 	}
 	// 1. Remove the main index directory (contains .index, .passages.jsonl, .meta.json, etc.)
+	// Only remove when it holds gleann artefacts or is empty; otherwise refuse and return an error.
 	indexPath := filepath.Join(indexDir, name)
-	if err := os.RemoveAll(indexPath); err != nil {
-		return fmt.Errorf("remove index directory: %w", err)
+	var dirErr error
+	if fi, err := os.Lstat(indexPath); err == nil {
+		if !fi.IsDir() {
+			dirErr = fmt.Errorf("removing index directory: %s: %w", indexPath, ErrNotAnIndex)
+		} else {
+			entries, readErr := os.ReadDir(indexPath)
+			if readErr != nil {
+				return fmt.Errorf("reading index directory %s: %w", indexPath, readErr)
+			}
+			if len(entries) == 0 {
+				if err := os.Remove(indexPath); err != nil && !os.IsNotExist(err) {
+					dirErr = fmt.Errorf("remove index directory: %w", err)
+				}
+			} else {
+				// One entry gleann did not write is enough to refuse: a
+				// wrong refusal costs the user an rm, a wrong removal
+				// their files.
+				foreign, isIndex := "", false
+				for _, entry := range entries {
+					if !isGleannArtefact(entry.Name(), name) {
+						foreign = entry.Name()
+						break
+					}
+					isIndex = isIndex || isIndexFile(entry.Name(), name)
+				}
+				switch {
+				case foreign != "":
+					dirErr = fmt.Errorf("removing index directory: %s holds %q, which gleann did not write: %w", indexPath, foreign, ErrNotAnIndex)
+				case !isIndex:
+					dirErr = fmt.Errorf("removing index directory: %s holds no index file: %w", indexPath, ErrNotAnIndex)
+				default:
+					if err := os.RemoveAll(indexPath); err != nil {
+						dirErr = fmt.Errorf("remove index directory: %w", err)
+					}
+				}
+			}
+		}
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("stat index directory: %w", err)
 	}
 
 	// 2. Remove the old Kùzu graph directory of a v1.9 index, if any: index
 	// remove deletes everything of an index, including leftovers.
 	graphPath := filepath.Join(indexDir, name+"_graph")
 	if err := os.RemoveAll(graphPath); err != nil {
+		if dirErr != nil {
+			return dirErr
+		}
 		return fmt.Errorf("remove graph database: %w", err)
 	}
 
@@ -1118,6 +1229,9 @@ func RemoveIndex(indexDir, name string) error {
 	// per-file content hash store.
 	for _, suffix := range []string{"_graph.wal", "_graph.shadow", "_graph_file_hashes.db"} {
 		if err := os.Remove(filepath.Join(indexDir, name+suffix)); err != nil && !os.IsNotExist(err) {
+			if dirErr != nil {
+				return dirErr
+			}
 			return fmt.Errorf("remove %s: %w", name+suffix, err)
 		}
 	}
@@ -1125,29 +1239,44 @@ func RemoveIndex(indexDir, name string) error {
 	// A rollback copy left by an interrupted sync and the cross-process rewrite
 	// lock would otherwise make a later index of this name look half-synced.
 	if err := os.RemoveAll(indexPath + ".sync-bak"); err != nil {
+		if dirErr != nil {
+			return dirErr
+		}
 		return fmt.Errorf("remove rollback copy: %w", err)
 	}
 	if err := os.Remove(filepath.Join(indexDir, name+".rewrite.lock")); err != nil && !os.IsNotExist(err) {
+		if dirErr != nil {
+			return dirErr
+		}
 		return fmt.Errorf("remove rewrite lock: %w", err)
 	}
 	// The format-2 build/migrate lock lives beside the index directory (RFC 003
 	// section 3.6). The SQLite store, its WAL companions and the .v1 rollback
 	// copies are inside <name>/ and go with the directory removed above.
 	if err := os.Remove(filepath.Join(indexDir, name+".lock")); err != nil && !os.IsNotExist(err) {
+		if dirErr != nil {
+			return dirErr
+		}
 		return fmt.Errorf("remove index lock: %w", err)
 	}
 	// The v1.9 lexical sidecar lived inside <name>/; its rebuild lock beside it.
 	if err := os.Remove(filepath.Join(indexDir, name+".lex.lock")); err != nil && !os.IsNotExist(err) {
+		if dirErr != nil {
+			return dirErr
+		}
 		return fmt.Errorf("remove lexical lock: %w", err)
 	}
 
 	// 3. Remove the sync state file if it exists
 	syncPath := filepath.Join(indexDir, name+".sync.json")
 	if err := os.Remove(syncPath); err != nil && !os.IsNotExist(err) {
+		if dirErr != nil {
+			return dirErr
+		}
 		return fmt.Errorf("remove sync state: %w", err)
 	}
 
-	return nil
+	return dirErr
 }
 
 // cosineSimilarity computes cosine similarity between two vectors.
@@ -1432,7 +1561,15 @@ func (s *LeannSearcher) buildBoostedResults(query, rq string, searchOpts SearchC
 // stand-in: the caller keeps its own results and only fills up with it
 // (mergeLexicalFill), never replacing vector-scored results by BM25 ones.
 func (s *LeannSearcher) searchPreselected(ctx context.Context, query, rq string, queryEmb []float32, searchOpts SearchConfig, topK int, engine *MetadataFilterEngine, normDist float32) (results []SearchResult, exact, ok bool) {
-	allowed, ran := s.preselectFilterIDs(ctx, engine)
+	return s.searchPreselectedLimit(ctx, query, rq, queryEmb, searchOpts, topK, engine, normDist, filterPreselectCap, false)
+}
+
+// searchPreselectedLimit is searchPreselected reading at most limit matching
+// rows. With vectorOnly it reports ok only when the matches were scored by
+// vector distance (tier 1): the few-matches path replaces k results the loop
+// already holds, which a lexical-only ranking must not do.
+func (s *LeannSearcher) searchPreselectedLimit(ctx context.Context, query, rq string, queryEmb []float32, searchOpts SearchConfig, topK int, engine *MetadataFilterEngine, normDist float32, limit int, vectorOnly bool) (results []SearchResult, exact, ok bool) {
+	allowed, ran := s.preselectFilterIDsLimit(ctx, engine, limit)
 	if !ran {
 		return nil, false, false
 	}
@@ -1529,6 +1666,11 @@ func (s *LeannSearcher) searchPreselected(ctx context.Context, query, rq string,
 							}
 						}
 					}
+					// Like the unfiltered path, which builds results for its
+					// retrieveK best candidates only, keep the best scored
+					// matches: building a result reads the passage from the
+					// store, and a filter can match thousands.
+					finalScores = topScores(finalScores, max(4*topK, 50))
 					results := s.buildBoostedResults(query, rq, searchOpts, finalScores, rawDistances, bm25Raw)
 					if searchOpts.OnePerFile {
 						results = onePerFile(results)
@@ -1537,6 +1679,10 @@ func (s *LeannSearcher) searchPreselected(ctx context.Context, query, rq string,
 				}
 			}
 		}
+	}
+
+	if vectorOnly {
+		return nil, false, false
 	}
 
 	// Tier 2: lexical BM25 over the allowed rowids (no vector path): only

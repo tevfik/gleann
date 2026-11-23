@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -59,8 +60,14 @@ type SyncResult struct {
 // Sync incrementally synchronises an existing index with its source
 // directory: it detects added/modified/deleted files (Merkle manifest fast
 // path, vault tracker fallback), applies the delta to the vector or lexical
-// index (falling back to a full rebuild when the backend cannot apply
-// deltas), updates the graph and saves the new manifest.
+// index, updates the graph and saves the new manifest.
+//
+// It falls back to a full rebuild only when the delta cannot be applied at
+// all: the passage store is missing, unreadable or damaged, or the index is in
+// a state the update cannot edit (gleann.ErrRebuildRequired). A transient
+// failure — embedder unreachable, plugin extraction, source read error — is
+// returned with the index untouched, because a rebuild would repeat it (and
+// re-embed the whole corpus); the next sync retries the delta.
 func Sync(ctx context.Context, opts SyncOptions) (*SyncResult, error) {
 	if ctx == nil {
 		ctx = context.Background()
@@ -126,11 +133,37 @@ func Sync(ctx context.Context, opts SyncOptions) (*SyncResult, error) {
 	}
 	defer unlock()
 
+	// A format-2 index whose <name>.db is gone has lost its passages and its
+	// code graph: both live in that database. HasCodeGraph no longer recreates
+	// an empty store, so remember the loss here. The incremental update then
+	// fails with gleann.ErrRebuildRequired, and the full-rebuild fallback
+	// restores the store and, when meta.json recorded a graph, the graph.
+	basePath := filepath.Join(cfg.IndexDir, name, name)
+	_, dbStatErr := os.Stat(basePath + ".db")
+	storeMissing := gleann.StoreFormatOf(basePath) == 2 && errors.Is(dbStatErr, fs.ErrNotExist)
+
+	// An index built before meta.json recorded has_graph keeps that fact only
+	// in the database. Backfill it here: without it, a later store loss is
+	// indistinguishable from an index that never had a graph, and the graph
+	// would be silently dropped instead of rebuilt. Every sync (even an
+	// up-to-date no-op) upgrades a legacy index this way.
+	hasGraph := gleann.HasCodeGraph(cfg.IndexDir, name)
+	if !storeMissing && hasGraph && !meta.HasGraph {
+		if mErr := gleann.UpdateIndexMeta(cfg.IndexDir, name, func(m *gleann.IndexMeta) {
+			m.HasGraph = true
+		}); mErr != nil {
+			p.Warnf("warning: could not record the code graph in the index metadata: %v\n", mErr)
+		} else {
+			meta.HasGraph = true
+		}
+	}
+
 	// Determine if graph indexing is requested or exists.
-	buildGraph := opts.Graph
-	if !buildGraph {
-		// A format-2 index keeps its graph in the index database.
-		buildGraph = gleann.HasCodeGraph(cfg.IndexDir, name)
+	buildGraph := opts.Graph || hasGraph
+	if storeMissing && !buildGraph {
+		// meta.json is the only record left of a graph whose database was
+		// lost; rebuild it with the store.
+		buildGraph = meta.HasGraph
 	}
 
 	res := &SyncResult{Name: name, DocsDir: absDocsDir}
@@ -157,6 +190,13 @@ func Sync(ctx context.Context, opts SyncOptions) (*SyncResult, error) {
 				absF = filepath.Join(absDocsDir, f)
 			}
 			if _, err := os.Stat(absF); err != nil {
+				if !errors.Is(err, fs.ErrNotExist) {
+					// Only a vanished file is a deletion. A stat error (an
+					// unreadable parent directory, EACCES) must fail the sync:
+					// purging the passages would silently unindex a file that
+					// still exists.
+					return nil, fmt.Errorf("checking %s: %w", absF, err)
+				}
 				deletedFiles = append(deletedFiles, absF)
 			} else {
 				changedFiles = append(changedFiles, absF)
@@ -186,7 +226,7 @@ func Sync(ctx context.Context, opts SyncOptions) (*SyncResult, error) {
 		if existingManifest != nil {
 			diff, _, dErr := gleann.QuickDiffDirectory(existingManifest, absDocsDir, eligiblePaths)
 			if dErr == nil {
-				if diff.IsEmpty() {
+				if diff.IsEmpty() && !storeMissing {
 					if buildGraph {
 						// A format-2 graph can hold dirty files even when no
 						// passage changed; converge them before "up to date".
@@ -261,7 +301,7 @@ func Sync(ctx context.Context, opts SyncOptions) (*SyncResult, error) {
 	allChanged := make([]string, 0, len(changedFiles)+len(deletedFiles))
 	allChanged = append(allChanged, changedFiles...)
 	allChanged = append(allChanged, deletedFiles...)
-	if len(allChanged) == 0 {
+	if len(allChanged) == 0 && !storeMissing {
 		if buildGraph {
 			// A format-2 graph can hold dirty files even when no passage
 			// changed (a failed graph write); converge them before
@@ -308,12 +348,14 @@ func Sync(ctx context.Context, opts SyncOptions) (*SyncResult, error) {
 			return nil, fmt.Errorf("updating lexical index: %w", err)
 		}
 		p.Printf("⚡ Lexical index updated in %s\n", time.Since(start).Round(time.Millisecond))
-		if builder.DatabaseRecreated() {
-			// The database was recreated (damaged, or from an incompatible
-			// build) and took the graph with it: rebuild it in full.
-			p.Printf("⚠️  The index database was recreated, so the code graph is rebuilt from the sources.\n")
-			buildGraph = true
-			graphOpts.ChangedFiles = nil
+		if builder.DatabaseRecreated() || storeMissing {
+			// The database was recreated (damaged, incompatible, or gone); if
+			// it held a graph, that graph is rebuilt in full from the sources.
+			buildGraph = builder.DatabaseRecreated() || buildGraph || meta.HasGraph
+			if buildGraph {
+				p.Printf("⚠️  The index database was recreated, so the code graph is rebuilt from the sources.\n")
+				graphOpts.ChangedFiles = nil
+			}
 		}
 		if buildGraph {
 			graphOpts.PluginDocs = pDocs
@@ -329,13 +371,29 @@ func Sync(ctx context.Context, opts SyncOptions) (*SyncResult, error) {
 		}
 		defer cleanup()
 
-		pDocs, incErr := env.incremental(ctx, name, absDocsDir, allChanged)
+		var pDocs []*PluginDoc
+		var incErr error
+		if storeMissing {
+			// The store and its manifest are gone: there is nothing to update
+			// in place, so go straight to the (rollback-protected) rebuild.
+			incErr = fmt.Errorf("the record store of index %q is missing: %w", name, gleann.ErrRebuildRequired)
+		} else {
+			pDocs, incErr = env.incremental(ctx, name, absDocsDir, allChanged)
+		}
 		if incErr != nil {
 			if ctx.Err() != nil {
 				return nil, ctx.Err()
 			}
 			if errors.Is(incErr, gleann.ErrDimensionMismatch) {
 				return nil, incErr // a full rebuild would silently switch models
+			}
+			if !needsFullRebuild(incErr) {
+				// Transient (embedder unreachable, plugin or source read
+				// failure) or a backend error: a full rebuild would fail the
+				// same way or re-embed the whole corpus. The incremental
+				// update touched nothing, so the index stays as it is and the
+				// next sync retries.
+				return nil, incErr
 			}
 			p.Warnf("%v, falling back to full rebuild\n", incErr)
 			p.Printf("⚠️  Incremental vector update not supported or failed, running full rebuild...\n")
@@ -344,16 +402,24 @@ func Sync(ctx context.Context, opts SyncOptions) (*SyncResult, error) {
 			// leave a degraded index behind: roll back to the previous one.
 			err = withIndexRollback(cfg.IndexDir, name, p, func() error {
 				var rerr error
-				pDocs, rerr = env.rebuild(ctx, name, absDocsDir)
+				// requireItems: a corpus that became empty (the reason the
+				// empty update ran) must fail here, or the rollback copy is
+				// deleted and no index is left behind.
+				pDocs, rerr = env.rebuildWith(ctx, name, absDocsDir, storeMissing, true)
 				return rerr
 			})
 			if err != nil {
 				return nil, fmt.Errorf("full rebuild (previous index restored): %w", err)
 			}
-			if env.dbRecreated && !buildGraph {
-				p.Printf("⚠️  The index database was recreated, so the code graph is rebuilt from the sources.\n")
+			graphRebuilt := buildGraph || env.dbRecreated
+			if (env.dbRecreated || storeMissing) && !opts.Graph {
+				if graphRebuilt {
+					p.Printf("⚠️  The index database was recreated, so the code graph is rebuilt from the sources.\n")
+				} else {
+					p.Printf("⚠️  The index database was recreated from the sources.\n")
+				}
 			}
-			if buildGraph || env.dbRecreated {
+			if graphRebuilt {
 				graphOpts.ChangedFiles = nil
 				graphOpts.PluginDocs = pDocs
 				graphErr = buildGraphIndex(graphOpts, p)
@@ -543,6 +609,19 @@ func withIndexRollback(indexDir, name string, p *printer, fn func() error) error
 		_ = os.RemoveAll(bak)
 	}
 	return nil
+}
+
+// needsFullRebuild reports whether a failed incremental update can only be
+// repaired by rebuilding the index from its sources: the passage store is
+// missing, unreadable or damaged, or the backend cannot edit it in place
+// (gleann.ErrRebuildRequired).
+//
+// Everything else is returned to the caller: a transient failure (embedder
+// unreachable or failing, plugin extraction, source read error) would fail the
+// same way in a rebuild, and re-embedding the whole corpus for it is worse than
+// returning the error and letting the next sync retry the delta.
+func needsFullRebuild(incErr error) bool {
+	return errors.Is(incErr, gleann.ErrRebuildRequired)
 }
 
 // SyncChanged applies one batch of file-system events (index watch) to an

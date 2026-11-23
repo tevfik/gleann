@@ -158,8 +158,21 @@ func checkHealthFormat2(h *IndexHealth, meta *IndexMeta, basePath string) {
 				"vector slots are inconsistent (%d passages, highest slot %d, %d without a slot, vector_slots %d): vectors may be attached to the wrong passages, so searches can return the wrong text",
 				h.Passages, h.MaxID, slotless, vslots))
 		}
-		if _, err := os.Stat(basePath + ".index"); errors.Is(err, fs.ErrNotExist) {
+		// The vector file must be openable, not merely present: os.Stat
+		// succeeds on a directory, and a stat error that is not "missing"
+		// (permissions, I/O) is as fatal to the searcher as absence. Report it
+		// the way the delta file above is reported, so repair is suggested.
+		mainPath := basePath + suffixMain
+		if info, statErr := os.Stat(mainPath); errors.Is(statErr, fs.ErrNotExist) {
 			h.Problems = append(h.Problems, "the vector index file is missing")
+		} else if statErr != nil {
+			h.Problems = append(h.Problems, fmt.Sprintf("the vector index file cannot be read (%v); repair the index with: gleann index repair %s", statErr, h.Name))
+		} else if !info.Mode().IsRegular() {
+			h.Problems = append(h.Problems, fmt.Sprintf("the vector index file cannot be read (mode %s is not a regular file); repair the index with: gleann index repair %s", info.Mode(), h.Name))
+		} else if f, openErr := os.Open(mainPath); openErr != nil {
+			h.Problems = append(h.Problems, fmt.Sprintf("the vector index file cannot be read (%v); repair the index with: gleann index repair %s", openErr, h.Name))
+		} else {
+			_ = f.Close()
 		}
 	}
 }

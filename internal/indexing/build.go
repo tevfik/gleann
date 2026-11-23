@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -13,6 +14,7 @@ import (
 	"github.com/tevfik/gleann/internal/embedding"
 	"github.com/tevfik/gleann/internal/vault"
 	"github.com/tevfik/gleann/pkg/gleann"
+	"github.com/tevfik/gleann/pkg/walker"
 
 	// Register the vector backends so the library is self-contained.
 	_ "github.com/tevfik/gleann/pkg/backends"
@@ -171,7 +173,8 @@ func buildOne(ctx context.Context, opts BuildOptions) (*BuildResult, error) {
 
 	est := opts.Estimate
 	if est == nil {
-		est, err = gleann.EstimateJob(docsDir, runtime.NumCPU())
+		est, err = gleann.EstimateJobWalk(docsDir, runtime.NumCPU(),
+			walker.Options{IncludeSubmodules: opts.IncludeSubmodules, FollowSymlinks: true})
 		if err != nil {
 			return nil, fmt.Errorf("estimating job: %w", err)
 		}
@@ -420,11 +423,35 @@ func (e *pipelineEnv) readOptions() ReadOptions {
 }
 
 func (e *pipelineEnv) rebuild(ctx context.Context, name, docsDir string) ([]*PluginDoc, error) {
-	items, pluginDocs, err := readDocuments(ctx, docsDir, e.readOptions(), e.p)
+	return e.rebuildWith(ctx, name, docsDir, false, false)
+}
+
+// rebuildWith rebuilds the index from docsDir. strictReads makes an unreadable
+// source fail the read (the store-loss repair must not silently drop it);
+// requireItems makes an empty corpus fail instead of returning without writing
+// anything, so the caller's rollback restores the previous index rather than
+// deleting it. RebuildIndex (the watch-mode entry point) keeps the historical
+// best-effort/empty-tree behaviour with both false.
+func (e *pipelineEnv) rebuildWith(ctx context.Context, name, docsDir string, strictReads, requireItems bool) ([]*PluginDoc, error) {
+	var (
+		items      []gleann.Item
+		pluginDocs []*PluginDoc
+		err        error
+	)
+	if strictReads {
+		items, pluginDocs, err = readDocumentsStrict(ctx, docsDir, e.readOptions(), e.p)
+	} else {
+		items, pluginDocs, err = readDocuments(ctx, docsDir, e.readOptions(), e.p)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("reading documents: %w", err)
 	}
 	if len(items) == 0 {
+		if requireItems {
+			// Nothing to build. Reporting success would let the caller drop
+			// the rollback copy of the only remaining index.
+			return pluginDocs, ErrNoDocuments
+		}
 		return pluginDocs, nil
 	}
 
@@ -466,6 +493,13 @@ func (e *pipelineEnv) incremental(ctx context.Context, name, docsDir string, cha
 	for _, f := range changedFiles {
 		relPath := sourceRel(docsDir, f)
 		if _, err := os.Stat(f); err != nil {
+			if !errors.Is(err, fs.ErrNotExist) {
+				// A stat error that is not "gone" (a transiently unreadable
+				// parent directory, EACCES) is not a deletion: removing the
+				// passages here would silently unindex a file that still
+				// exists. Fail before anything is mutated.
+				return nil, fmt.Errorf("incremental: checking %s: %w", f, err)
+			}
 			removeSources = append(removeSources, relPath)
 		} else if !fileInMode(e.opts.Mode, f) {
 			// Outside the index mode (e.g. a .json/.pdf in a code-mode sync):
@@ -484,7 +518,10 @@ func (e *pipelineEnv) incremental(ctx context.Context, name, docsDir string, cha
 		}
 	}
 
-	items, pluginDocs, records, err := readDocumentsForFiles(ctx, docsDir, existingFiles, e.readOptions(), e.p)
+	// A changed file that exists but cannot be read (or whose extractor fails)
+	// must fail the sync here, before removeSources is applied: skipping it
+	// would delete its passages and add nothing.
+	items, pluginDocs, records, err := readDocumentsForFilesStrict(ctx, docsDir, existingFiles, e.readOptions(), e.p)
 	if err != nil {
 		return nil, fmt.Errorf("incremental: reading changed files: %w", err)
 	}

@@ -824,3 +824,173 @@ func TestRemoveIndex_LeftoversAndErrors(t *testing.T) {
 		})
 	}
 }
+
+func TestRemoveIndex_RefusesNonIndexDirectory(t *testing.T) {
+	dir := t.TempDir()
+
+	// 1. Directory with non-index user files.
+	srcDir := filepath.Join(dir, "src")
+	if err := os.MkdirAll(srcDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	mainGo := filepath.Join(srcDir, "main.go")
+	if err := os.WriteFile(mainGo, []byte("package main"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	err := RemoveIndex(dir, "src")
+	if err == nil {
+		t.Fatal("RemoveIndex on non-index directory should return error, got nil")
+	}
+	if !strings.Contains(err.Error(), srcDir) {
+		t.Errorf("error %q should name the directory %q", err.Error(), srcDir)
+	}
+	if _, statErr := os.Stat(mainGo); statErr != nil {
+		t.Fatalf("main.go was deleted: %v", statErr)
+	}
+	if _, statErr := os.Stat(srcDir); statErr != nil {
+		t.Fatalf("src directory was deleted: %v", statErr)
+	}
+
+	// 2. Directory with mixed files (meta.json and foreign file).
+	mixedDir := filepath.Join(dir, "mixed")
+	if err := os.MkdirAll(mixedDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(mixedDir, "mixed.meta.json"), []byte("{}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	foreign := filepath.Join(mixedDir, "user_script.py")
+	if err := os.WriteFile(foreign, []byte("print(1)"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	err = RemoveIndex(dir, "mixed")
+	if err == nil {
+		t.Fatal("RemoveIndex on mixed directory should return error, got nil")
+	}
+	if !strings.Contains(err.Error(), mixedDir) {
+		t.Errorf("error %q should name the directory %q", err.Error(), mixedDir)
+	}
+	if _, statErr := os.Stat(foreign); statErr != nil {
+		t.Fatalf("foreign file was deleted: %v", statErr)
+	}
+
+	// 3. Regular file named like index.
+	filePath := filepath.Join(dir, "regularfile")
+	if err := os.WriteFile(filePath, []byte("not a dir"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	err = RemoveIndex(dir, "regularfile")
+	if err == nil {
+		t.Fatal("RemoveIndex on regular file should return error, got nil")
+	}
+	if !strings.Contains(err.Error(), filePath) {
+		t.Errorf("error %q should name %q", err.Error(), filePath)
+	}
+	if _, statErr := os.Stat(filePath); statErr != nil {
+		t.Fatalf("regular file was deleted: %v", statErr)
+	}
+
+	// 4. Non-index directory with companion files: directory is preserved, companion files are cleaned.
+	targetDir := filepath.Join(dir, "myproject")
+	if err := os.MkdirAll(targetDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	codeFile := filepath.Join(targetDir, "app.rs")
+	if err := os.WriteFile(codeFile, []byte("fn main() {}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Companion files beside myproject:
+	lockFile := filepath.Join(dir, "myproject.lock")
+	syncBak := filepath.Join(dir, "myproject.sync-bak")
+	graphDir := filepath.Join(dir, "myproject_graph")
+	if err := os.WriteFile(lockFile, []byte("lock"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(syncBak, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(graphDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	err = RemoveIndex(dir, "myproject")
+	if err == nil {
+		t.Fatal("RemoveIndex on non-index directory should return error")
+	}
+	if !strings.Contains(err.Error(), targetDir) {
+		t.Errorf("error %q should name %q", err.Error(), targetDir)
+	}
+	if _, statErr := os.Stat(codeFile); statErr != nil {
+		t.Fatalf("code file was deleted: %v", statErr)
+	}
+	if _, statErr := os.Stat(targetDir); statErr != nil {
+		t.Fatalf("myproject dir was deleted: %v", statErr)
+	}
+	// Verify companions WERE cleaned:
+	if _, statErr := os.Stat(lockFile); !os.IsNotExist(statErr) {
+		t.Errorf("companion lock was not cleaned: %v", statErr)
+	}
+	if _, statErr := os.Stat(syncBak); !os.IsNotExist(statErr) {
+		t.Errorf("companion sync-bak was not cleaned: %v", statErr)
+	}
+	if _, statErr := os.Stat(graphDir); !os.IsNotExist(statErr) {
+		t.Errorf("companion graph dir was not cleaned: %v", statErr)
+	}
+
+	// 5. Empty directory: can be removed.
+	emptyDir := filepath.Join(dir, "emptyidx")
+	if err := os.MkdirAll(emptyDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := RemoveIndex(dir, "emptyidx"); err != nil {
+		t.Fatalf("RemoveIndex on empty directory failed: %v", err)
+	}
+	if _, statErr := os.Stat(emptyDir); !os.IsNotExist(statErr) {
+		t.Errorf("empty directory should have been removed: %v", statErr)
+	}
+}
+
+// A real index holds more than the files RemoveIndex lists by name: SQLite's
+// journal on a network file system, the companions of a staging database an
+// interrupted migrate left, lock and CSR files. All are named
+// "<name>.<suffix>"; a directory of the user's whose files happen to be named
+// like that (src/src.go) holds no index file and stays.
+func TestRemoveIndex_IndexCompanionsAndLookalikes(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		files   []string
+		removed bool
+	}{
+		{"journal on a network file system", []string{"x.db", "x.db-journal", "x.meta.json"}, true},
+		{"interrupted migrate", []string{"x.db", "x.db.tmp", "x.db.tmp-wal", "x.db.tmp-shm", "x.db.tmp-journal"}, true},
+		{"vacuum, lock and CSR files", []string{"x.db", "x.db-vacuum", "x.lock", "x.rewrite.lock", "x.csr", "x.lex.db-journal"}, true},
+		{"legacy names", []string{"meta.json", "meta.json.tmp", "passages.jsonl"}, true},
+		{"only a look-alike", []string{"x.go"}, false},
+		{"look-alike next to a stray temp file", []string{"x.go", "x.txt"}, false},
+		{"index plus a foreign file", []string{"x.db", "notes.md"}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			sub := filepath.Join(dir, "x")
+			if err := os.MkdirAll(sub, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			for _, f := range tc.files {
+				if err := os.WriteFile(filepath.Join(sub, f), []byte("x"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			err := RemoveIndex(dir, "x")
+			_, statErr := os.Stat(sub)
+			gone := os.IsNotExist(statErr)
+			if tc.removed && (err != nil || !gone) {
+				t.Errorf("RemoveIndex = %v, directory gone = %v; want it removed", err, gone)
+			}
+			if !tc.removed && (!errors.Is(err, ErrNotAnIndex) || gone) {
+				t.Errorf("RemoveIndex = %v, directory gone = %v; want ErrNotAnIndex and the directory kept", err, gone)
+			}
+		})
+	}
+}

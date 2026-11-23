@@ -134,7 +134,7 @@ func TestPruneEmbeddingsNone(t *testing.T) {
 
 	// Other nodes should have nil vectors.
 	prunedCount := 0
-	for id, node := range g.nodes {
+	for id, node := range g.nodes.all() {
 		if id != g.entryPoint && node.Vector == nil {
 			prunedCount++
 		}

@@ -124,10 +124,7 @@ func (s *Searcher) Search(ctx context.Context, query []float32, topK int) ([]int
 
 	cfg := s.config.DiskANNConfig
 	distFunc := GetDistanceFunc(string(cfg.DistanceMetric))
-	searchL := cfg.SearchL
-	if searchL <= 0 {
-		searchL = 100
-	}
+	searchL := ResolveSearchL(cfg.SearchL, int(s.idx.NumNodes))
 
 	// Use the PQ-prefiltered search with in-memory embeddings for reranking.
 	candidates := SearchExactRerank(s.idx, query, topK, searchL, cfg.SearchPQRerank, distFunc)
@@ -154,10 +151,7 @@ func (s *Searcher) SearchWithRecompute(ctx context.Context, query []float32, top
 
 	cfg := s.config.DiskANNConfig
 	distFunc := GetDistanceFunc(string(cfg.DistanceMetric))
-	searchL := cfg.SearchL
-	if searchL <= 0 {
-		searchL = 100
-	}
+	searchL := ResolveSearchL(cfg.SearchL, int(s.idx.NumNodes))
 	rerankK := DefaultRerankK(cfg.SearchPQRerank, topK, searchL)
 
 	// Reranking fetches embeddings via in-memory/mmap first, then recompute callback (=disk read).
@@ -208,6 +202,34 @@ func (s *Searcher) ExtractVectors(ctx context.Context, ids []int64) ([][]float32
 			return nil, fmt.Errorf("diskann: node %d has no stored vector", id)
 		}
 		out[i] = append([]float32(nil), v...)
+	}
+	return out, nil
+}
+
+// VectorDistances returns the exact distance from query to the stored vector
+// of each node ID (vector slot), using the index's distance metric. Both the
+// RAM and the memory-mapped load path serve from the raw stored vectors
+// (GetVector), never the PQ codes, so a SQL-pre-selected filter set can be
+// scored exactly instead of through the approximate widen loop.
+func (s *Searcher) VectorDistances(ctx context.Context, query []float32, ids []int64) ([]float32, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	if s.idx == nil {
+		return nil, fmt.Errorf("index not loaded")
+	}
+	if len(query) != s.idx.Dims {
+		return nil, fmt.Errorf("query has %d dimensions, index has %d", len(query), s.idx.Dims)
+	}
+
+	distFunc := GetDistanceFunc(string(s.config.DiskANNConfig.DistanceMetric))
+	out := make([]float32, len(ids))
+	for i, id := range ids {
+		v := s.idx.GetVector(id)
+		if v == nil {
+			return nil, fmt.Errorf("diskann: node %d has no stored vector", id)
+		}
+		out[i] = distFunc(query, v)
 	}
 	return out, nil
 }

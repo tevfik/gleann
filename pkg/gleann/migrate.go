@@ -10,7 +10,6 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strings"
 	"time"
 
 	"go.etcd.io/bbolt"
@@ -268,7 +267,7 @@ func MigrateIndex(indexDir, name string, opts MigrateOptions) (*MigrateResult, e
 				Text:   p.Text,
 				Kind:   kind,
 				Meta:   metaJSON,
-				Tokens: strings.Join(analyzer.Tokens(p.Text, analysis.Kind(kind)), " "),
+				Tokens: analyzer.TokenString(p.Text, analysis.Kind(kind)),
 			}
 			if hasVectors {
 				np.VecSlot = &slot

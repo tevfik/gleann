@@ -299,7 +299,7 @@ func TestMmapNeighborsMatchGraphAtEveryLevel(t *testing.T) {
 		}
 		toInt := func(ext int64) int64 { return mg.internalIndex(ext) }
 		upper := 0
-		for ext, n := range g.nodes {
+		for ext, n := range g.nodes.all() {
 			idx := toInt(ext)
 			if mg.GetExternalID(idx) != ext {
 				t.Fatalf("firstID %d: node %d maps to index %d and back to %d", firstID, ext, idx, mg.GetExternalID(idx))

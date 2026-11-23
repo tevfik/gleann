@@ -5,8 +5,10 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -136,6 +138,19 @@ func ReadDocuments(ctx context.Context, dir string, ro ReadOptions) ([]gleann.It
 }
 
 func readDocuments(ctx context.Context, dir string, ro ReadOptions, p *printer) ([]gleann.Item, []*PluginDoc, error) {
+	return readDocumentsMode(ctx, dir, ro, p, false)
+}
+
+// readDocumentsStrict is readDocuments for a repair rebuild that must not
+// silently drop a source it cannot read: a stat/read/extraction failure of an
+// existing file is returned (joined) instead of being skipped, so the caller
+// fails with the previous index restored. The best-effort read stays the rule
+// for a normal build (an unreadable file is skipped, as before).
+func readDocumentsStrict(ctx context.Context, dir string, ro ReadOptions, p *printer) ([]gleann.Item, []*PluginDoc, error) {
+	return readDocumentsMode(ctx, dir, ro, p, true)
+}
+
+func readDocumentsMode(ctx context.Context, dir string, ro ReadOptions, p *printer, strict bool) ([]gleann.Item, []*PluginDoc, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -174,6 +189,7 @@ func readDocuments(ctx context.Context, dir string, ro ReadOptions, p *printer) 
 	type result struct {
 		items  []gleann.Item
 		record *vault.FileRecord
+		err    error
 	}
 
 	jobCh := make(chan FileEntry, len(files))
@@ -209,6 +225,15 @@ func readDocuments(ctx context.Context, dir string, ro ReadOptions, p *printer) 
 				var data []byte
 				var err error
 
+				var readErr error
+				// recordErr is strict mode's policy (the repair rebuild): a
+				// source that exists but cannot be read must fail the rebuild
+				// instead of being dropped from the repaired index.
+				recordErr := func(err error) {
+					if strict && err != nil && !errors.Is(err, fs.ErrNotExist) {
+						readErr = err
+					}
+				}
 				// If a plugin handles this extension, use structured extraction.
 				pluginSucceeded := false
 				if pluginManager != nil && !(((ext == ".pdf" && visionPDFEnabled(mmProcessor)) || multimodal.IsMultimodal(fe.Path)) && mmProcessor != nil) {
@@ -216,6 +241,7 @@ func readDocuments(ctx context.Context, dir string, ro ReadOptions, p *printer) 
 						pResult, perr := pluginManager.ProcessStructured(plugin, fe.Path)
 						if perr != nil {
 							p.Warnf("Warning: plugin %s failed to extract %s: %v (fallback to native)\n", plugin.Name, filepath.Base(fe.Path), perr)
+							recordErr(fmt.Errorf("extracting %s: %w", fe.Path, perr))
 							// Fall through to native extractor
 						} else {
 							pluginSucceeded = true
@@ -277,7 +303,8 @@ func readDocuments(ctx context.Context, dir string, ro ReadOptions, p *printer) 
 					md, nerr := nativeExtractor.Extract(fe.Path)
 					if nerr != nil {
 						p.Warnf("Warning: native extraction failed for %s: %v\n", filepath.Base(fe.Path), nerr)
-						resCh <- result{}
+						recordErr(fmt.Errorf("extracting %s: %w", fe.Path, nerr))
+						resCh <- result{err: readErr}
 						continue
 					}
 					if md = strings.TrimSpace(md); md == "" {
@@ -337,7 +364,8 @@ func readDocuments(ctx context.Context, dir string, ro ReadOptions, p *printer) 
 					mr := mmProcessor.ProcessFile(fe.Path)
 					if mr.Error != nil {
 						p.Warnf("Warning: multimodal processing failed for %s: %v\n", filepath.Base(fe.Path), mr.Error)
-						resCh <- result{record: makeFileRecord(fe.Path, fe.Info, data)}
+						recordErr(fmt.Errorf("processing %s: %w", fe.Path, mr.Error))
+						resCh <- result{record: makeFileRecord(fe.Path, fe.Info, data), err: readErr}
 						continue
 					}
 					if desc := strings.TrimSpace(mr.Description); desc != "" {
@@ -361,7 +389,8 @@ func readDocuments(ctx context.Context, dir string, ro ReadOptions, p *printer) 
 				if data == nil {
 					data, err = os.ReadFile(fe.Path)
 					if err != nil {
-						resCh <- result{record: makeFileRecord(fe.Path, fe.Info, nil)} // skip unreadable
+						recordErr(fmt.Errorf("reading %s: %w", fe.Path, err))
+						resCh <- result{record: makeFileRecord(fe.Path, fe.Info, nil), err: readErr} // skip unreadable
 						continue
 					}
 				}
@@ -457,8 +486,12 @@ func readDocuments(ctx context.Context, dir string, ro ReadOptions, p *printer) 
 	// Collect results.
 	var allItems []gleann.Item
 	var records []vault.FileRecord
+	var readErrs []error
 	for range files {
 		r := <-resCh
+		if r.err != nil {
+			readErrs = append(readErrs, r.err)
+		}
 		allItems = append(allItems, r.items...)
 		if r.record != nil && r.record.Hash != "" {
 			records = append(records, *r.record)
@@ -467,6 +500,12 @@ func readDocuments(ctx context.Context, dir string, ro ReadOptions, p *printer) 
 
 	if err := ctx.Err(); err != nil {
 		return nil, nil, err
+	}
+
+	if len(readErrs) > 0 {
+		// A strict read must not hand a partial corpus to the caller: the
+		// repair rebuild fails with the previous index restored instead.
+		return nil, nil, errors.Join(readErrs...)
 	}
 
 	if tracker != nil && len(records) > 0 {
@@ -544,7 +583,23 @@ func visionPDFItems(analysis *multimodal.PDFAnalysis, relPath string, mdChunker 
 // used for incremental updates (watch / sync) where only changed files need
 // processing — much faster than re-reading the entire directory. It also
 // returns tracker records for the processed files.
+//
+// A file that cannot be read is skipped: this is the best-effort read. An
+// incremental update that must not drop the passages of a changed file it
+// could not re-read uses readDocumentsForFilesStrict instead.
 func readDocumentsForFiles(ctx context.Context, dir string, filePaths []string, ro ReadOptions, p *printer) ([]gleann.Item, []*PluginDoc, []vault.FileRecord, error) {
+	return readDocumentsForFilesMode(ctx, dir, filePaths, ro, p, false)
+}
+
+// readDocumentsForFilesStrict is readDocumentsForFiles for an incremental
+// update: a changed source that exists but cannot be read (including a failure
+// of its configured plugin or native extractor) is an error, so the caller can
+// fail the sync before the update deletes passages it could not re-create.
+func readDocumentsForFilesStrict(ctx context.Context, dir string, filePaths []string, ro ReadOptions, p *printer) ([]gleann.Item, []*PluginDoc, []vault.FileRecord, error) {
+	return readDocumentsForFilesMode(ctx, dir, filePaths, ro, p, true)
+}
+
+func readDocumentsForFilesMode(ctx context.Context, dir string, filePaths []string, ro ReadOptions, p *printer, strict bool) ([]gleann.Item, []*PluginDoc, []vault.FileRecord, error) {
 	if len(filePaths) == 0 {
 		return nil, nil, nil, nil
 	}
@@ -569,9 +624,18 @@ func readDocumentsForFiles(ctx context.Context, dir string, filePaths []string, 
 	var allItems []gleann.Item
 	var pluginDocs []*PluginDoc
 	var records []vault.FileRecord
+	var readErrs []error
 	addRecord := func(path string, info os.FileInfo, data []byte) {
 		if rec := makeFileRecord(path, info, data); rec != nil && rec.Hash != "" {
 			records = append(records, *rec)
+		}
+	}
+	// recordReadErr is strict mode's policy: a source that exists but cannot
+	// be read must abort the incremental update (returning the error before
+	// any passage is deleted). A vanished file is a deletion, not an error.
+	recordReadErr := func(path, action string, err error) {
+		if strict && err != nil && !errors.Is(err, fs.ErrNotExist) {
+			readErrs = append(readErrs, fmt.Errorf("%s %s: %w", action, path, err))
 		}
 	}
 
@@ -581,6 +645,7 @@ func readDocumentsForFiles(ctx context.Context, dir string, filePaths []string, 
 		}
 		info, err := os.Stat(filePath)
 		if err != nil || info.IsDir() {
+			recordReadErr(filePath, "reading", err)
 			continue
 		}
 
@@ -635,6 +700,7 @@ func readDocumentsForFiles(ctx context.Context, dir string, filePaths []string, 
 					addRecord(filePath, info, nil)
 					continue
 				}
+				recordReadErr(filePath, "extracting", perr)
 			}
 		}
 
@@ -692,6 +758,7 @@ func readDocumentsForFiles(ctx context.Context, dir string, filePaths []string, 
 					}
 				}
 			}
+			recordReadErr(filePath, "extracting", nerr)
 			addRecord(filePath, info, nil)
 			continue
 		}
@@ -700,6 +767,9 @@ func readDocumentsForFiles(ctx context.Context, dir string, filePaths []string, 
 		if mmProcessor != nil && mmProcessor.CanProcess(filePath) {
 			ensureAudioPlugin(pluginManager, filePath, p)
 			mr := mmProcessor.ProcessFile(filePath)
+			// A failing vision model or audio plugin has no fallback here: the
+			// file would lose its passages, so strict mode reports it.
+			recordReadErr(filePath, "processing", mr.Error)
 			if mr.Error == nil {
 				if desc := strings.TrimSpace(mr.Description); desc != "" {
 					allItems = append(allItems, gleann.Item{
@@ -715,6 +785,7 @@ func readDocumentsForFiles(ctx context.Context, dir string, filePaths []string, 
 		// Text file: read, detect binary, chunk.
 		data, err := os.ReadFile(filePath)
 		if err != nil {
+			recordReadErr(filePath, "reading", err)
 			continue
 		}
 		if looksBinary(data) {
@@ -774,6 +845,11 @@ func readDocumentsForFiles(ctx context.Context, dir string, filePaths []string, 
 		}
 	}
 
+	if len(readErrs) > 0 {
+		// The caller must not apply a partial update over sources it could not
+		// read; report every failed file so the sync fails before mutating.
+		return nil, nil, nil, errors.Join(readErrs...)
+	}
 	return allItems, pluginDocs, records, nil
 }
 
