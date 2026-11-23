@@ -109,7 +109,7 @@ func (m *Manager) RememberBlock(block *Block) (*Block, error) {
 	m.applyDefaults(block)
 
 	// Check for contradictions with existing long-term blocks.
-	if contradictions := m.checkContradictions(block.Content); len(contradictions) > 0 {
+	if contradictions := m.checkContradictions(block); len(contradictions) > 0 {
 		// Mark the new block metadata with contradiction info.
 		if block.Metadata == nil {
 			block.Metadata = make(map[string]string)
@@ -133,8 +133,9 @@ func (m *Manager) RememberBlock(block *Block) (*Block, error) {
 	return block, nil
 }
 
-// RevertReflection reverts a reflection run by ID, removing exactly the blocks it added.
-// It restores nothing else and leaves original blocks untouched.
+// RevertReflection reverts a reflection run by ID, removing exactly the blocks
+// it added and undoing exactly the confirmations it made. It restores nothing
+// else and leaves original blocks otherwise untouched.
 func (m *Manager) RevertReflection(runID string) (*ChangeSet, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -155,6 +156,37 @@ func (m *Manager) RevertReflection(runID string) (*ChangeSet, error) {
 			return nil, fmt.Errorf("reverting reflection run %s: deleting block %s: %w", runID, id, err)
 		}
 	}
+
+	// Undo the confirmations the run made to pre-existing blocks: give back
+	// the confirmation count and restore the prior UpdatedAt. Only the exact
+	// state the run produced is reversed, so a later confirmation or edit is
+	// never clobbered. Old change sets carry no confirmations and skip this.
+	// Unwind in reverse (LIFO) order: when the run confirmed the same block
+	// several times, each entry's Prior* state is the previous entry's
+	// NewUpdatedAt state, so only last-in-first-out unwinding reaches the
+	// pre-run baseline (forward iteration stops one confirmation short).
+	for i := len(cs.BlocksConfirmed) - 1; i >= 0; i-- {
+		conf := cs.BlocksConfirmed[i]
+		b, err := m.store.Get(conf.ID)
+		if err != nil {
+			continue // already gone
+		}
+		changed := false
+		if b.Confirms > conf.PriorConfirms {
+			b.Confirms--
+			changed = true
+		}
+		if !conf.NewUpdatedAt.IsZero() && b.UpdatedAt.Equal(conf.NewUpdatedAt) {
+			b.UpdatedAt = conf.PriorUpdatedAt
+			changed = true
+		}
+		if changed {
+			if err := m.store.Update(b); err != nil {
+				return nil, fmt.Errorf("reverting reflection run %s: restoring block %s: %w", runID, conf.ID, err)
+			}
+		}
+	}
+
 	if err := m.store.DeleteChangeSet(runID); err != nil {
 		return nil, fmt.Errorf("reverting reflection run %s: %w", runID, err)
 	}
@@ -354,6 +386,14 @@ func (m *Manager) BuildContext() (*ContextWindow, error) {
 	}
 	m.applyBudget(cw)
 	return cw, nil
+}
+
+// BuildRepoContext compiles the memory visible to the current repository:
+// global blocks, the repository scope and its path ancestors. It is the
+// default scope of MCP memory_context and the context injected by ask, chat
+// and the TUI.
+func (m *Manager) BuildRepoContext() (*ContextWindow, error) {
+	return m.BuildScopedContext(DetectRepoScope())
 }
 
 // BuildScopedContext compiles memory visible to a specific scope.
@@ -570,17 +610,43 @@ func scopeAncestors(scope string) map[string]struct{} {
 	return out
 }
 
-// checkContradictions checks new content against existing long-term blocks
-// for potential contradictions using heuristic text comparison.
-func (m *Manager) checkContradictions(content string) []*Block {
+// checkContradictions checks a new block against the existing long-term
+// blocks visible to its scope (global blocks, the scope itself and its
+// ancestors) for potential contradictions using heuristic text comparison.
+// The block the write would merge into is skipped: a duplicate confirms the
+// stored knowledge, it does not contradict it.
+//
+// Scope visibility is asymmetric, exactly like search: a writer only sees
+// global blocks and its own scope chain, never descendants or siblings. A
+// write therefore never lowers the validity of a block in a scope the writer
+// cannot see — a global write conflicts only with global blocks. filterScope
+// is deliberately not used here: for the global scope it returns every block
+// (correct for search, wrong for conflict marking).
+func (m *Manager) checkContradictions(block *Block) []*Block {
 	blocks, err := m.store.List(TierLong)
 	if err != nil {
 		return nil
 	}
+	visible := scopeAncestors(block.Scope)
+	inScope := make([]Block, 0, len(blocks))
+	for _, b := range blocks {
+		if _, ok := visible[b.Scope]; ok {
+			inScope = append(inScope, b)
+		}
+	}
+	blocks = inScope
+
+	mergeID := ""
+	if dup, err := m.store.FindDuplicate(block); err == nil && dup != nil {
+		mergeID = dup.ID
+	}
 
 	var contradictions []*Block
 	for i := range blocks {
-		if blocks[i].ContradictionCheck(content) {
+		if blocks[i].ID == mergeID {
+			continue
+		}
+		if blocks[i].ContradictionCheck(block.Content) {
 			contradictions = append(contradictions, &blocks[i])
 		}
 	}

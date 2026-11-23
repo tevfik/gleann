@@ -63,7 +63,7 @@ func TestManager_DatabaseFailures(t *testing.T) {
 
 	// Callers that cannot report an error degrade to "nothing found" rather
 	// than guessing.
-	if got := mgr.checkContradictions("anything is not true"); got != nil {
+	if got := mgr.checkContradictions(&Block{Content: "anything is not true"}); got != nil {
 		t.Errorf("checkContradictions = %v, want nil", got)
 	}
 	if stale, err := mgr.StaleBlocks(); err != nil || len(stale) != 0 {

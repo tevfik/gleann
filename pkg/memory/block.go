@@ -77,7 +77,10 @@ type Block struct {
 	LastAccessedAt *time.Time `json:"last_accessed_at,omitempty"`
 }
 
-// IsExpired returns true if the block has passed its expiration date.
+// IsExpired returns true if the block has passed its explicit expiration date.
+// A nil ExpiresAt never expires. An explicitly set ExpiresAt is honored in
+// every tier: long-term facts do not expire by age, but a caller-set expiry
+// is deliberate intent, not age.
 func (b *Block) IsExpired() bool {
 	if b.ExpiresAt == nil {
 		return false

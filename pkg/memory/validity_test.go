@@ -55,18 +55,81 @@ func TestValidityScore_HighConflict(t *testing.T) {
 }
 
 func TestValidityScore_StaleDecay(t *testing.T) {
+	// Age decay applies to the short and medium tiers only; the long tier
+	// is exempt (see TestValidityScore_LongTierNoAgeDecay).
 	old := time.Now().Add(-365 * 24 * time.Hour) // 1 year ago
-	b := &Block{
-		ID:        "test-4",
-		Tier:      TierLong,
-		Content:   "Old fact",
-		CreatedAt: old,
-		UpdatedAt: old,
-	}
+	for _, tier := range []Tier{TierShort, TierMedium} {
+		t.Run(string(tier), func(t *testing.T) {
+			b := &Block{
+				ID:        "test-4",
+				Tier:      tier,
+				Content:   "Old fact",
+				CreatedAt: old,
+				UpdatedAt: old,
+			}
 
-	score := b.ValidityScore()
-	if score > 0.2 {
-		t.Errorf("stale block (1 year old) should have decayed score < 0.2, got %f", score)
+			score := b.ValidityScore()
+			if score > 0.2 {
+				t.Errorf("stale %s block (1 year old) should have decayed score < 0.2, got %f", tier, score)
+			}
+		})
+	}
+}
+
+// TestValidityScore_LongTierNoAgeDecay pins the maintainer decision
+// (2026-11-21): long-term facts never lose validity by age alone. An
+// unconfirmed, never-accessed TierLong block keeps its 0.5 prior at any
+// age, while confirmations raise and conflicts lower the score exactly
+// as before — the long tier stays changeable, not immortal.
+func TestValidityScore_LongTierNoAgeDecay(t *testing.T) {
+	ages := []struct {
+		name string
+		days int
+	}{
+		{"130_days", 130},
+		{"365_days", 365},
+		{"1000_days", 1000},
+		{"10_years", 3650},
+	}
+	for _, age := range ages {
+		t.Run(age.name, func(t *testing.T) {
+			old := time.Now().Add(-time.Duration(age.days) * 24 * time.Hour)
+			b := &Block{
+				ID:        "long-" + age.name,
+				Tier:      TierLong,
+				Content:   "Persistent fact",
+				CreatedAt: old,
+				UpdatedAt: old,
+			}
+
+			// 0 confirms / 0 conflicts -> the 0.5 prior, at any age.
+			score := b.ValidityScore()
+			if score < 0.5 {
+				t.Errorf("unconfirmed TierLong block %d days old should keep score >= 0.5, got %f", age.days, score)
+			}
+			if score < 0.2 {
+				t.Errorf("TierLong block %d days old must stay above the 0.2 filter threshold, got %f", age.days, score)
+			}
+			if b.IsStale() {
+				t.Errorf("TierLong block %d days old must not be stale by age", age.days)
+			}
+
+			// Confirmations still raise the score.
+			confirmed := *b
+			confirmed.Confirms = 5
+			if confirmed.ValidityScore() <= score {
+				t.Errorf("confirmed TierLong block should score higher than %f, got %f", score, confirmed.ValidityScore())
+			}
+
+			// Heavy conflict still drops the score below 0.2, so a
+			// contradicted long-term fact can be pruned — on conflict,
+			// never on age.
+			conflicted := *b
+			conflicted.Conflicts = 10
+			if cs := conflicted.ValidityScore(); cs >= 0.2 {
+				t.Errorf("heavily conflicted TierLong block should score < 0.2, got %f", cs)
+			}
+		})
 	}
 }
 

@@ -95,27 +95,26 @@ func (s *LeannSyncer) AddContent(ctx context.Context, nodeID, content string, at
 	return nil
 }
 
-// Content is one entity for AddContents.
-type Content struct {
-	NodeID  string
-	Content string
-	Attrs   map[string]any
-}
+// Content is one entity for AddContents. It is the shared gleann.VectorContent
+// so the method also satisfies gleann.VectorBatchSyncer, which is what lets the
+// Memory Engine publish a whole inject request in one update.
+type Content = gleann.VectorContent
 
 // AddContents embeds several entities and writes them to the vector index in
 // one update (one publication instead of one per entity). An entity that is
 // already in the index is replaced, so a repeated call adds no duplicates.
-// Entities without content are skipped.
+// An entity repeated within the batch keeps its last content, matching the
+// database upsert (one passage per entity). Only then are entities without
+// content skipped: a cleared duplicate must not publish the earlier text it
+// replaced.
 func (s *LeannSyncer) AddContents(ctx context.Context, contents []Content) error {
 	if s.builder == nil {
 		return nil
 	}
 	var items []gleann.Item
 	var sources []string
+	seen := make(map[string]int, len(contents))
 	for _, c := range contents {
-		if c.Content == "" {
-			continue
-		}
 		meta := map[string]any{
 			"memory_node_id": c.NodeID,
 			"source":         "memory_engine:" + c.NodeID,
@@ -125,9 +124,27 @@ func (s *LeannSyncer) AddContents(ctx context.Context, contents []Content) error
 				meta[k] = v
 			}
 		}
+		if i, ok := seen[c.NodeID]; ok {
+			items[i].Text, items[i].Metadata = c.Content, meta
+			continue
+		}
+		seen[c.NodeID] = len(items)
 		items = append(items, gleann.Item{Text: c.Content, Metadata: meta})
 		sources = append(sources, "memory_engine:"+c.NodeID)
 	}
+
+	// Deduplication happens first, exactly like the database upsert; only the
+	// entity's last effective content decides whether it is published.
+	keptItems, keptSources := items[:0], sources[:0]
+	for i := range items {
+		if items[i].Text == "" {
+			continue
+		}
+		keptItems = append(keptItems, items[i])
+		keptSources = append(keptSources, sources[i])
+	}
+	items, sources = keptItems, keptSources
+
 	if len(items) == 0 {
 		return nil
 	}
