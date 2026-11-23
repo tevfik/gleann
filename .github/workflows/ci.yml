@@ -17,7 +17,7 @@ jobs:
   test:
     name: Test (${{ matrix.os }} / Go ${{ matrix.go-version }})
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 45
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
@@ -41,8 +41,9 @@ jobs:
         run: go vet ./...
 
       - name: Test (unit + integration, default tags)
-        # pkg/gleann alone takes about 8 minutes under -race on a hosted runner.
-        timeout-minutes: 30
+        # pkg/gleann alone takes about 8 minutes under -race on a hosted runner;
+        # the whole step took 29-32 minutes on macOS and Linux runners in 2026-11.
+        timeout-minutes: 40
         run: |
           set -o pipefail
           COVER_FLAG="-coverprofile=coverage.out"
