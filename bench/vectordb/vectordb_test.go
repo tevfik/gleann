@@ -327,3 +327,63 @@ func TestAddNearDuplicates(t *testing.T) {
 		t.Errorf("want separate truth caches for the plain and near-copy datasets, got %v", files)
 	}
 }
+
+// TestDatasetFromVectors: real vectors become a dataset with held-out queries,
+// deterministic for a seed, no vector both a query and a corpus entry.
+func TestDatasetFromVectors(t *testing.T) {
+	const n, dims, q = 500, 8, 50
+	rng := rand.New(rand.NewSource(3))
+	vecs := make([][]float32, n)
+	for i := range vecs {
+		v := make([]float32, dims)
+		for j := range v {
+			v[j] = rng.Float32()
+		}
+		v[0] = float32(i) // unique marker
+		vecs[i] = v
+	}
+	ds, err := vectordb.DatasetFromVectors(vecs, q, 42, "unit.fvecs")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ds.Queries) != q || len(ds.Vectors) != n-q || len(ds.IDs) != n-q || len(ds.Metas) != n-q || ds.Dims != dims || ds.Source != "unit.fvecs" {
+		t.Fatalf("shape: %d queries, %d vectors, %d ids, %d metas, dims %d, source %q", len(ds.Queries), len(ds.Vectors), len(ds.IDs), len(ds.Metas), ds.Dims, ds.Source)
+	}
+	seen := make(map[float32]bool, n)
+	for _, v := range append(append([][]float32{}, ds.Queries...), ds.Vectors...) {
+		if seen[v[0]] {
+			t.Fatalf("vector %v appears twice (as a query and in the corpus)", v[0])
+		}
+		seen[v[0]] = true
+	}
+	if len(seen) != n {
+		t.Fatalf("%d distinct vectors in the dataset, want all %d", len(seen), n)
+	}
+	for i, id := range ds.IDs {
+		if id != int64(i) {
+			t.Fatalf("IDs must be dense 0..n-1, got %d at %d", id, i)
+		}
+	}
+	// Metadata keeps the selectivities the filtered phase relies on.
+	if ds.Metas[0].Tag != 0 || ds.Metas[99].Tag != 99 || ds.Metas[100].Tag != 0 || ds.Metas[24].Source == ds.Metas[23].Source {
+		t.Errorf("synthetic metadata layout changed: %+v %+v", ds.Metas[0], ds.Metas[24])
+	}
+	again, err := vectordb.DatasetFromVectors(vecs, q, 42, "unit.fvecs")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := range ds.Queries {
+		if ds.Queries[i][0] != again.Queries[i][0] {
+			t.Fatal("the held-out queries differ between two runs with the same seed")
+		}
+	}
+
+	if _, err := vectordb.DatasetFromVectors(vecs[:60], q, 42, ""); err == nil {
+		t.Error("too few vectors for the held-out queries: want an error")
+	}
+	bad := append([][]float32{}, vecs...)
+	bad[7] = bad[7][:dims-1]
+	if _, err := vectordb.DatasetFromVectors(bad, q, 42, ""); err == nil {
+		t.Error("mixed dimensions: want an error")
+	}
+}

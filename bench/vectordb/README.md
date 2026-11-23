@@ -52,6 +52,25 @@ make bench-vectordb [VECTORDB_SIZES=10000] [VECTORDB_DIMS=384] [VECTORDB_TAGS=<a
 - `-dup`: share of vectors (0-1) replaced by near-copies of 20 base vectors, as in real corpora with license headers, boilerplate or repeated table text (default: `0`). Graph indexes whose neighbour selection rejects candidates that are closer to each other than to the node can starve on such data; `-dup 0.3` or `0.6` shows it.
 - `-list`: list registered stores and exit.
 
+- `-vectors`: a `.fvecs` file of real embedding vectors to run on instead of the synthetic mixture; `-queries` of them are held out as queries, and `-sizes` / `-dims` come from the file.
+
+## Real embeddings
+
+Synthetic clusters are an easy case. To measure on the embeddings of a real corpus, export the vectors of a gleann HNSW index (it must store its vectors, the default):
+
+```bash
+gleann index build myrepo --docs /path/to/repo --backend hnsw
+go run ./cmd/exportvecs -index ~/.gleann/indexes/myrepo/myrepo.index -out /tmp/myrepo.fvecs
+go run ./cmd/vectorbench -vectors /tmp/myrepo.fvecs
+```
+
+## Other commands
+
+- `cmd/filtbench` measures gleann's **real** search path (`gleann.NewBuilder`, `LeannSearcher.Search` with metadata filters) against the same ground truth, for `-backend hnsw` or `diskann`, with `-ef` as the search width. The adapters above call the backend modules directly; this goes through the index format, the record store and the filter logic.
+- `cmd/buildbench` times a build through `gleann.NewBuilder` (passage staging, then the vector index) with `-cpuprofile` / `-memprofile`, for `-backend hnsw` or `diskann`. Run the same file on two checkouts to compare their build cost.
+- `gate/` is the recall gate: `go test -run TestRecallGate ./gate/` (or `make recall-gate` from the repository root) builds 10,000-vector indexes and fails when recall@10 is below the thresholds in `gate/thresholds.go`. CI runs it on every change.
+- `competitive/` compares the HNSW and BM25 modules with chromem-go (brute force): `go test -v -run TestCompetitive ./competitive/`.
+
 ## What is measured
 
 Per store and dataset size:

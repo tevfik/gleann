@@ -17,13 +17,13 @@ require (
 	github.com/mark3labs/mcp-go v0.44.1
 	github.com/mattn/go-isatty v0.0.24
 	github.com/maypok86/otter/v2 v2.3.0
-	github.com/philippgille/chromem-go v0.7.0
 	github.com/qmuntal/stateless v1.8.0
 	github.com/smacker/go-tree-sitter v0.0.0-20240827094217-dd81d9e9be82
 	github.com/tevfik/agenttui v0.3.2
 	github.com/tevfik/gleann/modules/settings v0.0.0-20261026125249-6940c866c9f4
 	github.com/xuri/excelize/v2 v2.10.1
 	go.etcd.io/bbolt v1.4.3
+	golang.org/x/mod v0.39.0
 	golang.org/x/sync v0.22.0
 	golang.org/x/sys v0.47.0
 	golang.org/x/term v0.45.0
@@ -83,7 +83,6 @@ require (
 	github.com/yuin/goldmark-emoji v1.0.6 // indirect
 	golang.org/x/crypto v0.55.0 // indirect
 	golang.org/x/exp v0.0.0-20251023183803-a4bb9ffd2546 // indirect
-	golang.org/x/mod v0.39.0 // indirect
 	golang.org/x/net v0.58.0 // indirect
 	golang.org/x/text v0.41.0 // indirect
 	modernc.org/libc v1.75.7 // indirect

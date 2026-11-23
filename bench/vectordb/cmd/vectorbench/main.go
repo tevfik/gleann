@@ -27,8 +27,10 @@ func main() {
 		k        = flag.Int("k", 10, "top-k nearest neighbors")
 		results  = flag.String("results", "results", "directory for the JSON and markdown report")
 		workdir  = flag.String("workdir", "", "parent directory of the scratch databases (default: system temp)")
+		efsStr   = flag.String("efs", "", "comma-separated search widths to sweep; 0 = the store's default (default: 16,32,64,128,256)")
 		list     = flag.Bool("list", false, "list the registered stores and exit")
 		dup      = flag.Float64("dup", 0, "share of vectors replaced by near-copies of 20 base vectors (0-1), e.g. 0.3")
+		vectors  = flag.String("vectors", "", "real embedding vectors (.fvecs, see cmd/exportvecs) instead of synthetic data; -sizes and -dims come from the file")
 	)
 	flag.Parse()
 
@@ -40,6 +42,14 @@ func main() {
 	sizes, err := parseSizes(*sizesStr)
 	if err != nil {
 		fatal("-sizes: %v", err)
+	}
+
+	var efs []int
+	if *efsStr != "" {
+		efs, err = parseSizesAllowZero(*efsStr)
+		if err != nil {
+			fatal("-efs: %v", err)
+		}
 	}
 
 	names := vectordb.Names()
@@ -63,6 +73,8 @@ func main() {
 		Stores:      names,
 		WorkDir:     *workdir,
 		DupFraction: *dup,
+		VectorsFile: *vectors,
+		Efs:         efs,
 		Log: func(f string, a ...any) {
 			fmt.Fprintf(os.Stderr, f+"\n", a...)
 		},
@@ -102,6 +114,18 @@ func parseSizes(s string) ([]int, error) {
 	}
 	if len(out) == 0 {
 		return []int{10000}, nil
+	}
+	return out, nil
+}
+
+func parseSizesAllowZero(s string) ([]int, error) {
+	var out []int
+	for _, p := range strings.Split(s, ",") {
+		n, err := strconv.Atoi(strings.TrimSpace(p))
+		if err != nil || n < 0 {
+			return nil, fmt.Errorf("invalid width %q", p)
+		}
+		out = append(out, n)
 	}
 	return out, nil
 }

@@ -22,6 +22,19 @@ func init() {
 
 const filterPoolCap = 4096
 
+// filterExactMax mirrors pkg/gleann: when the estimated number of matching
+// vectors (observed pass rate times index size) is at most this, the matches
+// are scored exactly instead of trusting the widened approximate pool.
+const filterExactMax = 12000
+
+// filterExactSelectivity mirrors pkg/gleann: exact scoring only for filters
+// matching at most 1/5 of the vectors.
+const filterExactSelectivity = 5
+
+// filterExactScanMax mirrors pkg/gleann: exact scoring needs a scan over every
+// vector's metadata, so it only runs on indexes up to this size.
+const filterExactScanMax = 200_000
+
 // Store implements vectordb.Store for modules/hnsw.
 type Store struct {
 	dir      string
@@ -54,7 +67,7 @@ func (s *Store) Name() string { return "hnsw" }
 
 func (s *Store) Caveats() []string {
 	return []string{
-		"No native metadata filtering; uses widen-until-k candidate over-fetching and post-filtering (gleann WP-2.5)",
+		"No native metadata filtering; uses widen-until-k candidate over-fetching and post-filtering, plus exact scoring of the matches when few (mirrors gleann WP-2.5)",
 		"No in-place delete; uses tombstones and delta vectors (gleann RFC 005)",
 	}
 }
@@ -262,6 +275,29 @@ func (s *Store) Flush(ctx context.Context) error {
 	return nil
 }
 
+// exactMatches scores every live indexed vector that passes f and stores it in
+// candMap, replacing the approximate candidates. Delta matches keep precedence.
+func (s *Store) exactMatches(q []float32, f *vectordb.Filter, deltaMatches, candMap map[int64]candidate) {
+	distF16 := hnsw.GetDistanceFuncF16(s.params.Metric)
+	for id, m := range s.metas {
+		if _, dead := s.tombstones[id]; dead {
+			continue
+		}
+		if _, inDelta := deltaMatches[id]; inDelta || !f.Matches(m) {
+			continue
+		}
+		node, ok := s.graph.GetNode(id)
+		if !ok {
+			continue
+		}
+		if len(node.VectorF16) > 0 {
+			candMap[id] = candidate{id: id, dist: distF16(q, node.VectorF16)}
+		} else {
+			candMap[id] = candidate{id: id, dist: s.distFunc(q, node.Vector)}
+		}
+	}
+}
+
 type candidate struct {
 	id   int64
 	dist float32
@@ -334,6 +370,15 @@ func (s *Store) Search(ctx context.Context, q []float32, k int, f *vectordb.Filt
 			}
 
 			if validCount >= k || pool >= filterPoolCap || pool >= totalNodes {
+				// Exact scoring of the matches when they are few (gleann
+				// pkg/gleann filterExactMax); the adapter has no SQL, so it
+				// scans its metadata map.
+				if f != nil && len(rawCands) > 0 && totalNodes <= filterExactScanMax {
+					passed := validCount - len(deltaMatches)
+					if est := float64(passed) / float64(len(rawCands)) * float64(totalNodes); est <= filterExactMax && est*filterExactSelectivity <= float64(totalNodes) {
+						s.exactMatches(q, f, deltaMatches, candMap)
+					}
+				}
 				break
 			}
 			pool = min(pool*2, filterPoolCap)

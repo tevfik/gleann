@@ -20,6 +20,71 @@ type Dataset struct {
 	// DupFraction is the share of vectors replaced by near-copies
 	// (AddNearDuplicates); 0 for a plain dataset.
 	DupFraction float64
+	// Source names where the vectors came from when they are not synthetic
+	// (DatasetFromVectors); "" for the generated Gaussian mixture.
+	Source string
+}
+
+// DatasetFromVectors builds a dataset from real embedding vectors (e.g. the
+// stored vectors of a gleann index, see cmd/exportvecs): numQueries vectors
+// are held out as queries by a deterministic shuffle and the rest is the
+// corpus, in shuffled order, with the same synthetic metadata as
+// GenerateDataset (24 passages per file, kind by file, tag i%100) so the
+// filtered and update phases keep their known selectivities. The vectors are
+// not modified. Real embeddings are not a Gaussian mixture: they have uneven
+// density, near-copies and a few dominant directions, which is where graph
+// indexes lose recall first.
+func DatasetFromVectors(vecs [][]float32, numQueries int, seed int64, source string) (*Dataset, error) {
+	if numQueries <= 0 {
+		numQueries = 1000
+	}
+	if len(vecs) < 2*numQueries {
+		return nil, fmt.Errorf("%d vectors are too few for %d held-out queries", len(vecs), numQueries)
+	}
+	dims := len(vecs[0])
+	for i, v := range vecs {
+		if len(v) != dims {
+			return nil, fmt.Errorf("vector %d has %d dimensions, the first has %d", i, len(v), dims)
+		}
+	}
+	if seed == 0 {
+		seed = 42
+	}
+	order := rand.New(rand.NewSource(seed)).Perm(len(vecs))
+	queries := make([][]float32, numQueries)
+	for i := range queries {
+		queries[i] = vecs[order[i]]
+	}
+	size := len(vecs) - numQueries
+	ds := &Dataset{
+		Dims:    dims,
+		IDs:     make([]int64, size),
+		Vectors: make([][]float32, size),
+		Metas:   make([]Meta, size),
+		Queries: queries,
+		Source:  source,
+	}
+	for i := 0; i < size; i++ {
+		ds.IDs[i] = int64(i)
+		ds.Vectors[i] = vecs[order[numQueries+i]]
+		ds.Metas[i] = syntheticMeta(i)
+	}
+	return ds, nil
+}
+
+// syntheticMeta is the metadata of passage i: 24 passages per file, the kind
+// alternating by file, and a tag uniform over 0..99.
+func syntheticMeta(i int) Meta {
+	fileIdx := i / 24
+	kind := "code"
+	if fileIdx%2 != 0 {
+		kind = "prose"
+	}
+	return Meta{
+		Source: fmt.Sprintf("file_%06d.go", fileIdx),
+		Kind:   kind,
+		Tag:    i % 100,
+	}
 }
 
 // AddNearDuplicates replaces the first frac of the vectors with near-copies
@@ -84,16 +149,7 @@ func GenerateDataset(size, dims, numQueries int, seed int64) *Dataset {
 		ids[i] = int64(i)
 		vecs[i] = samplePoint()
 
-		fileIdx := i / 24
-		kind := "code"
-		if fileIdx%2 != 0 {
-			kind = "prose"
-		}
-		metas[i] = Meta{
-			Source: fmt.Sprintf("file_%06d.go", fileIdx),
-			Kind:   kind,
-			Tag:    i % 100, // 0..99 uniform distribution
-		}
+		metas[i] = syntheticMeta(i)
 	}
 
 	if numQueries <= 0 {

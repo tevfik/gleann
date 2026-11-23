@@ -1,5 +1,5 @@
 # ── Stage 1: Build (CGo enabled for tree-sitter) ─────────────────────────────
-FROM golang:1.24-bookworm AS builder
+FROM golang:1.25.9-bookworm AS builder
 
 # Install tree-sitter build dependencies.
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -19,8 +19,9 @@ RUN go mod download
 COPY . .
 
 # Build full binary with tree-sitter support.
+ARG TARGETARCH
 ARG VERSION=dev
-RUN CGO_ENABLED=1 GOOS=linux GOARCH=amd64 \
+RUN CGO_ENABLED=1 GOOS=linux GOARCH=${TARGETARCH:-amd64} \
     go build -tags "treesitter" \
     -ldflags "-s -w -X main.version=${VERSION}" \
     -o /out/gleann-full ./cmd/gleann

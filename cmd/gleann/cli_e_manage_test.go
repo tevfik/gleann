@@ -46,8 +46,9 @@ func TestCLIETUIRequiresTerminal(t *testing.T) {
 }
 
 func TestCLIERipgrepSearchTerms(t *testing.T) {
+	dir := t.TempDir()
 	for _, q := range []string{"", "   ", `"" ()`} {
-		paths, tokens, err := runRipgrepSearch(q, 3)
+		paths, tokens, err := runRipgrepSearch(dir, q, 3)
 		if err != nil || len(paths) != 0 || tokens != 0 {
 			t.Errorf("runRipgrepSearch(%q) = %v %d %v", q, paths, tokens, err)
 		}

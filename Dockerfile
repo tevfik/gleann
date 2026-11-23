@@ -1,5 +1,5 @@
 # ── Stage 1: Build ────────────────────────────────────────────────────────────
-FROM golang:1.24-bookworm AS builder
+FROM golang:1.25.9-bookworm AS builder
 
 WORKDIR /src
 
@@ -12,8 +12,9 @@ RUN go mod download
 COPY . .
 
 # Build pure-Go binary (no CGo, no tree-sitter/FAISS).
+ARG TARGETARCH
 ARG VERSION=dev
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH:-amd64} \
     go build -ldflags "-s -w -X main.version=${VERSION}" \
     -o /out/gleann ./cmd/gleann
 

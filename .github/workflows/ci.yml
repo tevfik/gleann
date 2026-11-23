@@ -6,8 +6,11 @@ on:
   pull_request:
     branches: [main]
 
+# Least privilege: every job here only reads the repository. Artifacts are
+# uploaded within the same run, Codecov uses its own token, and nothing
+# creates releases, pushes or comments.
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   # ── Cross-Platform Build & Test ──────────────────────────────
@@ -120,6 +123,19 @@ jobs:
         run: |
           cd bench/graphdb
           GOTOOLCHAIN=auto CGO_ENABLED=0 go test -timeout 4m ./...
+        shell: bash
+
+      - name: Test (bench/vectordb) and recall gate
+        # The vector benchmark harness is a nested module. The gate builds
+        # 10,000-vector HNSW and DiskANN indexes and a gleann index, and fails
+        # when recall@10 drops below the thresholds in bench/vectordb/gate
+        # (no race detector: the numbers, not the interleavings, are tested).
+        if: matrix.os == 'ubuntu-latest'
+        timeout-minutes: 20
+        run: |
+          cd bench/vectordb
+          GOTOOLCHAIN=auto CGO_ENABLED=0 go test -short -timeout 5m ./...
+          GOTOOLCHAIN=auto CGO_ENABLED=0 go test -count=1 -v -timeout 15m -run TestRecallGate ./gate/
         shell: bash
 
       - name: Build and test (tools/kuzu-memory-export, CGo)
@@ -248,6 +264,48 @@ jobs:
       - name: Run doc-drift detector
         run: bash scripts/doc-drift.sh
 
+  # ── Installer script & pure-Go go install smoke ──────────────
+  # scripts/test-install.sh checks install.sh's checksum verification and
+  # failure modes entirely offline (file:// fixtures, temp HOME), without
+  # sudo. The go install step then proves that `go install ./cmd/gleann`
+  # works in the default pure-Go build (CGO_ENABLED=0) and that the installed
+  # binary builds and searches a lexical-only index with no model and no
+  # network.
+  install-smoke:
+    name: Install script & go install
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Test install.sh checksums and failure modes
+        run: bash scripts/test-install.sh
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+
+      - name: go install (CGO_ENABLED=0) and lexical index smoke
+        shell: bash
+        run: |
+          set -euo pipefail
+          export CGO_ENABLED=0
+          export GOBIN="$(mktemp -d)"
+          go install ./cmd/gleann
+          "${GOBIN}/gleann" version
+
+          WORK="$(mktemp -d)"
+          export GLEANN_CONFIG_DIR="${WORK}/config"
+          export GLEANN_INDEX_DIR="${WORK}/indexes"
+          mkdir -p "${WORK}/docs"
+          printf 'gleann lexical smoke test alpha beta gamma\n' > "${WORK}/docs/notes.txt"
+
+          "${GOBIN}/gleann" index build smoke --docs "${WORK}/docs" \
+            --lexical-only --no-plugins --progress none
+          "${GOBIN}/gleann" search smoke "lexical smoke" --json > "${WORK}/results.json"
+          grep -q "lexical smoke" "${WORK}/results.json"
+
   # ── Static Analysis & Vulnerability Scan ─────────────────────
   lint:
     name: Lint & Vuln Scan
@@ -269,7 +327,9 @@ jobs:
       - name: govulncheck
         continue-on-error: true
         run: |
-          go install golang.org/x/vuln/cmd/govulncheck@latest
+          # Pinned: v1.8.0+ need Go 1.26, and this job builds with 1.25.
+          # The vulnerability database itself is fetched at run time.
+          go install golang.org/x/vuln/cmd/govulncheck@v1.7.0
           govulncheck ./...
       - name: go mod tidy check
         run: |

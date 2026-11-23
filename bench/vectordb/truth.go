@@ -140,7 +140,7 @@ func LoadOrComputeGroundTruth(cacheDir string, ds *Dataset, metric string) (*Gro
 
 	// Deterministic cache key from dataset size, dims, queries count, and first/last sample
 	h := sha256.New()
-	fmt.Fprintf(h, "n=%d,dims=%d,q=%d,metric=%s,dup=%g", len(ds.IDs), ds.Dims, len(ds.Queries), metric, ds.DupFraction)
+	fmt.Fprintf(h, "n=%d,dims=%d,q=%d,metric=%s,dup=%g,src=%s", len(ds.IDs), ds.Dims, len(ds.Queries), metric, ds.DupFraction, ds.Source)
 	if len(ds.Vectors) > 0 {
 		for _, v := range ds.Vectors[0] {
 			fmt.Fprintf(h, "%.4f,", v)

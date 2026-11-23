@@ -24,7 +24,14 @@ type Config struct {
 	// DupFraction replaces this share of the vectors with near-copies of 20
 	// base vectors (AddNearDuplicates); 0 = plain Gaussian mixture.
 	DupFraction float64
-	Log         func(format string, args ...any)
+	// VectorsFile is a .fvecs file of real embedding vectors (cmd/exportvecs).
+	// When set, the run uses them instead of the synthetic mixture: Queries of
+	// them are held out as queries, Sizes and Dims are taken from the file.
+	VectorsFile string
+	// Efs are the search widths swept; 0 means "unset", the store's own
+	// default. Empty = 16,32,64,128,256.
+	Efs []int
+	Log func(format string, args ...any)
 }
 
 func (c *Config) defaults() {
@@ -80,12 +87,32 @@ func Run(ctx context.Context, cfg Config) (*Report, error) {
 		Queries: cfg.Queries,
 	}
 
+	var real *Dataset
+	if cfg.VectorsFile != "" {
+		vecs, err := LoadFvecs(cfg.VectorsFile)
+		if err != nil {
+			return nil, fmt.Errorf("loading %s: %w", cfg.VectorsFile, err)
+		}
+		real, err = DatasetFromVectors(vecs, cfg.Queries, 42, filepath.Base(cfg.VectorsFile))
+		if err != nil {
+			return nil, fmt.Errorf("dataset from %s: %w", cfg.VectorsFile, err)
+		}
+		cfg.Sizes, cfg.Dims = []int{len(real.IDs)}, real.Dims
+		rep.Dims = real.Dims
+	}
+
 	for _, size := range cfg.Sizes {
 		cfg.Log("=== Benchmark size %d vectors, %d dims, %d queries ===", size, cfg.Dims, cfg.Queries)
 
-		// 1. Generate synthetic dataset
-		cfg.Log("Generating dataset (size=%d, dims=%d, queries=%d)...", size, cfg.Dims, cfg.Queries)
-		ds := GenerateDataset(size, cfg.Dims, cfg.Queries, 42)
+		// 1. Real vectors, or the synthetic dataset
+		var ds *Dataset
+		if real != nil {
+			cfg.Log("Using real vectors from %s (%d held out as queries)...", cfg.VectorsFile, cfg.Queries)
+			ds = real
+		} else {
+			cfg.Log("Generating dataset (size=%d, dims=%d, queries=%d)...", size, cfg.Dims, cfg.Queries)
+			ds = GenerateDataset(size, cfg.Dims, cfg.Queries, 42)
+		}
 		if cfg.DupFraction > 0 {
 			cfg.Log("Replacing %.0f%% of the vectors with near-copies of 20 base vectors...", cfg.DupFraction*100)
 			AddNearDuplicates(ds, cfg.DupFraction, 20, 7)
@@ -104,6 +131,7 @@ func Run(ctx context.Context, cfg Config) (*Report, error) {
 			Queries:     cfg.Queries,
 			K:           cfg.K,
 			DupFraction: cfg.DupFraction,
+			Source:      ds.Source,
 		}
 
 		for _, name := range cfg.Stores {
@@ -201,9 +229,12 @@ func runStore(ctx context.Context, name string, ds *Dataset, truth *GroundTruth,
 	res.ColdStartMS = float64(time.Since(tCold).Microseconds()) / 1000.0
 
 	// ── Phase 3: Search with ef sweep (concurrency 1 and 8) ──
-	efs := []int{16, 32, 64, 128, 256}
+	efs := cfg.Efs
+	if len(efs) == 0 {
+		efs = []int{16, 32, 64, 128, 256}
+	}
 	for _, ef := range efs {
-		if ef < cfg.K {
+		if ef != 0 && ef < cfg.K {
 			continue
 		}
 		if setter, ok := store.(EfSearchSetter); ok {

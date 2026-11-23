@@ -86,8 +86,10 @@ type SizeRun struct {
 	Queries int `json:"queries"`
 	K       int `json:"k"`
 	// DupFraction is the share of near-copy vectors (0 = plain dataset).
-	DupFraction float64        `json:"dup_fraction,omitempty"`
-	Results     []*StoreResult `json:"results"`
+	DupFraction float64 `json:"dup_fraction,omitempty"`
+	// Source names the real-vector file the run used ("" = synthetic).
+	Source  string         `json:"source,omitempty"`
+	Results []*StoreResult `json:"results"`
 }
 
 // Report records the entire benchmark run.
@@ -138,6 +140,9 @@ func (r *Report) Markdown() string {
 		dup := ""
 		if sz.DupFraction > 0 {
 			dup = fmt.Sprintf(" · %.0f%% near-copies", sz.DupFraction*100)
+		}
+		if sz.Source != "" {
+			dup += " · real vectors (" + sz.Source + ")"
 		}
 		fmt.Fprintf(&sb, "\n## %d vectors · %d dims · %d queries · k=%d%s\n", sz.Size, sz.Dims, sz.Queries, sz.K, dup)
 

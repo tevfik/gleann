@@ -2,6 +2,7 @@ package benchmark_test
 
 import (
 	"context"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -81,5 +82,63 @@ func TestBenchmarkRunner(t *testing.T) {
 	}
 	if !strings.Contains(jsonOut, "avg_recall_5") {
 		t.Errorf("unexpected json output:\n%s", jsonOut)
+	}
+}
+
+func TestBenchmarkRunnerUnavailableStrategy(t *testing.T) {
+	tasks := []benchmark.Task{
+		{ID: "t1", Query: "search query", GoldFiles: []string{"a.go"}},
+	}
+	runner := benchmark.NewRunner(tasks)
+	runner.RegisterStrategy("BM25", func(ctx context.Context, query string, topK int) ([]string, int, error) {
+		return []string{"a.go"}, 100, nil
+	})
+	runner.RegisterUnavailable("Ripgrep", "ripgrep not installed")
+
+	ctx := context.Background()
+	results, err := runner.Run(ctx, 5)
+	if err != nil {
+		t.Fatalf("runner.Run error: %v", err)
+	}
+
+	rg, ok := results["Ripgrep"]
+	if !ok {
+		t.Fatal("missing Ripgrep in results")
+	}
+	if rg.Unavailable != "ripgrep not installed" {
+		t.Errorf("expected unavailable note, got %q", rg.Unavailable)
+	}
+
+	report := benchmark.RenderMarkdownReport(results, len(tasks))
+	if !strings.Contains(report, "| **Ripgrep** | *(ripgrep not installed)* | — |") {
+		t.Errorf("report does not contain unavailable row for Ripgrep:\n%s", report)
+	}
+	if !strings.Contains(report, "- Ripgrep baseline: ripgrep not installed.") {
+		t.Errorf("report does not explain Ripgrep baseline status:\n%s", report)
+	}
+	// Report must not print zeros for Ripgrep
+	if strings.Contains(report, "| **Ripgrep** | 0.0% |") {
+		t.Errorf("report should not print zeros for unavailable strategy:\n%s", report)
+	}
+}
+
+func TestBenchmarkRunnerUnwritablePerTaskFileErrors(t *testing.T) {
+	tasks := []benchmark.Task{
+		{ID: "t1", Query: "search query", GoldFiles: []string{"a.go"}},
+	}
+	runner := benchmark.NewRunner(tasks)
+	runner.RegisterStrategy("BM25", func(ctx context.Context, query string, topK int) ([]string, int, error) {
+		return []string{"a.go"}, 100, nil
+	})
+	unwritablePath := filepath.Join(t.TempDir(), "no-such-dir", "sub", "pertask.jsonl")
+	runner.PerTaskFile = unwritablePath
+
+	ctx := context.Background()
+	_, err := runner.Run(ctx, 1)
+	if err == nil {
+		t.Fatalf("expected error when PerTaskFile is unwritable, got nil")
+	}
+	if !strings.Contains(err.Error(), "creating per-task file") {
+		t.Errorf("expected error to mention 'creating per-task file', got: %v", err)
 	}
 }

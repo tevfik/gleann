@@ -86,25 +86,105 @@ func TestEvaluateTaskWithoutGoldFiles(t *testing.T) {
 	}
 }
 
-func TestRenderMarkdownReportExtraStrategiesAndVectorTakeaway(t *testing.T) {
+func TestRenderMarkdownReportExtraStrategiesAndFindings(t *testing.T) {
 	sums := map[string]SummaryResult{
-		"BM25":                {Strategy: "BM25", AvgRecall5: 20},
-		"Vector (DiskANN+PQ)": {Strategy: "Vector (DiskANN+PQ)", AvgRecall5: 50, TokenSavings: 30},
+		"BM25":                {Strategy: "BM25", AvgRecall5: 20, AvgRecall10: 90},
+		"Vector (DiskANN+PQ)": {Strategy: "Vector (DiskANN+PQ)", AvgRecall5: 50, AvgRecall10: 60, TokenSavings: 30},
 		"Custom":              {Strategy: "Custom", AvgRecall5: 10, TokenSavings: -5},
 	}
 	md := RenderMarkdownReport(sums, 3)
 	for _, want := range []string{
 		"| **Custom** |",
-		"-5.0%",
-		"**2.5x Higher Recall**: DiskANN+PQ achieved 50.0%",
+		"+5.0%",
 		"**-30.0%**",
+		"- Best Recall@5: Vector (DiskANN+PQ) (50.0%).",
+		// The report names the winner of every metric, also when it is the
+		// keyword baseline.
+		"- Best Recall@10: BM25 (90.0%).",
+		"- 3 tasks: one task weighs 33.3 points",
 	} {
 		if !strings.Contains(md, want) {
 			t.Errorf("report lacks %q:\n%s", want, md)
 		}
 	}
-	if strings.Contains(md, "GraphRAG achieved") {
-		t.Error("no GraphRAG takeaway without GraphRAG results")
+	if strings.Contains(md, "Higher Recall") || strings.Contains(md, "GraphRAG") {
+		t.Errorf("report must not claim a gain or mention a strategy that did not run:\n%s", md)
+	}
+}
+
+// TestRenderMarkdownReportGraphAddsNothing: identical GraphRAG and Hybrid
+// numbers are reported as such, and ties name every strategy.
+func TestRenderMarkdownReportGraphAddsNothing(t *testing.T) {
+	same := SummaryResult{AvgRecall1: 55, AvgRecall5: 80, AvgRecall10: 80, AvgMRR: 0.652}
+	hy, gr := same, same
+	hy.Strategy, gr.Strategy = "Hybrid", "GraphRAG"
+	md := RenderMarkdownReport(map[string]SummaryResult{
+		"BM25": {Strategy: "BM25", AvgRecall5: 70, AvgRecall10: 95, AvgMRR: 0.615}, "Hybrid": hy, "GraphRAG": gr,
+	}, 20)
+	for _, want := range []string{
+		"- Best Recall@5: GraphRAG, Hybrid (80.0%).",
+		"- Best Recall@10: BM25 (95.0%).",
+		"- Best MRR: GraphRAG, Hybrid (0.652).",
+		"GraphRAG and Hybrid have the same recall and MRR",
+		"- 20 tasks: one task weighs 5.0 points",
+	} {
+		if !strings.Contains(md, want) {
+			t.Errorf("report lacks %q:\n%s", want, md)
+		}
+	}
+}
+
+// TestRenderMarkdownReportOrdersHybridVariants: the default row comes right
+// after the vector backends, GraphRAG follows, and the other hybrid rows are
+// ordered by their weight, not by the byte order of "α".
+func TestRenderMarkdownReportOrdersHybridVariants(t *testing.T) {
+	names := []string{
+		"Ripgrep", "Hybrid (α=0.5)", "GraphRAG", "Hybrid (α=0.3)",
+		"Hybrid (default, α=0.7)", "Vector (HNSW)", "BM25", "Hybrid (1 chunk/file)",
+	}
+	sums := make(map[string]SummaryResult, len(names))
+	for _, n := range names {
+		sums[n] = SummaryResult{Strategy: n, AvgRecall5: 50, AvgRecall10: 60, AvgMRR: 0.5}
+	}
+	md := RenderMarkdownReport(sums, 10)
+	want := []string{
+		"| **BM25** |",
+		"| **Vector (HNSW)** |",
+		"| **Hybrid (default, α=0.7)** |",
+		"| **GraphRAG** |",
+		"| **Hybrid (1 chunk/file)** |",
+		"| **Hybrid (α=0.3)** |",
+		"| **Hybrid (α=0.5)** |",
+		"| **Ripgrep** |",
+	}
+	prev := -1
+	for _, row := range want {
+		i := strings.Index(md, row)
+		if i < 0 {
+			t.Fatalf("report lacks row %q:\n%s", row, md)
+		}
+		if i < prev {
+			t.Errorf("row %q is out of the expected order:\n%s", row, md)
+		}
+		prev = i
+	}
+}
+
+// TestRenderMarkdownReportGraphComparesSameWeight: SearchGraphRAG seeds with
+// α=0.5, so its "no change" note names the α=0.5 row, not the 0.7 default.
+func TestRenderMarkdownReportGraphComparesSameWeight(t *testing.T) {
+	seed := SummaryResult{AvgRecall1: 55, AvgRecall5: 80, AvgRecall10: 80, AvgMRR: 0.652}
+	gr, h05 := seed, seed
+	gr.Strategy, h05.Strategy = "GraphRAG", "Hybrid (α=0.5)"
+	h07 := SummaryResult{Strategy: "Hybrid (default, α=0.7)", AvgRecall1: 50, AvgRecall5: 70, AvgRecall10: 75, AvgMRR: 0.60}
+	md := RenderMarkdownReport(map[string]SummaryResult{
+		"Hybrid (α=0.5)": h05, "Hybrid (default, α=0.7)": h07, "GraphRAG": gr,
+	}, 20)
+	if !strings.Contains(md, "GraphRAG and Hybrid (α=0.5) have the same recall and MRR") {
+		t.Errorf("the equality note must name the row with GraphRAG's seed weight:\n%s", md)
+	}
+	if strings.Contains(md, "GraphRAG and Hybrid (default") {
+		t.Errorf("the equality note must not compare GraphRAG with the 0.7 default:\n%s", md)
 	}
 }
 
@@ -229,5 +309,52 @@ func Undocumented() {}
 func TestGenerateGoTasksMissingRoot(t *testing.T) {
 	if _, err := GenerateGoTasks(filepath.Join(t.TempDir(), "missing"), GenOptions{}); err == nil {
 		t.Fatal("a missing root must be an error")
+	}
+}
+
+// TestRunnerIgnoresTheTasksFile: a result that is the tasks file itself takes
+// no rank. With the file in the index it matched every query verbatim and the
+// gold file fell from rank 1 to rank 2 (Recall@1 0 instead of 1).
+func TestRunnerIgnoresTheTasksFile(t *testing.T) {
+	tasks := []Task{{ID: "t1", Query: "how are scores fused", GoldFiles: []string{"pkg/search/fuse.go"}}}
+	search := func(context.Context, string, int) ([]string, int, error) {
+		return []string{"/src/repo/bench/tasks/repo.json", "/src/repo/pkg/search/fuse.go"}, 10, nil
+	}
+
+	plain := NewRunner(tasks)
+	plain.RegisterStrategy("BM25", search)
+	got, err := plain.Run(context.Background(), 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got["BM25"].AvgRecall1 != 0 {
+		t.Fatalf("without the filter Recall@1 = %v, want 0 (the tasks file is rank 1)", got["BM25"].AvgRecall1)
+	}
+
+	r := NewRunner(tasks)
+	r.RegisterStrategy("BM25", search)
+	r.IgnorePaths(TaskFileMatcher("bench/tasks/repo.json"))
+	got, err = r.Run(context.Background(), 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got["BM25"].AvgRecall1 != 100 || r.Ignored() != 1 {
+		t.Fatalf("Recall@1 = %v, ignored = %d; want 100 and 1", got["BM25"].AvgRecall1, r.Ignored())
+	}
+}
+
+func TestTaskFileMatcher(t *testing.T) {
+	m := TaskFileMatcher("./bench/tasks/gleann.json")
+	for p, want := range map[string]bool{
+		"/home/u/repo/bench/tasks/gleann.json": true,
+		"bench/tasks/gleann.json":              true,
+		"tasks/gleann.json":                    true,
+		"/home/u/repo/bench/tasks/other.json":  false,
+		"/home/u/repo/xtasks/gleann.json":      false,
+		"pkg/gleann.json":                      false,
+	} {
+		if got := m(p); got != want {
+			t.Errorf("match(%q) = %v, want %v", p, got, want)
+		}
 	}
 }

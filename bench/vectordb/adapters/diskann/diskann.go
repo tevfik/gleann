@@ -296,10 +296,12 @@ func (s *Store) Search(ctx context.Context, q []float32, k int, f *vectordb.Filt
 		return nil, nil
 	}
 
-	searchL := s.params.EfSearch
-	if searchL <= 0 {
-		searchL = 100
+	// Unset: the width gleann's searcher picks for this index size.
+	numNodes := 0
+	if s.idx != nil {
+		numNodes = int(s.idx.NumNodes)
 	}
+	searchL := diskann.ResolveSearchL(s.params.EfSearch, numNodes)
 	if searchL < k {
 		searchL = k
 	}

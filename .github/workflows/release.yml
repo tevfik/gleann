@@ -7,8 +7,11 @@ on:
   pull_request:
     branches: [ "main" ]
 
+# Least privilege: the build jobs only read the repository and upload
+# artifacts. `contents: write` is granted per job where a release is created
+# or edited (publish-release), never workflow-wide.
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   test:
@@ -243,15 +246,25 @@ jobs:
       - name: Install Task
         shell: bash
         run: |
-          if [ "$RUNNER_OS" == "macOS" ]; then
-            brew install go-task
-          else
-            if ! curl -fsSL --retry 3 https://taskfile.dev/install.sh | sudo sh -s -- -d -b /usr/local/bin; then
-              echo "Installing Task via go install fallback..."
-              go install github.com/go-task/task/v3/cmd/task@v3.54.0
-              sudo cp $(go env GOPATH)/bin/task /usr/local/bin/
-            fi
-          fi
+          # Pinned version and no remote installer piped into a root shell.
+          GOTOOLCHAIN=auto go install github.com/go-task/task/v3/cmd/task@v3.54.0
+          # `go install` already put the binary in $(go env GOPATH)/bin, which
+          # differs per runner (Linux: /home/runner/go/bin, Apple Silicon
+          # macOS: /Users/runner/go/bin) and is not on PATH by default. Export
+          # that directory for the following steps instead of copying into
+          # /usr/local/bin (which need not exist and needs sudo to create).
+          task_bin="$(go env GOPATH)/bin"
+          echo "${task_bin}" >> "$GITHUB_PATH"
+          "${task_bin}/task" --version
+
+      - name: Verify task is on PATH
+        shell: bash
+        run: |
+          # Proves the $GITHUB_PATH entry works; the build step below calls
+          # `task full` without an absolute path.
+          set -euo pipefail
+          command -v task
+          task --version
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
@@ -486,6 +499,9 @@ jobs:
     needs: [release-pure, release-eif, release-full, release-kuzu-memory-export]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
+    # Creates the release, removes stale assets and edits the release body.
+    permissions:
+      contents: write
     steps:
       # Check out first: checkout cleans the workspace, which would delete the
       # artifacts downloaded below.
@@ -539,3 +555,190 @@ jobs:
           files: dist/*
           body_path: ${{ steps.notes.outputs.path }}
           generate_release_notes: ${{ steps.notes.outputs.generate == 'true' }}
+
+      # The upload action keeps the body of a release that already exists, so a
+      # re-pushed tag would serve the new binaries under the old notes. Set the
+      # body from the tagged notes file every time (a no-op on a new release).
+      - name: Update release notes of an existing release
+        if: steps.notes.outputs.path != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NOTES: ${{ steps.notes.outputs.path }}
+        run: gh release edit "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --notes-file "$NOTES"
+
+  # ── `go install ...@<tag>` must work and report the tag ──────
+  # The path a user takes: go install github.com/tevfik/gleann/cmd/gleann@vX.Y.Z.
+  # Runs after publish-release so the tag is public; go install fetches the
+  # module through the Go proxy and needs no checkout here.
+  #
+  # Proxy negative caching — read before changing the retry strategy:
+  # * proxy.golang.org caches "version not found" (HTTP 404) for 10-30 minutes
+  #   (golang/go#33615). A `go install` issued before the proxy has crawled a
+  #   brand-new tag therefore does not fail once, it poisons the cache for the
+  #   rest of the run: sleeping 15 s and retrying four times (45 s) can never
+  #   succeed, and every later attempt in the same run hits the cached 404.
+  # * Hence the ordering: (1) wait until GitHub itself serves the tag ref
+  #   (git ls-remote); (2) wait until proxy.golang.org serves
+  #   /@v/<tag>.info with HTTP 200 — that first request is the warm-up that
+  #   makes the proxy fetch the tag behind it; (3) only then run `go install`.
+  #   Attempt 1 is what matters; the extra attempts only absorb a slow CDN
+  #   edge for a version the proxy has already stored.
+  # * The GOPRIVATE fallback is the last resort, not a substitute for waiting:
+  #   with `GOPRIVATE=github.com/tevfik/gleann` cmd/go skips the proxy for this
+  #   module and clones it over git, but plain `GOPROXY=direct` would also send
+  #   every dependency through a fresh git clone, and GOSUMDB (sum.golang.org)
+  #   resolves the module through proxy.golang.org's index, failing closed on a
+  #   cached 404 ("verifying module: ... 404"). GOPRIVATE sets GONOPROXY *and*
+  #   GONOSUMDB for the one path, so dependencies keep the proxy and their
+  #   checksum verification while gleann itself is fetched directly; its
+  #   authenticity then rests on the git tag ref GitHub served above. The
+  #   direct path also rescues the case where an earlier, unrelated run already
+  #   cached the 404 before this workflow ever started.
+  # * Known limitation, not fixable here: proxy.golang.org and sum.golang.org
+  #   never invalidate a tag that was deleted and re-pushed onto a new commit.
+  #   The proxy keeps serving the first commit it crawled and the checksum DB
+  #   keeps the first hash, so `go install @<tag>` can fail with a checksum
+  #   mismatch or silently install the older commit although the GitHub tag
+  #   moved. publish-release still supports re-pushed tags for the release
+  #   assets; on the module path, cut a new version instead of moving a tag.
+  verify-go-install:
+    name: Verify go install @${{ github.ref_name }}
+    needs: publish-release
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    # ~2 min (tag on GitHub) + ~4 min (proxy warm-up) + ~3 min (two build
+    # attempts / the direct fallback) leaves headroom below this limit.
+    timeout-minutes: 20
+    steps:
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+
+      - name: Wait for the tag on GitHub, then on the module proxy
+        shell: bash
+        env:
+          TAG: ${{ github.ref_name }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          # 1) GitHub must serve the tag ref. The workflow is triggered by the
+          # tag push, so this is normally immediate; it also guards against a
+          # stale CDN edge answering before the ref is readable.
+          for attempt in $(seq 1 8); do
+            if git ls-remote --exit-code --tags "https://github.com/${REPO}.git" \
+                 "refs/tags/${TAG}" >/dev/null 2>&1; then
+              echo "tag ${TAG} is visible on github.com/${REPO}"
+              break
+            fi
+            if [ "${attempt}" -eq 8 ]; then
+              echo "::error::tag ${TAG} is not visible on github.com/${REPO} after ~2 minutes"
+              exit 1
+            fi
+            echo "tag ${TAG} not visible on GitHub yet (attempt ${attempt}/8); waiting 15s"
+            sleep 15
+          done
+
+          # 2) Pre-warm the proxy. The FIRST request for a version is what makes
+          # proxy.golang.org crawl the tag, so issue it here (curl) instead of
+          # letting `go install` be the first query — that query's 404 is the
+          # one cached for 10-30 minutes. The module path is all lowercase, so
+          # it maps to the proxy URL unchanged. ~4 minutes of backoff in total.
+          url="https://proxy.golang.org/github.com/tevfik/gleann/@v/${TAG}.info"
+          for attempt in $(seq 1 10); do
+            code="$(curl -sS --max-time 20 -o /dev/null -w '%{http_code}' "${url}" 2>/dev/null || true)"
+            code="${code:-000}"
+            if [ "${code}" = "200" ]; then
+              echo "proxy.golang.org serves ${TAG}"
+              echo "PROXY_TAG_READY=true" >> "$GITHUB_ENV"
+              exit 0
+            fi
+            if [ "${attempt}" -eq 10 ]; then
+              echo "::warning::proxy.golang.org still returns ${code} for ${TAG} after ~4 minutes; the install step skips the proxy and goes direct"
+              echo "PROXY_TAG_READY=false" >> "$GITHUB_ENV"
+              exit 0
+            fi
+            case "${attempt}" in
+              1) delay=10 ;;
+              2) delay=15 ;;
+              3) delay=20 ;;
+              *) delay=30 ;;
+            esac
+            echo "proxy.golang.org returns ${code} for ${TAG} (attempt ${attempt}/10); waiting ${delay}s"
+            sleep "${delay}"
+          done
+
+      - name: go install the tagged module (pure Go)
+        shell: bash
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          export CGO_ENABLED=0
+          export GOBIN="$(mktemp -d)"
+          echo "GOBIN=${GOBIN}" >> "$GITHUB_ENV"
+          pkg="github.com/tevfik/gleann/cmd/gleann@${TAG}"
+
+          # Attempt 1 happens only after the previous step saw the proxy serve
+          # <tag>.info, so it cannot poison the negative cache. The second
+          # attempt (30 s later) only covers a lagging edge node.
+          if [ "${PROXY_TAG_READY:-false}" = "true" ]; then
+            for delay in 0 30; do
+              if [ "${delay}" -gt 0 ]; then
+                sleep "${delay}"
+              fi
+              if go install "${pkg}"; then
+                echo "installed ${pkg} through proxy.golang.org"
+                exit 0
+              fi
+              echo "::warning::go install ${pkg} failed through proxy.golang.org"
+            done
+          else
+            echo "::warning::skipping proxy.golang.org (it did not serve ${TAG} yet); going direct"
+          fi
+
+          # Last resort: bypass the proxy for gleann only. GOPRIVATE sets
+          # GONOPROXY and GONOSUMDB for this one module path, so cmd/go clones
+          # the repo over git instead of asking proxy.golang.org (whose negative
+          # cache is still warm) and skips the sum.golang.org lookup that would
+          # resolve through that same cache. Every dependency still comes from
+          # proxy.golang.org and keeps its checksum verification; authenticity of
+          # gleann itself rests on the git tag ref seen in the previous step.
+          export GOPROXY="https://proxy.golang.org,direct"
+          export GOPRIVATE=github.com/tevfik/gleann
+          if go install "${pkg}"; then
+            echo "installed ${pkg} with GOPRIVATE=github.com/tevfik/gleann (proxy.golang.org negative cache still warm)"
+            exit 0
+          fi
+
+          echo "::error::go install ${pkg} failed through proxy.golang.org and with GOPRIVATE (direct VCS)"
+          exit 1
+
+      - name: Version reports the tag, not dev
+        shell: bash
+        run: |
+          set -euo pipefail
+          got="$("${GOBIN}/gleann" version)"
+          want="gleann ${GITHUB_REF_NAME}"
+          echo "got:  ${got}"
+          echo "want: ${want}"
+          if [ "${got}" != "${want}" ]; then
+            echo "::error::version mismatch: got '${got}', want '${want}' (a go install binary must report its tag via debug.ReadBuildInfo, not 'dev')"
+            exit 1
+          fi
+
+      - name: Lexical index and search smoke (offline)
+        shell: bash
+        run: |
+          set -euo pipefail
+          WORK="$(mktemp -d)"
+          export GLEANN_CONFIG_DIR="${WORK}/config"
+          export GLEANN_INDEX_DIR="${WORK}/indexes"
+          mkdir -p "${WORK}/docs"
+          printf 'gleann lexical smoke test alpha beta gamma\n' > "${WORK}/docs/notes.txt"
+
+          "${GOBIN}/gleann" index build smoke --docs "${WORK}/docs" \
+            --lexical-only --no-plugins --progress none
+          "${GOBIN}/gleann" search smoke "lexical smoke" --json > "${WORK}/results.json"
+          grep -q "lexical smoke" "${WORK}/results.json"

@@ -13,13 +13,21 @@ vars:
   FAISS_LIB_DIR: '{{.REPO_ROOT}}/deps/faiss_install/lib'
   FAISS_INC_DIR: '{{.REPO_ROOT}}/deps/faiss_install/include'
   USER_BIN_DIR: '{{.HOME}}/.local/bin'
+  # The single tag set of every gleann-full build; keep it in sync with
+  # FULL_TAGS in the Makefile. The release workflow builds with `task full`.
+  FULL_TAGS: faiss treesitter native eif
   UNAME_S:
     sh: uname -s
   UNAME_M:
     sh: uname -m
   
-  # Platform detection logic
-  RPATH_FLAGS: '{{if eq .UNAME_S "Darwin"}}-Wl,-rpath,@loader_path -Wl,-rpath,@executable_path{{else}}-Wl,-rpath,\$$ORIGIN{{end}}'
+  # Platform detection logic. Only the install layout: a bundled build must
+  # resolve its libraries through $ORIGIN / @loader_path, never through
+  # /usr/local/lib or a per-user directory that may hold a mismatched FAISS.
+  # The value lands inside a double-quoted CGO_LDFLAGS assignment, so $ORIGIN
+  # needs exactly one backslash: "\$ORIGIN". (Task runs the command with
+  # mvdan/sh, where "$$" is the PID, not an escaped dollar.)
+  RPATH_FLAGS: '{{if eq .UNAME_S "Darwin"}}-Wl,-rpath,@loader_path -Wl,-rpath,@loader_path/../lib{{else}}-Wl,-rpath,\$ORIGIN -Wl,-rpath,\$ORIGIN/../lib{{end}}'
   ZNOW_FLAG: '{{if eq .UNAME_S "Darwin"}}{{else}}-Wl,-z,now{{end}}'
   SO_EXT: '{{if eq .UNAME_S "Darwin"}}dylib{{else}}so{{end}}'
 
@@ -137,7 +145,7 @@ tasks:
         CGO_CFLAGS="-w -I{{.FAISS_INC_DIR}} -fno-tree-vectorize -fmath-errno $CGO_CFLAGS" \
         CGO_CXXFLAGS="-w -I{{.FAISS_INC_DIR}} -fno-tree-vectorize -fmath-errno $CGO_CXXFLAGS" \
         CGO_LDFLAGS="{{.RPATH_FLAGS}} {{.ZNOW_FLAG}} -L{{.FAISS_LIB_DIR}} -lfaiss_c -lfaiss -L{{.BUILD_DIR}}/stage -lgleann_core_rs $CGO_LDFLAGS" \
-        go build -tags "faiss treesitter native eif" -ldflags "{{.LDFLAGS}}" -o {{.BUILD_DIR}}/stage/gleann-full-bin {{.CMD}}
+        go build -tags "{{.FULL_TAGS}}" -ldflags "{{.LDFLAGS}}" -o {{.BUILD_DIR}}/stage/gleann-full-bin {{.CMD}}
       - |
         if command -v patchelf >/dev/null 2>&1 && [ -f {{.BUILD_DIR}}/stage/gleann-full-bin ]; then
           # libmvec is part of glibc and must come from the system, and a bundled
@@ -152,10 +160,12 @@ tasks:
         if [ "{{.UNAME_S}}" = "Darwin" ] && command -v install_name_tool >/dev/null 2>&1; then
           install_name_tool -add_rpath @executable_path {{.BUILD_DIR}}/stage/gleann-full-bin 2>/dev/null || true
           install_name_tool -add_rpath @loader_path {{.BUILD_DIR}}/stage/gleann-full-bin 2>/dev/null || true
+          install_name_tool -add_rpath @loader_path/../lib {{.BUILD_DIR}}/stage/gleann-full-bin 2>/dev/null || true
           for dylib in {{.BUILD_DIR}}/stage/*.dylib; do
             if [ -f "$dylib" ]; then
               install_name_tool -add_rpath @executable_path "$dylib" 2>/dev/null || true
               install_name_tool -add_rpath @loader_path "$dylib" 2>/dev/null || true
+              install_name_tool -add_rpath @loader_path/../lib "$dylib" 2>/dev/null || true
             fi
           done
         fi

@@ -1,0 +1,29 @@
+# Files gleann skips when it indexes this repository (gitignore syntax; read
+# on top of .gitignore). Keep generated and vendored content out of the index:
+# it adds passages that answer no question and crowds out the source.
+
+# Agent worktrees: full copies of the repository
+.claude/
+
+# Local FAISS build (scripts/build-faiss.sh)
+deps/
+
+# Lock files and generated reports
+go.sum
+go.work.sum
+package-lock.json
+security/
+plugins-registry.json
+
+# Binary and demo assets
+*.gif
+*.png
+*.svg
+*.pdf
+*.onnx
+*.gguf
+
+# Evaluation tasks: they hold the benchmark queries verbatim and would
+# outrank the files that answer them
+bench/tasks/
+internal/quality/testdata/

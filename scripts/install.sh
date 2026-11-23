@@ -20,9 +20,9 @@
 #
 set -e
 
-REPO="tevfik/gleann"
-GITHUB_API="https://api.github.com"
-GITHUB_RELEASES="https://github.com/${REPO}/releases"
+REPO="${GLEANN_REPO:-tevfik/gleann}"
+GITHUB_API="${GLEANN_GITHUB_API:-https://api.github.com}"
+GITHUB_RELEASES="${GLEANN_RELEASES_URL:-https://github.com/${REPO}/releases}"
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -46,7 +46,7 @@ detect_arch() {
     case "$(uname -m)" in
         x86_64|amd64)   echo "amd64"  ;;
         aarch64|arm64)  echo "arm64"  ;;
-        armv7*)         echo "armv7"  ;;
+        armv7*)         fail "Unsupported architecture: armv7. Supported: amd64, arm64" ;;
         *)              fail "Unsupported architecture: $(uname -m). Supported: amd64, arm64" ;;
     esac
 }
@@ -146,6 +146,47 @@ main() {
 
     info "Downloading ${URL}..."
     download "${URL}" "${TMPDIR}/${ASSET}"
+
+    # Verify checksum against SHA256SUMS published with the release.
+    if [ "${GLEANN_SKIP_CHECKSUM:-}" = "1" ]; then
+        warn "Skipping checksum verification (GLEANN_SKIP_CHECKSUM=1)"
+    else
+        CHECKSUMS_FILE="${TMPDIR}/SHA256SUMS"
+        CHECKSUMS_URL="${GITHUB_RELEASES}/download/${VERSION}/SHA256SUMS"
+        info "Downloading SHA256SUMS..."
+        download "${CHECKSUMS_URL}" "${CHECKSUMS_FILE}"
+
+        SHACMD=""
+        if command -v sha256sum > /dev/null 2>&1; then
+            SHACMD="sha256sum"
+        elif command -v shasum > /dev/null 2>&1; then
+            SHACMD="shasum -a 256"
+        else
+            fail "Neither sha256sum nor shasum found to verify checksum. Install one or set GLEANN_SKIP_CHECKSUM=1 to skip verification."
+        fi
+
+        EXPECTED_SUM=$(awk -v asset="${ASSET}" '
+            $2 == asset || $2 == "*" asset || $2 == "./" asset { print $1; exit }
+        ' "${CHECKSUMS_FILE}")
+
+        if [ -z "${EXPECTED_SUM}" ]; then
+            fail "Checksum for ${ASSET} not found in SHA256SUMS. Release may be incomplete or corrupt."
+        fi
+
+        ACTUAL_SUM=$(${SHACMD} "${TMPDIR}/${ASSET}" | awk '{print $1}')
+        if [ -z "${ACTUAL_SUM}" ]; then
+            fail "Failed to compute checksum for ${ASSET}."
+        fi
+
+        EXPECTED_LOWER=$(printf "%s" "${EXPECTED_SUM}" | tr '[:upper:]' '[:lower:]')
+        ACTUAL_LOWER=$(printf "%s" "${ACTUAL_SUM}" | tr '[:upper:]' '[:lower:]')
+
+        if [ "${EXPECTED_LOWER}" != "${ACTUAL_LOWER}" ]; then
+            fail "Checksum verification failed for ${ASSET}!\n  Expected: ${EXPECTED_LOWER}\n  Got:      ${ACTUAL_LOWER}\nArchive may be corrupted or tampered with."
+        fi
+
+        log "Checksum verified (${ACTUAL_LOWER})"
+    fi
 
     # Extract archive
     if [ "${ARCHIVE_EXT}" = "zip" ]; then
