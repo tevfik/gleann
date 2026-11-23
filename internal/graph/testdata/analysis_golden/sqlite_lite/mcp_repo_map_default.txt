@@ -2,17 +2,17 @@
 
 ### store/store.go
 - interface `Store`
-- function `NewMemStore`
 - function `normalize`
+- function `NewMemStore`
 - struct `MemStore`
 - method `MemStore.Get`
 
 ### service/service.go
 - method `Service.Load`
 - function `New`
+- method `Service.Save`
 - function `validate`
 - method `Service.Report`
-- method `Service.Save`
 
 ### ts/app.ts
 - interface `Shape`

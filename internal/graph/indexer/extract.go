@@ -35,37 +35,80 @@ type FileGraph struct {
 // innermost function/method/class containing it; module-level calls are
 // charged to a "<script>" symbol anchored at line 1 and spanning the file.
 //
-// module is the Go module name (see DetectGoModule), root the absolute
-// codebase root used to derive relative paths, absPath the file location and
-// source its content. Go declaration anchors (start/end line, start column,
-// byte offset) are resolved from the AST; symbols without an AST anchor keep
-// the chunker's line range with zero column/offset.
+// module is the fallback Go module name (see DetectGoModule), used only for
+// files no module of modules owns; root the absolute codebase root used to
+// derive relative paths, absPath the file location and source its content. Go
+// declaration anchors (start/end line, start column, byte offset) are resolved
+// from the AST; symbols without an AST anchor keep the chunker's line range
+// with zero column/offset.
 func ExtractFile(module, root, absPath, source string) FileGraph {
-	return extractFile(module, root, absPath, source, nil)
+	return extractFileWithModules(module, root, absPath, source, nil, nil)
+}
+
+// ExtractFileInModules is ExtractFile with the Go modules discovered under
+// root: a file of a nested submodule or go.work workspace is prefixed with its
+// own module path, not with the fallback module plus the nested directory.
+func ExtractFileInModules(modules *ModuleIndex, module, root, absPath, source string) FileGraph {
+	return extractFileWithModules(module, root, absPath, source, nil, modules)
 }
 
 // ExtractFileExact is ExtractFile with exact go/types resolution for files the
 // resolver type-checked (WP-G3). Files absent from the resolver (type errors,
-// build-tag-excluded, cgo-only, test files, non-Go) fall back to the syntactic
-// resolver, so the result is always a complete FileGraph. A nil resolver is
-// equivalent to ExtractFile.
+// build-tag-excluded, test-only packages or broken tests, non-Go) fall back to
+// the syntactic resolver, so the result is always a complete FileGraph. A nil
+// resolver is equivalent to ExtractFile.
 func ExtractFileExact(module, root, absPath, source string, r *ExactResolver) FileGraph {
-	return extractFile(module, root, absPath, source, r)
+	return extractFileWithModules(module, root, absPath, source, r, r.Modules())
 }
 
+// ExtractFileExactInModules is ExtractFileExact with the module index passed
+// explicitly, for a caller that resolves modules even when no exact resolver is
+// available (GLEANN_GRAPH_EXACT=0).
+func ExtractFileExactInModules(modules *ModuleIndex, module, root, absPath, source string, r *ExactResolver) FileGraph {
+	return extractFileWithModules(module, root, absPath, source, r, modules)
+}
+
+// extractFile keeps the historical entry point for a single-module tree.
 func extractFile(module, root, absPath, source string, r *ExactResolver) FileGraph {
+	return extractFileWithModules(module, root, absPath, source, r, nil)
+}
+
+func extractFileWithModules(module, root, absPath, source string, r *ExactResolver, modules *ModuleIndex) FileGraph {
 	module = strings.TrimSuffix(module, "/")
 	root = filepath.Clean(root)
 	langEnum := chunking.DetectLanguage(absPath)
 	lang := string(langEnum)
 	relPath := relPathOf(root, absPath)
 
+	// fqnModule/fqnRel put the file under its real module: a file of a nested
+	// submodule gets that submodule's path, and the part below its own module
+	// directory, so buildFQNOf does not repeat the nested directory.
+	fqnModule, fqnRel := module, relPath
+	if modules != nil {
+		if m, ok := modules.ModuleFor(relPath); ok {
+			fqnModule, fqnRel = m.Path, m.RelPath(relPath)
+		}
+	}
+
 	chunker := chunking.NewASTChunker(chunking.DefaultASTChunkerConfig())
+	// A Go file is parsed once: the chunker, the declaration anchors and the
+	// syntactic CALLS / IMPLEMENTS / REFERENCES collectors all read this one
+	// syntax tree (each used to parse the file again for itself).
+	var syn *goSyntax
+	if langEnum == chunking.LangGo {
+		syn = parseGoSyntax(relPath, source)
+	}
 	// Non-Go tree-sitter languages are parsed once for declarations and CALLS
 	// (treesitter builds); everything else uses the chunker alone.
-	chunks, tsNodes, tsEdges, tsOK := chunkWithCalls(chunker, module, relPath, absPath, source, langEnum)
+	chunks, tsNodes, tsEdges, tsOK := chunkWithCalls(chunker, fqnModule, fqnRel, absPath, source, langEnum)
 	if !tsOK {
-		chunks = chunker.ChunkCode(source, absPath)
+		if syn != nil && syn.err == nil {
+			chunks = chunker.ChunkGoFile(syn.fset, syn.file, source, absPath)
+		} else {
+			// Not Go, or Go that does not parse (the chunker then falls back
+			// to its line patterns).
+			chunks = chunker.ChunkCode(source, absPath)
+		}
 	}
 
 	// One declaration is one symbol: the pieces of an oversized declaration
@@ -75,23 +118,25 @@ func extractFile(module, root, absPath, source string, r *ExactResolver) FileGra
 	rationaleByLine := extractRationale(source)
 
 	var anchors map[string]goAnchor
-	if langEnum == chunking.LangGo {
-		anchors = goDeclAnchors(relPath, source)
+	if syn != nil {
+		anchors = goDeclAnchorsOf(syn)
 	}
+	// The lines of the file, split once for the source hints of all symbols.
+	lines := strings.Split(source, "\n")
 
 	fg := FileGraph{File: gtypes.FileNode{Path: relPath, Lang: lang}}
 	for _, ch := range chunks {
 		if ch.Name == "" || ch.NodeType == "preamble" {
 			continue
 		}
-		fqn := buildFQNOf(module, relPath, ch.Name)
+		fqn := buildFQNOf(fqnModule, fqnRel, ch.Name)
 		doc := attachRationale(rationaleByLine, ch.StartLine, ch.EndLine)
 
 		hint := ch.NodeType
 		if hint == "" {
 			hint = symbolHintFromKind(ch.Name, ch.NodeType)
 		}
-		hint = detectSourceHint(langEnum, source, ch.StartLine, hint)
+		hint = detectSourceHintLines(langEnum, lines, ch.StartLine, hint)
 		weight := applyHeuristics(langEnum, ch.NodeType, hint)
 
 		sym := gtypes.SymbolNode{
@@ -119,11 +164,11 @@ func extractFile(module, root, absPath, source string, r *ExactResolver) FileGra
 	if langEnum == chunking.LangGo {
 		if r.HasFile(relPath) {
 			// Exact go/types resolution for this type-checked file.
-			nodes, edges := collectGoCallQueriesExact(module, relPath, source, chunks, r.files[relPath])
+			nodes, edges := collectGoCallQueriesExact(fqnModule, fqnRel, source, chunks, r.files[relPath])
 			fg.Symbols = append(fg.Symbols, nodes...)
 			fg.Calls = append(fg.Calls, edges...)
 		} else {
-			nodes, edges, nodeErr := collectGoCallQueries(module, relPath, source, chunks)
+			nodes, edges, nodeErr := collectGoCallQueriesOf(syn, fqnModule, fqnRel, chunks)
 			if nodeErr != nil {
 				fmt.Fprintf(os.Stderr, "warn: call extraction failed for %s: %v\n", relPath, nodeErr)
 			} else {
@@ -132,7 +177,7 @@ func extractFile(module, root, absPath, source string, r *ExactResolver) FileGra
 			}
 		}
 
-		implEdges, refEdges, extraSyms := collectGoImplementsEdges(module, relPath, source, chunks)
+		implEdges, refEdges, extraSyms := collectGoImplementsEdgesOf(syn, fqnModule, fqnRel, chunks)
 		fg.Implements = append(fg.Implements, implEdges...)
 		fg.References = append(fg.References, refEdges...)
 		fg.Symbols = append(fg.Symbols, extraSyms...)
@@ -142,7 +187,10 @@ func extractFile(module, root, absPath, source string, r *ExactResolver) FileGra
 
 	if tsOK {
 		for _, n := range tsNodes {
-			if n.Kind == "script" {
+			// Declaration nodes (the file's synthetic <script> caller and the
+			// declarations the Svelte <script> blocks contribute) get a
+			// DECLARES edge; callee stubs have no file and do not.
+			if n.File != "" {
 				fg.Declares = append(fg.Declares, gtypes.EdgeDeclares{FilePath: relPath, SymbolFQN: n.FQN})
 			}
 		}
@@ -167,15 +215,42 @@ type goAnchor struct {
 	offset  int64
 }
 
+// goSyntax is one parse of a Go source file, shared by everything the
+// extractor derives from the syntax tree: the chunks (chunking.ChunkGoFile),
+// the declaration anchors and the syntactic CALLS / IMPLEMENTS / REFERENCES
+// collectors. err is the parse error; file is then partial or nil and no
+// consumer reads it.
+type goSyntax struct {
+	fset *token.FileSet
+	file *ast.File
+	err  error
+}
+
+// parseGoSyntax parses a Go file for the extractor. Comments are kept because
+// the chunker starts a chunk at its doc comment; they add Doc/Comment fields
+// and move no declaration position. The identifier resolution of go/parser
+// (ast.Ident.Obj, ast.File.Scope) is skipped: no consumer reads it, and it
+// reports no error in this mode, so the tree and the error are the ones the
+// separate parses produced.
+func parseGoSyntax(relPath, source string) *goSyntax {
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, relPath, source, parser.ParseComments|parser.SkipObjectResolution)
+	return &goSyntax{fset: fset, file: file, err: err}
+}
+
 // goDeclAnchors maps chunk symbol names to their declaration positions.
 // Naming mirrors the chunker's chunkGo: functions as Name / Receiver.Name,
 // type/var/const groups after their first spec.
 func goDeclAnchors(relPath, source string) map[string]goAnchor {
-	fset := token.NewFileSet()
-	file, err := parser.ParseFile(fset, relPath, source, 0)
-	if err != nil {
+	return goDeclAnchorsOf(parseGoSyntax(relPath, source))
+}
+
+// goDeclAnchorsOf is goDeclAnchors over a file that is already parsed.
+func goDeclAnchorsOf(syn *goSyntax) map[string]goAnchor {
+	if syn.err != nil {
 		return nil
 	}
+	fset, file := syn.fset, syn.file
 	anchors := make(map[string]goAnchor)
 	put := func(name string, pos, end token.Pos) {
 		if name == "" {

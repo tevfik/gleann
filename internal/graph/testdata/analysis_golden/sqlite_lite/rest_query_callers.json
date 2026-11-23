@@ -1,6 +1,7 @@
 {
   "body": {
     "count": 0,
+    "notice": "note: non-Go code was extracted without tree-sitter (use a build with tree-sitter: the 'full' release artifact)",
     "query_ms": 0,
     "results": []
   },

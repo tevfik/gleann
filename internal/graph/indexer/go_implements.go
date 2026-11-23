@@ -2,7 +2,6 @@ package indexer
 
 import (
 	"go/ast"
-	"go/parser"
 	"go/token"
 	"strings"
 
@@ -22,11 +21,18 @@ import (
 func collectGoImplementsEdges(module, relPath, source string, chunks []chunking.CodeChunk) (
 	impls []gtypes.EdgeImplements, refs []gtypes.EdgeReferences, extraSyms []gtypes.SymbolNode,
 ) {
-	fset := token.NewFileSet()
-	file, parseErr := parser.ParseFile(fset, relPath, source, 0)
-	if parseErr != nil {
+	return collectGoImplementsEdgesOf(parseGoSyntax(relPath, source), module, relPath, chunks)
+}
+
+// collectGoImplementsEdgesOf is collectGoImplementsEdges over a file that is
+// already parsed (see goSyntax).
+func collectGoImplementsEdgesOf(syn *goSyntax, module, relPath string, chunks []chunking.CodeChunk) (
+	impls []gtypes.EdgeImplements, refs []gtypes.EdgeReferences, extraSyms []gtypes.SymbolNode,
+) {
+	if syn.err != nil {
 		return nil, nil, nil
 	}
+	file := syn.file
 
 	// Build local FQN map.
 	localFQN := make(map[string]string)

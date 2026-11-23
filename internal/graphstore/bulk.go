@@ -44,6 +44,16 @@ import (
 // The transaction holds the single writer for the whole rebuild (RFC 003
 // section 3.6); callers serialise rebuilds with the per-index build lock.
 func (g *SQLite) ReplaceAll(ctx context.Context, deltas []FileDelta) error {
+	return g.ReplaceAllWithMeta(ctx, deltas, nil)
+}
+
+// ReplaceAllWithMeta rebuilds the whole code graph and applies metadata mutations in ONE transaction.
+// A nil value in metaMutations causes the key (or prefix if ending with '%') to be deleted.
+// Mutations are applied in a deterministic order (prefix deletions, exact
+// deletions, then sets; see applyMetaMutationsTx), and graph_treesitter is
+// recomputed from the rows and markers the transaction writes, exactly as a
+// per-file delta does.
+func (g *SQLite) ReplaceAllWithMeta(ctx context.Context, deltas []FileDelta, metaMutations map[string]*string) error {
 	b, err := normalizeBulk(deltas)
 	if err != nil {
 		return err
@@ -176,6 +186,17 @@ ON CONFLICT(path) DO UPDATE SET graph_hash = excluded.graph_hash, graph_dirty = 
 		if _, err := fileUp.ExecContext(ctx, file, graphHash, boolInt(b.dirty[file]), now); err != nil {
 			return fmt.Errorf("replacing graph: writing files row %q: %w", file, err)
 		}
+	}
+
+	if err := g.applyMetaMutationsTx(ctx, tx, metaMutations); err != nil {
+		return fmt.Errorf("replacing graph: %w", err)
+	}
+	// Derive the global key from the rows and markers this transaction wrote,
+	// exactly as a per-file delta does, so a rebuild cannot commit an explicit
+	// value that contradicts the graph (no non-Go rows, lite markers, or
+	// tree-sitter-extracted non-Go rows).
+	if err := g.RecomputeTreeSitterMetaTx(ctx, tx); err != nil {
+		return fmt.Errorf("replacing graph: syncing tree-sitter metadata: %w", err)
 	}
 
 	if err := tx.Commit(); err != nil {

@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	gtypes "github.com/tevfik/gleann/internal/graph/types"
+	"github.com/tevfik/gleann/modules/chunking"
 )
 
 // tsExtract extracts one file as ExtractFile does for a root-level source of
@@ -70,10 +71,14 @@ func TestExtractFileTreeSitterCalls(t *testing.T) {
 			[]string{"<script:a_php> -> helper", "A::m -> helper", "A::m -> n"}},
 		{"a.swift", "class A {\n  func m() { helper(); n() }\n  func n() {}\n}\nfunc helper() {}\n",
 			[]string{"A::m -> helper", "A::m -> n"}},
-		// The chunker finds no Kotlin declarations, so every call is a
-		// module-level call of the anchored script symbol.
+		// Kotlin declarations are real now, so calls are charged to the
+		// enclosing method instead of the file's script symbol.
 		{"a.kt", "class A {\n  fun m() { helper(); n() }\n  fun n() {}\n}\nfun helper() {}\n",
-			[]string{"<script:a_kt> -> helper", "<script:a_kt> -> n"}},
+			[]string{"A::m -> helper", "A::m -> n"}},
+		{"a.lua", "local function helper() return 1 end\nfunction m() helper() end\nhelper()\n",
+			[]string{"<script:a_lua> -> helper", "m -> helper"}},
+		{"a.scala", "object M {\n  def greet() = { helper(); obj.run(1) }\n  def helper() = 1\n}\n",
+			[]string{"M::greet -> helper", "M::greet -> run"}},
 	}
 	for _, c := range cases {
 		t.Run(c.file, func(t *testing.T) {
@@ -87,29 +92,44 @@ func TestExtractFileTreeSitterCalls(t *testing.T) {
 	}
 }
 
-// The bundled Lua grammar yields no chunks, so Lua keeps the regex fallback:
-// declarations, no calls (and nothing unanchored).
-func TestExtractFileLuaDeclarationsOnly(t *testing.T) {
-	fg, got := tsExtract(t, "a.lua", "function helper() end\nfunction m() helper() end\nhelper()\n")
-	if len(got) != 0 {
-		t.Errorf("calls = %v, want none", got)
+// The Lua grammar declares functions as function_statement nodes and calls as
+// function_call nodes; both are extracted, so a callee really is charged to the
+// function that contains it.
+func TestExtractFileLuaDeclarationsAndCalls(t *testing.T) {
+	fg, got := tsExtract(t, "a.lua", "local function helper() end\nfunction m() helper() end\nhelper()\n")
+	want := []string{"<script:a_lua> -> helper", "m -> helper"}
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Errorf("calls =\n  %s\nwant\n  %s", strings.Join(got, "\n  "), strings.Join(want, "\n  "))
 	}
-	if len(fg.Symbols) < 2 {
-		t.Errorf("symbols = %d, want the regex-chunker declarations", len(fg.Symbols))
+	names := map[string]bool{}
+	for _, s := range fg.Symbols {
+		if s.File != "" {
+			names[s.Name] = true
+		}
+	}
+	for _, want := range []string{"helper", "m"} {
+		if !names[want] {
+			t.Errorf("declaration %q missing (have %v)", want, names)
+		}
 	}
 }
 
-// Elixir has no function-call syntax apart from def/defmodule macros, so the
-// extractor sees them as calls; the edges are anchored like any other and the
-// real callee is present.
+// Elixir's def/defp/defmodule are macros, i.e. `call` nodes: they declare
+// symbols and must not surface as CALLS edges themselves, while the calls in a
+// definition body are charged to it.
 func TestExtractFileElixirCalls(t *testing.T) {
 	fg, got := tsExtract(t, "a.ex", "defmodule A do\n  def m do\n    helper()\n  end\n  def helper do\n  end\nend\n")
-	joined := strings.Join(got, "\n")
-	if !strings.Contains(joined, "-> helper") {
-		t.Errorf("no call to helper in %q", joined)
+	want := []string{"A::m -> helper"}
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Errorf("calls =\n  %s\nwant\n  %s", strings.Join(got, "\n  "), strings.Join(want, "\n  "))
 	}
 	if len(fg.Calls) == 0 {
 		t.Fatal("no calls extracted")
+	}
+	for _, s := range fg.Symbols {
+		if s.File == "" && chunking.IsElixirNonCallKeyword(s.Name) {
+			t.Errorf("definition keyword %q became a callee stub", s.Name)
+		}
 	}
 }
 

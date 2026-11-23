@@ -3,8 +3,6 @@ package indexer
 import (
 	"fmt"
 	"go/ast"
-	"go/parser"
-	"go/token"
 	"path/filepath"
 	"strings"
 
@@ -15,11 +13,16 @@ import (
 // collectGoCallQueries inspects Go source with go/ast and returns CALLS edges
 // plus callee stub symbols (to be batched into a transaction by the caller).
 func collectGoCallQueries(module, relPath, source string, chunks []chunking.CodeChunk) (nodes []gtypes.SymbolNode, edges []gtypes.EdgeCalls, err error) {
-	fset := token.NewFileSet()
-	file, err := parser.ParseFile(fset, relPath, source, 0)
-	if err != nil {
-		return nil, nil, fmt.Errorf("parse: %w", err)
+	return collectGoCallQueriesOf(parseGoSyntax(relPath, source), module, relPath, chunks)
+}
+
+// collectGoCallQueriesOf is collectGoCallQueries over a file that is already
+// parsed (see goSyntax).
+func collectGoCallQueriesOf(syn *goSyntax, module, relPath string, chunks []chunking.CodeChunk) (nodes []gtypes.SymbolNode, edges []gtypes.EdgeCalls, err error) {
+	if syn.err != nil {
+		return nil, nil, fmt.Errorf("parse: %w", syn.err)
 	}
+	file := syn.file
 
 	localFQN, pkgPrefix := buildGoFQNMaps(module, relPath, chunks)
 

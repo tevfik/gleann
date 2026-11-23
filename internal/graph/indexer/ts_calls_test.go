@@ -8,6 +8,7 @@
 package indexer_test
 
 import (
+	"sort"
 	"strings"
 	"testing"
 
@@ -23,59 +24,227 @@ func extract(t *testing.T, relPath, src string) []gtypes.SymbolNode {
 	return declared(indexer.ExtractFile("test", "/r", "/r/"+relPath, src))
 }
 
-func TestCallQueryElixir(t *testing.T) {
-	// Elixir's grammar matches `call` nodes aggressively (even `1 + 2`);
-	// the extractor must not panic on it.
-	_ = extract(t, "elixir.ex", "# elixir fixture\n")
+// extractCalls runs ExtractFile and returns the anchored declarations together
+// with the CALLS edges as "caller -> callee", both with the "test." FQN prefix
+// dropped and sorted.
+func extractCalls(t *testing.T, relPath, src string) ([]gtypes.SymbolNode, []string) {
+	t.Helper()
+	fg := indexer.ExtractFile("test", "/r", "/r/"+relPath, src)
+	var edges []string
+	for _, e := range fg.Calls {
+		edges = append(edges, trimTest(e.CallerFQN)+" -> "+trimTest(e.CalleeFQN))
+	}
+	sort.Strings(edges)
+	return declared(fg), edges
 }
 
-func TestCallQueryRuby(t *testing.T) {
-	src := `class Greeter
-  def initialize(name)
-    @name = name
-  end
+func trimTest(fqn string) string { return strings.ReplaceAll(fqn, "test.", "") }
 
-  def greet
-    puts "hi #{@name}"
-    self.salute
-  end
-end
-`
-	if syms := extract(t, "greeter.rb", src); len(syms) < 2 {
-		t.Errorf("expected ≥2 symbols in Ruby, got %d", len(syms))
+func assertEdges(t *testing.T, got []string, want ...string) {
+	t.Helper()
+	sort.Strings(want)
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Errorf("calls =\n  %s\nwant\n  %s", strings.Join(got, "\n  "), strings.Join(want, "\n  "))
 	}
 }
 
+// declFQNs returns the sorted, deduplicated FQNs of the anchored declarations,
+// leaving out the chunker's gap chunks (kind "block"), which the graph keeps
+// for every tree-sitter language but which are not declarations under test.
+func declFQNs(syms []gtypes.SymbolNode) []string {
+	seen := make(map[string]bool)
+	var out []string
+	for _, s := range syms {
+		if s.Kind == "block" {
+			continue
+		}
+		if !seen[s.FQN] {
+			seen[s.FQN] = true
+			out = append(out, trimTest(s.FQN))
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// TestCallQueryElixirDeclarations: def/defp/defmodule are `call` nodes in the
+// Elixir grammar. The chunker must extract their real names, and the call
+// query must not turn the defining macros (or alias/import/use/require) into
+// CALLS edges; the calls inside a definition are charged to it.
+func TestCallQueryElixirDeclarations(t *testing.T) {
+	src := `defmodule M do
+  alias Foo.Bar
+  import Baz
+  use GenServer
+  require Logger
+  defstruct [:a]
+
+  def foo do
+    helper()
+  end
+
+  defp bar(x), do: other(x)
+end
+`
+	syms, edges := extractCalls(t, "a.ex", src)
+	assertEdges(t, edges, "M::bar -> other", "M::foo -> helper")
+	if got := strings.Join(declFQNs(syms), ","); got != "M,M::bar,M::foo" {
+		t.Errorf("declarations = %s, want M,M::bar,M::foo", got)
+	}
+	for _, edge := range edges {
+		callee := edge[strings.Index(edge, " -> ")+4:]
+		if chunking.IsElixirNonCallKeyword(callee) {
+			t.Errorf("definition/directive keyword %q emitted as a CALLS edge in %v", callee, edges)
+		}
+	}
+}
+
+// TestCallQueryElixirGuardedDefinitions: a `when` guard wraps the declared
+// signature in a `binary_operator`, so the chunker declared no symbol and the
+// header calls (`foo`, `is_integer`, `rem`) leaked as bogus edges charged to
+// the file's <script> symbol.
+func TestCallQueryElixirGuardedDefinitions(t *testing.T) {
+	src := `defmodule M do
+  def foo(n) when is_integer(n) do
+    helper(n)
+  end
+
+  defguard is_even(n) when rem(n, 2) == 0
+end
+`
+	syms, edges := extractCalls(t, "a.ex", src)
+	assertEdges(t, edges, "M::foo -> helper")
+	if got := strings.Join(declFQNs(syms), ","); got != "M,M::foo,M::is_even" {
+		t.Errorf("declarations = %s, want M,M::foo,M::is_even", got)
+	}
+	for _, edge := range edges {
+		for _, bogus := range []string{" -> foo", " -> is_integer", " -> rem", " -> def", " -> defguard"} {
+			if strings.HasSuffix(edge, bogus) {
+				t.Errorf("definition header call %q emitted as a CALLS edge: %v", bogus, edges)
+			}
+		}
+		if strings.HasPrefix(edge, "<script:") {
+			t.Errorf("call charged to the script symbol despite a real declaration: %v", edges)
+		}
+	}
+}
+
+// TestCallQueryElixirRemoteCalls: the Elixir call query bound only an
+// `identifier` target, so a remote call (`Mod.func(1)`, `A.B.helper(2)`) —
+// whose target is a `dot` node — produced no edge at all.
+func TestCallQueryElixirRemoteCalls(t *testing.T) {
+	src := `defmodule M do
+  def run do
+    Mod.func(1)
+    A.B.helper(2)
+  end
+end
+`
+	syms, edges := extractCalls(t, "a.ex", src)
+	assertEdges(t, edges, "M::run -> func", "M::run -> helper")
+	if got := strings.Join(declFQNs(syms), ","); got != "M,M::run" {
+		t.Errorf("declarations = %s, want M,M::run", got)
+	}
+}
+
+// TestCallQueryRuby: the Ruby grammar exposes every call as a `call` node with
+// the callee in its `method` field, so calls written without parentheses
+// (`helper x`, `puts "hi"`) are found as well as receiver calls. A plain
+// identifier (`y = plain`) and a `def` name are not calls.
+func TestCallQueryRuby(t *testing.T) {
+	src := `class Greeter
+  def greet
+    helper(x)
+    helper x
+    puts "hi #{@name}"
+    self.salute
+    Mod.call(x)
+    y = plain_identifier
+  end
+end
+
+def defined_but_never_called
+end
+`
+	syms, edges := extractCalls(t, "greeter.rb", src)
+	assertEdges(t, edges,
+		"Greeter::greet -> call",
+		"Greeter::greet -> helper",
+		"Greeter::greet -> puts",
+		"Greeter::greet -> salute",
+	)
+	declared := strings.Join(declFQNs(syms), ",")
+	for _, want := range []string{"Greeter", "Greeter::greet", "defined_but_never_called"} {
+		if !strings.Contains(declared, want) {
+			t.Errorf("declaration %q missing from %s", want, declared)
+		}
+	}
+	for _, bogus := range []string{"plain_identifier", "defined_but_never_called", "greet"} {
+		for _, e := range edges {
+			if strings.HasSuffix(e, " -> "+bogus) {
+				t.Errorf("plain identifier %q emitted as a call: %v", bogus, edges)
+			}
+		}
+	}
+}
+
+// TestCallQueryScala: Scala call_expression keeps the callee in its `function`
+// field, a field_expression for `obj.run()`. Calls must be charged to the
+// enclosing method, including a method of an `object`.
 func TestCallQueryScala(t *testing.T) {
 	src := `package x
 
 class Box[T](value: T) {
-  def get: T = value
-  def printIt(): Unit = println(s"got: $value")
+  def printIt(): Unit = println("got")
 }
 
 object Main {
-  def main(args: Array[String]): Unit = {
-    val b = new Box(42)
-    b.printIt()
-  }
+  def greet() = { helper(); obj.run(1) }
+  def helper() = 1
 }
 `
-	if syms := extract(t, "Box.scala", src); len(syms) < 2 {
-		t.Errorf("expected ≥2 symbols in Scala, got %d", len(syms))
+	syms, edges := extractCalls(t, "Box.scala", src)
+	assertEdges(t, edges,
+		"Box::printIt -> println",
+		"Main::greet -> helper",
+		"Main::greet -> run",
+	)
+	if got := strings.Join(declFQNs(syms), ","); !strings.Contains(got, "Main::greet") {
+		t.Errorf("Main::greet is not a declaration: %s", got)
 	}
 }
 
+// TestCallQueryKotlin: the Kotlin chunker used to yield nameless declarations,
+// so every call fell through to the file's <script> symbol. The real enclosing
+// function/method must be the caller, and a navigation call (`a.b()`) must
+// bind b, not a.
 func TestCallQueryKotlin(t *testing.T) {
-	// The Kotlin chunker may or may not surface classes vs methods
-	// depending on the grammar version; we only assert no panic.
 	src := `class Greet {
     fun hello() {
-        1 + 1
+        helper()
+        name.length()
     }
 }
+
+fun greet() {
+    helper()
+}
 `
-	t.Logf("kotlin symbols: %d", len(extract(t, "Greet.kt", src)))
+	syms, edges := extractCalls(t, "Greet.kt", src)
+	assertEdges(t, edges,
+		"Greet::hello -> helper",
+		"Greet::hello -> length",
+		"greet -> helper",
+	)
+	got := strings.Join(declFQNs(syms), ",")
+	if got != "Greet,Greet::hello,greet" {
+		t.Errorf("declarations = %s, want Greet,Greet::hello,greet", got)
+	}
+	for _, e := range edges {
+		if strings.HasPrefix(e, "<script:") {
+			t.Errorf("call charged to the script symbol despite real declarations: %v", edges)
+		}
+	}
 }
 
 func TestCallQuerySwift(t *testing.T) {
@@ -119,16 +288,32 @@ public:
 	}
 }
 
+// TestCallQueryLua: the bundled Lua grammar declares functions as
+// function_statement nodes and calls as function_call nodes. Chunks must come
+// from the AST (not the regex fallback), dotted and colon calls must bind the
+// method, and bare/string/table-argument calls must bind the function.
 func TestCallQueryLua(t *testing.T) {
-	src := `local M = {}
-function M.say_hi(name)
-  print("hi " .. name)
-  return string.upper(name)
-end
+	src := `local function helper() return 1 end
+local M = {}
+function M.run() helper() end
+function M:send(x) self:helper(x) end
+obj:method()
+m.helper()
+helper()
+require "json"
 return M
 `
-	if syms := extract(t, "greeter.lua", src); len(syms) < 1 {
-		t.Errorf("expected ≥1 symbol in Lua, got %d", len(syms))
+	syms, edges := extractCalls(t, "greeter.lua", src)
+	assertEdges(t, edges,
+		"<script:greeter_lua> -> helper",
+		"<script:greeter_lua> -> method",
+		"<script:greeter_lua> -> require",
+		"M.run -> helper",
+		"M:send -> helper",
+	)
+	got := strings.Join(declFQNs(syms), ",")
+	if got != "<script:greeter_lua>,M.run,M:send,helper" {
+		t.Errorf("declarations = %s, want <script:greeter_lua>,M.run,M:send,helper", got)
 	}
 }
 
@@ -160,6 +345,68 @@ func (f Foo) String() string { return f.B }
 	}
 }
 
+// TestCallQuerySvelteScriptCalls: the Svelte grammar keeps a <script> body as
+// an unparsed raw_text node, so the extractor parses each inline block with the
+// JavaScript/TypeScript grammar and shifts its lines back into the component.
+// Declarations and CALLS inside <script> are real; the template markup is not
+// scanned for calls.
+func TestCallQuerySvelteScriptCalls(t *testing.T) {
+	src := `<script>
+  function helper() { return 1; }
+  function f() {
+    helper();
+    console.log(1);
+  }
+</script>
+
+<button on:click={f}>go</button>
+`
+	syms, edges := extractCalls(t, "App.svelte", src)
+	assertEdges(t, edges, "f -> helper", "f -> log")
+
+	byName := map[string]gtypes.SymbolNode{}
+	for _, s := range syms {
+		byName[s.Name] = s
+	}
+	f, ok := byName["f"]
+	if !ok {
+		t.Fatalf("no declaration for f in %v", declFQNs(syms))
+	}
+	if f.Line != 3 || f.EndLine != 6 {
+		t.Errorf("f anchor = %d-%d, want 3-6 (shifted into the component)", f.Line, f.EndLine)
+	}
+	if h, ok := byName["helper"]; !ok || h.Line != 2 {
+		t.Errorf("helper anchor = %+v, want line 2", h)
+	}
+}
+
+// TestCallQuerySvelteTypeScriptScript uses the TypeScript grammar for a
+// <script lang="ts"> block.
+func TestCallQuerySvelteTypeScriptScript(t *testing.T) {
+	src := `<script lang="ts">
+  function f(): void {
+    helper();
+  }
+</script>
+`
+	_, edges := extractCalls(t, "App.svelte", src)
+	assertEdges(t, edges, "f -> helper")
+}
+
+// TestCallQuerySvelteWithoutScript: a template-only component is indexed
+// cleanly (no panic, no declarations, no calls).
+func TestCallQuerySvelteWithoutScript(t *testing.T) {
+	fg := indexer.ExtractFile("test", "/r", "/r/App.svelte", "<div class=\"a\">{label}</div>\n")
+	if len(fg.Calls) != 0 {
+		t.Errorf("calls = %v, want none", fg.Calls)
+	}
+	for _, s := range fg.Symbols {
+		if s.File != "" {
+			t.Errorf("unexpected declaration %s", s.FQN)
+		}
+	}
+}
+
 // TestCallQueryLanguagesRegisteredSanity extracts a minimal snippet per
 // binding-backed language: a missing call query still yields declarations,
 // but a missing binding or a broken query must not panic.
@@ -177,6 +424,7 @@ var bindingLangs = []chunking.Language{
 	chunking.LangJava, chunking.LangC, chunking.LangCPP, chunking.LangRust,
 	chunking.LangCSharp, chunking.LangRuby, chunking.LangPHP, chunking.LangKotlin,
 	chunking.LangScala, chunking.LangSwift, chunking.LangLua, chunking.LangElixir,
+	chunking.LangSvelte,
 }
 
 // minimalSnippet returns a tiny but realistic source for each language that
@@ -213,7 +461,9 @@ func minimalSnippet(lang chunking.Language) (relPath, src string) {
 	case chunking.LangLua:
 		return "m.lua", "function f() return 1 end\n"
 	case chunking.LangElixir:
-		return "m.ex", "# elixir fixture\n"
+		return "m.ex", "defmodule M do\n  def f do\n    1\n  end\nend\n"
+	case chunking.LangSvelte:
+		return "App.svelte", "<script>\n  function f() { return 1; }\n</script>\n<p>{f()}</p>\n"
 	}
 	return "m.txt", ""
 }
@@ -239,4 +489,183 @@ func TestCallQuerySnippetStringsAreValid(t *testing.T) {
 			t.Errorf("language %s: relPath is empty", lang)
 		}
 	}
+}
+
+// TestCallQueryElixirGuardedWrapperExpressions: the grammar wraps a
+// parenthesized guard in a `block` node and a `not` guard in a
+// `unary_operator` node. Both remain part of the definition header, so neither
+// the guard check nor the signature may become a CALLS edge.
+func TestCallQueryElixirGuardedWrapperExpressions(t *testing.T) {
+	cases := []struct {
+		name  string
+		src   string
+		edges []string
+	}{
+		{
+			name:  "parenthesized_guard",
+			src:   "defmodule M do\n  def foo(x) when (is_integer(x)) do\n    work(x)\n  end\nend\n",
+			edges: []string{"M::foo -> work"},
+		},
+		{
+			name:  "not_guard",
+			src:   "defmodule M do\n  def bar(x) when not is_map(x) do\n    work(x)\n  end\nend\n",
+			edges: []string{"M::bar -> work"},
+		},
+		{
+			name:  "nested_not_parenthesized",
+			src:   "defmodule M do\n  def baz(x) when not (is_nil(x)) do\n    work(x)\n  end\nend\n",
+			edges: []string{"M::baz -> work"},
+		},
+		{
+			name:  "parenthesized_compound_guard",
+			src:   "defmodule M do\n  def foo(x) when (is_integer(x) and x > 0) do\n    work(x)\n  end\nend\n",
+			edges: []string{"M::foo -> work"},
+		},
+		{
+			name:  "defguard_parenthesized_guard",
+			src:   "defmodule M do\n  defguard is_even(n) when (rem(n, 2) == 0)\nend\n",
+			edges: nil,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, edges := extractCalls(t, "a.ex", tc.src)
+			assertEdges(t, edges, tc.edges...)
+		})
+	}
+}
+
+// TestCallQueryElixirKeywordFormGuardedDefinition: the `do:` value of a
+// keyword-form definition is a real call body, not part of the `when` guard.
+func TestCallQueryElixirKeywordFormGuardedDefinition(t *testing.T) {
+	src := "defmodule M do\n  def foo(x) when is_integer(x), do: helper(x)\nend\n"
+	_, edges := extractCalls(t, "a.ex", src)
+	assertEdges(t, edges, "M::foo -> helper")
+}
+
+// TestCallQueryElixirDefaultArgumentWithGuard: a default argument sits inside
+// the signature call's own argument list, not in the `when` guard, so the
+// helper call it makes remains a real CALLS edge.
+func TestCallQueryElixirDefaultArgumentWithGuard(t *testing.T) {
+	src := "defmodule M do\n  def foo(x \\\\ helper()) when (is_map(x)) do\n    work(x)\n  end\nend\n"
+	_, edges := extractCalls(t, "a.ex", src)
+	assertEdges(t, edges, "M::foo -> helper", "M::foo -> work")
+}
+
+// TestCallQueryElixirQualifiedKeywordCalls: a dot-qualified callee named after
+// a control-flow macro (`Mod.if(x)`) is a real remote call; only an unqualified
+// bare macro invocation is filtered.
+func TestCallQueryElixirQualifiedKeywordCalls(t *testing.T) {
+	src := "defmodule M do\n  def run(x) do\n    Mod.if(x)\n    MyDSL.unless(x)\n  end\nend\n"
+	_, edges := extractCalls(t, "a.ex", src)
+	assertEdges(t, edges, "M::run -> if", "M::run -> unless")
+}
+
+// TestCallQueryElixirParenlessPipe: `xs |> helper` calls helper(xs), but the
+// grammar models the pipe's RHS as a bare identifier rather than a call node.
+func TestCallQueryElixirParenlessPipe(t *testing.T) {
+	src := "defmodule M do\n  def run(xs) do\n    xs |> helper\n    xs |> Mod.func\n    xs |> Enum.map(&f/1)\n  end\nend\n"
+	_, edges := extractCalls(t, "a.ex", src)
+	assertEdges(t, edges, "M::run -> func", "M::run -> helper", "M::run -> map")
+}
+
+// TestCallQueryElixirModuleAttributes: a module attribute is a
+// `unary_operator(@, call(<name>, arguments(...)))`; its name is never a
+// CALLS edge and a typespec attribute (`@spec`, `@type`, `@callback`, ...)
+// declares types instead of calling functions. Only the value of a plain
+// attribute (`@attr helper()`) is a real module-level call.
+func TestCallQueryElixirModuleAttributes(t *testing.T) {
+	src := `defmodule M do
+  @moduledoc "module docs"
+  @typedoc "type docs"
+  @doc "foo docs"
+  @spec foo(integer()) :: integer()
+  @type t :: list(integer())
+  @typep tp :: atom()
+  @opaque o :: term()
+  @callback cb(atom()) :: {:ok, term()}
+  @macrocallback mcb(term()) :: Macro.t()
+  @attr helper()
+  def foo(x), do: work(x)
+end
+`
+	syms, edges := extractCalls(t, "a.ex", src)
+	assertEdges(t, edges, "<script:a_ex> -> helper", "M::foo -> work")
+	if got := strings.Join(declFQNs(syms), ","); got != "<script:a_ex>,M,M::foo" {
+		t.Errorf("declarations = %s, want <script:a_ex>,M,M::foo", got)
+	}
+}
+
+// TestCallQueryElixirAttributeValueCalls: the value expression of a non-typespec
+// attribute is evaluated at compile time, so its calls are real CALLS edges,
+// including the right-hand side of a parenless pipe.
+func TestCallQueryElixirAttributeValueCalls(t *testing.T) {
+	src := `defmodule M do
+  @config build_config() |> finalize()
+  @attr xs |> helper
+  @attr helper()
+end
+`
+	_, edges := extractCalls(t, "a.ex", src)
+	assertEdges(t, edges,
+		"<script:a_ex> -> build_config",
+		"<script:a_ex> -> finalize",
+		"<script:a_ex> -> helper",
+	)
+}
+
+// TestCallQueryElixirNestedGuardBuiltins: a guard-safe builtin nested inside
+// another guard call's argument list is part of the defining macro's header at
+// any depth, so it is not a CALLS edge.
+func TestCallQueryElixirNestedGuardBuiltins(t *testing.T) {
+	cases := []struct {
+		name string
+		src  string
+	}{
+		{
+			name: "binary_part_byte_size",
+			src:  "defmodule M do\n  def foo(x) when binary_part(x, 0, byte_size(x)) == \"a\" do\n    work(x)\n  end\nend\n",
+		},
+		{
+			name: "elem_map_size",
+			src:  "defmodule M do\n  def foo(x) when is_integer(elem(x, map_size(y))) do\n    work(x)\n  end\nend\n",
+		},
+		{
+			name: "rem_byte_size",
+			src:  "defmodule M do\n  def foo(x) when rem(x, byte_size(y)) == 0 do\n    work(x)\n  end\nend\n",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, edges := extractCalls(t, "a.ex", tc.src)
+			assertEdges(t, edges, "M::foo -> work")
+		})
+	}
+}
+
+// TestCallQueryElixirAttributeAndGuardPreservedCalls: the attribute and
+// guard filters must not drop a default argument, an `unquote` in a macro head
+// or a keyword-form `do:` body.
+func TestCallQueryElixirAttributeAndGuardPreservedCalls(t *testing.T) {
+	src := `defmodule M do
+  def foo(x \\ bar(baz())) do
+    work(x)
+  end
+
+  defmacro mac(unquote(helper())) do
+    ok()
+  end
+
+  def kw(x) when is_map(x), do: helper(x)
+end
+`
+	_, edges := extractCalls(t, "a.ex", src)
+	assertEdges(t, edges,
+		"M::foo -> bar",
+		"M::foo -> baz",
+		"M::foo -> work",
+		"M::kw -> helper",
+		"M::mac -> helper",
+		"M::mac -> ok",
+	)
 }

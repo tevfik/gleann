@@ -213,12 +213,31 @@ func (c *ASTChunker) postProcess(chunks []CodeChunk) []CodeChunk {
 // chunkGo uses Go's native AST parser for precise function/type boundaries.
 func (c *ASTChunker) chunkGo(source, filename string) []CodeChunk {
 	fset := token.NewFileSet()
-	file, err := parser.ParseFile(fset, filename, source, parser.ParseComments)
+	// The chunker reads declarations, positions and doc comments, never the
+	// identifier resolution of go/parser (ast.Ident.Obj, ast.File.Scope), so
+	// that pass is skipped.
+	file, err := parser.ParseFile(fset, filename, source, parser.ParseComments|parser.SkipObjectResolution)
 	if err != nil {
 		// Fall back to regex if AST parse fails.
 		return c.chunkByPattern(source, filename, goPatterns(), LangGo)
 	}
+	return c.chunkGoFile(fset, file, source, filename)
+}
 
+// ChunkGoFile is ChunkCode for a Go file the caller has already parsed, so a
+// caller that needs the syntax tree for more than chunking (the code graph
+// extractor) parses the file once. file must be the error-free result of
+// parsing source with parser.ParseComments (the chunks start at the doc
+// comments) and fset the file set it was parsed with; filename is the path
+// recorded in the chunk metadata. The chunks are those of
+// ChunkCode(source, filename).
+func (c *ASTChunker) ChunkGoFile(fset *token.FileSet, file *ast.File, source, filename string) []CodeChunk {
+	return c.postProcess(c.chunkGoFile(fset, file, source, filename))
+}
+
+// chunkGoFile cuts a parsed Go file into its preamble and one chunk per
+// top-level declaration.
+func (c *ASTChunker) chunkGoFile(fset *token.FileSet, file *ast.File, source, filename string) []CodeChunk {
 	var chunks []CodeChunk
 	lines := strings.Split(source, "\n")
 

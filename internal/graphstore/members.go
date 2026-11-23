@@ -61,6 +61,29 @@ WHERE e.dst IN (SELECT id FROM symbols WHERE fqn IN (`+ph+`) UNION ALL SELECT id
 	return out, nil
 }
 
+// SymbolFiles lists every file (sorted) with at least one declaration in the
+// graph. The one-time migration of legacy non-code rows uses it to find the
+// files an older gleann stored "block_N" symbols for.
+func (g *SQLite) SymbolFiles() ([]string, error) {
+	rows, err := g.reader.QueryContext(readCtx(), `SELECT DISTINCT file FROM symbols WHERE file <> '' ORDER BY file`)
+	if err != nil {
+		return nil, fmt.Errorf("listing symbol files: %w", err)
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var f string
+		if err := rows.Scan(&f); err != nil {
+			return nil, fmt.Errorf("listing symbol files: %w", err)
+		}
+		out = append(out, f)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("listing symbol files: %w", err)
+	}
+	return out, nil
+}
+
 // FilesInDir lists the files (sorted) with at least one declaration directly in
 // dir, a slash-separated path relative to the indexed root ("." or "" is the
 // root). A call whose target was not declared when its file was extracted

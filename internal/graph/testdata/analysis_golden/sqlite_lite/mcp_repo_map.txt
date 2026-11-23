@@ -1,24 +1,24 @@
 ## Repository Map — fixture (by importance)
 
-### store/store.go
-- interface `Store`
-- function `NewMemStore`
-- function `normalize`
-- struct `MemStore`
-- method `MemStore.Get`
-- method `MemStore.Keys`
-- method `MemStore.Put`
-
 ### service/service.go
 - method `Service.Load`
 - function `New`
+- method `Service.Save`
 - function `validate`
 - method `Service.Report`
-- method `Service.Save`
 - struct `Service`
 - struct `emptyError`
 - method `emptyError.Error`
 - var `errEmpty`
+
+### store/store.go
+- interface `Store`
+- function `normalize`
+- function `NewMemStore`
+- struct `MemStore`
+- method `MemStore.Get`
+- method `MemStore.Keys`
+- method `MemStore.Put`
 
 ### py/app.py
 - class `Registry`

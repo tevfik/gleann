@@ -2,10 +2,10 @@
 
 ### service/service.go
 - method `example.com/fixture/service.Service.Load`
-- function `example.com/fixture/service.New`
 - function `example.com/fixture/service.validate`
-- method `example.com/fixture/service.Service.Report`
+- function `example.com/fixture/service.New`
 - method `example.com/fixture/service.Service.Save`
+- method `example.com/fixture/service.Service.Report`
 - struct `example.com/fixture/service.Service`
 - struct `example.com/fixture/service.emptyError`
 - method `example.com/fixture/service.emptyError.Error`
@@ -13,8 +13,8 @@
 
 ### store/store.go
 - interface `example.com/fixture/store.Store`
-- function `example.com/fixture/store.NewMemStore`
 - function `example.com/fixture/store.normalize`
+- function `example.com/fixture/store.NewMemStore`
 
 ### py/app.py
 - class `example.com/fixture/py.Registry`

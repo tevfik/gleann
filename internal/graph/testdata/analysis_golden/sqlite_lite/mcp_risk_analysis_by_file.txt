@@ -2,13 +2,13 @@ File Risk Analysis — fixture (top 10)
 
 FILE                                               RISK       SCORE    TOP SYMBOL
 ──────────────────────────────────────────────────────────────────────────────────────────
-service/service.go                                 high       0.6122   Service.Load
-store/store.go                                     medium     0.4387   Store
-main.go                                            medium     0.3732   run
-service/service_test.go                            low        0.1526   TestReport
-py/app.py                                          low        0.0851   Registry
-py/util.py                                         low        0.0851   clean
-rs/main.rs                                         low        0.0851   Counter
-rs/util.rs                                         low        0.0851   clamp
-ts/app.ts                                          low        0.0851   Shape
-ts/util.ts                                         low        0.0851   pluralize
+service/service.go                                 high       0.5445   Service.Save
+store/store.go                                     medium     0.4530   Store
+main.go                                            medium     0.2654   run
+service/service_test.go                            low        0.2038   TestReport
+py/app.py                                          low        0.0754   Registry
+py/util.py                                         low        0.0754   clean
+rs/main.rs                                         low        0.0754   Counter
+rs/util.rs                                         low        0.0754   clamp
+ts/app.ts                                          low        0.0754   Shape
+ts/util.ts                                         low        0.0754   pluralize

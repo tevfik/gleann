@@ -1,7 +1,7 @@
 {
   "body": {
     "available": true,
-    "calls_count": 21,
+    "calls_count": 27,
     "db_path": "<INDEXDIR>/fixture/fixture.db",
     "declares_count": 41,
     "file_count": 10,

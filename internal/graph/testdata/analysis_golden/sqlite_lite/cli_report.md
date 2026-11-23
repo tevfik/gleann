@@ -8,11 +8,11 @@ Source: `<FIXTURE>`
 | Metric | Value |
 |--------|-------|
 | Nodes | 51 |
-| Edges | 58 |
-| Communities | 13 |
-| Modularity (Q) | 0.6253 |
-| God Nodes | 6 |
-| Cross-Community Edges | 16 |
+| Edges | 62 |
+| Communities | 14 |
+| Modularity (Q) | 0.4798 |
+| God Nodes | 9 |
+| Cross-Community Edges | 20 |
 
 **Modularity interpretation:** Strong community structure (Q > 0.4). Code is well-modularized.
 
@@ -25,9 +25,12 @@ These symbols have an unusually high number of connections, making them central 
 | 1 | `service.go` | file | 0 | 9 | 9 |
 | 2 | `store.go` | file | 0 | 7 | 7 |
 | 3 | `fixture.main` | function | 1 | 5 | 6 |
-| 4 | `app.py` | file | 0 | 6 | 6 |
-| 5 | `store.Store` | interface | 5 | 0 | 5 |
-| 6 | `app.ts` | file | 0 | 5 | 5 |
+| 4 | `service.Service.Save` | method | 4 | 2 | 6 |
+| 5 | `app.py` | file | 0 | 6 | 6 |
+| 6 | `service.Service.Load` | method | 4 | 1 | 5 |
+| 7 | `service.Service.Report` | method | 3 | 2 | 5 |
+| 8 | `store.Store` | interface | 5 | 0 | 5 |
+| 9 | `app.ts` | file | 0 | 5 | 5 |
 
 > **Tip:** God nodes are potential coupling hotspots. If a god node changes, many dependents may be affected.
 
@@ -62,12 +65,7 @@ Detected via the Louvain algorithm. Each community represents a group of tightly
 - `rs.util`
 - `main.rs`
 
-### Community 3: service_test (5 nodes, cohesion=0.230)
-
-- `service.New`
-- `store.NewMemStore`
-
-### Community 4: service (5 nodes, cohesion=0.060)
+### Community 3: service (5 nodes, cohesion=0.060)
 
 - `service.Service`
 - `service.emptyError`
@@ -75,30 +73,34 @@ Detected via the Louvain algorithm. Each community represents a group of tightly
 - `service.errEmpty`
 - `service.go`
 
-### Community 5: service (4 nodes, cohesion=0.317)
+### Community 4: service (4 nodes, cohesion=0.317)
 
 - `service.Service.Load`
 - `service.Service.Report`
 - `store.MemStore`
 - `store.Store`
 
-### Community 6: main (3 nodes, cohesion=0.267)
+### Community 5: main (3 nodes, cohesion=0.267)
 
 - `fixture.main`
 - `fixture.run`
 - `main.go`
 
-### Community 7: util (3 nodes, cohesion=0.100)
+### Community 6: util (3 nodes, cohesion=0.100)
 
 - `py.clean`
 - `py.join_words`
 - `util.py`
 
-### Community 8: util (3 nodes, cohesion=0.100)
+### Community 7: util (3 nodes, cohesion=0.100)
 
 - `rs.clamp`
 - `rs.double`
 - `util.rs`
+
+### Community 8: service_test (3 nodes, cohesion=0.217)
+
+- `service.New`
 
 ### Community 9: store (3 nodes, cohesion=0.100)
 
@@ -117,7 +119,11 @@ Detected via the Louvain algorithm. Each community represents a group of tightly
 - `service.Service.Save`
 - `service.validate`
 
-### Community 12: store (2 nodes, cohesion=0.500)
+### Community 12: service_test (2 nodes, cohesion=0.500)
+
+- `store.NewMemStore`
+
+### Community 13: store (2 nodes, cohesion=0.500)
 
 - `store.MemStore.Put`
 - `store.normalize`
@@ -129,22 +135,19 @@ Ranked by composite score: cross-community edges involving different packages sc
 
 | From | To | Communities | Score |
 |------|----|------------|-------|
-| `fixture.main` | `service.New` | 6 → 3 | 1.50 |
-| `fixture.main` | `service.Service.Report` | 6 → 5 | 1.50 |
-| `fixture.main` | `service.Service.Save` | 6 → 11 | 1.80 |
-| `fixture.main` | `store.NewMemStore` | 6 → 3 | 1.50 |
-| `fixture.run` | `service.Service.Load` | 6 → 5 | 1.50 |
-| `service.Service.Save` | `store.Store` | 11 → 5 | 1.80 |
-| `service.New` | `service.go` | 3 → 4 | 0.45 |
-| `service.Service.Load` | `service.go` | 5 → 4 | 0.45 |
-| `service.Service.Report` | `service.go` | 5 → 4 | 0.45 |
-| `service.Service.Save` | `service.go` | 11 → 4 | 0.54 |
-| `service.validate` | `service.go` | 11 → 4 | 0.54 |
-| `store.MemStore` | `store.go` | 5 → 9 | 0.54 |
-| `store.MemStore.Put` | `store.go` | 12 → 9 | 0.45 |
-| `store.NewMemStore` | `store.go` | 3 → 9 | 0.54 |
-| `store.Store` | `store.go` | 5 → 9 | 0.54 |
-| `store.normalize` | `store.go` | 12 → 9 | 0.45 |
+| `fixture.main` | `service.New` | 5 → 8 | 1.50 |
+| `fixture.main` | `service.Service.Report` | 5 → 4 | 1.50 |
+| `fixture.main` | `service.Service.Save` | 5 → 11 | 1.80 |
+| `fixture.main` | `store.NewMemStore` | 5 → 12 | 1.80 |
+| `fixture.run` | `service.Service.Load` | 5 → 4 | 1.50 |
+| `service.Service.Save` | `store.Store` | 11 → 4 | 1.80 |
+| `service.New` | `service.go` | 8 → 3 | 0.54 |
+| `service.Service.Load` | `service.go` | 4 → 3 | 0.45 |
+| `service.Service.Report` | `service.go` | 4 → 3 | 0.45 |
+| `service.Service.Save` | `service.go` | 11 → 3 | 0.54 |
+| `service.validate` | `service.go` | 11 → 3 | 0.54 |
+| `store.MemStore` | `store.go` | 4 → 9 | 0.54 |
+| `store.MemStore.Put` | `store.go` | 13 → 9 | 0.54 |
 
 > **Tip:** Many cross-community edges between the same two communities may indicate they should be merged, or there's a missing abstraction layer.
 

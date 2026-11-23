@@ -70,3 +70,48 @@ func TestHasCodeGraphAndOpenGraphStore(t *testing.T) {
 		t.Fatalf("Stats = %+v, %v; want 1 symbol", s, err)
 	}
 }
+
+func TestOpenGraphDBExposesTreeSitterChecker(t *testing.T) {
+	dir := t.TempDir()
+	idx := filepath.Join(dir, "idx")
+	if err := os.MkdirAll(idx, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(idx, "idx.meta.json"), []byte(`{"store_format":2}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	st, err := store.Open(filepath.Join(idx, "idx.db"), store.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	delta := graphstore.FileDelta{File: "a.go", Symbols: []graphstore.Symbol{
+		{FQN: "p.A", Name: "A", Kind: "function", File: "a.go", StartLine: 1, EndLine: 2, StartCol: 1, ByteOffset: 1},
+	}}
+	if err := graphstore.New(st).ApplyFileDelta(context.Background(), delta); err != nil {
+		t.Fatal(err)
+	}
+	st.Close()
+
+	db, err := OpenGraphDB(dir, "idx")
+	if err != nil || db == nil {
+		t.Fatalf("OpenGraphDB = %v, %v", db, err)
+	}
+	defer db.Close()
+
+	checker, ok := db.(interface{ HasTreeSitterEdges() bool })
+	if !ok {
+		t.Fatal("BUG: OpenGraphDB returns *gleann.ownedGraphDB, which does not expose HasTreeSitterEdges; the notice's type assertion falls through and the meta key is never read on the CLI path")
+	}
+	_ = checker.HasTreeSitterEdges()
+
+	resolver, ok := db.(interface {
+		ResolveSymbolFiles(string, int) ([]string, error)
+	})
+	if !ok {
+		t.Fatal("BUG: OpenGraphDB returns *gleann.ownedGraphDB, which does not expose ResolveSymbolFiles(string, int)")
+	}
+	files, err := resolver.ResolveSymbolFiles("A", DirectionCallers)
+	if err != nil || len(files) != 1 || files[0] != "a.go" {
+		t.Fatalf("ResolveSymbolFiles(\"A\", DirectionCallers) = %v, %v; want [\"a.go\"], nil", files, err)
+	}
+}

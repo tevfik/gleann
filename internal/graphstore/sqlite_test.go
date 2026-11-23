@@ -8,6 +8,7 @@ import (
 	"reflect"
 	"sort"
 	"testing"
+	"time"
 
 	"github.com/tevfik/gleann/internal/store"
 )
@@ -624,5 +625,62 @@ func TestResolveSymbols(t *testing.T) {
 				t.Fatalf("ResolveSymbols(%q, %d) = %v, want %v", tc.q, tc.dir, got, tc.want)
 			}
 		})
+	}
+}
+
+func TestHasTreeSitterEdges_LegacyFallback(t *testing.T) {
+	ctx := context.Background()
+	g, _ := openTestGraph(t)
+
+	// Ensure no MetaGraphTreeSitter key exists
+	_ = g.ClearMeta(ctx, store.MetaGraphTreeSitter)
+
+	// Case 1: Empty graph -> false
+	if g.HasTreeSitterEdges() {
+		t.Fatal("empty graph must report false")
+	}
+
+	// Case 2: Only Go files with CALLS edges -> false
+	deltaGo := FileDelta{
+		File: "main.go",
+		Symbols: []Symbol{
+			{FQN: "main.Run", Name: "Run", Kind: "function", File: "main.go", StartLine: 1, EndLine: 5},
+			{FQN: "main.Worker", Name: "Worker", Kind: "function", File: "main.go", StartLine: 6, EndLine: 10},
+		},
+		Edges: []Edge{
+			{Src: "main.Run", Dst: "main.Worker", Kind: "CALLS"},
+		},
+	}
+	if err := g.ApplyFileDelta(ctx, deltaGo); err != nil {
+		t.Fatal(err)
+	}
+	_ = g.ClearMeta(ctx, store.MetaGraphTreeSitter)
+	if g.HasTreeSitterEdges() {
+		t.Fatal("Go-only graph must report false")
+	}
+
+	// Case 3: Python file with CALLS edge -> true
+	deltaPy := FileDelta{
+		File: "app.py",
+		Symbols: []Symbol{
+			{FQN: "app.caller", Name: "caller", Kind: "function", File: "app.py", StartLine: 1, EndLine: 5},
+			{FQN: "app.callee", Name: "callee", Kind: "function", File: "app.py", StartLine: 6, EndLine: 10},
+		},
+		Edges: []Edge{
+			{Src: "app.caller", Dst: "app.callee", Kind: "CALLS"},
+		},
+	}
+	if err := g.ApplyFileDelta(ctx, deltaPy); err != nil {
+		t.Fatal(err)
+	}
+	_ = g.ClearMeta(ctx, store.MetaGraphTreeSitter)
+	start := time.Now()
+	has := g.HasTreeSitterEdges()
+	dur := time.Since(start)
+	if !has {
+		t.Fatal("Python CALLS edge must report true")
+	}
+	if dur > 100*time.Millisecond {
+		t.Fatalf("HasTreeSitterEdges took too long: %v", dur)
 	}
 }

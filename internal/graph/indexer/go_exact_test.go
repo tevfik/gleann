@@ -1,9 +1,13 @@
 package indexer
 
 import (
+	"errors"
+	"go/version"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
+	"slices"
 	"strings"
 	"testing"
 
@@ -95,6 +99,9 @@ func loadExactFixture(t *testing.T) (*ExactResolver, string) {
 	}
 	root := writeTree(t, exactFixture)
 	r, err := LoadExact(exactModule, root)
+	if errors.Is(err, errNothingTypeChecked) {
+		t.Skipf("go/packages could not type-check the fixture in this environment: %v", err)
+	}
 	if err != nil {
 		t.Fatalf("LoadExact: %v", err)
 	}
@@ -262,5 +269,126 @@ func TestDedupeImplementsPrefersExact(t *testing.T) {
 	}
 	if out[0].ImplFQN != "p.A" || out[1].ImplFQN != "p.B" {
 		t.Errorf("first-seen order not preserved: %+v", out)
+	}
+}
+
+// The load must not reach the network or edit go.mod, and it must leave the
+// toolchain choice to the user: GOTOOLCHAIN=local made `go list` fail wherever
+// the installed go is older than go.mod's go line.
+func TestExactLoadEnv(t *testing.T) {
+	in := []string{"PATH=/usr/bin", "GOTOOLCHAIN=go1.24.0+auto"}
+	env := exactLoadEnv(in, t.TempDir())
+	for _, want := range []string{"PATH=/usr/bin", "GOTOOLCHAIN=go1.24.0+auto", "GOPROXY=off", "GOFLAGS=-mod=readonly"} {
+		if !slices.Contains(env, want) {
+			t.Errorf("env lacks %q: %v", want, env)
+		}
+	}
+	if len(in) != 2 {
+		t.Errorf("input slice changed: %v", in)
+	}
+	for _, e := range exactLoadEnv([]string{"PATH=/usr/bin"}, t.TempDir()) {
+		if strings.HasPrefix(e, "GOTOOLCHAIN=") {
+			t.Errorf("GOTOOLCHAIN forced to %q", e)
+		}
+	}
+}
+
+// olderGoOnPath returns the directory of a go command on PATH whose own
+// release is older than the one this test runs with, or "".
+func olderGoOnPath(t *testing.T) string {
+	t.Helper()
+	name := "go"
+	if runtime.GOOS == "windows" {
+		name = "go.exe"
+	}
+	for _, dir := range filepath.SplitList(os.Getenv("PATH")) {
+		bin := filepath.Join(dir, name)
+		if _, err := os.Stat(bin); err != nil {
+			continue
+		}
+		cmd := exec.Command(bin, "env", "GOVERSION")
+		cmd.Dir = t.TempDir() // no go.mod: the command's own release
+		cmd.Env = append(os.Environ(), "GOTOOLCHAIN=local", "GOROOT=")
+		out, err := cmd.Output()
+		if err != nil {
+			continue
+		}
+		if v := strings.TrimSpace(string(out)); version.IsValid(v) && version.Compare(v, runtime.Version()) < 0 {
+			return dir
+		}
+	}
+	return ""
+}
+
+// A module whose go line is newer than the installed go command still loads
+// when the toolchain it asks for is in the module cache (what `go build` does
+// there). It needs such a machine: an older go on PATH and this test's Go
+// release in the module cache; it is skipped elsewhere.
+func TestLoadExactUsesModuleToolchain(t *testing.T) {
+	if !version.IsValid(runtime.Version()) {
+		t.Skipf("not a release toolchain: %s", runtime.Version())
+	}
+	dir := olderGoOnPath(t)
+	if dir == "" {
+		t.Skip("no go command older than this test's toolchain on PATH")
+	}
+	files := map[string]string{}
+	for rel, content := range exactFixture {
+		files[rel] = content
+	}
+	files["go.mod"] = "module " + exactModule + "\n\ngo " + strings.TrimPrefix(runtime.Version(), "go") + "\n"
+	root := writeTree(t, files)
+
+	// The environment of an installed gleann: the older go first on PATH, no
+	// GOROOT or GOTOOLCHAIN from `go test`.
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("GOROOT", "")
+	t.Setenv("GOTOOLCHAIN", "")
+	probe := exec.Command("go", "env", "GOVERSION")
+	probe.Dir = root
+	probe.Env = append(os.Environ(), "GOPROXY=off")
+	if out, err := probe.Output(); err != nil || strings.TrimSpace(string(out)) != runtime.Version() {
+		t.Skipf("toolchain %s is not available offline here (go env GOVERSION = %q, %v)", runtime.Version(), strings.TrimSpace(string(out)), err)
+	}
+
+	r, err := LoadExact(exactModule, root)
+	if err != nil {
+		t.Fatalf("LoadExact with an older go on PATH: %v", err)
+	}
+	if !r.HasFile("app.go") {
+		t.Error("app.go was not type-checked")
+	}
+}
+
+// A load that fails is an error, not a silent nil: the caller reports it.
+func TestLoadExactReportsFailedLoad(t *testing.T) {
+	if _, err := exec.LookPath("go"); err != nil {
+		t.Skip("go toolchain not available")
+	}
+	root := writeTree(t, map[string]string{
+		"go.mod": "module " + exactModule + "\n\ngo 1.999.0\n",
+		"app.go": "package app\n\nfunc A() {}\n",
+	})
+	r, err := LoadExact(exactModule, root)
+	if r != nil || err == nil {
+		t.Fatalf("LoadExact(go 1.999.0) = %v, %v; want nil and an error", r, err)
+	}
+}
+
+// A module in which no package type-checks is reported too.
+func TestLoadExactReportsNothingTypeChecked(t *testing.T) {
+	if _, err := exec.LookPath("go"); err != nil {
+		t.Skip("go toolchain not available")
+	}
+	root := writeTree(t, map[string]string{
+		"go.mod": "module " + exactModule + "\n\ngo 1.21\n",
+		"app.go": "package app\n\nfunc A() int { return undefinedName }\n",
+	})
+	r, err := LoadExact(exactModule, root)
+	if r != nil || !errors.Is(err, errNothingTypeChecked) {
+		t.Fatalf("LoadExact = %v, %v; want nil and errNothingTypeChecked", r, err)
+	}
+	if !strings.Contains(err.Error(), "undefinedName") {
+		t.Errorf("error does not name the first type error: %v", err)
 	}
 }

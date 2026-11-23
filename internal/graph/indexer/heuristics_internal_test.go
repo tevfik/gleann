@@ -1,5 +1,3 @@
-//go:build !windows
-
 // Internal-package tests for heuristics.go. External tests in
 // heuristics_test.go exercise the same code via the public indexer
 // API; this file tests the package-private helpers directly so the

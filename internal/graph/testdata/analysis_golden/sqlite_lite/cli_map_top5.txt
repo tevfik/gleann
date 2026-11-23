@@ -1,11 +1,11 @@
 🗺️  Repo Map — fixture (top 5 symbols by PageRank)
 
 📄 store/store.go
-   ██████████ example.com/fixture/store.Store          0.0831
-   ████ example.com/fixture/store.NewMemStore    0.0408
-   ████ example.com/fixture/store.normalize      0.0374
+   ██████████ example.com/fixture/store.Store          0.0923
+   ███ example.com/fixture/store.normalize      0.0368
 📄 service/service.go
-   ██████ example.com/fixture/service.Service.Load 0.0503
-   ████ example.com/fixture/service.New          0.0408
+   ██████ example.com/fixture/service.Service.Load 0.0556
+   ███ example.com/fixture/service.validate     0.0334
+   ███ example.com/fixture/service.New          0.0317
 
-📊 Total: 41 nodes, 16 edges
+📊 Total: 41 nodes, 20 edges

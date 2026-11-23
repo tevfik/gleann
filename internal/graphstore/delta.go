@@ -44,6 +44,11 @@ type inboundEdge struct {
 // 6.5: "in one transaction together with the file's passages and its files
 // row").
 func (g *SQLite) ApplyFileDelta(ctx context.Context, d FileDelta) error {
+	return g.ApplyFileDeltaWithMeta(ctx, d, nil)
+}
+
+// ApplyFileDeltaWithMeta replaces one file's graph rows and applies metadata mutations in ONE transaction.
+func (g *SQLite) ApplyFileDeltaWithMeta(ctx context.Context, d FileDelta, metaMutations map[string]*string) error {
 	tx, err := g.writer.BeginTx(ctx, nil) // _txlock=immediate makes this BEGIN IMMEDIATE
 	if err != nil {
 		return fmt.Errorf("applying graph delta for %q: beginning transaction: %w", d.File, err)
@@ -51,6 +56,15 @@ func (g *SQLite) ApplyFileDelta(ctx context.Context, d FileDelta) error {
 	defer tx.Rollback()
 	if err := g.ApplyFileDeltaTx(ctx, tx, d); err != nil {
 		return err
+	}
+	if err := g.applyMetaMutationsTx(ctx, tx, metaMutations); err != nil {
+		return fmt.Errorf("applying graph delta for %q: %w", d.File, err)
+	}
+	// The global key is recomputed from the transaction's own view: a delta
+	// (and its lite marker) never commits without the matching
+	// graph_treesitter value, and a failing key write rolls both back.
+	if err := g.RecomputeTreeSitterMetaTx(ctx, tx); err != nil {
+		return fmt.Errorf("applying graph delta for %q: syncing tree-sitter metadata: %w", d.File, err)
 	}
 	// Step 5: commit.
 	if err := tx.Commit(); err != nil {
@@ -509,6 +523,11 @@ ON CONFLICT(path) DO UPDATE SET graph_dirty = 1`, file, time.Now().UnixNano()); 
 // store (store.RemoveSource deletes it); here only graph_hash is cleared so
 // the row no longer claims built graph rows.
 func (g *SQLite) RemoveFile(ctx context.Context, file string) error {
+	return g.RemoveFileWithMeta(ctx, file, nil)
+}
+
+// RemoveFileWithMeta retracts everything a deleted file owns and applies metadata mutations in ONE transaction.
+func (g *SQLite) RemoveFileWithMeta(ctx context.Context, file string, metaMutations map[string]*string) error {
 	file = slashPath(file)
 	tx, err := g.writer.BeginTx(ctx, nil)
 	if err != nil {
@@ -517,6 +536,14 @@ func (g *SQLite) RemoveFile(ctx context.Context, file string) error {
 	defer tx.Rollback()
 	if err := g.RemoveFileTx(ctx, tx, file); err != nil {
 		return err
+	}
+	if err := g.applyMetaMutationsTx(ctx, tx, metaMutations); err != nil {
+		return fmt.Errorf("removing graph rows of %q: %w", file, err)
+	}
+	// Same invariant as ApplyFileDeltaWithMeta: the removal, its marker
+	// deletion and the recomputed graph_treesitter key commit atomically.
+	if err := g.RecomputeTreeSitterMetaTx(ctx, tx); err != nil {
+		return fmt.Errorf("removing graph rows of %q: syncing tree-sitter metadata: %w", file, err)
 	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("removing graph rows of %q: committing: %w", file, err)

@@ -2,13 +2,15 @@
 
 // Tree-sitter based AST chunking for non-Go languages.
 // Provides precise AST parsing for Python, JavaScript, TypeScript,
-// Java, C, C++, Rust, and C# using tree-sitter grammars.
+// Java, C, C++, Rust, C#, Ruby, PHP, Kotlin, Scala, Swift, Lua, Elixir,
+// Svelte, Vue and Objective-C using tree-sitter grammars.
 //
 // Build with: go build -tags treesitter
 // Requires: CGo toolchain (gcc/clang)
 package chunking
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"strings"
@@ -226,11 +228,15 @@ var nodeTypeRules = map[Language][]nodeRule{
 		{Type: "enum_declaration", ChunkType: "enum"},
 	},
 	LangLua: {
-		{Type: "function_declaration", ChunkType: "function"},
-		{Type: "local_function_declaration", ChunkType: "function"},
-		{Type: "function_definition", ChunkType: "function"},
+		// The bundled Lua grammar names its declaration node
+		// function_statement (`local function f`, `function M.run`,
+		// `function M:send`); function_declaration/local_function_declaration
+		// exist in other Lua grammars only.
+		{Type: "function_statement", ChunkType: "function"},
 	},
 	LangElixir: {
+		// Every Elixir macro invocation is a `call` node; the walk below keeps
+		// only the defining macros (def/defp/defmodule/...) as chunks.
 		{Type: "call", ChunkType: "function"},
 	},
 	LangSvelte: {
@@ -322,8 +328,10 @@ var nameFieldByNodeType = map[string]string{
 	// Swift
 	"protocol_declaration": "name",
 
-	// Lua — function_declaration uses "name", local_function_declaration uses "name"
-	"local_function_declaration": "name",
+	// Lua — function_statement carries the declared name; for
+	// `function M.run`/`function M:send` it is a function_name node whose
+	// content is the qualified name.
+	"function_statement": "name",
 }
 
 // ParseTree parses source with a pooled tree-sitter parser and returns the
@@ -420,7 +428,41 @@ func treeSitterChunkFromTree(source, filename string, lang Language, config ASTC
 		if isTarget {
 			startLine := int(node.StartPoint().Row) + 1
 			endLine := int(node.EndPoint().Row) + 1
-			name := extractNodeName(node, nodeType, sourceBytes)
+
+			// The Lua grammar attaches the leading whitespace (often a newline)
+			// to a function_statement's first token and the statement
+			// terminator to its last one, so the raw node span starts on the
+			// previous line and ends one line into the next statement. Anchor
+			// the declaration on `function`..`end` instead.
+			if lang == LangLua && nodeType == "function_statement" {
+				startLine = firstNonSpaceLine(sourceBytes, int(node.StartByte()))
+				if fe := lastChildOfType(node, "function_end"); fe != nil {
+					endLine = int(fe.EndPoint().Row) + 1
+				}
+			}
+
+			name := extractNodeName(node, nodeType, lang, sourceBytes)
+
+			// A Lua function declared with a qualified name
+			// (`function M.run`, `function M:send`) is a method.
+			if lang == LangLua && nodeType == "function_statement" && strings.ContainsAny(name, ".:") {
+				chunkType = "method"
+			}
+
+			// Every Elixir macro invocation is a `call` node, so only the
+			// defining macros are declarations. The others (alias, import,
+			// use, defstruct, plain calls) are walked through, so a
+			// definition nested in one is still found.
+			if lang == LangElixir && nodeType == "call" {
+				declName, declType := elixirDeclaration(node, sourceBytes)
+				if declType == "" {
+					for i := 0; i < int(node.ChildCount()); i++ {
+						walk(node.Child(i), depth+1, parentScope)
+					}
+					return
+				}
+				name, chunkType = declName, declType
+			}
 
 			// Handle decorated definitions (Python @decorator).
 			if nodeType == "decorated_definition" {
@@ -429,7 +471,7 @@ func treeSitterChunkFromTree(source, filename string, lang Language, config ASTC
 					child := node.Child(i)
 					if child.Type() == "function_definition" || child.Type() == "class_definition" {
 						chunkType = targetTypes[child.Type()]
-						name = extractNodeName(child, child.Type(), sourceBytes)
+						name = extractNodeName(child, child.Type(), lang, sourceBytes)
 						break
 					}
 				}
@@ -441,7 +483,7 @@ func treeSitterChunkFromTree(source, filename string, lang Language, config ASTC
 					child := node.Child(i)
 					if ct, ok := targetTypes[child.Type()]; ok {
 						chunkType = ct
-						name = extractNodeName(child, child.Type(), sourceBytes)
+						name = extractNodeName(child, child.Type(), lang, sourceBytes)
 						break
 					}
 				}
@@ -644,12 +686,21 @@ func ChunkCodeWithTree(lang Language, filename, source string, tree *sitter.Tree
 }
 
 // extractNodeName extracts a human-readable name from a tree-sitter AST node.
-func extractNodeName(node *sitter.Node, nodeType string, source []byte) string {
+func extractNodeName(node *sitter.Node, nodeType string, lang Language, source []byte) string {
 	// Try the known field name first.
 	if fieldName, ok := nameFieldByNodeType[nodeType]; ok && fieldName != "" {
 		child := node.ChildByFieldName(fieldName)
 		if child != nil {
 			return child.Content(source)
+		}
+	}
+
+	// Kotlin's bundled grammar exposes no field names at all, so the name node
+	// has to be located by type. Without this every Kotlin chunk had an empty
+	// name and the indexer dropped the declaration.
+	if lang == LangKotlin {
+		if n := kotlinNameNode(node, nodeType); n != nil {
+			return n.Content(source)
 		}
 	}
 
@@ -663,7 +714,7 @@ func extractNodeName(node *sitter.Node, nodeType string, source []byte) string {
 					return nameNode.Content(source)
 				}
 				// Recurse one more level for export_statement.
-				return extractNodeName(child, child.Type(), source)
+				return extractNodeName(child, child.Type(), lang, source)
 			}
 		}
 	}
@@ -690,7 +741,7 @@ func extractNodeName(node *sitter.Node, nodeType string, source []byte) string {
 	if nodeType == "template_declaration" {
 		for i := 0; i < int(node.ChildCount()); i++ {
 			child := node.Child(i)
-			inner := extractNodeName(child, child.Type(), source)
+			inner := extractNodeName(child, child.Type(), lang, source)
 			if inner != "" {
 				return inner
 			}
@@ -716,14 +767,429 @@ func extractNodeName(node *sitter.Node, nodeType string, source []byte) string {
 	return ""
 }
 
+// SvelteScript is one inline <script> block of a Svelte component.
+type SvelteScript struct {
+	Lang      Language // LangJavaScript, or LangTypeScript for lang="ts"
+	Content   string   // the body of the block, without the tags
+	StartRow  int      // 0-based row of the block's first content line
+	StartCol  int      // 0-based column at which the content starts
+	ByteStart int      // byte offset of the content in the file
+}
+
+// SvelteScripts returns the inline <script> blocks of a parsed Svelte
+// component in document order. The Svelte grammar keeps a block's JavaScript or
+// TypeScript body as an unparsed raw_text node, so callers that want the
+// declarations and calls inside one parse the block themselves with the
+// JavaScript/TypeScript grammar and shift its line numbers by StartRow (the
+// parser reports rows relative to the block, not to the component). StartCol
+// and ByteStart locate the content for consumers that need an exact anchor.
+//
+// A component without a <script> block (template only) returns nil.
+func SvelteScripts(tree *sitter.Tree, source []byte) []SvelteScript {
+	if tree == nil {
+		return nil
+	}
+	var out []SvelteScript
+	var walk func(n *sitter.Node)
+	walk = func(n *sitter.Node) {
+		if n == nil {
+			return
+		}
+		if n.Type() == "script_element" {
+			if s, ok := svelteScriptOf(n, source); ok {
+				out = append(out, s)
+			}
+			return
+		}
+		for i := 0; i < int(n.ChildCount()); i++ {
+			walk(n.Child(i))
+		}
+	}
+	walk(tree.RootNode())
+	return out
+}
+
+// svelteScriptOf builds the SvelteScript of one script_element node.
+func svelteScriptOf(el *sitter.Node, source []byte) (SvelteScript, bool) {
+	var raw *sitter.Node
+	lang := LangJavaScript
+	for i := 0; i < int(el.ChildCount()); i++ {
+		ch := el.Child(i)
+		switch ch.Type() {
+		case "raw_text":
+			raw = ch
+		case "start_tag":
+			if svelteScriptIsTS(ch, source) {
+				lang = LangTypeScript
+			}
+		}
+	}
+	if raw == nil {
+		return SvelteScript{}, false
+	}
+	sp := raw.StartPoint()
+	return SvelteScript{
+		Lang:      lang,
+		Content:   raw.Content(source),
+		StartRow:  int(sp.Row),
+		StartCol:  int(sp.Column),
+		ByteStart: int(raw.StartByte()),
+	}, true
+}
+
+// svelteScriptIsTS reports whether a <script> start tag carries lang="ts" or
+// lang="typescript".
+func svelteScriptIsTS(startTag *sitter.Node, source []byte) bool {
+	for i := 0; i < int(startTag.ChildCount()); i++ {
+		attr := startTag.Child(i)
+		if attr.Type() != "attribute" {
+			continue
+		}
+		name := firstChildOfType(attr, "attribute_name")
+		if name == nil || name.Content(source) != "lang" {
+			continue
+		}
+		if v := findDescendantOfType(attr, "attribute_value", 2); v != nil {
+			switch strings.ToLower(v.Content(source)) {
+			case "ts", "typescript":
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// findDescendantOfType returns the first descendant of node (including the
+// direct children) of the given type, searching at most maxDepth levels down.
+func findDescendantOfType(node *sitter.Node, nodeType string, maxDepth int) *sitter.Node {
+	if node == nil || maxDepth < 0 {
+		return nil
+	}
+	for i := 0; i < int(node.ChildCount()); i++ {
+		ch := node.Child(i)
+		if ch.Type() == nodeType {
+			return ch
+		}
+		if found := findDescendantOfType(ch, nodeType, maxDepth-1); found != nil {
+			return found
+		}
+	}
+	return nil
+}
+
 // isClassLike returns true if the chunk type represents a container (class, struct, impl, etc.)
 // whose children should be individually chunked.
 func isClassLike(chunkType string) bool {
 	switch chunkType {
-	case "class", "struct", "impl", "namespace", "module", "trait", "interface":
+	case "class", "struct", "impl", "namespace", "module", "trait", "interface", "object":
 		return true
 	}
 	return false
+}
+
+// kotlinNameNode returns the node holding the declared name of a Kotlin
+// declaration. The grammar bundled with go-tree-sitter has no field names: a
+// function's name is its first simple_identifier, a class/object/interface name
+// its first type_identifier, and a property's name is the simple_identifier of
+// its variable_declaration.
+func kotlinNameNode(node *sitter.Node, nodeType string) *sitter.Node {
+	switch nodeType {
+	case "function_declaration":
+		return firstChildOfType(node, "simple_identifier")
+	case "class_declaration", "object_declaration", "interface_declaration":
+		return firstChildOfType(node, "type_identifier", "simple_identifier")
+	case "property_declaration":
+		if vd := firstChildOfType(node, "variable_declaration"); vd != nil {
+			return firstChildOfType(vd, "simple_identifier")
+		}
+	}
+	return nil
+}
+
+// firstChildOfType returns the first direct child of node whose type is one of
+// types, or nil.
+func firstChildOfType(node *sitter.Node, types ...string) *sitter.Node {
+	if node == nil {
+		return nil
+	}
+	for i := 0; i < int(node.ChildCount()); i++ {
+		ch := node.Child(i)
+		for _, t := range types {
+			if ch.Type() == t {
+				return ch
+			}
+		}
+	}
+	return nil
+}
+
+// lastChildOfType returns the last direct child of node of the given type, or
+// nil.
+func lastChildOfType(node *sitter.Node, nodeType string) *sitter.Node {
+	if node == nil {
+		return nil
+	}
+	for i := int(node.ChildCount()) - 1; i >= 0; i-- {
+		if ch := node.Child(i); ch.Type() == nodeType {
+			return ch
+		}
+	}
+	return nil
+}
+
+// firstNonSpaceLine returns the 1-based line of the first byte that is not
+// whitespace at or after off. Some grammars (Lua) include the preceding
+// newline in the node they hand to the chunker; the declaration really starts
+// at its first token.
+func firstNonSpaceLine(src []byte, off int) int {
+	if off < 0 || off > len(src) {
+		return 1
+	}
+	line := 1 + bytes.Count(src[:off], []byte("\n"))
+	for i := off; i < len(src); i++ {
+		switch src[i] {
+		case '\n':
+			line++
+		case ' ', '\t', '\r', '\f', '\v':
+			// skip
+		default:
+			return line
+		}
+	}
+	return line
+}
+
+// elixirDeclaration returns the name and chunk type declared by an Elixir
+// `call` node when the call is a defining macro, or two empty strings when it
+// is not. The defining macros keep the project's real declarations:
+//
+//	defmodule M do ... end          -> module M
+//	def foo do ... end              -> function foo
+//	defp bar(x), do: other(x)       -> function bar
+//	defmacro mac(x) do ... end      -> function mac
+//
+// defstruct/defimpl/defexception are deliberately not declarations: they define
+// no nameable function, and two `defimpl X, for: Y` blocks would collide on the
+// same FQN.
+func elixirDeclaration(node *sitter.Node, source []byte) (name, chunkType string) {
+	target := node.ChildByFieldName("target")
+	if target == nil || target.Type() != "identifier" {
+		return "", ""
+	}
+	switch target.Content(source) {
+	case "defmodule", "defprotocol":
+		chunkType = "module"
+	case "def", "defp", "defmacro", "defmacrop", "defdelegate", "defguard", "defguardp":
+		chunkType = "function"
+	default:
+		return "", ""
+	}
+
+	// `arguments` is a child node type, not a field, in the bundled grammar.
+	args := firstChildOfType(node, "arguments")
+	if args == nil {
+		return "", ""
+	}
+	first := elixirSignatureNode(firstNamedChild(args))
+	if first == nil {
+		return "", ""
+	}
+	switch first.Type() {
+	case "identifier", "alias":
+		return first.Content(source), chunkType
+	case "call":
+		// `def foo(x) do ... end`: the signature is itself a call node.
+		if t := first.ChildByFieldName("target"); t != nil && t.Type() == "identifier" {
+			return t.Content(source), chunkType
+		}
+	}
+	return "", ""
+}
+
+// elixirSignatureNode returns the declared signature of an Elixir definition
+// header. A `when` guard makes the grammar wrap the header in a
+// `binary_operator` whose operator field is the `when` node and whose left
+// child is the signature:
+//
+//	def foo(n) when is_integer(n)   -> binary_operator(left: call foo(n), ...)
+//	defguard is_even(n) when ...    -> binary_operator(left: call is_even(n), ...)
+//
+// Multiple guards nest to the right (`when a when b`), so the signature is the
+// leftmost `left` child of the whole chain. An unguarded header passes through
+// unchanged (the plain identifier, alias or signature call). A header that is
+// any other binary operator (`def foo(a + b)`) has no extractable name.
+func elixirSignatureNode(n *sitter.Node) *sitter.Node {
+	for n != nil && n.Type() == "binary_operator" {
+		op := n.ChildByFieldName("operator")
+		if op == nil || op.Type() != "when" {
+			return nil
+		}
+		n = n.ChildByFieldName("left")
+	}
+	return n
+}
+
+// IsElixirDefinitionHeaderCall reports whether call belongs to the header of an
+// Elixir defining macro or module attribute rather than being a real call site.
+//
+// A module attribute is parsed as `unary_operator(@, call(<name>, arguments))`.
+// Its name (`@moduledoc`, `@doc`, `@spec`, `@attr`, ...) is a declaration, and
+// every expression inside a typespec attribute (`@spec`, `@type`, `@callback`,
+// ...) denotes a type, not a call. The value expression of a plain attribute
+// (`@attr helper()`, `@config build_config() |> finalize()`) is evaluated at
+// compile time and remains a real call site.
+//
+// A definition header is the first argument of the defining macro: the declared
+// signature (`foo` in `def foo(x)`), possibly with default arguments, followed
+// by a `when` guard chain. The signature itself is not a call site, and neither
+// is any guard expression, at any nesting depth: guards are restricted to
+// guard-safe expressions and never denote a project function, so a guard-safe
+// builtin nested inside another guard call's argument list
+// (`byte_size` in `def foo(x) when binary_part(x, 0, byte_size(x)) == "a"`) is
+// header too.
+//
+// A call under the macro's `do_block` is a body call and is never header. A
+// default argument (`def foo(x \\ helper())`) is a real call site: it sits in
+// the signature call's own argument list and is evaluated when foo is called.
+// A keyword-form body (`def foo(x) when is_map(x), do: helper(x)`) follows the
+// same rule: the `do:` value is a trailing keyword pair of the macro's
+// arguments, not part of its header.
+func IsElixirDefinitionHeaderCall(call *sitter.Node, src []byte) bool {
+	if call == nil {
+		return false
+	}
+	if elixirAttributeNonCall(call, src) {
+		return true
+	}
+	header := elixirDefiningHeader(call, src)
+	if header == nil {
+		return false
+	}
+	sig := elixirSignatureNode(header)
+	if sig == nil || !elixirNodeContains(sig, call) {
+		return true
+	}
+	// The signature call itself is the declared name; its own argument list
+	// holds default values, which are evaluated at call time.
+	return call.StartByte() == sig.StartByte() && call.EndByte() == sig.EndByte()
+}
+
+// elixirDefiningHeader returns the header node of the innermost defining macro
+// whose argument list contains call, or nil when call is not in such a header.
+// The header is the macro's first argument (signature plus its `when` guards);
+// a trailing `keywords` list (`, do: ...`) and the `do_block` body are not.
+func elixirDefiningHeader(call *sitter.Node, src []byte) *sitter.Node {
+	for n := call.Parent(); n != nil; n = n.Parent() {
+		if n.Type() == "do_block" {
+			// A body call: no defining macro header above a do_block.
+			return nil
+		}
+		if n.Type() != "arguments" || !elixirDefiningArguments(n, src) {
+			continue
+		}
+		header := firstNamedChild(n)
+		if header == nil || !elixirNodeContains(header, call) {
+			return nil
+		}
+		return header
+	}
+	return nil
+}
+
+// elixirAttributeNonCall reports whether call is the name of a module attribute
+// or an expression of a typespec attribute value, i.e. not a call site.
+func elixirAttributeNonCall(call *sitter.Node, src []byte) bool {
+	for n := call.Parent(); n != nil; n = n.Parent() {
+		if n.Type() != "unary_operator" {
+			continue
+		}
+		op := n.ChildByFieldName("operator")
+		if op == nil || strings.TrimSpace(op.Content(src)) != "@" {
+			// `not`/`!`/`^`: not an attribute; an enclosing expression could
+			// still be one, so keep walking outward.
+			continue
+		}
+		operand := n.ChildByFieldName("operand")
+		if operand == nil {
+			return false
+		}
+		// The call directly under the `@` is the attribute's name.
+		if operand.Equal(call) {
+			return true
+		}
+		return IsElixirTypespecAttribute(elixirAttributeName(operand, src))
+	}
+	return false
+}
+
+// elixirAttributeName returns the attribute name of a `unary_operator(@)`'s
+// operand call, or "" when the operand is not a named call.
+func elixirAttributeName(operand *sitter.Node, src []byte) string {
+	if operand == nil || operand.Type() != "call" {
+		return ""
+	}
+	target := operand.ChildByFieldName("target")
+	if target == nil || target.Type() != "identifier" {
+		return ""
+	}
+	return strings.TrimSpace(target.Content(src))
+}
+
+// elixirNodeContains reports whether inner lies inside the source span of
+// outer.
+func elixirNodeContains(outer, inner *sitter.Node) bool {
+	return outer != nil && inner != nil &&
+		inner.StartByte() >= outer.StartByte() && inner.EndByte() <= outer.EndByte()
+}
+
+// IsElixirNonCallKeywordCall reports whether call is an unqualified invocation
+// of an Elixir definition, directive or control-flow macro, i.e. a `call` node
+// that must not be recorded as a CALLS edge.
+//
+// Only a bare `identifier` target can be the Kernel macro: a qualified callee
+// is a `dot` (`Mod.if(x)` calls a function named `if` on Mod), so it is a real
+// remote call and its name must not be filtered.
+func IsElixirNonCallKeywordCall(call *sitter.Node, name string) bool {
+	if !IsElixirNonCallKeyword(name) {
+		return false
+	}
+	if call == nil {
+		// Without the call node we cannot tell unqualified from qualified;
+		// keep the conservative (keyword) behaviour.
+		return true
+	}
+	target := call.ChildByFieldName("target")
+	if target == nil {
+		return true
+	}
+	return target.Type() == "identifier"
+}
+
+// elixirDefiningArguments reports whether args is the argument list of a call
+// to one of the defining macros (`def`, `defp`, `defguard`, ...).
+func elixirDefiningArguments(args *sitter.Node, src []byte) bool {
+	def := args.Parent()
+	if def == nil || def.Type() != "call" {
+		return false
+	}
+	target := def.ChildByFieldName("target")
+	if target == nil || target.Type() != "identifier" {
+		return false
+	}
+	return IsElixirDefiningMacro(strings.TrimSpace(target.Content(src)))
+}
+
+// firstNamedChild returns the first named child of node, or nil.
+func firstNamedChild(node *sitter.Node) *sitter.Node {
+	if node == nil {
+		return nil
+	}
+	for i := 0; i < int(node.ChildCount()); i++ {
+		if ch := node.Child(i); ch.IsNamed() {
+			return ch
+		}
+	}
+	return nil
 }
 
 // langCommentPrefix returns the single-line comment prefix for a language.
@@ -791,10 +1257,34 @@ func extractCallsForLang(lang Language, node *sitter.Node, source []byte) []stri
 			break
 		}
 		m = qc.FilterPredicates(m, source)
+
+		// Elixir needs the whole call node to recognise the signature and
+		// guards of a definition header; other languages capture only the
+		// callee name.
+		var elixirCall *sitter.Node
+		if lang == LangElixir {
+			for _, cap := range m.Captures {
+				if q.CaptureNameForId(cap.Index) == "call" {
+					elixirCall = cap.Node
+				}
+			}
+		}
+
 		for _, cap := range m.Captures {
 			if q.CaptureNameForId(cap.Index) == "callee" {
-				name := cap.Node.Content(source)
-				if name != "" && !seen[name] {
+				name := strings.TrimSpace(cap.Node.Content(source))
+				if name == "" {
+					continue
+				}
+				// Elixir parses its defining and directive macros as calls;
+				// they are not callees. A definition header (the signature
+				// and its `when` guards) is not a call site either. Both
+				// filters only apply to an unqualified target: `Mod.if(x)`
+				// is a real remote call to a function named `if`.
+				if lang == LangElixir && (IsElixirNonCallKeywordCall(elixirCall, name) || IsElixirDefinitionHeaderCall(elixirCall, source)) {
+					continue
+				}
+				if !seen[name] {
 					seen[name] = true
 					calls = append(calls, name)
 				}
@@ -816,8 +1306,27 @@ func callsQueryBodyFor(lang Language) (string, bool) {
 (call function: (_) @callee)
 `, true
 	case LangElixir:
+		// A call's callee is an identifier for `helper()` and a `dot` for a
+		// remote call (`Mod.func()`, `A.B.helper()`, `foo().bar()`); the
+		// receiver is not part of the callee, matching Python/JS/Ruby. The
+		// whole call is captured too so the definition header (a guarded
+		// signature) can be told apart from a body call.
+		//
+		// The pipe operator calls its right-hand side (`xs |> helper` is
+		// `helper(xs)`), but the grammar models a parenless RHS as a bare
+		// identifier rather than a call node. A parenthesized or remote RHS
+		// (`xs |> helper()`, `xs |> Mod.func`) is a call and is matched above.
 		return `
-(call target: (_) @callee)
+[
+  (call
+    target: [
+      (identifier) @callee
+      (dot right: (identifier) @callee)
+    ]) @call
+  (binary_operator
+    operator: "|>"
+    right: (identifier) @callee) @call
+]
 `, true
 	case LangRuby:
 		// Ruby uses `(call ...)` with callee under "method".
@@ -826,14 +1335,11 @@ func callsQueryBodyFor(lang Language) (string, bool) {
 `, true
 	case LangJavaScript, LangTypeScript, LangVue, LangCPP, LangRust, LangObjectiveC:
 		// Most ECMAScript-family and C-family grammars expose the
-		// callee as the "function" field of call_expression. Svelte
-		// is intentionally NOT in this list: its tree-sitter grammar
-		// uses a different vocabulary for call-like nodes inside
-		// <script> blocks, and the Svelte-specific query lives in
-		// ts_calls.go (the indexer) as a narrower, optional shape.
-		// We keep Svelte out of the broad union so a single failure
-		// in its grammar doesn't break call extraction for the other
-		// JS-family languages.
+		// callee as the "function" field of call_expression. Svelte is
+		// intentionally NOT in this list: its grammar keeps each
+		// <script> body as an unparsed raw_text node, so the indexer
+		// parses those blocks with the JavaScript/TypeScript grammar
+		// (see SvelteScripts and collectTSCallsPrecise).
 		return `
 (call_expression function: (_) @callee)
 `, true
@@ -863,8 +1369,36 @@ func callsQueryBodyFor(lang Language) (string, bool) {
 (call_expression function: (_) @callee)
 `, true
 	case LangLua:
+		// A Lua call's callee is the identifier immediately before its
+		// argument list; the identifiers before it belong to the receiver
+		// (`m` in `m.helper()`, `obj` in `obj:send()`). The dot anchor keeps
+		// them out, and the argument alternatives cover the argument forms
+		// without a paren list (`require "x"`, `f{...}`).
 		return `
-(function_call name: (_) @callee)
+(function_call
+  (identifier) @callee
+  . [(function_call_paren) (string_argument) (table_argument)])
+`, true
+	case LangKotlin:
+		// Kotlin's grammar has no field names: a bare call's callee is a
+		// simple_identifier child, a navigation call's (`a.b()`) the
+		// simple_identifier inside the navigation_suffix.
+		return `
+(call_expression
+  [
+    (simple_identifier) @callee
+    (navigation_expression (navigation_suffix (simple_identifier) @callee))
+  ])
+`, true
+	case LangScala:
+		// Scala exposes the callee in the `function` field: an identifier for
+		// `helper()` and a field_expression for `obj.run()`.
+		return `
+(call_expression
+  function: [
+    (identifier) @callee
+    (field_expression field: (identifier) @callee)
+  ])
 `, true
 	}
 	return "", false

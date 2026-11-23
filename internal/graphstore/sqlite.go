@@ -208,6 +208,52 @@ func (g *SQLite) resolveSeedRows(query string, args ...any) ([]string, error) {
 	return out, nil
 }
 
+// ResolveDeclarationFiles returns the declaration file paths for symbol q
+// following the exact same 3-step hierarchy as ResolveSymbols (exact FQN,
+// qualified suffix, base name) but without requiring CALLS edges.
+func (g *SQLite) ResolveDeclarationFiles(q string) ([]string, error) {
+	q = strings.TrimSpace(q)
+	if q == "" {
+		return nil, nil
+	}
+
+	// Step 1: exact FQN
+	files, err := g.resolveDeclarationRows(`SELECT DISTINCT file FROM symbols WHERE fqn = ? ORDER BY file`, q)
+	if err != nil || len(files) > 0 {
+		return files, err
+	}
+
+	// Step 2: qualified suffix (if q contains . or : or /)
+	if strings.ContainsAny(q, ".:/") {
+		files, err := g.resolveDeclarationRows(`SELECT DISTINCT file FROM symbols
+ WHERE (substr(fqn, -length(?)) = ? OR substr(fqn, -length(?)) = ? OR substr(fqn, -length(?)) = ?)
+ ORDER BY file`, "::"+q, "::"+q, "."+q, "."+q, "/"+q, "/"+q)
+		if err != nil || len(files) > 0 {
+			return files, err
+		}
+	}
+
+	// Step 3: base name
+	return g.resolveDeclarationRows(`SELECT DISTINCT file FROM symbols WHERE (name = ? OR fqn = ?) ORDER BY file`, baseName(q), q)
+}
+
+func (g *SQLite) resolveDeclarationRows(query string, args ...any) ([]string, error) {
+	rows, err := g.reader.QueryContext(readCtx(), query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("resolving symbol declaration files: %w", err)
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var f string
+		if err := rows.Scan(&f); err != nil {
+			return nil, fmt.Errorf("resolving symbol declaration files: %w", err)
+		}
+		out = append(out, f)
+	}
+	return out, rows.Err()
+}
+
 // SymbolsInFile lists every first-party declaration anchored in one file,
 // ordered by FQN. It is the port of kuzu.SymbolsInFile (the DECLARES relation
 // folded into symbols.file, RFC 003 section 3.4), without Symbols' LIMIT 50:
@@ -1126,4 +1172,238 @@ func (g *SQLite) DirtyFiles() ([]string, error) {
 		return nil, fmt.Errorf("listing dirty files: %w", err)
 	}
 	return out, nil
+}
+
+// HasTreeSitterEdges reports whether the code graph contains tree-sitter CALLS edges
+// for non-Go source files, or recorded that it was built with tree-sitter.
+func (g *SQLite) HasTreeSitterEdges() bool {
+	var val string
+	if err := g.reader.QueryRowContext(readCtx(), `SELECT value FROM meta WHERE key = ?`, store.MetaGraphTreeSitter).Scan(&val); err == nil {
+		return val == "1"
+	}
+	var callsID int
+	if err := g.reader.QueryRowContext(readCtx(), `SELECT id FROM graph_labels WHERE label = 'CALLS'`).Scan(&callsID); err != nil {
+		return false
+	}
+	var count int
+	_ = g.reader.QueryRowContext(readCtx(), `
+		SELECT 1 FROM symbols s
+		JOIN graph_edges e ON e.src = s.id
+		WHERE s.file NOT LIKE '%.go' AND e.kind = ?
+		LIMIT 1
+	`, callsID).Scan(&count)
+	return count > 0
+}
+
+// SetMeta sets a key-value pair in the meta table.
+func (g *SQLite) SetMeta(ctx context.Context, key, value string) error {
+	_, err := g.writer.ExecContext(ctx, `INSERT INTO meta (key, value) VALUES (?, ?)
+ON CONFLICT(key) DO UPDATE SET value = excluded.value`, key, value)
+	if err != nil {
+		return fmt.Errorf("setting meta %s: %w", key, err)
+	}
+	return nil
+}
+
+// SetMetaTx sets a key-value pair in the meta table within tx.
+func (g *SQLite) SetMetaTx(ctx context.Context, tx *sql.Tx, key, value string) error {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO meta (key, value) VALUES (?, ?)
+ON CONFLICT(key) DO UPDATE SET value = excluded.value`, key, value); err != nil {
+		return fmt.Errorf("setting meta %s: %w", key, err)
+	}
+	return nil
+}
+
+// ClearMeta deletes a key from the meta table.
+func (g *SQLite) ClearMeta(ctx context.Context, key string) error {
+	_, err := g.writer.ExecContext(ctx, `DELETE FROM meta WHERE key = ?`, key)
+	if err != nil {
+		return fmt.Errorf("clearing meta %s: %w", key, err)
+	}
+	return nil
+}
+
+// ClearMetaTx deletes a key from the meta table within tx.
+func (g *SQLite) ClearMetaTx(ctx context.Context, tx *sql.Tx, key string) error {
+	if _, err := tx.ExecContext(ctx, `DELETE FROM meta WHERE key = ?`, key); err != nil {
+		return fmt.Errorf("clearing meta %s: %w", key, err)
+	}
+	return nil
+}
+
+// ClearMetaPrefix deletes all keys starting with prefix from the meta table.
+func (g *SQLite) ClearMetaPrefix(ctx context.Context, prefix string) error {
+	_, err := g.writer.ExecContext(ctx, `DELETE FROM meta WHERE key LIKE ? || '%'`, prefix)
+	if err != nil {
+		return fmt.Errorf("clearing meta prefix %s: %w", prefix, err)
+	}
+	return nil
+}
+
+// ClearMetaPrefixTx deletes all keys starting with prefix within tx.
+func (g *SQLite) ClearMetaPrefixTx(ctx context.Context, tx *sql.Tx, prefix string) error {
+	if _, err := tx.ExecContext(ctx, `DELETE FROM meta WHERE key LIKE ? || '%'`, prefix); err != nil {
+		return fmt.Errorf("clearing meta prefix %s: %w", prefix, err)
+	}
+	return nil
+}
+
+// applyMetaMutationsTx applies a graph write's metadata mutations inside tx in
+// a deterministic order:
+//
+//  1. prefix deletions (nil value, key ending in "%"), sorted by key;
+//  2. exact key deletions (nil value), sorted by key;
+//  3. key sets, sorted by key.
+//
+// The order is a contract, not an optimisation: a full lite build clears
+// "graph_nongo_lite:%" and re-sets the per-file "graph_nongo_lite:<rel>"
+// markers in one map. Go map iteration order is randomized, so applying the
+// map directly lets the prefix deletion run after the marker sets and wipe
+// them (rv-lite-nongo-v4): a later Go-only sync then recomputes
+// graph_treesitter to "1" beside lite-extracted symbols and silences
+// NonGoSymbolNotice. Sorting each phase by key also keeps the write order
+// identical between runs.
+//
+// A nil-valued key ending in "%" is a prefix deletion in the caller's terms:
+// its value is a LIKE pattern, so the trailing wildcard is stripped and the
+// remainder is passed to ClearMetaPrefixTx (prefix + "%" is the same pattern).
+func (g *SQLite) applyMetaMutationsTx(ctx context.Context, tx *sql.Tx, metaMutations map[string]*string) error {
+	if len(metaMutations) == 0 {
+		return nil
+	}
+	var prefixDeletes, exactDeletes, sets []string
+	for k, v := range metaMutations {
+		switch {
+		case v == nil && strings.HasSuffix(k, "%"):
+			prefixDeletes = append(prefixDeletes, k)
+		case v == nil:
+			exactDeletes = append(exactDeletes, k)
+		default:
+			sets = append(sets, k)
+		}
+	}
+	sort.Strings(prefixDeletes)
+	sort.Strings(exactDeletes)
+	sort.Strings(sets)
+	for _, k := range prefixDeletes {
+		if err := g.ClearMetaPrefixTx(ctx, tx, strings.TrimSuffix(k, "%")); err != nil {
+			return err
+		}
+	}
+	for _, k := range exactDeletes {
+		if err := g.ClearMetaTx(ctx, tx, k); err != nil {
+			return err
+		}
+	}
+	for _, k := range sets {
+		if err := g.SetMetaTx(ctx, tx, k, *metaMutations[k]); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// HasNonGoFiles reports whether the code graph contains symbols declared in non-Go files.
+func (g *SQLite) HasNonGoFiles() (bool, error) {
+	return hasNonGoFiles(readCtx(), g.reader)
+}
+
+// HasNonGoFilesTx is HasNonGoFiles within tx: uncommitted deltas are visible
+// there, while g.reader (WAL) would still see the pre-transaction state.
+func (g *SQLite) HasNonGoFilesTx(ctx context.Context, tx *sql.Tx) (bool, error) {
+	return hasNonGoFiles(ctx, tx)
+}
+
+// rowQueryer is satisfied by *sql.DB and *sql.Tx.
+type rowQueryer interface {
+	QueryRowContext(context.Context, string, ...any) *sql.Row
+}
+
+func hasNonGoFiles(ctx context.Context, q rowQueryer) (bool, error) {
+	var count int
+	err := q.QueryRowContext(ctx, `SELECT 1 FROM symbols WHERE file NOT LIKE '%.go' LIMIT 1`).Scan(&count)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("checking non-Go symbols: %w", err)
+	}
+	return count > 0, nil
+}
+
+// NonGoFileCount returns the count of distinct non-Go files declared in the symbols table.
+func (g *SQLite) NonGoFileCount() (int, error) {
+	var count int
+	err := g.reader.QueryRowContext(readCtx(), `SELECT COUNT(DISTINCT file) FROM symbols WHERE file NOT LIKE '%.go'`).Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("counting non-Go files: %w", err)
+	}
+	return count, nil
+}
+
+// LiteNonGoCount returns the number of non-Go files in the graph recorded as extracted in lite mode.
+func (g *SQLite) LiteNonGoCount() (int, error) {
+	return liteNonGoCount(readCtx(), g.reader)
+}
+
+// LiteNonGoCountTx is LiteNonGoCount within tx (see HasNonGoFilesTx on why the
+// caller-owned transaction must be queried, not g.reader).
+func (g *SQLite) LiteNonGoCountTx(ctx context.Context, tx *sql.Tx) (int, error) {
+	return liteNonGoCount(ctx, tx)
+}
+
+func liteNonGoCount(ctx context.Context, q rowQueryer) (int, error) {
+	var count int
+	err := q.QueryRowContext(ctx, `SELECT COUNT(*) FROM meta WHERE key LIKE 'graph_nongo_lite:%'`).Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("counting lite non-Go files: %w", err)
+	}
+	return count, nil
+}
+
+// RecomputeTreeSitterMetaTx recomputes the global graph_treesitter key (and
+// clears the lite markers when the graph holds no non-Go declarations) within
+// tx. Running it inside every file delta's transaction means a committed
+// delta, its graph_nongo_lite marker and the global key are always mutually
+// consistent: a failed key write rolls the whole delta back, and no committed
+// state can leave a stale "1" beside lite-extracted rows.
+func (g *SQLite) RecomputeTreeSitterMetaTx(ctx context.Context, tx *sql.Tx) error {
+	hasNonGo, err := g.HasNonGoFilesTx(ctx, tx)
+	if err != nil {
+		return err
+	}
+	if !hasNonGo {
+		if err := g.ClearMetaTx(ctx, tx, store.MetaGraphTreeSitter); err != nil {
+			return err
+		}
+		return g.ClearMetaPrefixTx(ctx, tx, "graph_nongo_lite:")
+	}
+	liteCount, err := g.LiteNonGoCountTx(ctx, tx)
+	if err != nil {
+		return err
+	}
+	if liteCount > 0 {
+		return g.SetMetaTx(ctx, tx, store.MetaGraphTreeSitter, "0")
+	}
+	return g.SetMetaTx(ctx, tx, store.MetaGraphTreeSitter, "1")
+}
+
+// SyncTreeSitterMeta recomputes the graph_treesitter key in its own
+// transaction. After a sync each delta has already done this atomically; the
+// standalone call converges legacy or manually edited metadata (for example a
+// graph built before the key existed) without ever leaving an autocommit
+// half-write behind.
+func (g *SQLite) SyncTreeSitterMeta(ctx context.Context) error {
+	tx, err := g.writer.BeginTx(ctx, nil) // _txlock=immediate
+	if err != nil {
+		return fmt.Errorf("syncing tree-sitter metadata: beginning transaction: %w", err)
+	}
+	defer tx.Rollback()
+	if err := g.RecomputeTreeSitterMetaTx(ctx, tx); err != nil {
+		return fmt.Errorf("syncing tree-sitter metadata: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("syncing tree-sitter metadata: committing: %w", err)
+	}
+	return nil
 }

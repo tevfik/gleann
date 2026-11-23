@@ -248,16 +248,28 @@
     <edge id="e11" source="example.com/fixture/service.TestReport" target="example.com/fixture/service.New">
       <data key="d3">CALLS</data>
     </edge>
-    <edge id="e12" source="example.com/fixture/service.TestReport" target="example.com/fixture/store.NewMemStore">
+    <edge id="e12" source="example.com/fixture/service.TestReport" target="example.com/fixture/service.Service.Report">
       <data key="d3">CALLS</data>
     </edge>
-    <edge id="e13" source="example.com/fixture/service.TestSaveLoad" target="example.com/fixture/service.New">
+    <edge id="e13" source="example.com/fixture/service.TestReport" target="example.com/fixture/service.Service.Save">
       <data key="d3">CALLS</data>
     </edge>
-    <edge id="e14" source="example.com/fixture/service.TestSaveLoad" target="example.com/fixture/store.NewMemStore">
+    <edge id="e14" source="example.com/fixture/service.TestReport" target="example.com/fixture/store.NewMemStore">
       <data key="d3">CALLS</data>
     </edge>
-    <edge id="e15" source="example.com/fixture/store.MemStore.Put" target="example.com/fixture/store.normalize">
+    <edge id="e15" source="example.com/fixture/service.TestSaveLoad" target="example.com/fixture/service.New">
+      <data key="d3">CALLS</data>
+    </edge>
+    <edge id="e16" source="example.com/fixture/service.TestSaveLoad" target="example.com/fixture/service.Service.Load">
+      <data key="d3">CALLS</data>
+    </edge>
+    <edge id="e17" source="example.com/fixture/service.TestSaveLoad" target="example.com/fixture/service.Service.Save">
+      <data key="d3">CALLS</data>
+    </edge>
+    <edge id="e18" source="example.com/fixture/service.TestSaveLoad" target="example.com/fixture/store.NewMemStore">
+      <data key="d3">CALLS</data>
+    </edge>
+    <edge id="e19" source="example.com/fixture/store.MemStore.Put" target="example.com/fixture/store.normalize">
       <data key="d3">CALLS</data>
     </edge>
   </graph>

@@ -9,6 +9,10 @@
     ],
     "query_ms": 0,
     "symbol": "example.com/fixture/store.NewMemStore",
+    "test_callers": [
+      "example.com/fixture/service.TestReport",
+      "example.com/fixture/service.TestSaveLoad"
+    ],
     "total_affected": 1,
     "transitive_callers": []
   },

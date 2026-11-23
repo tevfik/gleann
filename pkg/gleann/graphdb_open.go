@@ -1,12 +1,29 @@
 package gleann
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
+	"os"
 	"path/filepath"
 
 	"github.com/tevfik/gleann/internal/graphstore"
 	"github.com/tevfik/gleann/internal/store"
 )
+
+// graphStorePresent reports whether <name>.db exists. OpenGraphDB and
+// OpenGraphStore must check it before store.Open, which would create an empty
+// database and hide a lost store from HasCodeGraph (and from Sync, which would
+// then overwrite the index without the graph it used to hold).
+func graphStorePresent(base string) (bool, error) {
+	if _, err := os.Stat(base + ".db"); err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return false, nil
+		}
+		return false, err
+	}
+	return true, nil
+}
 
 // OpenGraphDB opens the code graph of a format-2 index for standalone graph
 // queries (CLI `gleann graph ...`), without loading the passage searcher.
@@ -18,6 +35,15 @@ import (
 func OpenGraphDB(indexDir, name string) (GraphDB, error) {
 	base := filepath.Join(indexDir, name, name)
 	if StoreFormatOf(base) != 2 {
+		return nil, nil
+	}
+	present, err := graphStorePresent(base)
+	if err != nil {
+		return nil, fmt.Errorf("checking index store for graph queries: %w", err)
+	}
+	if !present {
+		// Never let store.Open create an empty database: a missing store is
+		// "no graph", not a new empty index.
 		return nil, nil
 	}
 	st, err := store.Open(base+".db", store.Options{})
@@ -50,6 +76,29 @@ func (d *ownedGraphDB) Close() {
 	d.st.Close()
 }
 
+// HasTreeSitterEdges forwards the check to the underlying GraphDB implementation.
+func (d *ownedGraphDB) HasTreeSitterEdges() bool {
+	if checker, ok := d.GraphDB.(interface{ HasTreeSitterEdges() bool }); ok {
+		return checker.HasTreeSitterEdges()
+	}
+	return false
+}
+
+// ResolveSymbolFiles forwards the symbol file resolution to the underlying GraphDB implementation.
+func (d *ownedGraphDB) ResolveSymbolFiles(symbol string, dir int) ([]string, error) {
+	if resolver, ok := d.GraphDB.(interface {
+		ResolveSymbolFiles(string, int) ([]string, error)
+	}); ok {
+		return resolver.ResolveSymbolFiles(symbol, dir)
+	}
+	return nil, nil
+}
+
+// Unwrap returns the underlying GraphDB.
+func (d *ownedGraphDB) Unwrap() GraphDB {
+	return d.GraphDB
+}
+
 // GraphStore is the format-2 code graph of an index opened for analysis
 // (communities, risk, repo map, REST and MCP tools): the graphstore handle
 // plus the index database it borrows. Close releases the database.
@@ -73,6 +122,15 @@ func (g *GraphStore) GraphDB() GraphDB { return &sqliteGraphDB{g: g.SQLite} }
 func OpenGraphStore(indexDir, name string) (*GraphStore, error) {
 	base := filepath.Join(indexDir, name, name)
 	if StoreFormatOf(base) != 2 {
+		return nil, nil
+	}
+	present, err := graphStorePresent(base)
+	if err != nil {
+		return nil, fmt.Errorf("checking index store for graph analysis: %w", err)
+	}
+	if !present {
+		// A missing store must stay missing until the sync rebuilds it; see
+		// OpenGraphDB.
 		return nil, nil
 	}
 	st, err := store.Open(base+".db", store.Options{})

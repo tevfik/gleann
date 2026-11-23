@@ -366,6 +366,61 @@ func (d *sqliteGraphDB) Stats() (*GraphStats, error) {
 	}, nil
 }
 
+// ResolveSymbolFiles resolves a symbol to its source files, prioritizing symbols
+// with CALLS edges matching the requested query direction and falling back
+// to the declaration resolution hierarchy. DirectionBoth unions the callers
+// and callees seeds, so a surface that answers both sides (MCP neighbors) does
+// not fall through to the direction-agnostic declaration fallback when the
+// symbol only has edges on one side.
+func (d *sqliteGraphDB) ResolveSymbolFiles(symbol string, dir int) ([]string, error) {
+	seeds, err := d.resolvedSeeds(symbol, dir)
+	if err == nil && len(seeds) > 0 {
+		m, err := d.g.DeclaredFQNs(seeds)
+		if err == nil && len(m) > 0 {
+			files := make([]string, 0, len(m))
+			for _, f := range m {
+				files = append(files, f)
+			}
+			sort.Strings(files) // map iteration order must not leak into results
+			return files, nil
+		}
+	}
+	return d.g.ResolveDeclarationFiles(symbol)
+}
+
+// resolvedSeeds resolves symbol on the requested side of the CALLS graph.
+// DirectionBoth returns the deduplicated union of the callers-side and
+// callees-side seeds, sorted by FQN.
+func (d *sqliteGraphDB) resolvedSeeds(symbol string, dir int) ([]string, error) {
+	if dir != DirectionBoth {
+		return d.g.ResolveSymbols(symbol, graphstore.Direction(dir))
+	}
+	callers, err := d.g.ResolveSymbols(symbol, graphstore.DirectionCallers)
+	if err != nil {
+		return nil, err
+	}
+	callees, err := d.g.ResolveSymbols(symbol, graphstore.DirectionCallees)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]string, 0, len(callers)+len(callees))
+	seen := make(map[string]bool, len(callers)+len(callees))
+	for _, fqn := range append(callers, callees...) {
+		if !seen[fqn] {
+			seen[fqn] = true
+			out = append(out, fqn)
+		}
+	}
+	sort.Strings(out)
+	return out, nil
+}
+
+// HasTreeSitterEdges reports whether the code graph contains tree-sitter CALLS edges
+// for non-Go source files.
+func (d *sqliteGraphDB) HasTreeSitterEdges() bool {
+	return d.g.HasTreeSitterEdges()
+}
+
 // Close is a no-op: the underlying store is owned by the passage store and is
 // closed with it (RFC 003 section 8 step 7: Close must not double-close the
 // shared store).

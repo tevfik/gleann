@@ -1,24 +1,30 @@
 Community Detection — fixture
-Nodes: 51 | Edges: 58 | Communities: 13 | Modularity: 0.6253
+Nodes: 51 | Edges: 62 | Communities: 14 | Modularity: 0.4798
 
 Community 0: app (7 nodes, cohesion=0.043)
 Community 1: app (6 nodes, cohesion=0.050)
 Community 2: main (5 nodes, cohesion=0.060)
-Community 3: service_test (5 nodes, cohesion=0.230)
-Community 4: service (5 nodes, cohesion=0.060)
-Community 5: service (4 nodes, cohesion=0.317)
-Community 6: main (3 nodes, cohesion=0.267)
+Community 3: service (5 nodes, cohesion=0.060)
+Community 4: service (4 nodes, cohesion=0.317)
+Community 5: main (3 nodes, cohesion=0.267)
+Community 6: util (3 nodes, cohesion=0.100)
 Community 7: util (3 nodes, cohesion=0.100)
-Community 8: util (3 nodes, cohesion=0.100)
+Community 8: service_test (3 nodes, cohesion=0.217)
 Community 9: store (3 nodes, cohesion=0.100)
 Community 10: util (3 nodes, cohesion=0.100)
 Community 11: service (2 nodes, cohesion=0.500)
-Community 12: store (2 nodes, cohesion=0.500)
+Community 12: service_test (2 nodes, cohesion=0.500)
+Community 13: store (2 nodes, cohesion=0.500)
 
 God Nodes:
   [file] service/service.go (in=0, out=9)
   [file] store/store.go (in=0, out=7)
   [function] main (in=1, out=5)
+  [method] Service.Save (in=4, out=2)
   [file] py/app.py (in=0, out=6)
+  [method] Service.Load (in=4, out=1)
+  [method] Service.Report (in=3, out=2)
+  [function] TestReport (in=1, out=4)
+  [function] TestSaveLoad (in=1, out=4)
   [interface] Store (in=5, out=0)
   [file] ts/app.ts (in=0, out=5)

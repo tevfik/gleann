@@ -1,8 +1,7 @@
-//go:build !windows
-
 package indexer
 
 import (
+	"path/filepath"
 	"testing"
 
 	gtypes "github.com/tevfik/gleann/internal/graph/types"
@@ -33,7 +32,7 @@ type MyServer struct {
 	name string
 }
 `
-	chunks := chunking.NewASTChunker(chunking.DefaultASTChunkerConfig()).ChunkCode(source, "/proj/server/server.go")
+	chunks := chunking.NewASTChunker(chunking.DefaultASTChunkerConfig()).ChunkCode(source, filepath.FromSlash("server/server.go"))
 
 	impls, refs, _ := collectGoImplementsEdges("github.com/test/proj", "server/server.go", source, chunks)
 
@@ -94,7 +93,7 @@ func NewService(cfg Config, db Database) *Service {
 	return &Service{config: cfg, db: db}
 }
 `
-	chunks := chunking.NewASTChunker(chunking.DefaultASTChunkerConfig()).ChunkCode(source, "/proj/service/service.go")
+	chunks := chunking.NewASTChunker(chunking.DefaultASTChunkerConfig()).ChunkCode(source, filepath.FromSlash("service/service.go"))
 
 	_, refs, _ := collectGoImplementsEdges("github.com/test/proj", "service/service.go", source, chunks)
 
@@ -134,7 +133,7 @@ func Handle(req Request) Response {
 	return Response{Code: 200}
 }
 `
-	chunks := chunking.NewASTChunker(chunking.DefaultASTChunkerConfig()).ChunkCode(source, "/proj/handler/handler.go")
+	chunks := chunking.NewASTChunker(chunking.DefaultASTChunkerConfig()).ChunkCode(source, filepath.FromSlash("handler/handler.go"))
 
 	_, refs, _ := collectGoImplementsEdges("github.com/test/proj", "handler/handler.go", source, chunks)
 
@@ -166,7 +165,7 @@ import "net/http"
 func serve(w http.ResponseWriter, r *http.Request) {
 }
 `
-	chunks := chunking.NewASTChunker(chunking.DefaultASTChunkerConfig()).ChunkCode(source, "/proj/main.go")
+	chunks := chunking.NewASTChunker(chunking.DefaultASTChunkerConfig()).ChunkCode(source, filepath.FromSlash("main.go"))
 
 	_, refs, _ := collectGoImplementsEdges("github.com/test/proj", "main.go", source, chunks)
 

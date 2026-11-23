@@ -205,8 +205,14 @@ func detectSourceHint(lang chunking.Language, source string, startLine int, kind
 	if startLine <= 0 || source == "" {
 		return kindHint
 	}
-	lines := strings.Split(source, "\n")
-	if startLine > len(lines) {
+	return detectSourceHintLines(lang, strings.Split(source, "\n"), startLine, kindHint)
+}
+
+// detectSourceHintLines is detectSourceHint over the lines of the source
+// (strings.Split(source, "\n")), so a caller that asks for every symbol of a
+// file splits the file once instead of once per symbol.
+func detectSourceHintLines(lang chunking.Language, lines []string, startLine int, kindHint string) string {
+	if startLine <= 0 || startLine > len(lines) {
 		return kindHint
 	}
 	// Stage 1: check the declaration line itself for in-line markers
