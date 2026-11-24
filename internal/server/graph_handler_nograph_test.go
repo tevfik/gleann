@@ -117,13 +117,13 @@ func TestAcquireSearcher_OldFormatConflict(t *testing.T) {
 		t.Fatalf("acquireSearcher = %v, want ErrOldStoreFormat", err)
 	}
 	w := httptest.NewRecorder()
-	writeSearcherError(w, "old", err)
+	writeSearcherError(w, httptest.NewRequest(http.MethodGet, "/", nil), "old", err)
 	if w.Code != http.StatusConflict || !strings.Contains(w.Body.String(), "gleann index migrate old") {
 		t.Errorf("got %d %s, want 409 with the migration hint", w.Code, w.Body.String())
 	}
 	w = httptest.NewRecorder()
-	writeSearcherError(w, "x", errors.New("boom"))
-	if w.Code != http.StatusNotFound {
-		t.Errorf("other errors: got %d, want 404", w.Code)
+	writeSearcherError(w, httptest.NewRequest(http.MethodGet, "/", nil), "x", errors.New("boom"))
+	if w.Code != http.StatusInternalServerError {
+		t.Errorf("other errors: got %d, want 500", w.Code)
 	}
 }

@@ -21,6 +21,7 @@ type LeannBuilder struct {
 	chunker    Chunker
 	progressCb func(phase string, done, total int)
 	limits     incrementalLimits // delta and dead-slot limits of RFC 005, read once at creation
+	metaHook   func(*IndexMeta)  // applied to the metadata of every passage build before it is written (SetMetaHook)
 	sourceDir  string            // documents directory, for the files-table content hashes (SetSourceDir)
 	// crashHook injects a failure at a named boundary of the format-2 vector
 	// publication (tests only; see the crash* constants in builder_format2.go).
@@ -79,6 +80,15 @@ func (b *LeannBuilder) SetProgressCallback(cb func(phase string, done, total int
 // reading as untagged and exposed until the end of the rebuild. An index that
 // has a readable meta.json uses that file instead.
 func (b *LeannBuilder) SetPreviousMeta(m *IndexMeta) { b.fallbackMeta = m }
+
+// SetMetaHook registers a function applied to the index metadata just before
+// BuildPassages writes it, after the previous metadata is carried over. It lets
+// a caller attach governance fields (tags, description, exposure) in the very
+// write that creates the index, instead of a second update that can fail
+// and leave an index without them.
+func (b *LeannBuilder) SetMetaHook(f func(*IndexMeta)) {
+	b.metaHook = f
+}
 
 // SetChunker sets a custom chunker for text processing.
 func (b *LeannBuilder) SetChunker(chunker Chunker) {
@@ -143,6 +153,10 @@ func (b *LeannBuilder) BuildPassages(name string, items []Item) ([]int64, error)
 		if !prevMeta.CreatedAt.IsZero() {
 			meta.CreatedAt = prevMeta.CreatedAt
 		}
+	}
+
+	if b.metaHook != nil {
+		b.metaHook(&meta)
 	}
 
 	meta.StoreFormat = 2

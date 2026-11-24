@@ -99,7 +99,7 @@ func (s *Server) handleListModels(w http.ResponseWriter, r *http.Request) {
 	seenTags := make(map[string]bool)
 	for _, idx := range indexes {
 		// Governance: only expose public (MCP exposed) indexes to AI agents
-		if !idx.IsMCPExposed() {
+		if !s.isIndexAccessibleMeta(&idx) {
 			continue
 		}
 		models = append(models, oaiModel{
@@ -128,6 +128,31 @@ func (s *Server) handleListModels(w http.ResponseWriter, r *http.Request) {
 // ---------------------------------------------------------------------------
 // POST /v1/chat/completions
 // ---------------------------------------------------------------------------
+
+// checkProxyModelAccess refuses (before anything is loaded) a model that
+// names an index the client may not use: GLEANN_TAGS and the client target
+// apply as on the index routes, and under a restriction a missing index looks
+// like a forbidden one. An @tag reference is not checked here; it expands only
+// to the indexes the restriction allows (expandProxyIndexNames).
+func (s *Server) checkProxyModelAccess(r *http.Request, indexNames []string) error {
+	// X-Gleann-Index selects the model on the pass-through path, so only an
+	// explicit X-Gleann-Target (or ?target=) pins the client here.
+	pinned := r.Header.Get("X-Gleann-Target") != "" || r.URL.Query().Get("target") != ""
+	for _, n := range indexNames {
+		if pinned {
+			if err := s.checkClientTarget(r, n); err != nil {
+				return err
+			}
+		}
+		if strings.HasPrefix(n, "@") {
+			continue
+		}
+		if err := s.checkIndexTags(n); err != nil {
+			return err
+		}
+	}
+	return nil
+}
 
 // handleChatCompletions is the OpenAI-compatible RAG proxy endpoint.
 // It accepts standard chat completion requests, performs RAG retrieval
@@ -158,6 +183,11 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, "invalid index name in model: "+err.Error())
 			return
 		}
+	}
+
+	if err := s.checkProxyModelAccess(r, indexNames); err != nil {
+		writeError(w, http.StatusForbidden, err.Error())
+		return
 	}
 
 	// Per-request RAG option overrides from headers.
@@ -365,7 +395,7 @@ func (s *Server) expandProxyIndexNames(rawNames []string) ([]string, error) {
 			}
 			found := false
 			for _, idx := range allIndexes {
-				if idx.IsMCPExposed() && idx.HasTag(tag) {
+				if s.isIndexAccessibleMeta(&idx) && idx.HasTag(tag) {
 					found = true
 					if !seen[idx.Name] {
 						seen[idx.Name] = true
@@ -558,7 +588,10 @@ func (s *Server) retrieveProxyContextLimited(
 	perIndex := make(map[string][]gleann.SearchResult)
 	for _, name := range resolvedNames {
 		// Governance: a private index is refused when asked for alone and skipped in multi-index queries.
-		if meta, err := gleann.GetIndexMeta(s.cfg().IndexDir, name); err == nil && !meta.IsMCPExposed() {
+		// Under GLEANN_TAGS an index that is missing, unreadable or other-tagged
+		// is refused the same way (the handler has normally answered 403 already).
+		meta, merr := gleann.GetIndexMeta(s.cfg().IndexDir, name)
+		if len(allowedTags()) > 0 && (merr != nil || !s.isIndexAccessibleMeta(meta)) || merr == nil && !meta.IsMCPExposed() {
 			if single {
 				return "", nil, nil, fmt.Errorf("index %q is private and not exposed via proxy", name)
 			}

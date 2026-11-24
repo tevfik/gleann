@@ -158,9 +158,9 @@ func TestHandleDeleteIndexNotFound(t *testing.T) {
 
 	mux.ServeHTTP(w, req)
 
-	// Should succeed even if nothing to delete (os.RemoveAll is idempotent).
-	if w.Code != http.StatusOK {
-		t.Errorf("expected 200, got %d", w.Code)
+	// A missing index is 404, as the API spec says.
+	if w.Code != http.StatusNotFound {
+		t.Errorf("expected 404, got %d", w.Code)
 	}
 }
 

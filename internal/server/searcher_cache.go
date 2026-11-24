@@ -312,20 +312,37 @@ func (s *Server) cachedSearcherCount() int {
 	return len(s.searchers)
 }
 
-// writeSearcherError answers a failed acquireSearcher: an index in the old
-// store format is a conflict the caller can resolve with `gleann index
-// migrate` (409 with that hint), a load that kept being invalidated is 503
-// with Retry-After; anything else is reported as not found.
-func writeSearcherError(w http.ResponseWriter, name string, err error) {
-	if errors.Is(err, gleann.ErrOldStoreFormat) {
+// writeSearcherError answers a failed acquireSearcher by class: an index that
+// does not exist (not-exist, or a plain file where its directory should be) is
+// 404; one in the old store format is a conflict the caller can resolve with
+// `gleann index migrate` (409 with that hint); a load that kept being
+// invalidated, or ran into the server's deadline, is 503 with Retry-After; a
+// client that went away gets nothing worth sending (499, logged only);
+// anything else (corrupt database, unreadable file, model mismatch) is a
+// server-side 500 with a generic body, never "not found". The detail of a 500
+// is logged, not sent: it carries file paths.
+func writeSearcherError(w http.ResponseWriter, r *http.Request, name string, err error) {
+	switch {
+	case errors.Is(err, gleann.ErrOldStoreFormat):
 		writeError(w, http.StatusConflict, err.Error())
-		return
-	}
-	if errors.Is(err, errSearcherBusy) {
+	case errors.Is(err, context.Canceled) && r.Context().Err() != nil:
+		// The request's own context is done: the client went away.
+		log.Printf("load index %q: client went away: %v", name, err)
+		w.WriteHeader(statusClientClosedRequest)
+	case errors.Is(err, errSearcherBusy), errors.Is(err, context.DeadlineExceeded), errors.Is(err, context.Canceled):
+		// A canceled load with a live client is the server shutting down (the
+		// load runs on the server's lifetime and every waiter gets its error).
 		// Transient, not "not found": the client should retry.
 		w.Header().Set("Retry-After", "1")
-		writeError(w, http.StatusServiceUnavailable, err.Error())
-		return
+		writeError(w, http.StatusServiceUnavailable, fmt.Sprintf("index %q is busy; retry", name))
+	case indexMissing(err):
+		writeError(w, http.StatusNotFound, fmt.Sprintf("index %q not found", name))
+	default:
+		log.Printf("load index %q: %v", name, err)
+		writeError(w, http.StatusInternalServerError, fmt.Sprintf("index %q could not be loaded", name))
 	}
-	writeError(w, http.StatusNotFound, fmt.Sprintf("index %q not found: %v", name, err))
 }
+
+// statusClientClosedRequest is the nginx convention for a request the client
+// abandoned; nobody reads it, it only keeps the log and metrics honest.
+const statusClientClosedRequest = 499

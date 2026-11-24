@@ -91,18 +91,18 @@ a token, but they are deliberately outside the spec.
 | Method | Path | Description |
 |--------|------|-------------|
 | GET | `/api/indexes` | List all indexes |
-| GET | `/api/indexes/{name}` | Get index metadata |
+| GET | `/api/indexes/{name}` | Get index metadata. `400` invalid name, `403` access denied (client target or tag isolation), `404` unknown index, `409` old store format, `500` index cannot be loaded (corrupt or unreadable), `503` index kept changing while loading (`Retry-After`) |
 | GET | `/api/indexes/{name}/passages` | List stored passages in internal ID order (`?limit=`, default 100, max 1000; `?offset=`). One SQLite page per request (`ORDER BY id LIMIT/OFFSET`); no vector file or embedder is loaded. `id` is the internal passage ID (the sort key), `vec_slot` the ID search results carry (null for a lexical-only passage). `400` invalid name/limit/offset, `403` client-target or tag isolation, `404` missing index, `409` old store format (run `gleann index migrate <name>`) |
 | GET | `/api/indexes/{name}/sections` | List document sections grouped from passage metadata (`section_id`, `section_title`, `section_path`, `section_summary`, falling back to `heading`/`title`) with `passage_count` and the chunk and passage-ID ranges of each section. Passages without section metadata are not listed. Same `?limit=`/`?offset=` bounds and status codes as `/passages` |
 | GET | `/api/storage` | Disk space of the index directory: `index_dir`, `indexes`, `passages`, `bytes` (every file under it) and the file system's `disk_total_bytes` / `disk_free_bytes` (0 where the platform does not report it); also the whole gleann data folder (`GLEANN_CONFIG_DIR`, default `~/.gleann`): `data_dir`, `data_bytes` and `data_folders` (bytes per top-level entry, e.g. `models`). The data-folder walk is cached for 60 s |
 | POST | `/api/indexes/{name}/storage` | Convert the index between `store` and `recompute` vector storage (body `{"mode":"store"\|"recompute"}`); `202 {"task_id"}` while it re-indexes in the background (see Background Tasks), `200 {"unchanged":true}` when it already uses that mode, `409` when the index cannot be switched, `501` when the server was started without the converter |
-| PATCH | `/api/indexes/{name}` | Update index governance (`tags`, `description`, `mcp_exposed`); only fields present in the body change. `400` invalid name/body, `403` access denied (client target or tag isolation, as on `GET`), `404` unknown index, `500` metadata update failure |
+| PATCH | `/api/indexes/{name}` | Update index governance (`tags`, `description`, `mcp_exposed`); only fields present in the body change. `400` invalid name/body, `403` access denied (client target or tag isolation, as on `GET`), `404` unknown index (unrestricted clients), `500` metadata update failure |
 | POST | `/api/indexes/{name}/build` | Build index from texts/items |
 | POST | `/api/indexes/{name}/update` | Remove the passages of some sources and/or add items |
 | POST | `/api/indexes/{name}/index-path` | Index a directory on the server (must be inside `allowed_roots`, default: home) |
 | POST | `/api/indexes/{name}/watch` | Watch and auto-rebuild index on changes |
 | POST | `/api/indexes/{name}/upload` | Upload a document into a new index. The build runs without the vault tracker and with a memory-only embedding cache, so the document lives only in its index (deleting the index removes it); at start the server removes vault records that older versions left for upload temp folders |
-| DELETE | `/api/indexes/{name}` | Delete an index |
+| DELETE | `/api/indexes/{name}` | Delete an index. `403` access denied (client target or tag isolation), `404` unknown index (unrestricted clients) |
 
 
 ### Search & RAG
@@ -944,9 +944,9 @@ Common HTTP status codes:
 | 200 | Success |
 | 400 | Bad request (missing required fields) |
 | 403 | Scope too low, or a client-supplied path (`index-path`, `update` `docs_root`, `watch` `dir`, graph `docs_dir`) is outside `allowed_roots` (see below) |
-| 404 | Index or graph not found |
+| 404 | Index or graph not found. `GLEANN_TAGS` restricts every index route, reads and writes (build, update, index-path, watch, upload, storage, delete, graph, memory, multi-index search, the OpenAI proxy); a missing (or unreadable) index looks like a forbidden one to a restricted client: the same `403`, so index names cannot be probed. Exception: with `GLEANN_TAGS` set, `build` creates a new index when its `tags` include an allowed tag (stored with the index); `upload` cannot carry tags and so cannot create one. Under `GLEANN_TAGS`, `build`, `PATCH` and `index-path` accept only tags inside the allowed set (`build` and `PATCH` also at least one of them; `403` otherwise); `index-path` cannot create an index under `GLEANN_TAGS` |
 | 429 | Rate limit exceeded (per-IP token bucket; see `GLEANN_RATE_LIMIT`) — includes `Retry-After: 1` header |
-| 500 | Internal server error |
+| 500 | Internal server error (also an index that exists but cannot be loaded: corrupt or unreadable) |
 | 503 | Feature unavailable |
 | 504 | Gateway timeout — request exceeded its deadline (see `GLEANN_TIMEOUT_*_S` env vars) |
 

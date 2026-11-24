@@ -50,7 +50,7 @@ func (s *Server) openAPISpec() map[string]any {
 			{"name": "system", "description": "Server control and observability: logs, proxy stop, and proxy provider model discovery"},
 			{"name": "packs", "description": "Knowledge Packs — domain-specific readonly datasets (crops, pests, varieties, …) served as versioned YAML bundles"},
 		},
-		"paths": s.openAPIPaths(),
+		"paths": withAccessResponses(s.openAPIPaths()),
 		// Bearer auth is declared once here so importing /api/openapi.json into
 		// Postman surfaces a single security scheme that every operation
 		// inherits. The four public routes (health, the agent card, the Swagger
@@ -218,4 +218,63 @@ func (s *Server) handleSwaggerUI(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "public, max-age=3600")
 	w.WriteHeader(http.StatusOK)
 	fmt.Fprint(w, swaggerUIHTML)
+}
+
+// accessRestrictedOps are the operations that answer 403 for a client the
+// GLEANN_TAGS isolation or the X-Gleann-Target pin keeps away from an index.
+// GLEANN_TAGS restricts every index route, reads and writes; a missing index
+// looks like a forbidden one to a restricted client.
+var accessRestrictedOps = map[string][]string{
+	"/api/indexes/{name}":            {"get", "delete", "patch"},
+	"/api/indexes/{name}/passages":   {"get"},
+	"/api/indexes/{name}/sections":   {"get"},
+	"/api/indexes/{name}/search":     {"post"},
+	"/api/indexes/{name}/ask":        {"post"},
+	"/api/indexes/{name}/build":      {"post"},
+	"/api/indexes/{name}/update":     {"post"},
+	"/api/indexes/{name}/index-path": {"post"},
+	"/api/indexes/{name}/watch":      {"post"},
+	"/api/indexes/{name}/upload":     {"post"},
+	"/api/indexes/{name}/storage":    {"post"},
+	"/api/graph/{name}":              {"get"},
+	"/api/graph/{name}/toc":          {"get"},
+	"/api/graph/{name}/documents":    {"get"},
+	"/api/graph/{name}/query":        {"post"},
+	"/api/graph/{name}/index":        {"post"},
+	"/api/memory/{name}/inject":      {"post"},
+	"/api/memory/{name}/nodes/{id}":  {"delete"},
+	"/api/memory/{name}/edges":       {"delete"},
+	"/api/memory/{name}/traverse":    {"post"},
+	"/api/search":                    {"post"},
+	"/v1/chat/completions":           {"post"},
+}
+
+const accessDeniedDescription = "Access denied: client target or GLEANN_TAGS isolation. With GLEANN_TAGS set, an index that does not exist (or whose metadata cannot be read) answers 403 as well, so a restricted client cannot probe index names"
+
+// withAccessResponses documents the 403 of every access-restricted operation
+// (and the 404 /api/search gives an unrestricted client for a missing index).
+func withAccessResponses(paths map[string]any) map[string]any {
+	for path, methods := range accessRestrictedOps {
+		item, _ := paths[path].(map[string]any)
+		for _, m := range methods {
+			op, _ := item[m].(map[string]any)
+			resp, _ := op["responses"].(map[string]any)
+			if resp == nil {
+				continue
+			}
+			if _, ok := resp["403"]; !ok {
+				resp["403"] = map[string]any{"description": accessDeniedDescription}
+			}
+		}
+	}
+	if item, _ := paths["/api/search"].(map[string]any); item != nil {
+		if op, _ := item["post"].(map[string]any); op != nil {
+			if resp, _ := op["responses"].(map[string]any); resp != nil {
+				if _, ok := resp["404"]; !ok {
+					resp["404"] = map[string]any{"description": "A named index does not exist (unrestricted clients)"}
+				}
+			}
+		}
+	}
+	return paths
 }

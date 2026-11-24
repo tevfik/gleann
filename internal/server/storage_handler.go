@@ -48,6 +48,9 @@ func (s *Server) handleSetStorage(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	if s.denyIndexAccess(w, r, name) {
+		return
+	}
 	if s.storageSwitcher == nil {
 		writeError(w, http.StatusNotImplemented, "storage conversion is not available in this server")
 		return

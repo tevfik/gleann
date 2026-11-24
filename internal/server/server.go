@@ -696,7 +696,7 @@ func (s *Server) handleGetIndex(w http.ResponseWriter, r *http.Request) {
 
 	searcher, release, err := s.acquireSearcher(r.Context(), name)
 	if err != nil {
-		writeSearcherError(w, name, err)
+		writeSearcherError(w, r, name, err)
 		return
 	}
 	defer release()
@@ -733,6 +733,15 @@ func (s *Server) handlePatchIndex(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
 		return
+	}
+
+	if req.Tags != nil {
+		norm := gleann.NormalizeTags(*req.Tags)
+		req.Tags = &norm
+		if err := checkRequestedTags(*req.Tags); err != nil {
+			writeError(w, http.StatusForbidden, err.Error())
+			return
+		}
 	}
 
 	// One read-modify-write under the per-index lock: the metadata is read,
@@ -846,7 +855,7 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 
 	searcher, release, err := s.acquireSearcher(r.Context(), name)
 	if err != nil {
-		writeSearcherError(w, name, err)
+		writeSearcherError(w, r, name, err)
 		return
 	}
 	defer release()
@@ -899,7 +908,7 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		release()
 		if searcher, release, err = s.acquireSearcher(r.Context(), name); err != nil {
 			serverMetrics.RecordSearch(time.Since(start), true)
-			writeSearcherError(w, name, err)
+			writeSearcherError(w, r, name, err)
 			return
 		}
 		defer release()
@@ -987,7 +996,7 @@ func (s *Server) handleAsk(w http.ResponseWriter, r *http.Request) {
 
 	searcher, release, err := s.acquireSearcher(r.Context(), name)
 	if err != nil {
-		writeSearcherError(w, name, err)
+		writeSearcherError(w, r, name, err)
 		return
 	}
 	defer release()
@@ -1290,6 +1299,20 @@ func (s *Server) handleBuild(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
 		return
 	}
+	req.Tags = gleann.NormalizeTags(req.Tags)
+	// A build may create the index: under GLEANN_TAGS that needs an allowed tag
+	// in the request (it is stored with the index).
+	if err := s.checkIndexCreateAccess(r, name, req.Tags); err != nil {
+		writeError(w, http.StatusForbidden, err.Error())
+		return
+	}
+	// ...and may not move the index to another tenant.
+	if len(req.Tags) > 0 {
+		if err := checkRequestedTags(req.Tags); err != nil {
+			writeError(w, http.StatusForbidden, err.Error())
+			return
+		}
+	}
 
 	if req.Backend != "" {
 		if _, err := gleann.GetBackend(req.Backend); err != nil {
@@ -1329,12 +1352,37 @@ func (s *Server) handleBuild(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Governance fields travel with the build: the metadata write that creates
+	// the index carries them, so there is no window (or failed second write)
+	// that leaves an index without its tags.
+	if len(req.Tags) > 0 || req.Description != "" || req.MCPExposed != nil {
+		builder.SetMetaHook(func(meta *gleann.IndexMeta) {
+			if len(req.Tags) > 0 {
+				meta.Tags = req.Tags
+			}
+			if req.Description != "" {
+				meta.Description = req.Description
+			}
+			if req.MCPExposed != nil {
+				meta.MCPExposed = req.MCPExposed
+			}
+		})
+	}
+
+	// A restricted client's failed create must not leave a half-built index it
+	// can neither see nor delete: remove what this request created.
+	_, statErr := os.Lstat(filepath.Join(s.cfg().IndexDir, name))
+	createdHere := len(allowedTags()) > 0 && indexMissing(statErr)
+
 	start := time.Now()
 	s.publish(eventbus.TopicIndexStarted, map[string]any{
 		"index": name,
 		"count": len(items),
 	})
 	if err := builder.Build(r.Context(), name, items); err != nil {
+		if createdHere {
+			s.removePartialCreate(name, req.Tags)
+		}
 		serverMetrics.RecordBuild(time.Since(start), true)
 		s.publish(eventbus.TopicIndexFailed, map[string]any{
 			"index": name,
@@ -1350,21 +1398,6 @@ func (s *Server) handleBuild(w http.ResponseWriter, r *http.Request) {
 		"count":    len(items),
 		"build_ms": buildDuration.Milliseconds(),
 	})
-
-	// Update governance metadata if provided.
-	if len(req.Tags) > 0 || req.Description != "" || req.MCPExposed != nil {
-		_ = gleann.UpdateIndexMeta(s.cfg().IndexDir, name, func(meta *gleann.IndexMeta) {
-			if len(req.Tags) > 0 {
-				meta.Tags = req.Tags
-			}
-			if req.Description != "" {
-				meta.Description = req.Description
-			}
-			if req.MCPExposed != nil {
-				meta.MCPExposed = req.MCPExposed
-			}
-		})
-	}
 
 	// Clear cached searcher (closed once in-flight requests release it).
 	s.invalidateSearcher(name)
@@ -1394,6 +1427,9 @@ func (s *Server) handleUpdateIndex(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	if err := gleann.ValidateName(name); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid index name: "+err.Error())
+		return
+	}
+	if s.denyIndexAccess(w, r, name) {
 		return
 	}
 
@@ -1523,6 +1559,16 @@ func (s *Server) handleDeleteIndex(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	if err := gleann.ValidateName(name); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid index name: "+err.Error())
+		return
+	}
+	if s.denyIndexAccess(w, r, name) {
+		return
+	}
+
+	// A missing index is 404 (a restricted client never gets here: the access
+	// check above answers 403 for it).
+	if _, err := os.Lstat(filepath.Join(s.cfg().IndexDir, name)); indexMissing(err) {
+		writeError(w, http.StatusNotFound, fmt.Sprintf("index %q not found", name))
 		return
 	}
 
@@ -1695,6 +1741,10 @@ func (s *Server) isIndexAccessible(name string) bool {
 	}
 	meta, err := gleann.GetIndexMeta(s.cfg().IndexDir, name)
 	if err != nil {
+		if len(allowedTags()) > 0 {
+			// Fail closed: the tag rule cannot be evaluated without readable metadata.
+			return false
+		}
 		// Fallback for mock or test indexes where directory exists or graphPool has it
 		if s.graphPool != nil {
 			if _, ok := s.graphPool.dbs[name]; ok {
@@ -1724,28 +1774,145 @@ func (s *Server) firstAccessibleIndexName() string {
 	return ""
 }
 
+// allowedTags returns the tags GLEANN_TAGS restricts the server to (nil when
+// no restriction is configured).
+func allowedTags() []string {
+	var allowed []string
+	for _, t := range strings.Split(os.Getenv("GLEANN_TAGS"), ",") {
+		if t = strings.TrimSpace(t); t != "" {
+			allowed = append(allowed, t)
+		}
+	}
+	return allowed
+}
+
+// errIndexForbidden is the one refusal a tag-restricted client gets for an
+// index it may not use, whatever the reason: other tags, no such index, or
+// metadata that cannot be read. The reasons must not be distinguishable.
+func errIndexForbidden(indexName string) error {
+	return fmt.Errorf("access denied: index %q does not match required tags (%s)", indexName, os.Getenv("GLEANN_TAGS"))
+}
+
 // checkIndexAccess verifies both client target constraints and server-side tag isolation rules.
+// With GLEANN_TAGS set it fails closed: an index that does not exist, or whose
+// metadata cannot be read, is refused exactly like one whose tags do not
+// match (same message); the real cause is only logged. This applies to every
+// index-scoped route, reads and writes.
 func (s *Server) checkIndexAccess(r *http.Request, indexName string) error {
 	if err := s.checkClientTarget(r, indexName); err != nil {
 		return err
 	}
-	tagEnv := os.Getenv("GLEANN_TAGS")
-	if tagEnv != "" {
-		meta, err := gleann.GetIndexMeta(s.cfg().IndexDir, indexName)
-		if err == nil {
-			var allowed []string
-			for _, t := range strings.Split(tagEnv, ",") {
-				t = strings.TrimSpace(t)
-				if t != "" {
-					allowed = append(allowed, t)
-				}
-			}
-			if len(allowed) > 0 && !meta.HasAnyTag(allowed) {
-				return fmt.Errorf("access denied: index %q does not match required tags (%s)", indexName, tagEnv)
-			}
+	return s.checkIndexTags(indexName)
+}
+
+// checkIndexTags is the GLEANN_TAGS half of checkIndexAccess.
+func (s *Server) checkIndexTags(indexName string) error {
+	allowed := allowedTags()
+	if len(allowed) == 0 {
+		return nil
+	}
+	meta, err := gleann.GetIndexMeta(s.cfg().IndexDir, indexName)
+	if err != nil {
+		if !indexMissing(err) {
+			log.Printf("access check for index %q: %v", indexName, err)
 		}
+		return errIndexForbidden(indexName)
+	}
+	if !meta.HasAnyTag(allowed) {
+		return errIndexForbidden(indexName)
 	}
 	return nil
+}
+
+// removePartialCreate removes the index a failed restricted create left
+// behind, but only when it is still ours: its metadata is missing or carries
+// exactly the tags this request wrote. An index that carries other tags was
+// created by someone else in the meantime and is left alone.
+func (s *Server) removePartialCreate(name string, wrote []string) {
+	meta, err := gleann.GetIndexMeta(s.cfg().IndexDir, name)
+	switch {
+	case err == nil && !sameTags(meta.Tags, wrote):
+		log.Printf("build %q failed; leaving the index: it carries other tags (%v), so it is not ours", name, meta.Tags)
+		return
+	case err != nil && !indexMissing(err):
+		log.Printf("build %q failed; leaving the index: its metadata is unreadable: %v", name, err)
+		return
+	}
+	s.invalidateSearcher(name)
+	if rerr := gleann.RemoveIndex(s.cfg().IndexDir, name); rerr != nil {
+		log.Printf("build %q failed; removing the partial index: %v", name, rerr)
+	}
+}
+
+func sameTags(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if gleann.NormalizeTag(a[i]) != gleann.NormalizeTag(b[i]) {
+			return false
+		}
+	}
+	return true
+}
+
+// checkRequestedTags limits the tags a restricted client may set (build,
+// PATCH): every one must be in the GLEANN_TAGS set, and at least one must
+// remain, so the client can neither move an index into another tenant nor
+// make it vanish from its own view. Unrestricted servers accept any tags.
+func checkRequestedTags(tags []string) error {
+	allowed := allowedTags()
+	if len(allowed) == 0 {
+		return nil
+	}
+	set := gleann.IndexMeta{Tags: allowed}
+	n := 0
+	for _, t := range tags {
+		if strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(t), "@")) == "" {
+			continue
+		}
+		if !set.HasTag(t) {
+			return fmt.Errorf("access denied: tags must stay within the allowed set (%s)", os.Getenv("GLEANN_TAGS"))
+		}
+		n++
+	}
+	if n == 0 {
+		return fmt.Errorf("access denied: at least one of the allowed tags (%s) must stay on the index", os.Getenv("GLEANN_TAGS"))
+	}
+	return nil
+}
+
+// checkIndexCreateAccess is checkIndexAccess for a request that may create
+// the index (build). Under GLEANN_TAGS, an index that does not exist may be
+// created when the request assigns at least one allowed tag; without one it is
+// refused like any forbidden index. An existing index follows the normal rule.
+// An unreadable one is refused (fail closed).
+func (s *Server) checkIndexCreateAccess(r *http.Request, indexName string, reqTags []string) error {
+	if err := s.checkClientTarget(r, indexName); err != nil {
+		return err
+	}
+	allowed := allowedTags()
+	if len(allowed) == 0 {
+		return nil
+	}
+	_, err := gleann.GetIndexMeta(s.cfg().IndexDir, indexName)
+	if indexMissing(err) {
+		if (gleann.IndexMeta{Tags: reqTags}).HasAnyTag(allowed) {
+			return nil
+		}
+		return errIndexForbidden(indexName)
+	}
+	return s.checkIndexTags(indexName)
+}
+
+// denyIndexAccess answers 403 and reports true when the request may not use
+// the index (see checkIndexAccess).
+func (s *Server) denyIndexAccess(w http.ResponseWriter, r *http.Request, name string) bool {
+	if err := s.checkIndexAccess(r, name); err != nil {
+		writeError(w, http.StatusForbidden, err.Error())
+		return true
+	}
+	return false
 }
 
 func withMiddleware(next http.Handler) http.Handler {
@@ -2200,6 +2367,9 @@ func (s *Server) handleIndexPath(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid index name: "+err.Error())
 		return
 	}
+	if s.denyIndexAccess(w, r, name) {
+		return
+	}
 
 	var req indexPathRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -2209,6 +2379,15 @@ func (s *Server) handleIndexPath(w http.ResponseWriter, r *http.Request) {
 	if req.Path == "" {
 		writeError(w, http.StatusBadRequest, "path required")
 		return
+	}
+	// The tags are appended to the index: a restricted client may only add
+	// allowed ones (the index already carries an allowed tag, which stays).
+	req.Tags = gleann.NormalizeTags(req.Tags)
+	if len(req.Tags) > 0 {
+		if err := checkRequestedTags(req.Tags); err != nil {
+			writeError(w, http.StatusForbidden, err.Error())
+			return
+		}
 	}
 
 	// A client may only have the server index what is inside allowed_roots.
@@ -2308,6 +2487,9 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid index name: "+err.Error())
 		return
 	}
+	if s.denyIndexAccess(w, r, name) {
+		return
+	}
 
 	// The upload is indexed with a full build from a temp dir that holds only
 	// the new file. On an existing index that would replace all of its content,
@@ -2377,6 +2559,9 @@ func (s *Server) handleWatch(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	if err := gleann.ValidateName(name); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid index name: "+err.Error())
+		return
+	}
+	if s.denyIndexAccess(w, r, name) {
 		return
 	}
 

@@ -3,6 +3,7 @@ package server
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -161,7 +162,18 @@ func (s *Server) handleMultiSearch(w http.ResponseWriter, r *http.Request) {
 				}
 				meta, err := gleann.GetIndexMeta(s.cfg().IndexDir, name)
 				if err != nil {
-					writeError(w, http.StatusNotFound, fmt.Sprintf("index %q not found: %v", name, err))
+					switch {
+					case len(allowedTags()) > 0:
+						// Restricted: a missing or unreadable index looks exactly
+						// like a forbidden one; the cause is only logged.
+						log.Printf("multi-search: index %q: %v", name, err)
+						writeError(w, http.StatusForbidden, fmt.Sprintf("access denied: index %q is private or does not match required tags", name))
+					case indexMissing(err):
+						writeError(w, http.StatusNotFound, fmt.Sprintf("index %q not found", name))
+					default:
+						log.Printf("multi-search: index %q: %v", name, err)
+						writeError(w, http.StatusInternalServerError, fmt.Sprintf("index %q could not be read", name))
+					}
 					return
 				}
 				if !s.isIndexAccessibleMeta(meta) {

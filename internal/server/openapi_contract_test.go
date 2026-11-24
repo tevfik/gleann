@@ -471,7 +471,7 @@ func TestPatchIndexGleannTags(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		want int
-	}{{"mine", 200}, {"secret", 403}, {"ghost", 404}, {"okindex", 500}} {
+	}{{"mine", 200}, {"secret", 403}, {"ghost", 403}, {"okindex", 403}} {
 		patch := serve(mux, http.MethodPatch, "/api/indexes/"+tc.name, `{"description":"x"}`, nil).Code
 		if patch != tc.want {
 			t.Errorf("PATCH %s: %d, want %d", tc.name, patch, tc.want)
@@ -480,9 +480,61 @@ func TestPatchIndexGleannTags(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		want int
-	}{{"secret", 403}, {"ghost", 404}} {
+	}{{"secret", 403}, {"ghost", 403}} {
 		if got := serve(mux, http.MethodGet, "/api/indexes/"+tc.name, "", nil).Code; got != tc.want {
 			t.Errorf("GET %s: %d, want %d (PATCH must match GET)", tc.name, got, tc.want)
+		}
+	}
+}
+
+// A client restricted by GLEANN_TAGS must not be able to tell a missing index
+// from one it may not see: same status and same body, on every method and on
+// the other index-scoped routes. An unrestricted client still gets 404.
+func TestGleannTagsDoNotLeakIndexExistence(t *testing.T) {
+	t.Setenv("GLEANN_TAGS", "team")
+	s, mux, dir := patchTestServer(t)
+	mux.HandleFunc("POST /api/indexes/{name}/search", s.handleSearch)
+	mux.HandleFunc("POST /api/indexes/{name}/ask", s.handleAsk)
+	mux.HandleFunc("GET /api/indexes/{name}/passages", s.handleListPassages)
+	mux.HandleFunc("GET /api/indexes/{name}/sections", s.handleListSections)
+	if err := os.MkdirAll(filepath.Join(dir, "secret"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	b, _ := json.Marshal(gleann.IndexMeta{Name: "secret", Tags: []string{"other"}})
+	if err := os.WriteFile(filepath.Join(dir, "secret", "secret.meta.json"), b, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, rt := range []struct{ method, path, body string }{
+		{http.MethodGet, "/api/indexes/%s", ""},
+		{http.MethodPatch, "/api/indexes/%s", `{"description":"x"}`},
+		{http.MethodPost, "/api/indexes/%s/search", `{"query":"q"}`},
+		{http.MethodPost, "/api/indexes/%s/ask", `{"question":"q"}`},
+		{http.MethodGet, "/api/indexes/%s/passages", ""},
+		{http.MethodGet, "/api/indexes/%s/sections", ""},
+	} {
+		forbidden := serve(mux, rt.method, fmt.Sprintf(rt.path, "secret"), rt.body, nil)
+		missing := serve(mux, rt.method, fmt.Sprintf(rt.path, "ghost"), rt.body, nil)
+		if forbidden.Code != http.StatusForbidden {
+			t.Errorf("%s %s secret: %d, want 403", rt.method, rt.path, forbidden.Code)
+		}
+		if missing.Code != forbidden.Code {
+			t.Errorf("%s %s: missing index %d, forbidden index %d; must be equal", rt.method, rt.path, missing.Code, forbidden.Code)
+		}
+		// The names differ in the message; normalise them.
+		fb := strings.ReplaceAll(forbidden.Body.String(), "secret", "NAME")
+		mb := strings.ReplaceAll(missing.Body.String(), "ghost", "NAME")
+		if fb != mb {
+			t.Errorf("%s %s: bodies differ: forbidden %q, missing %q", rt.method, rt.path, fb, mb)
+		}
+	}
+}
+
+func TestMissingIndexIs404WhenUnrestricted(t *testing.T) {
+	t.Setenv("GLEANN_TAGS", "")
+	_, mux, _ := patchTestServer(t)
+	for _, m := range []string{http.MethodGet, http.MethodPatch} {
+		if c := serve(mux, m, "/api/indexes/ghost", `{"description":"x"}`, nil).Code; c != http.StatusNotFound {
+			t.Errorf("%s ghost unrestricted: %d, want 404", m, c)
 		}
 	}
 }

@@ -181,12 +181,33 @@ func (m IndexMeta) IsMCPExposed() bool {
 	return *m.MCPExposed
 }
 
+// NormalizeTag is the one rule for a tag as stored and as matched: trimmed,
+// without a leading "@" (case is kept for display; matching ignores it).
+func NormalizeTag(tag string) string {
+	return strings.TrimPrefix(strings.TrimSpace(tag), "@")
+}
+
+// NormalizeTags normalises every tag (NormalizeTag) and drops empty ones. A
+// nil list stays nil; an empty one stays empty (not nil).
+func NormalizeTags(tags []string) []string {
+	if tags == nil {
+		return nil
+	}
+	out := make([]string, 0, len(tags))
+	for _, t := range tags {
+		if t = NormalizeTag(t); t != "" {
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
 // HasTag returns true if this index contains the specified tag (case-insensitive).
+// A legacy stored "@x" tag matches "x".
 func (m IndexMeta) HasTag(tag string) bool {
-	tag = strings.TrimSpace(strings.ToLower(tag))
-	tag = strings.TrimPrefix(tag, "@")
+	tag = strings.ToLower(NormalizeTag(tag))
 	for _, t := range m.Tags {
-		if strings.EqualFold(strings.TrimSpace(t), tag) {
+		if strings.EqualFold(NormalizeTag(t), tag) {
 			return true
 		}
 	}

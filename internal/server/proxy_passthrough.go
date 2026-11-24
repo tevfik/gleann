@@ -127,6 +127,11 @@ func (s *Server) passthroughChatCompletions(w http.ResponseWriter, r *http.Reque
 		}
 	}
 
+	if err := s.checkProxyModelAccess(r, indexNames); err != nil {
+		writeError(w, http.StatusForbidden, err.Error())
+		return
+	}
+
 	if len(indexNames) > 0 {
 		var searchOpts []gleann.SearchOption
 		if v := r.Header.Get("X-Gleann-Top-K"); v != "" {

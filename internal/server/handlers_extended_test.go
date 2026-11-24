@@ -133,9 +133,9 @@ func TestHandleDeleteIndexMissing(t *testing.T) {
 	w := httptest.NewRecorder()
 	s.handleDeleteIndex(w, req)
 
-	// Should succeed (RemoveAll on non-existent is OK).
-	if w.Code != http.StatusOK {
-		t.Errorf("status = %d, want 200", w.Code)
+	// The API spec promises 404 for a missing index.
+	if w.Code != http.StatusNotFound {
+		t.Errorf("status = %d, want 404", w.Code)
 	}
 }
 
