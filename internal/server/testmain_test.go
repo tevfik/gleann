@@ -1,6 +1,7 @@
 package server
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -25,6 +26,12 @@ func TestMain(m *testing.M) {
 	memory.ResetRemoteForTesting()
 
 	code := m.Run()
+	// A handle left open under tmpDir (typically a block-memory store opened
+	// by a handler under test) makes the RemoveAll below fail on Windows.
+	if open := openFilesUnderDir(tmpDir); len(open) > 0 {
+		fmt.Fprintf(os.Stderr, "FAIL: %d file handle(s) still open at exit: %v\n", len(open), open)
+		code = 1
+	}
 
 	if origRemote != "" {
 		_ = os.Setenv("GLEANN_REMOTE_ADDR", origRemote)

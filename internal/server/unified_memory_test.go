@@ -331,6 +331,7 @@ func TestHandleUnifiedRecallMissingQuery(t *testing.T) {
 
 func TestHandleUnifiedRecallWithProject(t *testing.T) {
 	s := &Server{config: gleann.Config{IndexDir: t.TempDir()}, searchers: make(map[string]*gleann.LeannSearcher)}
+	t.Cleanup(s.closeBlockMem) // the handler opens the block store
 	body, _ := json.Marshal(UnifiedRecallRequest{
 		Query:   "test",
 		Project: "myproj",
@@ -347,6 +348,7 @@ func TestHandleUnifiedRecallWithProject(t *testing.T) {
 
 func TestHandleUnifiedRecallContextFormat(t *testing.T) {
 	s := &Server{config: gleann.Config{IndexDir: t.TempDir()}, searchers: make(map[string]*gleann.LeannSearcher)}
+	t.Cleanup(s.closeBlockMem) // the handler opens the block store
 	body, _ := json.Marshal(UnifiedRecallRequest{
 		Query:  "test",
 		Format: "context",

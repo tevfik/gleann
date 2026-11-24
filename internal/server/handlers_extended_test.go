@@ -193,6 +193,7 @@ func TestHandleListModels(t *testing.T) {
 
 func TestHandleBlockStatsExt(t *testing.T) {
 	s := testServer()
+	t.Cleanup(s.closeBlockMem) // the handler opens the block store
 	req := httptest.NewRequest("GET", "/api/blocks/stats", nil)
 	w := httptest.NewRecorder()
 	s.handleBlockStats(w, req)
@@ -205,6 +206,7 @@ func TestHandleBlockStatsExt(t *testing.T) {
 
 func TestHandleListBlocks(t *testing.T) {
 	s := testServer()
+	t.Cleanup(s.closeBlockMem) // the handler opens the block store
 	req := httptest.NewRequest("GET", "/api/blocks", nil)
 	w := httptest.NewRecorder()
 	s.handleListBlocks(w, req)

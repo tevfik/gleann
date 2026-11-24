@@ -17,13 +17,18 @@ import (
 func testServer(t *testing.T) *Server {
 	t.Helper()
 	tmpDir := t.TempDir()
-	return NewServer(Config{
+	srv := NewServer(Config{
 		IndexDir:          tmpDir,
 		EmbeddingProvider: "ollama",
 		EmbeddingModel:    "bge-m3",
 		OllamaHost:        gleann.DefaultOllamaHost,
 		Version:           "test",
 	})
+	// Close releases the block-memory store (and any cached searcher) the
+	// handlers open under temp dirs; without it t.TempDir cleanup fails on
+	// Windows ("file is being used by another process").
+	t.Cleanup(srv.Close)
+	return srv
 }
 
 // serverWithSource returns a server whose only index, "src", has a source

@@ -98,6 +98,11 @@ type Server struct {
 	stopCh   chan struct{} // closed on Stop() to signal background goroutines
 	stopOnce sync.Once
 
+	// startMu orders Start's set-up (s.server, s.stopCh, background tasks)
+	// against Stop, which a signal handler may call while Start is running.
+	startMu sync.Mutex
+	stopped bool // Stop has run (guarded by startMu); Start then refuses to listen
+
 	sec *securityConfig // resolved by PrepareAuth
 
 	// runtimeOverrides are config keys whose in-memory value differs from the
@@ -424,6 +429,11 @@ func (s *Server) Start() error {
 	globalRateLimiter.applyConfigRates(cfg.RateLimit, cfg.RateBurst)
 	mux := s.buildMux()
 
+	s.startMu.Lock()
+	if s.stopped {
+		s.startMu.Unlock()
+		return http.ErrServerClosed
+	}
 	s.server = &http.Server{
 		Addr:         s.addr,
 		Handler:      securityMiddleware(s.sec, withMiddleware(mux)),
@@ -444,17 +454,23 @@ func (s *Server) Start() error {
 
 	// Older versions recorded the temporary folder of each upload in the vault
 	// (the folder is deleted right after the build); drop those records.
-	go func() {
+	// Tracked so Stop waits until the vault is released again.
+	s.goBackground(func() {
 		prefix := filepath.Join(os.TempDir(), uploadTempPrefix)
-		if n, err := indexing.PruneTrackedPaths(context.Background(), prefix); err != nil {
+		if n, err := indexing.PruneTrackedPaths(s.lifetime(), prefix); err != nil {
 			log.Printf("vault: pruning upload records: %v", err)
 		} else if n > 0 {
 			log.Printf("vault: removed %d records of past upload folders", n)
 		}
-	}()
+	})
+
+	srv := s.server
+	s.startMu.Unlock()
 
 	log.Printf("gleann server starting on %s", s.addr)
-	return s.server.ListenAndServe()
+	// A Stop that ran during set-up has already shut srv down: ListenAndServe
+	// then returns http.ErrServerClosed at once.
+	return srv.ListenAndServe()
 }
 
 // Stop gracefully shuts down the server.
@@ -464,15 +480,19 @@ func (s *Server) Start() error {
 // are stopped, cached searchers closed, and finally the auto-indexer.
 func (s *Server) Stop(ctx context.Context) error {
 	var shutdownErr error
-	if s.server != nil {
-		shutdownErr = s.server.Shutdown(ctx)
+	s.startMu.Lock()
+	srv, stopCh := s.server, s.stopCh
+	s.stopped = true
+	s.startMu.Unlock()
+	if srv != nil {
+		shutdownErr = srv.Shutdown(ctx)
 	}
 
 	// Signal background goroutines to stop and cancel lifetime-bound work
 	// (self-exec'd builds, downloads, searcher loads).
 	s.stopOnce.Do(func() {
-		if s.stopCh != nil {
-			close(s.stopCh)
+		if stopCh != nil {
+			close(stopCh)
 		}
 	})
 	s.lifetime()
