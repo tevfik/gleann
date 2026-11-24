@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### Fixed
+- **Concurrent builds of one index through the server.** `POST /api/indexes/{name}/build` now takes the index lock (`<name>.lock`, the one the CLI build and sync use) on every server: two requests for one name run one after the other instead of overlapping (one used to fail with `assigning slots`), and a build while a CLI build or sync holds the lock answers `409`. Under `GLEANN_TAGS` the access and existence check of a create happens while holding the lock, so two creates cannot both pass it.
+- **Metadata updates are safe across processes.** `UpdateIndexMeta` and the build's metadata write now also take `<name>.meta.lock` (beside the index directory; removed with the index), waiting up to 5 s (an update of a missing index creates no lock file), so a CLI rebuild and a PATCH on a running server no longer lose each other's edit. A longer wait ends in a clear error instead of a lost write.
+- **Watch toggle answers 503 if the metadata was not written** (it answered 200); other bookkeeping metadata writes log a failure instead of dropping it.
+- **Watch toggle survives a rebuild.** `MergeUserMeta` treats `source_dir` and `auto_watch` as one pair, so a rebuild cannot keep one value of the toggle and reset the other.
+- **Model mismatch answers 409, not 500.** Searching, asking or reading an index built with another embedding model than the server's returns `409` with the `model mismatch` message (OpenAPI and `docs/api.md` updated).
+
 ## [v1.21.0] — 2026-11-24
 
 See [docs/releases/v1.21.0.md](docs/releases/v1.21.0.md).

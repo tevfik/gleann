@@ -263,3 +263,25 @@ func TestMergeUserMeta(t *testing.T) {
 		t.Errorf("zero baseline: %+v", dst)
 	}
 }
+
+// The watch toggle sets SourceDir and AutoWatch together. When it lands while
+// a rebuild runs, both come from the file, never one of each.
+func TestMergeUserMetaWatchPair(t *testing.T) {
+	// A rebuild that wrote a fresh file (zero baseline) from a snapshot that
+	// had watching on; meanwhile the file became {/new, off}. AutoWatch equals
+	// the baseline, so the field-wise merge brought the snapshot's "on" back
+	// next to the new directory.
+	snapshot := &IndexMeta{SourceDir: "/old", AutoWatch: true}
+	current := &IndexMeta{SourceDir: "/new", AutoWatch: false}
+	dst := &IndexMeta{}
+	MergeUserMeta(dst, snapshot, nil, current)
+	if dst.SourceDir != "/new" || dst.AutoWatch {
+		t.Fatalf("pair split: %q %v", dst.SourceDir, dst.AutoWatch)
+	}
+	// Untouched file: the snapshot's pair is kept.
+	dst = &IndexMeta{}
+	MergeUserMeta(dst, snapshot, snapshot, snapshot)
+	if dst.SourceDir != "/old" || !dst.AutoWatch {
+		t.Fatalf("pair changed: %q %v", dst.SourceDir, dst.AutoWatch)
+	}
+}

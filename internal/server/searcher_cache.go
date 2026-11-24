@@ -97,6 +97,11 @@ func (s *Server) acquireSearcher(ctx context.Context, name string) (*gleann.Lean
 // request can be retried.
 var errSearcherBusy = errors.New("the index changed during every load attempt; retry")
 
+// ErrModelMismatch: the index was built with an embedding model other than the
+// one the server uses. The caller can fix it (rebuild, or switch the model), so
+// it answers 409 with the message, which names models only.
+var ErrModelMismatch = errors.New("model mismatch")
+
 // loadSearcher loads the index and, unless the cache was invalidated while
 // loading, inserts it into s.searchers. Called via singleflight.
 func (s *Server) loadSearcher(name string) error {
@@ -109,7 +114,7 @@ func (s *Server) loadSearcher(name string) error {
 	// Check model compatibility if dynamic resolution is not configured.
 	if meta, err := gleann.GetIndexMeta(cfg.IndexDir, name); err == nil {
 		if cfg.EmbedderResolver == nil && meta.EmbeddingModel != "" && emb != nil && meta.EmbeddingModel != emb.ModelName() {
-			return fmt.Errorf("model mismatch: index uses '%s', current is '%s'. please delete and recreate index", meta.EmbeddingModel, emb.ModelName())
+			return fmt.Errorf("%w: index uses '%s', current is '%s'. please delete and recreate index", ErrModelMismatch, meta.EmbeddingModel, emb.ModelName())
 		}
 	}
 
@@ -315,15 +320,16 @@ func (s *Server) cachedSearcherCount() int {
 // writeSearcherError answers a failed acquireSearcher by class: an index that
 // does not exist (not-exist, or a plain file where its directory should be) is
 // 404; one in the old store format is a conflict the caller can resolve with
-// `gleann index migrate` (409 with that hint); a load that kept being
+// `gleann index migrate` (409 with that hint), as is one built with another
+// embedding model than the server's (409, ErrModelMismatch); a load that kept being
 // invalidated, or ran into the server's deadline, is 503 with Retry-After; a
 // client that went away gets nothing worth sending (499, logged only);
-// anything else (corrupt database, unreadable file, model mismatch) is a
+// anything else (corrupt database, unreadable file) is a
 // server-side 500 with a generic body, never "not found". The detail of a 500
 // is logged, not sent: it carries file paths.
 func writeSearcherError(w http.ResponseWriter, r *http.Request, name string, err error) {
 	switch {
-	case errors.Is(err, gleann.ErrOldStoreFormat):
+	case errors.Is(err, gleann.ErrOldStoreFormat), errors.Is(err, ErrModelMismatch):
 		writeError(w, http.StatusConflict, err.Error())
 	case errors.Is(err, context.Canceled) && r.Context().Err() != nil:
 		// The request's own context is done: the client went away.

@@ -19,6 +19,7 @@ import (
 	"github.com/tevfik/gleann/internal/fsretry"
 	"github.com/tevfik/gleann/internal/graphstore"
 	"github.com/tevfik/gleann/internal/metafault"
+	"github.com/tevfik/gleann/internal/store"
 )
 
 // LeannSearcher performs search on built indexes.
@@ -1098,12 +1099,32 @@ func canonicalLockKey(metaPath string) string {
 	return filepath.Join(dir, base)
 }
 
-// lockMeta takes the in-process lock of one metadata file and returns the
-// function that releases it.
-func lockMeta(metaPath string) (unlock func()) {
+// metaFileLockWait bounds how long a metadata update waits for another
+// process (a CLI rebuild, a running server) to finish its own update of the
+// same file; the critical section is a read and a rename, so it is short.
+const metaFileLockWait = 5 * time.Second
+
+// lockMeta takes the in-process lock of one metadata file and then a
+// cross-process file lock <indexDir>/<name>.meta.lock (waiting up to
+// metaFileLockWait), and returns the function that releases both. The lock
+// file sits beside the index directory like the index lock, which a rebuild
+// renames aside; it is not the index lock because that one fails fast and
+// is held for a whole build.
+func lockMeta(metaPath string) (unlock func(), err error) {
 	mu, _ := metaLocks.LoadOrStore(canonicalLockKey(metaPath), &sync.Mutex{})
-	mu.(*sync.Mutex).Lock()
-	return mu.(*sync.Mutex).Unlock
+	m := mu.(*sync.Mutex)
+	m.Lock()
+	name := strings.TrimSuffix(filepath.Base(metaPath), ".meta.json")
+	lockPath := filepath.Join(filepath.Dir(filepath.Dir(metaPath)), name+".meta.lock")
+	fl, err := store.AcquireLockWait(lockPath, metaFileLockWait)
+	if err != nil {
+		m.Unlock()
+		return nil, fmt.Errorf("locking metadata of index %q (another gleann process is updating it): %w", name, err)
+	}
+	return func() {
+		_ = fl.Release()
+		m.Unlock()
+	}, nil
 }
 
 // MergeUserMeta sets the user-editable fields of dst (SourceDir, AutoWatch,
@@ -1132,8 +1153,11 @@ func MergeUserMeta(dst, snapshot, baseline, current *IndexMeta) {
 		}
 		return snapshot
 	}
-	dst.SourceDir = pick(current.SourceDir != baseline.SourceDir).SourceDir
-	dst.AutoWatch = pick(current.AutoWatch != baseline.AutoWatch).AutoWatch
+	// SourceDir and AutoWatch are one unit (the watch toggle sets both): an
+	// edit of either takes both from current, so they never end up mixed.
+	watch := pick(current.SourceDir != baseline.SourceDir || current.AutoWatch != baseline.AutoWatch)
+	dst.SourceDir = watch.SourceDir
+	dst.AutoWatch = watch.AutoWatch
 	dst.Tags = pick(!slices.Equal(current.Tags, baseline.Tags)).Tags
 	dst.Description = pick(current.Description != baseline.Description).Description
 	dst.MCPExposed = pick(!sameBoolPtr(current.MCPExposed, baseline.MCPExposed)).MCPExposed
@@ -1154,7 +1178,10 @@ func sameBoolPtr(a, b *bool) bool {
 // name.
 func replaceIndexMeta(indexDir, name string, compose func(current *IndexMeta) (*IndexMeta, error)) error {
 	metaPath := filepath.Join(indexDir, name, name+".meta.json")
-	unlock := lockMeta(metaPath)
+	unlock, err := lockMeta(metaPath)
+	if err != nil {
+		return err
+	}
 	defer unlock()
 	current, _ := GetIndexMeta(indexDir, name)
 	next, err := compose(current)
@@ -1222,7 +1249,15 @@ func UpdateIndexMetaResult(indexDir, name string, updateFn func(*IndexMeta)) (*I
 		return nil, err
 	}
 	metaPath := filepath.Join(indexDir, name, name+".meta.json")
-	unlock := lockMeta(metaPath)
+	// A missing index must not leave a lock file behind: check before locking
+	// (GetIndexMeta below checks again under the lock).
+	if _, err := os.Stat(filepath.Dir(metaPath)); err != nil {
+		return nil, fmt.Errorf("read index metadata: %w", err)
+	}
+	unlock, err := lockMeta(metaPath)
+	if err != nil {
+		return nil, err
+	}
 	defer unlock()
 
 	meta, err := GetIndexMeta(indexDir, name)
@@ -1430,6 +1465,14 @@ func RemoveIndex(indexDir, name string) error {
 			return dirErr
 		}
 		return fmt.Errorf("remove index lock: %w", err)
+	}
+	// Best effort: on Windows the file cannot be deleted while a metadata
+	// update holds or polls it, and a leftover lock file is harmless (it is
+	// reused or removed with the next index of this name). On POSIX a holder
+	// keeps the unlinked file; that only matters while the index is being
+	// removed, when metadata writes race the removal anyway.
+	if err := os.Remove(filepath.Join(indexDir, name+".meta.lock")); err != nil && !os.IsNotExist(err) {
+		log.Printf("remove metadata lock of %q: %v", name, err)
 	}
 	// The v1.9 lexical sidecar lived inside <name>/; its rebuild lock beside it.
 	if err := os.Remove(filepath.Join(indexDir, name+".lex.lock")); err != nil && !os.IsNotExist(err) {

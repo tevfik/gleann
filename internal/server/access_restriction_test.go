@@ -1,22 +1,28 @@
 package server
 
 import (
+	"bufio"
 	"context"
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"github.com/tevfik/gleann/internal/a2a"
 	"github.com/tevfik/gleann/internal/embedding"
+	"github.com/tevfik/gleann/internal/indexing"
 	"github.com/tevfik/gleann/internal/metafault"
+	"github.com/tevfik/gleann/internal/store"
 	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/tevfik/gleann/pkg/gleann"
 )
@@ -574,5 +580,108 @@ func TestFailedRestrictedCreateKeepsForeignIndex(t *testing.T) {
 	b, err := os.ReadFile(filepath.Join(cfg.IndexDir, "raced", "raced.meta.json"))
 	if err != nil || !strings.Contains(string(b), `"other"`) {
 		t.Errorf("the other tenant's index was removed or changed: %v %s", err, b)
+	}
+}
+
+// Two creates of one new name race, with and without GLEANN_TAGS. Both used
+// to pass the existence check and build into one directory (one failed with
+// "assigning slots"; under GLEANN_TAGS the cleanup could then remove the
+// winner's index). The server's build takes the index lock, so they run one
+// after the other: the second is a rebuild of the first one's index. Neither
+// fails, and the index is intact with the tags of the request that ran last.
+func TestConcurrentCreatesOfOneName(t *testing.T) {
+	for _, tags := range []string{"", "a,b"} {
+		t.Run("GLEANN_TAGS="+tags, func(t *testing.T) {
+			t.Setenv("GLEANN_TAGS", "")
+			_, h, cfg := newIndexedServer(t)
+			t.Setenv("GLEANN_TAGS", tags)
+			for i := 0; i < 6; i++ {
+				name := fmt.Sprintf("race%d", i)
+				var wg sync.WaitGroup
+				codes := make([]int, 2)
+				bodies := make([]string, 2)
+				for j, tag := range []string{"a", "b"} {
+					wg.Add(1)
+					go func() {
+						defer wg.Done()
+						w := doJSON(h, "POST", "/api/indexes/"+name+"/build",
+							`{"items":[{"text":"hello world"},{"text":"second passage"}],"tags":["`+tag+`"]}`, nil)
+						codes[j], bodies[j] = w.Code, w.Body.String()
+					}()
+				}
+				wg.Wait()
+				for j := range codes {
+					if codes[j] != http.StatusOK {
+						t.Fatalf("round %d request %d: %d %s, want 200 (serialised)", i, j, codes[j], bodies[j])
+					}
+				}
+				m, err := gleann.GetIndexMeta(cfg.IndexDir, name)
+				if err != nil {
+					t.Fatalf("round %d: the winner's index is gone: %v", i, err)
+				}
+				if len(m.Tags) != 1 || (m.Tags[0] != "a" && m.Tags[0] != "b") {
+					t.Fatalf("round %d: tags = %v", i, m.Tags)
+				}
+			}
+		})
+	}
+}
+
+// Another process holds <name>.lock (a CLI build or sync): the build route
+// answers 409 and changes nothing.
+func TestBuildAnswers409WhenOtherProcessHoldsIndexLock(t *testing.T) {
+	t.Setenv("GLEANN_TAGS", "")
+	_, h, cfg := newIndexedServer(t)
+
+	cmd := exec.Command(os.Args[0], "-test.run=^TestIndexLockHelperProcess$", "-test.timeout=60s")
+	cmd.Env = append(os.Environ(), "GLEANN_INDEX_LOCK_HELPER="+filepath.Join(cfg.IndexDir, "idx.lock"))
+	out, err := cmd.StdoutPipe()
+	must(t, err)
+	must(t, cmd.Start())
+	defer func() { _ = cmd.Process.Kill(); _ = cmd.Wait() }()
+	sc := bufio.NewScanner(out)
+	for sc.Scan() && sc.Text() != "locked" {
+	}
+
+	w := doJSON(h, "POST", "/api/indexes/idx/build", `{"items":[{"text":"hello"}]}`, nil)
+	if w.Code != http.StatusConflict || !strings.Contains(w.Body.String(), "another gleann process") {
+		t.Fatalf("build while locked: %d %s, want 409", w.Code, w.Body.String())
+	}
+}
+
+// TestIndexLockHelperProcess is the child of the test above.
+func TestIndexLockHelperProcess(t *testing.T) {
+	path := os.Getenv("GLEANN_INDEX_LOCK_HELPER")
+	if path == "" {
+		t.Skip("helper process only")
+	}
+	l, err := store.AcquireLock(path)
+	if err != nil {
+		os.Stderr.WriteString(err.Error())
+		os.Exit(2)
+	}
+	os.Stdout.WriteString("locked\n")
+	time.Sleep(time.Minute)
+	_ = l.Release()
+}
+
+// No test of this package may leave a lock file in the package directory (an
+// empty IndexDir once made the build route lock "<name>.lock" in the working
+// directory); the build lock refuses an empty directory.
+func TestIndexLockRefusesEmptyDirAndLeavesNoFile(t *testing.T) {
+	if _, err := indexing.LockIndex(context.Background(), "", "test"); err == nil {
+		t.Fatal("LockIndex with an empty index dir must fail")
+	}
+	s := &Server{config: gleann.DefaultConfig(), searchers: map[string]*gleann.LeannSearcher{}}
+	s.config.IndexDir = ""
+	w := doJSON(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		r.SetPathValue("name", "test")
+		s.handleBuild(w, r)
+	}), "POST", "/api/indexes/test/build", `{"texts":["x"]}`, nil)
+	if w.Code < 400 {
+		t.Fatalf("build with no index dir: %d", w.Code)
+	}
+	if left, _ := filepath.Glob("*.lock"); len(left) != 0 {
+		t.Fatalf("lock files in the package directory: %v", left)
 	}
 }

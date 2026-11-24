@@ -442,7 +442,7 @@ func Sync(ctx context.Context, opts SyncOptions) (*SyncResult, error) {
 		}
 	}
 
-	_ = gleann.UpdateIndexMeta(cfg.IndexDir, name, func(m *gleann.IndexMeta) {
+	updateMetaLogged(cfg.IndexDir, name, func(m *gleann.IndexMeta) {
 		m.SourceDir = absDocsDir
 		m.GleannVersion = gleann.GetGleannVersion()
 		m.PluginVersions = gleann.GetInstalledPluginVersions()
@@ -609,7 +609,7 @@ func withIndexRollbackMeta(indexDir, name string, p *printer, fn func(prev *glea
 	}
 	if prevMeta != nil {
 		// Keep what the user attached to the index across the rebuild.
-		_ = gleann.UpdateIndexMeta(indexDir, name, func(m *gleann.IndexMeta) {
+		updateMetaLogged(indexDir, name, func(m *gleann.IndexMeta) {
 			// The rebuild wrote its file carrying prevMeta's user fields, so a
 			// field that differs now was edited (PATCH) after that and is kept.
 			cur := *m

@@ -1,9 +1,11 @@
 package store
 
 import (
+	"errors"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestLockInProcess(t *testing.T) {
@@ -25,4 +27,25 @@ func TestLockInProcess(t *testing.T) {
 		t.Fatalf("AcquireLock after Release: %v", err)
 	}
 	l2.Release()
+}
+
+func TestAcquireLockWaitTimesOutThenSucceeds(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "x.meta.lock")
+	held, err := AcquireLock(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	start := time.Now()
+	if _, err := AcquireLockWait(path, 100*time.Millisecond); !errors.Is(err, ErrLockTimeout) {
+		t.Fatalf("want ErrLockTimeout, got %v", err)
+	}
+	if time.Since(start) < 90*time.Millisecond {
+		t.Fatal("did not wait")
+	}
+	go func() { time.Sleep(50 * time.Millisecond); _ = held.Release() }()
+	l, err := AcquireLockWait(path, 5*time.Second)
+	if err != nil {
+		t.Fatalf("lock after release: %v", err)
+	}
+	_ = l.Release()
 }

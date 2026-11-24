@@ -171,7 +171,8 @@ func (b *LeannBuilder) BuildPassages(name string, items []Item) ([]int64, error)
 	// Same per-index lock and atomic replace as UpdateIndexMeta: the file
 	// cannot tear, and an edit of a user field (PATCH) made since prevMeta was
 	// read is kept instead of overwritten (MergeUserMeta, under the lock).
-	// A rebuild in another process is not covered: it does not hold this lock.
+	// The lock includes the cross-process <name>.meta.lock, so a PATCH on a
+	// running server and a rebuild in another process do not lose each other.
 	err = replaceIndexMeta(b.config.IndexDir, name, func(current *IndexMeta) (*IndexMeta, error) {
 		if prevMeta != nil {
 			MergeUserMeta(&meta, prevMeta, prevMeta, current)

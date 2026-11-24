@@ -68,7 +68,7 @@ func buildGraphIndexSQLite(opts GraphOptions, p *printer) error {
 		if err != nil {
 			return
 		}
-		_ = gleann.UpdateIndexMeta(opts.IndexDir, opts.Name, func(m *gleann.IndexMeta) {
+		updateMetaLogged(opts.IndexDir, opts.Name, func(m *gleann.IndexMeta) {
 			m.HasGraph = has
 		})
 	}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -222,6 +223,17 @@ var ErrIndexLocked = errors.New("index is locked by another gleann process")
 // invoke lockIndex again while holding it (flock is per open file description,
 // so a second acquisition in the same process would fail).
 func lockIndex(ctx context.Context, indexDir, name string) (func(), error) {
+	return LockIndex(ctx, indexDir, name)
+}
+
+// LockIndex is the index build/sync lock for callers outside this package (the
+// server's build route): same semantics as lockIndex. A clash with another
+// process wraps ErrIndexLocked.
+func LockIndex(ctx context.Context, indexDir, name string) (func(), error) {
+	// An empty directory would put <name>.lock in the working directory.
+	if indexDir == "" || name == "" {
+		return nil, errors.New("index lock needs an index directory and a name")
+	}
 	key := filepath.Join(filepath.Clean(indexDir), name)
 	v, _ := indexLocks.LoadOrStore(key, make(chan struct{}, 1))
 	sem := v.(chan struct{})
@@ -239,4 +251,13 @@ func lockIndex(ctx context.Context, indexDir, name string) (func(), error) {
 		_ = lock.Release()
 		<-sem
 	}, nil
+}
+
+// updateMetaLogged is gleann.UpdateIndexMeta for bookkeeping writes that must
+// not fail the operation, but whose failure (a metadata lock held by another
+// process for too long, an unwritable directory) is reported, not dropped.
+func updateMetaLogged(indexDir, name string, update func(*gleann.IndexMeta)) {
+	if err := gleann.UpdateIndexMeta(indexDir, name, update); err != nil {
+		log.Printf("index %q: metadata not updated: %v", name, err)
+	}
 }

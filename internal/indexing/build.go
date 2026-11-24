@@ -258,7 +258,7 @@ func buildOne(ctx context.Context, opts BuildOptions) (*BuildResult, error) {
 		}
 	}
 
-	_ = gleann.UpdateIndexMeta(cfg.IndexDir, name, func(meta *gleann.IndexMeta) {
+	updateMetaLogged(cfg.IndexDir, name, func(meta *gleann.IndexMeta) {
 		meta.SourceDir = docsDir
 		meta.GleannVersion = gleann.GetGleannVersion()
 		meta.PluginVersions = gleann.GetInstalledPluginVersions()
@@ -479,7 +479,7 @@ func (e *pipelineEnv) rebuildWith(ctx context.Context, name, docsDir string, str
 		return nil, fmt.Errorf("building: %w", err)
 	}
 	e.dbRecreated = builder.DatabaseRecreated()
-	_ = gleann.UpdateIndexMeta(e.cfg.IndexDir, name, func(meta *gleann.IndexMeta) {
+	updateMetaLogged(e.cfg.IndexDir, name, func(meta *gleann.IndexMeta) {
 		cur := *meta
 		meta.GleannVersion = gleann.GetGleannVersion()
 		meta.PluginVersions = gleann.GetInstalledPluginVersions()

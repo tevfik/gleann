@@ -223,8 +223,10 @@ func TestHandleBuildBadRequest(t *testing.T) {
 }
 
 func TestHandleBuildNoTexts(t *testing.T) {
+	cfg := gleann.DefaultConfig()
+	cfg.IndexDir = t.TempDir()
 	s := &Server{
-		config:    gleann.DefaultConfig(),
+		config:    cfg,
 		searchers: make(map[string]*gleann.LeannSearcher),
 	}
 

@@ -1300,6 +1300,30 @@ func (s *Server) handleBuild(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	req.Tags = gleann.NormalizeTags(req.Tags)
+	// Under GLEANN_TAGS a refused request is answered before any lock file is
+	// created; the check is repeated under the lock below.
+	if len(allowedTags()) > 0 {
+		if err := s.checkIndexCreateAccess(r, name, req.Tags); err != nil {
+			writeError(w, http.StatusForbidden, err.Error())
+			return
+		}
+	}
+	// One build per index at a time, in this process and across processes (the
+	// same lock as the CLI's build and sync, <name>.lock). Two requests for one
+	// name used to overlap and fail with "assigning slots"; a CLI build running
+	// at the same time answers 409. The access and existence check of a create
+	// and the create itself happen while holding it, so two creates cannot both
+	// pass the check; the second one sees the first one's index.
+	unlock, err := indexing.LockIndex(r.Context(), s.cfg().IndexDir, name)
+	if err != nil {
+		if errors.Is(err, indexing.ErrIndexLocked) {
+			writeError(w, http.StatusConflict, fmt.Sprintf("index %q is being built or synced by another gleann process; retry when it finishes", name))
+			return
+		}
+		writeError(w, http.StatusServiceUnavailable, "waiting for a concurrent build of this index: "+err.Error())
+		return
+	}
+	defer unlock()
 	// A build may create the index: under GLEANN_TAGS that needs an allowed tag
 	// in the request (it is stored with the index).
 	if err := s.checkIndexCreateAccess(r, name, req.Tags); err != nil {
@@ -2630,17 +2654,25 @@ func (s *Server) handleWatch(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		_ = gleann.UpdateIndexMeta(s.cfg().IndexDir, name, func(meta *gleann.IndexMeta) {
+		if err := gleann.UpdateIndexMeta(s.cfg().IndexDir, name, func(meta *gleann.IndexMeta) {
 			meta.AutoWatch = true
 			meta.SourceDir = dirToWatch
-		})
+		}); err != nil {
+			log.Printf("watch %q: metadata not written: %v", name, err)
+			writeError(w, http.StatusServiceUnavailable, "watching started but the index metadata could not be updated; retry")
+			return
+		}
 	} else {
 		if ai := s.getAutoIndexer(); ai != nil {
 			ai.Unwatch(name)
 		}
-		_ = gleann.UpdateIndexMeta(s.cfg().IndexDir, name, func(meta *gleann.IndexMeta) {
+		if err := gleann.UpdateIndexMeta(s.cfg().IndexDir, name, func(meta *gleann.IndexMeta) {
 			meta.AutoWatch = false
-		})
+		}); err != nil {
+			log.Printf("unwatch %q: metadata not written: %v", name, err)
+			writeError(w, http.StatusServiceUnavailable, "watching stopped but the index metadata could not be updated; retry")
+			return
+		}
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "watch": req.Enable})

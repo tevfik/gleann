@@ -413,7 +413,9 @@ func TestHandleBuild_BadJSON(t *testing.T) {
 }
 
 func TestHandleBuild_EmptyTexts(t *testing.T) {
-	s := &Server{config: gleann.DefaultConfig(), searchers: map[string]*gleann.LeannSearcher{}}
+	cfg := gleann.DefaultConfig()
+	cfg.IndexDir = t.TempDir()
+	s := &Server{config: cfg, searchers: map[string]*gleann.LeannSearcher{}}
 	body, _ := json.Marshal(buildRequest{Texts: nil, Items: nil})
 	req := httptest.NewRequest(http.MethodPost, "/api/indexes/test/build", bytes.NewReader(body))
 	req.SetPathValue("name", "test")

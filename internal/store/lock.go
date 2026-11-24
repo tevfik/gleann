@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 // Lock is an exclusive, OS-level lock on an index's lock file,
@@ -43,6 +44,35 @@ func AcquireLock(path string) (*Lock, error) {
 			"wait for it to finish or stop it (lock %s is held by another process): %w", name, path, err)
 	}
 	return &Lock{f: f}, nil
+}
+
+// ErrLockTimeout marks an AcquireLockWait that gave up while another process
+// still held the lock.
+var ErrLockTimeout = errors.New("lock held by another process")
+
+// AcquireLockWait is AcquireLock that polls for up to wait before giving up
+// with an error wrapping ErrLockTimeout. It is for short critical sections
+// (a metadata read-modify-write), never for the index build lock.
+func AcquireLockWait(path string, wait time.Duration) (*Lock, error) {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return nil, fmt.Errorf("creating directory for lock file %s: %w", path, err)
+	}
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o644)
+	if err != nil {
+		return nil, fmt.Errorf("opening lock file %s: %w", path, err)
+	}
+	deadline := time.Now().Add(wait)
+	for {
+		lerr := lockFile(f)
+		if lerr == nil {
+			return &Lock{f: f}, nil
+		}
+		if !time.Now().Before(deadline) {
+			f.Close()
+			return nil, fmt.Errorf("%w: waited %s for %s: %v", ErrLockTimeout, wait, path, lerr)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 }
 
 // Release unlocks and closes the lock file. The file itself is left in

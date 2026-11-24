@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -151,5 +152,32 @@ func TestAsk_ProviderFormatAndRoleOverrides(t *testing.T) {
 	// An unknown role is ignored rather than failing the request.
 	if w := postObj(h, "/api/indexes/idx/ask", map[string]any{"question": "q", "role": "no-such-role"}); w.Code != http.StatusOK {
 		t.Errorf("unknown role: %d %s", w.Code, w.Body.String())
+	}
+}
+
+// An index built with one embedding model, served by a server on another: the
+// load refuses with 409 (the caller can rebuild or switch models), not 500.
+func TestSearchModelMismatchIs409(t *testing.T) {
+	s, h, _ := newIndexedServer(t)
+	s.cfgMu.Lock()
+	s.embedder = embedding.NewComputer(embedding.Options{Provider: embedding.ProviderOllama, Model: "other-model", BaseURL: s.config.OllamaHost})
+	s.cfgMu.Unlock()
+	w := doJSON(h, "POST", "/api/indexes/idx/search", `{"query":"alpha"}`, nil)
+	if w.Code != http.StatusConflict || !strings.Contains(w.Body.String(), "model mismatch") {
+		t.Fatalf("search with a mismatched model: %d %s, want 409 model mismatch", w.Code, w.Body.String())
+	}
+}
+
+// PATCH of a missing index is 404 and leaves no metadata lock file.
+func TestPatchMissingIndexLeavesNoLockFile(t *testing.T) {
+	_, h, cfg := newIndexedServer(t)
+	for i := 0; i < 3; i++ {
+		w := doJSON(h, "PATCH", "/api/indexes/nope", `{"description":"x"}`, nil)
+		if w.Code != http.StatusNotFound {
+			t.Fatalf("PATCH missing: %d %s", w.Code, w.Body.String())
+		}
+	}
+	if left, _ := filepath.Glob(filepath.Join(cfg.IndexDir, "nope*.lock")); len(left) != 0 {
+		t.Fatalf("lock files left behind: %v", left)
 	}
 }
