@@ -67,3 +67,8 @@ func retry(op func() error, transient func(error) bool, sleep func(time.Duration
 		}
 	}
 }
+
+// IsBusy reports whether err is the error Windows returns for a file another
+// handle holds open (ERROR_ACCESS_DENIED or ERROR_SHARING_VIOLATION). It is
+// always false on other systems, where an open file can be removed.
+func IsBusy(err error) bool { return isTransient(err) }

@@ -999,14 +999,22 @@ func TestRemoveIndex_IndexCompanionsAndLookalikes(t *testing.T) {
 // removal of an index report failure once the data is gone; on POSIX the same
 // error is still reported.
 func TestRemoveLockFileBusy(t *testing.T) {
-	busy := func(string) error { return errors.New("being used by another process") }
-	if err := removeLockFile("x.lock", busy, true); err != nil {
+	errBusy := errors.New("being used by another process")
+	errOther := errors.New("the directory is not empty")
+	isBusy := func(err error) bool { return errors.Is(err, errBusy) }
+	fail := func(e error) func(string) error { return func(string) error { return e } }
+	if err := removeLockFile("x.lock", fail(errBusy), isBusy); err != nil {
 		t.Errorf("tolerated busy lock file reported: %v", err)
 	}
-	if err := removeLockFile("x.lock", busy, false); err == nil {
-		t.Error("a removal error must be reported when busy files are not tolerated")
+	// Only a busy file is tolerated: any other failure is still reported, on
+	// every system (TestRemoveIndexReportsLeftoversItCannotDelete relies on it).
+	if err := removeLockFile("x.lock", fail(errOther), isBusy); !errors.Is(err, errOther) {
+		t.Errorf("a non-busy removal error must be reported, got %v", err)
 	}
-	if err := removeLockFile("x.lock", func(string) error { return os.ErrNotExist }, false); err != nil {
+	if err := removeLockFile("x.lock", fail(errBusy), func(error) bool { return false }); err == nil {
+		t.Error("a busy error must be reported where busy files are not tolerated")
+	}
+	if err := removeLockFile("x.lock", fail(os.ErrNotExist), isBusy); err != nil {
 		t.Errorf("a missing lock file is not an error: %v", err)
 	}
 }

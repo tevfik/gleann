@@ -9,7 +9,6 @@ import (
 	"math"
 	"os"
 	"path/filepath"
-	"runtime"
 	"slices"
 	"sort"
 	"strings"
@@ -1392,18 +1391,19 @@ func RemoveIndexLockFile(indexDir, name string) error {
 	if err := checkPathName(name); err != nil {
 		return err
 	}
-	return removeLockFile(filepath.Join(indexDir, name+".lock"), os.Remove, runtime.GOOS == "windows")
+	return removeLockFile(filepath.Join(indexDir, name+".lock"), os.Remove, fsretry.IsBusy)
 }
 
-// removeLockFile deletes a lock file. With tolerateBusy (Windows) a failure
-// other than "does not exist" is logged and ignored: the file is held open by
-// a build or sync and a leftover lock file is harmless.
-func removeLockFile(path string, remove func(string) error, tolerateBusy bool) error {
+// removeLockFile deletes a lock file. A failure because another handle holds
+// the file open (busy: on Windows, a build or sync holding the lock) is logged
+// and ignored, since a leftover lock file is harmless; any other failure (e.g.
+// a directory in its place) is reported.
+func removeLockFile(path string, remove func(string) error, busy func(error) bool) error {
 	err := remove(path)
 	if err == nil || os.IsNotExist(err) {
 		return nil
 	}
-	if tolerateBusy {
+	if busy(err) {
 		log.Printf("lock file %s left in place: %v", path, err)
 		return nil
 	}
@@ -1499,7 +1499,7 @@ func removeIndex(indexDir, name string, removeLock bool) error {
 	// section 3.6). The SQLite store, its WAL companions and the .v1 rollback
 	// copies are inside <name>/ and go with the directory removed above.
 	if removeLock {
-		if err := removeLockFile(filepath.Join(indexDir, name+".lock"), os.Remove, runtime.GOOS == "windows"); err != nil {
+		if err := removeLockFile(filepath.Join(indexDir, name+".lock"), os.Remove, fsretry.IsBusy); err != nil {
 			if dirErr != nil {
 				return dirErr
 			}
