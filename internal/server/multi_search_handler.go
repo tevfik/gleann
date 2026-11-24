@@ -57,6 +57,10 @@ func (s *Server) handleMultiSearch(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	if err := gleann.ValidateMetadataFilters(req.Filters); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 
 	// 1. Collect requested target names from body
 	var rawTargets []string

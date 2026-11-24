@@ -115,7 +115,11 @@ func (s *Server) handleSearchIDs(ctx context.Context, request mcp.CallToolReques
 	defer release()
 
 	searchOpts := []gleann.SearchOption{gleann.WithTopK(topK)}
-	if filters, logic := parseFilters(args); len(filters) > 0 {
+	filters, logic, ferr := parseFilters(args)
+	if ferr != nil {
+		return mcp.NewToolResultError("invalid filters: " + ferr.Error()), nil
+	}
+	if len(filters) > 0 {
 		searchOpts = append(searchOpts, gleann.WithMetadataFilter(filters...))
 		searchOpts = append(searchOpts, gleann.WithFilterLogic(logic))
 	}

@@ -18,15 +18,8 @@ func openAPISchemasSearch() map[string]any {
 				"expand":               map[string]any{"type": "boolean", "default": false, "description": "HyDE query expansion: an LLM sketches code for the question and the search uses it too (+1-3 s, better for natural-language questions)"},
 				"graph_context":        map[string]any{"type": "boolean", "default": false, "description": "Include code graph context (callers/callees) in results"},
 				"metadata_filters": map[string]any{
-					"type": "array",
-					"items": map[string]any{
-						"type": "object",
-						"properties": map[string]any{
-							"field": map[string]any{"type": "string"},
-							"op":    map[string]any{"type": "string", "enum": []string{"eq", "ne", "gt", "gte", "lt", "lte", "in", "contains"}},
-							"value": map[string]any{},
-						},
-					},
+					"type":        "array",
+					"items":       metadataFilterSchema(),
 					"description": "Metadata filters for narrowing results",
 				},
 				"filter_logic": map[string]any{"type": "string", "enum": []string{"and", "or"}, "default": "and"},
@@ -111,7 +104,7 @@ func openAPISchemasSearch() map[string]any {
 				"min_score":        map[string]any{"type": "number", "format": "float"},
 				"rerank":           map[string]any{"type": "boolean", "default": false},
 				"rerank_model":     map[string]any{"type": "string"},
-				"metadata_filters": map[string]any{"type": "array", "items": map[string]any{"type": "object"}},
+				"metadata_filters": map[string]any{"type": "array", "items": metadataFilterSchema()},
 				"filter_logic":     map[string]any{"type": "string", "enum": []string{"and", "or"}, "default": "and"},
 			},
 		},
@@ -923,6 +916,21 @@ func openAPISchemasPacks() map[string]any {
 					"description": "Per-app metadata hints (required, auto_load, etc.)",
 				},
 			},
+		},
+	}
+}
+
+// metadataFilterSchema is one metadata_filters item: the keys of
+// gleann.MetadataFilter, which the search handlers decode strictly.
+func metadataFilterSchema() map[string]any {
+	return map[string]any{
+		"type":                 "object",
+		"required":             []string{"field", "operator"},
+		"additionalProperties": false,
+		"properties": map[string]any{
+			"field":    map[string]any{"type": "string"},
+			"operator": map[string]any{"type": "string", "enum": []string{"eq", "ne", "gt", "gte", "lt", "lte", "in", "nin", "contains", "startswith", "endswith", "exists"}},
+			"value":    map[string]any{},
 		},
 	}
 }

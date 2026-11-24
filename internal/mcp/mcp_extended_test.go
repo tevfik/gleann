@@ -74,7 +74,7 @@ func TestParseFiltersExtended(t *testing.T) {
 					map[string]interface{}{"field": "a", "operator": "eq", "value": "b"},
 				},
 			},
-			1, "and",
+			0, "and", // refused as a whole (see TestParseFiltersRefusesMalformed)
 		},
 		{
 			"incomplete filter (missing value)",
@@ -83,7 +83,7 @@ func TestParseFiltersExtended(t *testing.T) {
 					map[string]interface{}{"field": "a", "operator": "eq"},
 				},
 			},
-			0, "and",
+			1, "and", // value is optional (exists needs none)
 		},
 		{
 			"filters not a slice",
@@ -96,7 +96,7 @@ func TestParseFiltersExtended(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			filters, logic := parseFilters(tt.args)
+			filters, logic, _ := parseFilters(tt.args)
 			if len(filters) != tt.wantLen {
 				t.Errorf("len(filters) = %d, want %d", len(filters), tt.wantLen)
 			}
@@ -114,7 +114,7 @@ func TestParseFiltersOperators(t *testing.T) {
 		},
 	}
 
-	filters, _ := parseFilters(args)
+	filters, _, _ := parseFilters(args)
 	if len(filters) != 1 {
 		t.Fatalf("expected 1 filter, got %d", len(filters))
 	}
@@ -149,5 +149,29 @@ func TestServerGetSearcherError(t *testing.T) {
 	_, err := s.getSearcher("nonexistent")
 	if err == nil {
 		t.Error("expected error for nonexistent index")
+	}
+}
+
+// A malformed filter is an error, as on REST, instead of being skipped (which
+// widened the search silently).
+func TestParseFiltersRefusesMalformed(t *testing.T) {
+	for name, filters := range map[string][]interface{}{
+		"not an object":    {"x"},
+		"missing field":    {map[string]interface{}{"operator": "eq", "value": 1}},
+		"missing operator": {map[string]interface{}{"field": "a", "value": 1}},
+		"unknown operator": {map[string]interface{}{"field": "a", "operator": "equals"}},
+		"op typo":          {map[string]interface{}{"field": "a", "op": "eq", "value": 1}},
+	} {
+		if _, _, err := parseFilters(map[string]interface{}{"filters": filters}); err == nil {
+			t.Errorf("%s: no error", name)
+		}
+	}
+	if _, _, err := parseFilters(map[string]interface{}{"filters": "x"}); err == nil {
+		t.Error("non-array filters: no error")
+	}
+	f, _, err := parseFilters(map[string]interface{}{"filters": []interface{}{
+		map[string]interface{}{"field": "kind", "operator": "exists"}}})
+	if err != nil || len(f) != 1 {
+		t.Errorf("exists without value: %v %v", f, err)
 	}
 }

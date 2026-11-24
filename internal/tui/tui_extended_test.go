@@ -246,11 +246,8 @@ func TestPickBestModels(t *testing.T) {
 	if result.EmbeddingModel != "bge-m3" {
 		t.Errorf("EmbeddingModel = %q, want bge-m3", result.EmbeddingModel)
 	}
-	if result.RerankEnabled != true {
-		t.Error("RerankEnabled should be true when reranker found")
-	}
-	if result.RerankModel != "bge-reranker-v2-m3" {
-		t.Errorf("RerankModel = %q", result.RerankModel)
+	if result.RerankEnabled || result.RerankModel != "" {
+		t.Errorf("an Ollama reranker has no rerank API and must stay off: %v %q", result.RerankEnabled, result.RerankModel)
 	}
 }
 

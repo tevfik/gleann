@@ -126,6 +126,7 @@ func TestCLID1DoctorHealthyWithIndexesAndPlugins(t *testing.T) {
 		"Embedding model 'bge-m3' available",
 		"LLM model 'qwen3' available",
 		"Reranker model 'bge-reranker' available",
+		"Reranker is enabled with provider ollama, which has no rerank API",
 		"1 index(es) in "+e.IndexDir,
 		"good — ",
 		`Index "good": a sync left a rollback copy`,
@@ -245,7 +246,10 @@ func TestCLID1DoctorCheckModelsProviders(t *testing.T) {
 	mustContain(t, "openai cloud", join(oks), "(https://api.openai.com — OpenAI cloud: documents and questions leave this machine, API key configured)")
 	oks, warns, _ = collect(map[string]any{"llm_provider": "anthropic", "llm_model": "claude", "rerank_enabled": true, "rerank_model": "nope"})
 	mustContain(t, "anthropic", join(oks), "LLM model 'claude' via Anthropic API")
-	mustContain(t, "rerank missing", join(warns), "Reranker model 'nope' not found")
+	mustContain(t, "rerank missing", join(warns), "Reranker is enabled with provider ollama")
+	if strings.Contains(join(warns), "ollama pull nope") {
+		t.Error("doctor must not suggest `ollama pull` for a reranker Ollama cannot run")
+	}
 
 	// An unparsable model list.
 	bad := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte("<html>")) }))

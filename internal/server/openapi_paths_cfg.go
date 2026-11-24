@@ -39,6 +39,7 @@ func openAPIPathsConfig() map[string]any {
 				"responses": map[string]any{
 					"200": map[string]any{"description": "Configuration updated and persisted", "content": map[string]any{"application/json": map[string]any{"schema": map[string]any{"type": "object", "properties": map[string]any{"ok": map[string]any{"type": "boolean", "example": true}}}}}},
 					"400": map[string]any{"description": "Invalid JSON or a rejected field (storage mode, vision model)"},
+					"403": map[string]any{"description": "The body changes allowed_roots, index_dir, auth or cors_origins, which are read-only over the API (edit config.json or use gleann setup, then restart)"},
 					"500": map[string]any{"description": "Failed to encode or persist the change"},
 				},
 			},

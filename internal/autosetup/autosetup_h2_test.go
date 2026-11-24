@@ -126,8 +126,8 @@ func TestEnsureConfig_VerboseFoundWithReranker(t *testing.T) {
 	if err := json.Unmarshal(data, &cfg); err != nil {
 		t.Fatal(err)
 	}
-	if cfg["rerank_enabled"] != true || cfg["rerank_model"] != "bge-reranker-v2-m3" {
-		t.Fatalf("reranker not configured: %v", cfg)
+	if _, on := cfg["rerank_enabled"]; on || cfg["rerank_model"] != nil {
+		t.Fatalf("an Ollama reranker has no rerank API and must not be enabled: %v", cfg)
 	}
 }
 

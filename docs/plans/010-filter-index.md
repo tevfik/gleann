@@ -1,6 +1,6 @@
 # RFC 010: Metadata filter indexes — filtered search without a full-table scan
 
-Status: implemented in lane `filt-index` (port of the 2026-11-21 design onto 3bcf70f).
+Status: implemented and released (v1.21.0; it was built in lane `filt-index`, a port of the 2026-11-21 design onto 3bcf70f).
 The schema change (new SQLite indexes on `passages`) was approved by the maintainer on
 2026-11-21 ("if it is needed"). This RFC documents the design, the measurements and the
 rejected alternatives.

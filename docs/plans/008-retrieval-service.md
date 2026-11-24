@@ -1,6 +1,6 @@
 # RFC 008: One retrieval service
 
-Status: accepted by the maintainer on 2026-11-21 (audited 2026-11-20); not implemented yet
+Status: accepted by the maintainer on 2026-11-21 (audited 2026-11-20); step 0a (fixtures: `internal/paritytest`) shipped in v1.20.2; steps 0b to 18 not implemented yet (`internal/retrieval` does not exist)
 Builds on: ROADMAP W6 and item 5.1; WORKPLAN WP-5.1; `docs/architecture.md` "Planned refactors"; `internal/indexing` as the write-side precedent
 Release: not assigned. No index format, `config.json` key, REST route, MCP tool name or CLI flag is renamed or removed.
 Tree: main `11f4538` (v1.20.1) plus the uncommitted next-release work. Line numbers were written on 2026-11-20 and re-read on 2026-11-21 wherever the audit touched them; the working tree is still changing (section 11). Paths are relative to the repository root.

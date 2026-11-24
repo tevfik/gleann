@@ -53,7 +53,18 @@ func cmdSetup(args []string) {
 		if docModel == "" {
 			docModel = getFlag(args, "--doc-embedding-model")
 		}
-		if _, err := tui.BootstrapWithAPIKey(host, getFlag(args, "--ollama-api-key"), codeModel, docModel); err != nil {
+		_, err := tui.Bootstrap(tui.BootstrapOptions{
+			OllamaHost:   host,
+			OllamaAPIKey: getFlag(args, "--ollama-api-key"),
+			Provider:     getFlag(args, "--provider"),
+			Model:        getFlag(args, "--model"),
+			LLMProvider:  getFlag(args, "--llm-provider"),
+			LLMModel:     getFlag(args, "--llm-model"),
+			CodeModel:    codeModel,
+			DocModel:     docModel,
+			Force:        hasFlag(args, "--force"),
+		})
+		if err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 			exitFunc(1)
 		}
@@ -306,7 +317,11 @@ Flags:
   --auto               Zero-friction onboarding: detect, confirm, index the current directory
   --quick              Alias for --auto
   --check              Exit 0 when setup is complete, 1 otherwise
-  --bootstrap          Pull the configured embedding models without the wizard
+  --bootstrap          Write a default configuration without the wizard (detects Ollama;
+                       honours --model, --provider, --llm-model, --llm-provider,
+                       --code-model, --doc-model, --host, --ollama-api-key)
+  --force              With --bootstrap: replace a completed configuration
+                       (otherwise it is refused; the old file is kept as config.json.bak)
   --yes, -y            Accept the detected defaults without asking (with --auto)
   --docs <dir>         Directory to index (with --auto; default: current directory)
   --name <name>        Index name (with --auto; default: the directory name)
@@ -315,5 +330,6 @@ Flags:
   --ollama-api-key <k> Optional Ollama API key
   --model, --provider, --code-model, --doc-model, --index-dir ...
                        Embedding settings shared with gleann index build
+                       (--bootstrap and --auto read the model, provider and host ones)
   -h, --help           Show this help message`)
 }

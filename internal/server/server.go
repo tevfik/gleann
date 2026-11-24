@@ -343,7 +343,7 @@ func (s *Server) buildMux() *http.ServeMux {
 		// gleann's own settings form (modules/settings contract), the same
 		// fields the TUI settings screen edits.
 		mux.Handle("GET /api/settings", s.settingsHandler)
-		mux.Handle("PUT /api/settings", s.settingsHandler)
+		mux.Handle("PUT /api/settings", guardSettingsPut(s.settingsHandler))
 	}
 	mux.HandleFunc("GET /api/logs", s.handleGetLogs)
 	mux.HandleFunc("GET /api/proxy/models", s.handleProxyModels)
@@ -854,6 +854,10 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := validHybridAlpha(req.HybridAlpha); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := gleann.ValidateMetadataFilters(req.MetadataFilters); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -2132,6 +2136,10 @@ func (s *Server) handleUpdateConfig(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := json.Unmarshal(body, &newConfig); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid config JSON")
+		return
+	}
+	if changed := changedHTTPProtected(prev, newConfig); len(changed) > 0 {
+		writeError(w, http.StatusForbidden, httpProtectedMessage(changed))
 		return
 	}
 	if newConfig.MultimodalModel != "" && newConfig.MultimodalModel != prev.MultimodalModel {

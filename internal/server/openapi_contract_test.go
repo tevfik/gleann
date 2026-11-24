@@ -548,3 +548,62 @@ func TestPatchIndexWriteNotExistIs500(t *testing.T) {
 		t.Errorf("PATCH with a not-exist write error: %d, want 500", c)
 	}
 }
+
+// TestSearchFilterSpecMatchesHandler: the SearchRequest metadata_filters items
+// must document exactly the keys of gleann.MetadataFilter (the spec once said
+// "op" while the handler reads "operator", so a spec-following request matched
+// nothing), and the handler must refuse an unknown key or operator with 400.
+func TestSearchFilterSpecMatchesHandler(t *testing.T) {
+	cfg := gleann.DefaultConfig()
+	cfg.IndexDir = t.TempDir()
+	s := &Server{config: cfg, searchers: make(map[string]*gleann.LeannSearcher)}
+
+	schemas := s.openAPISpec()["components"].(map[string]any)["schemas"].(map[string]any)
+	req := schemas["SearchRequest"].(map[string]any)["properties"].(map[string]any)
+	items := req["metadata_filters"].(map[string]any)["items"].(map[string]any)
+	props := items["properties"].(map[string]any)
+	if got, want := sortedKeys(props), jsonFieldNames(reflect.TypeOf(gleann.MetadataFilter{})); !reflect.DeepEqual(got, want) {
+		t.Fatalf("spec filter keys %v, handler reads %v", got, want)
+	}
+	enum, _ := props["operator"].(map[string]any)["enum"].([]string)
+	if len(enum) == 0 {
+		t.Fatal("spec lists no operator enum")
+	}
+	for _, o := range enum {
+		if err := (gleann.MetadataFilter{Field: "f", Operator: gleann.FilterOperator(o)}).Validate(); err != nil {
+			t.Errorf("spec operator %q is refused by the server: %v", o, err)
+		}
+	}
+
+	multi := schemas["MultiSearchRequest"].(map[string]any)["properties"].(map[string]any)["metadata_filters"].(map[string]any)["items"].(map[string]any)["properties"].(map[string]any)
+	if got, want := sortedKeys(multi), jsonFieldNames(reflect.TypeOf(gleann.MetadataFilter{})); !reflect.DeepEqual(got, want) {
+		t.Fatalf("multi-search spec filter keys %v, handler reads %v", got, want)
+	}
+	mr := httptest.NewRequest(http.MethodPost, "/api/search", strings.NewReader(`{"query":"q","metadata_filters":[{"field":"kind","op":"eq"}]}`))
+	mw := httptest.NewRecorder()
+	s.handleMultiSearch(mw, mr)
+	if mw.Code != http.StatusBadRequest {
+		t.Errorf("multi-search with op: status %d, want 400 (%s)", mw.Code, mw.Body.String())
+	}
+	mr = httptest.NewRequest(http.MethodPost, "/api/search", strings.NewReader(`{"query":"q","metadata_filters":[{"field":"kind","value":"x"}]}`))
+	mw = httptest.NewRecorder()
+	s.handleMultiSearch(mw, mr)
+	if mw.Code != http.StatusBadRequest {
+		t.Errorf("multi-search without operator: status %d, want 400 (%s)", mw.Code, mw.Body.String())
+	}
+
+	for name, body := range map[string]string{
+		"op instead of operator": `{"query":"q","metadata_filters":[{"field":"kind","op":"eq","value":"x"}]}`,
+		"missing operator":       `{"query":"q","metadata_filters":[{"field":"kind","value":"x"}]}`,
+		"unknown operator":       `{"query":"q","metadata_filters":[{"field":"kind","operator":"equals","value":"x"}]}`,
+		"missing field":          `{"query":"q","metadata_filters":[{"operator":"eq","value":"x"}]}`,
+	} {
+		r := httptest.NewRequest(http.MethodPost, "/api/indexes/test/search", strings.NewReader(body))
+		r.SetPathValue("name", "test")
+		w := httptest.NewRecorder()
+		s.handleSearch(w, r)
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("%s: status %d, want 400 (body %s)", name, w.Code, w.Body.String())
+		}
+	}
+}

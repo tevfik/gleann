@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -66,8 +67,11 @@ func TestBootstrap_DetectsOllamaAndPicksModels(t *testing.T) {
 	if res.EmbeddingModel != "bge-m3" || res.LLMModel != "gemma3:4b" {
 		t.Errorf("preferred models not picked: emb=%s llm=%s", res.EmbeddingModel, res.LLMModel)
 	}
-	if !res.RerankEnabled || res.RerankModel != "bge-reranker-v2" {
-		t.Errorf("reranker should be enabled: %+v", res)
+	if res.RerankEnabled || res.RerankModel != "" {
+		t.Errorf("an Ollama reranker has no rerank API and must not be enabled: %+v", res)
+	}
+	if !strings.Contains(out, "no rerank API") {
+		t.Errorf("no hint about the reranker:\n%s", out)
 	}
 	if res.CodeEmbeddingModel != "code-m" || res.DocEmbeddingModel != "doc-m" {
 		t.Errorf("dual models lost: %q %q", res.CodeEmbeddingModel, res.DocEmbeddingModel)
@@ -176,5 +180,64 @@ func TestConfigErrorUnwrap(t *testing.T) {
 	ce := &ConfigError{Path: "p", Err: inner}
 	if !errors.Is(ce, inner) {
 		t.Error("ConfigError must unwrap to its cause")
+	}
+}
+
+func TestBootstrap_ExplicitOptionsWin(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	srv := fakeOllama(t, `{"models":[{"name":"gemma3:4b"},{"name":"bge-m3"}]}`, 200)
+	var res *OnboardResult
+	var err error
+	captureStdout(t, func() {
+		res, err = Bootstrap(BootstrapOptions{OllamaHost: srv.URL, Provider: "llamacpp", Model: "my-embed", LLMProvider: "openai", LLMModel: "my-chat"})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.EmbeddingModel != "my-embed" || res.EmbeddingProvider != "llamacpp" || res.LLMModel != "my-chat" || res.LLMProvider != "openai" {
+		t.Errorf("explicit options lost: %+v", res)
+	}
+}
+
+func TestBootstrap_RefusesCompletedConfigWithoutForce(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	captureStdout(t, func() {
+		if _, err := Bootstrap(BootstrapOptions{OllamaHost: "http://127.0.0.1:1", Model: "first"}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := Bootstrap(BootstrapOptions{OllamaHost: "http://127.0.0.1:1", Model: "second"}); !errors.Is(err, ErrConfigExists) {
+			t.Fatalf("err = %v, want ErrConfigExists", err)
+		}
+		if got := LoadSavedConfig().EmbeddingModel; got != "first" {
+			t.Fatalf("refused bootstrap changed the config: %q", got)
+		}
+		if _, err := Bootstrap(BootstrapOptions{OllamaHost: "http://127.0.0.1:1", Model: "second", Force: true}); err != nil {
+			t.Fatal(err)
+		}
+		if got := LoadSavedConfig().EmbeddingModel; got != "second" {
+			t.Fatalf("force did not replace: %q", got)
+		}
+	})
+}
+
+func TestBootstrap_ForceKeepsOlderBackup(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	captureStdout(t, func() {
+		for _, m := range []string{"one", "two", "three"} {
+			if _, err := Bootstrap(BootstrapOptions{OllamaHost: "http://127.0.0.1:1", Model: m, Force: true}); err != nil {
+				t.Fatal(err)
+			}
+		}
+	})
+	baks, _ := filepath.Glob(configPath() + ".bak*")
+	if len(baks) != 2 {
+		t.Fatalf("want 2 backups (the second force keeps the first), got %v", baks)
+	}
+	first, err := os.ReadFile(configPath() + ".bak")
+	if err != nil || !strings.Contains(string(first), `"one"`) {
+		t.Fatalf("the original backup was overwritten: %v %s", err, first)
+	}
+	if fi, _ := os.Stat(baks[0]); runtime.GOOS != "windows" && fi.Mode().Perm() != 0o600 {
+		t.Errorf("backup mode %v, want 0600", fi.Mode().Perm())
 	}
 }

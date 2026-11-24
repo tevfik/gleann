@@ -681,9 +681,9 @@ func TestParseFiltersWithBadItemExt3(t *testing.T) {
 			map[string]interface{}{"field": "f", "operator": "eq", "value": "v"},
 		},
 	}
-	filters, logic := parseFilters(args)
-	if len(filters) != 1 {
-		t.Errorf("expected 1 filter, got %d", len(filters))
+	filters, logic, err := parseFilters(args)
+	if err == nil || len(filters) != 0 {
+		t.Errorf("a bad item must refuse the whole list, got %d filters, err %v", len(filters), err)
 	}
 	if logic != "and" {
 		t.Errorf("expected and, got %s", logic)
@@ -697,7 +697,7 @@ func TestParseFiltersOrLogicExt3(t *testing.T) {
 			map[string]interface{}{"field": "f", "operator": "eq", "value": "v"},
 		},
 	}
-	_, logic := parseFilters(args)
+	_, logic, _ := parseFilters(args)
 	if logic != "or" {
 		t.Errorf("expected or, got %s", logic)
 	}
@@ -707,7 +707,7 @@ func TestParseFiltersInvalidLogicExt3(t *testing.T) {
 	args := map[string]interface{}{
 		"filter_logic": "xor",
 	}
-	_, logic := parseFilters(args)
+	_, logic, _ := parseFilters(args)
 	if logic != "and" {
 		t.Errorf("expected default and, got %s", logic)
 	}
@@ -719,7 +719,7 @@ func TestParseFiltersMissingFieldsExt3(t *testing.T) {
 			map[string]interface{}{"field": "f"}, // missing operator and value
 		},
 	}
-	filters, _ := parseFilters(args)
+	filters, _, _ := parseFilters(args)
 	if len(filters) != 0 {
 		t.Errorf("should skip incomplete filter, got %d", len(filters))
 	}

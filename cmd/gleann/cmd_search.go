@@ -122,6 +122,10 @@ func cmdSearch(args []string) {
 
 	name := args[0]
 	query := stripSearchFlags(args[1:])
+	if strings.TrimSpace(query) == "" {
+		fmt.Fprintln(os.Stderr, "error: no query given (usage: gleann search <name[,name2,...]|--all> <query>)")
+		exitFunc(2)
+	}
 
 	config := getConfig(args)
 	asJSON := hasFlag(args, "--json")

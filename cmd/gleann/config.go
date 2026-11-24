@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -101,18 +102,18 @@ func getConfig(args []string) gleann.Config {
 			}
 		case "--top-k":
 			if i+1 < len(args) {
-				fmt.Sscanf(args[i+1], "%d", &config.SearchConfig.TopK)
+				scanNumberFlag("--top-k", args[i+1], &config.SearchConfig.TopK)
 				i++
 			}
 		case "--ef-search":
 			if i+1 < len(args) {
-				fmt.Sscanf(args[i+1], "%d", &config.HNSWConfig.EfSearch)
+				scanNumberFlag("--ef-search", args[i+1], &config.HNSWConfig.EfSearch)
 				i++
 			}
 		case "--chunk-size":
 			if i+1 < len(args) {
 				var cs int
-				fmt.Sscanf(args[i+1], "%d", &cs)
+				scanNumberFlag("--chunk-size", args[i+1], &cs)
 				if cs > 0 {
 					config.ChunkConfig.ChunkSize = cs
 				}
@@ -121,7 +122,7 @@ func getConfig(args []string) gleann.Config {
 		case "--chunk-overlap":
 			if i+1 < len(args) {
 				var co int
-				fmt.Sscanf(args[i+1], "%d", &co)
+				scanNumberFlag("--chunk-overlap", args[i+1], &co)
 				config.ChunkConfig.ChunkOverlap = co
 				i++
 			}
@@ -129,18 +130,18 @@ func getConfig(args []string) gleann.Config {
 			config.ChunkConfig.SignaturesOnly = true
 		case "--batch-size":
 			if i+1 < len(args) {
-				fmt.Sscanf(args[i+1], "%d", &config.BatchSize)
+				scanNumberFlag("--batch-size", args[i+1], &config.BatchSize)
 				i++
 			}
 		case "--concurrency":
 			if i+1 < len(args) {
-				fmt.Sscanf(args[i+1], "%d", &config.Concurrency)
+				scanNumberFlag("--concurrency", args[i+1], &config.Concurrency)
 				i++
 			}
 		case "--hybrid":
 			if i+1 < len(args) {
 				var alpha float32
-				fmt.Sscanf(args[i+1], "%f", &alpha)
+				scanNumberFlag("--hybrid", args[i+1], &alpha)
 				config.SearchConfig.HybridAlpha = alpha
 				i++
 			}
@@ -152,7 +153,7 @@ func getConfig(args []string) gleann.Config {
 		case "--prune":
 			if i+1 < len(args) {
 				var fraction float64
-				fmt.Sscanf(args[i+1], "%f", &fraction)
+				scanNumberFlag("--prune", args[i+1], &fraction)
 				config.HNSWConfig.PruneKeepFraction = fraction
 				config.HNSWConfig.PruneEmbeddings = true
 				i++
@@ -173,37 +174,37 @@ func getConfig(args []string) gleann.Config {
 			}
 		case "--pq-dim":
 			if i+1 < len(args) {
-				fmt.Sscanf(args[i+1], "%d", &config.DiskANNConfig.PQDim)
+				scanNumberFlag("--pq-dim", args[i+1], &config.DiskANNConfig.PQDim)
 				i++
 			}
 		case "--pq-centroids":
 			if i+1 < len(args) {
-				fmt.Sscanf(args[i+1], "%d", &config.DiskANNConfig.PQCentroids)
+				scanNumberFlag("--pq-centroids", args[i+1], &config.DiskANNConfig.PQCentroids)
 				i++
 			}
 		case "--search-l":
 			if i+1 < len(args) {
-				fmt.Sscanf(args[i+1], "%d", &config.DiskANNConfig.SearchL)
+				scanNumberFlag("--search-l", args[i+1], &config.DiskANNConfig.SearchL)
 				i++
 			}
 		case "--search-pq-rerank":
 			if i+1 < len(args) {
-				fmt.Sscanf(args[i+1], "%d", &config.DiskANNConfig.SearchPQRerank)
+				scanNumberFlag("--search-pq-rerank", args[i+1], &config.DiskANNConfig.SearchPQRerank)
 				i++
 			}
 		case "--diskann-r":
 			if i+1 < len(args) {
-				fmt.Sscanf(args[i+1], "%d", &config.DiskANNConfig.R)
+				scanNumberFlag("--diskann-r", args[i+1], &config.DiskANNConfig.R)
 				i++
 			}
 		case "--diskann-l":
 			if i+1 < len(args) {
-				fmt.Sscanf(args[i+1], "%d", &config.DiskANNConfig.L)
+				scanNumberFlag("--diskann-l", args[i+1], &config.DiskANNConfig.L)
 				i++
 			}
 		case "--diskann-alpha":
 			if i+1 < len(args) {
-				fmt.Sscanf(args[i+1], "%f", &config.DiskANNConfig.Alpha)
+				scanNumberFlag("--diskann-alpha", args[i+1], &config.DiskANNConfig.Alpha)
 				i++
 			}
 		case "--host":
@@ -236,6 +237,29 @@ func getConfig(args []string) gleann.Config {
 	}
 
 	return config
+}
+
+// scanNumberFlag parses the value of a numeric flag into dst. A value that is
+// not a number is an error (exit 2): it used to be dropped silently, so
+// "--hybrid abc" searched lexical only.
+func scanNumberFlag[T int | float32 | float64](flag, val string, dst *T) {
+	var err error
+	switch d := any(dst).(type) {
+	case *int:
+		var n int64
+		n, err = strconv.ParseInt(val, 10, 0)
+		*d = int(n)
+	case *float32:
+		var f float64
+		f, err = strconv.ParseFloat(val, 32)
+		*d = float32(f)
+	case *float64:
+		*d, err = strconv.ParseFloat(val, 64)
+	}
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %s needs a number, got %q\n", flag, val)
+		exitFunc(2)
+	}
 }
 
 // getFlag returns the value of a --flag in args, or "" if not found.

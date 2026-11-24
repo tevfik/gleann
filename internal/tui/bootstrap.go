@@ -1,18 +1,80 @@
 package tui
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/tevfik/gleann/pkg/gleann"
 )
 
-// BootstrapWithAPIKey creates a default configuration without launching the
-// interactive TUI. It auto-detects Ollama at localhost:11434 and picks
-// sensible defaults, and stores an optional Ollama API key (sent as a Bearer
-// token for Ollama behind an auth proxy).
+// BootstrapOptions are the inputs of `gleann setup --bootstrap`.
+type BootstrapOptions struct {
+	OllamaHost   string
+	OllamaAPIKey string
+	// Embedding provider and model, and the chat provider and model. An empty
+	// value keeps the default or the model picked from Ollama's list; a set
+	// value always wins.
+	Provider, Model, LLMProvider, LLMModel string
+	// CodeModel and DocModel are the dual embedding models.
+	CodeModel, DocModel string
+	// Force overwrites a completed configuration (the previous file is kept as
+	// config.json.bak); without it a completed configuration is refused.
+	Force bool
+}
+
+// ErrConfigExists is returned by Bootstrap when a completed configuration is
+// already saved and Force is not set.
+var ErrConfigExists = errors.New("a completed configuration already exists")
+
+// Bootstrap creates a default configuration without launching the TUI. It
+// auto-detects Ollama, picks sensible defaults, lets explicit options win and
+// refuses to overwrite a completed configuration unless opts.Force is set.
+func Bootstrap(opts BootstrapOptions) (*OnboardResult, error) {
+	if !opts.Force {
+		if existing := LoadSavedConfig(); existing != nil && existing.Completed {
+			return nil, fmt.Errorf("%w at %s: re-run with --force to replace it (the old file is kept as %s, or a timestamped copy if that exists), or edit it with 'gleann setup'",
+				ErrConfigExists, configPath(), filepath.Base(configPath())+".bak")
+		}
+	} else if err := backupConfig(); err != nil {
+		return nil, err
+	}
+	return bootstrap(opts)
+}
+
+// backupConfig copies an existing config.json to config.json.bak (mode 0600,
+// as the file may hold API keys). A backup that already exists is kept: the
+// new one gets a timestamped name (config.json.bak-YYYYMMDD-HHMMSS).
+func backupConfig() error {
+	path := configPath()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("reading %s: %w", path, err)
+	}
+	bak := path + ".bak"
+	if _, err := os.Stat(bak); err == nil {
+		bak = path + ".bak-" + time.Now().Format("20060102-150405")
+	}
+	f, err := os.OpenFile(bak, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return fmt.Errorf("backing up %s: %w", path, err)
+	}
+	if _, err := f.Write(data); err != nil {
+		f.Close()
+		return fmt.Errorf("backing up %s: %w", path, err)
+	}
+	return f.Close()
+}
+
+// BootstrapWithAPIKey is Bootstrap with only the host, key and dual models,
+// replacing an existing configuration without asking (the pre-v1.21.1
+// behaviour, kept for library callers).
 //
 // Usage from CLI:
 //
@@ -21,6 +83,18 @@ import (
 //	gleann setup --bootstrap --code-model M1 --doc-model M2
 //	gleann setup --bootstrap --host URL --ollama-api-key KEY
 func BootstrapWithAPIKey(ollamaHost, ollamaAPIKey string, dualModels ...string) (*OnboardResult, error) {
+	opts := BootstrapOptions{OllamaHost: ollamaHost, OllamaAPIKey: ollamaAPIKey}
+	if len(dualModels) > 0 {
+		opts.CodeModel = dualModels[0]
+	}
+	if len(dualModels) > 1 {
+		opts.DocModel = dualModels[1]
+	}
+	return bootstrap(opts)
+}
+
+func bootstrap(opts BootstrapOptions) (*OnboardResult, error) {
+	ollamaHost, ollamaAPIKey := opts.OllamaHost, opts.OllamaAPIKey
 	if ollamaHost == "" {
 		ollamaHost = "http://localhost:11434"
 	}
@@ -44,11 +118,13 @@ func BootstrapWithAPIKey(ollamaHost, ollamaAPIKey string, dualModels ...string) 
 		TopK:        10,
 	}
 
-	if len(dualModels) > 0 && dualModels[0] != "" {
-		result.CodeEmbeddingModel = dualModels[0]
+	result.CodeEmbeddingModel = opts.CodeModel
+	result.DocEmbeddingModel = opts.DocModel
+	if opts.Provider != "" {
+		result.EmbeddingProvider = opts.Provider
 	}
-	if len(dualModels) > 1 && dualModels[1] != "" {
-		result.DocEmbeddingModel = dualModels[1]
+	if opts.LLMProvider != "" {
+		result.LLMProvider = opts.LLMProvider
 	}
 
 	// Try to detect Ollama and pick models.
@@ -60,6 +136,7 @@ func BootstrapWithAPIKey(ollamaHost, ollamaAPIKey string, dualModels ...string) 
 		if err == nil && len(models) > 0 {
 			fmt.Printf("  ✓ Found %d models\n", len(models))
 			pickBestModels(result, models)
+			applyBootstrapOverrides(result, opts)
 		} else {
 			fmt.Println("  ⚠ Could not list models, using defaults")
 		}
@@ -67,6 +144,8 @@ func BootstrapWithAPIKey(ollamaHost, ollamaAPIKey string, dualModels ...string) 
 		fmt.Println("  ⚠ Ollama not reachable, using defaults")
 		fmt.Println("    Start Ollama and run 'gleann setup --bootstrap' again to auto-detect models")
 	}
+
+	applyBootstrapOverrides(result, opts)
 
 	// Print summary.
 	fmt.Println()
@@ -98,6 +177,17 @@ func BootstrapWithAPIKey(ollamaHost, ollamaAPIKey string, dualModels ...string) 
 	fmt.Println("  gleann setup                                # interactive wizard for fine-tuning")
 
 	return result, nil
+}
+
+// applyBootstrapOverrides puts the explicit options over what pickBestModels
+// chose from Ollama's list.
+func applyBootstrapOverrides(result *OnboardResult, opts BootstrapOptions) {
+	if opts.Model != "" {
+		result.EmbeddingModel = opts.Model
+	}
+	if opts.LLMModel != "" {
+		result.LLMModel = opts.LLMModel
+	}
 }
 
 // CheckSetup verifies that gleann is configured and optionally checks Ollama availability.
@@ -168,12 +258,11 @@ func pickBestModels(result *OnboardResult, models []ModelInfo) {
 		fmt.Printf("  → LLM model: %s\n", result.LLMModel)
 	}
 
-	// Reranker: enable if available.
-	rrModels := filterRerankerModels(models)
-	if len(rrModels) > 0 {
-		result.RerankEnabled = true
-		result.RerankModel = rrModels[0].Name
-		fmt.Printf("  → Reranker model: %s (enabled)\n", result.RerankModel)
+	// Reranker: Ollama has no rerank API, so a reranker model it lists is not
+	// usable through Ollama; leave reranking off and say how to get it.
+	if rrModels := filterRerankerModels(models); len(rrModels) > 0 {
+		fmt.Printf("  ⚠ Reranker model %s is listed but Ollama has no rerank API; reranking stays off\n", rrModels[0].Name)
+		fmt.Println("    Enable it with rerank_provider \"eif\" (in-process GGUF) or \"llamacpp\" (llama-server --reranking)")
 	}
 }
 

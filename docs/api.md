@@ -398,7 +398,7 @@ new version into the packs directory and call `POST /api/packs/reload`.
 | Method | Path | Description |
 |--------|------|-------------|
 | GET | `/api/config` | Get server configuration |
-| POST | `/api/config` | Update server configuration: the body is applied on top of the running config, so fields it leaves out keep their value (`""` clears a string) |
+| POST | `/api/config` | Update server configuration: the body is applied on top of the running config, so fields it leaves out keep their value (`""` clears a string). `allowed_roots`, `index_dir`, `auth` and `cors_origins` are read-only here (and in `PUT /api/settings`): a body that changes one answers `403`; edit `config.json` or use `gleann setup`, then restart the server. A value sent back unchanged (compared exactly: same list, same order, same string) is accepted |
 | GET | `/api/logs` | Retrieve recent server logs |
 | GET | `/api/proxy/models` | List available models from configured provider |
 | GET | `/api/settings` | gleann's settings form: the fields the TUI settings screen edits, with their values and a `revision` (only when the server was started by the CLI) |
@@ -447,7 +447,7 @@ incomplete. The field is absent for a healthy index.
 conditions (`filter_logic`: `and`, the default, or `or`). Each condition is
 `{"field": ..., "operator": ..., "value": ...}`; operators are `eq`, `ne`,
 `gt`, `gte`, `lt`, `lte`, `in`, `nin`, `contains`, `startswith`, `endswith`,
-`exists`. Fields understand the `type`/`kind` and `source`/`file` aliases and
+`exists`; a condition with another key (`op` is not `operator`), a missing field or a missing or unknown operator answers `400`. Fields understand the `type`/`kind` and `source`/`file` aliases and
 derive `ext` from the file path. Filters are applied during retrieval, not
 after it: a selective filter still returns `top_k` results when that many
 passages match — the candidate pool widens until k pass (sized from the

@@ -160,6 +160,7 @@ var installFlags = flagSet{
 var setupFlags = configFlags.union(flagSet{
 	"--auto": false, "--quick": false, "--check": false, "--bootstrap": false,
 	"--yes": false, "--docs": true, "--name": true, "--graph": false,
+	"--force": false,
 })
 
 var updateFlags = flagSet{"--check": false, "--force": false}

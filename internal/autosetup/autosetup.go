@@ -95,9 +95,9 @@ func DetectOllama(host string) Result {
 		"gemma3", "gemma4", "qwen2.5", "qwen3", "llama3", "phi-4", "mistral",
 	}, "gemma3:4b")
 
-	res.RerankModel = pickModel(res.ModelsFound, []string{
-		"bge-reranker", "jina-reranker",
-	}, "")
+	// A reranker model that Ollama lists is not usable: Ollama has no rerank
+	// API, so enabling one made every search warn and fall back. RerankModel
+	// stays empty here; rerank needs the eif or llamacpp provider, set by hand.
 
 	return res
 }
@@ -178,11 +178,6 @@ func EnsureConfig(ollamaHost string, quiet bool) (bool, error) {
 		"max_tokens":         4096,
 		"top_k":              10,
 	}
-	if det.RerankModel != "" {
-		cfg["rerank_enabled"] = true
-		cfg["rerank_model"] = det.RerankModel
-	}
-
 	// Merge: keys the user already has win over detected defaults.
 	for k, v := range existing {
 		cfg[k] = v
@@ -493,11 +488,6 @@ func ApplyDetectedConfig(dc DetectedConfig) error {
 	if dc.DocEmbeddingModel != "" {
 		cfg["doc_embedding_model"] = dc.DocEmbeddingModel
 	}
-	if dc.RerankModel != "" {
-		cfg["rerank_enabled"] = true
-		cfg["rerank_model"] = dc.RerankModel
-	}
-
 	if err := os.MkdirAll(home+"/.gleann", 0o755); err != nil {
 		return err
 	}

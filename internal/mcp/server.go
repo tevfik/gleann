@@ -893,8 +893,11 @@ func (s *Server) buildSearchTool() mcp.Tool {
 	}
 }
 
-// parseFilters extracts metadata filters from MCP tool arguments
-func parseFilters(args map[string]interface{}) ([]gleann.MetadataFilter, string) {
+// parseFilters extracts metadata filters from MCP tool arguments and refuses
+// malformed ones: a filter that is not an object, has a key other than field,
+// operator and value, or lacks a field or a valid operator (the same rule as
+// REST). value is optional: exists needs none.
+func parseFilters(args map[string]interface{}) ([]gleann.MetadataFilter, string, error) {
 	var filters []gleann.MetadataFilter
 	logic := "and"
 
@@ -902,29 +905,37 @@ func parseFilters(args map[string]interface{}) ([]gleann.MetadataFilter, string)
 		logic = l
 	}
 
-	rawFilters, ok := args["filters"].([]interface{})
+	rawVal, present := args["filters"]
+	if !present || rawVal == nil {
+		return nil, logic, nil
+	}
+	rawFilters, ok := rawVal.([]interface{})
 	if !ok {
-		return nil, logic
+		return nil, logic, fmt.Errorf("filters must be an array of {field, operator, value} objects")
 	}
 
-	for _, rf := range rawFilters {
+	for i, rf := range rawFilters {
 		fMap, ok := rf.(map[string]interface{})
 		if !ok {
-			continue
+			return nil, logic, fmt.Errorf("filters[%d] must be an object with field, operator and value", i)
 		}
-		field, okF := fMap["field"].(string)
-		opStr, okO := fMap["operator"].(string)
-		val, okV := fMap["value"]
-
-		if okF && okO && okV {
-			filters = append(filters, gleann.MetadataFilter{
-				Field:    field,
-				Operator: gleann.FilterOperator(opStr),
-				Value:    val,
-			})
+		for k := range fMap {
+			if k != "field" && k != "operator" && k != "value" {
+				return nil, logic, fmt.Errorf("filters[%d]: unknown key %q (keys are field, operator, value)", i, k)
+			}
 		}
+		field, _ := fMap["field"].(string)
+		opStr, _ := fMap["operator"].(string)
+		filters = append(filters, gleann.MetadataFilter{
+			Field:    field,
+			Operator: gleann.FilterOperator(opStr),
+			Value:    fMap["value"],
+		})
 	}
-	return filters, logic
+	if err := gleann.ValidateMetadataFilters(filters); err != nil {
+		return nil, logic, err
+	}
+	return filters, logic, nil
 }
 
 func (s *Server) handleSearch(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -964,7 +975,11 @@ func (s *Server) handleSearch(ctx context.Context, request mcp.CallToolRequest) 
 	}
 
 	searchOpts := []gleann.SearchOption{gleann.WithTopK(topK)}
-	if filters, logic := parseFilters(args); len(filters) > 0 {
+	filters, logic, ferr := parseFilters(args)
+	if ferr != nil {
+		return mcp.NewToolResultError("invalid filters: " + ferr.Error()), nil
+	}
+	if len(filters) > 0 {
 		searchOpts = append(searchOpts, gleann.WithMetadataFilter(filters...))
 		searchOpts = append(searchOpts, gleann.WithFilterLogic(logic))
 	}
@@ -1251,7 +1266,11 @@ func (s *Server) handleAsk(ctx context.Context, request mcp.CallToolRequest) (*m
 	chat := gleann.NewChat(searcher, s.chatConfig())
 
 	var searchOpts []gleann.SearchOption
-	if filters, logic := parseFilters(args); len(filters) > 0 {
+	filters, logic, ferr := parseFilters(args)
+	if ferr != nil {
+		return mcp.NewToolResultError("invalid filters: " + ferr.Error()), nil
+	}
+	if len(filters) > 0 {
 		searchOpts = append(searchOpts, gleann.WithMetadataFilter(filters...))
 		searchOpts = append(searchOpts, gleann.WithFilterLogic(logic))
 	}

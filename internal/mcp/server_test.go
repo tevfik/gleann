@@ -127,7 +127,7 @@ func TestParseFilters(t *testing.T) {
 			wantLogic: "or",
 		},
 		{
-			name: "invalid filter entry skipped",
+			name: "invalid filter entry refuses the list",
 			args: map[string]interface{}{
 				"filters": []interface{}{
 					"not a map",
@@ -138,7 +138,7 @@ func TestParseFilters(t *testing.T) {
 					},
 				},
 			},
-			wantCount: 1,
+			wantCount: 0,
 			wantLogic: "and",
 		},
 		{
@@ -153,7 +153,7 @@ func TestParseFilters(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			filters, logic := parseFilters(tt.args)
+			filters, logic, _ := parseFilters(tt.args)
 			if len(filters) != tt.wantCount {
 				t.Errorf("parseFilters() got %d filters, want %d", len(filters), tt.wantCount)
 			}

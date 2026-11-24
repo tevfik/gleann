@@ -308,8 +308,10 @@ func TestE2E_Autosetup_DetectOllamaFull(t *testing.T) {
 	if res.EmbeddingModel != "bge-m3:latest" {
 		t.Errorf("expected bge-m3:latest as embedding, got %s", res.EmbeddingModel)
 	}
-	if res.RerankModel != "bge-reranker:latest" {
-		t.Errorf("expected bge-reranker:latest, got %s", res.RerankModel)
+	// Ollama has no rerank API: an Ollama reranker model is not picked
+	// (gleann v1.21.1; setting rerank up is an explicit choice).
+	if res.RerankModel != "" {
+		t.Errorf("expected no Ollama reranker, got %s", res.RerankModel)
 	}
 }
 
@@ -490,10 +492,12 @@ func TestE2E_Autosetup_ApplyAndReadConfig(t *testing.T) {
 	checks := map[string]any{
 		"embedding_model":    "nomic-embed-text",
 		"llm_model":          "gemma3:4b",
-		"rerank_model":       "bge-reranker",
-		"rerank_enabled":     true,
 		"embedding_provider": "ollama",
 		"completed":          true,
+	}
+	// Auto-setup no longer enables an Ollama reranker (Ollama has no rerank API).
+	if v, ok := cfg["rerank_enabled"]; ok && v == true {
+		t.Errorf("config[rerank_enabled] = %v, want unset or false", v)
 	}
 	for key, want := range checks {
 		got := cfg[key]

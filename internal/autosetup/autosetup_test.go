@@ -491,8 +491,8 @@ func TestApplyDetectedConfig(t *testing.T) {
 	if cfg["llm_model"] != "gemma3:4b" {
 		t.Errorf("expected llm_model=gemma3:4b, got %v", cfg["llm_model"])
 	}
-	if cfg["rerank_model"] != "bge-reranker" {
-		t.Errorf("expected rerank_model=bge-reranker, got %v", cfg["rerank_model"])
+	if _, on := cfg["rerank_enabled"]; on {
+		t.Errorf("rerank must not be enabled by ApplyDetectedConfig, got %v", cfg["rerank_enabled"])
 	}
 	if cfg["completed"] != true {
 		t.Error("expected completed=true")

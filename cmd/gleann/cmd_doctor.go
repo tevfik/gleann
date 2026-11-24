@@ -226,7 +226,9 @@ func checkModels(cfg *tui.OnboardResult, host string, ok, warn, fail func(string
 		fail(fmt.Sprintf("LLM model '%s' not found — run: ollama pull %s", llmModel, llmModel))
 	}
 
-	// Check reranker (optional).
+	// Check reranker (optional). An Ollama reranker is reported once, by
+	// rerankerUnusable below: "ollama pull" would not make it work.
+	unusable := rerankerUnusable(cfg)
 	if cfg != nil && cfg.RerankEnabled && cfg.RerankModel != "" {
 		rerankModel := cfg.RerankModel
 		if strings.HasSuffix(rerankModel, ".gguf") || filepath.IsAbs(rerankModel) {
@@ -241,10 +243,31 @@ func checkModels(cfg *tui.OnboardResult, host string, ok, warn, fail func(string
 			}
 		} else if available[rerankModel] || available[rerankModel+":latest"] {
 			ok(fmt.Sprintf("Reranker model '%s' available", rerankModel))
-		} else {
+		} else if unusable == "" {
 			warn(fmt.Sprintf("Reranker model '%s' not found — run: ollama pull %s", rerankModel, rerankModel))
 		}
 	}
+	// Presence of the model is not enough: the provider must be able to rerank.
+	if unusable != "" {
+		warn(unusable)
+	}
+}
+
+// rerankerUnusable explains why a configured reranker cannot work, or returns
+// "" when it can (or reranking is off). Ollama lists reranker models but has
+// no rerank API, so presence in `ollama list` does not make one usable.
+func rerankerUnusable(cfg *tui.OnboardResult) string {
+	if cfg == nil || !cfg.RerankEnabled {
+		return ""
+	}
+	provider := gleann.RerankerProvider(cfg.RerankProvider)
+	if provider == "" || provider == gleann.RerankerAuto {
+		provider = gleann.AutoRerankerProvider(cfg.EmbeddingProvider, cfg.RerankModel)
+	}
+	if provider == gleann.RerankerOllama {
+		return "Reranker is enabled with provider ollama, which has no rerank API: every search falls back to unreranked results — set rerank_provider to \"eif\" or \"llamacpp\" (with rerank_url), or disable rerank"
+	}
+	return ""
 }
 
 // checkDiskSpace reports available space in the index directory.

@@ -2,6 +2,8 @@
 package gleann
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -30,6 +32,49 @@ type MetadataFilter struct {
 	Field    string         `json:"field"`
 	Operator FilterOperator `json:"operator"`
 	Value    any            `json:"value"`
+}
+
+// validFilterOperators lists every operator evaluateFilter understands.
+var validFilterOperators = map[FilterOperator]bool{
+	OpEqual: true, OpNotEqual: true, OpGreaterThan: true, OpGreaterEqual: true,
+	OpLessThan: true, OpLessEqual: true, OpIn: true, OpNotIn: true,
+	OpContains: true, OpStartsWith: true, OpEndsWith: true, OpExists: true,
+}
+
+// Validate refuses a filter that could never match as the caller meant: no
+// field, or an empty or unknown operator (which would silently match nothing).
+func (f MetadataFilter) Validate() error {
+	if f.Field == "" {
+		return fmt.Errorf("metadata filter: field is required")
+	}
+	if !validFilterOperators[f.Operator] {
+		return fmt.Errorf("metadata filter on %q: unknown or missing operator %q (use eq, ne, gt, gte, lt, lte, in, nin, contains, startswith, endswith or exists)", f.Field, string(f.Operator))
+	}
+	return nil
+}
+
+// ValidateMetadataFilters validates each filter and names the first bad one.
+func ValidateMetadataFilters(filters []MetadataFilter) error {
+	for i, f := range filters {
+		if err := f.Validate(); err != nil {
+			return fmt.Errorf("metadata_filters[%d]: %w", i, err)
+		}
+	}
+	return nil
+}
+
+// UnmarshalJSON rejects keys other than field, operator and value, so a typo
+// such as "op" fails loudly instead of leaving the operator empty.
+func (f *MetadataFilter) UnmarshalJSON(data []byte) error {
+	type plain MetadataFilter
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.DisallowUnknownFields()
+	var p plain
+	if err := dec.Decode(&p); err != nil {
+		return fmt.Errorf("metadata filter: %w (keys are field, operator, value)", err)
+	}
+	*f = MetadataFilter(p)
+	return nil
 }
 
 // MetadataFilterEngine evaluates filters against metadata.

@@ -760,7 +760,7 @@ func TestHandleReadResource_IndexNotFound(t *testing.T) {
 
 func TestParseFilters_NoFilters(t *testing.T) {
 	args := map[string]interface{}{"query": "test"}
-	filters, logic := parseFilters(args)
+	filters, logic, _ := parseFilters(args)
 	if len(filters) != 0 {
 		t.Fatal("expected no filters")
 	}
@@ -785,7 +785,7 @@ func TestParseFilters_WithFilters(t *testing.T) {
 		},
 		"filter_logic": "or",
 	}
-	filters, logic := parseFilters(args)
+	filters, logic, _ := parseFilters(args)
 	if len(filters) != 2 {
 		t.Fatalf("expected 2 filters, got %d", len(filters))
 	}
@@ -806,7 +806,7 @@ func TestParseFilters_PartialFilter(t *testing.T) {
 			},
 		},
 	}
-	filters, _ := parseFilters(args)
+	filters, _, _ := parseFilters(args)
 	if len(filters) != 0 {
 		t.Fatal("expected no valid filters")
 	}
@@ -818,7 +818,7 @@ func TestParseFilters_NonMapFilter(t *testing.T) {
 			"not a map",
 		},
 	}
-	filters, _ := parseFilters(args)
+	filters, _, _ := parseFilters(args)
 	if len(filters) != 0 {
 		t.Fatal("expected no valid filters")
 	}

@@ -15,10 +15,23 @@ All notable changes to this project will be documented in this file.
 - **Post-commit hook is silent after `git commit`.** The background `index sync` stdout and stderr are discarded.
 - **`memory remember --scope repo`** (and `.`) means the detected repository scope instead of the literal `repo`; same for `memory context`, `memory failure` and `--scope` of list. `memory list` shows each block's scope.
 - **`install uninstall` removes a `CLAUDE.md` / `AGENTS.md` that holds nothing else** instead of leaving a one-byte file.
+- **Metadata filter key `op` (OpenAPI) vs `operator` (server).** The spec named the key `op`; the server reads `operator`, so a request that followed the spec returned 200 with no results. The spec now says `operator` and lists all twelve operators. A `metadata_filters` item with an unknown key (such as `op`), no field, or a missing or unknown operator is rejected with 400 (strict, so a typo fails loudly) instead of matching nothing.
+- **`gleann setup --bootstrap`** honours `--model`, `--provider`, `--llm-model` and `--llm-provider` (they were ignored) and refuses to replace a completed configuration unless `--force` is given (the old file is kept as `config.json.bak`). A second bootstrap used to overwrite manual edits silently.
+- **Bootstrap no longer enables an Ollama reranker**, which has no rerank API (every search warned and fell back); it prints how to enable reranking with `eif` or `llamacpp`. `gleann doctor` warns when `rerank_enabled` is set with a provider that cannot rerank.
+- **CLI `search` with an empty query** (`search code --json`, `search code --kind -h`) is an error with exit status 2, as on REST and MCP.
+- **Numeric flags** (`--hybrid`, `--top-k`, `--ef-search`, `--chunk-size`, and the other numeric config flags) exit with status 2 on a value that is not a number; `--hybrid abc` used to set the weight to 0 (lexical only).
+- **Security: `allowed_roots`, `index_dir`, `auth` and `cors_origins` are read-only over the API.** `POST /api/config` and `PUT /api/settings` answer 403 when a body changes one of them (a value sent back unchanged is accepted); edit `config.json` or use `gleann setup`, then restart. An admin token no longer lets a client widen the path policy.
+- **MCP filters are validated like REST.** `gleann_search`, ask and the progressive search return a tool error for a `filters` entry that is not an object, has an unknown key, or lacks a field or a valid operator (they were skipped, widening the search); `value` is optional (`exists`). `POST /api/search` validates `metadata_filters` too.
+- Setup (`gleann serve` first run, `setup --auto`) no longer enables an Ollama reranker either; `setup --force` keeps an existing `config.json.bak` and writes a timestamped one (mode 0600).
+- Numeric flags are parsed strictly (`--top-k 10x`, `--top-k 1.5`, `--hybrid 0.5abc` exit 2).
+- `PUT /api/settings` answers 400 for a body that is not exactly one JSON value (trailing data used to bypass the protected-key check).
 
 ### Security
 - **`gleann serve` no longer prints the admin token.** The startup output names the token file and `gleann token show` instead of a `?token=` URL (logs, journald and screen shares kept it).
 - **REST HyDE expander cache is keyed by the API key (hash only).** A rotated key now gets a fresh expander instead of the old credential.
+
+### Documentation
+- RFC status lines (001, 004, 008, 010) and `docs/plans/README.md` brought up to date.
 
 ## [v1.21.0] — 2026-11-24
 
