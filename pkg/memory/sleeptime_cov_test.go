@@ -50,6 +50,13 @@ func (e *sleepEnv) save(t *testing.T, id string, age time.Duration, msgs ...conv
 	if err := e.convs.Save(c); err != nil {
 		t.Fatal(err)
 	}
+	// Save stamps UpdatedAt with time.Now(); on a coarse clock (Windows: up to
+	// ~16 ms) the next save could share that timestamp, and the engine rightly
+	// keeps tied conversations together at a cut. Wait until the clock has
+	// moved on, so conversations saved one after another are strictly ordered.
+	for !time.Now().After(c.UpdatedAt) {
+		time.Sleep(time.Millisecond)
+	}
 }
 
 func userMsg(s string) conversations.Message { return conversations.Message{Role: "user", Content: s} }
