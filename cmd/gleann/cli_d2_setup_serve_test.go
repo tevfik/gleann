@@ -10,7 +10,6 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -225,12 +224,13 @@ func TestCLID2ServeStartsAndStops(t *testing.T) {
 	e.build("demo")
 	addr := fmt.Sprintf("127.0.0.1:%d", d2FreePort(t))
 
-	var indexes, settingsPut, settingsGet string
+	var indexes, settingsPut, settingsGet, adminTok string
 	r, ok := d2Serve(t, e, func(base string) {
 		token := ""
 		if b, err := os.ReadFile(authTokenPath()); err == nil {
 			token = strings.TrimSpace(string(b))
 		}
+		adminTok = token
 		do := func(method, path, body string) string {
 			req, _ := http.NewRequest(method, base+path, bytes.NewBufferString(body))
 			req.Header.Set("Authorization", "Bearer "+token)
@@ -254,8 +254,13 @@ func TestCLID2ServeStartsAndStops(t *testing.T) {
 		t.Fatalf("server never became healthy:\n%s\n%s", r.Out, r.Err)
 	}
 	mustContain(t, "serve banner", r.Out, "gleann server starting on "+addr, "bearer token required",
-		"Web UI:    http://"+addr+"/?token=", "Index dir: "+e.IndexDir, "Host:      "+e.Ollama.URL,
+		"Web UI:    http://"+addr+"/?token=<run: gleann token show>", "Index dir: "+e.IndexDir, "Host:      "+e.Ollama.URL,
 		"Endpoints:", "Shutting down...")
+	if tok := adminTok; tok == "" {
+		t.Errorf("no admin token read")
+	} else if strings.Contains(r.Out+r.Err, tok) {
+		t.Errorf("serve output leaks the admin token")
+	}
 	if !strings.HasPrefix(indexes, "200 ") || !strings.Contains(indexes, "demo") {
 		t.Errorf("GET /api/indexes = %s", indexes)
 	}
@@ -373,8 +378,7 @@ func TestCLID2ServeAddrHelpers(t *testing.T) {
 	}
 }
 
-// The admin token line printed by serve is the token in authTokenPath.
-var d2TokenRE = regexp.MustCompile(`\?token=(\S+)`)
+// serve names the admin token file and never prints the token itself.
 
 func TestCLID2ServeTokenMatchesFile(t *testing.T) {
 	e := newCLIEnv(t)
@@ -384,11 +388,14 @@ func TestCLID2ServeTokenMatchesFile(t *testing.T) {
 	if !ok {
 		t.Fatalf("server never became healthy:\n%s\n%s", r.Out, r.Err)
 	}
-	m := d2TokenRE.FindStringSubmatch(r.Out)
 	b, err := os.ReadFile(authTokenPath())
-	if m == nil || err != nil || strings.TrimSpace(string(b)) != m[1] {
-		t.Errorf("printed token %v does not match %s (%v)", m, authTokenPath(), err)
+	if err != nil || strings.TrimSpace(string(b)) == "" {
+		t.Fatalf("no token file %s: %v", authTokenPath(), err)
 	}
+	if strings.Contains(r.Out+r.Err, strings.TrimSpace(string(b))) || strings.Contains(r.Out, "?token=gl") {
+		t.Errorf("serve printed the admin token:\n%s", r.Out)
+	}
+	mustContain(t, "serve banner", r.Out, authTokenPath(), "gleann token show")
 }
 
 func TestCLID2ServeSavedAddrAndLlamaFallback(t *testing.T) {

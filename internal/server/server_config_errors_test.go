@@ -251,6 +251,28 @@ func TestQueryExpander_ConfigOverrides(t *testing.T) {
 	}
 }
 
+func TestQueryExpander_RotatedKeyGetsNewExpander(t *testing.T) {
+	s := &Server{}
+	cfg := gleann.DefaultConfig()
+	cfg.LLMProvider = "openai"
+	cfg.OpenAIBaseURL = "http://127.0.0.1:2/v1"
+	cfg.OpenAIAPIKey = "sk-old"
+	a := s.queryExpander(cfg)
+	cfg.OpenAIAPIKey = "sk-new"
+	b := s.queryExpander(cfg)
+	if a == b {
+		t.Fatal("a rotated API key must not reuse the expander holding the old key")
+	}
+	if got := b.Chat.Config().APIKey; got != "sk-new" {
+		t.Errorf("expander key = %q, want sk-new", got)
+	}
+	for k := range s.expanders {
+		if strings.Contains(k, "sk-") {
+			t.Errorf("cache key leaks the API key: %q", k)
+		}
+	}
+}
+
 func TestNewLogBuffer_KeepsNewestLines(t *testing.T) {
 	b := NewLogBuffer(2)
 	for _, l := range []string{"one", "two", "three"} {

@@ -793,7 +793,7 @@ func removeSection(path, startSentinel, endSentinel string) error {
 	} else {
 		s = s[:start] + s[start+end+len(endSentinel):]
 	}
-	return os.WriteFile(path, []byte(strings.TrimRight(s, "\n")+"\n"), 0o644)
+	return writeAfterSectionRemoval(path, s)
 }
 
 // ─── OpenCode ─────────────────────────────────────────────────────────────────
@@ -983,7 +983,7 @@ func patchOpenCodeJSON(path string) error {
 				servers["gleann"] = exMap
 				mcpSection["servers"] = servers
 				config["mcp"] = mcpSection
-				out, err := json.MarshalIndent(config, "", "  ")
+				out, err := marshalKeepingOrder(data, config)
 				if err == nil {
 					_ = os.WriteFile(path, append(out, '\n'), 0o644)
 				}
@@ -1003,7 +1003,7 @@ func patchOpenCodeJSON(path string) error {
 	mcpSection["servers"] = servers
 	config["mcp"] = mcpSection
 
-	out, err := json.MarshalIndent(config, "", "  ")
+	out, err := marshalKeepingOrder(data, config)
 	if err != nil {
 		return err
 	}
@@ -1033,7 +1033,7 @@ func uninstallOpenCode(dir, home string) error {
 				} else {
 					config["mcp"] = mcpSection
 				}
-				if out, err := json.MarshalIndent(config, "", "  "); err == nil {
+				if out, err := marshalKeepingOrder(data, config); err == nil {
 					_ = os.WriteFile(ocConfigPath, append(out, '\n'), 0o644)
 				}
 			}
@@ -1065,10 +1065,12 @@ const claudeHookTimeoutSeconds = 10
 // claudeHookScript runs once per session (SessionStart): a one-line hint when
 // a GRAPH_REPORT.md exists, then the memory window of the current repository
 // (`gleann memory context` defaults to the detected repo scope plus global
-// blocks), cut at 2000 bytes and omitted when empty. Stdout of a SessionStart
-// hook becomes session context. The cut is by bytes, so a multi-byte character
-// at the boundary can be split.
-const claudeHookScript = `if [ -f GRAPH_REPORT.md ]; then echo "[gleann] GRAPH_REPORT.md found: read it for the repository overview."; fi; ctx=$(gleann memory context 2>/dev/null | head -c 2000); if [ -n "$ctx" ] && [ "$ctx" != "(empty memory context)" ]; then printf '[gleann] memory:\n%s\n' "$ctx"; fi ` + gleannHookMarker + ` v1`
+// blocks), cut at 2000 bytes on a character boundary (--max-bytes) and
+// omitted when empty. Stdout of a SessionStart hook becomes session context.
+// Marker v1 cut with `head -c 2000`, which can split a multi-byte character;
+// v1 hooks still carry the marker, so install replaces and uninstall removes
+// them.
+const claudeHookScript = `if [ -f GRAPH_REPORT.md ]; then echo "[gleann] GRAPH_REPORT.md found: read it for the repository overview."; fi; ctx=$(gleann memory context --max-bytes 2000 2>/dev/null); if [ -n "$ctx" ] && [ "$ctx" != "(empty memory context)" ]; then printf '[gleann] memory:\n%s\n' "$ctx"; fi ` + gleannHookMarker + ` v2`
 
 // legacyClaudeHookCommands are the exact hook commands older gleann
 // installers wrote. They carry no ownership marker, so they are matched by
@@ -1274,7 +1276,7 @@ func patchClaudeSettings(path string) error {
 	})
 	settings["hooks"] = hooks
 
-	out, err := json.MarshalIndent(settings, "", "  ")
+	out, err := marshalKeepingOrder(data, settings)
 	if err != nil {
 		return err
 	}
@@ -1328,7 +1330,7 @@ func uninstallClaudeAt(claudePath, home string) error {
 				}
 				if len(removed) > 0 {
 					settings["hooks"] = hooks
-					if out, err := json.MarshalIndent(settings, "", "  "); err == nil {
+					if out, err := marshalKeepingOrder(data, settings); err == nil {
 						_ = os.WriteFile(settingsPath, append(out, '\n'), 0o600)
 					}
 				}
@@ -1533,7 +1535,7 @@ func patchGeminiSettings(path string) error {
 	}
 	settings["hooks"] = hooks
 
-	out, err := json.MarshalIndent(settings, "", "  ")
+	out, err := marshalKeepingOrder(data, settings)
 	if err != nil {
 		return err
 	}
@@ -1558,7 +1560,7 @@ func uninstallGeminiAt(geminiMDPath, geminiDir string) error {
 			if hooks, ok := settings["hooks"].(map[string]interface{}); ok {
 				delete(hooks, "gleann")
 				settings["hooks"] = hooks
-				if out, err := json.MarshalIndent(settings, "", "  "); err == nil {
+				if out, err := marshalKeepingOrder(data, settings); err == nil {
 					_ = os.WriteFile(settingsPath, append(out, '\n'), 0o644)
 				}
 			}

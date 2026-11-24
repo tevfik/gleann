@@ -605,7 +605,7 @@ if [ -n "$INDEX" ]; then
         CODE_CHANGED=$(echo "$CHANGED" | grep -E '\.(go|py|ts|js|tsx|jsx|rs|java|c|cpp|rb|cs|kt|scala|php|swift|lua|ex|exs|zig|ps1|jl|m|mm|vue|svelte)$' || true)
         if [ -n "$CODE_CHANGED" ]; then
             echo "gleann: syncing index $INDEX ($(echo "$CODE_CHANGED" | wc -l | tr -d ' ') code files changed)..."
-            $GLEANN_BIN index sync "$INDEX" 2>/dev/null &
+            $GLEANN_BIN index sync "$INDEX" >/dev/null 2>&1 &
         fi
     fi
 fi

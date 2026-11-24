@@ -278,8 +278,30 @@ func removeAgentsSection(path string) error {
 		}
 		spans = []span{sp}
 	}
-	out := spliceSpans(s, spans, "")
-	return os.WriteFile(path, []byte(strings.TrimRight(out, "\n")+"\n"), 0o644)
+	return writeAfterSectionRemoval(path, spliceSpans(s, spans, ""))
+}
+
+// writeAfterSectionRemoval writes the file that remains once gleann's section
+// is cut out. When nothing but whitespace is left, the file held only gleann's
+// section (gleann created it, or the user kept nothing else in it), so it is
+// removed rather than left as a one-byte file.
+func writeAfterSectionRemoval(path, remaining string) error {
+	// A symlink (reached only with --follow-symlink) is never deleted: the
+	// edit goes to the file it points at.
+	if sym, _, _ := isSymlink(path); sym {
+		resolved, err := filepath.EvalSymlinks(path)
+		if err != nil {
+			return err
+		}
+		path = resolved
+	}
+	if strings.TrimSpace(remaining) == "" {
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+		return nil
+	}
+	return os.WriteFile(path, []byte(strings.TrimRight(remaining, "\n")+"\n"), 0o644)
 }
 
 // removeMarkedSection removes every well-formed block from startSentinel to
@@ -302,5 +324,5 @@ func removeMarkedSection(path, startSentinel, endSentinel string) error {
 	if len(spans) == 0 {
 		return nil
 	}
-	return os.WriteFile(path, []byte(strings.TrimRight(spliceSpans(s, spans, ""), "\n")+"\n"), 0o644)
+	return writeAfterSectionRemoval(path, spliceSpans(s, spans, ""))
 }

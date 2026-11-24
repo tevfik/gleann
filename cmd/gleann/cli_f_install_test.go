@@ -110,8 +110,9 @@ func TestCLIFInstallAutoDetect(t *testing.T) {
 	r = e.run("install", "uninstall", "--dir", proj)
 	wantExit(t, r, 0)
 	mustContain(t, "uninstall", r.Out, "Uninstalling gleann from codex", "Uninstalling gleann from cline")
-	if s := fReadFile(t, filepath.Join(proj, "AGENTS.md")); strings.Contains(s, "gleann: Code Intelligence") {
-		t.Errorf("uninstall left the gleann section:\n%s", s)
+	// AGENTS.md held only gleann's section, so uninstall removes the file.
+	if b, err := os.ReadFile(filepath.Join(proj, "AGENTS.md")); err == nil && strings.Contains(string(b), "gleann: Code Intelligence") {
+		t.Errorf("uninstall left the gleann section:\n%s", b)
 	}
 	if _, err := os.Stat(filepath.Join(proj, ".codex", "hooks.json")); !os.IsNotExist(err) {
 		t.Errorf("codex hooks.json not removed: %v", err)
@@ -180,8 +181,8 @@ func TestCLIFInstallUserScope(t *testing.T) {
 
 	r = e.run("install", "uninstall", "claude")
 	wantExit(t, r, 0)
-	if s := fReadFile(t, userClaude); strings.Contains(s, "gleann") {
-		t.Errorf("user CLAUDE.md still mentions gleann:\n%s", s)
+	if b, err := os.ReadFile(userClaude); err == nil && strings.Contains(string(b), "gleann") {
+		t.Errorf("user CLAUDE.md still mentions gleann:\n%s", b)
 	}
 	var st map[string]any
 	if err := json.Unmarshal([]byte(fReadFile(t, filepath.Join(e.Home, ".claude", "settings.json"))), &st); err != nil {
@@ -196,8 +197,8 @@ func TestCLIFInstallUserScope(t *testing.T) {
 
 	r = e.run("install", "uninstall", "gemini")
 	wantExit(t, r, 0)
-	if s := fReadFile(t, filepath.Join(e.Home, ".gemini", "GEMINI.md")); strings.Contains(s, "<!-- gleann -->") {
-		t.Errorf("user GEMINI.md still has the section:\n%s", s)
+	if b, err := os.ReadFile(filepath.Join(e.Home, ".gemini", "GEMINI.md")); err == nil && strings.Contains(string(b), "<!-- gleann -->") {
+		t.Errorf("user GEMINI.md still has the section:\n%s", b)
 	}
 }
 

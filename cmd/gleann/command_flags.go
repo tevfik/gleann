@@ -77,7 +77,7 @@ var memoryFlagSets = map[string]flagSet{
 	"summarize":    {"--last": false, "--id": true, "--extract": false},
 	"prune":        {"--age": true},
 	"compact":      {"--min-validity": true},
-	"context":      {"--json": false, "--verbose": false, "--path": true, "--command": true, "--symbol": true, "--scope": true},
+	"context":      {"--json": false, "--verbose": false, "--path": true, "--command": true, "--symbol": true, "--scope": true, "--max-bytes": true},
 	"maintain":     {},
 	"export":       {"--dir": true},
 	"import":       {"--dir": true},

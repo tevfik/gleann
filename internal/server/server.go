@@ -6,7 +6,9 @@ package server
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"embed"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -136,7 +138,10 @@ func (s *Server) queryExpander(cfg gleann.Config) *gleann.LLMQueryExpander {
 	}
 	cfg.ApplyChatEndpoint(&cc)
 	cc.MaxTokens = 120
-	key := string(cc.Provider) + "|" + cc.BaseURL + "|" + cc.Model
+	// The key includes a digest of the API key (never the key itself) so a
+	// rotated key gets a fresh expander instead of the old credential.
+	keySum := sha256.Sum256([]byte(cc.APIKey))
+	key := string(cc.Provider) + "|" + cc.BaseURL + "|" + cc.Model + "|" + hex.EncodeToString(keySum[:8])
 	s.expanderMu.Lock()
 	defer s.expanderMu.Unlock()
 	if e, ok := s.expanders[key]; ok {

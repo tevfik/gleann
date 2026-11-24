@@ -10,6 +10,15 @@ All notable changes to this project will be documented in this file.
 - **Watch toggle answers 503 if the metadata was not written** (it answered 200); other bookkeeping metadata writes log a failure instead of dropping it.
 - **Watch toggle survives a rebuild.** `MergeUserMeta` treats `source_dir` and `auto_watch` as one pair, so a rebuild cannot keep one value of the toggle and reset the other.
 - **Model mismatch answers 409, not 500.** Searching, asking or reading an index built with another embedding model than the server's returns `409` with the `model mismatch` message (OpenAPI and `docs/api.md` updated).
+- **`gleann install` keeps settings files as written.** `settings.json` (Claude, Gemini) and `opencode.json` are rewritten without HTML escaping (`2>/dev/null` stays) and in the user's key order at every depth.
+- **SessionStart hook cuts on a character boundary.** `gleann memory context --max-bytes N` replaces `head -c 2000`; the hook marker is now `v2` (`v1` hooks are still recognised and replaced by `gleann install`; re-run it to migrate).
+- **Post-commit hook is silent after `git commit`.** The background `index sync` stdout and stderr are discarded.
+- **`memory remember --scope repo`** (and `.`) means the detected repository scope instead of the literal `repo`; same for `memory context`, `memory failure` and `--scope` of list. `memory list` shows each block's scope.
+- **`install uninstall` removes a `CLAUDE.md` / `AGENTS.md` that holds nothing else** instead of leaving a one-byte file.
+
+### Security
+- **`gleann serve` no longer prints the admin token.** The startup output names the token file and `gleann token show` instead of a `?token=` URL (logs, journald and screen shares kept it).
+- **REST HyDE expander cache is keyed by the API key (hash only).** A rotated key now gets a fresh expander instead of the old credential.
 
 ## [v1.21.0] — 2026-11-24
 

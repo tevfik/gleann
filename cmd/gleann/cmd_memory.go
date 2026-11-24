@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/tevfik/gleann/internal/indexing"
 	"github.com/tevfik/gleann/internal/memsync"
@@ -95,7 +96,7 @@ Usage:
   gleann memory prune    [--age <duration>]       Remove old entries
   gleann memory compact  [--min-validity <0-1>]   Prune stale/unreliable blocks (default min validity: 0.2)
   gleann memory maintain                          Full maintenance pass
-  gleann memory context [--scope <s>|all]         Show compiled context sent to LLM (default: detected repo scope + global)
+  gleann memory context [--scope <s>|all] [--max-bytes N]  Show compiled context sent to LLM (default: detected repo scope + global; --max-bytes N cuts the text on a character boundary, 0 = unlimited, plain text only (--json ignores it), the output ends with a newline)
   gleann memory context --path <p> --command <c>  Show context + failures matching files/command
   gleann memory context --symbol <s> [--scope <s>]  Show context + failures matching symbols
   gleann memory failure add --command <c> --error <text> --fix <text> [--path <p>]... [--symbol <s>]... [--scope <s>]
@@ -118,7 +119,7 @@ Options:
   --tag <tags>            Comma-separated tags (e.g. "preference,project")
   --label <label>         Semantic label (default: "note" or "user_memory")
   --age <duration>        Duration for prune (e.g. 30d, 90d, 2w, 24h)
-  --scope <scope>         Block/failure/context scope. remember: default global; failure/context: default detected repo. --scope all = global on add, all scopes on list/context
+  --scope <scope>         Block/failure/context scope ("repo" or "." = the detected repository scope). remember: default global; failure/context: default detected repo. --scope all = global on add, all scopes on list/context
   --json                  Output as JSON (memory context includes the budget report)
   --verbose               Print the injection budget report to stderr (memory context)
   --extract               Also extract individual facts (with summarize)
@@ -233,7 +234,7 @@ func cmdMemoryRemember(args []string) {
 
 	// Normalize the scope; a sentinel means global, never a literal "all"
 	// block. Without --scope, remember stays global (v3 repair, finding 1).
-	scope := memory.NormalizeScope(rawScope)
+	scope := resolveRepoScopeAlias(memory.NormalizeScope(rawScope))
 	if memory.IsAllScopesSentinel(scope) {
 		scope = ""
 	}
@@ -393,8 +394,12 @@ func cmdMemoryList(args []string) {
 		if len(b.Tags) > 0 {
 			tags = " [" + strings.Join(b.Tags, ",") + "]"
 		}
-		fmt.Printf("  %s  %-8s %-12s %s%s  (%s ago)\n",
-			b.ID[:8], b.Tier, b.Label, truncateStr(b.Content, 50), tags, formatMemAge(age))
+		scope := b.Scope
+		if scope == "" {
+			scope = "global"
+		}
+		fmt.Printf("  %s  %-8s %-12s %s%s  [scope: %s]  (%s ago)\n",
+			b.ID[:8], b.Tier, b.Label, truncateStr(b.Content, 50), tags, scope, formatMemAge(age))
 	}
 }
 
@@ -846,11 +851,22 @@ func cmdMemoryContext(args []string) {
 	// Same default as MCP memory_context: the detected repository scope (plus
 	// the global blocks); outside a repository that is the directory name.
 	// --scope all shows every scope.
-	scope := memory.NormalizeScope(getFlag(args, "--scope"))
+	scope := resolveRepoScopeAlias(memory.NormalizeScope(getFlag(args, "--scope")))
 	if scope == "" {
 		scope = memory.DetectRepoScope()
 	} else if memory.IsAllScopesSentinel(scope) {
 		scope = ""
+	}
+	// --max-bytes caps the printed text on a character boundary (hooks use
+	// it instead of `head -c`, which can split a multi-byte character).
+	maxBytes := 0
+	if v := getFlag(args, "--max-bytes"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 0 {
+			fmt.Fprintf(os.Stderr, "error: --max-bytes needs a non-negative integer, got %q\n", v)
+			exitFunc(2)
+		}
+		maxBytes = n
 	}
 	if rc := remoteMemoryClient(); rc != nil && command == "" && len(paths) == 0 && len(symbols) == 0 {
 		rendered, err := rc.Context(scope)
@@ -859,7 +875,7 @@ func cmdMemoryContext(args []string) {
 				fmt.Println("(empty memory context)")
 				return
 			}
-			fmt.Println(rendered)
+			fmt.Println(truncateOnRune(rendered, maxBytes))
 			if verbose {
 				fmt.Fprintln(os.Stderr, "memory budget: not reported by a running server")
 			}
@@ -901,7 +917,31 @@ func cmdMemoryContext(args []string) {
 		fmt.Println("(empty memory context)")
 		return
 	}
-	fmt.Println(rendered)
+	fmt.Println(truncateOnRune(rendered, maxBytes))
+}
+
+// truncateOnRune cuts s to at most max bytes without splitting a UTF-8
+// character; max <= 0 means no limit.
+func truncateOnRune(s string, max int) string {
+	if max <= 0 || len(s) <= max {
+		return s
+	}
+	cut := max
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return s[:cut]
+}
+
+// resolveRepoScopeAlias maps the scope words "repo" and "." to the detected
+// repository scope (the default of memory context and failure); any other
+// scope passes through. A scope literally named "repo" is not addressable
+// from the CLI that way, which is the price of the shorthand.
+func resolveRepoScopeAlias(scope string) string {
+	if scope == "repo" || scope == "." {
+		return memory.DetectRepoScope()
+	}
+	return scope
 }
 
 func cmdMemoryFailure(args []string) {
@@ -926,7 +966,7 @@ func cmdMemoryFailureAdd(args []string) {
 	fix := getFlag(args, "--fix")
 	paths := getAllFlags(args, "--path")
 	symbols := getAllFlags(args, "--symbol")
-	scope := getFlag(args, "--scope")
+	scope := resolveRepoScopeAlias(memory.NormalizeScope(getFlag(args, "--scope")))
 
 	if command == "" || errText == "" {
 		fmt.Fprintln(os.Stderr, "usage: gleann memory failure add --command <c> --error <text> --fix <text> [--path <p>]... [--symbol <s>]... [--scope <s>]")
@@ -964,7 +1004,7 @@ func cmdMemoryFailureAdd(args []string) {
 
 func cmdMemoryFailureList(args []string) {
 	asJSON := hasFlag(args, "--json")
-	scope := memory.NormalizeScope(getFlag(args, "--scope"))
+	scope := resolveRepoScopeAlias(memory.NormalizeScope(getFlag(args, "--scope")))
 
 	if scope == "" {
 		scope = memory.DetectRepoScope()

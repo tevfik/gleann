@@ -170,7 +170,10 @@ Options:
 	fmt.Printf("🚀 gleann server starting on %s\n", addr)
 	if adminToken != "" {
 		fmt.Printf("   Auth:      bearer token required (admin token: %s)\n", authTokenPath())
-		fmt.Printf("   Web UI:    http://%s/?token=%s\n", uiHost(addr), adminToken)
+		// The token itself is never printed (logs, journald, screen shares);
+		// `gleann token show` prints it on demand.
+		// The UI has no sign-in form; the browser bootstraps with ?token=.
+		fmt.Printf("   Web UI:    http://%s/?token=<run: gleann token show>\n", uiHost(addr))
 		fmt.Println("   New token: gleann token create <name> [--scope query|admin]")
 	} else {
 		fmt.Println("   Auth:      DISABLED (loopback only)")

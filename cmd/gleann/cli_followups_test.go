@@ -233,6 +233,15 @@ func TestGraphHookSilentWithoutIndex(t *testing.T) {
 	if out := runHook("GLEANN_GRAPH_INDEX=demo", "PATH="+bin+":/usr/bin:/bin"); !strings.Contains(out, "syncing index demo") || !strings.Contains(out, "user-after") {
 		t.Errorf("hook with GLEANN_GRAPH_INDEX printed:\n%s", out)
 	}
+	// The background sync must not write into the terminal once git commit
+	// has returned: its stdout and stderr are discarded.
+	noisy := t.TempDir()
+	if err := os.WriteFile(filepath.Join(noisy, "gleann"), []byte("#!/bin/sh\nsleep 0.2\necho SYNC-STDOUT\necho SYNC-STDERR >&2\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if out := runHook("GLEANN_GRAPH_INDEX=demo", "PATH="+noisy+":/usr/bin:/bin"); strings.Contains(out, "SYNC-STD") {
+		t.Errorf("hook leaks the sync output into the terminal:\n%s", out)
+	}
 	// No gleann binary: the notice is printed and the user line still runs.
 	if out := runHook("GLEANN_GRAPH_INDEX=demo", "PATH=/usr/bin:/bin"); !strings.Contains(out, "binary not found") || !strings.Contains(out, "user-after") {
 		t.Errorf("hook without a gleann binary printed:\n%s", out)

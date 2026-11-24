@@ -212,10 +212,10 @@ func TestUninstallClaudeRemovesAllGleannHooksKeepsForeign(t *testing.T) {
 }
 
 func TestClaudeSessionStartHookIsBounded(t *testing.T) {
-	if !strings.Contains(claudeHookScript, "# gleann-managed-hook v1") {
+	if !strings.Contains(claudeHookScript, "# gleann-managed-hook v2") {
 		t.Error("hook must carry the ownership marker")
 	}
-	if !strings.Contains(claudeHookScript, "head -c") {
+	if !strings.Contains(claudeHookScript, "--max-bytes 2000") {
 		t.Error("memory output must be bounded")
 	}
 }
