@@ -994,3 +994,53 @@ func TestRemoveIndex_IndexCompanionsAndLookalikes(t *testing.T) {
 		})
 	}
 }
+
+// A held lock file (Windows cannot delete an open file) must not make the
+// removal of an index report failure once the data is gone; on POSIX the same
+// error is still reported.
+func TestRemoveLockFileBusy(t *testing.T) {
+	busy := func(string) error { return errors.New("being used by another process") }
+	if err := removeLockFile("x.lock", busy, true); err != nil {
+		t.Errorf("tolerated busy lock file reported: %v", err)
+	}
+	if err := removeLockFile("x.lock", busy, false); err == nil {
+		t.Error("a removal error must be reported when busy files are not tolerated")
+	}
+	if err := removeLockFile("x.lock", func(string) error { return os.ErrNotExist }, false); err != nil {
+		t.Errorf("a missing lock file is not an error: %v", err)
+	}
+}
+
+// A caller holding <name>.lock removes the index but not the lock file, then
+// removes the lock file after the release.
+func TestRemoveIndexKeepingLock(t *testing.T) {
+	dir := t.TempDir()
+	name := "idx"
+	if err := os.MkdirAll(filepath.Join(dir, name), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, name, name+".db"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, suf := range []string{".lock", ".sync.json"} {
+		if err := os.WriteFile(filepath.Join(dir, name+suf), nil, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := RemoveIndexKeepingLock(dir, name); err != nil {
+		t.Fatal(err)
+	}
+	entries, _ := os.ReadDir(dir)
+	if len(entries) != 1 || entries[0].Name() != name+".lock" {
+		t.Fatalf("want only %s.lock left, got %v", name, entries)
+	}
+	if err := RemoveIndexLockFile(dir, name); err != nil {
+		t.Fatal(err)
+	}
+	if entries, _ = os.ReadDir(dir); len(entries) != 0 {
+		t.Fatalf("lock file not removed: %v", entries)
+	}
+	if err := RemoveIndexLockFile(dir, ".."); err == nil {
+		t.Error("path name must be refused")
+	}
+}

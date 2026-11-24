@@ -1332,7 +1332,16 @@ func (s *Server) handleBuild(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "waiting for a concurrent build of this index: "+err.Error())
 		return
 	}
-	defer unlock()
+	// A failed create removes the partial index while holding the lock, minus
+	// the lock file itself (Windows cannot delete it while open); the file goes
+	// after the release.
+	var removeLockFile bool
+	defer func() {
+		unlock()
+		if removeLockFile {
+			_ = gleann.RemoveIndexLockFile(s.cfg().IndexDir, name)
+		}
+	}()
 	// A build may create the index: under GLEANN_TAGS that needs an allowed tag
 	// in the request (it is stored with the index).
 	if err := s.checkIndexCreateAccess(r, name, req.Tags); err != nil {
@@ -1414,7 +1423,7 @@ func (s *Server) handleBuild(w http.ResponseWriter, r *http.Request) {
 	})
 	if err := builder.Build(r.Context(), name, items); err != nil {
 		if createdHere {
-			s.removePartialCreate(name, req.Tags)
+			removeLockFile = s.removePartialCreate(name, req.Tags)
 		}
 		serverMetrics.RecordBuild(time.Since(start), true)
 		s.publish(eventbus.TopicIndexFailed, map[string]any{
@@ -1860,21 +1869,24 @@ func (s *Server) checkIndexTags(indexName string) error {
 // removePartialCreate removes the index a failed restricted create left
 // behind, but only when it is still ours: its metadata is missing or carries
 // exactly the tags this request wrote. An index that carries other tags was
-// created by someone else in the meantime and is left alone.
-func (s *Server) removePartialCreate(name string, wrote []string) {
+// created by someone else in the meantime and is left alone. The caller holds
+// <name>.lock, so that file is kept; the result tells it to remove the file
+// after releasing the lock.
+func (s *Server) removePartialCreate(name string, wrote []string) (removed bool) {
 	meta, err := gleann.GetIndexMeta(s.cfg().IndexDir, name)
 	switch {
 	case err == nil && !sameTags(meta.Tags, wrote):
 		log.Printf("build %q failed; leaving the index: it carries other tags (%v), so it is not ours", name, meta.Tags)
-		return
+		return false
 	case err != nil && !indexMissing(err):
 		log.Printf("build %q failed; leaving the index: its metadata is unreadable: %v", name, err)
-		return
+		return false
 	}
 	s.invalidateSearcher(name)
-	if rerr := gleann.RemoveIndex(s.cfg().IndexDir, name); rerr != nil {
+	if rerr := gleann.RemoveIndexKeepingLock(s.cfg().IndexDir, name); rerr != nil {
 		log.Printf("build %q failed; removing the partial index: %v", name, rerr)
 	}
+	return true
 }
 
 func sameTags(a, b []string) bool {

@@ -11,6 +11,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 )
 
 // captureStdout runs fn with os.Stdout/os.Stderr redirected and returns what was written.
@@ -37,6 +38,16 @@ func captureStdout(t *testing.T, fn func()) string {
 	return <-done
 }
 
+// isolateHome gives the test its own HOME (and USERPROFILE, which is what
+// os.UserHomeDir reads on Windows) so tests cannot see each other's config.
+func isolateHome(t *testing.T) string {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	return home
+}
+
 func fakeOllama(t *testing.T, tags string, status int) *httptest.Server {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -52,7 +63,7 @@ func fakeOllama(t *testing.T, tags string, status int) *httptest.Server {
 }
 
 func TestBootstrap_DetectsOllamaAndPicksModels(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	isolateHome(t)
 	srv := fakeOllama(t, `{"models":[
 		{"name":"llama3:8b"},{"name":"gemma3:4b"},
 		{"name":"nomic-embed-text"},{"name":"bge-m3"},
@@ -88,7 +99,7 @@ func TestBootstrap_DetectsOllamaAndPicksModels(t *testing.T) {
 }
 
 func TestBootstrap_Defaults(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	isolateHome(t)
 	t.Run("unreachable keeps defaults", func(t *testing.T) {
 		var res *OnboardResult
 		var err error
@@ -123,9 +134,7 @@ func TestBootstrap_Defaults(t *testing.T) {
 }
 
 func TestBootstrap_SaveFailure(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	t.Setenv("USERPROFILE", home) // os.UserHomeDir on Windows
+	home := isolateHome(t)
 	// A regular file where ~/.gleann should be makes SaveConfig fail.
 	if err := os.WriteFile(filepath.Join(home, ".gleann"), []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
@@ -138,9 +147,7 @@ func TestBootstrap_SaveFailure(t *testing.T) {
 }
 
 func TestCheckSetupAndHint(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	t.Setenv("USERPROFILE", home) // os.UserHomeDir on Windows
+	isolateHome(t)
 	var ok bool
 	out := captureStdout(t, func() { ok = CheckSetup() })
 	if ok || !strings.Contains(out, "not configured") {
@@ -184,7 +191,7 @@ func TestConfigErrorUnwrap(t *testing.T) {
 }
 
 func TestBootstrap_ExplicitOptionsWin(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	isolateHome(t)
 	srv := fakeOllama(t, `{"models":[{"name":"gemma3:4b"},{"name":"bge-m3"}]}`, 200)
 	var res *OnboardResult
 	var err error
@@ -200,7 +207,7 @@ func TestBootstrap_ExplicitOptionsWin(t *testing.T) {
 }
 
 func TestBootstrap_RefusesCompletedConfigWithoutForce(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	isolateHome(t)
 	captureStdout(t, func() {
 		if _, err := Bootstrap(BootstrapOptions{OllamaHost: "http://127.0.0.1:1", Model: "first"}); err != nil {
 			t.Fatal(err)
@@ -221,7 +228,7 @@ func TestBootstrap_RefusesCompletedConfigWithoutForce(t *testing.T) {
 }
 
 func TestBootstrap_ForceKeepsOlderBackup(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	isolateHome(t)
 	captureStdout(t, func() {
 		for _, m := range []string{"one", "two", "three"} {
 			if _, err := Bootstrap(BootstrapOptions{OllamaHost: "http://127.0.0.1:1", Model: m, Force: true}); err != nil {
@@ -239,5 +246,30 @@ func TestBootstrap_ForceKeepsOlderBackup(t *testing.T) {
 	}
 	if fi, _ := os.Stat(baks[0]); runtime.GOOS != "windows" && fi.Mode().Perm() != 0o600 {
 		t.Errorf("backup mode %v, want 0600", fi.Mode().Perm())
+	}
+}
+
+func TestBackupConfigAt_SameSecondCollision(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	now := time.Date(2026, 11, 24, 10, 0, 0, 0, time.UTC)
+	for i := 0; i < 4; i++ {
+		if err := os.WriteFile(path, []byte(fmt.Sprintf("gen%d", i)), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := backupConfigAt(path, now); err != nil {
+			t.Fatalf("backup %d: %v", i, err)
+		}
+	}
+	want := map[string]string{
+		path + ".bak":                   "gen0",
+		path + ".bak-20261124-100000":   "gen1",
+		path + ".bak-20261124-100000-1": "gen2",
+		path + ".bak-20261124-100000-2": "gen3",
+	}
+	for name, content := range want {
+		got, err := os.ReadFile(name)
+		if err != nil || string(got) != content {
+			t.Errorf("%s = %q (%v), want %q", name, got, err, content)
+		}
 	}
 }

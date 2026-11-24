@@ -9,6 +9,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"sort"
 	"strings"
@@ -1373,6 +1374,43 @@ func isIndexFile(entryName, name string) bool {
 
 // RemoveIndex removes an index and all its associated files (vector index, graph database, sync state).
 func RemoveIndex(indexDir, name string) error {
+	return removeIndex(indexDir, name, true)
+}
+
+// RemoveIndexKeepingLock is RemoveIndex for a caller that holds <name>.lock
+// (the index build lock): it removes everything of the index except that lock
+// file, which Windows cannot delete while it is open. The caller releases the
+// lock and then calls RemoveIndexLockFile.
+func RemoveIndexKeepingLock(indexDir, name string) error {
+	return removeIndex(indexDir, name, false)
+}
+
+// RemoveIndexLockFile removes <name>.lock after its holder released it. It is
+// best effort by nature: another process may have taken the lock again, in
+// which case Windows refuses and the file stays for that process.
+func RemoveIndexLockFile(indexDir, name string) error {
+	if err := checkPathName(name); err != nil {
+		return err
+	}
+	return removeLockFile(filepath.Join(indexDir, name+".lock"), os.Remove, runtime.GOOS == "windows")
+}
+
+// removeLockFile deletes a lock file. With tolerateBusy (Windows) a failure
+// other than "does not exist" is logged and ignored: the file is held open by
+// a build or sync and a leftover lock file is harmless.
+func removeLockFile(path string, remove func(string) error, tolerateBusy bool) error {
+	err := remove(path)
+	if err == nil || os.IsNotExist(err) {
+		return nil
+	}
+	if tolerateBusy {
+		log.Printf("lock file %s left in place: %v", path, err)
+		return nil
+	}
+	return err
+}
+
+func removeIndex(indexDir, name string, removeLock bool) error {
 	// Never let a crafted name (e.g. "..") escape indexDir: RemoveAll below
 	// would otherwise delete arbitrary directories.
 	if err := checkPathName(name); err != nil {
@@ -1460,11 +1498,13 @@ func RemoveIndex(indexDir, name string) error {
 	// The format-2 build/migrate lock lives beside the index directory (RFC 003
 	// section 3.6). The SQLite store, its WAL companions and the .v1 rollback
 	// copies are inside <name>/ and go with the directory removed above.
-	if err := os.Remove(filepath.Join(indexDir, name+".lock")); err != nil && !os.IsNotExist(err) {
-		if dirErr != nil {
-			return dirErr
+	if removeLock {
+		if err := removeLockFile(filepath.Join(indexDir, name+".lock"), os.Remove, runtime.GOOS == "windows"); err != nil {
+			if dirErr != nil {
+				return dirErr
+			}
+			return fmt.Errorf("remove index lock: %w", err)
 		}
-		return fmt.Errorf("remove index lock: %w", err)
 	}
 	// Best effort: on Windows the file cannot be deleted while a metadata
 	// update holds or polls it, and a leftover lock file is harmless (it is

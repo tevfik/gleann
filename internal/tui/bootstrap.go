@@ -47,9 +47,13 @@ func Bootstrap(opts BootstrapOptions) (*OnboardResult, error) {
 
 // backupConfig copies an existing config.json to config.json.bak (mode 0600,
 // as the file may hold API keys). A backup that already exists is kept: the
-// new one gets a timestamped name (config.json.bak-YYYYMMDD-HHMMSS).
+// new one gets a timestamped name (config.json.bak-YYYYMMDD-HHMMSS), with a
+// counter suffix (-1, -2, ...) when that name is taken too.
 func backupConfig() error {
-	path := configPath()
+	return backupConfigAt(configPath(), time.Now())
+}
+
+func backupConfigAt(path string, now time.Time) error {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -59,7 +63,14 @@ func backupConfig() error {
 	}
 	bak := path + ".bak"
 	if _, err := os.Stat(bak); err == nil {
-		bak = path + ".bak-" + time.Now().Format("20060102-150405")
+		stamped := path + ".bak-" + now.Format("20060102-150405")
+		bak = stamped
+		for i := 1; ; i++ {
+			if _, err := os.Lstat(bak); os.IsNotExist(err) {
+				break
+			}
+			bak = fmt.Sprintf("%s-%d", stamped, i)
+		}
 	}
 	f, err := os.OpenFile(bak, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
