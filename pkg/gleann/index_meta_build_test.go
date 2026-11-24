@@ -10,6 +10,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/tevfik/gleann/internal/fsretry"
 )
 
 // A full build writes <name>.meta.json while UpdateIndexMeta (the PATCH path)
@@ -35,7 +37,9 @@ func TestBuildMetaWriteAgainstConcurrentUpdates(t *testing.T) {
 	go func() { // raw reader: every observed state must be complete JSON
 		defer wg.Done()
 		for !stop.Load() {
-			data, err := os.ReadFile(metaPath)
+			// fsretry.ReadFile, like the product's readers: on Windows a file
+			// that is being replaced cannot be opened for a moment.
+			data, err := fsretry.ReadFile(metaPath)
 			if err != nil {
 				fail("read: %v", err)
 				return
