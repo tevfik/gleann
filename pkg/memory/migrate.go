@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/tevfik/gleann/internal/fsretry"
 	bolt "go.etcd.io/bbolt"
 	bolterrors "go.etcd.io/bbolt/errors"
 )
@@ -396,7 +397,7 @@ func migrateFromBbolt(legacyPath, sqlitePath string, notify func(int)) error {
 			return fmt.Errorf("closing legacy memory db: %w", err)
 		}
 	}
-	if err := os.Rename(tmpPath, sqlitePath); err != nil {
+	if err := fsretry.Rename(tmpPath, sqlitePath); err != nil {
 		return fmt.Errorf("switching memory store to %s: %w", sqlitePath, err)
 	}
 	notifyStep(notify, 4)
@@ -406,7 +407,7 @@ func migrateFromBbolt(legacyPath, sqlitePath string, notify func(int)) error {
 	if fileExists(legacyPath + ".v1") {
 		return fmt.Errorf("completing memory migration: both %s and %s.v1 exist; move one aside manually", legacyPath, legacyPath)
 	}
-	if err := os.Rename(legacyPath, legacyPath+".v1"); err != nil {
+	if err := fsretry.Rename(legacyPath, legacyPath+".v1"); err != nil {
 		return fmt.Errorf("renaming legacy memory db aside: %w", err)
 	}
 	notifyStep(notify, 5)
@@ -455,7 +456,7 @@ func (s *Store) completeSwitch(legacyPath string) error {
 			}
 			return fmt.Errorf("completing memory migration: both %s and %s.v1 exist and %s has data; move one aside manually", legacyPath, legacyPath, legacyPath)
 		}
-		if err := os.Rename(legacyPath, legacyPath+".v1"); err != nil {
+		if err := fsretry.Rename(legacyPath, legacyPath+".v1"); err != nil {
 			return fmt.Errorf("renaming legacy memory db aside: %w", err)
 		}
 		return writeGuardFile(legacyPath)

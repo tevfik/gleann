@@ -1,6 +1,6 @@
 // Package metafault is a fault-injection seam for the index metadata write
-// (gleann.UpdateIndexMeta). Production code never sets it; tests use Set to make
-// the write fail after the index store is open, which no file-system trick can
+// (gleann.UpdateIndexMeta and the full build's replacement of the file).
+// Production code never sets it; tests use Set to make the write fail after the index store is open, which no file-system trick can
 // do portably (it would also fail the store open, and does not work as root or
 // on Windows).
 package metafault

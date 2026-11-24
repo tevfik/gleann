@@ -34,7 +34,7 @@ func TestBuildPassagesCannotWriteMetadata(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, err := b.BuildPassages("idx", f2Items())
-	if err == nil || !strings.Contains(err.Error(), "write metadata") {
+	if err == nil || !strings.Contains(err.Error(), "writing index metadata") {
 		t.Fatalf("err = %v", err)
 	}
 }

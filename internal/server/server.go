@@ -1860,7 +1860,7 @@ func isSecretKey(k string) bool { return k == "openai_api_key" || k == "ollama_a
 func readPersistedConfigMap() map[string]any {
 	m := map[string]any{}
 	if p, err := serverConfigPath(); err == nil {
-		if data, err := os.ReadFile(p); err == nil {
+		if data, err := fsretry.ReadFile(p); err == nil {
 			_ = json.Unmarshal(data, &m)
 		}
 	}
@@ -2033,7 +2033,7 @@ func saveServerConfig(cfg gleann.Config) error {
 
 	// Read existing config as raw map to preserve unknown fields.
 	existing := make(map[string]any)
-	if data, err := os.ReadFile(cfgPath); err == nil {
+	if data, err := fsretry.ReadFile(cfgPath); err == nil {
 		if len(strings.TrimSpace(string(data))) > 0 {
 			if err := json.Unmarshal(data, &existing); err != nil {
 				return fmt.Errorf("existing %s is not valid JSON (fix or remove it): %w", cfgPath, err)

@@ -260,7 +260,13 @@ func TestSyncEmptyCorpusRebuildRestoresTheIndex(t *testing.T) {
 		}
 		// The metadata write fails once the store is open and emptied (the
 		// injected failure cannot hit the store open, unlike a read-only dir).
-		t.Cleanup(metafault.Set(func(string) error { return errors.New("injected metadata write failure") }))
+		wantMeta := filepath.Join(env.cfg.IndexDir, "mw", "mw.meta.json")
+		t.Cleanup(metafault.Set(func(p string) error {
+			if filepath.Clean(p) == filepath.Clean(wantMeta) {
+				return errors.New("injected metadata write failure")
+			}
+			return nil
+		}))
 		if err := os.Remove(notes); err != nil {
 			t.Fatal(err)
 		}

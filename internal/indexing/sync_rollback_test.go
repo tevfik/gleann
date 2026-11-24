@@ -1,6 +1,7 @@
 package indexing
 
 import (
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -38,9 +39,14 @@ func TestWithIndexRollback(t *testing.T) {
 	}
 
 	// Success: user-owned metadata carried over to the new index.
-	err = withIndexRollback(idx, "demo", newPrinter(nil, nil), func() error {
+	// The rebuild writes its first meta.json with the old user fields (what
+	// BuildPassages does through SetPreviousMeta); the restore keeps them.
+	err = withIndexRollbackMeta(idx, "demo", newPrinter(nil, nil), func(prev *gleann.IndexMeta) error {
 		_ = os.MkdirAll(dir, 0o755)
-		return os.WriteFile(filepath.Join(dir, "demo.meta.json"), []byte(`{"name":"demo","vector_ready":true}`), 0o644)
+		fresh := gleann.IndexMeta{Name: "demo", VectorReady: true}
+		gleann.MergeUserMeta(&fresh, prev, prev, prev)
+		data, _ := json.Marshal(fresh)
+		return os.WriteFile(filepath.Join(dir, "demo.meta.json"), data, 0o644)
 	})
 	if err != nil {
 		t.Fatal(err)

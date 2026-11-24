@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/tevfik/gleann/internal/analysis"
+	"github.com/tevfik/gleann/internal/fsretry"
 	"github.com/tevfik/gleann/internal/graphstore"
 	"github.com/tevfik/gleann/internal/store"
 )
@@ -341,8 +342,9 @@ const (
 	crashAfterFinish  = "after_finish"  // generation finished, meta.json not written
 
 	// Points of a publication that stages more than one file (RFC 005 section 4).
-	crashAfterRenameMain  = "after_rename_main"  // main file renamed, the other staged files not yet
-	crashAfterMergeCommit = "after_merge_commit" // a publication that replaces the main file committed, nothing renamed
+	crashAfterRenameMain    = "after_rename_main"    // main file renamed, the other staged files not yet
+	crashBeforePassagesMeta = "before_passages_meta" // passages published, the build's meta.json not written yet
+	crashAfterMergeCommit   = "after_merge_commit"   // a publication that replaces the main file committed, nothing renamed
 )
 
 // crashPoint runs the builder's test crash hook, if set. It is a struct field,
@@ -504,7 +506,7 @@ func (b *LeannBuilder) publishVectorFormat2(ctx context.Context, st *store.Store
 	}
 	for i, f := range files {
 		final := basePath + f.Suffix
-		if err := os.Rename(final+".tmp", final); err != nil {
+		if err := fsretry.Rename(final+".tmp", final); err != nil {
 			// A reader that opened the index between the commit and this rename
 			// runs recoverVectorPublication, which rolls the publication forward
 			// itself: the staging file is gone because it was renamed already.
@@ -633,7 +635,7 @@ func recoverVectorPublication(ctx context.Context, st *store.Store, basePath str
 		}
 		tmpPath := filepath.Join(dir, n)
 		if _, err := os.Stat(tmpPath); err == nil {
-			if err := os.Rename(tmpPath, strings.TrimSuffix(tmpPath, ".tmp")); err != nil {
+			if err := fsretry.Rename(tmpPath, strings.TrimSuffix(tmpPath, ".tmp")); err != nil {
 				return fmt.Errorf("rolling forward vector publication: %w", err)
 			}
 		} else if !errors.Is(err, fs.ErrNotExist) {

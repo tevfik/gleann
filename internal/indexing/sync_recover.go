@@ -13,6 +13,7 @@ import (
 	"go.etcd.io/bbolt"
 	bolterrors "go.etcd.io/bbolt/errors"
 
+	"github.com/tevfik/gleann/internal/fsretry"
 	"github.com/tevfik/gleann/pkg/gleann"
 )
 
@@ -116,7 +117,7 @@ func recoverSyncBackupLocked(indexDir, name string) (string, error) {
 	if err := os.RemoveAll(dir); err != nil {
 		return "", fmt.Errorf("clearing the partial index %s (the good copy is in %s): %w", dir, bak, err)
 	}
-	if err := os.Rename(bak, dir); err != nil {
+	if err := fsretry.Rename(bak, dir); err != nil {
 		return "", fmt.Errorf("restoring the index from %s: %w", bak, err)
 	}
 	return "restored", nil

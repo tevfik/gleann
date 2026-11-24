@@ -339,8 +339,8 @@ func TestSyncPublishedMetaFailures(t *testing.T) {
 	})
 	t.Run("meta.json cannot be written", func(t *testing.T) {
 		_, base, _ := fxBuilt(t)
-		// An unwritable index directory makes the metadata write fail.
-		blockMetaWrites(t)
+		// An injected fault makes the metadata write fail (the store stays usable).
+		blockMetaWrites(t, base+".meta.json")
 		err := syncPublishedMeta(ctx, fxOpen(t, base), base, 5)
 		if err == nil || !strings.Contains(err.Error(), "syncing meta.json after recovery") || !strings.Contains(err.Error(), "injected metadata write failure") {
 			t.Fatalf("err = %v", err)

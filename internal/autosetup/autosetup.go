@@ -128,7 +128,7 @@ func EnsureConfig(ollamaHost string, quiet bool) (bool, error) {
 	// existing holds the user's current keys; defaults are only ever added
 	// for keys that are missing, never replacing what the user wrote.
 	var existing map[string]any
-	if data, rerr := os.ReadFile(cfgPath); rerr == nil {
+	if data, rerr := fsretry.ReadFile(cfgPath); rerr == nil {
 		if uerr := json.Unmarshal(data, &existing); uerr != nil {
 			// Never overwrite a file we cannot parse: it may hold hand-written
 			// settings and API keys. Let the user fix it.
@@ -194,7 +194,7 @@ func EnsureConfig(ollamaHost string, quiet bool) (bool, error) {
 		return false, err
 	}
 	data, _ := json.MarshalIndent(cfg, "", "  ")
-	if prev, perr := os.ReadFile(cfgPath); perr == nil {
+	if prev, perr := fsretry.ReadFile(cfgPath); perr == nil {
 		_ = os.WriteFile(cfgPath+".bak", prev, 0o600)
 	}
 	tmp, err := os.CreateTemp(home+"/.gleann", ".config-*.tmp")

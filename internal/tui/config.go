@@ -213,7 +213,7 @@ func saveExact(path string, merged OnboardResult) error {
 	// Keys that OnboardResult does not model (search_config, chunk_config,
 	// rate_limit, timezone, ...) live in the same file: preserve them.
 	out := map[string]any{}
-	if raw, rerr := os.ReadFile(path); rerr == nil && len(strings.TrimSpace(string(raw))) > 0 {
+	if raw, rerr := fsretry.ReadFile(path); rerr == nil && len(strings.TrimSpace(string(raw))) > 0 {
 		if uerr := json.Unmarshal(raw, &out); uerr != nil {
 			return fmt.Errorf("existing %s is not valid JSON (%v); fix or remove it — not overwritten", path, uerr)
 		}
@@ -340,7 +340,7 @@ func newConfigError(path string, data []byte, err error) *ConfigError {
 // hiding it. A missing or empty file is not an error: it returns (nil, nil).
 func LoadSavedConfigChecked() (*OnboardResult, error) {
 	path := configPath()
-	data, err := os.ReadFile(path)
+	data, err := fsretry.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, nil

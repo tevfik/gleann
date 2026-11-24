@@ -9,6 +9,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -1097,6 +1098,108 @@ func canonicalLockKey(metaPath string) string {
 	return filepath.Join(dir, base)
 }
 
+// lockMeta takes the in-process lock of one metadata file and returns the
+// function that releases it.
+func lockMeta(metaPath string) (unlock func()) {
+	mu, _ := metaLocks.LoadOrStore(canonicalLockKey(metaPath), &sync.Mutex{})
+	mu.(*sync.Mutex).Lock()
+	return mu.(*sync.Mutex).Unlock
+}
+
+// MergeUserMeta sets the user-editable fields of dst (SourceDir, AutoWatch,
+// Tags, Description, MCPExposed) after a rebuild, so an edit made while it ran
+// is not undone. snapshot is what the rebuild started from (the values to carry
+// over), baseline is what the file holds when nothing has edited it since (the
+// snapshot itself, or the zero value when the rebuild wrote a fresh file), and
+// current is the file now (nil if unreadable). A field of current that differs
+// from the baseline was edited meanwhile and wins, even when it was set to its
+// zero value; otherwise the snapshot's value is used. Nil arguments act as an
+// empty IndexMeta.
+func MergeUserMeta(dst, snapshot, baseline, current *IndexMeta) {
+	zero := IndexMeta{}
+	if snapshot == nil {
+		snapshot = &zero
+	}
+	if baseline == nil {
+		baseline = &zero
+	}
+	if current == nil {
+		current = baseline
+	}
+	pick := func(edited bool) *IndexMeta {
+		if edited {
+			return current
+		}
+		return snapshot
+	}
+	dst.SourceDir = pick(current.SourceDir != baseline.SourceDir).SourceDir
+	dst.AutoWatch = pick(current.AutoWatch != baseline.AutoWatch).AutoWatch
+	dst.Tags = pick(!slices.Equal(current.Tags, baseline.Tags)).Tags
+	dst.Description = pick(current.Description != baseline.Description).Description
+	dst.MCPExposed = pick(!sameBoolPtr(current.MCPExposed, baseline.MCPExposed)).MCPExposed
+}
+
+func sameBoolPtr(a, b *bool) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return *a == *b
+}
+
+// replaceIndexMeta writes the whole metadata file of an index under the same
+// per-index lock and atomic temp-file replace as UpdateIndexMeta (for a writer
+// that composes the complete file itself, such as a full build). compose gets
+// the file as it is now (nil when it cannot be read) and returns what to write,
+// so the writer can keep edits made since it started. The caller has validated
+// name.
+func replaceIndexMeta(indexDir, name string, compose func(current *IndexMeta) (*IndexMeta, error)) error {
+	metaPath := filepath.Join(indexDir, name, name+".meta.json")
+	unlock := lockMeta(metaPath)
+	defer unlock()
+	current, _ := GetIndexMeta(indexDir, name)
+	next, err := compose(current)
+	if err != nil {
+		return err
+	}
+	data, err := json.MarshalIndent(next, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal metadata: %w", err)
+	}
+	if err := writeMetaFile(metaPath, name, data); err != nil {
+		return fmt.Errorf("%w: %w", ErrIndexMetaWrite, err)
+	}
+	return nil
+}
+
+// staleMetaTempAge is how old a leftover temporary metadata file must be before
+// the next update removes it (a live update finishes in milliseconds).
+const staleMetaTempAge = time.Hour
+
+// removeStaleMetaTemps deletes the temporary files a crashed update of this
+// index left behind: exactly <name>.meta.json.<digits>.tmp (what os.CreateTemp
+// makes in writeMetaFile), older than staleMetaTempAge. Errors are ignored: it
+// is housekeeping and must never fail an update.
+func removeStaleMetaTemps(dir, name string, now time.Time) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
+	prefix := name + ".meta.json."
+	for _, e := range entries {
+		n := e.Name()
+		if len(n) <= len(prefix)+len(".tmp") || !strings.HasPrefix(n, prefix) || !strings.HasSuffix(n, ".tmp") || e.IsDir() {
+			continue
+		}
+		mid := n[len(prefix) : len(n)-len(".tmp")]
+		if strings.Trim(mid, "0123456789") != "" {
+			continue
+		}
+		if info, err := e.Info(); err == nil && now.Sub(info.ModTime()) > staleMetaTempAge {
+			_ = os.Remove(filepath.Join(dir, n))
+		}
+	}
+}
+
 // ErrIndexMetaWrite marks a failure to write the updated metadata, as opposed
 // to failing to read the existing one: a caller that maps "not exist" to "no
 // such index" must not do so for a write error (the temp file or directory
@@ -1119,9 +1222,8 @@ func UpdateIndexMetaResult(indexDir, name string, updateFn func(*IndexMeta)) (*I
 		return nil, err
 	}
 	metaPath := filepath.Join(indexDir, name, name+".meta.json")
-	mu, _ := metaLocks.LoadOrStore(canonicalLockKey(metaPath), &sync.Mutex{})
-	mu.(*sync.Mutex).Lock()
-	defer mu.(*sync.Mutex).Unlock()
+	unlock := lockMeta(metaPath)
+	defer unlock()
 
 	meta, err := GetIndexMeta(indexDir, name)
 	if err != nil {
@@ -1145,6 +1247,7 @@ func writeMetaFile(metaPath, name string, data []byte) error {
 	if err := metafault.Check(metaPath); err != nil {
 		return fmt.Errorf("write temp metadata: %w", err)
 	}
+	removeStaleMetaTemps(filepath.Dir(metaPath), name, time.Now())
 	tmp, err := os.CreateTemp(filepath.Dir(metaPath), name+".meta.json.*.tmp")
 	if err != nil {
 		return fmt.Errorf("write temp metadata: %w", err)

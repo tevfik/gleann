@@ -80,7 +80,7 @@ func TestGetAndUpdateIndexMetaErrors(t *testing.T) {
 
 	// A failing metadata write leaves the original metadata untouched.
 	writeMeta(t, dir, "ok", `{"name":"ok"}`)
-	blockMetaWrites(t)
+	blockMetaWrites(t, filepath.Join(dir, "ok", "ok.meta.json"))
 	called := false
 	err := UpdateIndexMeta(dir, "ok", func(m *IndexMeta) { called = true; m.Description = "changed" })
 	if err == nil || !strings.Contains(err.Error(), "write temp metadata") || !strings.Contains(err.Error(), "injected metadata write failure") || !called {

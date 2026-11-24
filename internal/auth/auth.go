@@ -91,7 +91,7 @@ func newRaw() (string, error) {
 }
 
 func (s *Store) load() ([]Entry, error) {
-	data, err := os.ReadFile(s.tokensPath())
+	data, err := fsretry.ReadFile(s.tokensPath())
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, nil
 	}
@@ -172,7 +172,7 @@ func (s *Store) EnsureAdmin() (string, bool, error) {
 	if err != nil {
 		return "", false, err
 	}
-	if raw, err := os.ReadFile(s.adminPath()); err == nil {
+	if raw, err := fsretry.ReadFile(s.adminPath()); err == nil {
 		r := strings.TrimSpace(string(raw))
 		for _, e := range es {
 			if e.Name == "admin" && e.Scope == ScopeAdmin && constEq(e.Hash, hashToken(r)) {
@@ -286,7 +286,7 @@ func ClientToken() string {
 	if dir == "" {
 		return ""
 	}
-	b, err := os.ReadFile(filepath.Join(dir, "admin.token"))
+	b, err := fsretry.ReadFile(filepath.Join(dir, "admin.token"))
 	if err != nil {
 		return ""
 	}

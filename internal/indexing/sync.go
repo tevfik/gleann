@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/tevfik/gleann/internal/fsretry"
 	"github.com/tevfik/gleann/internal/vault"
 	"github.com/tevfik/gleann/pkg/gleann"
 )
@@ -400,7 +401,8 @@ func Sync(ctx context.Context, opts SyncOptions) (*SyncResult, error) {
 			res.FullRebuild = true
 			// A failed rebuild (e.g. the embedder is still down) must not
 			// leave a degraded index behind: roll back to the previous one.
-			err = withIndexRollback(cfg.IndexDir, name, p, func() error {
+			err = withIndexRollbackMeta(cfg.IndexDir, name, p, func(prev *gleann.IndexMeta) error {
+				env.prevMeta = prev
 				var rerr error
 				// requireItems: a corpus that became empty (the reason the
 				// empty update ran) must fail here, or the rollback copy is
@@ -566,6 +568,13 @@ func bootstrapTrackerFromIndex(ctx context.Context, tracker *vault.Tracker, docs
 // (recoverSyncBackupLocked) instead of deleting it, and a cross-process guard
 // keeps a second gleann from "recovering" an index that is being rebuilt.
 func withIndexRollback(indexDir, name string, p *printer, fn func() error) error {
+	return withIndexRollbackMeta(indexDir, name, p, func(*gleann.IndexMeta) error { return fn() })
+}
+
+// withIndexRollbackMeta is withIndexRollback whose fn also gets the index's
+// metadata from before the rewrite, for the rebuild to carry over its user
+// fields from its first meta.json on.
+func withIndexRollbackMeta(indexDir, name string, p *printer, fn func(prev *gleann.IndexMeta) error) error {
 	dir := filepath.Join(indexDir, name)
 	bak := SyncBackupPath(indexDir, name)
 	release, err := acquireRewriteGuard(indexDir, name)
@@ -578,18 +587,21 @@ func withIndexRollback(indexDir, name string, p *printer, fn func() error) error
 	} else if what != "" {
 		p.Printf("ℹ️  A previous sync of %q was interrupted (rollback copy: %s)\n", name, what)
 	}
-	prevMeta, _ := gleann.GetIndexMeta(indexDir, name)
+	var prevMeta *gleann.IndexMeta
 	moved := false
 	if _, err := os.Stat(dir); err == nil {
-		if err := os.Rename(dir, bak); err != nil {
+		if err := fsretry.Rename(dir, bak); err != nil {
 			return fmt.Errorf("preparing rollback copy: %w", err)
 		}
 		moved = true
+		// Read the metadata from the moved copy: a PATCH that landed before
+		// the move is in it, and one after the move cannot reach it.
+		prevMeta = readBackupMeta(bak, name)
 	}
-	if err := fn(); err != nil {
+	if err := fn(prevMeta); err != nil {
 		if moved {
 			_ = os.RemoveAll(dir)
-			if rerr := os.Rename(bak, dir); rerr != nil {
+			if rerr := fsretry.Rename(bak, dir); rerr != nil {
 				return fmt.Errorf("%w (and restoring the previous index failed: %v; it is in %s)", err, rerr, bak)
 			}
 		}
@@ -598,8 +610,11 @@ func withIndexRollback(indexDir, name string, p *printer, fn func() error) error
 	if prevMeta != nil {
 		// Keep what the user attached to the index across the rebuild.
 		_ = gleann.UpdateIndexMeta(indexDir, name, func(m *gleann.IndexMeta) {
-			m.SourceDir, m.AutoWatch, m.Tags = prevMeta.SourceDir, prevMeta.AutoWatch, prevMeta.Tags
-			m.Description, m.MCPExposed = prevMeta.Description, prevMeta.MCPExposed
+			// The rebuild wrote its file carrying prevMeta's user fields, so a
+			// field that differs now was edited (PATCH) after that and is kept.
+			cur := *m
+			gleann.MergeUserMeta(m, prevMeta, prevMeta, &cur)
+			m.SourceDir = prevMeta.SourceDir // the rebuild's own value is a default, not an edit
 			if !prevMeta.CreatedAt.IsZero() {
 				m.CreatedAt = prevMeta.CreatedAt
 			}

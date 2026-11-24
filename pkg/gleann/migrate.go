@@ -15,6 +15,7 @@ import (
 	"go.etcd.io/bbolt"
 
 	"github.com/tevfik/gleann/internal/analysis"
+	"github.com/tevfik/gleann/internal/fsretry"
 	"github.com/tevfik/gleann/internal/store"
 )
 
@@ -326,7 +327,7 @@ func MigrateIndex(indexDir, name string, opts MigrateOptions) (*MigrateResult, e
 			_ = removeDBFiles(tmpPath)
 			return nil, fmt.Errorf("staging the renumbered vector file: %w", err)
 		}
-		if err := os.Rename(basePath+suffixMain, basePath+suffixMain+".v1"); err != nil {
+		if err := fsretry.Rename(basePath+suffixMain, basePath+suffixMain+".v1"); err != nil {
 			_ = os.Remove(staged)
 			_ = removeDBFiles(tmpPath)
 			return nil, fmt.Errorf("preserving the old vector file: %w", err)
@@ -334,14 +335,14 @@ func MigrateIndex(indexDir, name string, opts MigrateOptions) (*MigrateResult, e
 		if err := hook(migrateAfterIndexAside); err != nil {
 			return nil, err
 		}
-		if err := os.Rename(staged, basePath+suffixMain); err != nil {
+		if err := fsretry.Rename(staged, basePath+suffixMain); err != nil {
 			return nil, fmt.Errorf("publishing the renumbered vector file: %w", err)
 		}
 		if err := hook(migrateAfterIndexNew); err != nil {
 			return nil, err
 		}
 	}
-	if err := os.Rename(tmpPath, basePath+".db"); err != nil {
+	if err := fsretry.Rename(tmpPath, basePath+".db"); err != nil {
 		return nil, fmt.Errorf("switching to format 2: %w", err)
 	}
 	if err := hook(migrateAfterDBRename); err != nil {
@@ -469,7 +470,7 @@ func undoMigrationSwitch(basePath string) error {
 	}
 	for _, suffix := range []string{".passages.db", ".manifest.json", suffixMain} {
 		if _, err := os.Stat(basePath + suffix + ".v1"); err == nil {
-			if err := os.Rename(basePath+suffix+".v1", basePath+suffix); err != nil {
+			if err := fsretry.Rename(basePath+suffix+".v1", basePath+suffix); err != nil {
 				return fmt.Errorf("restoring old %s: %w", suffix, err)
 			}
 		}

@@ -3,7 +3,6 @@ package gleann
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -27,6 +26,10 @@ type LeannBuilder struct {
 	// publication (tests only; see the crash* constants in builder_format2.go).
 	// A struct field, not a package global: production builders never set it.
 	crashHook func(point string) error
+
+	// fallbackMeta is the metadata whose user fields a build carries over when
+	// the index has no readable meta.json yet (SetPreviousMeta).
+	fallbackMeta *IndexMeta
 
 	// Results of the last format-2 passage build (buildPassagesFormat2):
 	// the vector generation the rebuild published, and whether the database
@@ -69,6 +72,14 @@ func (b *LeannBuilder) SetProgressCallback(cb func(phase string, done, total int
 	b.progressCb = cb
 }
 
+// SetPreviousMeta names the metadata of the index before a rebuild that starts
+// from an empty directory (a sync rebuild moves the old index aside first): the
+// first meta.json the build writes then already carries its user fields (tags,
+// description, mcp_exposed, auto_watch, source_dir, created_at) instead of
+// reading as untagged and exposed until the end of the rebuild. An index that
+// has a readable meta.json uses that file instead.
+func (b *LeannBuilder) SetPreviousMeta(m *IndexMeta) { b.fallbackMeta = m }
+
 // SetChunker sets a custom chunker for text processing.
 func (b *LeannBuilder) SetChunker(chunker Chunker) {
 	b.chunker = chunker
@@ -93,6 +104,9 @@ func (b *LeannBuilder) BuildPassages(name string, items []Item) ([]int64, error)
 
 	// Rebuilding must not forget what the user attached to the index.
 	prevMeta, _ := GetIndexMeta(b.config.IndexDir, name)
+	if prevMeta == nil {
+		prevMeta = b.fallbackMeta
+	}
 
 	// Every index is format 2 (RFC 004 B1). An index in the old format is
 	// refused: `gleann index migrate` converts it, `gleann index rebuild`
@@ -125,11 +139,7 @@ func (b *LeannBuilder) BuildPassages(name string, items []Item) ([]int64, error)
 		meta.Dimensions = b.embedder.Dimensions()
 	}
 	if prevMeta != nil {
-		meta.SourceDir = prevMeta.SourceDir
-		meta.AutoWatch = prevMeta.AutoWatch
-		meta.Tags = prevMeta.Tags
-		meta.Description = prevMeta.Description
-		meta.MCPExposed = prevMeta.MCPExposed
+		MergeUserMeta(&meta, prevMeta, prevMeta, prevMeta)
 		if !prevMeta.CreatedAt.IsZero() {
 			meta.CreatedAt = prevMeta.CreatedAt
 		}
@@ -141,13 +151,21 @@ func (b *LeannBuilder) BuildPassages(name string, items []Item) ([]int64, error)
 	// must see the change.
 	meta.VectorGeneration = b.passagesGeneration
 
-	metaPath := basePath + ".meta.json"
-	metaData, err := json.MarshalIndent(meta, "", "  ")
-	if err != nil {
-		return nil, fmt.Errorf("marshal metadata: %w", err)
+	if err := b.crashPoint(crashBeforePassagesMeta); err != nil {
+		return nil, err
 	}
-	if err := os.WriteFile(metaPath, metaData, 0o644); err != nil {
-		return nil, fmt.Errorf("write metadata: %w", err)
+	// Same per-index lock and atomic replace as UpdateIndexMeta: the file
+	// cannot tear, and an edit of a user field (PATCH) made since prevMeta was
+	// read is kept instead of overwritten (MergeUserMeta, under the lock).
+	// A rebuild in another process is not covered: it does not hold this lock.
+	err = replaceIndexMeta(b.config.IndexDir, name, func(current *IndexMeta) (*IndexMeta, error) {
+		if prevMeta != nil {
+			MergeUserMeta(&meta, prevMeta, prevMeta, current)
+		}
+		return &meta, nil
+	})
+	if err != nil {
+		return nil, err
 	}
 	return ids, nil
 }

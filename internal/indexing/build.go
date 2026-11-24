@@ -341,6 +341,11 @@ type pipelineEnv struct {
 	// anew (damaged, or from an incompatible build): the code graph that lived
 	// in it is gone and the caller must rebuild it from the sources.
 	dbRecreated bool
+
+	// prevMeta is the metadata of the index a sync rebuild moved aside (set by
+	// the caller before rebuildWith): the rebuilt index carries its user fields
+	// from the first meta.json it writes.
+	prevMeta *gleann.IndexMeta
 }
 
 // progressCallback forwards a builder's embedding progress to Options.Progress.
@@ -461,9 +466,13 @@ func (e *pipelineEnv) rebuildWith(ctx context.Context, name, docsDir string, str
 	}
 	builder.SetSourceDir(docsDir)
 	builder.SetProgressCallback(e.progressCallback())
+	builder.SetPreviousMeta(e.prevMeta)
 
 	// A rebuild recreates meta.json; carry over user-managed fields.
 	prev, prevErr := gleann.GetIndexMeta(e.cfg.IndexDir, name)
+	if prevErr != nil && e.prevMeta != nil {
+		prev, prevErr = e.prevMeta, nil
+	}
 
 	start := time.Now()
 	if err := builder.Build(ctx, name, items); err != nil {
@@ -471,16 +480,19 @@ func (e *pipelineEnv) rebuildWith(ctx context.Context, name, docsDir string, str
 	}
 	e.dbRecreated = builder.DatabaseRecreated()
 	_ = gleann.UpdateIndexMeta(e.cfg.IndexDir, name, func(meta *gleann.IndexMeta) {
-		meta.SourceDir = docsDir
+		cur := *meta
 		meta.GleannVersion = gleann.GetGleannVersion()
 		meta.PluginVersions = gleann.GetInstalledPluginVersions()
 		if prevErr == nil && prev != nil {
 			if !prev.CreatedAt.IsZero() {
 				meta.CreatedAt = prev.CreatedAt
 			}
-			meta.Tags, meta.Description = prev.Tags, prev.Description
-			meta.MCPExposed, meta.AutoWatch = prev.MCPExposed, prev.AutoWatch
+			// The file now holds what the builder wrote from the same
+			// snapshot; a field that differs was edited (PATCH) during the
+			// build and is kept.
+			gleann.MergeUserMeta(meta, prev, prev, &cur)
 		}
+		meta.SourceDir = docsDir
 	})
 	e.p.Printf("✅ Rebuilt %q: %d passages in %s\n", name, len(items), time.Since(start).Round(time.Millisecond))
 	return pluginDocs, nil
