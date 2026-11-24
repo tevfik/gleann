@@ -330,7 +330,7 @@ func (ac *agentChat) stream(ctx context.Context, prompt string, emit func(agentt
 	cm.tokensSent += len(prompt) / 4
 	ac.mu.Unlock()
 
-	if err := memory.InjectRepoContextErr(chat, memMgr); err != nil {
+	if err := memory.InjectRepoContextErr(chat, memMgr); cm.memNotice.report(err) {
 		// Non-fatal: the answer goes ahead without the (refreshed) memory,
 		// and a failed tool card tells the user why.
 		emit(agenttui.Event{Kind: agenttui.EventToolStart, ToolID: "memory-context", ToolName: "memory", ToolArgs: "inject repository memory"})
@@ -443,6 +443,7 @@ func (ac *agentChat) commands() []agenttui.SlashCommand {
 			Name: "new", Description: "Start a fresh conversation (clears history, attachments, budget)",
 			Handler: func(ctx context.Context, args []string, a *agenttui.App) (string, bool, error) {
 				ac.withState(func(cm *ChatModel) string {
+					cm.memNotice.reset()
 					cm.chat.ClearHistory()
 					cm.pendingImages, cm.attachedFiles = nil, nil
 					cm.tokensSent, cm.tokensReceived = 0, 0
@@ -465,7 +466,7 @@ func (ac *agentChat) commands() []agenttui.SlashCommand {
 		{
 			Name: "clear", Description: "Clear the screen and the conversation history",
 			Handler: func(ctx context.Context, args []string, a *agenttui.App) (string, bool, error) {
-				ac.withState(func(cm *ChatModel) string { cm.chat.ClearHistory(); return "" })
+				ac.withState(func(cm *ChatModel) string { cm.memNotice.reset(); cm.chat.ClearHistory(); return "" })
 				a.ClearMessages()
 				return "Conversation cleared.", true, nil
 			},
@@ -594,6 +595,7 @@ func (ac *agentChat) resumeConversation(ctx context.Context, a *agenttui.App) (s
 	}
 
 	ac.withState(func(cm *ChatModel) string {
+		cm.memNotice.reset()
 		cm.chat.ClearHistory()
 		for _, m := range full.Messages {
 			if m.Role == "system" && m.Content != "" {

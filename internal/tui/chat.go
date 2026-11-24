@@ -45,6 +45,10 @@ type answerMsg struct {
 // streamStartMsg signals the start of streaming with the token channel.
 type streamStartMsg struct {
 	tokenChan <-chan string
+	// notice is a non-fatal problem found while preparing the question (shown
+	// as a system line); it travels in the message because the command runs off
+	// the UI goroutine and must not touch the model.
+	notice string
 }
 
 // streamTokenMsg is sent for each token during streaming.
@@ -150,6 +154,9 @@ type ChatModel struct {
 
 	// Memory system.
 	memoryMgr *memory.Manager
+	// memNotice limits the memory-failure notice to state changes; shared by
+	// value copies of the model.
+	memNotice *memoryNoticeGate
 
 	// Mouse capture toggle (Ctrl+M).
 	mouseEnabled bool
@@ -366,6 +373,7 @@ func NewChatModel(chat *gleann.LeannChat, indexName, modelName string) ChatModel
 		width:             80,
 		height:            24,
 		memoryMgr:         memMgr,
+		memNotice:         &memoryNoticeGate{},
 		mouseEnabled:      true,
 		contextLimit:      lookupContextLimit(chat.Config()),
 	}
@@ -512,14 +520,29 @@ func (m ChatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case streamStartMsg:
 		// Initialize streaming: store channel and wait for first token.
 		m.streamChan = msg.tokenChan
+		if msg.notice != "" {
+			// Keep the streaming placeholder last: tokens fill the last assistant message.
+			note := chatMsg{role: "system", content: msg.notice}
+			if n := len(m.messages); n > 0 && m.messages[n-1].role == "assistant" {
+				m.messages = append(m.messages[:n-1], note, m.messages[n-1])
+			} else {
+				m.messages = append(m.messages, note)
+			}
+			m.viewport.SetContent(m.renderMessages())
+			m.viewport.GotoBottom()
+		}
 		return m, waitForToken(m.streamChan)
 
 	case streamTokenMsg:
 		if m.waiting {
 			// Accumulate token and update last message (assistant).
 			m.streamingAnswer.WriteString(msg.token)
-			if len(m.messages) > 0 && m.messages[len(m.messages)-1].role == "assistant" {
-				m.messages[len(m.messages)-1].content = m.streamingAnswer.String()
+			// A system line may land after the placeholder: fill the last assistant message.
+			for i := len(m.messages) - 1; i >= 0; i-- {
+				if m.messages[i].role == "assistant" {
+					m.messages[i].content = m.streamingAnswer.String()
+					break
+				}
 			}
 			m.viewport.SetContent(m.renderMessages())
 			m.viewport.GotoBottom()
@@ -718,6 +741,7 @@ func (m ChatModel) updateHistory(msg tea.Msg) (tea.Model, tea.Cmd) {
 						content: "⚠ Error loading conversation: " + err.Error(),
 					})
 				} else {
+					m.memNotice.reset()
 					m.messages = m.messages[:0]
 					// Restore messages from conversation.
 					for _, msg := range full.Messages {
@@ -2102,11 +2126,15 @@ func (m ChatModel) askLLMStreamWithMedia(question string, images []string) tea.C
 	topK := m.topK
 	rerank := m.rerankEnabled
 	memMgr := m.memoryMgr
+	gate := m.memNotice
 	attachedFiles := m.attachedFiles
 
 	return func() tea.Msg {
 		// Refresh the current repository's memory context before each query.
-		memory.InjectRepoContext(chat, memMgr)
+		var notice string
+		if err := memory.InjectRepoContextErr(chat, memMgr); gate.report(err) {
+			notice = "⚠ Memory not injected: " + err.Error()
+		}
 
 		// Build context from attached files.
 		question += attachedFilesContext(attachedFiles)
@@ -2136,7 +2164,7 @@ func (m ChatModel) askLLMStreamWithMedia(question string, images []string) tea.C
 			}
 		}()
 
-		return streamStartMsg{tokenChan: tokenChan}
+		return streamStartMsg{tokenChan: tokenChan, notice: notice}
 	}
 }
 
@@ -2409,6 +2437,7 @@ func (m ChatModel) handleSlashCommand(input string) (tea.Model, tea.Cmd, bool) {
 		return m, tea.Quit, true
 
 	case input == "/clear":
+		m.memNotice.reset()
 		m.messages = m.messages[:1]
 		m.chat.ClearHistory()
 		m.textarea.Reset()
@@ -2572,6 +2601,7 @@ func (m ChatModel) handleSlashCommand(input string) (tea.Model, tea.Cmd, bool) {
 		return m, nil, true
 
 	case input == "/new":
+		m.memNotice.reset()
 		m.messages = m.messages[:0]
 		m.chat.ClearHistory()
 		m.pendingImages = nil
