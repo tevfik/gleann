@@ -9,6 +9,7 @@ import (
 	"hash/fnv"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"runtime"
 	"sort"
@@ -475,8 +476,11 @@ func normFQN(fqn string) string {
 }
 
 // prefixOf mirrors indexer.buildPkgPrefixOf for the ground-truth computation.
+// The product uses the slash-only path package (fqn.go), so the mirror must not
+// use filepath: on Windows filepath.Dir("a/b/c.go") returns "a\b" and the
+// ground-truth prefixes would carry backslashes.
 func prefixOf(module, relPath string) string {
-	dir := filepath.Dir(relPath)
+	dir := path.Dir(strings.ReplaceAll(relPath, "\\", "/"))
 	if dir == "." || dir == "/" {
 		dir = ""
 	}

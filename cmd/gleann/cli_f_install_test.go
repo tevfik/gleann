@@ -439,7 +439,7 @@ func TestFPatchOpenCodeJSONHealsStaleEntry(t *testing.T) {
 		t.Errorf("legacy plugin cleanup wrong: %v", plugins)
 	}
 	cmd := cfg["mcp"].(map[string]any)["servers"].(map[string]any)["gleann"].(map[string]any)["command"].([]any)
-	if s, _ := cmd[0].(string); strings.Contains(s, ".gleann/runtime") {
+	if s, _ := cmd[0].(string); strings.Contains(filepath.ToSlash(s), ".gleann/runtime") {
 		t.Errorf("stale runtime path kept: %v", cmd)
 	}
 	if cmd[len(cmd)-1] != "--clean-names" {
