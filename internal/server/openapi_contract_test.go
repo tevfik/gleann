@@ -6,8 +6,11 @@ package server
 // without a token. Each test failed against the committed spec before the repair.
 
 import (
+	"io/fs"
+
 	"encoding/json"
 	"fmt"
+	"github.com/tevfik/gleann/internal/metafault"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -381,22 +384,34 @@ func TestPatchIndexConcurrent(t *testing.T) {
 	_, mux, dir := patchTestServer(t)
 	const n = 100
 	var wg sync.WaitGroup
-	codes := make(chan int, n)
+	type result struct {
+		code int
+		body string
+	}
+	codes := make(chan result, n)
+	var bodies []string
 	for i := 0; i < n; i++ {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			codes <- serve(mux, http.MethodPatch, "/api/indexes/okindex", fmt.Sprintf(`{"description":"d%d"}`, i), nil).Code
+			w := serve(mux, http.MethodPatch, "/api/indexes/okindex", fmt.Sprintf(`{"description":"d%d"}`, i), nil)
+			codes <- result{w.Code, w.Body.String()}
 		}(i)
 	}
 	wg.Wait()
 	close(codes)
 	got := map[int]int{}
-	for c := range codes {
-		got[c]++
+	for r := range codes {
+		got[r.code]++
+		if r.code != http.StatusOK && len(bodies) < 5 {
+			bodies = append(bodies, r.body)
+		}
+	}
+	for _, b := range bodies {
+		t.Logf("non-200 response body: %s", b)
 	}
 	if got[http.StatusOK] != n {
-		t.Fatalf("status codes of %d concurrent PATCHes: %v, want all 200", n, got)
+		t.Fatalf("status codes of %d concurrent PATCHes: %v, want all 200 (bodies logged above)", n, got)
 	}
 	m, err := gleann.GetIndexMeta(dir, "okindex")
 	if err != nil {
@@ -469,5 +484,15 @@ func TestPatchIndexGleannTags(t *testing.T) {
 		if got := serve(mux, http.MethodGet, "/api/indexes/"+tc.name, "", nil).Code; got != tc.want {
 			t.Errorf("GET %s: %d, want %d (PATCH must match GET)", tc.name, got, tc.want)
 		}
+	}
+}
+
+// A not-exist error from the metadata WRITE (temp file vanishing, directory
+// removed mid-update) is a server fault, never "index not found".
+func TestPatchIndexWriteNotExistIs500(t *testing.T) {
+	_, mux, _ := patchTestServer(t)
+	t.Cleanup(metafault.Set(func(string) error { return fs.ErrNotExist }))
+	if c := serve(mux, http.MethodPatch, "/api/indexes/okindex", `{"description":"x"}`, nil).Code; c != http.StatusInternalServerError {
+		t.Errorf("PATCH with a not-exist write error: %d, want 500", c)
 	}
 }

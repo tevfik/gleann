@@ -1068,7 +1068,7 @@ func GetIndexMeta(indexDir, name string) (*IndexMeta, error) {
 		return nil, err
 	}
 	metaPath := filepath.Join(indexDir, name, name+".meta.json")
-	data, err := os.ReadFile(metaPath)
+	data, err := fsretry.ReadFile(metaPath)
 	if err != nil {
 		return nil, fmt.Errorf("read index metadata: %w", err)
 	}
@@ -1097,12 +1097,26 @@ func canonicalLockKey(metaPath string) string {
 	return filepath.Join(dir, base)
 }
 
+// ErrIndexMetaWrite marks a failure to write the updated metadata, as opposed
+// to failing to read the existing one: a caller that maps "not exist" to "no
+// such index" must not do so for a write error (the temp file or directory
+// vanishing is a server fault, not a missing index).
+var ErrIndexMetaWrite = errors.New("writing index metadata")
+
 // UpdateIndexMeta atomically updates the metadata file of an existing index.
 // Concurrent updates of one index are serialised so none is lost, and each
 // writes through its own temporary file, so they cannot clobber each other.
 func UpdateIndexMeta(indexDir, name string, updateFn func(*IndexMeta)) error {
+	_, err := UpdateIndexMetaResult(indexDir, name, updateFn)
+	return err
+}
+
+// UpdateIndexMetaResult is UpdateIndexMeta that also returns the metadata as
+// written, so the caller needs no second read (which would run outside the
+// lock and could collide with another update's replace on Windows).
+func UpdateIndexMetaResult(indexDir, name string, updateFn func(*IndexMeta)) (*IndexMeta, error) {
 	if err := checkPathName(name); err != nil {
-		return err
+		return nil, err
 	}
 	metaPath := filepath.Join(indexDir, name, name+".meta.json")
 	mu, _ := metaLocks.LoadOrStore(canonicalLockKey(metaPath), &sync.Mutex{})
@@ -1111,16 +1125,23 @@ func UpdateIndexMeta(indexDir, name string, updateFn func(*IndexMeta)) error {
 
 	meta, err := GetIndexMeta(indexDir, name)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	updateFn(meta)
 	meta.UpdatedAt = time.Now()
 
 	data, err := json.MarshalIndent(meta, "", "  ")
 	if err != nil {
-		return fmt.Errorf("marshal index metadata: %w", err)
+		return nil, fmt.Errorf("marshal index metadata: %w", err)
 	}
+	if err := writeMetaFile(metaPath, name, data); err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrIndexMetaWrite, err)
+	}
+	return meta, nil
+}
 
+// writeMetaFile replaces metaPath with data through a unique temporary file.
+func writeMetaFile(metaPath, name string, data []byte) error {
 	if err := metafault.Check(metaPath); err != nil {
 		return fmt.Errorf("write temp metadata: %w", err)
 	}

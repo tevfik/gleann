@@ -89,6 +89,13 @@ func TestSleepTimeEngine_OldestFirstAcrossCycles(t *testing.T) {
 			Title:    fmt.Sprintf("conv-old-%02d", i),
 			Messages: []conversations.Message{userMsg("we standardise on Go")},
 		}
+		// Save stamps time.Now(); on a coarse clock (Windows: up to ~16 ms) two
+		// saves can share a timestamp, and the engine rightly keeps tied
+		// conversations together. This test is about the oldest-first order,
+		// so wait until the clock has moved past the previous conversation.
+		for i > 0 && !time.Now().After(updatedAt[i-1]) {
+			time.Sleep(time.Millisecond)
+		}
 		if err := e.convs.Save(c); err != nil {
 			t.Fatal(err)
 		}

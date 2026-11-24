@@ -735,18 +735,11 @@ func (s *Server) handlePatchIndex(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Only this initial read decides 404: a not-exist error from the write
-	// below is a server fault, not a missing index.
-	if _, err := gleann.GetIndexMeta(s.cfg().IndexDir, name); err != nil {
-		if indexMissing(err) {
-			writeError(w, http.StatusNotFound, fmt.Sprintf("index %q not found", name))
-		} else {
-			writeError(w, http.StatusInternalServerError, "failed to read index metadata: "+err.Error())
-		}
-		return
-	}
-
-	err := gleann.UpdateIndexMeta(s.cfg().IndexDir, name, func(meta *gleann.IndexMeta) {
+	// One read-modify-write under the per-index lock: the metadata is read,
+	// changed and written without another update (or a second read of ours)
+	// interleaving. A not-exist error from the read is a missing index (404); one
+	// from the write (ErrIndexMetaWrite) is a server fault.
+	meta, err := gleann.UpdateIndexMetaResult(s.cfg().IndexDir, name, func(meta *gleann.IndexMeta) {
 		if req.Tags != nil {
 			meta.Tags = *req.Tags
 		}
@@ -758,13 +751,11 @@ func (s *Server) handlePatchIndex(w http.ResponseWriter, r *http.Request) {
 		}
 	})
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to update index metadata: %v", err))
-		return
-	}
-
-	meta, err := gleann.GetIndexMeta(s.cfg().IndexDir, name)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		if indexMissing(err) && !errors.Is(err, gleann.ErrIndexMetaWrite) {
+			writeError(w, http.StatusNotFound, fmt.Sprintf("index %q not found", name))
+		} else {
+			writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to update index metadata: %v", err))
+		}
 		return
 	}
 

@@ -30,15 +30,30 @@ func Rename(oldpath, newpath string) error {
 	return rename(os.Rename, isTransient, time.Sleep, budget, oldpath, newpath)
 }
 
+// ReadFile is os.ReadFile with the same retry. On Windows a file that is being
+// replaced by a rename cannot be opened for a moment (access denied / sharing
+// violation); a reader that gives up there turns a harmless race into an error.
+func ReadFile(path string) ([]byte, error) {
+	var data []byte
+	err := retry(func() (err error) { data, err = os.ReadFile(path); return }, isTransient, time.Sleep, budget)
+	return data, err
+}
+
 // rename is Rename with its dependencies injected: renameFn does the rename,
 // transient classifies an error as worth retrying, sleep waits, and total is
 // the time budget (counted in the delays handed to sleep, so tests run
 // instantly).
 func rename(renameFn func(string, string) error, transient func(error) bool, sleep func(time.Duration), total time.Duration, oldpath, newpath string) error {
+	return retry(func() error { return renameFn(oldpath, newpath) }, transient, sleep, total)
+}
+
+// retry runs op until it succeeds, fails with a non-transient error, or the
+// delays handed to sleep add up to total; the last error is returned.
+func retry(op func() error, transient func(error) bool, sleep func(time.Duration), total time.Duration) error {
 	delay := firstDelay
 	var waited time.Duration
 	for {
-		err := renameFn(oldpath, newpath)
+		err := op()
 		if err == nil || !transient(err) || waited >= total {
 			return err
 		}

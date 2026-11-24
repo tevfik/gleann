@@ -72,3 +72,30 @@ func TestRenameReplacesAFile(t *testing.T) {
 		t.Errorf("dst = %q", b)
 	}
 }
+
+func TestRetryReadSideRetriesThenSucceeds(t *testing.T) {
+	calls := 0
+	op := func() error {
+		calls++
+		if calls < 3 {
+			return &os.PathError{Op: "open", Path: "x", Err: errBusy}
+		}
+		return nil
+	}
+	if err := retry(op, busy, func(time.Duration) {}, time.Second); err != nil || calls != 3 {
+		t.Errorf("err = %v calls = %d, want success on the 3rd call", err, calls)
+	}
+}
+
+func TestReadFile(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "f")
+	if err := os.WriteFile(p, []byte("hi"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if b, err := ReadFile(p); err != nil || string(b) != "hi" {
+		t.Errorf("ReadFile = %q, %v", b, err)
+	}
+	if _, err := ReadFile(p + ".missing"); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("missing file: %v, want ErrNotExist (no retry, no wrapping)", err)
+	}
+}
