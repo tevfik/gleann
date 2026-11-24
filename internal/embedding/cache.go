@@ -10,6 +10,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -372,15 +373,57 @@ func (c *CachedComputer) SetProgressCallback(cb ProgressCallback) {
 	}
 }
 
+// sweepStampName is the file in a cache directory whose modification time
+// records the last sweep for stale temp files.
+const sweepStampName = ".stale-sweep"
+
+// sweepInterval is the minimum time between two sweeps of one directory.
+const sweepInterval = time.Hour
+
 // removeStaleTemps deletes temp files that a killed process left behind
-// between writing and renaming a vector. Only files older than an hour are
-// removed, so a write in progress in another process is never touched.
+// between writing and renaming a vector. Listing a cache of hundreds of
+// thousands of entries takes over half a second, and every CLI command and
+// searcher load opens the cache, so the sweep runs at most once an hour per
+// directory (the stamp file's mtime, shared by all processes).
 func removeStaleTemps(dir string) {
-	matches, _ := filepath.Glob(filepath.Join(dir, "*.tmp-*"))
+	stamp := filepath.Join(dir, sweepStampName)
+	// A negative age (a stamp dated in the future) sweeps and re-stamps.
+	if fi, err := os.Stat(stamp); err == nil {
+		if age := time.Since(fi.ModTime()); age >= 0 && age < sweepInterval {
+			return
+		}
+	}
+	// Stamp first: a concurrent opener skips instead of scanning too. If the
+	// stamp cannot be written the sweep still runs, on every open as before.
+	now := time.Now()
+	if err := os.WriteFile(stamp, nil, 0o644); err == nil {
+		_ = os.Chtimes(stamp, now, now)
+	}
+	sweepStaleTemps(dir)
+}
+
+// sweepStaleTemps removes the temp files in dir that are older than an hour,
+// so a write in progress in another process is never touched.
+func sweepStaleTemps(dir string) {
+	f, err := os.Open(dir)
+	if err != nil {
+		return
+	}
+	defer f.Close()
 	cutoff := time.Now().Add(-time.Hour)
-	for _, m := range matches {
-		if info, err := os.Stat(m); err == nil && info.ModTime().Before(cutoff) {
-			_ = os.Remove(m)
+	for {
+		names, err := f.Readdirnames(4096)
+		for _, name := range names {
+			if !strings.Contains(name, ".tmp-") {
+				continue
+			}
+			p := filepath.Join(dir, name)
+			if info, err := os.Stat(p); err == nil && info.ModTime().Before(cutoff) {
+				_ = os.Remove(p)
+			}
+		}
+		if err != nil {
+			return
 		}
 	}
 }

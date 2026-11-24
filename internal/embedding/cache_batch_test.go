@@ -143,6 +143,9 @@ func TestCachedComputer_PerBatchPersistenceOnError(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, e := range entries {
+		if e.Name() == sweepStampName {
+			continue // the hourly sweep's stamp, not a leftover
+		}
 		if !strings.HasSuffix(e.Name(), ".bin") {
 			t.Errorf("unexpected leftover file in cache dir: %s", e.Name())
 		}

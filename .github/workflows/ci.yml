@@ -158,6 +158,29 @@ jobs:
           fail_ci_if_error: false
           verbose: true
 
+  # ── tests must leave the home directory alone ──
+  # Runs the suite (-short, no race) with HOME and USERPROFILE pointing at an
+  # empty directory and fails if a file appears in it (Go's telemetry under
+  # .config/go excepted). Its own Linux job: a second whole-suite run inside
+  # the matrix job would add to its 60 minute budget on every OS.
+  test-home-sentinel:
+    name: Tests leave HOME empty
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+
+      - name: Run tests with an empty HOME
+        timeout-minutes: 25
+        run: GOTOOLCHAIN=auto scripts/check-test-home.sh
+
   # ── pkg/gleann with the tree-sitter parsers (RFC 004 F) ──
   # The public API's graph paths (GraphDB, the format-2 graph goldens) with
   # tree-sitter CALLS for non-Go languages. Own job: about 95 s without -race
