@@ -100,7 +100,13 @@ func runDecodeFamily(t *testing.T, metas []string, withScan bool) {
 			t.Errorf(format, args...)
 		}
 	}
+	// Under the race detector the table pass (it reads every row, the 3 MB
+	// ones included) is compared on every 4th filter only; the index path is
+	// compared on all. GLEANN_TEST_FULL_DIFFERENTIAL=1 restores the full run.
+	nChecks := 0
 	check := func(f MetadataFilter) {
+		nChecks++
+		scanThis := withScan && (fullDifferential() || nChecks%4 == 0)
 		engine := NewMetadataFilterEngine([]MetadataFilter{f})
 		want := ids(engine)
 		got, outcome := s.preselectIndexed(ctx, sp, engine, limit, true)
@@ -109,7 +115,10 @@ func runDecodeFamily(t *testing.T, metas []string, withScan bool) {
 				report("%+v:\n filter indexes %v\n engine         %v", f, g, want)
 			}
 		}
-		if scan, ran := s.preselectScan(ctx, sp, engine, limit); withScan && ran {
+		if !scanThis {
+			return
+		}
+		if scan, ran := s.preselectScan(ctx, sp, engine, limit); ran {
 			if g := sortedIDKeys(scan); fmt.Sprint(g) != fmt.Sprint(want) {
 				report("%+v:\n table pass %v\n engine     %v", f, g, want)
 			}

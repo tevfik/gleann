@@ -91,6 +91,12 @@ const metaJSONExpr = `CASE WHEN json_valid(meta) THEN meta ELSE '{}' END`
 // gleann wrote itself.
 const metaDamagedPredicate = `NOT json_valid(meta) OR instr(CAST(meta AS BLOB), X'00') > 0 OR meta GLOB '*\u0000*' OR meta GLOB '*\u[dD][89a-fA-F]*'`
 
+// MetaDamagedPredicate is metaDamagedPredicate for readers that evaluate a
+// filter over the whole passages table: a row it selects is one whose meta
+// SQLite's JSON functions may read differently from encoding/json, so such a
+// reader must hand the row to the Go filter engine instead of deciding it.
+const MetaDamagedPredicate = metaDamagedPredicate
+
 // MetaIndexable reports whether a meta key can have a filter index. The key
 // becomes part of the index definition and of the query text (an expression
 // index is only used by a query that spells the same expression, so the JSON

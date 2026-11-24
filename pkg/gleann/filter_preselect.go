@@ -7,6 +7,8 @@ import (
 	"sort"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/tevfik/gleann/internal/store"
 )
 
 // filterPoolCap bounds the widen-until-k candidate pool (WP-2.5). With
@@ -106,6 +108,15 @@ func (s *LeannSearcher) preselectScan(ctx context.Context, sp *storePassages, en
 	if !ok {
 		return nil, false
 	}
+	// A row whose meta SQLite reads differently from encoding/json (JSON5
+	// forms, a BOM, a trailing \f, a NUL) is selected without evaluating the
+	// filter: the engine sees no keys in such text, SQLite sees some, so
+	// neither "absent" nor "present" can be decided in SQL. The engine
+	// verification below decides it. The damaged test comes first so that the
+	// filter is not evaluated on such a row (a malformed meta would make a
+	// JSON function fail and the pre-selection give up); should an error
+	// occur anyway, the pre-selection gives up, never decides wrongly.
+	where = "(" + store.MetaDamagedPredicate + ") OR (" + where + ")"
 	ps, err := sp.st.SelectByPredicate(ctx, where, args, limit+1)
 	if err != nil {
 		// A predicate the store cannot answer (e.g. malformed meta JSON)
@@ -214,6 +225,13 @@ func compileFilterBranch(f MetadataFilter) (string, []any, bool) {
 	// cannot quote (the engine would read them as plain map keys, SQL
 	// cannot).
 	if strings.ContainsAny(f.Field, "\"\\") || strings.IndexFunc(f.Field, func(r rune) bool { return r < 0x20 }) >= 0 {
+		return "", nil, false
+	}
+	// Nor can SQL spell a field the engine reads differently: Go decodes an
+	// invalid byte or an escaped lone surrogate of a meta key as U+FFFD, SQLite
+	// keeps the bytes, so a path with U+FFFD (or invalid bytes) does not find
+	// the key the engine finds. The engine decides such fields.
+	if needleDecodesApart(f.Field) {
 		return "", nil, false
 	}
 
