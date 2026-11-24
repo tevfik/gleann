@@ -2,33 +2,35 @@
 
 All notable changes to this project will be documented in this file.
 
-## [Unreleased]
+## [v1.21.1] — 2026-11-24
 
-### Fixed
-- **Concurrent builds of one index through the server.** `POST /api/indexes/{name}/build` now takes the index lock (`<name>.lock`, the one the CLI build and sync use) on every server: two requests for one name run one after the other instead of overlapping (one used to fail with `assigning slots`), and a build while a CLI build or sync holds the lock answers `409`. Under `GLEANN_TAGS` the access and existence check of a create happens while holding the lock, so two creates cannot both pass it.
-- **Metadata updates are safe across processes.** `UpdateIndexMeta` and the build's metadata write now also take `<name>.meta.lock` (beside the index directory; removed with the index), waiting up to 5 s (an update of a missing index creates no lock file), so a CLI rebuild and a PATCH on a running server no longer lose each other's edit. A longer wait ends in a clear error instead of a lost write.
-- **Watch toggle answers 503 if the metadata was not written** (it answered 200); other bookkeeping metadata writes log a failure instead of dropping it.
-- **Watch toggle survives a rebuild.** `MergeUserMeta` treats `source_dir` and `auto_watch` as one pair, so a rebuild cannot keep one value of the toggle and reset the other.
-- **Model mismatch answers 409, not 500.** Searching, asking or reading an index built with another embedding model than the server's returns `409` with the `model mismatch` message (OpenAPI and `docs/api.md` updated).
-- **`gleann install` keeps settings files as written.** `settings.json` (Claude, Gemini) and `opencode.json` are rewritten without HTML escaping (`2>/dev/null` stays) and in the user's key order at every depth.
-- **SessionStart hook cuts on a character boundary.** `gleann memory context --max-bytes N` replaces `head -c 2000`; the hook marker is now `v2` (`v1` hooks are still recognised and replaced by `gleann install`; re-run it to migrate).
-- **Post-commit hook is silent after `git commit`.** The background `index sync` stdout and stderr are discarded.
-- **`memory remember --scope repo`** (and `.`) means the detected repository scope instead of the literal `repo`; same for `memory context`, `memory failure` and `--scope` of list. `memory list` shows each block's scope.
-- **`install uninstall` removes a `CLAUDE.md` / `AGENTS.md` that holds nothing else** instead of leaving a one-byte file.
-- **Metadata filter key `op` (OpenAPI) vs `operator` (server).** The spec named the key `op`; the server reads `operator`, so a request that followed the spec returned 200 with no results. The spec now says `operator` and lists all twelve operators. A `metadata_filters` item with an unknown key (such as `op`), no field, or a missing or unknown operator is rejected with 400 (strict, so a typo fails loudly) instead of matching nothing.
-- **`gleann setup --bootstrap`** honours `--model`, `--provider`, `--llm-model` and `--llm-provider` (they were ignored) and refuses to replace a completed configuration unless `--force` is given (the old file is kept as `config.json.bak`). A second bootstrap used to overwrite manual edits silently.
-- **Bootstrap no longer enables an Ollama reranker**, which has no rerank API (every search warned and fell back); it prints how to enable reranking with `eif` or `llamacpp`. `gleann doctor` warns when `rerank_enabled` is set with a provider that cannot rerank.
-- **CLI `search` with an empty query** (`search code --json`, `search code --kind -h`) is an error with exit status 2, as on REST and MCP.
-- **Numeric flags** (`--hybrid`, `--top-k`, `--ef-search`, `--chunk-size`, and the other numeric config flags) exit with status 2 on a value that is not a number; `--hybrid abc` used to set the weight to 0 (lexical only).
-- **Security: `allowed_roots`, `index_dir`, `auth` and `cors_origins` are read-only over the API.** `POST /api/config` and `PUT /api/settings` answer 403 when a body changes one of them (a value sent back unchanged is accepted); edit `config.json` or use `gleann setup`, then restart. An admin token no longer lets a client widen the path policy.
-- **MCP filters are validated like REST.** `gleann_search`, ask and the progressive search return a tool error for a `filters` entry that is not an object, has an unknown key, or lacks a field or a valid operator (they were skipped, widening the search); `value` is optional (`exists`). `POST /api/search` validates `metadata_filters` too.
-- Setup (`gleann serve` first run, `setup --auto`) no longer enables an Ollama reranker either; `setup --force` keeps an existing `config.json.bak` and writes a timestamped one (mode 0600).
-- Numeric flags are parsed strictly (`--top-k 10x`, `--top-k 1.5`, `--hybrid 0.5abc` exit 2).
-- `PUT /api/settings` answers 400 for a body that is not exactly one JSON value (trailing data used to bypass the protected-key check).
+See [docs/releases/v1.21.1.md](docs/releases/v1.21.1.md).
 
 ### Security
 - **`gleann serve` no longer prints the admin token.** The startup output names the token file and `gleann token show` instead of a `?token=` URL (logs, journald and screen shares kept it).
 - **REST HyDE expander cache is keyed by the API key (hash only).** A rotated key now gets a fresh expander instead of the old credential.
+- **`allowed_roots`, `index_dir`, `auth` and `cors_origins` are read-only over the API.** `POST /api/config` and `PUT /api/settings` answer 403 when a body changes one of them (a value sent back unchanged is accepted); edit `config.json` or use `gleann setup`, then restart. An admin token no longer lets a client widen the path policy.
+- **`PUT /api/settings` answers 400 for a body that is not exactly one JSON value** (trailing data used to bypass the protected-key check).
+- **MCP filters are validated like REST.** `gleann_search`, ask and the progressive search return a tool error for a `filters` entry that is not an object, has an unknown key, or lacks a field or a valid operator (they were skipped, widening the search); `value` is optional (`exists`). `POST /api/search` validates `metadata_filters` too.
+
+### Fixed
+- **Concurrent builds of one index through the server.** `POST /api/indexes/{name}/build` now takes the index lock (`<name>.lock`, the one the CLI build and sync use) on every server: two requests for one name run one after the other instead of overlapping (one used to fail with `assigning slots`), and a build while a CLI build or sync holds the lock answers `409`. Under `GLEANN_TAGS` the access and existence check of a create happens while holding the lock, so two creates cannot both pass it. The lock refuses an empty index directory.
+- **Metadata updates are safe across processes.** `UpdateIndexMeta` and the build's metadata write now also take `<name>.meta.lock` (beside the index directory; removed with the index), waiting up to 5 s (an update of a missing index creates no lock file), so a CLI rebuild and a PATCH on a running server no longer lose each other's edit. A longer wait ends in a clear error instead of a lost write.
+- **Watch toggle answers 503 if the metadata was not written** (it answered 200); other bookkeeping metadata writes log a failure instead of dropping it.
+- **Watch toggle survives a rebuild.** `MergeUserMeta` treats `source_dir` and `auto_watch` as one pair (`AutoWatch` and `SourceDir` are merged together), so a rebuild cannot keep one value of the toggle and reset the other.
+- **Model mismatch answers 409, not 500.** Searching, asking or reading an index built with another embedding model than the server's returns `409` with the `model mismatch` message on searcher load (OpenAPI and `docs/api.md` updated).
+- **`gleann install` keeps settings files as written.** `settings.json` (Claude, Gemini) and `opencode.json` are rewritten without HTML escaping (`2>/dev/null` stays) and in the user's key order at every depth.
+- **Post-commit hook is silent after `git commit`.** The background `index sync` stdout and stderr are discarded.
+- **`install uninstall` removes a `CLAUDE.md` / `AGENTS.md` / `GEMINI.md` that holds nothing else** (whitespace-only afterwards) instead of leaving a one-byte file, and edits through symlinks instead of deleting them.
+- **Metadata filter key `op` (OpenAPI) vs `operator` (server).** The spec named the key `op`; the server reads `operator`, so a request that followed the spec returned 200 with no results. The spec now says `operator` and lists all twelve operators. REST search and multi-search reject a `metadata_filters` item with an unknown key (such as `op`), no field, or a missing or unknown operator with 400 (strict, so a typo fails loudly) instead of matching nothing.
+
+### Changed
+- **`gleann setup --bootstrap`** honours `--model`, `--provider`, `--llm-model` and `--llm-provider` (they were ignored) and refuses to replace a completed configuration unless `--force` is given (the old file is kept as `config.json.bak`, mode 0600). A second bootstrap used to overwrite manual edits silently. `setup --force` keeps an existing `config.json.bak` and writes a timestamped one (mode 0600).
+- **Bootstrap and auto-setup no longer enable an Ollama reranker** (`gleann serve` first run, `setup --auto` included), which has no rerank API (every search warned and fell back); bootstrap prints how to enable reranking with `eif` or `llamacpp`. `gleann doctor` warns when `rerank_enabled` is set with a provider that cannot rerank.
+- **CLI `search` with an empty query** (`search code --json`, `search code --kind -h`) is an error with exit status 2, as on REST and MCP.
+- **Numeric flags are parsed strictly.** `--hybrid`, `--top-k`, `--ef-search`, `--chunk-size` and the other numeric config flags exit with status 2 on a value that is not a number (`--top-k 10x`, `--top-k 1.5`, `--hybrid 0.5abc`); `--hybrid abc` used to set the weight to 0 (lexical only).
+- **SessionStart hook cuts on a character boundary.** `gleann memory context --max-bytes N` replaces `head -c 2000`; the hook marker is now `v2` (`v1` hooks are still recognised and replaced by `gleann install`; re-run it to migrate).
+- **`memory remember --scope repo`** (and `.`) means the detected repository scope instead of the literal `repo`; same for `memory context`, `memory failure` and `--scope` of list. `memory list` shows each block's scope.
 
 ### Documentation
 - RFC status lines (001, 004, 008, 010) and `docs/plans/README.md` brought up to date.
