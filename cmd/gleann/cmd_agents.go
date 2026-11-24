@@ -18,16 +18,15 @@ func getAgentsMDContent(indexName string) string {
 	}
 
 	var sb strings.Builder
-	sb.WriteString("\n## gleann: Code Intelligence, Search & Long-term Memory\n\n")
+	sb.WriteString("\n" + agentsSectionStart + "\n## gleann: Code Intelligence, Search & Long-term Memory\n\n")
 	if indexName != "" {
 		sb.WriteString(fmt.Sprintf("This project is indexed in [gleann](https://github.com/tevfik/gleann) under index name **`%s`**.\n\n", indexName))
 	} else {
-		sb.WriteString("This project uses [gleann](https://github.com/tevfik/gleann) for AI-powered codebase\nnavigation and persistent cross-session memory.\n\n")
+		sb.WriteString("When the current project has a gleann index (named in its AGENTS.md/CLAUDE.md, or shown by\n`gleann index list`), use [gleann](https://github.com/tevfik/gleann) for codebase navigation and\npersistent cross-session memory. Otherwise ignore this section. Below, `<name>` is that index's name.\n\n")
 	}
 
 	sb.WriteString("### 1 — Before exploring source files\n\n")
-	sb.WriteString("Read **GRAPH_REPORT.md** (if present) — contains god nodes (high-degree hub symbols),\ncommunity structure, and cross-cutting dependency edges.\n")
-	sb.WriteString(fmt.Sprintf("Generate it with: `gleann graph report --index %s`\n\n", idxDisplay))
+	sb.WriteString("Get the repo overview with `gleann graph map --index " + idxDisplay + "` (compact, to stdout). If a **GRAPH_REPORT.md** exists you may read it too; `gleann graph report --index " + idxDisplay + "` writes one.\n\n")
 
 	sb.WriteString("Key graph / search commands:\n")
 	sb.WriteString(fmt.Sprintf("- `gleann search %s <query>` — semantic search\n", idxDisplay))
@@ -38,8 +37,9 @@ func getAgentsMDContent(indexName string) string {
 	sb.WriteString("- `gleann index list` — list available indexes\n")
 	sb.WriteString(fmt.Sprintf("- `gleann index sync %s [--docs <dir>]` — incrementally sync index after code changes\n", idxDisplay))
 	sb.WriteString(fmt.Sprintf("- `gleann index watch %s --docs <dir>` — auto-rebuild on file changes\n", idxDisplay))
-	sb.WriteString(fmt.Sprintf("- `gleann graph explain <symbol> --index %s` — callers, callees, blast radius\n", idxDisplay))
-	sb.WriteString(fmt.Sprintf("- `gleann graph query <pattern> --index %s` — find symbols by pattern\n", idxDisplay))
+	sb.WriteString(fmt.Sprintf("- `gleann graph explain <fqn> --index %s` — callers, callees, blast radius (fully qualified name)\n", idxDisplay))
+	sb.WriteString(fmt.Sprintf("- `gleann graph callers <fqn> --index %s` / `gleann graph deps <fqn> --index %s` — who calls it / what it calls\n", idxDisplay, idxDisplay))
+	sb.WriteString(fmt.Sprintf("- `gleann graph query <pattern> --index %s` — find FQNs matching a pattern, then the BFS neighbourhood of the first match\n", idxDisplay))
 	sb.WriteString(fmt.Sprintf("- `gleann graph path <from> <to> --index %s` — shortest dependency path\n\n", idxDisplay))
 
 	sb.WriteString("### 2 — Long-term memory (always ON)\n\n")
@@ -89,6 +89,7 @@ func getAgentsMDContent(indexName string) string {
 	sb.WriteString("  injects into LLM system prompts — call this at session start to recall everything;\n")
 	sb.WriteString("  pass `command`/`paths` to also get the recorded failures for that work\n\n")
 	sb.WriteString("**Workflow:** call `memory_context` at the start of every session, use `gleann_sync` after modifying files so code intelligence tools immediately reflect changes, then call `memory_remember` whenever you learn something important about the codebase.\n")
+	sb.WriteString(agentsSectionEnd + "\n")
 
 	return sb.String()
 }
@@ -162,7 +163,7 @@ func cmdAgents(args []string) {
 		return
 	}
 
-	if err := appendOrCreateFile(targetPath, content, "gleann: Code Intelligence"); err != nil {
+	if err := upsertAgentsSection(os.Stdout, os.Stdout, targetPath, content); err != nil {
 		fmt.Fprintf(os.Stderr, "error updating %s: %v\n", targetPath, err)
 		exitFunc(1)
 	}

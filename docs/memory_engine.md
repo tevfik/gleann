@@ -384,9 +384,13 @@ view, and the MCP `memory_context`, `memory_search`, `memory_list` and
 detected from the process working directory: the normalized git remote origin
 (`github.com/org/repo`), else the repository root name, else the directory
 basename, else `"global"` for filesystem roots. Global blocks and path-style
-ancestors stay visible; sibling repositories do not. `gleann memory context` and
-`GET /api/blocks/context` without a scope remain intentionally global for
-scripting and API compatibility.
+ancestors stay visible; sibling repositories do not. `gleann memory context`
+without `--scope` does the same (the SessionStart hook installed by
+`gleann install claude` relies on it, so a session sees only its own
+repository's memory); outside a repository it shows the global blocks and the
+blocks scoped to the directory name. `gleann memory context --scope all` shows
+every scope. `GET /api/blocks/context` without a scope remains global for API
+compatibility.
 
 ---
 

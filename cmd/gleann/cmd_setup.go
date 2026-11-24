@@ -267,7 +267,7 @@ func runAutoSetup(args []string) {
 
 	agentsPath := filepath.Join(absDir, "AGENTS.md")
 	content := getAgentsMDContent(indexName)
-	if err := appendOrCreateFile(agentsPath, content, "gleann: Code Intelligence"); err == nil {
+	if err := upsertAgentsSection(os.Stdout, os.Stdout, agentsPath, content); err == nil {
 		fmt.Printf("  🤖 AGENTS.md automatically generated/updated in %s\n", agentsPath)
 	}
 

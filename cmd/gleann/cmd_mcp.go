@@ -206,7 +206,7 @@ func cmdMCPInstall(args []string) {
 			configured++
 		}
 		globalAgentsPath := filepath.Join(openCodeDir, "AGENTS.md")
-		if err := appendOrCreateFile(globalAgentsPath, agentsMDSection, "gleann: Code Intelligence"); err == nil {
+		if err := upsertAgentsSection(os.Stdout, os.Stdout, globalAgentsPath, agentsMDSection); err == nil {
 			fmt.Printf("  ✓ OpenCode (Global AGENTS.md): %s\n", globalAgentsPath)
 		}
 	}

@@ -135,7 +135,7 @@ Running `gleann install` auto-detects and installs configuration for:
 
 | Platform | Integration Type | Supported Features |
 |---|---|---|
-| **Claude Code** | PreToolUse Hook + CLAUDE.md | MCP Tools + Auto Memory Injection |
+| **Claude Code** | SessionStart Hook + CLAUDE.md | MCP Tools + Auto Memory Injection |
 | **Cursor** | `.cursor/rules` + MCP Config | Semantic Code Search + Full Documents |
 | **Windsurf** | `.windsurf/rules` + MCP Config | Graph Traversal + Impact Analysis |
 | **Cline / Roo Code** | `.clinerules` + MCP Config | File Maps + AST Breadcrumbs |

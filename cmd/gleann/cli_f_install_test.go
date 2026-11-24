@@ -136,7 +136,7 @@ func TestCLIFInstallEveryPlatformRoundTrip(t *testing.T) {
 			mustNotContain(t, "reinstall "+p.Name, r.Err, "error")
 			for _, f := range []string{"AGENTS.md", "CLAUDE.md", "GEMINI.md"} {
 				if b, err := os.ReadFile(filepath.Join(proj, f)); err == nil {
-					if n := strings.Count(string(b), "gleann knowledge graph") + strings.Count(string(b), "## gleann: Code Intelligence"); n > 1 {
+					if n := strings.Count(string(b), "## gleann code intelligence") + strings.Count(string(b), "## gleann: Code Intelligence"); n > 1 {
 						t.Errorf("%s has %d gleann sections after reinstall", f, n)
 					}
 				}
@@ -162,9 +162,10 @@ func TestCLIFInstallUserScope(t *testing.T) {
 	r := e.run("install", "claude")
 	wantExit(t, r, 0)
 	userClaude := filepath.Join(e.Home, ".claude", "CLAUDE.md")
-	mustContain(t, "user CLAUDE.md", fReadFile(t, userClaude), "gleann knowledge graph")
+	mustContain(t, "user CLAUDE.md", fReadFile(t, userClaude), "## gleann code intelligence", "When the current project has a gleann index")
 	settings := fReadFile(t, filepath.Join(e.Home, ".claude", "settings.json"))
-	mustContain(t, "settings hook", settings, "PreToolUse", "GRAPH_REPORT.md")
+	mustContain(t, "settings hook", settings, "SessionStart", "[gleann]")
+	mustNotContain(t, "settings hook", settings, "PreToolUse")
 
 	r = e.run("install", "gemini")
 	wantExit(t, r, 0)
@@ -175,7 +176,7 @@ func TestCLIFInstallUserScope(t *testing.T) {
 	t.Chdir(proj)
 	r = e.run("install", "claude", "--project")
 	wantExit(t, r, 0)
-	mustContain(t, "project CLAUDE.md", fReadFile(t, filepath.Join(proj, "CLAUDE.md")), "gleann knowledge graph")
+	mustContain(t, "project CLAUDE.md", fReadFile(t, filepath.Join(proj, "CLAUDE.md")), "## gleann code intelligence")
 
 	r = e.run("install", "uninstall", "claude")
 	wantExit(t, r, 0)
@@ -187,11 +188,11 @@ func TestCLIFInstallUserScope(t *testing.T) {
 		t.Fatal(err)
 	}
 	hooks, _ := st["hooks"].(map[string]any)
-	if pre, _ := hooks["PreToolUse"].([]any); len(pre) != 0 {
-		t.Errorf("gleann hook not removed: %v", pre)
+	if start, _ := hooks["SessionStart"].([]any); len(start) != 0 {
+		t.Errorf("gleann hook not removed: %v", start)
 	}
 	// The project file is untouched by the user-level uninstall.
-	mustContain(t, "project CLAUDE.md kept", fReadFile(t, filepath.Join(proj, "CLAUDE.md")), "gleann knowledge graph")
+	mustContain(t, "project CLAUDE.md kept", fReadFile(t, filepath.Join(proj, "CLAUDE.md")), "## gleann code intelligence")
 
 	r = e.run("install", "uninstall", "gemini")
 	wantExit(t, r, 0)
@@ -517,11 +518,12 @@ func TestCLIFAgents(t *testing.T) {
 	wantExit(t, r, 0)
 	mustContain(t, "single index", fReadFile(t, filepath.Join(proj, "AGENTS.md")), "solo")
 
-	// A second run does not duplicate the section; --force rewrites it.
+	// A second run replaces the marked gleann section instead of duplicating
+	// it; --force rewrites the whole file.
 	r = e.run("agents", "--dir", proj, "--index", "other")
 	wantExit(t, r, 0)
-	if s := fReadFile(t, filepath.Join(proj, "AGENTS.md")); strings.Contains(s, "other") {
-		t.Errorf("existing section rewritten without --force:\n%s", s)
+	if s := fReadFile(t, filepath.Join(proj, "AGENTS.md")); !strings.Contains(s, "other") || strings.Contains(s, "solo") || strings.Count(s, "<!-- gleann:agents -->") != 1 {
+		t.Errorf("section not replaced once:\n%s", s)
 	}
 	r = e.run("agents", "--dir", proj, "--index", "other", "--force")
 	wantExit(t, r, 0)

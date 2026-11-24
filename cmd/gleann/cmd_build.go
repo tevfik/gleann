@@ -330,7 +330,7 @@ func cmdBuild(args []string) {
 		if quiet {
 			info, warn = io.Discard, os.Stderr
 		}
-		if err := appendOrCreateFileTo(info, warn, agentsPath, content, "gleann: Code Intelligence"); err == nil && !quiet {
+		if err := upsertAgentsSection(info, warn, agentsPath, content); err == nil && !quiet {
 			fmt.Printf("🤖 AGENTS.md generated/updated in %s\n", agentsPath)
 		}
 	}

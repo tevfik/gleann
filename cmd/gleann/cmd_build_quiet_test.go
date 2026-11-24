@@ -209,7 +209,7 @@ func TestCLIBuildQuietAgents(t *testing.T) {
 	// Control: without --quiet the sentinel notice stays on stdout.
 	r := e.run("index", "build", "loud", "--docs", e.Docs, "--no-report", "--agents")
 	wantExit(t, r, 0)
-	mustContain(t, "already configured (loud)", r.Out, "(already configured in AGENTS.md)")
+	mustContain(t, "user-edited section (loud)", r.Out, "does not look generated")
 
 	// Under --quiet the same run must leave stdout empty.
 	r = e.run("index", "build", "quiet", "--docs", e.Docs, "--no-report", "--agents", "--quiet")
@@ -218,8 +218,9 @@ func TestCLIBuildQuietAgents(t *testing.T) {
 		t.Errorf("--quiet --agents build printed stdout:\n%s", r.Out)
 	}
 	mustNotContain(t, "quiet agents stderr", r.Err, progressLines()...)
-	// The notice is informational, not a warning: it is dropped, not moved.
-	mustNotContain(t, "quiet agents stderr notice", r.Err, "already configured")
+	// The section is the user's own text (no gleann markers, no generated
+	// text): the warning that it was left alone survives on stderr.
+	mustContain(t, "quiet agents stderr warning", r.Err, "does not look generated")
 
 	// The existing file must not be modified.
 	after, err := os.ReadFile(agents)

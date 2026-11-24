@@ -68,8 +68,8 @@ follows the same rule. All other platforms are project-level, as listed below.
 
 | Platform | Files written | Integration type |
 |----------|--------------|-----------------|
-| **opencode** | `AGENTS.md` · `.opencode/plugins/gleann.js` · `.opencode/mcp.json` · `opencode.json` | `tool.execute.before` plugin hook |
-| **claude** | `~/.claude/CLAUDE.md` (or `CLAUDE.md` with `--project`) · `~/.claude/settings.json` | `PreToolUse` hook (Glob/Grep/Read) |
+| **opencode** | `AGENTS.md` · `.opencode/plugins/gleann.js` · `.opencode/mcp.json` · `opencode.json` | `experimental.session.compacting` plugin hook |
+| **claude** | `~/.claude/CLAUDE.md` (or `CLAUDE.md` with `--project`) · `~/.claude/settings.json` | `SessionStart` hook (once per session: memory context, bounded to 2000 bytes; hint when a `GRAPH_REPORT.md` exists). Older `PreToolUse` gleann hooks are removed on install |
 | **cursor** | `.cursor/rules/gleann.mdc` · `.cursor/mcp.json` | `alwaysApply: true` rules file |
 | **codex** | `AGENTS.md` · `.codex/hooks.json` | `PreToolUse` on Bash |
 | **gemini** | `~/.gemini/GEMINI.md` + `settings.json` (or `GEMINI.md` · `.gemini/settings.json` with `--project`) | `BeforeTool` hook |
@@ -86,11 +86,13 @@ follows the same rule. All other platforms are project-level, as listed below.
 | **neovim** | `AGENTS.md` | MCP instructions |
 | **jetbrains** | `AGENTS.md` · `.junie/guidelines.md` | Guidelines + MCP |
 
+The `claude` and `gemini` sections are delimited by `<!-- gleann ... -->` / `<!-- /gleann -->`; `gleann install` replaces an older variant of the section instead of adding a second one. The user-level text applies only to projects that have a gleann index; a project-level install names the index. Hooks written by gleann carry the `[gleann]` marker in their command, and install and uninstall remove every gleann-owned hook from `PreToolUse` and `SessionStart` (foreign hooks stay).
+
 ### OpenCode in depth
 
-OpenCode is the only platform that receives a JavaScript plugin (`.opencode/plugins/gleann.js`) which fires automatically before every `bash` tool call. If `GRAPH_REPORT.md` exists in the project root, the plugin injects the first 3 000 characters of its content into the context window so the AI sees god nodes and community structure before it starts searching source files.
+OpenCode is the only platform that receives a JavaScript plugin (`.opencode/plugins/gleann.js`) which fires when a session is compacted. It injects the first 2 000 characters of `GRAPH_REPORT.md` (if one exists in the project root) and the memory blocks into the context window so the AI sees god nodes and community structure before it starts searching source files.
 
-To generate the report:
+To generate a report (optional; `gleann graph map --index <name>` prints a compact repo map to stdout instead):
 
 ```bash
 gleann graph report --index <name>   # writes GRAPH_REPORT.md

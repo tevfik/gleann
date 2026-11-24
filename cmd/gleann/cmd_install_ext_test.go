@@ -242,9 +242,12 @@ func TestPatchClaudeSettingsNew(t *testing.T) {
 	if hooks == nil {
 		t.Fatal("expected hooks")
 	}
-	pre, _ := hooks["PreToolUse"].([]interface{})
-	if len(pre) == 0 {
-		t.Fatal("expected PreToolUse hook")
+	start, _ := hooks["SessionStart"].([]interface{})
+	if len(start) == 0 {
+		t.Fatal("expected SessionStart hook")
+	}
+	if pre, _ := hooks["PreToolUse"].([]interface{}); len(pre) != 0 {
+		t.Fatalf("no PreToolUse hook expected, got %v", pre)
 	}
 }
 
@@ -442,7 +445,7 @@ func TestInstallUninstallClaude(t *testing.T) {
 		t.Fatal("CLAUDE.md should contain gleann")
 	}
 	settingsData, _ := os.ReadFile(filepath.Join(home, ".claude", "settings.json"))
-	if !strings.Contains(string(settingsData), "PreToolUse") {
+	if !strings.Contains(string(settingsData), "SessionStart") {
 		t.Fatal("settings.json should contain hook")
 	}
 	// Uninstall

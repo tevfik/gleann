@@ -95,7 +95,7 @@ Usage:
   gleann memory prune    [--age <duration>]       Remove old entries
   gleann memory compact  [--min-validity <0-1>]   Prune stale/unreliable blocks (default min validity: 0.2)
   gleann memory maintain                          Full maintenance pass
-  gleann memory context                           Show compiled context sent to LLM
+  gleann memory context [--scope <s>|all]         Show compiled context sent to LLM (default: detected repo scope + global)
   gleann memory context --path <p> --command <c>  Show context + failures matching files/command
   gleann memory context --symbol <s> [--scope <s>]  Show context + failures matching symbols
   gleann memory failure add --command <c> --error <text> --fix <text> [--path <p>]... [--symbol <s>]... [--scope <s>]
@@ -843,8 +843,13 @@ func cmdMemoryContext(args []string) {
 	command := getFlag(args, "--command")
 	paths := getAllFlags(args, "--path")
 	symbols := getAllFlags(args, "--symbol")
+	// Same default as MCP memory_context: the detected repository scope (plus
+	// the global blocks); outside a repository that is the directory name.
+	// --scope all shows every scope.
 	scope := memory.NormalizeScope(getFlag(args, "--scope"))
-	if memory.IsAllScopesSentinel(scope) {
+	if scope == "" {
+		scope = memory.DetectRepoScope()
+	} else if memory.IsAllScopesSentinel(scope) {
 		scope = ""
 	}
 	if rc := remoteMemoryClient(); rc != nil && command == "" && len(paths) == 0 && len(symbols) == 0 {

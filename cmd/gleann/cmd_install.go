@@ -40,19 +40,19 @@ var platforms = []Platform{
 		Install: func(dir, home string) error {
 			agentsPath := filepath.Join(dir, "AGENTS.md")
 			content := getAgentsMDContent(getActiveInstallIndex(dir))
-			if err := appendOrCreateFile(agentsPath, content, "gleann: Code Intelligence"); err != nil {
+			if err := upsertAgentsSection(os.Stdout, os.Stdout, agentsPath, content); err != nil {
 				return err
 			}
 			fmt.Printf("  • %s\n", agentsPath)
 			return nil
 		},
 		Uninstall: func(dir, home string) error {
-			return removeSection(filepath.Join(dir, "AGENTS.md"), "## gleann: Code Intelligence", "\n---")
+			return removeAgentsSection(filepath.Join(dir, "AGENTS.md"))
 		},
 	},
 	{
 		Name:        "opencode",
-		Description: "OpenCode AI (tool.execute.before plugin + MCP config)",
+		Description: "OpenCode AI (session-compaction plugin + MCP config)",
 		Detect: func(dir, home string) bool {
 			if _, err := os.Stat(filepath.Join(dir, ".opencode")); err == nil {
 				return true
@@ -71,7 +71,7 @@ var platforms = []Platform{
 	},
 	{
 		Name:        "claude",
-		Description: "Claude Code (CLAUDE.md + PreToolUse hook in ~/.claude/settings.json)",
+		Description: "Claude Code (CLAUDE.md + SessionStart hook in ~/.claude/settings.json)",
 		Detect: func(dir, home string) bool {
 			_, err := os.Stat(filepath.Join(home, ".claude"))
 			if err == nil {
@@ -601,11 +601,7 @@ func getActiveInstallIndex(dir string) string {
 }
 
 func getClaudeMDSection(indexName string) string {
-	idx := indexName
-	if idx == "" {
-		idx = "<name>"
-	}
-	return strings.ReplaceAll(claudeMDSection, "<name>", idx)
+	return buildClaudeMDSection(indexName)
 }
 
 func getGeminiMDSection(indexName string) string {
@@ -649,7 +645,7 @@ persistent facts about this codebase.  Use gleann graph tools before exploring s
 
 ## Session start checklist
 1. ` + "`memory_context`" + ` — load compiled memory window (all tiers)
-2. If ` + "`GRAPH_REPORT.md`" + ` exists — read it (god nodes, communities)
+2. ` + "`gleann graph map --index <name>`" + ` — compact repo map (or read ` + "`GRAPH_REPORT.md`" + ` if one exists)
 3. ` + "`gleann index list`" + ` — check available indexes
 
 ## Long-term memory
@@ -707,10 +703,13 @@ gleann index watch <name> --docs ./src/           # auto-sync on file changes
 
 ### Graph traversal
 ` + "```bash" + `
-gleann graph explain  <symbol> --index <name>       # callers, callees, blast radius
-gleann graph query    <pattern> --index <name>       # find matching symbols
+gleann graph map      --index <name>                 # compact repo map (stdout)
+gleann graph explain  <fqn> --index <name>           # callers, callees, blast radius
+gleann graph callers  <fqn> --index <name>           # who calls it
+gleann graph deps     <fqn> --index <name>           # what it calls
+gleann graph query    <pattern> --index <name>       # find FQNs by pattern, then BFS neighbourhood of the first match
 gleann graph path     <from> <to> --index <name>     # shortest dependency path
-gleann graph report   --index <name>                 # generate GRAPH_REPORT.md
+gleann graph report   --index <name> [--output <path>] # Markdown report (read GRAPH_REPORT.md if one exists)
 gleann graph viz      --index <name>                 # interactive HTML graph
 ` + "```" + `
 
@@ -815,8 +814,8 @@ function getGleannContext() {
     parts.push("## gleann Knowledge Graph\n\n" + content.slice(0, 2000));
   } else {
     parts.push(
-      "## gleann\nNo GRAPH_REPORT.md found. " +
-      "Run: gleann graph report --index <name>  to generate it."
+      "## gleann\nNo GRAPH_REPORT.md found. If this project has a gleann index, " +
+      "'gleann graph map --index <its name>' prints a compact repo map."
     );
   }
 
@@ -869,7 +868,7 @@ func installOpenCode(dir, home string) error {
 	// 1. AGENTS.md
 	agentsPath := filepath.Join(dir, "AGENTS.md")
 	content := getAgentsMDContent(getActiveInstallIndex(dir))
-	if err := appendOrCreateFile(agentsPath, content, "gleann: Code Intelligence"); err != nil {
+	if err := upsertAgentsSection(os.Stdout, os.Stdout, agentsPath, content); err != nil {
 		return fmt.Errorf("writing AGENTS.md: %w", err)
 	}
 	fmt.Printf("  • %s\n", agentsPath)
@@ -902,7 +901,7 @@ func installOpenCode(dir, home string) error {
 		fmt.Printf("  • %s  (mcp.gleann registered globally)\n", globalConfigPath)
 	}
 	globalAgentsPath := filepath.Join(globalConfigDir, "AGENTS.md")
-	if err := appendOrCreateFile(globalAgentsPath, getAgentsMDContent(""), "gleann: Code Intelligence"); err == nil {
+	if err := upsertAgentsSection(os.Stdout, os.Stdout, globalAgentsPath, getAgentsMDContent("")); err == nil {
 		fmt.Printf("  • %s  (global instructions for OpenCode agents)\n", globalAgentsPath)
 	}
 
@@ -1043,25 +1042,109 @@ func uninstallOpenCode(dir, home string) error {
 
 	// Remove AGENTS.md section.
 	agentsPath := filepath.Join(dir, "AGENTS.md")
-	return removeSection(agentsPath, "## gleann: Code Intelligence", "\n---")
+	return removeAgentsSection(agentsPath)
 }
 
 // ─── Claude Code ──────────────────────────────────────────────────────────────
 
-const claudeMDSection = `
-<!-- gleann: Code Intelligence & Search -->
-## gleann knowledge graph
+const (
+	claudeSectionStart = "<!-- gleann: Code Intelligence & Search -->"
+	claudeSectionEnd   = "<!-- /gleann -->"
+)
 
-Run ` + "`gleann graph report --index <name>`" + ` to generate GRAPH_REPORT.md, then read it before
-searching source files.  Key commands:
-- ` + "`gleann graph explain <symbol> --index <name>`" + `  — callers, callees, blast radius
-- ` + "`gleann graph query <pattern> --index <name>`" + `   — symbol search
-- ` + "`gleann graph path <from> <to> --index <name>`" + ` — dependency path
-- ` + "`gleann search <name> <query>`" + `                  — semantic search
-<!-- /gleann -->
+// gleannHookMarker ends every hook command gleann writes, as a shell comment.
+// Install and uninstall treat a hook whose command contains it as
+// gleann-owned. It is specific enough that a user does not type it by accident
+// (the earlier "[gleann]" echo prefix is not an ownership mark).
+const gleannHookMarker = "# gleann-managed-hook"
+
+// claudeHookTimeoutSeconds bounds the SessionStart hook (Claude Code's own
+// default is 60 s).
+const claudeHookTimeoutSeconds = 10
+
+// claudeHookScript runs once per session (SessionStart): a one-line hint when
+// a GRAPH_REPORT.md exists, then the memory window of the current repository
+// (`gleann memory context` defaults to the detected repo scope plus global
+// blocks), cut at 2000 bytes and omitted when empty. Stdout of a SessionStart
+// hook becomes session context. The cut is by bytes, so a multi-byte character
+// at the boundary can be split.
+const claudeHookScript = `if [ -f GRAPH_REPORT.md ]; then echo "[gleann] GRAPH_REPORT.md found: read it for the repository overview."; fi; ctx=$(gleann memory context 2>/dev/null | head -c 2000); if [ -n "$ctx" ] && [ "$ctx" != "(empty memory context)" ]; then printf '[gleann] memory:\n%s\n' "$ctx"; fi ` + gleannHookMarker + ` v1`
+
+// legacyClaudeHookCommands are the exact hook commands older gleann
+// installers wrote. They carry no ownership marker, so they are matched by
+// equality, never by substring: a user's own hook that mentions gleann stays.
+var legacyClaudeHookCommands = []string{
+	// gleann v1.0 - v1.20, PreToolUse on Glob|Grep|Read|LS.
+	`if [ -f "GRAPH_REPORT.md" ]; then echo "[gleann] GRAPH_REPORT.md found — read it before searching source files." >&2; fi; gleann memory list 2>/dev/null | head -20 >&2`,
+	// gleann release with a `memory list --json` PreToolUse hook (2000-byte cut).
+	`if [ -f "GRAPH_REPORT.md" ]; then echo "[gleann] GRAPH_REPORT.md exists — read it before searching source files." >&2; fi; MC=$(gleann memory list --json 2>/dev/null | head -c 2000); if [ -n "$MC" ]; then echo "[gleann memory] $MC" >&2; fi`,
+	// Unmarked first form of the SessionStart hook of this version.
+	`if [ -f GRAPH_REPORT.md ]; then echo "[gleann] GRAPH_REPORT.md found: read it for the repository overview."; fi; ctx=$(gleann memory context 2>/dev/null | head -c 2000); if [ -n "$ctx" ] && [ "$ctx" != "(empty memory context)" ]; then printf '[gleann] memory:\n%s\n' "$ctx"; fi`,
+}
+
+// claudeHookEvents are the Claude Code events gleann hooks may live under: the
+// current one and the one older installers used.
+var claudeHookEvents = []string{"SessionStart", "PreToolUse"}
+
+func isGleannHookCommand(cmd string) bool {
+	if strings.Contains(cmd, gleannHookMarker) {
+		return true
+	}
+	for _, l := range legacyClaudeHookCommands {
+		if cmd == l {
+			return true
+		}
+	}
+	return false
+}
+
+func shortHookCommand(cmd string) string {
+	r := []rune(cmd)
+	if len(r) > 70 {
+		return string(r[:70]) + "..."
+	}
+	return cmd
+}
+
+// claudeMCPBlock is the MCP part of the Claude section; the tool names are
+// checked against the server's default profile by a test.
+const claudeMCPBlock = `When the gleann MCP server is configured, prefer its tools over shell commands:
+- ` + "`gleann_search`" + ` — hybrid semantic + lexical search over code and docs; ` + "`gleann_def`" + ` — go-to-definition for a symbol name; ` + "`gleann_read`" + ` — read a file by ` + "`path`" + ` in a compact mode (map/signatures/lines/task)
+- ` + "`gleann_impact`" + ` — blast radius (transitive callers, affected files) before changing a symbol; ` + "`gleann_graph_neighbors`" + ` — direct callers and callees of a symbol (FQN or partial name)
+- ` + "`gleann_sync`" + ` — refresh the index after editing code
+- ` + "`memory_context`" + ` (load at session start), ` + "`memory_search`" + `, ` + "`memory_remember`" + `, ` + "`memory_forget`" + `, ` + "`memory_failure_add`" + ` — persistent memory
 `
 
-const claudeHookScript = `if [ -f "GRAPH_REPORT.md" ]; then echo "[gleann] GRAPH_REPORT.md found — read it before searching source files." >&2; fi; gleann memory list 2>/dev/null | head -20 >&2`
+// buildClaudeMDSection renders the CLAUDE.md section. With an index name (a
+// project-level install) the commands name it; without one (user-level) the
+// text applies only to projects that have a gleann index.
+func buildClaudeMDSection(indexName string) string {
+	var sb strings.Builder
+	sb.WriteString("\n" + claudeSectionStart + "\n")
+	sb.WriteString("## gleann code intelligence\n\n")
+	idx := indexName
+	if idx == "" {
+		sb.WriteString("When the current project has a gleann index — e.g. its AGENTS.md/CLAUDE.md names one, or\n")
+		sb.WriteString("`gleann index list` shows it — use gleann before searching source files. Otherwise ignore\n")
+		sb.WriteString("this section. Below, `<index>` is that index's name.\n\n")
+		idx = "<index>"
+	} else {
+		sb.WriteString(fmt.Sprintf("This project is indexed in gleann under index name `%s`.\n\n", idx))
+	}
+	sb.WriteString(claudeMCPBlock)
+	sb.WriteString("\nCLI fallback:\n")
+	sb.WriteString(fmt.Sprintf("- `gleann search %s <query>` — semantic search\n", idx))
+	sb.WriteString(fmt.Sprintf("- `gleann graph map --index %s` — compact repo map (top symbols by PageRank), to stdout\n", idx))
+	sb.WriteString(fmt.Sprintf("- `gleann graph explain <fqn> --index %s` — callers, callees, blast radius (<fqn> is a fully qualified name)\n", idx))
+	sb.WriteString(fmt.Sprintf("- `gleann graph callers <fqn> --index %s` / `gleann graph deps <fqn> --index %s` — who calls it / what it calls\n", idx, idx))
+	sb.WriteString(fmt.Sprintf("- `gleann graph query <pattern> --index %s` — find FQNs matching a pattern (the FQNs explain/callers/deps need), then the BFS neighbourhood of the first match\n", idx))
+	sb.WriteString(fmt.Sprintf("- `gleann graph path <from> <to> --index %s` — shortest dependency path\n", idx))
+	sb.WriteString(fmt.Sprintf("- `gleann index sync %s` — run after editing code so the index follows\n\n", idx))
+	sb.WriteString(fmt.Sprintf("If a `GRAPH_REPORT.md` exists you may read it; `gleann graph report --index %s` writes one\n", idx))
+	sb.WriteString("(communities, god nodes; `--output <path>` chooses the file).\n")
+	sb.WriteString(claudeSectionEnd + "\n")
+	return sb.String()
+}
 
 // installClaude writes the project-level CLAUDE.md into dir.
 func installClaude(dir, home string) error {
@@ -1078,12 +1161,12 @@ func installClaudeUser(home string) error {
 
 func installClaudeAt(claudePath, home string, content string) error {
 	// 1. CLAUDE.md
-	if err := appendOrCreateFile(claudePath, content, "gleann: Code Intelligence"); err != nil {
+	if err := upsertSection(os.Stdout, os.Stdout, claudePath, content, "<!-- gleann: Code Intelligence", claudeSectionEnd); err != nil {
 		return fmt.Errorf("writing CLAUDE.md: %w", err)
 	}
 	fmt.Printf("  • %s\n", claudePath)
 
-	// 2. ~/.claude/settings.json — PreToolUse hook.
+	// 2. ~/.claude/settings.json — SessionStart hook.
 	claudeDir := filepath.Join(home, ".claude")
 	if err := os.MkdirAll(claudeDir, 0o700); err != nil {
 		return fmt.Errorf("creating ~/.claude: %w", err)
@@ -1092,8 +1175,57 @@ func installClaudeAt(claudePath, home string, content string) error {
 	if err := patchClaudeSettings(settingsPath); err != nil {
 		return fmt.Errorf("patching ~/.claude/settings.json: %w", err)
 	}
-	fmt.Printf("  • %s  (PreToolUse hook added)\n", settingsPath)
+	fmt.Printf("  • %s  (SessionStart hook)\n", settingsPath)
 	return nil
+}
+
+// removeGleannClaudeHooks drops every gleann-owned hook command from the
+// PreToolUse and SessionStart lists. Entries that still hold foreign hooks
+// are kept; entries left empty are dropped, and so is an emptied event.
+// It returns one description per removed hook command.
+func removeGleannClaudeHooks(hooks map[string]interface{}) []string {
+	var removed []string
+	for _, event := range claudeHookEvents {
+		entries, ok := hooks[event].([]interface{})
+		if !ok {
+			continue
+		}
+		var kept []interface{}
+		for _, e := range entries {
+			m, ok := e.(map[string]interface{})
+			if !ok {
+				kept = append(kept, e)
+				continue
+			}
+			inner, ok := m["hooks"].([]interface{})
+			if !ok {
+				kept = append(kept, e)
+				continue
+			}
+			var keptInner []interface{}
+			for _, h := range inner {
+				if hm, ok := h.(map[string]interface{}); ok {
+					if cmd, _ := hm["command"].(string); isGleannHookCommand(cmd) {
+						removed = append(removed, fmt.Sprintf("%s: %s", event, shortHookCommand(cmd)))
+						continue
+					}
+				}
+				keptInner = append(keptInner, h)
+			}
+			if len(keptInner) == len(inner) {
+				kept = append(kept, e)
+			} else if len(keptInner) > 0 {
+				m["hooks"] = keptInner
+				kept = append(kept, m)
+			}
+		}
+		if len(kept) == 0 {
+			delete(hooks, event)
+		} else {
+			hooks[event] = kept
+		}
+	}
+	return removed
 }
 
 func patchClaudeSettings(path string) error {
@@ -1112,40 +1244,34 @@ func patchClaudeSettings(path string) error {
 	} else {
 		settings = make(map[string]interface{})
 	}
+	if settings == nil {
+		settings = make(map[string]interface{})
+	}
 
 	hooks, _ := settings["hooks"].(map[string]interface{})
 	if hooks == nil {
 		hooks = make(map[string]interface{})
 	}
 
-	preToolUse, _ := hooks["PreToolUse"].([]interface{})
-	// Check if gleann hook already present.
-	for _, h := range preToolUse {
-		if m, ok := h.(map[string]interface{}); ok {
-			if hooks2, ok := m["hooks"].([]interface{}); ok {
-				for _, h2 := range hooks2 {
-					if m2, ok := h2.(map[string]interface{}); ok {
-						if m2["command"] == claudeHookScript {
-							fmt.Printf("  (gleann hook already in %s)\n", path)
-							return nil
-						}
-					}
-				}
-			}
-		}
+	// Already exactly right: one current SessionStart hook, nothing legacy.
+	if claudeHookCurrent(hooks) {
+		fmt.Printf("  (gleann hook already in %s)\n", path)
+		return nil
 	}
 
-	gleannHook := map[string]interface{}{
-		"matcher": "Glob|Grep|Read|LS",
+	for _, r := range removeGleannClaudeHooks(hooks) {
+		fmt.Printf("  - removed gleann hook (%s)\n", r)
+	}
+	sessionStart, _ := hooks["SessionStart"].([]interface{})
+	hooks["SessionStart"] = append(sessionStart, map[string]interface{}{
 		"hooks": []interface{}{
 			map[string]interface{}{
 				"type":    "command",
 				"command": claudeHookScript,
+				"timeout": claudeHookTimeoutSeconds,
 			},
 		},
-	}
-	preToolUse = append(preToolUse, gleannHook)
-	hooks["PreToolUse"] = preToolUse
+	})
 	settings["hooks"] = hooks
 
 	out, err := json.MarshalIndent(settings, "", "  ")
@@ -1153,6 +1279,29 @@ func patchClaudeSettings(path string) error {
 		return err
 	}
 	return os.WriteFile(path, append(out, '\n'), 0o600)
+}
+
+// claudeHookCurrent reports whether hooks already hold exactly one gleann
+// hook: the current SessionStart one, with its timeout, and nothing else of
+// gleann's in either event.
+func claudeHookCurrent(hooks map[string]interface{}) bool {
+	n, ok := 0, false
+	for _, event := range claudeHookEvents {
+		entries, _ := hooks[event].([]interface{})
+		for _, e := range entries {
+			m, _ := e.(map[string]interface{})
+			inner, _ := m["hooks"].([]interface{})
+			for _, h := range inner {
+				hm, _ := h.(map[string]interface{})
+				if cmd, _ := hm["command"].(string); isGleannHookCommand(cmd) {
+					n++
+					t, _ := hm["timeout"].(float64)
+					ok = event == "SessionStart" && cmd == claudeHookScript && t == claudeHookTimeoutSeconds
+				}
+			}
+		}
+	}
+	return n == 1 && ok
 }
 
 func uninstallClaude(dir, home string) error {
@@ -1164,34 +1313,20 @@ func uninstallClaudeUser(home string) error {
 }
 
 func uninstallClaudeAt(claudePath, home string) error {
-	if err := removeSection(claudePath, "<!-- gleann:", "<!-- /gleann -->"); err != nil {
+	if err := removeMarkedSection(claudePath, "<!-- gleann: Code Intelligence", claudeSectionEnd); err != nil {
 		return err
 	}
-	// Remove hook from ~/.claude/settings.json.
+	// Remove every gleann hook from ~/.claude/settings.json.
 	settingsPath := filepath.Join(home, ".claude", "settings.json")
 	if data, err := os.ReadFile(settingsPath); err == nil {
 		var settings map[string]interface{}
-		if json.Unmarshal(data, &settings) == nil {
+		if json.Unmarshal(data, &settings) == nil && settings != nil {
 			if hooks, ok := settings["hooks"].(map[string]interface{}); ok {
-				if preToolUse, ok := hooks["PreToolUse"].([]interface{}); ok {
-					var filtered []interface{}
-					for _, h := range preToolUse {
-						if m, ok := h.(map[string]interface{}); ok {
-							if hooks2, ok := m["hooks"].([]interface{}); ok {
-								isGleann := false
-								for _, h2 := range hooks2 {
-									if m2, ok := h2.(map[string]interface{}); ok && m2["command"] == claudeHookScript {
-										isGleann = true
-									}
-								}
-								if isGleann {
-									continue
-								}
-							}
-						}
-						filtered = append(filtered, h)
-					}
-					hooks["PreToolUse"] = filtered
+				removed := removeGleannClaudeHooks(hooks)
+				for _, r := range removed {
+					fmt.Printf("  - removed gleann hook (%s)\n", r)
+				}
+				if len(removed) > 0 {
 					settings["hooks"] = hooks
 					if out, err := json.MarshalIndent(settings, "", "  "); err == nil {
 						_ = os.WriteFile(settingsPath, append(out, '\n'), 0o600)
@@ -1214,12 +1349,14 @@ This project uses gleann for AI-powered codebase navigation.
 
 ## Before exploring source files
 
-1. Check **GRAPH_REPORT.md** for god nodes and community structure.
-   Generate it with: ` + "`gleann graph report --index <name>`" + `
+1. Get the repo overview: ` + "`gleann graph map --index <name>`" + ` (compact, to stdout).
+   If a GRAPH_REPORT.md exists you may read it (` + "`gleann graph report --index <name>`" + ` writes one).
 
 2. Key commands:
-   - ` + "`gleann graph explain <symbol> --index <name>`" + ` — callers, callees, blast radius
-   - ` + "`gleann graph query <pattern> --index <name>`" + ` — find symbols by pattern
+   - ` + "`gleann graph explain <fqn> --index <name>`" + ` — callers, callees, blast radius (fully qualified name)
+   - ` + "`gleann graph callers <fqn> --index <name>`" + ` / ` + "`gleann graph deps <fqn> --index <name>`" + `
+   - ` + "`gleann graph query <pattern> --index <name>`" + ` — find FQNs matching a pattern, then the BFS neighbourhood of the first match
+   - ` + "`gleann index sync <name>`" + ` — run after editing code
    - ` + "`gleann graph path <from> <to> --index <name>`" + ` — dependency path
    - ` + "`gleann search <name> <query>`" + ` — semantic search
    - ` + "`gleann ask <name> <question>`" + ` — RAG-powered Q&A
@@ -1289,7 +1426,7 @@ const codexHooksContent = `{
 func installCodex(dir, home string) error {
 	agentsPath := filepath.Join(dir, "AGENTS.md")
 	content := getAgentsMDContent(getActiveInstallIndex(dir))
-	if err := appendOrCreateFile(agentsPath, content, "gleann: Code Intelligence"); err != nil {
+	if err := upsertAgentsSection(os.Stdout, os.Stdout, agentsPath, content); err != nil {
 		return fmt.Errorf("writing AGENTS.md: %w", err)
 	}
 	fmt.Printf("  • %s\n", agentsPath)
@@ -1308,19 +1445,24 @@ func installCodex(dir, home string) error {
 
 func uninstallCodex(dir, home string) error {
 	_ = os.Remove(filepath.Join(dir, ".codex", "hooks.json"))
-	return removeSection(filepath.Join(dir, "AGENTS.md"), "## gleann: Code Intelligence", "\n---")
+	return removeAgentsSection(filepath.Join(dir, "AGENTS.md"))
 }
 
 // ─── Gemini CLI ───────────────────────────────────────────────────────────────
 
 const geminiMDSection = `
 <!-- gleann -->
-## gleann knowledge graph
+## gleann code intelligence
 
-Read GRAPH_REPORT.md before using file-search tools. Key commands:
-- ` + "`gleann graph explain <symbol> --index <name>`" + `
-- ` + "`gleann graph query <pattern> --index <name>`" + `
-- ` + "`gleann search <name> <query>`" + `
+When the current project has a gleann index (its GEMINI.md/AGENTS.md names one, or
+` + "`gleann index list`" + ` shows it), use gleann before searching source files. Otherwise ignore
+this section. Below, ` + "`<name>`" + ` is that index's name.
+- ` + "`gleann search <name> <query>`" + ` — semantic search
+- ` + "`gleann graph map --index <name>`" + ` — compact repo map
+- ` + "`gleann graph explain <fqn> --index <name>`" + ` — callers, callees, blast radius (fully qualified name)
+- ` + "`gleann graph query <pattern> --index <name>`" + ` — find FQNs matching a pattern, then the BFS neighbourhood of the first match
+- ` + "`gleann index sync <name>`" + ` — run after editing code
+- If a GRAPH_REPORT.md exists you may read it.
 <!-- /gleann -->
 `
 
@@ -1342,7 +1484,7 @@ func installGeminiAt(geminiMDPath, geminiDir, content string) error {
 		return fmt.Errorf("creating .gemini: %w", err)
 	}
 	// GEMINI.md
-	if err := appendOrCreateFile(geminiMDPath, content, "<!-- gleann -->"); err != nil {
+	if err := upsertSection(os.Stdout, os.Stdout, geminiMDPath, content, "<!-- gleann -->", "<!-- /gleann -->"); err != nil {
 		return fmt.Errorf("writing GEMINI.md: %w", err)
 	}
 	fmt.Printf("  • %s\n", geminiMDPath)
@@ -1408,7 +1550,7 @@ func uninstallGeminiUser(home string) error {
 }
 
 func uninstallGeminiAt(geminiMDPath, geminiDir string) error {
-	_ = removeSection(geminiMDPath, "<!-- gleann -->", "<!-- /gleann -->")
+	_ = removeMarkedSection(geminiMDPath, "<!-- gleann -->", "<!-- /gleann -->")
 	settingsPath := filepath.Join(geminiDir, "settings.json")
 	if data, err := os.ReadFile(settingsPath); err == nil {
 		var settings map[string]interface{}
@@ -1430,7 +1572,7 @@ func uninstallGeminiAt(geminiMDPath, geminiDir string) error {
 func installClaw(dir, home string) error {
 	agentsPath := filepath.Join(dir, "AGENTS.md")
 	content := getAgentsMDContent(getActiveInstallIndex(dir))
-	if err := appendOrCreateFile(agentsPath, content, "gleann: Code Intelligence"); err != nil {
+	if err := upsertAgentsSection(os.Stdout, os.Stdout, agentsPath, content); err != nil {
 		return fmt.Errorf("writing AGENTS.md: %w", err)
 	}
 	fmt.Printf("  • %s\n", agentsPath)
@@ -1451,7 +1593,7 @@ func installClaw(dir, home string) error {
 func uninstallClaw(dir, home string) error {
 	skillPath := filepath.Join(home, ".openclaw", "skills", "gleann", "SKILL.md")
 	_ = os.Remove(skillPath)
-	return removeSection(filepath.Join(dir, "AGENTS.md"), "## gleann: Code Intelligence", "\n---")
+	return removeAgentsSection(filepath.Join(dir, "AGENTS.md"))
 }
 
 // ─── Aider ────────────────────────────────────────────────────────────────────
@@ -1459,7 +1601,7 @@ func uninstallClaw(dir, home string) error {
 func installAider(dir, home string) error {
 	agentsPath := filepath.Join(dir, "AGENTS.md")
 	content := getAgentsMDContent(getActiveInstallIndex(dir))
-	if err := appendOrCreateFile(agentsPath, content, "gleann: Code Intelligence"); err != nil {
+	if err := upsertAgentsSection(os.Stdout, os.Stdout, agentsPath, content); err != nil {
 		return fmt.Errorf("writing AGENTS.md: %w", err)
 	}
 	fmt.Printf("  • %s\n", agentsPath)
@@ -1467,7 +1609,7 @@ func installAider(dir, home string) error {
 }
 
 func uninstallAider(dir, home string) error {
-	return removeSection(filepath.Join(dir, "AGENTS.md"), "## gleann: Code Intelligence", "\n---")
+	return removeAgentsSection(filepath.Join(dir, "AGENTS.md"))
 }
 
 // ─── GitHub Copilot CLI ───────────────────────────────────────────────────────
@@ -1514,7 +1656,7 @@ func uninstallWindsurf(dir, home string) error {
 func installCline(dir, home string) error {
 	agentsPath := filepath.Join(dir, "AGENTS.md")
 	content := getAgentsMDContent(getActiveInstallIndex(dir))
-	if err := appendOrCreateFile(agentsPath, content, "gleann: Code Intelligence"); err != nil {
+	if err := upsertAgentsSection(os.Stdout, os.Stdout, agentsPath, content); err != nil {
 		return fmt.Errorf("writing AGENTS.md: %w", err)
 	}
 	fmt.Printf("  • %s\n", agentsPath)
@@ -1542,7 +1684,7 @@ func installCline(dir, home string) error {
 
 func uninstallCline(dir, home string) error {
 	_ = os.Remove(filepath.Join(dir, ".cline", "mcp.json"))
-	return removeSection(filepath.Join(dir, "AGENTS.md"), "## gleann: Code Intelligence", "\n---")
+	return removeAgentsSection(filepath.Join(dir, "AGENTS.md"))
 }
 
 // ─── Amp ──────────────────────────────────────────────────────────────────────
@@ -1550,7 +1692,7 @@ func uninstallCline(dir, home string) error {
 func installAmp(dir, home string) error {
 	agentsPath := filepath.Join(dir, "AGENTS.md")
 	content := getAgentsMDContent(getActiveInstallIndex(dir))
-	if err := appendOrCreateFile(agentsPath, content, "gleann: Code Intelligence"); err != nil {
+	if err := upsertAgentsSection(os.Stdout, os.Stdout, agentsPath, content); err != nil {
 		return fmt.Errorf("writing AGENTS.md: %w", err)
 	}
 	fmt.Printf("  • %s\n", agentsPath)
@@ -1558,7 +1700,7 @@ func installAmp(dir, home string) error {
 }
 
 func uninstallAmp(dir, home string) error {
-	return removeSection(filepath.Join(dir, "AGENTS.md"), "## gleann: Code Intelligence", "\n---")
+	return removeAgentsSection(filepath.Join(dir, "AGENTS.md"))
 }
 
 // ─── Kiro ─────────────────────────────────────────────────────────────────────
@@ -1586,7 +1728,7 @@ func uninstallKiro(dir, home string) error {
 func installAmazonQ(dir, home string) error {
 	agentsPath := filepath.Join(dir, "AGENTS.md")
 	content := getAgentsMDContent(getActiveInstallIndex(dir))
-	if err := appendOrCreateFile(agentsPath, content, "gleann: Code Intelligence"); err != nil {
+	if err := upsertAgentsSection(os.Stdout, os.Stdout, agentsPath, content); err != nil {
 		return fmt.Errorf("writing AGENTS.md: %w", err)
 	}
 	fmt.Printf("  • %s\n", agentsPath)
@@ -1594,7 +1736,7 @@ func installAmazonQ(dir, home string) error {
 }
 
 func uninstallAmazonQ(dir, home string) error {
-	return removeSection(filepath.Join(dir, "AGENTS.md"), "## gleann: Code Intelligence", "\n---")
+	return removeAgentsSection(filepath.Join(dir, "AGENTS.md"))
 }
 
 // ─── Continue ─────────────────────────────────────────────────────────────────
@@ -1602,7 +1744,7 @@ func uninstallAmazonQ(dir, home string) error {
 func installContinue(dir, home string) error {
 	agentsPath := filepath.Join(dir, "AGENTS.md")
 	content := getAgentsMDContent(getActiveInstallIndex(dir))
-	if err := appendOrCreateFile(agentsPath, content, "gleann: Code Intelligence"); err != nil {
+	if err := upsertAgentsSection(os.Stdout, os.Stdout, agentsPath, content); err != nil {
 		return fmt.Errorf("writing AGENTS.md: %w", err)
 	}
 	fmt.Printf("  • %s\n", agentsPath)
@@ -1610,7 +1752,7 @@ func installContinue(dir, home string) error {
 }
 
 func uninstallContinue(dir, home string) error {
-	return removeSection(filepath.Join(dir, "AGENTS.md"), "## gleann: Code Intelligence", "\n---")
+	return removeAgentsSection(filepath.Join(dir, "AGENTS.md"))
 }
 
 // ─── Zed ──────────────────────────────────────────────────────────────────────
@@ -1618,7 +1760,7 @@ func uninstallContinue(dir, home string) error {
 func installZed(dir, home string) error {
 	agentsPath := filepath.Join(dir, "AGENTS.md")
 	content := getAgentsMDContent(getActiveInstallIndex(dir))
-	if err := appendOrCreateFile(agentsPath, content, "gleann: Code Intelligence"); err != nil {
+	if err := upsertAgentsSection(os.Stdout, os.Stdout, agentsPath, content); err != nil {
 		return fmt.Errorf("writing AGENTS.md: %w", err)
 	}
 	fmt.Printf("  • %s\n", agentsPath)
@@ -1626,7 +1768,7 @@ func installZed(dir, home string) error {
 }
 
 func uninstallZed(dir, home string) error {
-	return removeSection(filepath.Join(dir, "AGENTS.md"), "## gleann: Code Intelligence", "\n---")
+	return removeAgentsSection(filepath.Join(dir, "AGENTS.md"))
 }
 
 // ─── Neovim ───────────────────────────────────────────────────────────────────
@@ -1634,7 +1776,7 @@ func uninstallZed(dir, home string) error {
 func installNeovim(dir, home string) error {
 	agentsPath := filepath.Join(dir, "AGENTS.md")
 	content := getAgentsMDContent(getActiveInstallIndex(dir))
-	if err := appendOrCreateFile(agentsPath, content, "gleann: Code Intelligence"); err != nil {
+	if err := upsertAgentsSection(os.Stdout, os.Stdout, agentsPath, content); err != nil {
 		return fmt.Errorf("writing AGENTS.md: %w", err)
 	}
 	fmt.Printf("  • %s\n", agentsPath)
@@ -1642,7 +1784,7 @@ func installNeovim(dir, home string) error {
 }
 
 func uninstallNeovim(dir, home string) error {
-	return removeSection(filepath.Join(dir, "AGENTS.md"), "## gleann: Code Intelligence", "\n---")
+	return removeAgentsSection(filepath.Join(dir, "AGENTS.md"))
 }
 
 // ─── JetBrains ────────────────────────────────────────────────────────────────
@@ -1650,7 +1792,7 @@ func uninstallNeovim(dir, home string) error {
 func installJetBrains(dir, home string) error {
 	agentsPath := filepath.Join(dir, "AGENTS.md")
 	content := getAgentsMDContent(getActiveInstallIndex(dir))
-	if err := appendOrCreateFile(agentsPath, content, "gleann: Code Intelligence"); err != nil {
+	if err := upsertAgentsSection(os.Stdout, os.Stdout, agentsPath, content); err != nil {
 		return fmt.Errorf("writing AGENTS.md: %w", err)
 	}
 	fmt.Printf("  • %s\n", agentsPath)
@@ -1661,7 +1803,7 @@ func installJetBrains(dir, home string) error {
 		return fmt.Errorf("creating .junie: %w", err)
 	}
 	guidelinesPath := filepath.Join(junieDir, "guidelines.md")
-	if err := appendOrCreateFile(guidelinesPath, content, "gleann: Code Intelligence"); err != nil {
+	if err := upsertAgentsSection(os.Stdout, os.Stdout, guidelinesPath, content); err != nil {
 		return fmt.Errorf("writing guidelines.md: %w", err)
 	}
 	fmt.Printf("  • %s\n", guidelinesPath)
@@ -1670,7 +1812,7 @@ func installJetBrains(dir, home string) error {
 
 func uninstallJetBrains(dir, home string) error {
 	_ = os.Remove(filepath.Join(dir, ".junie", "guidelines.md"))
-	return removeSection(filepath.Join(dir, "AGENTS.md"), "## gleann: Code Intelligence", "\n---")
+	return removeAgentsSection(filepath.Join(dir, "AGENTS.md"))
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
