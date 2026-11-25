@@ -436,6 +436,15 @@ HNSW parameters can be tuned in the config file under `hnsw_config`:
 | `bge-m3` | 1024 | Excellent | Fast |
 | `nomic-embed-text` | 768 | Good | Very fast |
 | `mxbai-embed-large` | 1024 | Excellent | Moderate |
+| `embeddinggemma-2` (catalogue, `eif` only) | 768 | Excellent | Slow on CPU |
+
+#### EmbeddingGemma 2 (opt-in, `eif` provider only)
+
+`gleann models download embeddinggemma-2` fetches the Q8_0 GGUF (310 MB, 768 dimensions, multilingual, code, 8k context). Use it with `"embedding_provider": "eif"` and `"embedding_model": "embeddinggemma-2"` in a build with `-tags eif` (the `gleann-full` and `gleann-eif` builds). The `llamacpp` provider refuses it with a clear error, because the bundled llama-server cannot load the gemma-embedding2 architecture, and the built-in engine reads only F32 and Q8_0 weights (not F16, BF16 or the K-quants). It is never a default.
+
+Speed is the trade-off. On a CPU it embeds about 4 texts/s on one thread and about 18 texts/s with 12 workers, 15 to 40 times slower than multilingual-e5-small, and a 20,000-character passage takes about 27 s. On a 30-query Turkish and English set its MRR@10 is 0.944 (0.912 without prompts), about the same as multilingual-e5-small (0.957), so choose it for quality on long or code-heavy text, not for speed.
+
+gleann adds the prompts the model was trained with, detected from a model id or file name containing `embeddinggemma` (any case): passages get `title: none | text: ` and queries `task: search result | query: `. They are used on every path (build, sync, watch sync, search, ask, REST, MCP), recorded in the index metadata like the E5 prefixes, and part of the embedded text, so the embedding cache never serves a vector computed without them. `build_prompt_template` and `query_prompt_template` still override them. An index built with this model by an earlier gleann has no recorded prefixes and keeps working unprefixed (searches and syncs use what the index recorded); rebuild it (`gleann index build <name> --docs <dir> --force`, or delete and rebuild) to get the prefixes.
 
 ### LLM (for ask/chat)
 

@@ -37,6 +37,9 @@ func TestModelsJSONIsComplete(t *testing.T) {
 			t.Errorf("no %s models", k)
 		}
 	}
+	if e, ok := Find("embeddinggemma-2"); !ok || e.Kind != Embedding || e.Bytes != 309855520 || len(e.SHA256) != 64 {
+		t.Errorf("embeddinggemma-2: %+v %v", e, ok)
+	}
 	if e, ok := Find("/somewhere/BGE-M3-Q4_K_M.gguf"); !ok || e.ID != "bge-m3" {
 		t.Errorf("Find by path: %+v %v", e, ok)
 	}

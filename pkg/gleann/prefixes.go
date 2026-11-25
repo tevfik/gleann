@@ -7,7 +7,8 @@ import (
 
 // EmbeddingPrefixes returns the text put before passages and before queries when they are embedded: the configured
 // build and query prompt templates, else "passage: " and "query: " for the E5 family (e5-*, multilingual-e5-*),
-// which is trained with them and ranks noticeably worse without, else nothing. A build records them in the index's
+// which is trained with them and ranks noticeably worse without, and "title: none | text: " and
+// "task: search result | query: " for EmbeddingGemma (model id or file name containing "embeddinggemma"), else nothing. A build records them in the index's
 // meta (PassagePrefix, QueryPrefix), and searches and updates of that index use the recorded ones, so indexes built
 // before prefixes existed keep working unchanged.
 func EmbeddingPrefixes(cfg Config, model string) (passage, query string) {
@@ -17,6 +18,9 @@ func EmbeddingPrefixes(cfg Config, model string) (passage, query string) {
 	base := strings.ToLower(filepath.Base(model))
 	if strings.HasPrefix(base, "e5-") || strings.Contains(base, "multilingual-e5") {
 		return "passage: ", "query: "
+	}
+	if strings.Contains(base, "embeddinggemma") {
+		return "title: none | text: ", "task: search result | query: "
 	}
 	return "", ""
 }

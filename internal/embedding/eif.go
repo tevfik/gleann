@@ -119,18 +119,12 @@ func resolveEIFModelPath(model string) (string, error) {
 		}
 	}
 
-	// 3. Check common workspace build locations
-	workspaceCandidates := []string{
-		"/home/tevfik/workspace_old/edge-intelligence/models/dist/minilm_bert.eifm",
-		"/home/tevfik/workspace_old/edge-intelligence/models/dist/granite107m.eifm",
-	}
-	for _, c := range workspaceCandidates {
-		if _, err := os.Stat(c); err == nil {
-			return c, nil
-		}
+	// 2b. A catalogue id or file name whose file is not named after the id.
+	if p, ok := catalogEmbeddingPath(model); ok {
+		return p, nil
 	}
 
-	return "", fmt.Errorf("EIF model not found for %q (checked direct path, ~/.gleann/models/, and workspace)", model)
+	return "", fmt.Errorf("EIF model not found for %q (checked direct path and %s)", model, modelsDir)
 }
 
 // GetOrLoadEIF retrieves or initializes a cached in-process EIF engine instance.

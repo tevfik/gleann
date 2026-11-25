@@ -32,12 +32,21 @@ func (e *recordingEmbedder) ComputeSingle(ctx context.Context, text string) ([]f
 
 func (e *recordingEmbedder) ModelName() string { return e.model }
 
+const (
+	gemmaDoc   = "title: none | text: "
+	gemmaQuery = "task: search result | query: "
+)
+
 func TestEmbeddingPrefixes(t *testing.T) {
 	for model, want := range map[string]string{
 		"/home/u/.gleann/models/multilingual-e5-small-q8_0.gguf": "passage: |query: ",
-		"intfloat/e5-base-v2": "passage: |query: ",
-		"bge-m3":              "|",
-		"nomic-embed-text":    "|",
+		"intfloat/e5-base-v2":           "passage: |query: ",
+		"bge-m3":                        "|",
+		"nomic-embed-text":              "|",
+		"embeddinggemma-2":              gemmaDoc + "|" + gemmaQuery,
+		"/m/EmbeddingGemma-2-Q8_0.gguf": gemmaDoc + "|" + gemmaQuery,
+		"embeddinggemma:300m":           gemmaDoc + "|" + gemmaQuery,
+		"gemma-2-9b":                    "|",
 	} {
 		p, q := EmbeddingPrefixes(Config{}, model)
 		if p+"|"+q != want {
@@ -163,5 +172,53 @@ func TestExplainAndAttributeUsePrefixes(t *testing.T) {
 	}
 	if rec.texts[0] != "It works." {
 		t.Fatalf("plain attribute text = %q", rec.texts[0])
+	}
+}
+
+// A gemma index embeds passages, updates and queries with the gemma prefixes and records them; the prefix is part
+// of the embedded text, so it is part of the embedding cache key.
+func TestGemmaPrefixesBuildSearch(t *testing.T) {
+	dir := t.TempDir()
+	builder, _ := newTestBuilder(t, dir, 8)
+	emb := &recordingEmbedder{testEmbedder: testEmbedder{dim: 8}, model: "embeddinggemma-2-Q8_0.gguf"}
+	builder.embedder = emb
+	ctx := context.Background()
+	if err := builder.Build(ctx, "gem", []Item{{Text: "alpha", Metadata: map[string]any{"source": "a.md"}}}); err != nil {
+		t.Fatal(err)
+	}
+	for _, txt := range emb.texts {
+		if txt != gemmaDoc+"alpha" {
+			t.Errorf("build embedded %q", txt)
+		}
+	}
+	meta, err := GetIndexMeta(dir, "gem")
+	if err != nil || meta.PassagePrefix != gemmaDoc || meta.QueryPrefix != gemmaQuery {
+		t.Fatalf("meta %+v %v", meta, err)
+	}
+	emb.texts = nil
+	if err := builder.UpdateIndex(ctx, "gem", []Item{{Text: "beta", Metadata: map[string]any{"source": "b.md"}}}, nil); err != nil {
+		t.Fatal(err)
+	}
+	for _, txt := range emb.texts {
+		if !strings.HasPrefix(txt, gemmaDoc) {
+			t.Errorf("update embedded %q", txt)
+		}
+	}
+	initTestHNSW()
+	s := NewSearcher(Config{IndexDir: dir, Backend: "hnsw", SearchConfig: SearchConfig{HybridAlpha: 0.7}}, emb)
+	if err := s.Load(ctx, "gem"); err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	emb.texts = nil
+	if _, err := s.Search(ctx, "where is alpha"); err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, txt := range emb.texts {
+		found = found || txt == gemmaQuery+"where is alpha"
+	}
+	if !found {
+		t.Errorf("query not embedded with the gemma prefix: %q", emb.texts)
 	}
 }

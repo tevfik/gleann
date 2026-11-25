@@ -47,6 +47,16 @@
       "sha256": "6d39681b26c61279ac1f82db35a04a05009e94c415b51c858ff571489a82fc06"
     },
     {
+      "id": "embeddinggemma-2",
+      "name": "EmbeddingGemma 2 Q8 (multilingual, code, 8k context; eif only)",
+      "kind": "embedding",
+      "file": "embeddinggemma-2-Q8_0.gguf",
+      "url": "https://huggingface.co/unsloth/embeddinggemma-2-GGUF/resolve/main/embeddinggemma-2-Q8_0.gguf",
+      "bytes": 309855520,
+      "sha256": "6f1bd4ac6c5df7444f9cca7ca36cafe6cfa34cd6f49fefb1e0b4be8143aed8bc",
+      "note": "768 dimensions. Needs embedding_provider \"eif\" (a -tags eif build); llama-server cannot load it. Opt-in, never a default: retrieval matches multilingual-e5-small on a small Turkish and English set, but it is 15 to 40 times slower on CPU. gleann adds its prompt prefixes automatically."
+    },
+    {
       "id": "qwen2.5-0.5b-instruct",
       "name": "Qwen2.5 0.5B Instruct Q4",
       "kind": "llm",

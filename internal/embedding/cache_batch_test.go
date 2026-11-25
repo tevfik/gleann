@@ -405,3 +405,16 @@ func TestCachedComputer_StopsWhenCancelled(t *testing.T) {
 		t.Errorf("embedder called %d times after cancel", f.calls)
 	}
 }
+
+// The cache key covers the text as embedded, prefix included: a vector cached for an unprefixed text is never
+// served for the prefixed one (EmbeddingGemma prompts, E5 prefixes).
+func TestCacheKeyIncludesPrefix(t *testing.T) {
+	const m, text, prefix = "embeddinggemma-2-Q8_0.gguf", "hello", "title: none | text: "
+	if cacheKey(m, text) == cacheKey(m, prefix+text) {
+		t.Fatal("prefixed and unprefixed text share a cache key")
+	}
+	prefixed := prefix + text
+	if cacheKey(m, prefixed) != cacheKey(m, prefix+"hello") {
+		t.Fatal("key not deterministic")
+	}
+}

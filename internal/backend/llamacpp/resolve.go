@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/tevfik/gleann/internal/modelcatalog"
@@ -81,6 +82,18 @@ func (o ModelOptions) EnsureDownloaded(ctx context.Context, name string) error {
 	return nil
 }
 
+// isEmbeddingGemma2 reports whether name is EmbeddingGemma-2 (the catalogue id
+// or a file name in the -2 form). EmbeddingGemma v1 names such as
+// embeddinggemma-300m or embeddinggemma:300m are not matched: llama.cpp loads them.
+func isEmbeddingGemma2(name string) bool {
+	base := strings.ToLower(filepath.Base(name))
+	rest, ok := strings.CutPrefix(base, "embeddinggemma-2")
+	if !ok {
+		return false
+	}
+	return rest == "" || strings.ContainsRune("-_:.", rune(rest[0]))
+}
+
 // ResolveModel turns the configured llamacpp model into the file the runner
 // loads, without touching the user's config: it downloads first when opted in
 // (EnsureDownloaded), then a file or path is used as is, and a catalogue id
@@ -90,6 +103,9 @@ func (o ModelOptions) EnsureDownloaded(ctx context.Context, name string) error {
 func ResolveModel(ctx context.Context, name string, o ModelOptions) (string, error) {
 	if name == "" {
 		return "", fmt.Errorf("llamacpp provider requires a .gguf model (a path, a file name in %s, or a catalogue id such as 'bge-m3') as the embedding model", modelcatalog.Dir())
+	}
+	if isEmbeddingGemma2(name) {
+		return "", fmt.Errorf("embeddinggemma-2 needs embedding_provider \"eif\" (llama-server cannot load gemma-embedding2)")
 	}
 	if err := o.EnsureDownloaded(ctx, name); err != nil {
 		return "", err

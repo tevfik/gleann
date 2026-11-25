@@ -194,7 +194,7 @@ func sum(t *testing.T, paths ...string) string {
 func TestExportRealV190Fixture(t *testing.T) {
 	src := os.Getenv("GLEANN_V190_MEMORY_FIXTURE")
 	if src == "" {
-		src = "/home/tevfik/WORKSPACE/gleann-review/fixtures/v190-memory/store/mem_memory"
+		t.Skip("set GLEANN_V190_MEMORY_FIXTURE to run against the real v1.9.0 store")
 	}
 	if _, err := os.Stat(src); err != nil {
 		t.Skipf("v1.9.0 fixture not available: %v", err)
