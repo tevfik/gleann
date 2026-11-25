@@ -27,6 +27,15 @@ func cmdMemory(args []string) {
 	sub := args[0]
 	subArgs := args[1:]
 	if fs, ok := memoryFlagSets[sub]; ok {
+		// --help/-h is a request for usage, not a query word and not an
+		// unknown flag: it is honoured before the subcommand runs and before
+		// unknown flags are rejected, so it can never store, delete, clear or
+		// export anything. A literal "--" still ends flag parsing, so
+		// `memory forget -- --help` keeps "--help" as query text.
+		if wantsHelpIn(subArgs, fs) {
+			printMemoryUsage()
+			return // exit 0: showing help is not an error
+		}
 		rejectUnknownFlags("memory "+sub, subArgs, fs)
 	}
 

@@ -204,8 +204,8 @@ func (m *Manager) MarkSuspect(changedFiles []string, changedSymbols []string) (i
 	return m.store.MarkSuspect(changedFiles, changedSymbols)
 }
 
-// Forget removes a memory block by ID or content match.
-// This is the /forget command equivalent.
+// Forget removes a memory block by ID, by a unique ID prefix, or by content
+// match. This is the /forget command equivalent.
 func (m *Manager) Forget(idOrQuery string) (int, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -213,6 +213,36 @@ func (m *Manager) Forget(idOrQuery string) (int, error) {
 	// Try exact ID match first.
 	if err := m.store.Delete(idOrQuery); err == nil {
 		return 1, nil
+	}
+
+	// Then a unique ID prefix: list and search display only the first 8
+	// characters of the 16-character hex block ID, so `forget a1b2c3d4` has to
+	// address the block it shows. An ambiguous prefix is an error rather than a
+	// fall-through: a hex string can also be phrase text, and deleting on a
+	// guess is worse than asking for a longer prefix.
+	if isBlockIDPrefix(idOrQuery) {
+		blocks, err := m.store.List("")
+		if err != nil {
+			return 0, err
+		}
+		prefix := strings.ToLower(idOrQuery)
+		var matches []string
+		for _, b := range blocks {
+			if strings.HasPrefix(strings.ToLower(b.ID), prefix) {
+				matches = append(matches, b.ID)
+			}
+		}
+		switch len(matches) {
+		case 1:
+			if err := m.store.Delete(matches[0]); err != nil {
+				return 0, fmt.Errorf("deleting memory %s: %w", matches[0], err)
+			}
+			return 1, nil
+		case 0:
+			// Not an ID after all: fall through to the phrase match below.
+		default:
+			return 0, fmt.Errorf("ambiguous memory ID prefix %q matches %d blocks; provide a longer prefix", idOrQuery, len(matches))
+		}
 	}
 
 	// Search for content match and delete all matches.
@@ -234,6 +264,28 @@ func (m *Manager) Forget(idOrQuery string) (int, error) {
 		return 0, fmt.Errorf("no matching memories found for %q", idOrQuery)
 	}
 	return count, nil
+}
+
+// isBlockIDPrefix reports whether idOrQuery looks like the beginning of a
+// memory block ID: at least four characters, all of them hex digits. Block IDs
+// are 16 lowercase hexadecimal characters (blockIDFor), and the CLI shows their
+// first eight, so a short hex run such as "a1b2c3" is read as an ID prefix
+// while anything shorter or non-hex stays a phrase query.
+func isBlockIDPrefix(s string) bool {
+	if len(s) < 4 {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		switch {
+		case c >= '0' && c <= '9':
+		case c >= 'a' && c <= 'f':
+		case c >= 'A' && c <= 'F':
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 // ── Note Operations ───────────────────────────────────────────────

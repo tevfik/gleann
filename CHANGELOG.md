@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### Fixed
+- **`gleann memory <subcommand> --help` prints usage instead of running the subcommand.** `--help` and `-h` before a literal `--` show the memory usage and exit 0 for every subcommand (`remember`, `forget`, `list`, `search`, `add`, `clear`, `stats`, `summarize`, `prune`, `compact`, `context`, `maintain`, `reflect`, `export`, `import`, `import-graph` and `failure add|list`); they used to reach the subcommand as query text, so `memory forget --help` deleted every block containing `--help` and `memory remember -h` stored a note called `-h`. `memory forget -- --help` still searches for that literal text.
+- **`gleann memory forget` accepts the short IDs `list` and `search` print.** A unique hex ID prefix of four or more characters (any case) deletes that one block, after the exact-ID attempt and before the phrase match; an ambiguous prefix is refused with `ambiguous memory ID prefix "…" matches N blocks; provide a longer prefix` instead of falling through to the phrase delete (`Manager.Forget`, so the CLI and `DELETE /api/blocks/{id}` behave alike).
+
 ## [v1.21.1] — 2026-11-24
 
 See [docs/releases/v1.21.1.md](docs/releases/v1.21.1.md).
