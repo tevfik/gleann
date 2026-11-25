@@ -100,7 +100,7 @@ a token, but they are deliberately outside the spec.
 | POST | `/api/indexes/{name}/build` | Build index from texts/items |
 | POST | `/api/indexes/{name}/update` | Remove the passages of some sources and/or add items |
 | POST | `/api/indexes/{name}/index-path` | Index a directory on the server (must be inside `allowed_roots`, default: home) |
-| POST | `/api/indexes/{name}/watch` | Watch and auto-rebuild index on changes |
+| POST | `/api/indexes/{name}/watch` | Watch and auto-sync the index on changes; body `{"enable": true|false, "dir": "..."}` (`enable` is required, 400 without it) |
 | POST | `/api/indexes/{name}/upload` | Upload a document into a new index. The build runs without the vault tracker and with a memory-only embedding cache, so the document lives only in its index (deleting the index removes it); at start the server removes vault records that older versions left for upload temp folders |
 | DELETE | `/api/indexes/{name}` | Delete an index. `403` access denied (client target or tag isolation), `404` unknown index (unrestricted clients) |
 

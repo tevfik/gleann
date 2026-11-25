@@ -821,7 +821,7 @@ func (c *ASTChunker) ChunkWithMetadata(text string, metadata map[string]any) []C
 	}
 
 	lang := DetectLanguage(filename)
-	ext := filepath.Ext(filename)
+	ext := FileExt(filename)
 	isVendor := strings.Contains(filename, "vendor/") || strings.Contains(filename, "third_party/")
 
 	items := make([]Chunk, len(chunks))

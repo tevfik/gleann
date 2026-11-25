@@ -159,7 +159,7 @@ func (mc *MarkdownChunker) ChunkMarkdown(markdown string, source string) []Markd
 				"chunk_index":  i,
 				"total_chunks": len(textPieces),
 				"kind":         "docs",
-				"ext":          filepath.Ext(source),
+				"ext":          FileExt(source),
 				"is_test":      false,
 				"is_vendor":    false,
 			}
@@ -186,7 +186,7 @@ func (mc *MarkdownChunker) ChunkMarkdown(markdown string, source string) []Markd
 	}
 	chunks := mc.ChunkDocument(doc)
 	// Inject source and ext into all metadata.
-	ext := filepath.Ext(source)
+	ext := FileExt(source)
 	for i := range chunks {
 		chunks[i].Metadata["source"] = source
 		chunks[i].Metadata["ext"] = ext
@@ -680,4 +680,16 @@ func (mc *MarkdownChunker) chunkTable(tbl tableBlock) []contentPiece {
 	}
 
 	return subChunks
+}
+
+// FileExt is the one definition of a passage's "ext": the extension of the
+// base name as filepath.Ext reports it ("1.10" has ".10", "Makefile" has
+// none), lower-cased. Indexing stores it and the metadata filter derives it
+// the same way for passages that predate the stored key.
+func FileExt(name string) string {
+	ext := strings.ToLower(filepath.Ext(filepath.Base(name)))
+	if ext == "." { // "" and ".." have a base of "." or ".."; a bare dot is no extension
+		return ""
+	}
+	return ext
 }

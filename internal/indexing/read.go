@@ -332,6 +332,7 @@ func readDocumentsMode(ctx context.Context, dir string, ro ReadOptions, p *print
 									"total_chunks": len(textChunks),
 									"kind":         "docs",
 									"is_test":      false,
+									"ext":          chunking.FileExt(relPath),
 									"is_vendor":    false,
 								},
 							})
@@ -461,6 +462,7 @@ func readDocumentsMode(ctx context.Context, dir string, ro ReadOptions, p *print
 				} else {
 					metadata["kind"] = "docs"
 					metadata["is_test"] = false
+					metadata["ext"] = chunking.FileExt(metadata["source"].(string))
 					metadata["is_vendor"] = false
 					rawChunks = splitter.ChunkWithMetadata(text, metadata)
 				}
@@ -742,6 +744,7 @@ func readDocumentsForFilesMode(ctx context.Context, dir string, filePaths []stri
 									"extractor":    "native",
 									"chunk_index":  idx,
 									"total_chunks": len(textChunks),
+									"ext":          chunking.FileExt(relPath),
 								},
 							})
 						}
@@ -837,6 +840,7 @@ func readDocumentsForFilesMode(ctx context.Context, dir string, filePaths []stri
 		} else {
 			metadata["kind"] = "docs"
 			metadata["is_test"] = false
+			metadata["ext"] = chunking.FileExt(metadata["source"].(string))
 			metadata["is_vendor"] = false
 			rawChunks = splitter.ChunkWithMetadata(text, metadata)
 		}

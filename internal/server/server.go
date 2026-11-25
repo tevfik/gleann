@@ -2814,13 +2814,20 @@ func (s *Server) handleWatch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		Enable bool   `json:"enable"`
+		Enable *bool  `json:"enable"`
 		Dir    string `json:"dir"` // Required if enable=true and not already set
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
+	// A body without "enable" (for example only {"dir": ...}) used to mean
+	// false: it silently turned the watch off and answered 200 watch:false.
+	if req.Enable == nil {
+		writeError(w, http.StatusBadRequest, `"enable" is required: send {"enable": true} to start watching or {"enable": false} to stop`)
+		return
+	}
+	enable := *req.Enable
 
 	indexes, err := gleann.ListIndexes(s.cfg().IndexDir)
 	if err != nil {
@@ -2839,7 +2846,7 @@ func (s *Server) handleWatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if req.Enable {
+	if enable {
 		dirToWatch := req.Dir
 		if dirToWatch == "" {
 			dirToWatch = targetMeta.SourceDir
@@ -2897,5 +2904,5 @@ func (s *Server) handleWatch(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "watch": req.Enable})
+	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "watch": enable})
 }

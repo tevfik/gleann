@@ -268,7 +268,7 @@ func openAPIPathsSystem() map[string]any {
 				},
 				"responses": map[string]any{
 					"200": map[string]any{"description": "Watch updated", "content": map[string]any{"application/json": map[string]any{"schema": map[string]any{"type": "object", "properties": map[string]any{"status": map[string]any{"type": "string", "example": "ok"}, "watch": map[string]any{"type": "boolean"}}}}}},
-					"400": map[string]any{"description": "Invalid name/body or no dir when enabling"},
+					"400": map[string]any{"description": "Invalid name or body, missing `enable`, or no dir when enabling"},
 					"403": map[string]any{"description": "Dir resolves outside the allowed roots"},
 					"404": map[string]any{"description": "Index not found"},
 					"500": map[string]any{"description": "Read, watch, or auto-indexer error"},

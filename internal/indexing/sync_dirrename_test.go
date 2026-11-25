@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/tevfik/gleann/pkg/gleann"
 )
@@ -111,30 +110,33 @@ func TestExpandVanishedFromBoundaryAndSinglePass(t *testing.T) {
 	}
 }
 
-// Doubling the deleted paths and the manifest together must roughly double the
-// work, not quadruple it (the old per-path scan was quadratic).
+// The expansion is one manifest pass plus one ancestor-map lookup per path
+// separator of each entry: the counts are exact, so the test cannot flake on a
+// slow runner, and a per-deleted-path rescan (the old quadratic scan) would
+// show as entries examined > len(entries).
 func TestExpandVanishedFromLinear(t *testing.T) {
 	docs := t.TempDir()
-	run := func(n int) time.Duration {
+	for _, n := range []int{2000, 8000} {
 		entries := manifestOf(n, n/10)
 		var deleted []string
 		for i := 0; i < n/10; i++ {
 			deleted = append(deleted, filepath.Join(docs, fmt.Sprintf("d%d", i)))
 		}
-		best := time.Hour
-		for r := 0; r < 3; r++ {
-			start := time.Now()
-			expandVanishedFrom(docs, deleted, entries)
-			if d := time.Since(start); d < best {
-				best = d
-			}
+		maxLookups := 0
+		for key := range entries {
+			maxLookups += strings.Count(key[1:], "/")
 		}
-		return best
-	}
-	small, big := run(20000), run(80000)
-	// 4x the input: linear is ~4x, quadratic ~16x. Allow generous slack.
-	if big > small*10+50*time.Millisecond {
-		t.Errorf("expansion is superlinear: 20k entries %v, 80k entries %v", small, big)
+		var st expandStats
+		expandVanishedCounted(docs, deleted, entries, &st)
+		if st.entries != len(entries) {
+			t.Errorf("n=%d: examined %d entries, want exactly %d (one pass)", n, st.entries, len(entries))
+		}
+		if st.lookups > maxLookups {
+			t.Errorf("n=%d: %d ancestor lookups, want at most %d (one per separator)", n, st.lookups, maxLookups)
+		}
+		if st.stats > len(entries) {
+			t.Errorf("n=%d: %d stats for %d entries", n, st.stats, len(entries))
+		}
 	}
 }
 

@@ -83,3 +83,79 @@ func TestExistsOmittedValueSQLMatchesEngine(t *testing.T) {
 		t.Errorf("omitted %q (%v) != explicit true %q (%v)", omitted, ok1, explicit, ok2)
 	}
 }
+
+// ext has ONE definition: chunking.FileExt of the passage's file/source, the
+// value indexing stores. "1.10" has the extension ".10"; a dot in a directory
+// name is not an extension; stored and derived values compare lower-cased.
+func TestExtDefinitionIsTheStoredOne(t *testing.T) {
+	exists := NewMetadataFilterEngine([]MetadataFilter{{Field: "ext", Operator: OpExists}})
+	for _, c := range []struct {
+		md   map[string]any
+		want bool
+	}{
+		{map[string]any{"source": "1.10"}, true},
+		{map[string]any{"source": "1.10", "ext": ".10"}, true},
+		{map[string]any{"source": "v1.2/Makefile"}, false},
+		{map[string]any{"file": "v1.2/Makefile", "ext": ""}, false},
+	} {
+		if got := exists.Match(c.md); got != c.want {
+			t.Errorf("ext exists on %v = %v, want %v", c.md, got, c.want)
+		}
+	}
+	eq := NewMetadataFilterEngine([]MetadataFilter{{Field: "ext", Operator: OpEqual, Value: ".md"}})
+	for _, md := range []map[string]any{{"ext": ".MD"}, {"source": "A/Readme.MD"}} {
+		if !eq.Match(md) {
+			t.Errorf("ext eq .md missed %v", md)
+		}
+	}
+}
+
+// The SQL pre-selection and the metadata index do not compile ext: both leave
+// it to the engine, so no second definition of ext can exist.
+func TestExtIsLeftToTheEngineBySQLAndIndex(t *testing.T) {
+	for _, field := range []string{"ext", "extension"} {
+		for _, f := range []MetadataFilter{
+			{Field: field, Operator: OpExists},
+			{Field: field, Operator: OpExists, Value: false},
+			{Field: field, Operator: OpEqual, Value: ".10"},
+			{Field: field, Operator: OpIn, Value: []any{".go", ".10"}},
+		} {
+			if sql, _, ok := compileFilterBranch(f); ok {
+				t.Errorf("SQL compiled %v: %s", f, sql)
+			}
+			if _, ok := compileFilterIndex(f); ok {
+				t.Errorf("filter index compiled %v", f)
+			}
+		}
+	}
+}
+
+// Stored ext is lower-cased, so the filter value of ext/extension is too, for
+// every operator that compares text; other fields keep their case.
+func TestExtFilterValueIsCaseInsensitive(t *testing.T) {
+	md := map[string]any{"source": "Docs/README.MD", "lang": "Go"}
+	for _, field := range []string{"ext", "extension"} {
+		for _, c := range []struct {
+			op   FilterOperator
+			val  any
+			want bool
+		}{
+			{OpEqual, ".MD", true},
+			{OpNotEqual, ".MD", false},
+			{OpIn, []any{".GO", ".Md"}, true},
+			{OpIn, []string{".GO", ".MD"}, true},
+			{OpNotIn, []any{".MD"}, false},
+			{OpStartsWith, ".M", true},
+			{OpEndsWith, "D", true},
+			{OpContains, ".MD", true},
+		} {
+			got := NewMetadataFilterEngine([]MetadataFilter{{Field: field, Operator: c.op, Value: c.val}}).Match(md)
+			if got != c.want {
+				t.Errorf("%s %s %v = %v, want %v", field, c.op, c.val, got, c.want)
+			}
+		}
+	}
+	if NewMetadataFilterEngine([]MetadataFilter{{Field: "lang", Operator: OpEqual, Value: "go"}}).Match(md) {
+		t.Error("lang stays case-sensitive")
+	}
+}

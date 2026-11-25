@@ -278,3 +278,25 @@ func TestStart_FailsFastOnUnusableAddress(t *testing.T) {
 		t.Errorf("Stop after failed Start: %v", err)
 	}
 }
+
+// A body without "enable" must not unwatch behind a 200 watch:false: it is a
+// 400 that names the field, and the existing watch and metadata stay as they were.
+func TestWatch_MissingEnableIsRefusedAndChangesNothing(t *testing.T) {
+	s, h, dir := newWatchServer(t)
+	src := t.TempDir()
+	t.Setenv("GLEANN_ALLOWED_ROOTS", src)
+	writeMeta(t, dir, gleann.IndexMeta{Name: "docs"}, 0)
+	if w := postJSON(h, "/api/indexes/docs/watch", `{"enable":true,"dir":`+jsonStr(src)+`}`); w.Code != http.StatusOK {
+		t.Fatalf("enable: %d %s", w.Code, w.Body.String())
+	}
+	w := postJSON(h, "/api/indexes/docs/watch", `{"dir":`+jsonStr(src)+`}`)
+	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "is required: send") || strings.Contains(w.Body.String(), `"watch":`) {
+		t.Fatalf("missing enable: %d %s", w.Code, w.Body.String())
+	}
+	if ai := s.getAutoIndexer(); ai == nil || len(ai.WatchedIndexes()) != 1 {
+		t.Error("the refused request changed the watch")
+	}
+	if meta, _ := gleann.GetIndexMeta(dir, "docs"); !meta.AutoWatch {
+		t.Error("the refused request cleared AutoWatch")
+	}
+}

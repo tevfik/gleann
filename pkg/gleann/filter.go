@@ -6,8 +6,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
-	"path/filepath"
 	"strings"
+
+	"github.com/tevfik/gleann/modules/chunking"
 )
 
 // FilterOperator defines a metadata filter comparison operator.
@@ -180,24 +181,59 @@ func resolveMetadataField(field string, metadata map[string]any) (any, bool) {
 }
 
 // resolveExt returns the passage extension: the "ext" or "extension" key, else
-// the one derived from the file or source path. An empty extension is absent.
+// the one derived from the file or source path with chunking.FileExt, the
+// definition indexing stores ("1.10" has ".10"; "Makefile" has none). The
+// value is lower-cased. An empty extension is absent.
 func resolveExt(metadata map[string]any) (any, bool) {
 	for _, key := range []string{"ext", "extension"} {
 		if val, ok := metadata[key]; ok {
-			if str, isStr := val.(string); isStr && str == "" {
-				continue
+			if str, isStr := val.(string); isStr {
+				if str == "" {
+					continue
+				}
+				return strings.ToLower(str), true
 			}
 			return val, true
 		}
 	}
 	for _, key := range []string{"file", "source"} {
 		if pathVal, ok := metadata[key].(string); ok && pathVal != "" {
-			if ext := filepath.Ext(pathVal); ext != "" {
+			if ext := chunking.FileExt(pathVal); ext != "" {
 				return ext, true
 			}
 		}
 	}
 	return nil, false
+}
+
+// lowerExtValue lower-cases the string values of an ext/extension filter, since
+// the passage extension itself is lower-cased (see resolveExt). Every surface
+// (REST, MCP, CLI, library) evaluates through evaluateFilter, and the SQL
+// pre-selection and metadata index do not compile ext, so they agree.
+func lowerExtValue(f MetadataFilter) MetadataFilter {
+	if f.Field != "ext" && f.Field != "extension" {
+		return f
+	}
+	switch v := f.Value.(type) {
+	case string:
+		f.Value = strings.ToLower(v)
+	case []string:
+		out := make([]string, len(v))
+		for i, s := range v {
+			out[i] = strings.ToLower(s)
+		}
+		f.Value = out
+	case []any:
+		out := make([]any, len(v))
+		for i, it := range v {
+			if s, ok := it.(string); ok {
+				it = strings.ToLower(s)
+			}
+			out[i] = it
+		}
+		f.Value = out
+	}
+	return f
 }
 
 // existsWanted is the boolean an exists filter asks for. An omitted value
@@ -214,6 +250,7 @@ func existsWanted(f MetadataFilter) bool {
 
 // evaluateFilter evaluates a single filter condition.
 func evaluateFilter(f MetadataFilter, metadata map[string]any) bool {
+	f = lowerExtValue(f)
 	value, exists := resolveMetadataField(f.Field, metadata)
 
 	// Handle exists operator.

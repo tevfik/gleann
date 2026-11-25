@@ -692,6 +692,18 @@ func expandVanishedDirs(indexDir, name, absDocsDir string, deleted []string) []s
 
 // expandVanishedFrom is expandVanishedDirs over an already loaded manifest.
 func expandVanishedFrom(absDocsDir string, deleted []string, entries map[string]gleann.ManifestEntry) []string {
+	return expandVanishedCounted(absDocsDir, deleted, entries, nil)
+}
+
+// expandStats counts the work of one expansion; tests pass one to assert the
+// operation count instead of wall-clock time.
+type expandStats struct {
+	entries int // manifest entries examined
+	lookups int // ancestor-map lookups
+	stats   int // os.Stat calls
+}
+
+func expandVanishedCounted(absDocsDir string, deleted []string, entries map[string]gleann.ManifestEntry, st *expandStats) []string {
 	have := make(map[string]bool, len(deleted))
 	vanished := make(map[string]bool, len(deleted)) // slash-relative paths
 	for _, d := range deleted {
@@ -707,12 +719,18 @@ func expandVanishedFrom(absDocsDir string, deleted []string, entries map[string]
 	}
 	out := deleted
 	for key := range entries {
-		if !underVanished(key, vanished) {
+		if st != nil {
+			st.entries++
+		}
+		if !underVanished(key, vanished, st) {
 			continue
 		}
 		abs := filepath.Join(absDocsDir, filepath.FromSlash(key))
 		if have[abs] {
 			continue
+		}
+		if st != nil {
+			st.stats++
 		}
 		if _, err := os.Stat(abs); err == nil || !errors.Is(err, fs.ErrNotExist) {
 			continue
@@ -726,9 +744,15 @@ func expandVanishedFrom(absDocsDir string, deleted []string, entries map[string]
 
 // underVanished reports whether a strict ancestor directory of the
 // slash-separated key is in vanished.
-func underVanished(key string, vanished map[string]bool) bool {
+func underVanished(key string, vanished map[string]bool, st *expandStats) bool {
 	for i := len(key) - 1; i > 0; i-- {
-		if key[i] == '/' && vanished[key[:i]] {
+		if key[i] != '/' {
+			continue
+		}
+		if st != nil {
+			st.lookups++
+		}
+		if vanished[key[:i]] {
 			return true
 		}
 	}

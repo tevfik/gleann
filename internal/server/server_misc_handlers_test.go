@@ -260,6 +260,9 @@ func TestHandleWatch_Validation(t *testing.T) {
 		{"bad json", "/api/indexes/idx/watch", `{`, 400, "invalid request body"},
 		{"unknown index", "/api/indexes/ghost/watch", `{"enable":true,"dir":"x"}`, 404, "index not found"},
 		{"no directory known", "/api/indexes/idx/watch", `{"enable":true}`, 400, "no directory"},
+		{"enable missing (empty object)", "/api/indexes/idx/watch", `{}`, 400, "is required: send"},
+		{"enable missing (dir only)", "/api/indexes/idx/watch", `{"dir":"x"}`, 400, "is required: send"},
+		{"enable null", "/api/indexes/idx/watch", `{"enable":null}`, 400, "is required: send"},
 		{"directory outside allowed roots", "/api/indexes/idx/watch", `{"enable":true,"dir":"` + filepath.ToSlash(t.TempDir()) + `"}`, 403, "allowed_roots"},
 	}
 	for _, tc := range tests {
