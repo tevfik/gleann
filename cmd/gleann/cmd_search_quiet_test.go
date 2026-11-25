@@ -162,7 +162,7 @@ func TestCLIIndexSyncStartupHonoursQuiet(t *testing.T) {
 		t.Helper()
 		e := newCLIEnv(t)
 		e.sampleDocs()
-		e.build("idx", "--model", "test-embed")
+		e.build("idx", "--model", "test-embed.gguf") // a missing .gguf: the runner starts and fails
 		e.write("README.md", "# Demo project\n\n## Rate limiting\n\nThe token bucket rate limiter allows 5 requests per second.\n")
 
 		args := []string{"index", "sync", "idx", "--provider", "llamacpp"}

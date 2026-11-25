@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/tevfik/gleann/internal/autosetup"
 	"github.com/tevfik/gleann/pkg/gleann"
 )
 
@@ -153,7 +154,10 @@ func bootstrap(opts BootstrapOptions) (*OnboardResult, error) {
 		}
 	} else {
 		fmt.Println("  ⚠ Ollama not reachable, using defaults")
-		fmt.Println("    Start Ollama and run 'gleann setup --bootstrap' again to auto-detect models")
+		// T1: inform, never download in the background; the same guidance
+		// is persisted as setup_notice for the user to act on later.
+		fmt.Println(autosetup.NoOllamaGuidance())
+		result.SetupNotice = autosetup.NoOllamaNotice(ollamaHost)
 	}
 
 	applyBootstrapOverrides(result, opts)

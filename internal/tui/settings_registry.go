@@ -36,8 +36,9 @@ func Settings() *settings.Registry[OnboardResult] {
 		BeforeSave: func(c *OnboardResult) { c.Completed = true },
 		Validate:   validateSettings,
 		// Install state, lists edited elsewhere (roles, format text in
-		// `gleann config`), and the llama.cpp download defaults.
-		Internal: []string{"completed", "llamacpp_config", "install_path", "install_completions", "roles", "format_text"},
+		// `gleann config`), the llama.cpp download defaults, and the
+		// first-run no-Ollama guidance (written by auto-setup/bootstrap).
+		Internal: []string{"completed", "llamacpp_config", "install_path", "install_completions", "roles", "format_text", "setup_notice"},
 		Fields:   settingsFields(),
 	}
 }

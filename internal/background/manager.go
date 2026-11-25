@@ -245,7 +245,12 @@ func (m *Manager) executeTask(entry *taskEntry) {
 	} else {
 		entry.task.Status = StatusCompleted
 		entry.task.Progress = 1.0
-		entry.task.Message = "Completed"
+		// Keep the last progress message (e.g. "busy, will retry" or what was
+		// synced) so the task history says what happened; "Completed" is only
+		// the fallback for tasks that never reported progress.
+		if entry.task.Message == "" || entry.task.Message == "Running" {
+			entry.task.Message = "Completed"
+		}
 	}
 	m.mu.Unlock()
 }

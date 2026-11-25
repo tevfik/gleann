@@ -42,14 +42,26 @@ func initLlamaCPPQuiet(ctx context.Context, config *gleann.Config, quiet bool) e
 		return nil
 	}
 
-	if config.EmbeddingModel == "" || config.EmbeddingModel == "bge-m3" {
-		return fmt.Errorf("llamacpp provider requires a .gguf model (a path, or a file name in ~/.gleann/models) as --model")
+	if config.EmbeddingModel == "" {
+		return fmt.Errorf("llamacpp provider requires a .gguf model (a path, a file name in ~/.gleann/models, or a catalogue id such as 'bge-m3') as --model")
+	}
+
+	// Opt-in only (llamacpp_config.auto_download): fetch a missing catalogue
+	// model in the foreground before the runner needs it.
+	if err := ensureLlamaCPPModels(ctx, config, quiet); err != nil {
+		return err
+	}
+	// A catalogue id (or the first-run default) is resolved to its file at
+	// run time; the config itself is left as the user wrote it.
+	modelPath, err := resolveLlamaCPPModel(config.EmbeddingModel)
+	if err != nil {
+		return err
 	}
 
 	if !quiet {
-		fmt.Fprintf(os.Stderr, "🚀 Starting embedded llama.cpp server for model %s\n", config.EmbeddingModel)
+		fmt.Fprintf(os.Stderr, "🚀 Starting embedded llama.cpp server for model %s\n", modelPath)
 	}
-	globalLlamaRunner = newLlamaRunner(config.EmbeddingModel)
+	globalLlamaRunner = newLlamaRunner(modelPath)
 	llamaRunnerQuiet = quiet
 	globalLlamaRunner.SetEmbedding(true)
 

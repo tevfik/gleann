@@ -91,6 +91,12 @@ type OnboardResult struct {
 	IndexDir    string `json:"index_dir"`
 	Completed   bool   `json:"completed"`
 
+	// SetupNotice carries the first-run guidance persisted when Ollama was
+	// not detected (autosetup.NoOllamaNotice): how to get models without a
+	// background download. Informational only; a later bootstrap that finds
+	// Ollama clears it.
+	SetupNotice string `json:"setup_notice,omitempty"`
+
 	// LlamaCPP Config
 	LlamaCPPConfig gleann.LlamaCPPConfig `json:"llamacpp_config,omitempty"`
 

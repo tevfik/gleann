@@ -114,7 +114,9 @@ var client = &http.Client{Transport: &http.Transport{
 
 // Download fetches an entry into Dir, checking its size and sha256. It
 // writes to a .part file first, so an interrupted download never leaves a
-// truncated model under the real name.
+// truncated model under the real name. The temp file is unique per call and
+// is renamed into place only after size and sha256 check out, so concurrent
+// downloads of one model end with one valid file.
 func Download(ctx context.Context, e Entry, progress func(done, total int64)) error {
 	if e.Installed() {
 		return nil
@@ -140,11 +142,13 @@ func Download(ctx context.Context, e Entry, progress func(done, total int64)) er
 		total = e.Bytes
 	}
 
-	part := e.Path() + ".part"
-	f, err := os.Create(part)
+	// A unique temp name per download: two processes fetching the same model
+	// (serve and a CLI command) must not truncate each other's partial file.
+	f, err := os.CreateTemp(Dir(), e.File+".*.part")
 	if err != nil {
 		return err
 	}
+	part := f.Name()
 	h := sha256.New()
 	pw := &progressWriter{total: total, report: progress}
 	_, err = io.Copy(io.MultiWriter(f, h, pw), resp.Body)
@@ -164,7 +168,37 @@ func Download(ctx context.Context, e Entry, progress func(done, total int64)) er
 		_ = os.Remove(part)
 		return fmt.Errorf("download %s: %w", e.Name, err)
 	}
-	return os.Rename(part, e.Path())
+	// Another process may have installed the model while this one downloaded.
+	// If the file there is complete and has the right checksum, keep it and
+	// discard this copy; otherwise the verified copy replaces it atomically.
+	if e.Installed() && sameChecksum(e) {
+		_ = os.Remove(part)
+		return nil
+	}
+	if err := os.Rename(part, e.Path()); err != nil {
+		_ = os.Remove(part)
+		return err
+	}
+	return nil
+}
+
+// sameChecksum reports whether the installed file matches the catalogue
+// checksum. A pooler entry's installed file differs from the download, so for
+// it the size check in Installed is all there is.
+func sameChecksum(e Entry) bool {
+	if e.Pooler != nil || e.SHA256 == "" {
+		return true
+	}
+	f, err := os.Open(e.Path())
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return false
+	}
+	return hex.EncodeToString(h.Sum(nil)) == e.SHA256
 }
 
 // addPoolerTo replaces the downloaded GGUF at path with a copy that has the

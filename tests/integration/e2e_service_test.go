@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/tevfik/gleann/internal/autosetup"
@@ -530,6 +531,46 @@ func TestE2E_Autosetup_FormatDetectedConfigBox(t *testing.T) {
 		if !strings.Contains(box, want) {
 			t.Errorf("expected box to contain %q", want)
 		}
+	}
+}
+
+// First run without Ollama: EnsureConfig writes the defaults and the
+// setup_notice guidance but never pulls a model in the background.
+func TestE2E_Autosetup_NoOllamaNoBackgroundPull(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("HOME", tmpDir)
+	t.Setenv("USERPROFILE", tmpDir)
+	t.Setenv("GLEANN_CONFIG_DIR", filepath.Join(tmpDir, ".gleann"))
+
+	var pulls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/pull" {
+			pulls.Add(1)
+		}
+		http.Error(w, "ollama is down", http.StatusServiceUnavailable)
+	}))
+	defer srv.Close()
+
+	bootstrapped, err := autosetup.EnsureConfig(srv.URL, true)
+	if err != nil || !bootstrapped {
+		t.Fatalf("EnsureConfig = %v, %v", bootstrapped, err)
+	}
+	if n := pulls.Load(); n != 0 {
+		t.Errorf("EnsureConfig pulled models without Ollama (%d pull requests), want 0", n)
+	}
+	data, err := os.ReadFile(filepath.Join(tmpDir, ".gleann", "config.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cfg map[string]any
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		t.Fatal(err)
+	}
+	if cfg["embedding_provider"] != "ollama" || cfg["completed"] != true {
+		t.Errorf("defaults changed: %v", cfg)
+	}
+	if notice, _ := cfg["setup_notice"].(string); !strings.Contains(notice, "No models were downloaded in the background") {
+		t.Errorf("setup_notice missing: %v", cfg["setup_notice"])
 	}
 }
 

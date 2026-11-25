@@ -218,10 +218,14 @@ func TestNewEmbedderRoutesOpenAIToItsBaseURL(t *testing.T) {
 // The llamacpp provider needs a GGUF model; the default model name is
 // refused before anything is started.
 func TestLlamaCPPRequiresAModel(t *testing.T) {
-	for _, model := range []string{"", "bge-m3"} {
+	// "bge-m3" is a catalogue id: with nothing downloaded it is refused with
+	// the download hint, which (like the other names) mentions a .gguf or the
+	// models command.
+	t.Setenv("GLEANN_CONFIG_DIR", t.TempDir())
+	for _, model := range []string{"", "bge-m3", "no-such-model"} {
 		cfg := gleann.Config{EmbeddingProvider: "llamacpp", EmbeddingModel: model}
 		_, _, err := resolveEmbedder(context.Background(), &Options{}, &cfg, newPrinter(nil, nil))
-		if err == nil || !strings.Contains(err.Error(), ".gguf") {
+		if err == nil || !(strings.Contains(err.Error(), ".gguf") || strings.Contains(err.Error(), "gleann models download")) {
 			t.Errorf("model %q: err = %v", model, err)
 		}
 		env := newEnv(t)

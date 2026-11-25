@@ -9,13 +9,16 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"time"
 
 	"github.com/tevfik/gleann/internal/fsretry"
+	"github.com/tevfik/gleann/internal/modelcatalog"
 	"github.com/tevfik/gleann/pkg/gleann"
 )
 
@@ -135,12 +138,14 @@ func EnsureConfig(ollamaHost string, quiet bool) (bool, error) {
 			return false, fmt.Errorf("%s is not valid JSON (%v); fix or remove it — it was left untouched", cfgPath, uerr)
 		}
 		if completed, ok := existing["completed"].(bool); ok && completed {
+			clearStaleNotice(home, cfgPath, existing, ollamaHost)
 			return false, nil
 		}
 		// If embedding or LLM settings are already defined, preserve user configuration.
 		if (existing["embedding_provider"] != nil && existing["embedding_provider"] != "") ||
 			(existing["embedding_model"] != nil && existing["embedding_model"] != "") ||
 			(existing["llm_provider"] != nil && existing["llm_provider"] != "") {
+			clearStaleNotice(home, cfgPath, existing, ollamaHost)
 			return false, nil
 		}
 	} else if !errors.Is(rerr, os.ErrNotExist) {
@@ -160,7 +165,15 @@ func EnsureConfig(ollamaHost string, quiet bool) (bool, error) {
 			fmt.Printf("   → LLM: %s\n", det.LLMModel)
 		} else {
 			fmt.Printf("   ⚠ Ollama not found at %s — using defaults\n", det.OllamaHost)
+			// T1: inform, never download in the background; the same
+			// guidance is persisted below as setup_notice.
+			fmt.Println(NoOllamaGuidance())
 		}
+	} else if !det.OllamaFound {
+		// Quiet mode (serve --quiet) still leaves one log line: the user must
+		// learn that nothing was downloaded; the details are saved below as
+		// setup_notice in config.json.
+		log.Printf("auto-setup: Ollama not found at %s; no models were downloaded. See setup_notice in config.json (install Ollama and 'ollama pull', or use llamacpp and 'gleann models download %s')", det.OllamaHost, downloadExampleID())
 	}
 
 	// Build minimal config.
@@ -178,6 +191,11 @@ func EnsureConfig(ollamaHost string, quiet bool) (bool, error) {
 		"max_tokens":         4096,
 		"top_k":              10,
 	}
+	if !det.OllamaFound {
+		// T1: persist the auto-download guidance so the user can act on it
+		// later; nothing is downloaded here.
+		cfg["setup_notice"] = NoOllamaNotice(det.OllamaHost)
+	}
 	// Merge: keys the user already has win over detected defaults.
 	for k, v := range existing {
 		cfg[k] = v
@@ -192,24 +210,7 @@ func EnsureConfig(ollamaHost string, quiet bool) (bool, error) {
 	if prev, perr := fsretry.ReadFile(cfgPath); perr == nil {
 		_ = os.WriteFile(cfgPath+".bak", prev, 0o600)
 	}
-	tmp, err := os.CreateTemp(home+"/.gleann", ".config-*.tmp")
-	if err != nil {
-		return false, err
-	}
-	defer os.Remove(tmp.Name())
-	// The config holds API keys: keep it private.
-	if err := tmp.Chmod(0o600); err != nil {
-		tmp.Close()
-		return false, err
-	}
-	if _, err := tmp.Write(data); err != nil {
-		tmp.Close()
-		return false, err
-	}
-	if err := tmp.Close(); err != nil {
-		return false, err
-	}
-	if err := fsretry.Rename(tmp.Name(), cfgPath); err != nil {
+	if err := writeConfigAtomic(home, cfgPath, data); err != nil {
 		return false, err
 	}
 
@@ -217,6 +218,67 @@ func EnsureConfig(ollamaHost string, quiet bool) (bool, error) {
 		fmt.Println("   ✓ Config saved to ~/.gleann/config.json")
 	}
 	return true, nil
+}
+
+// writeConfigAtomic writes data to cfgPath via a private temp file and a
+// rename, so a crash never leaves a half-written config.
+func writeConfigAtomic(home, cfgPath string, data []byte) error {
+	tmp, err := os.CreateTemp(home+"/.gleann", ".config-*.tmp")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(tmp.Name())
+	// The config holds API keys: keep it private.
+	if err := tmp.Chmod(0o600); err != nil {
+		tmp.Close()
+		return err
+	}
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return fsretry.Rename(tmp.Name(), cfgPath)
+}
+
+// clearStaleNotice removes the first-run "setup_notice" from an existing
+// config once it is out of date: Ollama answers now, or the configured local
+// (llamacpp/eif) embedding model is on disk. The notice is informational, so
+// a failure to rewrite the file is ignored.
+func clearStaleNotice(home, cfgPath string, existing map[string]any, ollamaHost string) {
+	if n, _ := existing["setup_notice"].(string); n == "" {
+		return
+	}
+	if !DetectOllama(ollamaHost).OllamaFound && !localEmbeddingModelPresent(existing) {
+		return
+	}
+	delete(existing, "setup_notice")
+	data, err := json.MarshalIndent(existing, "", "  ")
+	if err != nil {
+		return
+	}
+	_ = writeConfigAtomic(home, cfgPath, data)
+}
+
+// localEmbeddingModelPresent reports whether the config selects a local
+// (llamacpp or eif) embedding model whose file is installed.
+func localEmbeddingModelPresent(cfg map[string]any) bool {
+	provider, _ := cfg["embedding_provider"].(string)
+	model, _ := cfg["embedding_model"].(string)
+	if (provider != "llamacpp" && provider != "eif") || model == "" {
+		return false
+	}
+	if e, ok := modelcatalog.Find(model); ok && e.Installed() {
+		return true
+	}
+	for _, p := range []string{model, filepath.Join(modelcatalog.Dir(), model)} {
+		if fi, err := os.Stat(p); err == nil && !fi.IsDir() {
+			return true
+		}
+	}
+	return false
 }
 
 // ── Model Tier System ─────────────────────────────────────────────────────

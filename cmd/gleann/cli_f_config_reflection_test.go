@@ -46,6 +46,7 @@ var savedConfigFieldAllowlist = map[string]string{
 	"WordWrap":           "CLI output formatting (cmd_query)",
 	"Roles":              "custom agent prompts read by the agent registry, not an index setting",
 	"FormatText":         "output-format templates read by chat, not an index setting",
+	"SetupNotice":        "first-run guidance persisted when Ollama was absent (autosetup.NoOllamaNotice); informational text for the user, not a runtime setting",
 }
 
 // isPersistedSavedField reports whether f is an exported OnboardResult field

@@ -126,10 +126,17 @@ func mergeConfig(existing, incoming *OnboardResult) OnboardResult {
 		merged.RerankProvider = incoming.RerankProvider
 		merged.ServerEnabled = incoming.ServerEnabled
 		merged.MCPEnabled = incoming.MCPEnabled
+		// A completed save replaces the first-run notice: a bootstrap that
+		// finds Ollama clears a stale one (round-trips keep it, since the
+		// loaded config carries the saved value).
+		merged.SetupNotice = incoming.SetupNotice
 		if incoming.A2AEnabled != nil {
 			merged.A2AEnabled = incoming.A2AEnabled
 		}
 	} else {
+		if incoming.SetupNotice != "" {
+			merged.SetupNotice = incoming.SetupNotice
+		}
 		if incoming.RerankEnabled {
 			merged.RerankEnabled = true
 			merged.RerankModel = incoming.RerankModel

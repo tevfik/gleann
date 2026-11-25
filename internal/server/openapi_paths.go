@@ -115,6 +115,7 @@ func openAPIPathsIndexes() map[string]any {
 				"responses": map[string]any{
 					"200": map[string]any{"description": "Index deleted"},
 					"404": map[string]any{"description": "Index not found"},
+					"409": map[string]any{"description": "A build or sync (including the auto-sync watch) holds the index lock or did not stop in time; retry shortly"},
 				},
 			},
 			"patch": map[string]any{

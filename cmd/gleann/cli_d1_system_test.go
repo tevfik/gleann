@@ -421,11 +421,15 @@ func TestCLID1InitLlamaCPP(t *testing.T) {
 		t.Error("chat overridden without a runner")
 	}
 
-	for _, m := range []string{"", "bge-m3"} {
-		cfg = gleann.Config{EmbeddingProvider: "llamacpp", EmbeddingModel: m}
-		if err := initLlamaCPP(context.Background(), &cfg); err == nil || !strings.Contains(err.Error(), "requires a .gguf model") {
-			t.Errorf("model %q: err = %v", m, err)
-		}
+	cfg = gleann.Config{EmbeddingProvider: "llamacpp", EmbeddingModel: ""}
+	if err := initLlamaCPP(context.Background(), &cfg); err == nil || !strings.Contains(err.Error(), "requires a .gguf model") {
+		t.Errorf("empty model: err = %v", err)
+	}
+	// A catalogue id that is not downloaded says how to get it.
+	t.Setenv("GLEANN_CONFIG_DIR", t.TempDir())
+	cfg = gleann.Config{EmbeddingProvider: "llamacpp", EmbeddingModel: "bge-m3"}
+	if err := initLlamaCPP(context.Background(), &cfg); err == nil || !strings.Contains(err.Error(), "gleann models download bge-m3") {
+		t.Errorf("bge-m3: err = %v", err)
 	}
 
 	// The real runner reports a missing model file before starting anything.

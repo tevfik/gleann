@@ -131,10 +131,17 @@ func TestDownloadCannotCreatePartFile(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte("x")) }))
 	defer srv.Close()
 	e := Entry{Name: "m", File: "m.gguf", URL: srv.URL}
-	// A directory under the .part name makes os.Create fail.
-	if err := os.MkdirAll(e.Path()+".part", 0o755); err != nil {
+	// A models dir that cannot be written makes creating the temp file fail.
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores directory permissions")
+	}
+	if err := os.MkdirAll(Dir(), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.Chmod(Dir(), 0o555); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chmod(Dir(), 0o755)
 	if err := Download(context.Background(), e, nil); err == nil {
 		t.Fatal("want an error")
 	}

@@ -33,6 +33,17 @@ func NewEmbedder(cfg gleann.Config) *embedding.Computer {
 	})
 }
 
+// llamaRunner is the part of *llamacpp.Runner startLlamaCPP uses.
+type llamaRunner interface {
+	SetEmbedding(bool)
+	Start(context.Context) error
+	Stop() error
+	BaseURL() string
+}
+
+// newLlamaRunner creates the embedded runner; a seam for tests.
+var newLlamaRunner = func(model string) llamaRunner { return llamacpp.NewRunner(model) }
+
 // startLlamaCPP starts an embedded llama-server when cfg uses the
 // "llamacpp" embedding provider and rewrites cfg to talk to it through the
 // OpenAI-compatible API. The returned stop function must always be called.
@@ -41,11 +52,19 @@ func startLlamaCPP(ctx context.Context, cfg *gleann.Config, p *printer) (stop fu
 	if cfg.EmbeddingProvider != "llamacpp" {
 		return func() {}, nil
 	}
-	if cfg.EmbeddingModel == "" || cfg.EmbeddingModel == "bge-m3" {
-		return func() {}, fmt.Errorf("llamacpp provider requires a .gguf model (a path, or a file name in ~/.gleann/models) as the embedding model")
+	// The same resolver as the CLI start path: a catalogue id (or the
+	// first-run default "bge-m3") maps to its installed file, and with
+	// llamacpp_config.auto_download a missing one is downloaded here, in the
+	// foreground (an MCP sync blocks until it is done; opt-in only).
+	modelPath, err := llamacpp.ResolveModel(ctx, cfg.EmbeddingModel, llamacpp.ModelOptions{
+		AutoDownload: cfg.LlamaCPPConfig.AutoDownload,
+		Progress:     p.err,
+	})
+	if err != nil {
+		return func() {}, err
 	}
-	p.Printf("🚀 Starting embedded llama.cpp server for model %s\n", cfg.EmbeddingModel)
-	runner := llamacpp.NewRunner(cfg.EmbeddingModel)
+	p.Printf("🚀 Starting embedded llama.cpp server for model %s\n", modelPath)
+	runner := newLlamaRunner(modelPath)
 	runner.SetEmbedding(true)
 	if err := runner.Start(ctx); err != nil {
 		return func() {}, fmt.Errorf("failed to start embedded llama-server: %w", err)

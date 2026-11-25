@@ -35,8 +35,10 @@ import (
 	"github.com/tevfik/gleann/internal/modelcatalog"
 	"github.com/tevfik/gleann/internal/multimodal"
 	"github.com/tevfik/gleann/internal/pathpolicy"
+	"github.com/tevfik/gleann/internal/store"
 
 	"github.com/tevfik/gleann/internal/eventbus"
+	"github.com/tevfik/gleann/pkg/configpath"
 	"github.com/tevfik/gleann/pkg/conversations"
 	"github.com/tevfik/gleann/pkg/gleann"
 	"github.com/tevfik/gleann/pkg/memory"
@@ -120,6 +122,10 @@ type Server struct {
 	lifeCtx    context.Context
 	lifeCancel context.CancelFunc
 	bgWG       sync.WaitGroup
+
+	// autoSyncHook, when set (tests only), replaces autoSyncIndex as the
+	// watcher's sync callback.
+	autoSyncHook func(ctx context.Context, indexName string, files []string) error
 }
 
 // cfg returns a snapshot of the current server configuration.
@@ -503,6 +509,16 @@ func (s *Server) Stop(ctx context.Context) error {
 	s.lifetime()
 	s.lifeCancel()
 
+	// Stop the watcher first and wait (bounded by ctx) for a sync it is
+	// running: that sync writes the index and the graph database, which the
+	// steps below close, and the process must not exit under it.
+	if ai := s.getAutoIndexer(); ai != nil {
+		ai.Stop()
+		if err := ai.Wait(ctx); err != nil {
+			log.Printf("server stop: %v", err)
+		}
+	}
+
 	if s.bgManager != nil {
 		s.bgManager.Stop()
 	}
@@ -540,9 +556,7 @@ func (s *Server) Stop(ctx context.Context) error {
 // It reads GLEANN_AUTO_INDEX_DIRS (format: "name1:dir1,name2:dir2") to
 // determine which indexes to watch for file changes.
 func (s *Server) startAutoIndexer() {
-	ai, err := background.NewAutoIndexer(s.bgManager, background.AutoIndexConfig{
-		IndexDir: s.cfg().IndexDir,
-	})
+	ai, err := s.newAutoIndexer()
 	if err != nil {
 		log.Printf("auto-indexer: init failed: %v", err)
 		return
@@ -577,14 +591,132 @@ func (s *Server) startAutoIndexer() {
 		}
 	}
 
-	if len(ai.WatchedIndexes()) > 0 {
-		ai.Start(context.Background())
-	}
+	// Start even with no watches yet: handleWatch adds watches to this same
+	// indexer later, and its loops must already be running. The lifetime
+	// context makes Stop cancel any sync the watcher started.
+	ai.Start(s.lifetime())
 	// Keep the autoIndexer around (even with no watches) so we can add
 	// watches dynamically later.
 	s.aiMu.Lock()
 	s.autoIndexer = ai
 	s.aiMu.Unlock()
+}
+
+// newAutoIndexer creates the server's auto-indexer with the real sync
+// callback wired (watch changes are synced into the index, not just counted).
+func (s *Server) newAutoIndexer() (*background.AutoIndexer, error) {
+	return background.NewAutoIndexer(s.bgManager, background.AutoIndexConfig{
+		IndexDir:    s.cfg().IndexDir,
+		ExcludeDirs: gleannDataDirs(),
+		OnChange:    s.autoSyncOnChange,
+		IsBusy: func(err error) bool {
+			return errors.Is(err, indexing.ErrIndexLocked) || errors.Is(err, store.ErrLockTimeout)
+		},
+	})
+}
+
+// gleannDataDirs lists the directories gleann itself writes to besides the
+// index directory (config and models, memory, conversations, caches, packs).
+// A watched source tree that contains one of them must not sync on gleann's
+// own writes.
+func gleannDataDirs() []string {
+	var dirs []string
+	if d, err := configpath.GetConfigDir(); err == nil {
+		dirs = append(dirs, d)
+	}
+	dirs = append(dirs, filepath.Dir(memory.DefaultStorePath()))
+	for _, k := range []string{"GLEANN_CONVERSATIONS_DIR", "GLEANN_MULTIMODAL_CACHE_DIR", "GLEANN_PACKS_DIR"} {
+		if v := os.Getenv(k); v != "" {
+			dirs = append(dirs, v)
+		}
+	}
+	return dirs
+}
+
+// autoSyncOnChange is the AutoIndexer's OnChange: autoSyncIndex, or the test
+// hook that replaces it.
+func (s *Server) autoSyncOnChange(ctx context.Context, indexName string, files []string) error {
+	if s.autoSyncHook != nil {
+		return s.autoSyncHook(ctx, indexName, files)
+	}
+	return s.autoSyncIndex(ctx, indexName, files)
+}
+
+// autoSyncIndex applies one batch of watched file changes to an existing
+// index (the AutoIndexer's OnChange). It runs the same incremental sync as
+// `gleann index sync`, limited to the changed paths, under the server
+// lifetime context; on success the cached searcher is dropped so the next
+// query sees the new passages. A busy index lock is returned as
+// indexing.ErrIndexLocked so the watcher re-queues the batch and retries.
+func (s *Server) autoSyncIndex(ctx context.Context, indexName string, files []string) error {
+	cfg := s.cfg()
+	// The watched directory wins (an env watch may differ from the recorded
+	// source); fall back to the index's recorded SourceDir.
+	docsDir := ""
+	if ai := s.getAutoIndexer(); ai != nil {
+		docsDir = ai.WatchedDir(indexName)
+	}
+	if docsDir == "" {
+		meta, err := gleann.GetIndexMeta(cfg.IndexDir, indexName)
+		if err != nil {
+			if s.dropIfGone(indexName, err) {
+				return nil
+			}
+			return fmt.Errorf("looking up index %q: %w", indexName, err)
+		}
+		docsDir = meta.SourceDir
+	}
+	if docsDir == "" {
+		return fmt.Errorf("%w: %q", indexing.ErrNoSourceDir, indexName)
+	}
+
+	// The graph database admits one writer; release the pooled handles so
+	// the sync can write the graph (they reopen on the next query).
+	if s.graphPool != nil {
+		s.graphPool.close(indexName)
+	}
+	var out bytes.Buffer
+	opts := indexing.SyncOptions{
+		Options: indexing.Options{Config: cfg, Stdout: &out, Stderr: &out},
+		Name:    indexName,
+		DocsDir: docsDir,
+	}
+	res, err := indexing.SyncChanged(ctx, opts, files)
+	if res != nil || errors.Is(err, indexing.ErrGraphUpdate) {
+		// A sync that failed after updating the passages (graph write) still
+		// changed what a search returns: drop the cached searcher either way.
+		s.invalidateSearcher(indexName)
+	}
+	if err != nil {
+		if s.dropIfGone(indexName, err) {
+			return nil
+		}
+		if tail := strings.TrimSpace(lastLines(out.String(), 20)); tail != "" {
+			return fmt.Errorf("%w: %s", err, tail)
+		}
+		return err
+	}
+	if !res.UpToDate {
+		log.Printf("auto-index: synced %q (%d changed, %d deleted)", indexName, len(res.Changed), len(res.Deleted))
+	}
+	return nil
+}
+
+// dropIfGone stops watching an index that no longer exists (deleted by
+// another process) and reports true, so its changes stop producing failing
+// tasks.
+func (s *Server) dropIfGone(indexName string, err error) bool {
+	if !errors.Is(err, gleann.ErrIndexNotFound) && !errors.Is(err, fs.ErrNotExist) {
+		return false
+	}
+	if _, serr := os.Lstat(filepath.Join(s.cfg().IndexDir, indexName)); !indexMissing(serr) {
+		return false
+	}
+	if ai := s.getAutoIndexer(); ai != nil {
+		ai.Unwatch(indexName)
+	}
+	log.Printf("auto-index: %q no longer exists, watch dropped", indexName)
+	return true
 }
 
 // --- Handlers ---
@@ -1585,6 +1717,10 @@ func (s *Server) handleUpdateIndex(w http.ResponseWriter, r *http.Request) {
 // let go of the index files.
 const removeIndexTimeout = 5 * time.Second
 
+// deleteLockTimeout bounds how long a delete waits for a running auto-sync to
+// stop and for the index lock.
+const deleteLockTimeout = 30 * time.Second
+
 // removeIndexRetrying removes the index, retrying briefly while it fails.
 // invalidateSearcher only closes a searcher once the requests still using it
 // have released it, so for a moment after the cache drop the index files can
@@ -1595,7 +1731,8 @@ const removeIndexTimeout = 5 * time.Second
 func (s *Server) removeIndexRetrying(name string) error {
 	deadline := time.Now().Add(removeIndexTimeout)
 	for {
-		err := gleann.RemoveIndex(s.cfg().IndexDir, name)
+		// The caller holds <name>.lock, so the lock file itself stays.
+		err := gleann.RemoveIndexKeepingLock(s.cfg().IndexDir, name)
 		if err == nil || errors.Is(err, gleann.ErrNotAnIndex) || time.Now().After(deadline) {
 			return err
 		}
@@ -1621,11 +1758,49 @@ func (s *Server) handleDeleteIndex(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Stop the auto-sync first: unwatch the index, drop its pending batch and
+	// cancel / wait for a sync already running, so nothing rewrites the index
+	// while it is being removed and no later edit recreates it.
+	// A delete that does not happen (409, failure) must leave the watch as it
+	// was, so the directory is remembered and watched again on those paths.
+	deleted := false
+	if ai := s.getAutoIndexer(); ai != nil {
+		watchedDir := ai.WatchedDir(name)
+		defer func() {
+			if !deleted && watchedDir != "" {
+				if err := ai.Watch(name, watchedDir); err != nil {
+					log.Printf("delete %q: could not restore the watch on %s: %v", name, watchedDir, err)
+				}
+			}
+		}()
+		wctx, wcancel := context.WithTimeout(r.Context(), deleteLockTimeout)
+		err := ai.UnwatchAndWait(wctx, name)
+		wcancel()
+		if err != nil {
+			writeError(w, http.StatusConflict, "index is being synced, retry shortly: "+err.Error())
+			return
+		}
+	}
+
+	// Take the index lock (the one builds and syncs hold) for the whole
+	// removal, so no sync or build can run against a half-deleted index.
+	lctx, lcancel := context.WithTimeout(r.Context(), deleteLockTimeout)
+	release, lerr := indexing.LockIndex(lctx, s.cfg().IndexDir, name)
+	lcancel()
+	if lerr != nil {
+		writeError(w, http.StatusConflict, fmt.Sprintf("index %q is busy (a build or sync holds its lock), retry shortly: %v", name, lerr))
+		return
+	}
+
 	// Drop the cached searcher; it is closed once in-flight requests that
 	// still use it have released it.
 	s.invalidateSearcher(name)
 
 	err := s.removeIndexRetrying(name)
+	release()
+	if err == nil {
+		_ = gleann.RemoveIndexLockFile(s.cfg().IndexDir, name)
+	}
 	// A request may have re-loaded the index while it was being removed;
 	// drop anything cached in the meantime.
 	s.invalidateSearcher(name)
@@ -1634,6 +1809,7 @@ func (s *Server) handleDeleteIndex(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	deleted = true
 	serverMetrics.RecordDelete()
 
 	// Notify webhooks.
@@ -2668,16 +2844,14 @@ func (s *Server) handleWatch(w http.ResponseWriter, r *http.Request) {
 		ai := s.autoIndexer
 		if ai == nil {
 			var err error
-			ai, err = background.NewAutoIndexer(s.bgManager, background.AutoIndexConfig{
-				IndexDir: s.cfg().IndexDir,
-			})
+			ai, err = s.newAutoIndexer()
 			if err != nil {
 				s.aiMu.Unlock()
 				writeError(w, http.StatusInternalServerError, "failed to start auto-indexer")
 				return
 			}
 			s.autoIndexer = ai
-			ai.Start(context.Background())
+			ai.Start(s.lifetime())
 		}
 		s.aiMu.Unlock()
 

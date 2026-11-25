@@ -278,7 +278,7 @@ func TestCLIEAskSearchSettingsAndErrors(t *testing.T) {
 
 	r = e.run("ask", "pair", "q", "--provider", "llamacpp", "--no-cache")
 	wantExit(t, r, 1)
-	mustContain(t, "llamacpp needs a model", r.Err, "error initializing llamacpp", ".gguf")
+	mustContain(t, "llamacpp needs a downloaded model", r.Err, "error initializing llamacpp", "gleann models download bge-m3")
 }
 
 func TestCLIEAskAgentSteps(t *testing.T) {

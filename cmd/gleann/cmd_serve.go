@@ -39,7 +39,8 @@ Options:
 	ollamaHost := getFlag(args, "--host")
 	quiet := hasFlag(args, "--quiet")
 	autosetup.SetOllamaAPIKey(getFlag(args, "--ollama-api-key"))
-	if _, err := autosetup.EnsureConfig(ollamaHost, quiet); err != nil {
+	bootstrapped, err := autosetup.EnsureConfig(ollamaHost, quiet)
+	if err != nil {
 		fmt.Fprintf(os.Stderr, "warning: auto-setup failed: %v\n", err)
 	}
 
@@ -57,7 +58,18 @@ Options:
 		}
 		if len(modelsToEnsure) > 0 {
 			autosetup.SetOllamaAPIKey(config.OllamaAPIKey)
-			autosetup.EnsureModels(config.OllamaHost, quiet, modelsToEnsure...)
+			// T1: when Ollama is absent, inform instead of attempting a
+			// background pull (a pull cannot succeed without Ollama anyway).
+			if autosetup.DetectOllama(config.OllamaHost).OllamaFound {
+				if _, err := autosetup.EnsureModels(config.OllamaHost, quiet, modelsToEnsure...); err != nil {
+					// Report it: a failed pull must not be dropped silently.
+					fmt.Fprintf(os.Stderr, "warning: could not ensure Ollama models: %v\n", err)
+				}
+			} else if !bootstrapped {
+				// A first-run EnsureConfig just printed this guidance; show it
+				// again only on later starts.
+				fmt.Println(autosetup.NoOllamaNotice(config.OllamaHost))
+			}
 		}
 	}
 

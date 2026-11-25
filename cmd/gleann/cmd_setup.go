@@ -140,6 +140,9 @@ func runAutoSetup(args []string) {
 		fmt.Println("   Then retry: gleann setup --auto")
 		fmt.Println()
 		fmt.Println("   Don't have Ollama? Install: https://ollama.com/download")
+		// T1: no background download — show the same actionable guidance
+		// the other first-run paths persist as setup_notice.
+		fmt.Println(autosetup.NoOllamaGuidance())
 		exitFunc(1)
 	}
 
