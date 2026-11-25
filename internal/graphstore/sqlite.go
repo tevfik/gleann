@@ -1010,7 +1010,9 @@ func (g *SQLite) HasData() (bool, error) {
 // RemoveFile and ReplaceAll maintain in their write transactions, so Stats
 // is a handful of point lookups instead of a scan over edges (the GROUP BY
 // kind used to scan the whole edges_file covering index). Files stays a live
-// count: the manifest is small and shared with the passage store.
+// count: the manifest is small and shared with the passage store. Stats never
+// reads the health record: that needs a GROUP BY over the whole graph_edges
+// table (v1.22 T3/M1), so health-aware callers fetch GraphHealth explicitly.
 func (g *SQLite) Stats() (Stats, error) {
 	var st Stats
 	if err := g.reader.QueryRowContext(readCtx(), `SELECT count(*) FROM files`).Scan(&st.Files); err != nil {

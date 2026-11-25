@@ -99,6 +99,17 @@ func (d *ownedGraphDB) Unwrap() GraphDB {
 	return d.GraphDB
 }
 
+// GraphHealth reports how the index's code graph was built: which graph
+// extractor wrote it, whether Go calls were resolved exactly (go/types) or
+// syntactically, whether tree-sitter contributed non-Go symbols, when the
+// graph was last built in full (an incremental sync leaves that timestamp
+// alone), how many files are still marked graph_dirty and how the edges
+// break down by confidence. It is the public mirror of
+// graphstore.GraphHealth; see internal/graphstore/health.go for the metadata
+// keys behind it. A graph written by an older gleann reports ExtractorVersion
+// "" and Stale true, and VersionDriftHint names the rebuild command.
+type GraphHealth = graphstore.GraphHealth
+
 // GraphStore is the format-2 code graph of an index opened for analysis
 // (communities, risk, repo map, REST and MCP tools): the graphstore handle
 // plus the index database it borrows. Close releases the database.

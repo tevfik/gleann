@@ -7,8 +7,8 @@ Source: `<FIXTURE>`
 
 | Metric | Value |
 |--------|-------|
-| Nodes | 51 |
-| Edges | 62 |
+| Nodes (all symbols + file nodes) | 51 |
+| Edges (CALLS + IMPLEMENTS + DECLARES) | 62 |
 | Communities | 14 |
 | Modularity (Q) | 0.4798 |
 | God Nodes | 9 |

@@ -1,8 +1,8 @@
 # Graph Report: fixture
 Source: `<FIXTURE>`
 ## Summary
-| Nodes | 85 |
-| Edges | 94 |
+| Nodes (all symbols + file nodes) | 85 |
+| Edges (CALLS + IMPLEMENTS + DECLARES) | 94 |
 | God Nodes | 12 |
 ## God Nodes (High-Degree Hubs)
 ## Communities

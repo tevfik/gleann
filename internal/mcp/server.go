@@ -19,6 +19,7 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 	"github.com/tevfik/gleann/internal/embedding"
+	"github.com/tevfik/gleann/internal/graphstore"
 	"github.com/tevfik/gleann/internal/indexing"
 	"github.com/tevfik/gleann/internal/pathpolicy"
 	"github.com/tevfik/gleann/pkg/gleann"
@@ -1853,7 +1854,7 @@ func (s *Server) handleImpact(ctx context.Context, request mcp.CallToolRequest) 
 func (s *Server) buildGraphStatsTool() mcp.Tool {
 	return mcp.Tool{
 		Name:        "gleann_graph_stats",
-		Description: "Get statistics about the code graph for an index: file count, symbol count, edge counts by type.",
+		Description: "Code graph statistics for an index: file count, symbol count, edge counts by type, and the health record (which graph extractor wrote it, exact or syntactic Go resolution and why, tree-sitter, when, dirty files, edges by confidence) with a rebuild hint when the graph is older.",
 		InputSchema: mcp.ToolInputSchema{
 			Type: "object",
 			Properties: map[string]interface{}{
@@ -1893,6 +1894,16 @@ func (s *Server) handleGraphStats(ctx context.Context, request mcp.CallToolReque
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("Failed to get graph stats: %v", err)), nil
 	}
+	// Stats() stays counters-only (v1.22 M1), so this health-aware tool fetches
+	// the record explicitly through the SQLite view's GraphHealth method.
+	var health *graphstore.GraphHealth
+	if hq, ok := db.(interface {
+		GraphHealth() (*graphstore.GraphHealth, error)
+	}); ok {
+		if h, err := hq.GraphHealth(); err == nil {
+			health = h
+		}
+	}
 
 	var sb strings.Builder
 	sb.WriteString(fmt.Sprintf("Graph Statistics — %s\n\n", indexName))
@@ -1901,6 +1912,17 @@ func (s *Server) handleGraphStats(ctx context.Context, request mcp.CallToolReque
 	sb.WriteString(fmt.Sprintf("  Call edges:      %d\n", stats.CallEdges))
 	sb.WriteString(fmt.Sprintf("  Declare edges:   %d\n", stats.DeclareEdges))
 	sb.WriteString(fmt.Sprintf("  Implements edges: %d\n", stats.ImplementsEdges))
+	// Graph health (T3): how the graph was built, and the rebuild command when
+	// the stored graph extractor is older than this binary.
+	if lines := graphstore.HealthLines(health); len(lines) > 0 {
+		sb.WriteString("\n  Graph health:\n")
+		for _, line := range lines {
+			sb.WriteString("    " + line + "\n")
+		}
+	}
+	if hint := graphstore.VersionDriftHint(indexName, health); hint != "" {
+		sb.WriteString("    ⚠️  " + hint + "\n")
+	}
 
 	return mcp.NewToolResultText(sb.String()), nil
 }

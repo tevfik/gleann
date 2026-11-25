@@ -4,9 +4,19 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+- **Graph provenance record.** A full graph build records how the graph was produced: the graph extractor version, whether Go calls were resolved exactly (`go/types`) or syntactically and why, whether tree-sitter contributed, and when the graph was last built in full (`graph.extractor_version`, `graph.resolver`, `graph.resolver_reason`, `graph.built_at` in the index database); an incremental sync preserves the record untouched. `pkg/gleann.GraphStats` carries it as the optional `Health` field, filled by health-aware callers.
+- **`gleann graph stats --index <name> [--json]`.** Row counts plus that health record (extractor version, resolver and reason, tree-sitter, built at, dirty files, edges by confidence). MCP `gleann_graph_stats` prints the same block.
+- **A graph written by an older gleann says so.** `gleann graph stats`, `gleann index info` (new `Graph:` line) and `gleann doctor` name the rebuild command (`gleann graph build <name>`) when the graph's extractor version is older than the binary's or predates the record; graph rows are never migrated on their own.
+
 ### Fixed
 - **`gleann memory <subcommand> --help` prints usage instead of running the subcommand.** `--help` and `-h` before a literal `--` show the memory usage and exit 0 for every subcommand (`remember`, `forget`, `list`, `search`, `add`, `clear`, `stats`, `summarize`, `prune`, `compact`, `context`, `maintain`, `reflect`, `export`, `import`, `import-graph` and `failure add|list`); they used to reach the subcommand as query text, so `memory forget --help` deleted every block containing `--help` and `memory remember -h` stored a note called `-h`. `memory forget -- --help` still searches for that literal text.
 - **`gleann memory forget` accepts the short IDs `list` and `search` print.** A unique hex ID prefix of four or more characters (any case) deletes that one block, after the exact-ID attempt and before the phrase match; an ambiguous prefix is refused with `ambiguous memory ID prefix "…" matches N blocks; provide a longer prefix` instead of falling through to the phrase delete (`Manager.Forget`, so the CLI and `DELETE /api/blocks/{id}` behave alike).
+- **The "no Go module" warning is no longer repeated on every sync** of a tree without a `go.mod`/`go.work`: it is printed by the build that first needs it and re-armed when the tree loses its module again.
+- **`gleann graph explain` counts agree and say what they cover.** `Called by (3, 1 production + 2 test)` and `Direct callers (production only): 1` add up (the blast-radius `Test callers` line counts test callers at any depth, so it is not part of that sum), and test callers are marked `🧪` in the caller list.
+
+### Changed
+- **`gleann graph map` and `gleann graph report` state what they count**: the map footer counts code symbols and call edges only, the report's Nodes/Edges rows count the whole graph (symbols plus file nodes; CALLS plus IMPLEMENTS and DECLARES).
 
 ## [v1.21.1] — 2026-11-24
 

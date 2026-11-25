@@ -220,6 +220,12 @@ type GraphStats struct {
 	CallEdges       int `json:"call_edges"`
 	DeclareEdges    int `json:"declare_edges"`
 	ImplementsEdges int `json:"implements_edges"`
+	// Health reports how the graph was built (extractor version, resolver
+	// mode, tree-sitter, build time, dirty files, edges by confidence). It is
+	// optional: Stats() leaves it nil (it stays counters-only), and health-
+	// aware callers fetch the record (graphstore.GraphHealth) and set it. A
+	// legacy graph without a record yields a non-nil, stale record.
+	Health *GraphHealth `json:"health,omitempty"`
 }
 
 // DocumentHeadingItem represents a heading node in a document table of contents.

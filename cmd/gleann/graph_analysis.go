@@ -769,7 +769,10 @@ func cmdGraphMap(args []string, config gleann.Config) {
 		}
 	}
 
-	fmt.Printf("\n📊 Total: %d nodes, %d edges\n", len(nodes), len(edges))
+	// E5: these counts are the CALLS-only graph this command ranks, not the
+	// whole graph in the index — `graph report` and `graph communities` also
+	// count the file nodes and the DECLARES/IMPLEMENTS edges.
+	fmt.Printf("\n📊 Total: %d nodes (code symbols), %d edges (call edges only; the full graph also holds file nodes and DECLARES/IMPLEMENTS edges)\n", len(nodes), len(edges))
 }
 
 func renderBar(score float64, allRanks map[string]float64) string {

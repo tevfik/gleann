@@ -178,6 +178,10 @@ func fullGraphSQLite(ctx context.Context, g *graphstore.SQLite, module, root str
 	// made through a receiver, a variable or an interface, so the graph of a
 	// Go module then lacks nearly all of its method calls.
 	var resolver *indexer.ExactResolver
+	// How this build resolved the Go calls, for the graph health record
+	// (v1.22 T3): the mode plus the reason a syntactic build was not exact.
+	resolverMode, resolverReason := graphstore.ResolverSyntactic, ""
+	warnedNoModule := false
 	if graphExactEnabled() {
 		var err error
 		resolver, err = indexer.LoadExactModules(modules, module)
@@ -189,6 +193,22 @@ func fullGraphSQLite(ctx context.Context, g *graphstore.SQLite, module, root str
 		case resolver == nil && hasGoSource(root, files):
 			p.Warnf("warning: found %d Go file(s) under %s but no Go module (no go.mod or go.work) was loaded; the graph uses the syntactic resolver, so calls through a receiver, variable or interface are missing\n", countGoSource(root, files), root)
 		}
+		switch {
+		case resolver != nil:
+			resolverMode = graphstore.ResolverExact
+			if err != nil {
+				resolverReason = "some packages did not type-check"
+			}
+		case !hasGoSource(root, files):
+			resolverReason = "no Go source"
+		case modules.Empty():
+			resolverReason = "no go.mod"
+			warnedNoModule = true
+		default:
+			resolverReason = "no package type-checked"
+		}
+	} else {
+		resolverReason = "GLEANN_GRAPH_EXACT=0"
 	}
 
 	// Extraction is CPU-bound (parsing), so it runs on a pool of NumCPU
@@ -273,6 +293,20 @@ func fullGraphSQLite(ctx context.Context, g *graphstore.SQLite, module, root str
 			}
 		}
 	}
+	// The health record of this build travels with its rows (v1.22 T3), so a
+	// graph is never readable without knowing which extractor and resolver
+	// produced it. A full rebuild also re-arms the "no Go module" warning: the
+	// build just printed it (or had no reason to), and the next syncs stay
+	// quiet until it becomes due again (v1.22 E4).
+	for k, v := range graphstore.GraphHealthMeta(resolverMode, resolverReason) {
+		metaMutations[k] = v
+	}
+	if warnedNoModule {
+		one := "1"
+		metaMutations[store.MetaGraphNoGoWarned] = &one
+	} else {
+		metaMutations[store.MetaGraphNoGoWarned] = nil
+	}
 
 	if err := g.ReplaceAllWithMeta(ctx, deltas, metaMutations); err != nil {
 		return fmt.Errorf("writing code graph: %w", err)
@@ -328,7 +362,7 @@ func incrementalGraphSQLite(ctx context.Context, g *graphstore.SQLite, changedFi
 			existing = append(existing, absPath)
 		}
 	}
-	if err := exact.load(present); err != nil {
+	if err := exact.load(ctx, present); err != nil {
 		errs = append(errs, err)
 	}
 	// Declarations of the whole batch, so a call into a file applied later in
@@ -411,7 +445,7 @@ func incrementalGraphSQLite(ctx context.Context, g *graphstore.SQLite, changedFi
 		p.Printf("🔁 Re-applying %d dirty graph file(s)\n", len(dirty))
 		// The dirty files of packages the first load did not cover (callers
 		// in other packages of a declaration that appeared or went away).
-		if err := exact.load(dirty); err != nil {
+		if err := exact.load(ctx, dirty); err != nil {
 			errs = append(errs, err)
 		}
 	}
@@ -593,7 +627,12 @@ func applyFileGraphModules(ctx context.Context, g *graphstore.SQLite, modules *i
 		}
 		// A call to a name declared nowhere was dropped, not stored, so the
 		// callers of a new declaration are found among the files of its
-		// package (its directory).
+		// package (its directory). That is why a sync of a file that adds a
+		// declaration reports "Re-applying N dirty graph file(s)" — its
+		// siblings, whatever language they are in — and why the second pass
+		// converges: the flag is cleared as each file is re-extracted (the
+		// re-extraction of a sibling declares nothing new, so it dirties
+		// nobody further).
 		siblings, err := g.FilesInDir(path.Dir(rel))
 		if err != nil {
 			return fmt.Errorf("finding files of the package of %s: %w", rel, err)

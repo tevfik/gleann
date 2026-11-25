@@ -120,7 +120,8 @@ func TestCLIEGraphExplainExternalAndPaths(t *testing.T) {
 	// its callers are known and the memory about it is linked.
 	r := e.graph("explain", "errors.New")
 	wantExit(t, r, 0)
-	mustContain(t, "external symbol", r.Out, "Explain: errors.New", "Called by (3):", "← [function] example.com/fixture.main",
+	mustContain(t, "external symbol", r.Out, "Explain: errors.New", "Called by (3, 1 production + 2 test):", "← [function] example.com/fixture.main",
+		"🧪 [function] example.com/fixture/service.TestReport",
 		"Linked Memory & Architectural Context (1):", "errors New is the constructor", "...")
 	mustNotContain(t, "external symbol", r.Out, "Kind:", "Impact")
 

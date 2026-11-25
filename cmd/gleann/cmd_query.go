@@ -191,6 +191,13 @@ Options:
 	if meta.GleannVersion != "" {
 		fmt.Printf("   Engine Ver:  %s\n", meta.GleannVersion)
 	}
+	// Code-graph provenance (v1.22 T3): which graph extractor wrote this
+	// index's graph and how it resolved calls. Blank for an index with no
+	// readable graph, so `index info` never fails over one. Note that the
+	// indexDir local above already contains the index name.
+	if line := graphHealthSummary(config.IndexDir, name); line != "" {
+		fmt.Printf("   Graph:       %s\n", line)
+	}
 	if len(meta.PluginVersions) > 0 {
 		var plList []string
 		for k, v := range meta.PluginVersions {

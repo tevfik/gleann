@@ -36,8 +36,11 @@ func TestWriteMarkdown(t *testing.T) {
 	if !strings.Contains(md, "# Graph Report: test-idx") {
 		t.Error("missing title")
 	}
-	if !strings.Contains(md, "| Nodes | 15 |") {
+	if !strings.Contains(md, "| Nodes (all symbols + file nodes) | 15 |") {
 		t.Error("missing node count")
+	}
+	if !strings.Contains(md, "| Edges (CALLS + IMPLEMENTS + DECLARES) | 20 |") {
+		t.Error("missing edge count")
 	}
 	if !strings.Contains(md, "God Nodes") {
 		t.Error("missing god nodes section")

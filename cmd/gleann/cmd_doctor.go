@@ -112,6 +112,9 @@ func cmdDoctor() {
 			fmt.Printf("       • %s\n", describeIndex(indexDir, idx))
 		}
 		checkIndexHealth(indexDir, indexes, warn)
+		// Graph provenance (v1.22 T3): a graph written by an older extractor
+		// needs `gleann graph build <name>` — nothing migrates graph rows.
+		warnStaleGraphs(indexDir, indexes, warn)
 	}
 	warnPendingSyncBackups(indexDir, warn)
 	warnLegacyMemoryStores(indexDir, warn)

@@ -119,6 +119,11 @@ type Stats struct {
 	CallEdges       int
 	DeclareEdges    int
 	ImplementsEdges int
+	// Health is how the graph was built (v1.22 T3): extractor version,
+	// resolver mode, tree-sitter content, build timestamp, dirty-file count and
+	// edge counts by confidence. Stats leaves it nil — the record costs a scan
+	// of graph_edges — so health-aware callers fetch GraphHealth() themselves.
+	Health *GraphHealth `json:",omitempty"`
 }
 
 // InDegree is one hub symbol of the CALLS graph: how many call edges point

@@ -98,6 +98,9 @@ func cmdGraph(args []string) {
 	case "build":
 		cmdGraphBuild(args[1:], config)
 		return
+	case "stats":
+		cmdGraphStats(args[1:], config)
+		return
 	case "help", "--help":
 		printGraphUsage()
 		return
@@ -239,10 +242,7 @@ func cmdGraphExplain(fqn string, db gleann.GraphDB) {
 			}
 		}
 		if len(callers) > 0 {
-			fmt.Printf("  Called by (%d):\n", len(callers))
-			for _, c := range callers {
-				fmt.Printf("    ← [%s] %s\n", c.Kind, c.FQN)
-			}
+			printExplainCallers(callers)
 		}
 		memories := searchLinkedMemories(fqn)
 		if len(memories) > 0 {
@@ -278,10 +278,8 @@ func cmdGraphExplain(fqn string, db gleann.GraphDB) {
 
 	// Callers
 	callers, _ := db.Callers(target.FQN)
-	fmt.Printf("\n  Called by (%d):\n", len(callers))
-	for _, c := range callers {
-		fmt.Printf("    ← [%s] %s\n", c.Kind, c.FQN)
-	}
+	fmt.Println()
+	printExplainCallers(callers)
 	if notice := indexing.NonGoFileNotice(target.File, db); notice != "" {
 		fmt.Printf("  %s\n", notice)
 	}
@@ -291,7 +289,7 @@ func cmdGraphExplain(fqn string, db gleann.GraphDB) {
 	impact, err := db.Impact(target.FQN, 3)
 	if err == nil && (len(impact.AffectedFiles) > 0 || len(impact.TestCallers) > 0) {
 		fmt.Printf("\n  Impact (blast radius, depth=3):\n")
-		fmt.Printf("    Direct callers:     %d\n", len(impact.DirectCallers))
+		fmt.Printf("    Direct callers (production only): %d\n", len(impact.DirectCallers))
 		fmt.Printf("    Transitive callers: %d\n", len(impact.TransitiveCallers))
 		fmt.Printf("    Affected files:     %d\n", len(impact.AffectedFiles))
 		fmt.Printf("    Test callers:       %d\n", len(impact.TestCallers))
@@ -579,6 +577,31 @@ func printHeadingTree(headings []gleann.DocumentHeadingItem, prefix string) {
 	}
 }
 
+// printExplainCallers prints the callers of an explained symbol (E5). The
+// count says what it includes: every caller is listed, production and test
+// alike, with the test callers marked 🧪. `graph explain`'s Impact block
+// counts production callers only, so its figures carry their own labels.
+func printExplainCallers(callers []gleann.Callee) {
+	testCallers := 0
+	for _, c := range callers {
+		if c.IsTest {
+			testCallers++
+		}
+	}
+	note := "all of them production code"
+	if testCallers > 0 {
+		note = fmt.Sprintf("%d production + %d test", len(callers)-testCallers, testCallers)
+	}
+	fmt.Printf("  Called by (%d, %s):\n", len(callers), note)
+	for _, c := range callers {
+		marker := "←"
+		if c.IsTest {
+			marker = "🧪"
+		}
+		fmt.Printf("    %s [%s] %s\n", marker, c.Kind, c.FQN)
+	}
+}
+
 func printGraphUsage() {
 	fmt.Println(`gleann graph — Code graph analysis & visualization
 
@@ -595,6 +618,11 @@ Usage:
 
   gleann graph build   <name> [--docs <dir>] [--include-submodules] [--quiet]
       Rebuild the graph of an existing index (--quiet: no status output)
+
+  gleann graph stats   --index <name> [--json]
+      Row counts plus the graph health record: which extractor wrote it, the
+      resolver mode, tree-sitter, build time, dirty files and the edges by
+      confidence. A graph written by an older gleann prints the rebuild hint.
 
   gleann graph viz         --index <name> [--output <file.html>]
       Generate interactive HTML graph visualization (vis.js)

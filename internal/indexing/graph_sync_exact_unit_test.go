@@ -15,6 +15,7 @@ import (
 
 // exactCandidate and the per-directory bookkeeping of syncExact.
 func TestSyncExactLoadsEachDirectoryOnce(t *testing.T) {
+	ctx := context.Background()
 	docs := syncExactFixture(t)
 	writeFile(t, filepath.Join(docs, "app_test.go"), "package sx\n\nimport \"testing\"\n\nfunc TestOne(t *testing.T) { Use(nil) }\n")
 	resolved, err := filepath.EvalSymlinks(docs)
@@ -23,15 +24,15 @@ func TestSyncExactLoadsEachDirectoryOnce(t *testing.T) {
 	}
 	var warn bytes.Buffer
 	s := newSyncExact(nil, syncExactPkg, resolved, newPrinter(nil, &warn))
-	s.load([]string{"app.go", "app_test.go", "README.md", "store/store.go"})
+	s.load(ctx, []string{"app.go", "app_test.go", "README.md", "store/store.go"})
 	if len(s.resolvers) != 1 || !s.loaded["."] || !s.loaded["store"] || s.loaded["cli"] {
 		t.Fatalf("after the first load: %d resolver(s), loaded = %v", len(s.resolvers), s.loaded)
 	}
-	s.load([]string{"other.go", "store/store.go"}) // both directories are covered
+	s.load(ctx, []string{"other.go", "store/store.go"}) // both directories are covered
 	if len(s.resolvers) != 1 {
 		t.Errorf("a covered directory was loaded again: %d resolvers", len(s.resolvers))
 	}
-	s.load([]string{"cli/cli.go"})
+	s.load(ctx, []string{"cli/cli.go"})
 	if len(s.resolvers) != 2 {
 		t.Errorf("the new directory was not loaded: %d resolvers", len(s.resolvers))
 	}
@@ -48,7 +49,7 @@ func TestSyncExactLoadsEachDirectoryOnce(t *testing.T) {
 	// is attempted (a test file is a candidate) but yields no resolver, no
 	// warning and no retry entry.
 	writeFile(t, filepath.Join(resolved, "onlytest", "x_test.go"), "package onlytest\n\nimport \"testing\"\n\nfunc TestX(t *testing.T) {}\n")
-	s.load([]string{"onlytest/x_test.go"})
+	s.load(ctx, []string{"onlytest/x_test.go"})
 	if !s.loaded["onlytest"] {
 		t.Error("a test-only directory was not loaded")
 	}
@@ -63,7 +64,7 @@ func TestSyncExactLoadsEachDirectoryOnce(t *testing.T) {
 	}
 
 	var nilSync *syncExact
-	nilSync.load([]string{"app.go"})
+	nilSync.load(ctx, []string{"app.go"})
 	if nilSync.resolverFor("app.go") != nil {
 		t.Error("a nil syncExact must resolve nothing")
 	}
@@ -73,8 +74,8 @@ func TestSyncExactLoadsEachDirectoryOnce(t *testing.T) {
 		t.Fatal(err)
 	}
 	f := newSyncExact(nil, syncExactPkg, resolved, newPrinter(nil, &warn))
-	f.load([]string{"app.go"})
-	f.load([]string{"cli/cli.go"})
+	f.load(ctx, []string{"app.go"})
+	f.load(ctx, []string{"cli/cli.go"})
 	if n := strings.Count(warn.String(), "warning:"); n != 1 || len(f.resolvers) != 0 {
 		t.Errorf("%d warning(s) and %d resolver(s) after a failed load, want 1 and 0: %s", n, len(f.resolvers), warn.String())
 	}

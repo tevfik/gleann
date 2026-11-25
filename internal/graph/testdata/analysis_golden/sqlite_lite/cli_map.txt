@@ -52,4 +52,4 @@
    ██ example.com/fixture/ts.pluralize         0.0199
    ██ example.com/fixture/ts.slug              0.0199
 
-📊 Total: 41 nodes, 20 edges
+📊 Total: 41 nodes (code symbols), 20 edges (call edges only; the full graph also holds file nodes and DECLARES/IMPLEMENTS edges)

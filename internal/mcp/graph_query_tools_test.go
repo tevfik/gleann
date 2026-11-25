@@ -104,6 +104,12 @@ func newGraphQueryServer(t *testing.T) *Server {
 			t.Fatalf("ApplyFileDelta(%s): %v", d.File, err)
 		}
 	}
+	// The graph this fixture stands for was written by this binary, so its
+	// health record matches (graph_query_tools_test.go's stale-graph case
+	// rewrites the stored version).
+	if err := g.RecordGraphHealth(ctx, graphstore.ResolverExact, ""); err != nil {
+		t.Fatalf("RecordGraphHealth: %v", err)
+	}
 
 	err = g.ApplyDocDelta(ctx, graphstore.DocDelta{
 		RPath: "docs/guide.md",
@@ -265,6 +271,20 @@ func TestGraphStatsAndSymbolsInFile(t *testing.T) {
 		if !strings.Contains(stats, want) {
 			t.Errorf("stats missing %q:\n%s", want, stats)
 		}
+	}
+
+	// Graph health (T3): how the graph was built, and the rebuild hint when
+	// the stored graph extractor is older than this binary.
+	for _, want := range []string{"Graph extractor:", "Resolver:", "Tree-sitter:", "Built at:"} {
+		if !strings.Contains(stats, want) {
+			t.Errorf("stats miss graph health %q:\n%s", want, stats)
+		}
+	}
+	if strings.Contains(stats, "gleann graph build") {
+		t.Errorf("a graph built by this binary must not be reported stale:\n%s", stats)
+	}
+	if !strings.Contains(stats, "CALLS/") && !strings.Contains(stats, "Edges by confidence") {
+		t.Errorf("stats must break edges down by confidence:\n%s", stats)
 	}
 
 	syms := callTool(t, s.handleSymbolsInFile, map[string]interface{}{"index": graphToolsIndex, "file_path": "core/hub.go"})

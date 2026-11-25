@@ -179,7 +179,7 @@ model before the first tool call. They describe the intended routing:
 | `gleann_graph_neighbors` | Query callers/callees of a symbol |
 | `gleann_document_links` | Get document structure links |
 | `gleann_document_toc` | Table of contents / heading outline of an indexed document, or the list of indexed documents |
-| `gleann_graph_stats` | Code graph statistics for an index: file count, symbol count, edge counts by type |
+| `gleann_graph_stats` | Code graph statistics for an index: file count, symbol count, edge counts by type, and the health record (which graph extractor wrote it, exact or syntactic Go resolution and why, tree-sitter, when, dirty files, edges by confidence) with a rebuild hint when the graph is older |
 | `gleann_symbols_in_file` | List the symbols (functions, methods, types) defined in one source file |
 | `gleann_impact` | Blast radius analysis for a symbol |
 | `gleann_read_full_document` | Retrieve intact full document text via the document graph's path resolution or graph chunks |

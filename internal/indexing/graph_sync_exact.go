@@ -1,6 +1,7 @@
 package indexing
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"path"
@@ -10,6 +11,7 @@ import (
 	"github.com/tevfik/gleann/internal/graph/indexer"
 	gtypes "github.com/tevfik/gleann/internal/graph/types"
 	"github.com/tevfik/gleann/internal/graphstore"
+	"github.com/tevfik/gleann/internal/store"
 )
 
 // syncExact gives the Go files of one incremental sync exact go/types
@@ -67,7 +69,7 @@ func exactCandidate(rel string) bool {
 // a second attempt would fail the same way. A second load re-type-checks the
 // earlier directories too (a superset), so the newest resolver judges every
 // interface an earlier one judged; resolverFor prefers it.
-func (s *syncExact) load(relFiles []string) error {
+func (s *syncExact) load(ctx context.Context, relFiles []string) error {
 	if s == nil || !s.enabled {
 		return nil
 	}
@@ -106,9 +108,21 @@ func (s *syncExact) load(relFiles []string) error {
 	if s.modules.Empty() {
 		// Go files were re-extracted but no go.mod/go.work was discovered
 		// under the root: say why those files keep the syntactic resolver.
-		s.p.Warnf("warning: found Go file(s) but no Go module (no go.mod or go.work) under %s, so calls through a receiver, variable or interface are missing from the synced files\n", s.root)
+		// A moduleless tree is synced file by file, so the same warning on
+		// every pass is noise: it is printed once per index (v1.22 E4) and
+		// re-armed by the branches below and by a full rebuild. A failed flag
+		// write never hides the warning.
+		first, err := s.g.MarkMetaOnce(ctx, store.MetaGraphNoGoWarned)
+		if err != nil || first {
+			s.p.Warnf("warning: found Go file(s) but no Go module (no go.mod or go.work) under %s, so calls through a receiver, variable or interface are missing from the synced files\n", s.root)
+		}
 		s.enabled = false
 		return nil
+	}
+	// A module was found after all: re-arm the warning for the next time the
+	// tree loses it. Best-effort — the flag only tunes a warning.
+	if s.g != nil {
+		_ = s.g.ClearMeta(ctx, store.MetaGraphNoGoWarned)
 	}
 	r, err := indexer.LoadExactDirsModules(s.modules, s.module, all)
 	if err != nil {

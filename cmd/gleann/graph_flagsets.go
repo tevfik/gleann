@@ -20,4 +20,5 @@ var graphFlagSets = map[string]flagSet{
 	"risk":        configFlags.union(flagSet{"--index": true, "--top": true, "--by-file": false}),
 	"toc":         configFlags.union(flagSet{"--index": true, "--json": false, "--output": true, "--config": true}),
 	"build":       configFlags.union(flagSet{"--index": true, "--docs": true, "--include-submodules": false}),
+	"stats":       configFlags.union(flagSet{"--index": true, "--json": false}),
 }

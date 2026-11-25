@@ -90,6 +90,12 @@ be explained in the commit that causes it.
 | `rest_query_unknown.json` | unknown query type | exact | same |
 | `rest_query_cypher.json` | `POST .../query` `cypher` | exact | raw Cypher is retired by A2: the expected difference is a 4xx/410 and the removed UI option |
 
+The label wording of `cli_map.txt` (the map footer) and `cli_report.md` (the
+Nodes/Edges rows) was refreshed in v1.22 (E5) to say what each count covers:
+the map counts code symbols and call edges, the report counts the whole graph
+(symbols plus file nodes, CALLS plus IMPLEMENTS and DECLARES). The numbers in
+these two files are still the Kùzu-era ones — no test compares them.
+
 Observed behaviours worth knowing when comparing (all frozen in the files above):
 
 - `Callees(fqn)` and `Callers(fqn)` use a three-step name resolution (exact FQN,

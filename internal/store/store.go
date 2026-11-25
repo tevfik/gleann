@@ -176,6 +176,33 @@ const (
 	MetaGraphTreeSitter  = "graph_treesitter"
 )
 
+// Meta keys of the graph health record (v1.22 T3): how the code graph was
+// built. The indexing pipeline writes them inside the same transaction as the
+// graph rows (internal/graphstore.GraphHealthMeta), and incremental syncs
+// never drop them, so a graph left behind by an older gleann stays visibly
+// stale instead of silently degraded. Written by a full build only; see
+// internal/graphstore/health.go for the reader.
+const (
+	// MetaGraphExtractorVersion is the graph extractor format the rows were
+	// produced by (graphstore.GraphExtractorVersion). Missing or older than
+	// the running binary means the graph needs `gleann graph build`.
+	MetaGraphExtractorVersion = "graph.extractor_version"
+	// MetaGraphResolver is "exact" (go/types) or "syntactic" for the Go files
+	// of the graph.
+	MetaGraphResolver = "graph.resolver"
+	// MetaGraphResolverReason says why the resolver is syntactic ("no go.mod",
+	// "GLEANN_GRAPH_EXACT=0"); absent when the resolver is exact.
+	MetaGraphResolverReason = "graph.resolver_reason"
+	// MetaGraphBuiltAt is the RFC3339 UTC timestamp of the last full graph
+	// build. Incremental syncs leave it alone: it says when the graph was
+	// built, not when it was last touched.
+	MetaGraphBuiltAt = "graph.built_at"
+	// MetaGraphNoGoWarned marks that the "Go files but no go.mod" warning has
+	// already been printed for this index (v1.22 E4): it is shown once per
+	// index instead of on every sync.
+	MetaGraphNoGoWarned = "graph.nogo_warned"
+)
+
 const migrationLexVocab = `CREATE VIRTUAL TABLE IF NOT EXISTS lex_vocab USING fts5vocab(lex, 'row');`
 
 // migrationDocNodesIndexes adds the document-lookup indexes to doc_nodes:

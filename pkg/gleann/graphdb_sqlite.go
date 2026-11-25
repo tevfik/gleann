@@ -351,7 +351,9 @@ func (d *sqliteGraphDB) SymbolSearch(pattern string) ([]Callee, error) {
 	return out, nil
 }
 
-// Stats returns basic graph statistics.
+// Stats returns basic graph statistics. Stats.Health is never filled here —
+// SQLite.Stats stays counters-only — so health-aware consumers of this view
+// call GraphHealth (below) and attach the record themselves.
 func (d *sqliteGraphDB) Stats() (*GraphStats, error) {
 	st, err := d.g.Stats()
 	if err != nil {
@@ -363,7 +365,15 @@ func (d *sqliteGraphDB) Stats() (*GraphStats, error) {
 		CallEdges:       st.CallEdges,
 		DeclareEdges:    st.DeclareEdges,
 		ImplementsEdges: st.ImplementsEdges,
+		Health:          st.Health,
 	}, nil
+}
+
+// GraphHealth reports how this graph was built (v1.22 T3): the record lives
+// outside Stats() because reading it scans graph_edges, and Stats must stay a
+// handful of point lookups (v1.22 M1).
+func (d *sqliteGraphDB) GraphHealth() (*GraphHealth, error) {
+	return d.g.GraphHealth()
 }
 
 // ResolveSymbolFiles resolves a symbol to its source files, prioritizing symbols

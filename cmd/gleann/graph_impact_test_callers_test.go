@@ -97,7 +97,7 @@ func TestCLICGraphExplainTestCallers(t *testing.T) {
 	wantExit(t, r, 0)
 	mustContain(t, "explain hub impact", r.Out,
 		"Impact (blast radius, depth=3):",
-		"Direct callers:     2",
+		"Direct callers (production only): 2",
 		"Transitive callers: 0",
 		"Affected files:     1",
 		"Test callers:       25",
@@ -113,7 +113,7 @@ func TestCLICGraphExplainTestCallers(t *testing.T) {
 	wantExit(t, r, 0)
 	mustContain(t, "explain test-only symbol", r.Out,
 		"Impact (blast radius, depth=3):",
-		"Direct callers:     0",
+		"Direct callers (production only): 0",
 		"Affected files:     0",
 		"Test callers:       3",
 		"🧪 impcallers.Tester00",
@@ -125,7 +125,7 @@ func TestCLICGraphExplainTestCallers(t *testing.T) {
 	wantExit(t, r, 0)
 	mustContain(t, "explain without test callers", r.Out,
 		"Impact (blast radius, depth=3):",
-		"Direct callers:     1",
+		"Direct callers (production only): 1",
 		"Test callers:       0",
 	)
 	mustNotContain(t, "no test caller rows", r.Out, "🧪 impcallers.")

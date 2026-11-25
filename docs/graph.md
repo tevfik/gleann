@@ -170,6 +170,10 @@ An incremental sync (`gleann index sync`, watch mode) resolves the Go files it r
 
 Three things are only as fresh as the last full build: an unchanged file whose calls resolve differently after an edit elsewhere (when the edit removed the target, the file is re-extracted); a changed file's IMPLEMENTS edges to interfaces declared in packages that did not type-check during the sync, which are carried over rather than derived again; and a *new* type's IMPLEMENTS edges to interfaces of packages that are neither loaded nor imported by the changed files (the sync extends its load from the stored edges, which a new type does not have yet).
 
+### Graph provenance (`gleann graph stats`)
+
+A full graph build records how the graph was made, in the `meta` table of the index database, and an incremental sync leaves that record untouched: `graph.extractor_version` (which graph extractor wrote the rows), `graph.resolver` (`exact` or `syntactic`) and, when the exact resolver was not available, `graph.resolver_reason` (`no go.mod`, `GLEANN_GRAPH_EXACT=0`), `graph.built_at` (when the graph was last built in full; an incremental sync leaves it alone) and `graph.nogo_warned` (which arms the "no Go module" warning once per index instead of on every sync of a moduleless tree). `gleann graph stats --index <name>` prints that record with the row counts, the files still marked `graph_dirty` (a package that did not type-check, re-resolved by the next syncs) and the CALLS edges by confidence; `--json` returns the same as an object, and MCP `gleann_graph_stats` prints the health block too. `gleann index info` shows the record on one line, and `gleann doctor` warns about an index whose graph was written by an older graph extractor, or by a gleann that predates the record: graph rows are never migrated on their own, so the fix is `gleann graph build <name>`.
+
 ## Token Reduction Benchmark
 
 Measure how much context compression the RAG pipeline achieves:
