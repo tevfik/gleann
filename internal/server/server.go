@@ -798,6 +798,10 @@ type searchRequest struct {
 	GraphContext        bool                    `json:"graph_context,omitempty"`
 	IncludeTests        bool                    `json:"include_tests,omitempty"`
 	Kind                string                  `json:"kind,omitempty"`
+	// OnePerFile keeps at most one result per source file, widening retrieval
+	// first so the surviving hits stay relevant (parity with the CLI's
+	// --one-per-file).
+	OnePerFile bool `json:"one_per_file,omitempty"`
 	// Expand enables HyDE query expansion: the LLM sketches code for the
 	// question and the search uses it too (+1-3 s; ignored for identifiers).
 	Expand bool `json:"expand,omitempty"`
@@ -895,6 +899,9 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Kind != "" {
 		opts = append(opts, gleann.WithKind(req.Kind))
+	}
+	if req.OnePerFile {
+		opts = append(opts, gleann.WithOnePerFile(true))
 	}
 
 	// Set up per-request reranker if requested.

@@ -248,6 +248,17 @@ func cmdAsk(args []string) {
 	config := getConfig(args)
 	applySavedConfig(&config, args)
 
+	askFilters, err := parseCLIFilters(args)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "error: "+err.Error())
+		exitFunc(2)
+	}
+	if len(askFilters) > 0 {
+		// The searcher copies config before Load, so the filters must be set
+		// here to reach both single- and multi-index retrieval.
+		config.SearchConfig.MetadataFilters = askFilters
+	}
+
 	positional, attachFiles := extractPositionalArgs(args)
 
 	name, question := resolveIndexAndQuestion(positional, config)
@@ -789,6 +800,7 @@ func printCmdAskUsage() {
 	fmt.Fprintln(os.Stderr, "  --smart-context      Compress the context sent to the LLM")
 	fmt.Fprintln(os.Stderr, "  --compress-context   Alias for --smart-context")
 	fmt.Fprintln(os.Stderr, "  --graph              Add code-graph context (callers/callees) to the retrieved passages")
+	fmt.Fprintln(os.Stderr, "  --filter 'f op val'  Keep only retrieved passages whose metadata matches; repeatable. Operators: eq, ne, gt, gte, lt, lte, in, nin, contains, startswith, endswith, exists; the value may be omitted for exists (e.g. --filter 'lang exists')")
 	fmt.Fprintln(os.Stderr, "  --rerank             Rerank retrieved passages with a cross-encoder")
 	fmt.Fprintln(os.Stderr, "  --no-rerank          Do not rerank, even when the saved settings enable it")
 	fmt.Fprintln(os.Stderr, "  --rerank-model M     Reranker model (default: saved reranker settings)")

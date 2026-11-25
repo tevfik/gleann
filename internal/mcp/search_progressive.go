@@ -73,6 +73,10 @@ func (s *Server) buildSearchIDsTool() mcp.Tool {
 					"description": "Filter by content type: 'code' (source code), 'docs' (documentation and markdown), or 'all'. Default is 'all'.",
 					"enum":        []string{"all", "code", "docs"},
 				},
+				"one_per_file": map[string]interface{}{
+					"type":        "boolean",
+					"description": "If true, return at most one result per source file (retrieval widens first so the survivors stay relevant). Default is false.",
+				},
 				"rerank": map[string]interface{}{
 					"type":        "boolean",
 					"description": "If true, re-score candidates using a cross-encoder reranker for higher precision.",
@@ -128,6 +132,9 @@ func (s *Server) handleSearchIDs(ctx context.Context, request mcp.CallToolReques
 	}
 	if kind, ok := args["kind"].(string); ok && kind != "" {
 		searchOpts = append(searchOpts, gleann.WithKind(kind))
+	}
+	if opf, ok := args["one_per_file"].(bool); ok && opf {
+		searchOpts = append(searchOpts, gleann.WithOnePerFile(true))
 	}
 	if rerank, ok := args["rerank"].(bool); ok && rerank {
 		searchOpts = append(searchOpts, gleann.WithReranker(true))

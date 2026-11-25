@@ -28,6 +28,7 @@ type multiSearchRequest struct {
 	FilterLogic  string                  `json:"filter_logic,omitempty"`
 	IncludeTests bool                    `json:"include_tests,omitempty"`
 	Kind         string                  `json:"kind,omitempty"`
+	OnePerFile   bool                    `json:"one_per_file,omitempty"`
 }
 
 // multiSearchResponse is the response for POST /api/search.
@@ -241,6 +242,9 @@ func (s *Server) handleMultiSearch(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Kind != "" {
 		opts = append(opts, gleann.WithKind(req.Kind))
+	}
+	if req.OnePerFile {
+		opts = append(opts, gleann.WithOnePerFile(true))
 	}
 
 	start := time.Now()

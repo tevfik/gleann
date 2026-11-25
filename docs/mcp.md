@@ -356,6 +356,7 @@ Search an index with optional filters and graph context:
   "query": "how does authentication work?",
   "top_k": 5,
   "graph_context": true,
+  "one_per_file": true,
   "filters": [
     {"field": "ext", "operator": "eq", "value": ".go"}
   ]
@@ -370,6 +371,11 @@ those when the filter is estimated to match only a small fraction of the
 index, or when the loop stops at the cap short; HNSW and DiskANN (loaded in
 RAM or memory-mapped) score that set by exact vector distance. A filter
 nothing matches returns 0.
+
+`one_per_file` (boolean, default `false`; also accepted by `gleann_search_multi`
+and `gleann_search_ids`) returns at most one result per source file, widening
+retrieval first so the survivors stay relevant — useful for "which files touch
+X" questions.
 
 ### Index Governance, Scoping & Federated Search
 

@@ -23,6 +23,7 @@ func openAPISchemasSearch() map[string]any {
 					"description": "Metadata filters for narrowing results",
 				},
 				"filter_logic": map[string]any{"type": "string", "enum": []string{"and", "or"}, "default": "and"},
+				"one_per_file": map[string]any{"type": "boolean", "default": false, "description": "Return at most one result per source file (widens retrieval first to keep the survivors relevant)"},
 			},
 		},
 		"SearchResponse": map[string]any{
@@ -106,6 +107,7 @@ func openAPISchemasSearch() map[string]any {
 				"rerank_model":     map[string]any{"type": "string"},
 				"metadata_filters": map[string]any{"type": "array", "items": metadataFilterSchema()},
 				"filter_logic":     map[string]any{"type": "string", "enum": []string{"and", "or"}, "default": "and"},
+				"one_per_file":     map[string]any{"type": "boolean", "default": false, "description": "Return at most one result per source file (widens retrieval first to keep the survivors relevant)"},
 			},
 		},
 		"MultiSearchResponse": map[string]any{

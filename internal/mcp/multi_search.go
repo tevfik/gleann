@@ -28,6 +28,9 @@ func (s *Server) buildSearchMultiTool() mcp.Tool {
 		mcp.WithString("kind",
 			mcp.Description("Filter by content type: 'code' (source code), 'docs' (documentation and markdown), or 'all'. Default is 'all'."),
 		),
+		mcp.WithBoolean("one_per_file",
+			mcp.Description("If true, return at most one result per source file (retrieval widens first so the survivors stay relevant). Default is false."),
+		),
 		mcp.WithNumber("max_tokens",
 			mcp.Description("Optional strict token budget for the response (minimum 32). When exceeded, subsequent results degrade to locators (citations only) and extra results are dropped to guarantee context limit."),
 		),
@@ -64,6 +67,9 @@ func (s *Server) handleSearchMulti(ctx context.Context, request mcp.CallToolRequ
 	}
 	if kind, ok := args["kind"].(string); ok && kind != "" {
 		opts = append(opts, gleann.WithKind(kind))
+	}
+	if opf, ok := args["one_per_file"].(bool); ok && opf {
+		opts = append(opts, gleann.WithOnePerFile(true))
 	}
 
 	results, err := gleann.SearchMultiple(ctx, s.config, s.embedder, names, query, opts...)

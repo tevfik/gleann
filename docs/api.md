@@ -192,6 +192,10 @@ Use gleann indexes as if they were OpenAI models. Compatible with any tool that 
 
 **Model naming**: `"gleann/<index-name>"` for RAG-augmented answers, `"gleann/"` for pure LLM pass-through.
 
+`GET /v1/models` lists every index as an OpenAI model object and also includes
+the `gleann/` entry (the empty index name), which routes a completion straight
+to the LLM with no index retrieval.
+
 **Custom headers**: `X-Gleann-Top-K` (RAG result count), `X-Gleann-Min-Score` (score threshold), `X-Gleann-Hybrid-Alpha` (vector against lexical weight, a number from 0 to 1; `0` = lexical (BM25) search only, no query embedding; a value outside the range or not a number is ignored, like the other two; works in both proxy modes and, with several indexes, in the cross-index ranking).
 
 **Pass-through mode** (`proxy_mode: "passthrough"` in the config, or `GLEANN_PROXY_MODE=passthrough`): the request
@@ -462,6 +466,13 @@ selective filter bypasses the approximate search entirely. A filter nothing
 matches returns 0. A passage's score is the same with and without a filter
 that keeps it, and the pre-selected path applies the same `min_score`, `kind`
 and ranking boosts as the main path.
+
+`one_per_file` (boolean, default `false`) returns at most one result per source
+file. Retrieval widens first, so the surviving hits stay relevant; it answers
+"which files mention X" without one large file crowding out the rest. The same
+flag is accepted by `POST /api/search` (multi-index), the MCP `gleann_search`,
+`gleann_search_multi` and `gleann_search_ids` tools, and the CLI's
+`--one-per-file`.
 
 ### Ask (RAG)
 

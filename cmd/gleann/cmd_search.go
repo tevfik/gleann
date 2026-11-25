@@ -32,6 +32,12 @@ Options:
   --one-per-file          Return at most one result per file
   --include-tests         Include tests and fixtures in the results
   --kind <kind>           Only results of this content kind: code, docs, or all (default)
+  --filter <expr>         Keep only results whose metadata matches 'field op value'
+                          (repeatable). Operators: eq, ne, gt, gte, lt, lte, in,
+                          nin, contains, startswith, endswith, exists; the value
+                          may be omitted for exists (e.g. --filter 'lang exists').
+                          A value that parses as JSON (number, bool, array, object,
+                          quoted string) is compared as that type, otherwise as a string
   --explain               Show why each result matched: most important segments
                           and BM25 term weights (~70 ms per result)
   --json                  Output results as JSON
@@ -105,6 +111,7 @@ Examples:
   gleann search core "auth middleware"
   gleann search px4,core "ekf estimation" --rerank --no-expand
   gleann search --all "PID controller" --one-per-file --graph
+  gleann search core "rate limiter" --filter 'lang eq go' --filter 'kind eq code'
 `, gleann.DefaultConfig().SearchConfig.TopK)
 }
 
@@ -191,6 +198,14 @@ func cmdSearch(args []string) {
 	}
 	if kind := getFlag(args, "--kind"); kind != "" {
 		searchOpts = append(searchOpts, gleann.WithKind(kind))
+	}
+	filters, err := parseCLIFilters(args)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "error: "+err.Error())
+		exitFunc(2)
+	}
+	if len(filters) > 0 {
+		searchOpts = append(searchOpts, gleann.WithMetadataFilter(filters...))
 	}
 
 	// Multi-index search: comma-separated names, --all, or auto-expanded dual index (<name>-code, <name>-docs).

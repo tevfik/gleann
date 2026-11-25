@@ -58,6 +58,7 @@ var searchFlags = configFlags.union(rerankExpandFlags, flagSet{
 	"--graph": false, "--one-per-file": false, "--include-tests": false,
 	"--explain": false, "--kind": true,
 	"--top": true, "--base-url": true, "--api-key": true,
+	"--filter": true,
 })
 
 // askFlags is every flag `gleann ask` understands.
@@ -70,6 +71,7 @@ var askFlags = configFlags.union(rerankExpandFlags, flagSet{
 	"--classic": false, "--modular": false, "--smart-context": false,
 	"--compress-context": false, "--graph": false,
 	"--base-url": true, "--api-key": true,
+	"--filter": true,
 })
 
 // checkFlags returns an error for the first --flag in args that is not in
