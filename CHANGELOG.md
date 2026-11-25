@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [v1.22.0] — 2026-11-26
+
 ### Added
 - **EmbeddingGemma 2 (Q8_0) as an opt-in catalogue model, and its prompt prefixes.** `gleann models download embeddinggemma-2` (310 MB, 768 dimensions, multilingual, 8k context) works with `embedding_provider: "eif"` (the id resolves to its file); the `llamacpp` provider refuses only EmbeddingGemma-2 (id `embeddinggemma-2` or a `-2` file name) with a clear error, since llama-server cannot load it; EmbeddingGemma v1 files such as `embeddinggemma-300M-Q8_0.gguf` still work. It is never a default: it is slower than multilingual-e5-small on a CPU (MRR@10 0.944 with prompts, 0.912 without, on a small Turkish and English set). Models whose id or file name contains `embeddinggemma` get `title: none | text: ` before passages and `task: search result | query: ` before queries, on every build, sync, watch-sync and search path; they are recorded in the index metadata (existing indexes keep working unprefixed until rebuilt) and are part of the embedding cache key. See `docs/configuration.md`.
 - **Graph provenance record.** A full graph build records how the graph was produced: the graph extractor version, whether Go calls were resolved exactly (`go/types`) or syntactically and why, whether tree-sitter contributed, and when the graph was last built in full (`graph.extractor_version`, `graph.resolver`, `graph.resolver_reason`, `graph.built_at` in the index database); an incremental sync preserves the record untouched. `pkg/gleann.GraphStats` carries it as the optional `Health` field, filled by health-aware callers.
