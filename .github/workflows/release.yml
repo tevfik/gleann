@@ -2,7 +2,7 @@ name: CI/CD
 
 on:
   push:
-    branches: [ "main" ]
+    branches: [ "main", "lane/**" ]
     tags: [ "v*" ]
   pull_request:
     branches: [ "main" ]

@@ -583,9 +583,10 @@ func TestRace_DeleteIndexDuringSearch(t *testing.T) {
 					return
 				default:
 				}
-				code := doSearch(h)
-				if code != http.StatusOK && code != http.StatusNotFound && code != http.StatusInternalServerError {
-					t.Errorf("unexpected status %d", code)
+				// 200 before the delete, 404 once it has started: never 409
+				// (a client conflict) or 500 from half-removed files.
+				if w := doSearchBody(h); w.Code != http.StatusOK && w.Code != http.StatusNotFound {
+					t.Errorf("unexpected status %d: %s", w.Code, w.Body.String())
 				}
 			}
 		}()
@@ -608,6 +609,72 @@ func TestRace_DeleteIndexDuringSearch(t *testing.T) {
 	s.mu.RUnlock()
 	if n != 0 || refs != 0 {
 		t.Errorf("searcher cache not drained: searchers=%d refs=%d", n, refs)
+	}
+}
+
+// The contract, without timing: while a DELETE holds the index lock (paused in
+// the hook, files still intact) every search answers 404, neither 200 from the
+// not-yet-removed files nor 409/500 from half-removed ones. A delete that
+// ends (here it succeeds) clears the mark.
+func TestDeleteIndex_SearchDuringDeleteIs404(t *testing.T) {
+	s, h, _ := newIndexedServer(t)
+	if code := doSearch(h); code != http.StatusOK {
+		t.Fatalf("initial search: %d", code)
+	}
+	inHook, resume := make(chan struct{}), make(chan struct{})
+	s.deleteHook = func(string) { close(inHook); <-resume }
+
+	done := make(chan *httptest.ResponseRecorder, 1)
+	go func() {
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, httptest.NewRequest(http.MethodDelete, "/api/indexes/idx", nil))
+		done <- w
+	}()
+	<-inHook
+	for i := 0; i < 5; i++ {
+		if w := doSearchBody(h); w.Code != http.StatusNotFound {
+			t.Errorf("search during delete = %d %s, want 404", w.Code, w.Body.String())
+		}
+	}
+	close(resume)
+	if w := <-done; w.Code != http.StatusOK {
+		t.Fatalf("delete: %d %s", w.Code, w.Body.String())
+	}
+	if w := doSearchBody(h); w.Code != http.StatusNotFound {
+		t.Errorf("search after delete = %d, want 404", w.Code)
+	}
+	if s.isDeleting("idx") {
+		t.Error("the deleting mark outlived the delete")
+	}
+}
+
+// A load that outlasts a whole delete (the deleting mark is long cleared) and
+// then fails with an error that would map to 409 must still answer 404: the
+// index directory is gone.
+func TestDeleteIndex_SlowLoadFailingAfterDeleteIs404(t *testing.T) {
+	s, h, _ := newIndexedServer(t)
+	s.invalidateSearcher("idx")
+	inLoad, resume := make(chan struct{}), make(chan struct{})
+	s.loadHook = func(string) error {
+		close(inLoad)
+		<-resume
+		return fmt.Errorf("reading removed files: %w", gleann.ErrOldStoreFormat)
+	}
+	got := make(chan *httptest.ResponseRecorder, 1)
+	go func() { got <- doSearchBody(h) }()
+	<-inLoad
+
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, httptest.NewRequest(http.MethodDelete, "/api/indexes/idx", nil))
+	if w.Code != http.StatusOK {
+		t.Fatalf("delete: %d %s", w.Code, w.Body.String())
+	}
+	if s.isDeleting("idx") {
+		t.Fatal("the deleting mark must be cleared for this test")
+	}
+	close(resume)
+	if r := <-got; r.Code != http.StatusNotFound {
+		t.Errorf("search whose load failed after the delete = %d %s, want 404", r.Code, r.Body.String())
 	}
 }
 

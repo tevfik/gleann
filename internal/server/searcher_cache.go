@@ -17,9 +17,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log"
 	"net/http"
 	"os"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -38,10 +40,59 @@ type searcherRef struct {
 // acquireSearcher returns the cached searcher for name, loading it if
 // needed, together with a release func that must be called exactly once
 // when the caller is done with the searcher (extra calls are no-ops).
+//
+// An index whose DELETE holds its lock (see markDeleting) is gone as far as
+// searches are concerned: they get a not-exist error (404) from the moment the
+// delete has started, instead of loading the half-removed files and answering
+// with whatever that produced (a 409 "old store format", a 500).
 func (s *Server) acquireSearcher(ctx context.Context, name string) (*gleann.LeannSearcher, func(), error) {
 	if err := gleann.ValidateName(name); err != nil {
 		return nil, nil, err
 	}
+	if s.isDeleting(name) {
+		return nil, nil, fmt.Errorf("index %q is being deleted: %w", name, fs.ErrNotExist)
+	}
+	sr, release, err := s.acquireSearcherLocked(ctx, name)
+	if err != nil && !indexMissing(err) {
+		// A load that outlasts a whole delete fails on the removed files (a
+		// 409/500 by class) after the deleting mark is gone: an index whose
+		// directory no longer exists is gone, whatever the load said.
+		if s.isDeleting(name) {
+			return nil, nil, fmt.Errorf("index %q is being deleted: %w", name, fs.ErrNotExist)
+		}
+		if _, serr := os.Lstat(filepath.Join(s.cfg().IndexDir, name)); indexMissing(serr) {
+			return nil, nil, fmt.Errorf("index %q was deleted while loading: %w", name, fs.ErrNotExist)
+		}
+	}
+	return sr, release, err
+}
+
+// markDeleting records that a delete of name holds its lock and returns the
+// func that clears the mark; the mark ends with the delete, whatever its
+// outcome.
+func (s *Server) markDeleting(name string) func() {
+	s.mu.Lock()
+	if s.deleting == nil {
+		s.deleting = make(map[string]int)
+	}
+	s.deleting[name]++
+	s.mu.Unlock()
+	return func() {
+		s.mu.Lock()
+		if s.deleting[name]--; s.deleting[name] <= 0 {
+			delete(s.deleting, name)
+		}
+		s.mu.Unlock()
+	}
+}
+
+func (s *Server) isDeleting(name string) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.deleting[name] > 0
+}
+
+func (s *Server) acquireSearcherLocked(ctx context.Context, name string) (*gleann.LeannSearcher, func(), error) {
 
 	// A load may complete just after a concurrent invalidation, in which
 	// case it is discarded and we retry; bound the retries.
@@ -109,6 +160,11 @@ func (s *Server) loadSearcher(name string) error {
 	gen := s.searcherGen
 	s.mu.RUnlock()
 
+	if s.loadHook != nil {
+		if err := s.loadHook(name); err != nil {
+			return err
+		}
+	}
 	cfg, emb := s.cfgAndEmbedder()
 
 	// Check model compatibility if dynamic resolution is not configured.

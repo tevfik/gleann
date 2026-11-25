@@ -126,6 +126,14 @@ type Server struct {
 	// autoSyncHook, when set (tests only), replaces autoSyncIndex as the
 	// watcher's sync callback.
 	autoSyncHook func(ctx context.Context, indexName string, files []string) error
+	// deleting counts the DELETEs in progress per index (guarded by mu); a
+	// search of such an index answers 404. deleteHook (tests only) runs while
+	// a delete holds the index lock and the mark is set.
+	deleting   map[string]int
+	deleteHook func(name string)
+	// loadHook (tests only) runs at the start of a searcher load; a non-nil
+	// error fails the load.
+	loadHook func(name string) error
 }
 
 // cfg returns a snapshot of the current server configuration.
@@ -1790,6 +1798,14 @@ func (s *Server) handleDeleteIndex(w http.ResponseWriter, r *http.Request) {
 	if lerr != nil {
 		writeError(w, http.StatusConflict, fmt.Sprintf("index %q is busy (a build or sync holds its lock), retry shortly: %v", name, lerr))
 		return
+	}
+
+	// From here the index is gone for searches (404), not busy and not
+	// half-removed: see acquireSearcher.
+	unmark := s.markDeleting(name)
+	defer unmark()
+	if s.deleteHook != nil {
+		s.deleteHook(name)
 	}
 
 	// Drop the cached searcher; it is closed once in-flight requests that
