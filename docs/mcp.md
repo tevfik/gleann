@@ -586,13 +586,15 @@ subsequent LLM query as part of the `<memory_context>` system message.
 
 ### memory_forget
 
-Delete a memory block by ID or by content match:
+Delete a memory block by ID (or unique ID prefix of 8+ hex characters) or by content match:
 
 ```json
 {
   "id_or_query": "hexagonal architecture"
 }
 ```
+
+A query that matches several blocks deletes nothing and returns a tool error listing them (short ID, tier, excerpt). Add `"all": true` to delete every match.
 
 ### memory_search
 

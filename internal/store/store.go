@@ -191,7 +191,9 @@ const (
 	// of the graph.
 	MetaGraphResolver = "graph.resolver"
 	// MetaGraphResolverReason says why the resolver is syntactic ("no go.mod",
-	// "GLEANN_GRAPH_EXACT=0"); absent when the resolver is exact.
+	// "no Go source", "GLEANN_GRAPH_EXACT=0") or that an exact build left some
+	// packages untyped ("some packages did not type-check"); absent for a plain
+	// exact build.
 	MetaGraphResolverReason = "graph.resolver_reason"
 	// MetaGraphBuiltAt is the RFC3339 UTC timestamp of the last full graph
 	// build. Incremental syncs leave it alone: it says when the graph was

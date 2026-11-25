@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"math"
 	"path/filepath"
 	"strings"
 )
@@ -49,6 +50,18 @@ func (f MetadataFilter) Validate() error {
 	}
 	if !validFilterOperators[f.Operator] {
 		return fmt.Errorf("metadata filter on %q: unknown or missing operator %q (use eq, ne, gt, gte, lt, lte, in, nin, contains, startswith, endswith or exists)", f.Field, string(f.Operator))
+	}
+	switch f.Operator {
+	case OpIn, OpNotIn:
+		switch f.Value.(type) {
+		case []any, []string:
+		default:
+			return fmt.Errorf("metadata filter on %q: operator %q needs an array value, got %T", f.Field, string(f.Operator), f.Value)
+		}
+	case OpGreaterThan, OpGreaterEqual, OpLessThan, OpLessEqual:
+		if n, ok := f.Value.(float64); ok && (math.IsNaN(n) || math.IsInf(n, 0)) {
+			return fmt.Errorf("metadata filter on %q: operator %q needs a finite number", f.Field, string(f.Operator))
+		}
 	}
 	return nil
 }

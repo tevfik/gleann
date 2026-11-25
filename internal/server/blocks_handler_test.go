@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/tevfik/gleann/pkg/gleann"
@@ -579,5 +580,40 @@ func TestHandleAddBlock_TargetField(t *testing.T) {
 	mux.ServeHTTP(wBad, r)
 	if wBad.Code != http.StatusForbidden {
 		t.Errorf("expected 403 Forbidden on header/body target mismatch, got %d", wBad.Code)
+	}
+}
+
+// A content phrase matching several blocks answers 409 with the matches and
+// deletes nothing; ?all=true deletes them all.
+func TestHandleDeleteBlock_MultiMatchConflict(t *testing.T) {
+	_, mux := newBlocksTestServer(t)
+	doBlockAdd(t, mux, blockAddRequest{Content: "deploy runs on friday"})
+	doBlockAdd(t, mux, blockAddRequest{Content: "deploy needs a green CI"})
+
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, httptest.NewRequest(http.MethodDelete, "/api/blocks/deploy", nil))
+	if w.Code != http.StatusConflict {
+		t.Fatalf("expected 409, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		Error   string               `json:"error"`
+		Matches []memory.ForgetMatch `json:"matches"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil || len(resp.Matches) != 2 || resp.Error == "" {
+		t.Fatalf("409 body = %+v (%v), want error and 2 matches", resp, err)
+	}
+
+	lw := httptest.NewRecorder()
+	mux.ServeHTTP(lw, httptest.NewRequest(http.MethodGet, "/api/blocks", nil))
+	if !strings.Contains(lw.Body.String(), "friday") || !strings.Contains(lw.Body.String(), "green CI") {
+		t.Fatalf("a refused DELETE removed blocks: %s", lw.Body.String())
+	}
+
+	w = httptest.NewRecorder()
+	mux.ServeHTTP(w, httptest.NewRequest(http.MethodDelete, "/api/blocks/deploy?all=true", nil))
+	var ok map[string]any
+	json.NewDecoder(w.Body).Decode(&ok)
+	if w.Code != http.StatusOK || ok["deleted"] != float64(2) {
+		t.Fatalf("all=true: %d %v", w.Code, ok)
 	}
 }

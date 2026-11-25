@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"strconv"
@@ -91,11 +92,11 @@ All stored memory is automatically injected into every LLM query (ask, chat, mcp
 
 Usage:
   gleann memory remember <text> [--tag <tags>] [--label <label>] [--scope <scope>]  Store fact in long-term memory
-  gleann memory forget   <query-or-id>           Remove memory by content match or ID
+  gleann memory forget   [--all] <query-or-id>   Remove memory by ID, or by content match (several matches need --all)
   gleann memory list     [--tier <tier>]          List memories (all tiers or specific)
   gleann memory search   <query>                 Full-text search across all tiers
   gleann memory add      <tier> <text>            Add note to specific tier
-  gleann memory clear    [--tier <tier>]          Delete memories (tier or all)
+  gleann memory clear    [<tier>|--tier <tier>]  Delete memories of one tier (no tier = every tier)
   gleann memory stats                             Storage statistics
   gleann memory summarize --last                 Summarize last conversation → memory
   gleann memory summarize --id <conv-id>          Summarize specific conversation
@@ -146,7 +147,7 @@ Injection budget:
 
 Chat Slash Commands (inside 'gleann chat'):
   /remember <text>        Store fact to long-term memory
-  /forget <query>         Remove memories matching query
+  /forget [--all] <query> Remove memories matching query (several matches need --all)
   /memories               Browse stored memories
   /new                    Start a fresh conversation thread (clears context)
 
@@ -318,21 +319,28 @@ func printContradictionWarning(block *memory.Block) {
 
 func cmdMemoryForget(args []string) {
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "usage: gleann memory forget <id-or-query>")
+		fmt.Fprintln(os.Stderr, "usage: gleann memory forget [--all] <id-or-query>")
 		exitFunc(1)
 	}
 
 	query := freeText(args, memoryFlagSets["forget"])
 	if query == "" {
-		fmt.Fprintln(os.Stderr, "usage: gleann memory forget <id-or-query>")
+		fmt.Fprintln(os.Stderr, "usage: gleann memory forget [--all] <id-or-query>")
 		exitFunc(1)
 	}
 
+	all := hasFlag(args, "--all")
+
 	if rc := remoteMemoryClient(); rc != nil {
-		count, err := rc.Forget(query)
+		count, err := rc.Forget(query, all)
 		if err == nil {
 			fmt.Printf("🗑  Forgot %d memory block(s) matching %q  (via running server)\n", count, query)
 			return
+		}
+		var amb *memory.ForgetAmbiguousError
+		if errors.As(err, &amb) {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			exitFunc(2)
 		}
 		// Fallback to local store if remote call failed
 	}
@@ -340,9 +348,19 @@ func cmdMemoryForget(args []string) {
 	mgr := openMemoryManager()
 	defer mgr.Close()
 
-	count, err := mgr.Forget(query)
+	var count int
+	var err error
+	if all {
+		count, err = mgr.ForgetAll(query)
+	} else {
+		count, err = mgr.Forget(query)
+	}
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		var amb *memory.ForgetAmbiguousError
+		if errors.As(err, &amb) {
+			exitFunc(2)
+		}
 		exitFunc(1)
 	}
 
@@ -469,15 +487,50 @@ func cmdMemorySearch(args []string) {
 	}
 }
 
-func cmdMemoryClear(args []string) {
-	var tier memory.Tier
-	if tierStr := getFlag(args, "--tier"); tierStr != "" {
-		t, err := memory.ParseTier(tierStr)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "error: %v\n", err)
-			exitFunc(1)
+// parseClearTier reads the tier of `memory clear`: a positional tier name, or
+// --tier/-t <tier> (also --tier=<tier>). No tier means every tier, but only a
+// bare `clear`: a malformed form (missing value, unknown tier, stray flag, two
+// tiers) is an error, never "clear everything".
+func parseClearTier(args []string) (memory.Tier, error) {
+	var names []string
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		switch {
+		case a == "--":
+			names = append(names, args[i+1:]...)
+			i = len(args)
+		case a == "--tier" || a == "-t":
+			if i+1 >= len(args) || strings.HasPrefix(args[i+1], "-") {
+				return "", fmt.Errorf("%s needs a tier (short, medium or long); run 'gleann memory clear' with no tier to clear every tier", a)
+			}
+			names = append(names, args[i+1])
+			i++
+		case strings.HasPrefix(a, "--tier="):
+			names = append(names, strings.TrimPrefix(a, "--tier="))
+		case strings.HasPrefix(a, "-"):
+			return "", fmt.Errorf("unknown option %q for 'memory clear' (use --tier <tier>)", a)
+		default:
+			names = append(names, a)
 		}
-		tier = t
+	}
+	if len(names) == 0 {
+		return "", nil
+	}
+	if len(names) > 1 {
+		return "", fmt.Errorf("memory clear takes one tier, got %d", len(names))
+	}
+	t, err := memory.ParseTier(names[0])
+	if err != nil {
+		return "", err
+	}
+	return t, nil
+}
+
+func cmdMemoryClear(args []string) {
+	tier, err := parseClearTier(args)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		exitFunc(2)
 	}
 
 	if rc := remoteMemoryClient(); rc != nil {
@@ -724,6 +777,20 @@ func defaultSummarizerConfig() memory.SummarizerConfig {
 	return sumCfg
 }
 
+// flagPresent reports whether --flag appears before a literal "--", as
+// "--flag", "--flag value" or "--flag=value", whatever its value is.
+func flagPresent(args []string, flag string) bool {
+	for _, a := range args {
+		if a == "--" {
+			return false
+		}
+		if a == flag || strings.HasPrefix(a, flag+"=") {
+			return true
+		}
+	}
+	return false
+}
+
 func cmdMemoryReflect(args []string) {
 	dryRun := hasFlag(args, "--dry-run")
 	revertID := getFlag(args, "--revert")
@@ -736,6 +803,15 @@ func cmdMemoryReflect(args []string) {
 	if listRuns && (dryRun || revertID != "") {
 		fmt.Fprintln(os.Stderr, "error: cannot use --list with --dry-run or --revert")
 		exitFunc(1)
+	}
+
+	if !listRuns {
+		for _, fl := range []string{"--limit", "--json"} {
+			if flagPresent(args, fl) {
+				fmt.Fprintf(os.Stderr, "error: %s only applies to 'memory reflect --list'; refusing to run a reflection cycle\n", fl)
+				exitFunc(2)
+			}
+		}
 	}
 
 	mgr := openMemoryManager()

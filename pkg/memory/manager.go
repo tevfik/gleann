@@ -212,9 +212,68 @@ func (m *Manager) MarkSuspect(changedFiles []string, changedSymbols []string) (i
 	return m.store.MarkSuspect(changedFiles, changedSymbols)
 }
 
+// minBlockIDPrefix is the shortest ID prefix Forget accepts: the 8 characters
+// list and search display.
+const minBlockIDPrefix = 8
+
 // Forget removes a memory block by ID, by a unique ID prefix, or by content
 // match. This is the /forget command equivalent.
+//
+// A content phrase that matches more than one block deletes nothing and
+// returns a *ForgetAmbiguousError listing the matches; ForgetAll deletes them
+// all when the caller asked for that explicitly (CLI --all, REST ?all=true,
+// MCP "all": true, TUI /forget --all).
 func (m *Manager) Forget(idOrQuery string) (int, error) {
+	return m.forget(idOrQuery, false)
+}
+
+// ForgetAll is Forget that also deletes every block of a multi-block content
+// match. An ID or ID prefix still addresses exactly one block.
+func (m *Manager) ForgetAll(idOrQuery string) (int, error) {
+	return m.forget(idOrQuery, true)
+}
+
+// ForgetMatch is one block a refused Forget would have deleted.
+type ForgetMatch struct {
+	ID      string `json:"id"`
+	Tier    Tier   `json:"tier"`
+	Label   string `json:"label,omitempty"`
+	Excerpt string `json:"excerpt"`
+}
+
+// ForgetAmbiguousError is returned by Forget when a content phrase matches
+// several blocks and the caller did not ask to delete them all. Nothing was
+// deleted.
+type ForgetAmbiguousError struct {
+	Query   string
+	Matches []ForgetMatch
+}
+
+func (e *ForgetAmbiguousError) Error() string {
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "%q matches %d memory blocks; nothing was deleted. Use a block ID, or ask for all of them (CLI --all, REST ?all=true, MCP \"all\": true, TUI /forget --all):", e.Query, len(e.Matches))
+	for _, mt := range e.Matches {
+		fmt.Fprintf(&sb, "\n  %s  [%s] %s", shortBlockID(mt.ID), mt.Tier, mt.Excerpt)
+	}
+	return sb.String()
+}
+
+func shortBlockID(id string) string {
+	if len(id) > 8 {
+		return id[:8]
+	}
+	return id
+}
+
+func forgetExcerpt(content string) string {
+	content = strings.Join(strings.Fields(content), " ")
+	if r := []rune(content); len(r) > 60 {
+		return string(r[:60]) + "..."
+	}
+	return content
+}
+
+func (m *Manager) forget(idOrQuery string, all bool) (int, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -223,11 +282,11 @@ func (m *Manager) Forget(idOrQuery string) (int, error) {
 		return 1, nil
 	}
 
-	// Then a unique ID prefix: list and search display only the first 8
-	// characters of the 16-character hex block ID, so `forget a1b2c3d4` has to
-	// address the block it shows. An ambiguous prefix is an error rather than a
-	// fall-through: a hex string can also be phrase text, and deleting on a
-	// guess is worse than asking for a longer prefix.
+	// Then a unique ID prefix of at least minBlockIDPrefix characters (the
+	// length list and search display), so `forget a1b2c3d4` addresses the block
+	// it shows. A hex string can also be phrase text, so a prefix that ALSO
+	// matches block content is refused as ambiguous, as is a prefix shared by
+	// several IDs: deleting on a guess is worse than asking for the full ID.
 	if isBlockIDPrefix(idOrQuery) {
 		blocks, err := m.store.List("")
 		if err != nil {
@@ -241,24 +300,39 @@ func (m *Manager) Forget(idOrQuery string) (int, error) {
 			}
 		}
 		switch len(matches) {
+		case 0:
+			// Not an ID after all: fall through to the phrase match below.
 		case 1:
+			phrase, err := m.store.SearchPhrase(idOrQuery)
+			if err != nil {
+				return 0, err
+			}
+			if len(phrase) > 0 {
+				return 0, fmt.Errorf("%q matches block %s by ID and %d block(s) by content; pass the full 16-character ID to delete that block, or reword the text", idOrQuery, matches[0], len(phrase))
+			}
 			if err := m.store.Delete(matches[0]); err != nil {
 				return 0, fmt.Errorf("deleting memory %s: %w", matches[0], err)
 			}
 			return 1, nil
-		case 0:
-			// Not an ID after all: fall through to the phrase match below.
 		default:
 			return 0, fmt.Errorf("ambiguous memory ID prefix %q matches %d blocks; provide a longer prefix", idOrQuery, len(matches))
 		}
 	}
 
-	// Search for content match and delete all matches.
+	// Search for content match; several matches need an explicit all.
 	// Strict phrase match: ranked search is deliberately loose and must not
 	// drive deletion.
 	blocks, err := m.store.SearchPhrase(idOrQuery)
 	if err != nil {
 		return 0, err
+	}
+
+	if len(blocks) > 1 && !all {
+		amb := &ForgetAmbiguousError{Query: idOrQuery}
+		for _, b := range blocks {
+			amb.Matches = append(amb.Matches, ForgetMatch{ID: b.ID, Tier: b.Tier, Label: b.Label, Excerpt: forgetExcerpt(b.Content)})
+		}
+		return 0, amb
 	}
 
 	count := 0
@@ -275,12 +349,12 @@ func (m *Manager) Forget(idOrQuery string) (int, error) {
 }
 
 // isBlockIDPrefix reports whether idOrQuery looks like the beginning of a
-// memory block ID: at least four characters, all of them hex digits. Block IDs
-// are 16 lowercase hexadecimal characters (blockIDFor), and the CLI shows their
-// first eight, so a short hex run such as "a1b2c3" is read as an ID prefix
-// while anything shorter or non-hex stays a phrase query.
+// memory block ID: at least minBlockIDPrefix characters, all of them hex
+// digits. Block IDs are 16 lowercase hexadecimal characters (blockIDFor), and
+// the CLI shows their first eight, so anything shorter ("2024", "cafe") or
+// non-hex stays a phrase query.
 func isBlockIDPrefix(s string) bool {
-	if len(s) < 4 {
+	if len(s) < minBlockIDPrefix {
 		return false
 	}
 	for i := 0; i < len(s); i++ {

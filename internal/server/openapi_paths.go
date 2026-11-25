@@ -730,7 +730,7 @@ func openAPIPathsBlocks() map[string]any {
 			"delete": map[string]any{
 				"tags":        []string{"blocks"},
 				"summary":     "Forget a memory block",
-				"description": "Removes a specific memory block by ID. Also accepts a content query — all blocks matching the query will be deleted.",
+				"description": "Removes a specific memory block by ID or unique ID prefix (8 or more hex characters). Also accepts a content query: a query that matches one block deletes it; a query that matches several blocks deletes nothing and answers 409 with the matches, unless all=true is given.",
 				"operationId": "deleteBlock",
 				"parameters": []map[string]any{
 					{
@@ -739,6 +739,13 @@ func openAPIPathsBlocks() map[string]any {
 						"required":    true,
 						"description": "Block ID",
 						"schema":      map[string]any{"type": "string"},
+					},
+					{
+						"name":        "all",
+						"in":          "query",
+						"required":    false,
+						"description": "Set to true to delete every block of a multi-block content match",
+						"schema":      map[string]any{"type": "boolean"},
 					},
 				},
 				"responses": map[string]any{
@@ -754,6 +761,26 @@ func openAPIPathsBlocks() map[string]any {
 						},
 					},
 					"404": map[string]any{"description": "Block not found"},
+					"409": map[string]any{
+						"description": "The content query matches several blocks and all=true was not given; nothing was deleted",
+						"content": map[string]any{
+							"application/json": map[string]any{
+								"schema": map[string]any{
+									"type": "object",
+									"properties": map[string]any{
+										"error": map[string]any{"type": "string"},
+										"matches": map[string]any{"type": "array", "items": map[string]any{
+											"type": "object",
+											"properties": map[string]any{
+												"id": map[string]any{"type": "string"}, "tier": map[string]any{"type": "string"},
+												"label": map[string]any{"type": "string"}, "excerpt": map[string]any{"type": "string"},
+											},
+										}},
+									},
+								},
+							},
+						},
+					},
 					"500": map[string]any{"description": "Internal server error"},
 				},
 			},

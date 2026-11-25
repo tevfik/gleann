@@ -134,7 +134,7 @@ func TestRemoteClient(t *testing.T) {
 	}
 
 	// Forget
-	deleted, err := client.Forget("blk-123")
+	deleted, err := client.Forget("blk-123", false)
 	if err != nil {
 		t.Fatalf("Forget failed: %v", err)
 	}

@@ -131,6 +131,19 @@ func (g *GraphStore) GraphDB() GraphDB { return &sqliteGraphDB{g: g.SQLite} }
 // its graph tables hold no data, so the caller can tell "no graph" from an
 // error. The returned handle owns its store; callers must Close it.
 func OpenGraphStore(indexDir, name string) (*GraphStore, error) {
+	return openGraphStoreMode(indexDir, name, false)
+}
+
+// OpenGraphStoreReadOnly is OpenGraphStore for diagnostics (doctor, index
+// info, graph stats): the database is opened read-only, so it is never
+// migrated, created or otherwise written. An index whose schema is older than
+// this binary reads as "no graph" (nil, nil) or an error instead of being
+// upgraded behind the user's back.
+func OpenGraphStoreReadOnly(indexDir, name string) (*GraphStore, error) {
+	return openGraphStoreMode(indexDir, name, true)
+}
+
+func openGraphStoreMode(indexDir, name string, readOnly bool) (*GraphStore, error) {
 	base := filepath.Join(indexDir, name, name)
 	if StoreFormatOf(base) != 2 {
 		return nil, nil
@@ -144,7 +157,12 @@ func OpenGraphStore(indexDir, name string) (*GraphStore, error) {
 		// OpenGraphDB.
 		return nil, nil
 	}
-	st, err := store.Open(base+".db", store.Options{})
+	var st *store.Store
+	if readOnly {
+		st, err = store.OpenReadOnly(base + ".db")
+	} else {
+		st, err = store.Open(base+".db", store.Options{})
+	}
 	if err != nil {
 		return nil, fmt.Errorf("opening index store for graph analysis: %w", err)
 	}

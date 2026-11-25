@@ -62,7 +62,7 @@ func TestRemoteClient_ServerErrors(t *testing.T) {
 			check("Context", err)
 			_, err = r.Add(TierLong, "l", "c", nil)
 			check("Add", err)
-			_, err = r.Forget("x")
+			_, err = r.Forget("x", false)
 			check("Forget", err)
 			_, err = r.Clear(TierShort)
 			check("Clear", err)
@@ -87,7 +87,7 @@ func TestRemoteClient_UndecodableReplies(t *testing.T) {
 	_, cases["decode blocks"] = r.Search("q")
 	_, cases["decode stats"] = r.Stats()
 	_, cases["decode block"] = r.AddBlock(&Block{Tier: TierLong, Content: "c"})
-	_, cases["decode delete"] = r.Forget("id")
+	_, cases["decode delete"] = r.Forget("id", false)
 	_, cases["decode clear"] = r.Clear("")
 	_, cases["decode compact"] = r.Compact(0)
 	for want, err := range cases {
@@ -115,7 +115,7 @@ func TestRemoteClient_ServerDown(t *testing.T) {
 	if _, err := r.AddBlock(&Block{Content: "c"}); err == nil {
 		t.Error("AddBlock succeeded")
 	}
-	if _, err := r.Forget("x"); err == nil {
+	if _, err := r.Forget("x", false); err == nil {
 		t.Error("Forget succeeded")
 	}
 	if _, err := r.Clear(""); err == nil {
@@ -126,7 +126,7 @@ func TestRemoteClient_ServerDown(t *testing.T) {
 	}
 	// An invalid base URL fails while building the DELETE request.
 	bad := NewRemoteClient("http://bad host")
-	if _, err := bad.Forget("x"); err == nil {
+	if _, err := bad.Forget("x", false); err == nil {
 		t.Error("Forget with an invalid URL succeeded")
 	}
 	if _, err := bad.Clear(""); err == nil {

@@ -570,7 +570,11 @@ func TestSearchFilterSpecMatchesHandler(t *testing.T) {
 		t.Fatal("spec lists no operator enum")
 	}
 	for _, o := range enum {
-		if err := (gleann.MetadataFilter{Field: "f", Operator: gleann.FilterOperator(o)}).Validate(); err != nil {
+		mf := gleann.MetadataFilter{Field: "f", Operator: gleann.FilterOperator(o)}
+		if o == "in" || o == "nin" {
+			mf.Value = []any{"x"}
+		}
+		if err := mf.Validate(); err != nil {
 			t.Errorf("spec operator %q is refused by the server: %v", o, err)
 		}
 	}
@@ -597,6 +601,26 @@ func TestSearchFilterSpecMatchesHandler(t *testing.T) {
 		"missing operator":       `{"query":"q","metadata_filters":[{"field":"kind","value":"x"}]}`,
 		"unknown operator":       `{"query":"q","metadata_filters":[{"field":"kind","operator":"equals","value":"x"}]}`,
 		"missing field":          `{"query":"q","metadata_filters":[{"operator":"eq","value":"x"}]}`,
+	} {
+		r := httptest.NewRequest(http.MethodPost, "/api/indexes/test/search", strings.NewReader(body))
+		r.SetPathValue("name", "test")
+		w := httptest.NewRecorder()
+		s.handleSearch(w, r)
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("%s: status %d, want 400 (body %s)", name, w.Code, w.Body.String())
+		}
+	}
+}
+
+// REST rejects a null or non-array in/nin operand with 400, like the CLI.
+func TestSearchRejectsNullInOperand(t *testing.T) {
+	cfg := gleann.DefaultConfig()
+	cfg.IndexDir = t.TempDir()
+	s := &Server{config: cfg, searchers: make(map[string]*gleann.LeannSearcher)}
+	for name, body := range map[string]string{
+		"null in":    `{"query":"q","metadata_filters":[{"field":"tags","operator":"in","value":null}]}`,
+		"string nin": `{"query":"q","metadata_filters":[{"field":"tags","operator":"nin","value":"go"}]}`,
+		"missing in": `{"query":"q","metadata_filters":[{"field":"tags","operator":"in"}]}`,
 	} {
 		r := httptest.NewRequest(http.MethodPost, "/api/indexes/test/search", strings.NewReader(body))
 		r.SetPathValue("name", "test")

@@ -35,9 +35,12 @@ Options:
   --filter <expr>         Keep only results whose metadata matches 'field op value'
                           (repeatable). Operators: eq, ne, gt, gte, lt, lte, in,
                           nin, contains, startswith, endswith, exists; the value
-                          may be omitted for exists (e.g. --filter 'lang exists').
-                          A value that parses as JSON (number, bool, array, object,
-                          quoted string) is compared as that type, otherwise as a string
+                          may be omitted for exists (--filter 'lang exists';
+                          'lang exists false' keeps passages without it).
+                          The value is everything after the operator, verbatim: a
+                          string ('version eq 1.10' compares "1.10"), a number for
+                          gt/gte/lt/lte, a JSON array for in/nin. Quote it to keep
+                          edge spaces: 'title eq "a  b "'. Operators are lower case.
   --explain               Show why each result matched: most important segments
                           and BM25 term weights (~70 ms per result)
   --json                  Output results as JSON
@@ -134,6 +137,13 @@ func cmdSearch(args []string) {
 		exitFunc(2)
 	}
 
+	// Validate --filter before any backend init so a typo fails fast.
+	filters, err := parseCLIFilters(args)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "error: "+err.Error())
+		exitFunc(2)
+	}
+
 	config := getConfig(args)
 	asJSON := hasFlag(args, "--json")
 	searchAll := hasFlag(args, "--all")
@@ -198,11 +208,6 @@ func cmdSearch(args []string) {
 	}
 	if kind := getFlag(args, "--kind"); kind != "" {
 		searchOpts = append(searchOpts, gleann.WithKind(kind))
-	}
-	filters, err := parseCLIFilters(args)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "error: "+err.Error())
-		exitFunc(2)
 	}
 	if len(filters) > 0 {
 		searchOpts = append(searchOpts, gleann.WithMetadataFilter(filters...))

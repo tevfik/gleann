@@ -4,6 +4,10 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"log/slog"
+	"os"
+	"path/filepath"
+	"strings"
 )
 
 // WriterDB exposes the single writer connection pool so another store over
@@ -35,4 +39,38 @@ func (s *Store) BeginWrite(ctx context.Context) (*sql.Tx, error) {
 		return nil, fmt.Errorf("beginning write transaction: %w", err)
 	}
 	return tx, nil
+}
+
+// OpenReadOnly opens an existing index database for diagnostics: both pools
+// are mode=ro with query_only, no migration runs and no pragma is written, so
+// a doctor or info command never modifies the main .db file (its content and
+// mtime stay as they were). SQLite may still create the -wal and -shm side
+// files of a WAL database. A missing file is an error. A database written by
+// an older schema is opened as it is; queries against a table it lacks fail
+// instead of triggering a migration.
+func OpenReadOnly(path string) (*Store, error) {
+	if _, err := os.Stat(path); err != nil {
+		return nil, fmt.Errorf("opening %s read-only: %w", path, err)
+	}
+	slash := filepath.ToSlash(path)
+	if !strings.HasPrefix(slash, "/") {
+		slash = "/" + slash // file:/C:/x on Windows
+	}
+	dsn := "file:" + slash + "?mode=ro&_pragma=busy_timeout(10000)&_pragma=query_only(1)&_pragma=foreign_keys(ON)"
+	writer, err := sql.Open("sqlite", dsn)
+	if err != nil {
+		return nil, fmt.Errorf("opening %s read-only: %w", path, err)
+	}
+	writer.SetMaxOpenConns(1)
+	reader, err := sql.Open("sqlite", dsn)
+	if err != nil {
+		writer.Close()
+		return nil, fmt.Errorf("opening %s read-only: %w", path, err)
+	}
+	s := &Store{path: path, writer: writer, reader: reader, log: slog.Default()}
+	if err := retryBusy(func() error { return reader.PingContext(context.Background()) }); err != nil {
+		s.Close()
+		return nil, fmt.Errorf("opening %s read-only: %w", path, err)
+	}
+	return s, nil
 }

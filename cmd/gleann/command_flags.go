@@ -69,7 +69,7 @@ var indexFlagSets = map[string]flagSet{
 var memoryFlagSets = map[string]flagSet{
 	"remember":     {"--tag": true, "--label": true, "--scope": true},
 	"add":          {"--tag": true, "--label": true},
-	"forget":       {},
+	"forget":       {"--all": false},
 	"list":         {"--tier": true, "--json": false},
 	"search":       {"--json": false},
 	"clear":        {"--tier": true},

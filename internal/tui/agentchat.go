@@ -491,7 +491,7 @@ func (ac *agentChat) commands() []agenttui.SlashCommand {
 			return fmt.Sprintf("✅ Remembered [%s]: %s", b.ID[:8], arg)
 		}),
 		{
-			Name: "forget", Description: "Forget memories matching a query or ID (asks first)", Usage: "<query|id>",
+			Name: "forget", Description: "Forget the memory matching a query or ID (asks first; several matches need --all)", Usage: "[--all] <query|id>",
 			Handler: func(ctx context.Context, args []string, a *agenttui.App) (string, bool, error) {
 				arg := strings.TrimSpace(strings.Join(args, " "))
 				if msg := ac.withState(func(cm *ChatModel) string {
@@ -505,11 +505,21 @@ func (ac *agentChat) commands() []agenttui.SlashCommand {
 				}); msg != "" {
 					return msg, true, nil
 				}
+				all := false
+				if rest, ok := strings.CutPrefix(arg, "--all "); ok && strings.TrimSpace(rest) != "" {
+					all, arg = true, strings.TrimSpace(rest)
+				}
 				if !confirm(ctx, ac.prompter(a), fmt.Sprintf("Permanently forget every memory matching %q?", arg)) {
 					return "Nothing forgotten.", true, nil
 				}
 				return ac.withState(func(cm *ChatModel) string {
-					n, err := cm.memoryMgr.Forget(arg)
+					var n int
+					var err error
+					if all {
+						n, err = cm.memoryMgr.ForgetAll(arg)
+					} else {
+						n, err = cm.memoryMgr.Forget(arg)
+					}
 					if err != nil {
 						return "⚠ " + err.Error()
 					}

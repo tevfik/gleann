@@ -18,6 +18,7 @@ package mcp
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -308,13 +309,17 @@ func contradictionNotice(b *memory.Block) string {
 func (s *Server) buildMemoryForgetTool() mcpsdk.Tool {
 	return mcpsdk.Tool{
 		Name:        "memory_forget",
-		Description: "Remove a memory block by its ID, or delete all blocks whose content matches the given query string. Destructive: use this only when a remembered fact is wrong or obsolete, after checking memory_search to be sure you are deleting the right block.",
+		Description: "Remove a memory block by its ID (or unique ID prefix of 8+ hex characters), or delete the block whose content matches the given query string. A query that matches several blocks deletes nothing and lists them; pass all=true to delete every match. Destructive: use this only when a remembered fact is wrong or obsolete, after checking memory_search to be sure you are deleting the right block.",
 		InputSchema: mcpsdk.ToolInputSchema{
 			Type: "object",
 			Properties: map[string]interface{}{
 				"id_or_query": map[string]interface{}{
 					"type":        "string",
 					"description": "Block ID to delete exactly, or a content snippet to match against (first exact ID match wins)",
+				},
+				"all": map[string]interface{}{
+					"type":        "boolean",
+					"description": "Delete every block of a multi-block content match (default false: several matches delete nothing and are listed)",
 				},
 			},
 			Required: []string{"id_or_query"},
@@ -333,10 +338,16 @@ func (s *Server) handleMemoryForget(ctx context.Context, req mcpsdk.CallToolRequ
 		return mcpsdk.NewToolResultError("id_or_query is required"), nil
 	}
 
+	all, _ := args["all"].(bool)
+
 	if rc := remoteMemoryClient(); rc != nil {
-		n, err := rc.Forget(idOrQuery)
+		n, err := rc.Forget(idOrQuery, all)
 		if err == nil {
 			return mcpsdk.NewToolResultText(fmt.Sprintf("Forgot %d block(s) matching %q.", n, idOrQuery)), nil
+		}
+		var amb *memory.ForgetAmbiguousError
+		if errors.As(err, &amb) {
+			return mcpsdk.NewToolResultError(err.Error()), nil
 		}
 		// Remote call failed; fallback to local store below
 	}
@@ -346,7 +357,12 @@ func (s *Server) handleMemoryForget(ctx context.Context, req mcpsdk.CallToolRequ
 		return mcpsdk.NewToolResultError("open memory store: " + err.Error()), nil
 	}
 
-	n, err := mgr.Forget(idOrQuery)
+	var n int
+	if all {
+		n, err = mgr.ForgetAll(idOrQuery)
+	} else {
+		n, err = mgr.Forget(idOrQuery)
+	}
 	if err != nil {
 		return mcpsdk.NewToolResultError(err.Error()), nil
 	}

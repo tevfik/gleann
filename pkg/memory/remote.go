@@ -414,9 +414,14 @@ func (r *RemoteClient) AddBlock(b *Block) (*Block, error) {
 	return &created, nil
 }
 
-// Forget deletes blocks matching an exact ID or content query string.
-func (r *RemoteClient) Forget(idOrQuery string) (int, error) {
+// Forget deletes blocks matching an exact ID or content query string. With
+// all false, a content match of several blocks is refused with a
+// *ForgetAmbiguousError (HTTP 409); all true sets ?all=true.
+func (r *RemoteClient) Forget(idOrQuery string, all bool) (int, error) {
 	u := fmt.Sprintf("%s/api/blocks/%s", r.base, url.PathEscape(idOrQuery))
+	if all {
+		u += "?all=true"
+	}
 	req, err := http.NewRequest(http.MethodDelete, u, nil)
 	if err != nil {
 		return 0, err
@@ -426,6 +431,16 @@ func (r *RemoteClient) Forget(idOrQuery string) (int, error) {
 		return 0, err
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusConflict {
+		body, _ := io.ReadAll(resp.Body)
+		var amb struct {
+			Matches []ForgetMatch `json:"matches"`
+		}
+		if json.Unmarshal(body, &amb) == nil && len(amb.Matches) > 1 {
+			return 0, &ForgetAmbiguousError{Query: idOrQuery, Matches: amb.Matches}
+		}
+		return 0, fmt.Errorf("server %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
 	if resp.StatusCode != http.StatusOK {
 		return 0, decodeError(resp)
 	}

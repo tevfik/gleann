@@ -168,6 +168,12 @@ CLI flags override both defaults and config file values.
 --graph                 # Enrich results with AST and/or hierarchical document context
 --kind <code|docs|all>  # Filter search results by content kind
 --one-per-file          # Return at most one result per file
+--filter '<f> <op> <v>' # Metadata filter, repeatable (also for `ask`). Operators: eq, ne, gt, gte, lt, lte,
+                        # in, nin, contains, startswith, endswith, exists. The value is everything after the
+                        # operator, verbatim, as a string ('version eq 1.10'); a number for gt/gte/lt/lte;
+                        # a JSON array for in/nin; quote it to keep edge spaces ('title eq "a  b "').
+                        # 'lang exists' keeps passages with the field, 'lang exists false' those without.
+                        # A missing value, an empty --filter= or a bad operator exits 2.
 --explain               # Show why each result matched: most important segments
                         # (occlusion, 8 segments ≈ 70 ms/result) and BM25 term weights
 --include-tests         # Include test files in search results

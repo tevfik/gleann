@@ -2,6 +2,8 @@ package main
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -22,11 +24,11 @@ func TestParseCLIFilter(t *testing.T) {
 	}{
 		{name: "string value", expr: "lang eq go", field: "lang", op: gleann.OpEqual, hasVal: true, value: "go"},
 		{name: "number decodes as number", expr: "loc gt 100", field: "loc", op: gleann.OpGreaterThan, hasVal: true, value: float64(100)},
-		{name: "bool decodes as bool", expr: "archived eq false", field: "archived", op: gleann.OpEqual, hasVal: true, value: false},
+		{name: "eq value stays a string", expr: "archived eq false", field: "archived", op: gleann.OpEqual, hasVal: true, value: "false"},
 		{name: "quoted string decodes", expr: `name eq "hello world"`, field: "name", op: gleann.OpEqual, hasVal: true, value: "hello world"},
 		{name: "array decodes", expr: "tags in [\"go\", \"api\"]", field: "tags", op: gleann.OpIn, hasVal: true, value: []any{"go", "api"}},
-		{name: "exists unary, no value", expr: "lang exists", field: "lang", op: gleann.OpExists, hasVal: false},
-		{name: "operator case-insensitive", expr: "kind EQ code", field: "kind", op: gleann.OpEqual, hasVal: true, value: "code"},
+		{name: "exists unary means true", expr: "lang exists", field: "lang", op: gleann.OpExists, hasVal: true, value: true},
+		{name: "exists false", expr: "lang exists false", field: "lang", op: gleann.OpExists, hasVal: true, value: false},
 		{name: "startswith", expr: "source startswith internal/", field: "source", op: gleann.OpStartsWith, hasVal: true, value: "internal/"},
 	}
 	for _, tc := range cases {
@@ -65,6 +67,17 @@ func TestParseCLIFilterRejectsBad(t *testing.T) {
 		"  ",              // empty
 		" eq go",          // missing field -> Fields gives ["eq","go"] -> field "eq" valid? operator "go" unknown -> rejected
 		"loc between 1 5", // not an operator
+		"lang eq",         // missing value
+		"lang eq   ",      // missing value
+		"kind EQ code",    // operators are case-sensitive like REST/MCP
+		"loc gt many",     // gt needs a number
+		"tags in go",      // in needs a JSON array
+		"a exists maybe",  // exists takes true/false
+		`t eq "unterminated`,
+		"loc lte NaN",  // not a finite number
+		"loc gt Inf",   // not a finite number
+		"loc gt -Inf",  // not a finite number
+		"tags in null", // needs a non-null array
 	}
 	for _, expr := range bad {
 		if f, err := parseCLIFilter(expr); err == nil {
@@ -168,5 +181,109 @@ func TestFilterFlagsListedInHelp(t *testing.T) {
 	ah := captureHelp(t, func() { printCmdAskUsage() })
 	if !strings.Contains(ah, "--filter") {
 		t.Error("ask --help must document --filter")
+	}
+}
+
+// TestParseCLIFilterExistsEvaluates runs the parsed filter through the engine:
+// 'exists' keeps passages WITH the field, 'exists false' those without.
+func TestParseCLIFilterExistsEvaluates(t *testing.T) {
+	with := map[string]any{"author": "x"}
+	without := map[string]any{"other": "x"}
+	for expr, want := range map[string][2]bool{
+		"author exists":       {true, false},
+		"author exists true":  {true, false},
+		"author exists false": {false, true},
+	} {
+		f, err := parseCLIFilter(expr)
+		if err != nil {
+			t.Fatalf("%q: %v", expr, err)
+		}
+		e := gleann.NewMetadataFilterEngine([]gleann.MetadataFilter{f})
+		if got := e.Match(with); got != want[0] {
+			t.Errorf("%q on passage with field: got %v want %v", expr, got, want[0])
+		}
+		if got := e.Match(without); got != want[1] {
+			t.Errorf("%q on passage without field: got %v want %v", expr, got, want[1])
+		}
+	}
+}
+
+// TestParseCLIFilterLossless pins whitespace and numeric-looking strings.
+func TestParseCLIFilterLossless(t *testing.T) {
+	f, err := parseCLIFilter(`title eq "a  b"`)
+	if err != nil || f.Value != "a  b" {
+		t.Fatalf("quoted: %#v %v", f.Value, err)
+	}
+	f, err = parseCLIFilter("title eq a  b")
+	if err != nil || f.Value != "a  b" {
+		t.Fatalf("verbatim rest: %#v %v", f.Value, err)
+	}
+	f, err = parseCLIFilter("version eq 1.10")
+	if err != nil || f.Value != "1.10" {
+		t.Fatalf("1.10 must stay a string: %#v %v", f.Value, err)
+	}
+	e := gleann.NewMetadataFilterEngine([]gleann.MetadataFilter{f})
+	if !e.Match(map[string]any{"version": "1.10"}) {
+		t.Error("version eq 1.10 must match \"1.10\"")
+	}
+}
+
+// TestParseCLIFiltersEmptyAndDangling rejects --filter= and a trailing --filter.
+func TestParseCLIFiltersEmptyAndDangling(t *testing.T) {
+	for _, args := range [][]string{{"i", "q", "--filter="}, {"i", "q", "--filter"}} {
+		if _, err := parseCLIFilters(args); err == nil {
+			t.Errorf("%v accepted", args)
+		}
+	}
+	if fs, err := parseCLIFilters([]string{"i", "q", "--", "--filter="}); err != nil || fs != nil {
+		t.Errorf("after -- is text: %v %v", fs, err)
+	}
+}
+
+// TestSearchFilterValidatedBeforeBackendInit: a bad --filter exits 2 even when
+// the config points at an unreachable embedder, before any init.
+func TestSearchFilterEmptyExitsTwo(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	t.Setenv("XDG_CONFIG_HOME", home)
+	t.Setenv("XDG_DATA_HOME", home)
+	code := runExit(t, func() {
+		cmdSearch([]string{"no-such-index", "q", "--filter="})
+	})
+	if code != 2 {
+		t.Fatalf("empty --filter=: exit %d, want 2", code)
+	}
+}
+
+// TestMemoryReflectLimitJSONNeedList: --limit/--json without --list exit 2 and
+// never open the memory manager or run a cycle.
+func TestMemoryReflectLimitJSONNeedList(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	t.Setenv("XDG_CONFIG_HOME", home)
+	t.Setenv("XDG_DATA_HOME", home)
+	t.Setenv("GLEANN_MEMORY_DIR", filepath.Join(home, "mem"))
+	for _, args := range [][]string{{"--limit", "5"}, {"--json"}, {"--limit", "5", "--json"}, {"--limit=5"}, {"--limit=0"}, {"--json=no"}} {
+		code := runExit(t, func() { cmdMemoryReflect(args) })
+		if code != 2 {
+			t.Errorf("reflect %v: exit %d, want 2", args, code)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(home, "mem")); err == nil {
+		t.Error("memory dir created: reflect proceeded past flag check")
+	}
+}
+
+// Unquoted values lose trailing whitespace; quoted ones keep it.
+func TestParseCLIFilterTrimsTrailingSpace(t *testing.T) {
+	f, err := parseCLIFilter("lang eq go \t")
+	if err != nil || f.Value != "go" {
+		t.Fatalf("unquoted: %#v %v", f.Value, err)
+	}
+	f, err = parseCLIFilter(`lang eq "go "`)
+	if err != nil || f.Value != "go " {
+		t.Fatalf("quoted: %#v %v", f.Value, err)
 	}
 }

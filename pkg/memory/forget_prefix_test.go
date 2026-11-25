@@ -38,10 +38,10 @@ func putBlockWithID(t *testing.T, mgr *Manager, id, content string) {
 
 func TestForgetIDPrefixUnique(t *testing.T) {
 	cases := []struct{ id, prefix, content string }{
-		{"a1b2c3d4e5f60718", "a1b2", "the build gate is go vet"},
+		{"a1b2c3d4e5f60718", "a1b2c3d4", "the build gate is go vet"},
 		{"b2c3d4e5f607189a", "b2c3d4e5", "changelog bullets go under Unreleased"},
 		{"c3d4e5f607189a1b", "c3d4e5f607189a1", "one writer per index database"},
-		{"d4e5f607189a1b2c", "D4E5F6", "kuzu was dropped in v1.20"},
+		{"d4e5f607189a1b2c", "D4E5F607", "kuzu was dropped in v1.20"},
 	}
 	mgr := newForgetStore(t)
 	for _, c := range cases {
@@ -121,5 +121,51 @@ func TestForgetIDPrefixTooShortStaysPhrase(t *testing.T) {
 	}
 	if _, err := mgr.Forget("ab ab"); err != nil {
 		t.Errorf("phrase forget after a short prefix failed: %v", err)
+	}
+}
+
+// Second review F1: a hex-looking content word must never delete the block
+// whose ID happens to start with it.
+func TestForgetHexContentWordDoesNotDeleteByShortPrefix(t *testing.T) {
+	mgr := newForgetStore(t)
+	putBlockWithID(t, mgr, "2024aaaaaaaaaaaa", "unrelated architecture decision")
+	putBlockWithID(t, mgr, "bbbbbbbbbbbbbbbb", "release notes for 2024")
+
+	for _, q := range []string{"2024", "2024aa", "2024aaa"} {
+		if _, err := mgr.Forget(q); err == nil {
+			// "2024" matches content of block b; "2024aa*" matches nothing.
+			if q != "2024" {
+				t.Errorf("Forget(%q) succeeded, want no match", q)
+			}
+		}
+	}
+	blocks, _ := mgr.store.List("")
+	for _, b := range blocks {
+		if b.ID == "2024aaaaaaaaaaaa" {
+			return
+		}
+	}
+	t.Fatal("block 2024aaaa... (unrelated) was deleted by a content word")
+}
+
+// An 8+ hex argument matching both an ID prefix and block content is refused.
+func TestForgetPrefixAndContentBothMatchIsRefused(t *testing.T) {
+	mgr := newForgetStore(t)
+	putBlockWithID(t, mgr, "deadbeef00000001", "unrelated decision")
+	putBlockWithID(t, mgr, "bbbbbbbbbbbbbbbb", "the marker deadbeef is a magic value")
+
+	n, err := mgr.Forget("deadbeef")
+	if err == nil || n != 0 {
+		t.Fatalf("Forget(deadbeef) = %d, %v; want refusal", n, err)
+	}
+	if !strings.Contains(err.Error(), "full 16-character ID") {
+		t.Errorf("error should say to pass the full ID: %v", err)
+	}
+	if blocks, _ := mgr.store.List(""); len(blocks) != 2 {
+		t.Errorf("a block was deleted: %v", blocks)
+	}
+	// The full ID still works.
+	if n, err := mgr.Forget("deadbeef00000001"); err != nil || n != 1 {
+		t.Errorf("full ID forget = %d, %v", n, err)
 	}
 }

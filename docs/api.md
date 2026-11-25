@@ -172,7 +172,7 @@ Hierarchical memory store (SQLite, `memory.sqlite`) with three tiers (short, med
 | GET | `/api/blocks` | List memory blocks (optional `?tier=short\|medium\|long`, `?scope=`) |
 | POST | `/api/blocks` | Store a new memory block (supports `char_limit`, `scope` fields) |
 | DELETE | `/api/blocks` | Clear blocks (optional `?tier=` filter) |
-| DELETE | `/api/blocks/{id}` | Delete a specific block by ID |
+| DELETE | `/api/blocks/{id}` | Delete a block by ID, unique ID prefix (8+ hex characters) or content query. A query matching several blocks deletes nothing and answers `409` with `{"error", "matches":[{id,tier,label,excerpt}]}`; add `?all=true` to delete them all |
 | GET | `/api/blocks/search` | Full-text search across all tiers (`?q=` query, optional `?scope=`) |
 | GET | `/api/blocks/context` | Compiled memory context (optional `?scope=`, `?format=xml`, `?command=`, `?paths=`, `?symbols=`) |
 | GET | `/api/blocks/stats` | Storage statistics per tier |
@@ -192,7 +192,7 @@ Use gleann indexes as if they were OpenAI models. Compatible with any tool that 
 
 **Model naming**: `"gleann/<index-name>"` for RAG-augmented answers, `"gleann/"` for pure LLM pass-through.
 
-`GET /v1/models` lists every index as an OpenAI model object and also includes
+`GET /v1/models` lists the indexes the caller can access (MCP exposure and `GLEANN_TAGS` governance apply) as OpenAI model objects and also includes
 the `gleann/` entry (the empty index name), which routes a completion straight
 to the LLM with no index retrieval.
 
@@ -451,7 +451,7 @@ incomplete. The field is absent for a healthy index.
 conditions (`filter_logic`: `and`, the default, or `or`). Each condition is
 `{"field": ..., "operator": ..., "value": ...}`; operators are `eq`, `ne`,
 `gt`, `gte`, `lt`, `lte`, `in`, `nin`, `contains`, `startswith`, `endswith`,
-`exists`; a condition with another key (`op` is not `operator`), a missing field or a missing or unknown operator answers `400`. Fields understand the `type`/`kind` and `source`/`file` aliases and
+`exists`; `in` and `nin` take a JSON array as `value` (`null` or a scalar answers `400`), `gt`/`gte`/`lt`/`lte` a finite number, and `exists` a boolean; a condition with another key (`op` is not `operator`), a missing field or a missing or unknown operator answers `400`. Fields understand the `type`/`kind` and `source`/`file` aliases and
 derive `ext` from the file path. Filters are applied during retrieval, not
 after it: a selective filter still returns `top_k` results when that many
 passages match — the candidate pool widens until k pass (sized from the

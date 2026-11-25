@@ -19,6 +19,7 @@ package server
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -313,8 +314,20 @@ func (s *Server) handleDeleteBlock(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	n, err := mgr.Forget(id)
+	var n int
+	if r.URL.Query().Get("all") == "true" {
+		n, err = mgr.ForgetAll(id)
+	} else {
+		n, err = mgr.Forget(id)
+	}
 	if err != nil {
+		var amb *memory.ForgetAmbiguousError
+		if errors.As(err, &amb) {
+			// 409: the content phrase names several blocks and all=true was
+			// not given. Nothing was deleted; the body lists the matches.
+			writeJSON(w, http.StatusConflict, map[string]any{"error": err.Error(), "matches": amb.Matches})
+			return
+		}
 		writeError(w, http.StatusNotFound, err.Error())
 		return
 	}

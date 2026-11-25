@@ -53,10 +53,10 @@ func childEnv(isolated map[string]string) []string {
 	return out
 }
 
-// resolveBinary returns a gleann binary to drive: a prebuilt build/gleann-full
-// or build/gleann when one exists, otherwise a fresh `go build ./cmd/gleann`
-// in a temporary directory. A failed build is a failure, never a skip: CI must
-// actually run this test.
+// resolveBinary returns a gleann binary to drive: the one named by
+// GLEANN_E2E_BINARY when set, otherwise a fresh `go build ./cmd/gleann` in a
+// temporary directory (a stale build/ binary is never picked up). A failed
+// build is a failure, never a skip: CI must actually run this test.
 func resolveBinary(t *testing.T, repoRoot string) string {
 	t.Helper()
 
@@ -64,11 +64,11 @@ func resolveBinary(t *testing.T, repoRoot string) string {
 	if runtime.GOOS == "windows" {
 		exe = ".exe"
 	}
-	for _, name := range []string{"gleann-full", "gleann"} {
-		path := filepath.Join(repoRoot, "build", name+exe)
-		if _, err := os.Stat(path); err == nil {
-			return path
+	if path := os.Getenv("GLEANN_E2E_BINARY"); path != "" {
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("GLEANN_E2E_BINARY %q: %v", path, err)
 		}
+		return path
 	}
 
 	bin := filepath.Join(t.TempDir(), "gleann-e2e"+exe)
@@ -82,7 +82,7 @@ func resolveBinary(t *testing.T, repoRoot string) string {
 
 // TestE2ECLI_IndexAndSearch tests the basic CLI workflow of building an index and searching it.
 // This is a native Go E2E test designed to gradually replace the bash-based run.sh script.
-// It builds the binary itself when build/ does not have one, so `go test ./...` in CI
+// It always builds the binary itself (unless GLEANN_E2E_BINARY names one), so `go test ./...` in CI
 // exercises the real CLI instead of skipping.
 func TestE2ECLI_IndexAndSearch(t *testing.T) {
 	// Skip if running in short mode
@@ -169,4 +169,31 @@ func TestE2ECLI_IndexAndSearch(t *testing.T) {
 			t.Errorf("memory dir %s is empty after writing a memory", db)
 		}
 	})
+}
+
+// TestResolveBinaryIgnoresStaleBuildDir: a build/gleann left in the tree must
+// not be used; the binary comes from a fresh build (or GLEANN_E2E_BINARY).
+func TestResolveBinaryIgnoresStaleBuildDir(t *testing.T) {
+	root := t.TempDir()
+	must := func(err error) {
+		t.Helper()
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	must(os.MkdirAll(filepath.Join(root, "build"), 0o755))
+	must(os.MkdirAll(filepath.Join(root, "cmd", "gleann"), 0o755))
+	exe := ""
+	if runtime.GOOS == "windows" {
+		exe = ".exe"
+	}
+	stale := filepath.Join(root, "build", "gleann"+exe)
+	must(os.WriteFile(stale, []byte("stale"), 0o755))
+	must(os.WriteFile(filepath.Join(root, "go.mod"), []byte("module fake\n\ngo 1.21\n"), 0o644))
+	must(os.WriteFile(filepath.Join(root, "cmd", "gleann", "main.go"), []byte("package main\n\nfunc main() {}\n"), 0o644))
+	t.Setenv("GLEANN_E2E_BINARY", "")
+	got := resolveBinary(t, root)
+	if got == stale {
+		t.Fatalf("resolveBinary returned the stale build/ binary %s", got)
+	}
 }

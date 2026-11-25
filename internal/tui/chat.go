@@ -2556,7 +2556,14 @@ func (m ChatModel) handleSlashCommand(input string) (tea.Model, tea.Cmd, bool) {
 			}
 			m.messages = append(m.messages, chatMsg{role: "system", content: msg})
 		} else {
-			count, err := m.memoryMgr.Forget(query)
+			var count int
+			var err error
+			if rest, ok := strings.CutPrefix(query, "--all "); ok && strings.TrimSpace(rest) != "" {
+				query = strings.TrimSpace(rest)
+				count, err = m.memoryMgr.ForgetAll(query)
+			} else {
+				count, err = m.memoryMgr.Forget(query)
+			}
 			if err != nil {
 				m.messages = append(m.messages, chatMsg{role: "system", content: "⚠ " + err.Error()})
 			} else {

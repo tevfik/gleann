@@ -475,3 +475,27 @@ func TestH2cAgentStreamWithMemoryAndImages(t *testing.T) {
 		t.Errorf("source card must carry the index name: %+v", sources)
 	}
 }
+
+// /forget with several content matches is refused unless --all is given.
+func TestH2cAgentForgetMultiMatchNeedsAll(t *testing.T) {
+	h2cHome(t)
+	ac := newTestAgentChat(nil)
+	mgr := withMemory(t, ac)
+	for _, c := range []string{"the sky is blue", "the sky is wide"} {
+		if _, err := mgr.Remember(c); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ac.prompt = &h2cPrompter{ask: func(q agenttui.Question) (string, error) { return "Yes", nil }}
+	out, _ := h2cRun(t, ac, "forget", "sky")
+	if !strings.HasPrefix(out, "⚠ ") || !strings.Contains(out, "the sky is blue") || !strings.Contains(out, "--all") {
+		t.Fatalf("multi-match forget: %q", out)
+	}
+	if blocks, _ := mgr.List(""); len(blocks) != 2 {
+		t.Fatalf("refused forget deleted blocks: %d left", len(blocks))
+	}
+	out, err := h2cRun(t, ac, "forget", "--all", "sky")
+	if err != nil || !strings.Contains(out, "Forgot 2 memory block") {
+		t.Fatalf("forget --all: %q %v", out, err)
+	}
+}

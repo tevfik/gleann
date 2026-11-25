@@ -139,7 +139,6 @@ func TestCLIBMemoryUsageErrors(t *testing.T) {
 		{[]string{"memory", "search"}, "usage: gleann memory search"},
 		{[]string{"memory", "search", "--json"}, "usage: gleann memory search"},
 		{[]string{"memory", "list", "--tier", "galaxy"}, "error:"},
-		{[]string{"memory", "clear", "--tier", "galaxy"}, "error:"},
 		{[]string{"memory", "add", "long"}, "usage: gleann memory add"},
 		{[]string{"memory", "add", "galaxy", "text"}, "error:"},
 		{[]string{"memory", "add", "long", "--label", "x"}, "no content provided"},

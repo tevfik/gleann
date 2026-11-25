@@ -21,7 +21,7 @@ func cmdGraphStats(args []string, config gleann.Config) {
 		fmt.Fprintln(os.Stderr, "usage: gleann graph stats --index <name> [--json]")
 		exitFunc(1)
 	}
-	gs, err := gleann.OpenGraphStore(config.IndexDir, indexName)
+	gs, err := gleann.OpenGraphStoreReadOnly(config.IndexDir, indexName)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: opening the code graph of index %q: %v\n", indexName, err)
 		exitFunc(1)
@@ -86,7 +86,7 @@ func cmdGraphStats(args []string, config gleann.Config) {
 // index still being written by a sync, an unreadable database), so `index info`
 // never fails over a graph it cannot open.
 func graphHealthSummary(indexDir, name string) string {
-	gs, err := gleann.OpenGraphStore(indexDir, name)
+	gs, err := gleann.OpenGraphStoreReadOnly(indexDir, name)
 	if err != nil || gs == nil {
 		return ""
 	}
@@ -131,7 +131,7 @@ func warnStaleGraphs(indexDir string, indexes []gleann.IndexMeta, warn func(stri
 		if !idx.HasGraph {
 			continue
 		}
-		gs, err := gleann.OpenGraphStore(indexDir, idx.Name)
+		gs, err := gleann.OpenGraphStoreReadOnly(indexDir, idx.Name)
 		if err != nil || gs == nil {
 			continue // no graph, or a sync owns the database right now
 		}

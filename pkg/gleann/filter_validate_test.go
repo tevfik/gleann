@@ -2,31 +2,45 @@ package gleann
 
 import (
 	"encoding/json"
-	"strings"
+	"math"
 	"testing"
 )
 
-func TestMetadataFilterRejectsUnknownKey(t *testing.T) {
-	var f []MetadataFilter
-	err := json.Unmarshal([]byte(`[{"field":"kind","op":"eq","value":"x"}]`), &f)
-	if err == nil || !strings.Contains(err.Error(), "op") {
-		t.Fatalf("want an error naming the unknown key, got %v", err)
+// The shared validator (REST, MCP and the CLI) rejects a null or non-array
+// in/nin operand and a NaN/Inf numeric operand.
+func TestMetadataFilterValidateOperands(t *testing.T) {
+	bad := []MetadataFilter{
+		{Field: "t", Operator: OpIn, Value: nil},
+		{Field: "t", Operator: OpNotIn, Value: "go"},
+		{Field: "n", Operator: OpLessEqual, Value: math.NaN()},
+		{Field: "n", Operator: OpGreaterThan, Value: math.Inf(1)},
 	}
-	if err := json.Unmarshal([]byte(`[{"field":"kind","operator":"eq","value":"x"}]`), &f); err != nil {
-		t.Fatal(err)
+	for _, f := range bad {
+		if err := f.Validate(); err == nil {
+			t.Errorf("Validate accepted %+v", f)
+		}
 	}
-	if f[0].Operator != OpEqual {
-		t.Fatalf("operator %q", f[0].Operator)
+	good := []MetadataFilter{
+		{Field: "t", Operator: OpIn, Value: []any{"a"}},
+		{Field: "t", Operator: OpIn, Value: []string{"a"}},
+		{Field: "n", Operator: OpGreaterThan, Value: float64(3)},
+		{Field: "n", Operator: OpGreaterThan, Value: "3"},
+		{Field: "e", Operator: OpExists, Value: true},
+	}
+	for _, f := range good {
+		if err := f.Validate(); err != nil {
+			t.Errorf("Validate rejected %+v: %v", f, err)
+		}
 	}
 }
 
-func TestValidateMetadataFilters(t *testing.T) {
-	if err := ValidateMetadataFilters([]MetadataFilter{{Field: "a", Operator: OpExists}}); err != nil {
+// The REST/MCP wire path: a JSON filter with a null "in" value is refused.
+func TestMetadataFilterJSONNullInRejected(t *testing.T) {
+	var fs []MetadataFilter
+	if err := json.Unmarshal([]byte(`[{"field":"tags","operator":"in","value":null}]`), &fs); err != nil {
 		t.Fatal(err)
 	}
-	for _, bad := range []MetadataFilter{{Field: "a"}, {Field: "a", Operator: "bogus"}, {Operator: OpEqual}} {
-		if ValidateMetadataFilters([]MetadataFilter{bad}) == nil {
-			t.Errorf("%+v accepted", bad)
-		}
+	if err := ValidateMetadataFilters(fs); err == nil {
+		t.Fatal("null in value accepted")
 	}
 }

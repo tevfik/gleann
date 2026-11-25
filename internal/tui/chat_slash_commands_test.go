@@ -640,3 +640,29 @@ func TestLookupContextLimit_FromEnvironment(t *testing.T) {
 		t.Fatalf("unknown model must report 0, got %d", got)
 	}
 }
+
+func TestHandleSlashCommand_ForgetMultiMatchNeedsAll(t *testing.T) {
+	store, err := memory.OpenStore(filepath.Join(t.TempDir(), "mem"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	m := mockChatModel(t)
+	m.memoryMgr = memory.NewManager(store)
+	for _, c := range []string{"the sky is blue", "the sky is wide"} {
+		if _, err := m.memoryMgr.Remember(c); err != nil {
+			t.Fatal(err)
+		}
+	}
+	res, _, _ := m.handleSlashCommand("/forget sky")
+	if got := lastSystemMessage(t, res.(ChatModel)); !strings.Contains(got, "⚠") || !strings.Contains(got, "--all") {
+		t.Fatalf("multi-match /forget: %q", got)
+	}
+	if blocks, _ := m.memoryMgr.List(""); len(blocks) != 2 {
+		t.Fatalf("refused /forget deleted blocks: %d left", len(blocks))
+	}
+	res, _, _ = m.handleSlashCommand("/forget --all sky")
+	if got := lastSystemMessage(t, res.(ChatModel)); !strings.Contains(got, "Forgot 2 memory block(s)") {
+		t.Fatalf("/forget --all: %q", got)
+	}
+}
