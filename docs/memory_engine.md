@@ -468,6 +468,11 @@ gleann memory reflect --dry-run
 # Revert a reflection run by ID (removes added blocks and undoes the run's
 # confirmations; leaves original blocks otherwise untouched)
 gleann memory reflect --revert <run-id>
+
+# List the reflection runs already stored, newest first, without running a
+# cycle (no LLM needed); --limit N caps the list, --json prints the change sets
+gleann memory reflect --list
+gleann memory reflect --list --limit 5 --json
 ```
 
 ## Failure Memory

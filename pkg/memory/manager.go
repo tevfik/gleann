@@ -197,6 +197,14 @@ func (m *Manager) RevertReflection(runID string) (*ChangeSet, error) {
 	return cs, nil
 }
 
+// ListReflections returns persisted reflection runs, newest first. Limit <= 0
+// means no cap.
+func (m *Manager) ListReflections(limit int) ([]*ChangeSet, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.store.ListChangeSets(limit)
+}
+
 // MarkSuspect flags stored memory blocks associated with modified files or symbols as suspect.
 func (m *Manager) MarkSuspect(changedFiles []string, changedSymbols []string) (int, error) {
 	m.mu.Lock()

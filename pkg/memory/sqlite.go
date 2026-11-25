@@ -607,6 +607,39 @@ func (s *Store) GetChangeSet(runID string) (*ChangeSet, error) {
 	return &cs, nil
 }
 
+// ListChangeSets returns persisted reflection runs, newest first. Limit <= 0
+// means no cap.
+func (s *Store) ListChangeSets(limit int) ([]*ChangeSet, error) {
+	query := `SELECT data FROM reflection_runs ORDER BY created_at DESC, run_id DESC`
+	var args []any
+	if limit > 0 {
+		query += ` LIMIT ?`
+		args = append(args, limit)
+	}
+	rows, err := s.reader.Query(query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("listing reflection runs: %w", err)
+	}
+	defer rows.Close()
+
+	var out []*ChangeSet
+	for rows.Next() {
+		var data string
+		if err := rows.Scan(&data); err != nil {
+			return nil, fmt.Errorf("reading reflection runs: %w", err)
+		}
+		var cs ChangeSet
+		if err := json.Unmarshal([]byte(data), &cs); err != nil {
+			return nil, fmt.Errorf("decoding reflection run: %w", err)
+		}
+		out = append(out, &cs)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("listing reflection runs: %w", err)
+	}
+	return out, nil
+}
+
 // DeleteChangeSet removes a change set record by run ID.
 func (s *Store) DeleteChangeSet(runID string) error {
 	return s.writeTx(func(tx *sql.Tx) error {

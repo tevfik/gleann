@@ -82,7 +82,7 @@ var memoryFlagSets = map[string]flagSet{
 	"export":       {"--dir": true},
 	"import":       {"--dir": true},
 	"import-graph": {},
-	"reflect":      {"--dry-run": false, "--revert": true},
+	"reflect":      {"--dry-run": false, "--revert": true, "--list": false, "--json": false, "--limit": true},
 	"failure":      {"--command": true, "--error": true, "--fix": true, "--path": true, "--symbol": true, "--scope": true, "--json": false},
 }
 

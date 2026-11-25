@@ -101,6 +101,7 @@ Usage:
   gleann memory summarize --id <conv-id>          Summarize specific conversation
   gleann memory summarize --last --extract        Also extract individual facts
   gleann memory reflect  [--dry-run]              Run sleep-time reflection cycle
+  gleann memory reflect  --list [--limit N]       List recorded reflection runs (newest first)
   gleann memory reflect  --revert <run-id>        Revert a reflection run change set
   gleann memory prune    [--age <duration>]       Remove old entries
   gleann memory compact  [--min-validity <0-1>]   Prune stale/unreliable blocks (default min validity: 0.2)
@@ -133,6 +134,8 @@ Options:
   --verbose               Print the injection budget report to stderr (memory context)
   --extract               Also extract individual facts (with summarize)
   --dry-run               Preview reflection change set without writing
+  --list                  List stored reflection runs (memory reflect; no LLM needed)
+  --limit <n>             Cap the reflection run list (0 or unset = all runs)
   --revert <run-id>       Revert reflection run by ID
 
 Injection budget:
@@ -167,6 +170,8 @@ Examples:
   gleann memory summarize --last --extract
   gleann memory summarize --id abc12345
   gleann memory prune --age 90d
+  gleann memory reflect --list
+  gleann memory reflect --list --limit 5 --json
   gleann memory stats
   gleann memory context
   gleann memory maintain
@@ -722,14 +727,33 @@ func defaultSummarizerConfig() memory.SummarizerConfig {
 func cmdMemoryReflect(args []string) {
 	dryRun := hasFlag(args, "--dry-run")
 	revertID := getFlag(args, "--revert")
+	listRuns := hasFlag(args, "--list")
 
 	if dryRun && revertID != "" {
 		fmt.Fprintln(os.Stderr, "error: cannot use --dry-run and --revert together")
 		exitFunc(1)
 	}
+	if listRuns && (dryRun || revertID != "") {
+		fmt.Fprintln(os.Stderr, "error: cannot use --list with --dry-run or --revert")
+		exitFunc(1)
+	}
 
 	mgr := openMemoryManager()
 	defer mgr.Close()
+
+	if listRuns {
+		limit := 0
+		if raw := getFlag(args, "--limit"); raw != "" {
+			n, err := strconv.Atoi(raw)
+			if err != nil || n < 0 {
+				fmt.Fprintf(os.Stderr, "error: invalid --limit %q\n", raw)
+				exitFunc(1)
+			}
+			limit = n
+		}
+		printReflectionRuns(mgr, limit, hasFlag(args, "--json"))
+		return
+	}
 
 	if revertID != "" {
 		cs, err := mgr.RevertReflection(revertID)
@@ -810,6 +834,52 @@ func cmdMemoryReflect(args []string) {
 			fmt.Printf("    = ID: %s (confirms %d -> %d)\n", c.ID, c.PriorConfirms, c.PriorConfirms+1)
 		}
 	}
+}
+
+// reflectionRunStatus summarizes what a persisted run did, so `reflect --list`
+// can show an outcome without re-reading the blocks.
+func reflectionRunStatus(cs *memory.ChangeSet) string {
+	if len(cs.BlocksAdded) == 0 && len(cs.BlocksSuperseded) == 0 && len(cs.BlocksConfirmed) == 0 {
+		return "no changes"
+	}
+	return "applied"
+}
+
+// printReflectionRuns lists persisted reflection runs, newest first. It reads
+// only the stored change sets, so it never needs an LLM.
+func printReflectionRuns(mgr *memory.Manager, limit int, asJSON bool) {
+	runs, err := mgr.ListReflections(limit)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		exitFunc(1)
+	}
+
+	if asJSON {
+		if runs == nil {
+			runs = []*memory.ChangeSet{}
+		}
+		data, err := json.MarshalIndent(runs, "", "  ")
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: encoding reflection runs: %v\n", err)
+			exitFunc(1)
+		}
+		fmt.Println(string(data))
+		return
+	}
+
+	if len(runs) == 0 {
+		fmt.Println("No reflection runs recorded.")
+		return
+	}
+
+	fmt.Printf("Reflection runs (%d, newest first):\n", len(runs))
+	for _, cs := range runs {
+		fmt.Printf("  %-12s  %s  added %d, superseded %d, confirmed %d  %s\n",
+			cs.RunID, cs.Timestamp.Format("2006-01-02 15:04:05"),
+			len(cs.BlocksAdded), len(cs.BlocksSuperseded), len(cs.BlocksConfirmed),
+			reflectionRunStatus(cs))
+	}
+	fmt.Println("\nRevert a run with: gleann memory reflect --revert <run-id>")
 }
 
 func cmdMemoryPrune(args []string) {
