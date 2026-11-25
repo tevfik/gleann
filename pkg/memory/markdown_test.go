@@ -473,7 +473,7 @@ func TestWindowsSafeFilenames(t *testing.T) {
 		{"id:with:colons", "id_with_colons-"},
 		{"id*with?wildcards", "id_with_wildcards-"},
 		{"trailing.dot.", "trailing.dot-"},
-		{"trailing space ", "trailing space-"},
+		{"trailing space ", "trailing_space_-"},
 	}
 
 	for _, tc := range cases {

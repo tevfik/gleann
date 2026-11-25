@@ -414,9 +414,9 @@ func TestIndexDirInsideSource_DoesNotResync(t *testing.T) {
 	}
 }
 
-// A busy index is retried inside one task with exponential backoff (doubling,
+// A busy index is resubmitted by a timer with exponential backoff (doubling,
 // capped) and nothing is lost.
-func TestBusyBackoff_OneTaskExponential(t *testing.T) {
+func TestBusyBackoff_TimerExponential(t *testing.T) {
 	manager := NewManager(1)
 	defer manager.Stop()
 	dir := t.TempDir()
@@ -450,12 +450,18 @@ func TestBusyBackoff_OneTaskExponential(t *testing.T) {
 	ai.recordChange(filepath.Join(dir, "a.md"))
 	ai.flushPending()
 
-	tasks := waitAutoIndexTasks(t, manager, 1)
-	if len(tasks) != 1 || tasks[0].Status != StatusCompleted || !strings.Contains(tasks[0].Message, "synced") {
-		t.Fatalf("tasks = %+v, want one synced task", tasks)
+	tasks := waitAutoIndexTasks(t, manager, 6)
+	synced := 0
+	for _, task := range tasks {
+		if task.Status == StatusFailed {
+			t.Fatalf("busy attempt failed its task: %+v", task)
+		}
+		if strings.Contains(task.Message, "synced") {
+			synced++
+		}
 	}
-	if n := len(manager.List("")); n != 1 {
-		t.Errorf("%d tasks, want one per batch", n)
+	if synced != 1 {
+		t.Fatalf("tasks = %+v, want exactly one synced task", tasks)
 	}
 	mu.Lock()
 	defer mu.Unlock()

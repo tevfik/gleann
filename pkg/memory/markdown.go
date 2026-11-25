@@ -7,10 +7,12 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"log"
 	"os"
 	"path"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"sort"
 	"strings"
 	"time"
@@ -117,12 +119,13 @@ func sanitizeFilename(s string) string {
 	}
 	var sb strings.Builder
 	for _, r := range s {
-		// Reserved characters on Windows: < > : " / \ | ? * and ASCII control characters 0-31
-		if r < 32 || r == '<' || r == '>' || r == ':' || r == '"' ||
-			r == '/' || r == '\\' || r == '|' || r == '?' || r == '*' {
-			sb.WriteRune('_')
-		} else {
+		// Only [A-Za-z0-9._-] survive. That excludes every Windows-reserved
+		// character, including ':' (an NTFS alternate data stream marker);
+		// the hash suffix of the generated name keeps sanitized IDs apart.
+		if isSafeNameRune(r) {
 			sb.WriteRune(r)
+		} else {
+			sb.WriteRune('_')
 		}
 	}
 	cleaned := strings.TrimRight(sb.String(), ". ")
@@ -133,6 +136,13 @@ func sanitizeFilename(s string) string {
 		cleaned = "_" + cleaned
 	}
 	return cleaned
+}
+
+// isSafeNameRune reports whether r is in the generated-name character set
+// [A-Za-z0-9._-].
+func isSafeNameRune(r rune) bool {
+	return r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' ||
+		r == '.' || r == '_' || r == '-'
 }
 
 // maxNameRunes bounds the readable part of a file name; the hash suffix keeps
@@ -602,6 +612,8 @@ func (s *Store) applyExportManifest(dir, scope string, written []string) (int, e
 	}
 
 	pruned := 0
+	var skippedPath string
+	skipped := 0
 	for _, name := range manifest.Files[key] {
 		// Manifests are stored with forward slashes; tolerate backslash entries
 		// an older Windows run may have written.
@@ -609,13 +621,24 @@ func (s *Store) applyExportManifest(dir, scope string, written []string) (int, e
 		if keep[name] || name == exportManifestName || !safeExportRelPath(name) || !isExportedFileName(name) {
 			continue
 		}
-		removed, err := removeExportedFile(dir, name)
+		removed, linkAt, err := removeExportedFileReason(dir, name)
+		if linkAt != "" {
+			if skipped == 0 {
+				skippedPath = linkAt
+			}
+			skipped++
+		}
 		if err != nil {
 			return pruned, fmt.Errorf("removing stale export file %s: %w", filepath.Join(dir, name), err)
 		}
 		if removed {
 			pruned++
 		}
+	}
+
+	if skipped > 0 {
+		// One warning per run, however many files were skipped.
+		warnf("warning: memory export: %d stale file(s) not pruned because %s is a symlink, junction or other reparse point (for example a OneDrive folder); gleann never deletes through those. Remove the stale files by hand if wanted", skipped, skippedPath)
 	}
 
 	if manifest.Files == nil {
@@ -643,7 +666,7 @@ func (s *Store) applyExportManifest(dir, scope string, written []string) (int, e
 // exportedFileRe matches the names Export generates: "<name>-<8hex>.md" in the
 // export directory or in its "summaries" subdirectory. A manifest entry with
 // any other shape is never deleted, however it got into the manifest.
-var exportedFileRe = regexp.MustCompile(`^(summaries/)?[^/\\]+-[0-9a-f]{8}\.md$`)
+var exportedFileRe = regexp.MustCompile(`^(summaries/)?[A-Za-z0-9._-]+-[0-9a-f]{8}\.md$`)
 
 func isExportedFileName(name string) bool {
 	return exportedFileRe.MatchString(filepath.ToSlash(name))
@@ -655,9 +678,20 @@ func isExportedFileName(name string) bool {
 // removal. It reports whether a file was deleted; a missing file is not an
 // error.
 func removeExportedFile(dir, name string) (bool, error) {
+	removed, _, err := removeExportedFileReason(dir, name)
+	return removed, err
+}
+
+// warnf reports a non-fatal export problem; a seam so tests can capture it.
+var warnf = log.Printf
+
+// removeExportedFileReason is removeExportedFile that also returns the path
+// of the symlink, junction or reparse point that made it refuse ("" when the
+// refusal had another reason or nothing was refused).
+func removeExportedFileReason(dir, name string) (bool, string, error) {
 	root, err := filepath.EvalSymlinks(dir)
 	if err != nil {
-		return false, err
+		return false, "", err
 	}
 	cur := root
 	parts := strings.Split(filepath.ToSlash(filepath.Clean(name)), "/")
@@ -666,31 +700,32 @@ func removeExportedFile(dir, name string) (bool, error) {
 		fi, err := os.Lstat(cur)
 		if err != nil {
 			if os.IsNotExist(err) {
-				return false, nil
+				return false, "", nil
 			}
-			return false, err
+			return false, "", err
 		}
-		if fi.Mode()&os.ModeSymlink != 0 {
-			return false, nil
+		// Symlinks, Windows junctions and other reparse points are refused.
+		if fileIsLinkLike(fi) {
+			return false, cur, nil
 		}
 		last := i == len(parts)-1
 		if last && !fi.Mode().IsRegular() {
-			return false, nil
+			return false, "", nil
 		}
 		if !last && !fi.IsDir() {
-			return false, nil
+			return false, "", nil
 		}
 	}
 	if rel, err := filepath.Rel(root, cur); err != nil || strings.HasPrefix(rel, "..") {
-		return false, nil
+		return false, "", nil
 	}
 	if err := os.Remove(cur); err != nil {
 		if os.IsNotExist(err) {
-			return false, nil
+			return false, "", nil
 		}
-		return false, err
+		return false, "", err
 	}
-	return true, nil
+	return true, "", nil
 }
 
 // readExportManifest loads the manifest of an export directory. A missing or
@@ -986,7 +1021,10 @@ func (s *Store) planImport(blocks []incomingBlock, summaries []*Summary, stats *
 // with the import, so a failed import leaves the ledger untouched.
 func registerImportedLegacyScopesTx(tx *sql.Tx, blocks []incomingBlock, current string, have map[string]bool) (map[string]bool, error) {
 	base, ok := legacyAliasScope(current)
-	if !ok || have[base] {
+	if !ok {
+		return nil, nil
+	}
+	if _, known := matchLegacyName(runtime.GOOS, have, base); known {
 		return nil, nil
 	}
 	found := false

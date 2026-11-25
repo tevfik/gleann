@@ -3,6 +3,7 @@ package memory
 import (
 	"fmt"
 	"os"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -766,10 +767,14 @@ func (s *Store) scopeAliases(scope string) []string {
 		return nil
 	}
 	base, ok := legacyAliasScope(scope)
-	if !ok || !s.legacyScopes[base] {
+	if !ok {
 		return nil
 	}
-	return []string{base}
+	stored, ok := matchLegacyName(runtime.GOOS, s.legacyScopes, base)
+	if !ok {
+		return nil
+	}
+	return []string{stored}
 }
 
 // scopeAncestors returns the set of scopes visible to a given query scope.

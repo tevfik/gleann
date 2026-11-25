@@ -194,7 +194,9 @@ Use gleann indexes as if they were OpenAI models. Compatible with any tool that 
 
 `GET /v1/models` lists the indexes the caller can access (MCP exposure and `GLEANN_TAGS` governance apply) as OpenAI model objects and also includes
 the `gleann/` entry (the empty index name), which routes a completion straight
-to the LLM with no index retrieval.
+to the LLM with no index retrieval (pass-through, no RAG). The index entries and `gleann/` carry
+a `description` field; the `gleann/` entry's says exactly that. The id stays
+`gleann/` so existing clients keep working.
 
 **Custom headers**: `X-Gleann-Top-K` (RAG result count), `X-Gleann-Min-Score` (score threshold), `X-Gleann-Hybrid-Alpha` (vector against lexical weight, a number from 0 to 1; `0` = lexical (BM25) search only, no query embedding; a value outside the range or not a number is ignored, like the other two; works in both proxy modes and, with several indexes, in the cross-index ranking).
 

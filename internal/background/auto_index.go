@@ -31,8 +31,9 @@ type AutoIndexConfig struct {
 	OnChange func(ctx context.Context, indexName string, files []string) error
 	// IsBusy reports whether an OnChange error only means "the index is locked
 	// right now" (another process or an in-process build holds it). The batch
-	// is then kept and retried with exponential backoff inside the same task;
-	// any other error fails the task. nil: no error is a busy error.
+	// is then kept: the task ends (it does not hold a background worker while
+	// it waits) and the batch is resubmitted by a timer after an exponential
+	// backoff; any other error fails the task. nil: no error is a busy error.
 	IsBusy func(err error) bool
 	// BusyBackoff is the first retry delay after a busy result (default 5s);
 	// it doubles after every further busy result up to BusyBackoffMax
@@ -61,6 +62,7 @@ type AutoIndexer struct {
 	pending map[string]map[string]bool // index name → set of changed files
 	entries map[string]*watchEntry     // index name → what is watched for it
 	flights map[string]*flight         // index name → its one queued/running sync task
+	busy    map[string]*busyState      // index name → retry state after a busy result
 	wg      sync.WaitGroup             // started sync task bodies (Wait)
 	stopCh  chan struct{}
 	stopped bool
@@ -79,12 +81,19 @@ type watchEntry struct {
 // is created for the index: changes that arrive meanwhile stay pending and the
 // flight (when busy-retrying) or the next tick after it ends picks them up.
 type flight struct {
-	ctx      context.Context
-	cancel   context.CancelFunc
-	quit     chan struct{} // closed on Unwatch: finish the current attempt, do not retry
-	quitOnce sync.Once
-	done     chan struct{} // closed when the task body ended
-	started  bool          // the task body began (guarded by AutoIndexer.mu)
+	ctx     context.Context
+	cancel  context.CancelFunc
+	done    chan struct{} // closed when the task body ended
+	started bool          // the task body began (guarded by AutoIndexer.mu)
+}
+
+// busyState is the retry state of an index whose last sync found it locked.
+// The batch itself waits in pending; this only says when to try again.
+type busyState struct {
+	until     time.Time     // flushPending skips the index before this instant
+	next      time.Duration // the delay after the next busy result
+	needTimer bool          // the flight just ended: arm the retry timer
+	timer     *time.Timer
 }
 
 // ignoreSet evaluates the CLI's ignore rules (the same walker.Matcher the
@@ -203,6 +212,7 @@ func NewAutoIndexer(manager *Manager, config AutoIndexConfig) (*AutoIndexer, err
 		pending: make(map[string]map[string]bool),
 		entries: make(map[string]*watchEntry),
 		flights: make(map[string]*flight),
+		busy:    make(map[string]*busyState),
 		stopCh:  make(chan struct{}),
 	}
 	for name, dir := range config.Indexes {
@@ -311,6 +321,7 @@ func (a *AutoIndexer) UnwatchAndWait(ctx context.Context, indexName string) erro
 func (a *AutoIndexer) unwatchLocked(indexName string) *flight {
 	delete(a.config.Indexes, indexName)
 	delete(a.pending, indexName)
+	a.clearBusyLocked(indexName)
 	if e := a.entries[indexName]; e != nil {
 		delete(a.entries, indexName)
 		a.removeUnusedWatchesLocked(e)
@@ -319,7 +330,6 @@ func (a *AutoIndexer) unwatchLocked(indexName string) *flight {
 	if f == nil {
 		return nil
 	}
-	f.quitOnce.Do(func() { close(f.quit) })
 	if !f.started {
 		// Still queued: its body will see the cancelled context and do
 		// nothing; a later re-enable must not wait for it.
@@ -508,6 +518,11 @@ func (a *AutoIndexer) debounceLoop(ctx context.Context) {
 // keeps its pending set: that task (or the next tick after it ended) takes it.
 func (a *AutoIndexer) flushPending() {
 	a.mu.Lock()
+	if a.stopped {
+		a.mu.Unlock()
+		return
+	}
+	now := time.Now()
 	base := a.ctx
 	if base == nil {
 		base = context.Background()
@@ -521,8 +536,11 @@ func (a *AutoIndexer) flushPending() {
 		if len(files) == 0 || a.flights[name] != nil {
 			continue
 		}
+		if st := a.busy[name]; st != nil && now.Before(st.until) {
+			continue // backing off after a busy result; the retry timer resubmits
+		}
 		fctx, cancel := context.WithCancel(base)
-		f := &flight{ctx: fctx, cancel: cancel, quit: make(chan struct{}), done: make(chan struct{})}
+		f := &flight{ctx: fctx, cancel: cancel, done: make(chan struct{})}
 		if a.flights == nil {
 			a.flights = make(map[string]*flight)
 		}
@@ -562,6 +580,14 @@ func (a *AutoIndexer) end(name string, f *flight) {
 	if a.flights[name] == f {
 		delete(a.flights, name)
 	}
+	// Arm the retry only now that the flight is gone, so the timer can never
+	// fire into a flush that still sees this flight and skips the index.
+	if st := a.busy[name]; st != nil && st.needTimer {
+		st.needTimer = false
+		if !a.stopped {
+			st.timer = time.AfterFunc(time.Until(st.until), a.flushPending)
+		}
+	}
 	a.mu.Unlock()
 	f.cancel()
 	close(f.done)
@@ -594,12 +620,13 @@ func nextBackoff(cur, max time.Duration) time.Duration {
 	return cur
 }
 
-// runFlight is the body of an index's single auto-index task. It hands the
-// exact changed paths (sorted) to OnChange. A busy result keeps the batch,
-// waits with exponential backoff (BusyBackoff doubling up to BusyBackoffMax)
-// and tries again inside the same task, updating its message; the delay
-// starts over with the next batch. Cancellation (Unwatch, delete, Stop) ends
-// the task without failing it.
+// runFlight is the body of an index's auto-index task. It hands the exact
+// changed paths (sorted) to OnChange. A busy result puts the batch back into
+// pending and ends the task: it must not sleep on a background worker, because
+// model downloads and the syncs of other indexes share the same few workers.
+// A timer resubmits the batch after BusyBackoff, doubling up to BusyBackoffMax
+// on every further busy result; any other outcome starts the delay over.
+// Cancellation (Unwatch, delete, Stop) ends the task without failing it.
 func (a *AutoIndexer) runFlight(name string, f *flight, progress func(float64, string)) error {
 	if !a.begin(name, f) {
 		progress(1.0, fmt.Sprintf("Auto-index %q skipped (stopped)", name))
@@ -607,91 +634,92 @@ func (a *AutoIndexer) runFlight(name string, f *flight, progress func(float64, s
 	}
 	defer a.end(name, f)
 
-	base, maxBackoff := a.config.BusyBackoff, a.config.BusyBackoffMax
-	if base <= 0 {
-		base = 5 * time.Second
+	files := a.takePending(name)
+	if len(files) == 0 {
+		a.clearBusy(name)
+		progress(1.0, fmt.Sprintf("Auto-index %q: nothing to sync", name))
+		return nil
 	}
-	if maxBackoff < base {
-		maxBackoff = 5 * time.Minute
-		if maxBackoff < base {
-			maxBackoff = base
-		}
+	progress(0.1, fmt.Sprintf("Auto-reindex %q: %d file(s) changed", name, len(files)))
+	if a.config.OnChange == nil {
+		// Legacy status-only behaviour: no sync callback is wired,
+		// so the task only reports that changes were seen.
+		progress(0.5, fmt.Sprintf("Queued rebuild for %q", name))
+		progress(1.0, fmt.Sprintf("Auto-index triggered for %q (%d files)", name, len(files)))
+		return nil
 	}
-	backoff := base
-	for {
-		files := a.takePending(name)
-		if len(files) == 0 {
-			progress(1.0, fmt.Sprintf("Auto-index %q: nothing to sync", name))
+	if f.ctx.Err() != nil {
+		progress(1.0, fmt.Sprintf("Auto-index %q skipped (shutting down)", name))
+		return nil
+	}
+	progress(0.5, fmt.Sprintf("Syncing %q (%d file(s))", name, len(files)))
+	err := a.config.OnChange(f.ctx, name, files)
+	switch {
+	case err == nil:
+		a.clearBusy(name)
+		progress(1.0, fmt.Sprintf("Auto-index synced %q (%d file(s))", name, len(files)))
+		return nil
+	case f.ctx.Err() != nil:
+		a.clearBusy(name)
+		progress(1.0, fmt.Sprintf("Auto-index %q cancelled", name))
+		return nil
+	case a.isBusy(err):
+		delay, ok := a.requeueBusy(name, files)
+		if !ok {
+			progress(1.0, fmt.Sprintf("Auto-index %q dropped (no longer watched)", name))
 			return nil
 		}
-		progress(0.1, fmt.Sprintf("Auto-reindex %q: %d file(s) changed", name, len(files)))
-		if a.config.OnChange == nil {
-			// Legacy status-only behaviour: no sync callback is wired,
-			// so the task only reports that changes were seen.
-			progress(0.5, fmt.Sprintf("Queued rebuild for %q", name))
-			progress(1.0, fmt.Sprintf("Auto-index triggered for %q (%d files)", name, len(files)))
-			return nil
-		}
-		if f.ctx.Err() != nil {
-			progress(1.0, fmt.Sprintf("Auto-index %q skipped (shutting down)", name))
-			return nil
-		}
-		progress(0.5, fmt.Sprintf("Syncing %q (%d file(s))", name, len(files)))
-		err := a.config.OnChange(f.ctx, name, files)
-		switch {
-		case err == nil:
-			progress(1.0, fmt.Sprintf("Auto-index synced %q (%d file(s))", name, len(files)))
-			return nil
-		case f.ctx.Err() != nil:
-			progress(1.0, fmt.Sprintf("Auto-index %q cancelled", name))
-			return nil
-		case a.isBusy(err):
-			if !a.requeue(name, files) {
-				progress(1.0, fmt.Sprintf("Auto-index %q dropped (no longer watched)", name))
-				return nil
-			}
-			progress(0.5, fmt.Sprintf("Auto-index %q busy, will retry in %s (%d file(s))", name, backoff, len(files)))
-			if !a.waitRetry(f, backoff) {
-				progress(1.0, fmt.Sprintf("Auto-index %q busy, retry abandoned (stopped)", name))
-				return nil
-			}
-			backoff = nextBackoff(backoff, maxBackoff)
-		default:
-			return fmt.Errorf("auto-sync index %q: %w", name, err)
-		}
+		progress(1.0, fmt.Sprintf("Auto-index %q busy, will retry in %s (%d file(s))", name, delay, len(files)))
+		return nil
+	default:
+		a.clearBusy(name)
+		return fmt.Errorf("auto-sync index %q: %w", name, err)
 	}
 }
 
-// waitRetry sleeps d; false means the flight was told to stop meanwhile.
-func (a *AutoIndexer) waitRetry(f *flight, d time.Duration) bool {
-	t := time.NewTimer(d)
-	defer t.Stop()
-	select {
-	case <-t.C:
-		return true
-	case <-f.ctx.Done():
-	case <-f.quit:
-	case <-a.stopCh:
-	}
-	return false
+// clearBusy forgets the retry state of an index (its sync ended in anything
+// but busy), so the next busy result starts from BusyBackoff again.
+func (a *AutoIndexer) clearBusy(name string) {
+	a.mu.Lock()
+	a.clearBusyLocked(name)
+	a.mu.Unlock()
 }
 
-// requeue puts a busy batch back into pending, merging with changes that
-// arrived since it was taken so nothing is lost or duplicated. It reports
-// false (and drops the batch) when the index is no longer watched.
-func (a *AutoIndexer) requeue(indexName string, files []string) bool {
+func (a *AutoIndexer) clearBusyLocked(name string) {
+	if st := a.busy[name]; st != nil {
+		if st.timer != nil {
+			st.timer.Stop()
+		}
+		delete(a.busy, name)
+	}
+}
+
+// requeueBusy puts a busy batch back into pending, merging with changes that
+// arrived since it was taken so nothing is lost or duplicated, and schedules
+// the retry. It returns the delay before the retry; ok is false (and the batch
+// is dropped) when the index is no longer watched.
+func (a *AutoIndexer) requeueBusy(name string, files []string) (time.Duration, bool) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	if _, ok := a.entries[indexName]; !ok {
-		return false
+	if _, ok := a.entries[name]; !ok {
+		return 0, false
 	}
-	if a.pending[indexName] == nil {
-		a.pending[indexName] = make(map[string]bool)
+	if a.pending[name] == nil {
+		a.pending[name] = make(map[string]bool)
 	}
 	for _, f := range files {
-		a.pending[indexName][f] = true
+		a.pending[name][f] = true
 	}
-	return true
+	st := a.busy[name]
+	if st == nil {
+		st = &busyState{next: a.config.BusyBackoff}
+		a.busy[name] = st
+	}
+	delay := st.next
+	st.next = nextBackoff(delay, a.config.BusyBackoffMax)
+	st.until = time.Now().Add(delay)
+	st.needTimer = true
+	return delay, true
 }
 
 // WatchedDir returns the directory watched for indexName ("" when unwatched).
@@ -724,6 +752,9 @@ func (a *AutoIndexer) Stop() {
 	a.stopped = true
 	for _, f := range a.flights {
 		f.cancel()
+	}
+	for name := range a.busy {
+		a.clearBusyLocked(name)
 	}
 	a.mu.Unlock()
 	close(a.stopCh)

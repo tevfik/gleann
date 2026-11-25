@@ -125,6 +125,28 @@ func pathHashKey(goos, p string) string {
 	return path.Clean(p)
 }
 
+// matchLegacyName looks base up in the legacy-alias set. On Windows the match
+// folds case with the same rule as pathHashKey, because the on-disk basename
+// a scope is derived from can differ in case from the name typed when the old
+// block was written. It returns the spelling stored in the set, which is the
+// one the blocks carry. goos is a parameter so tests run on any host.
+func matchLegacyName(goos string, set map[string]bool, base string) (string, bool) {
+	if set[base] {
+		return base, true
+	}
+	if goos != "windows" {
+		return "", false
+	}
+	fold := strings.ToLower(base)
+	var found string
+	for name := range set {
+		if strings.ToLower(name) == fold && (found == "" || name < found) {
+			found = name
+		}
+	}
+	return found, found != ""
+}
+
 // legacyAliasScope is the pre-v1.22 bare-basename scope a collision-safe scope
 // was derived from: "local:app-1a2b3c4d" and "dir:app-1a2b3c4d" both come from
 // a directory called "app". It is only used to keep blocks stored under that

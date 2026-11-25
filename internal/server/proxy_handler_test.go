@@ -162,10 +162,17 @@ func TestHandleListModels_Empty(t *testing.T) {
 	for _, m := range resp.Data {
 		if m.ID == "gleann/" {
 			found = true
+			if !strings.Contains(m.Description, "no index retrieval") {
+				t.Errorf("'gleann/' entry has no explanatory description: %q", m.Description)
+			}
 		}
 	}
 	if !found {
 		t.Error("expected 'gleann/' entry in model list")
+	}
+	// Clients that send the bare id keep working: it still means no index.
+	if names := parseIndexFromModel("gleann/"); names != nil {
+		t.Errorf("parseIndexFromModel(gleann/) = %v, want nil", names)
 	}
 }
 

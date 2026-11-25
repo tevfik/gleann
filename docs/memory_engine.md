@@ -459,7 +459,11 @@ Each export run records the files it wrote in a hidden manifest
 (`.gleann-export-manifest.json`) inside the export directory, per scope. A
 later run for the same scope deletes the files it no longer writes (blocks
 forgotten in the meantime) and touches nothing else, so a shared backup
-folder keeps your own files.
+folder keeps your own files. Pruning never goes through a symlink, a Windows
+junction or any other reparse point, so inside a cloud-synced folder such as
+OneDrive it may skip stale files; each run then prints one warning naming the
+first skipped path and how many files were skipped, and those files stay until
+you remove them by hand.
 
 ### File Structure & Front Matter
 

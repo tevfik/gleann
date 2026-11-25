@@ -196,9 +196,9 @@ func TestAutoIndexer_OnChangeReceivesExactFiles(t *testing.T) {
 	}
 }
 
-// A lock-busy OnChange error keeps the files and retries them inside the same
-// task (after the backoff), instead of failing the task or creating a new one.
-func TestAutoIndexer_OnChangeBusyRetriesInSameTask(t *testing.T) {
+// A lock-busy OnChange error keeps the files: the task ends (it does not hold
+// its worker) and a timer resubmits them as a new task after the backoff.
+func TestAutoIndexer_OnChangeBusyRequeuesWithTimer(t *testing.T) {
 	manager := NewManager(1)
 	defer manager.Stop()
 	dir := t.TempDir()
@@ -236,12 +236,19 @@ func TestAutoIndexer_OnChangeBusyRetriesInSameTask(t *testing.T) {
 	ai.recordChange(f)
 	ai.flushPending()
 
-	tasks := waitAutoIndexTasks(t, manager, 1)
-	if len(tasks) != 1 || tasks[0].Status != StatusCompleted || !strings.Contains(tasks[0].Message, "synced") {
-		t.Fatalf("busy batch must be retried to a synced state in one task: %+v", tasks)
+	// The debounce tick is an hour away: only the retry timer can resubmit.
+	tasks := waitAutoIndexTasks(t, manager, 2)
+	var synced int
+	for _, task := range tasks {
+		if task.Status == StatusFailed {
+			t.Fatalf("a busy attempt must not fail its task: %+v", task)
+		}
+		if strings.Contains(task.Message, "synced") {
+			synced++
+		}
 	}
-	if n := len(manager.List("")); n != 1 {
-		t.Errorf("a busy retry created extra tasks: %d tasks, want 1", n)
+	if synced != 1 {
+		t.Fatalf("want one synced task after the busy one: %+v", tasks)
 	}
 	mu.Lock()
 	defer mu.Unlock()
@@ -325,5 +332,71 @@ func TestAutoIndexer_CancelledContextSkipsSync(t *testing.T) {
 	waitAutoIndexTasks(t, manager, 1)
 	if calls.Load() != 0 {
 		t.Errorf("OnChange ran %d times after cancellation, want 0", calls.Load())
+	}
+}
+
+// With one worker and the lock of index A held, a sync for index B still runs:
+// the busy batch of A is not allowed to occupy the worker while it waits.
+func TestAutoIndexer_BusyIndexDoesNotBlockWorker(t *testing.T) {
+	manager := NewManager(1)
+	defer manager.Stop()
+	dirA, dirB := t.TempDir(), t.TempDir()
+
+	var aCalls atomic.Int32
+	var bDone atomic.Bool
+	ai, err := NewAutoIndexer(manager, AutoIndexConfig{
+		Debounce:       time.Hour,
+		BusyBackoff:    time.Hour, // A would hold a worker for an hour if it slept
+		BusyBackoffMax: time.Hour,
+		IsBusy:         func(err error) bool { return errors.Is(err, errTestBusy) },
+		OnChange: func(ctx context.Context, name string, files []string) error {
+			if name == "A" {
+				aCalls.Add(1)
+				return errTestBusy // the lock of A stays held
+			}
+			bDone.Store(true)
+			return nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ai.Stop()
+	for name, dir := range map[string]string{"A": dirA, "B": dirB} {
+		if err := ai.Watch(name, dir); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ai.Start(context.Background())
+
+	ai.recordChange(filepath.Join(dirA, "a.txt"))
+	ai.flushPending()
+	deadline := time.Now().Add(5 * time.Second)
+	for aCalls.Load() == 0 && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if aCalls.Load() == 0 {
+		t.Fatal("index A was never attempted")
+	}
+
+	ai.recordChange(filepath.Join(dirB, "b.txt"))
+	ai.flushPending()
+	for !bDone.Load() && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if !bDone.Load() {
+		t.Fatal("index B was never synced: the busy batch of A holds the only worker")
+	}
+	// A's batch is kept for the retry, and flushPending leaves it alone while
+	// it backs off.
+	ai.flushPending()
+	if n := aCalls.Load(); n != 1 {
+		t.Errorf("A attempted %d times during its backoff, want 1", n)
+	}
+	ai.mu.Lock()
+	kept := len(ai.pending["A"])
+	ai.mu.Unlock()
+	if kept != 1 {
+		t.Errorf("A's busy batch lost: %d pending, want 1", kept)
 	}
 }

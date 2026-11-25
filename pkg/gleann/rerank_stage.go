@@ -3,10 +3,39 @@ package gleann
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"strings"
+	"sync"
 	"unicode"
 )
+
+// rerankWarner prints each distinct reranker failure once per process. A
+// reranker that cannot work (Ollama has no rerank API) fails the same way on
+// every query, and a long-running server or a multi-index search would
+// otherwise repeat the line for each one.
+type rerankWarner struct {
+	mu   sync.Mutex
+	out  io.Writer
+	seen map[string]bool
+}
+
+// rerankWarnings is the process-wide warner of rerankStage.
+var rerankWarnings = &rerankWarner{out: os.Stderr}
+
+func (w *rerankWarner) warn(err error) {
+	msg := err.Error()
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.seen[msg] {
+		return
+	}
+	if w.seen == nil {
+		w.seen = make(map[string]bool)
+	}
+	w.seen[msg] = true
+	fmt.Fprintf(w.out, "reranker warning: %v (using the original ranking; shown once)\n", err)
+}
 
 // rerankStage applies the reranker to the first-stage results according to
 // opts (pool size, identifier gate) and returns the top-k in reranker order.
@@ -36,7 +65,7 @@ func rerankStage(ctx context.Context, rr Reranker, query string, results []Searc
 	}
 	reranked, err := rr.Rerank(ctx, query, pool, len(pool))
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "reranker warning: %v (using original ranking)\n", err)
+		rerankWarnings.warn(err)
 		return cut(results)
 	}
 	for i := range reranked {

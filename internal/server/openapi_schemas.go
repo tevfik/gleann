@@ -583,10 +583,11 @@ func openAPISchemasProxy() map[string]any {
 		"ModelObject": map[string]any{
 			"type": "object",
 			"properties": map[string]any{
-				"id":       map[string]any{"type": "string", "example": "gleann/my-docs"},
-				"object":   map[string]any{"type": "string", "example": "model"},
-				"created":  map[string]any{"type": "integer"},
-				"owned_by": map[string]any{"type": "string", "example": "gleann"},
+				"id":          map[string]any{"type": "string", "example": "gleann/my-docs"},
+				"object":      map[string]any{"type": "string", "example": "model"},
+				"created":     map[string]any{"type": "integer"},
+				"owned_by":    map[string]any{"type": "string", "example": "gleann"},
+				"description": map[string]any{"type": "string", "description": "What choosing the model does; for gleann/ it is pass-through to the LLM with no retrieval"},
 			},
 		},
 		"ModelList": map[string]any{

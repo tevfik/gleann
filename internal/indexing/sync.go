@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -203,6 +204,9 @@ func Sync(ctx context.Context, opts SyncOptions) (*SyncResult, error) {
 				changedFiles = append(changedFiles, absF)
 			}
 		}
+		// A directory that was renamed or removed vanishes as one path, but
+		// every file indexed under it is gone too.
+		deletedFiles = expandVanishedDirs(cfg.IndexDir, name, absDocsDir, deletedFiles)
 	} else {
 		pluginManager, closePlugins := openPluginManager(opts.NoPlugins, mode)
 		mmProcessor := NewMultimodalProcessor(cfg.OllamaHost, cfg.APIKeyForProvider("ollama"), opts.multimodalModel(), p.Printf)
@@ -663,4 +667,70 @@ func SyncChanged(ctx context.Context, opts SyncOptions, files []string) (*SyncRe
 	}
 	opts.Files = abs
 	return Sync(ctx, opts)
+}
+
+// expandVanishedDirs adds, for every vanished path in deleted, the indexed
+// files that lived under it. A rename or removal of a directory reaches a
+// watcher as a single event for the directory itself, which names no file; the
+// index's manifest says which files were below it. The manifest is walked once
+// and each entry is matched by looking up its ancestor directories in the set
+// of vanished paths (a path-boundary match), so the cost is O(entries x depth)
+// however many paths were deleted, not O(deleted x entries). Files that still
+// exist (moved back, or excluded again) are left to the normal change path. A
+// manifest that cannot be read leaves the list as it was: the next full sync
+// repairs it.
+func expandVanishedDirs(indexDir, name, absDocsDir string, deleted []string) []string {
+	if len(deleted) == 0 {
+		return deleted
+	}
+	m, err := gleann.LoadIndexManifest(indexDir, name)
+	if err != nil || m == nil || len(m.Entries) == 0 {
+		return deleted
+	}
+	return expandVanishedFrom(absDocsDir, deleted, m.Entries)
+}
+
+// expandVanishedFrom is expandVanishedDirs over an already loaded manifest.
+func expandVanishedFrom(absDocsDir string, deleted []string, entries map[string]gleann.ManifestEntry) []string {
+	have := make(map[string]bool, len(deleted))
+	vanished := make(map[string]bool, len(deleted)) // slash-relative paths
+	for _, d := range deleted {
+		have[d] = true
+		rel, err := filepath.Rel(absDocsDir, d)
+		if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			continue
+		}
+		vanished[filepath.ToSlash(rel)] = true
+	}
+	if len(vanished) == 0 {
+		return deleted
+	}
+	out := deleted
+	for key := range entries {
+		if !underVanished(key, vanished) {
+			continue
+		}
+		abs := filepath.Join(absDocsDir, filepath.FromSlash(key))
+		if have[abs] {
+			continue
+		}
+		if _, err := os.Stat(abs); err == nil || !errors.Is(err, fs.ErrNotExist) {
+			continue
+		}
+		have[abs] = true
+		out = append(out, abs)
+	}
+	sort.Strings(out[len(deleted):])
+	return out
+}
+
+// underVanished reports whether a strict ancestor directory of the
+// slash-separated key is in vanished.
+func underVanished(key string, vanished map[string]bool) bool {
+	for i := len(key) - 1; i > 0; i-- {
+		if key[i] == '/' && vanished[key[:i]] {
+			return true
+		}
+	}
+	return false
 }

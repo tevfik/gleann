@@ -74,7 +74,14 @@ type oaiModel struct {
 	Object  string `json:"object"`
 	Created int64  `json:"created"`
 	OwnedBy string `json:"owned_by"`
+	// Description says what choosing the model does. It is an extension: OpenAI
+	// clients ignore unknown fields, and UIs that show it make the bare
+	// "gleann/" entry understandable.
+	Description string `json:"description,omitempty"`
 }
+
+// passthroughModelDescription describes the "gleann/" model entry.
+const passthroughModelDescription = "Pass-through to the configured LLM with no index retrieval (no RAG). Use gleann/<index> to answer from an index."
 
 type oaiModelList struct {
 	Object string     `json:"object"`
@@ -93,8 +100,10 @@ func (s *Server) handleListModels(w http.ResponseWriter, r *http.Request) {
 
 	now := time.Now().Unix()
 	models := []oaiModel{
-		// Pure-LLM entry (no index).
-		{ID: "gleann/", Object: "model", Created: now, OwnedBy: "gleann"},
+		// Pure-LLM entry (no index). The id stays "gleann/" (the empty index
+		// name) because clients already send it, and a reserved word such as
+		// "gleann/passthrough" would shadow an index of that name.
+		{ID: "gleann/", Object: "model", Created: now, OwnedBy: "gleann", Description: passthroughModelDescription},
 	}
 	seenTags := make(map[string]bool)
 	for _, idx := range indexes {
@@ -103,10 +112,11 @@ func (s *Server) handleListModels(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		models = append(models, oaiModel{
-			ID:      "gleann/" + idx.Name,
-			Object:  "model",
-			Created: now,
-			OwnedBy: "gleann",
+			ID:          "gleann/" + idx.Name,
+			Object:      "model",
+			Created:     now,
+			OwnedBy:     "gleann",
+			Description: "Answers grounded in the " + idx.Name + " index (RAG).",
 		})
 		for _, tag := range idx.Tags {
 			cleanTag := strings.TrimPrefix(tag, "@")

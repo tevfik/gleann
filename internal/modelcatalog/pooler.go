@@ -29,6 +29,10 @@ type Pooler struct {
 	Bias   string `json:"bias"`
 	// Bytes is the size of the patched GGUF.
 	Bytes int64 `json:"bytes"`
+	// SHA256 is the checksum of the patched GGUF (hex). The patch is
+	// deterministic for a pinned checkpoint, so it can be verified like a plain
+	// entry. Empty means only the size is checked, and Download logs a warning.
+	SHA256 string `json:"sha256,omitempty"`
 }
 
 // stTensor is one entry of a safetensors header.

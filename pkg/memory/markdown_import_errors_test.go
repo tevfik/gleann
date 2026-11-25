@@ -237,7 +237,7 @@ func TestSanitizeFilenameEdgeCases(t *testing.T) {
 	for in, want := range map[string]string{
 		"":     "_unnamed",
 		"...":  "_unnamed",
-		" . ":  "_unnamed",
+		" . ":  "_._", // space is outside [A-Za-z0-9._-]
 		"CON":  "_CON",
 		"a<b>": "a_b_",
 	} {

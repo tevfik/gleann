@@ -3,6 +3,7 @@ package gleann
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 )
 
@@ -127,5 +128,30 @@ func TestRerankStage_MarksReranked(t *testing.T) {
 	got = rerankStage(context.Background(), &reverseReranker{}, "LeannSearcher", stageInput(5), 3, SearchConfig{RerankSkipIdentifiers: true})
 	if got[0].Reranked {
 		t.Fatal("first-stage results marked reranked")
+	}
+}
+
+// A reranker that cannot work (Ollama has no rerank API) warns once per
+// process, names the fix, and the search still returns the first-stage order.
+func TestRerankStageWarnsOncePerProcess(t *testing.T) {
+	var buf strings.Builder
+	old := rerankWarnings
+	rerankWarnings = &rerankWarner{out: &buf}
+	defer func() { rerankWarnings = old }()
+
+	rr := NewReranker(RerankerConfig{Provider: RerankerOllama, Model: "m"})
+	in := []SearchResult{{ID: 1, Text: "a", Score: 2}, {ID: 2, Text: "b", Score: 1}}
+	for i := 0; i < 3; i++ {
+		out := rerankStage(context.Background(), rr, "what is a", in, 2, SearchConfig{})
+		if len(out) != 2 || out[0].ID != 1 || out[0].Reranked {
+			t.Fatalf("call %d: first-stage order not kept: %+v", i, out)
+		}
+	}
+	got := buf.String()
+	if n := strings.Count(got, "reranker warning"); n != 1 {
+		t.Fatalf("%d warnings, want 1:\n%s", n, got)
+	}
+	if !strings.Contains(got, `rerank_provider to "eif"`) || !strings.Contains(got, "llamacpp") {
+		t.Errorf("warning does not name the fix: %s", got)
 	}
 }

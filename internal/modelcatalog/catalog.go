@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -110,6 +111,9 @@ func (e Entry) Installed() bool {
 // on Windows).
 var createTemp = os.CreateTemp
 
+// logf reports non-fatal catalogue problems; a seam so tests can capture it.
+var logf = log.Printf
+
 // client has no overall timeout (multi-GB files) but bounds connection setup.
 var client = &http.Client{Transport: &http.Transport{
 	Proxy:                 http.ProxyFromEnvironment,
@@ -193,22 +197,33 @@ func Download(ctx context.Context, e Entry, progress func(done, total int64)) er
 }
 
 // sameChecksum reports whether the installed file matches the catalogue
-// checksum. A pooler entry's installed file differs from the download, so for
-// it the size check in Installed is all there is.
+// checksum. A pooler entry's installed file differs from the download, so it
+// is compared with Pooler.SHA256; without one the size check in Installed is
+// all there is.
 func sameChecksum(e Entry) bool {
-	if e.Pooler != nil || e.SHA256 == "" {
+	want := e.SHA256
+	if e.Pooler != nil {
+		want = e.Pooler.SHA256
+	}
+	if want == "" {
 		return true
 	}
-	f, err := os.Open(e.Path())
+	got, err := fileSHA256(e.Path())
+	return err == nil && got == want
+}
+
+// fileSHA256 returns the hex SHA-256 of the file at path.
+func fileSHA256(path string) (string, error) {
+	f, err := os.Open(path)
 	if err != nil {
-		return false
+		return "", err
 	}
 	defer f.Close()
 	h := sha256.New()
 	if _, err := io.Copy(h, f); err != nil {
-		return false
+		return "", err
 	}
-	return hex.EncodeToString(h.Sum(nil)) == e.SHA256
+	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
 // addPoolerTo replaces the downloaded GGUF at path with a copy that has the
@@ -231,6 +246,19 @@ func addPoolerTo(ctx context.Context, e Entry, path string) error {
 	if e.Pooler.Bytes > 0 && fi.Size() != e.Pooler.Bytes {
 		_ = os.Remove(tmp)
 		return fmt.Errorf("pooler: patched file has %d bytes, want %d", fi.Size(), e.Pooler.Bytes)
+	}
+	if want := e.Pooler.SHA256; want != "" {
+		got, err := fileSHA256(tmp)
+		if err != nil {
+			_ = os.Remove(tmp)
+			return fmt.Errorf("pooler: %w", err)
+		}
+		if got != want {
+			_ = os.Remove(tmp)
+			return fmt.Errorf("pooler: patched file checksum mismatch (got %s, want %s)", got, want)
+		}
+	} else {
+		logf("warning: %s has no checksum for the patched file, only its size (%d bytes) is verified", e.ID, e.Pooler.Bytes)
 	}
 	return os.Rename(tmp, path)
 }

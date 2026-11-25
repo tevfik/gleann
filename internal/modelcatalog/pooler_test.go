@@ -8,6 +8,7 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"io"
 	"math"
 	"net/http"
@@ -372,5 +373,73 @@ func TestAddPoolerRejectsBadInput(t *testing.T) {
 	}
 	if err := AddPooler(src, filepath.Join(dir, "o2"), make([]float32, 15), make([]float32, 4)); err == nil {
 		t.Fatal("weight/bias mismatch: want an error")
+	}
+}
+
+// The patched file is verified against Pooler.SHA256 when the entry has one,
+// and a size-only entry logs a warning.
+func TestDownloadPoolerChecksumAndWarning(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("GLEANN_CONFIG_DIR", "")
+	const dim = 4
+	gg := tinyGGUF(t, dim)
+	wt := make([]float32, dim*dim)
+	bias := []float32{1, 2, 3, 4}
+	st := safetensors(t, "F32",
+		map[string][]float32{"bert.pooler.dense.weight": wt, "bert.pooler.dense.bias": bias},
+		map[string][]int64{"bert.pooler.dense.weight": {dim, dim}, "bert.pooler.dense.bias": {dim}})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/m.gguf":
+			http.ServeContent(w, r, "m.gguf", testTime, bytes.NewReader(gg))
+		default:
+			http.ServeContent(w, r, "m.safetensors", testTime, bytes.NewReader(st))
+		}
+	}))
+	defer srv.Close()
+	dir := t.TempDir()
+	src, dst := filepath.Join(dir, "a"), filepath.Join(dir, "b")
+	_ = os.WriteFile(src, gg, 0o644)
+	if err := AddPooler(src, dst, wt, bias); err != nil {
+		t.Fatal(err)
+	}
+	fi, _ := os.Stat(dst)
+	patched, _ := fileSHA256(dst)
+	sum := sha256.Sum256(gg)
+	mk := func(poolerSum string) Entry {
+		return Entry{ID: "x", Name: "x", Kind: Reranker, File: "x-pooler.gguf", URL: srv.URL + "/m.gguf",
+			Bytes: int64(len(gg)), SHA256: hex.EncodeToString(sum[:]),
+			Pooler: &Pooler{URL: srv.URL + "/m.safetensors", Weight: "bert.pooler.dense.weight", Bias: "bert.pooler.dense.bias", Bytes: fi.Size(), SHA256: poolerSum}}
+	}
+	var logged []string
+	old := logf
+	logf = func(format string, args ...any) { logged = append(logged, fmt.Sprintf(format, args...)) }
+	defer func() { logf = old }()
+
+	bad := mk(strings.Repeat("0", 64))
+	if err := Download(context.Background(), bad, nil); err == nil || !strings.Contains(err.Error(), "checksum") {
+		t.Fatalf("want a patched-file checksum error, got %v", err)
+	}
+	if _, err := os.Stat(bad.Path()); !os.IsNotExist(err) {
+		t.Fatal("a checksum failure left a file under the real name")
+	}
+	if len(logged) != 0 {
+		t.Errorf("unexpected warning: %v", logged)
+	}
+
+	good := mk(patched)
+	if err := Download(context.Background(), good, nil); err != nil || !good.Installed() {
+		t.Fatalf("verified download: %v", err)
+	}
+	if len(logged) != 0 || !sameChecksum(good) {
+		t.Errorf("verified entry warned or mismatched: %v", logged)
+	}
+
+	_ = os.Remove(good.Path())
+	if err := Download(context.Background(), mk(""), nil); err != nil {
+		t.Fatal(err)
+	}
+	if len(logged) != 1 || !strings.Contains(logged[0], "only its size") {
+		t.Errorf("size-only entry must log one warning, got %v", logged)
 	}
 }
