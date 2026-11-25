@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/tevfik/gleann/internal/testenv"
 )
 
 func typeModel(t *testing.T, m OnboardModel, s string) OnboardModel {
@@ -45,6 +46,8 @@ func toCustom(t *testing.T, m OnboardModel) OnboardModel {
 // model typed on the Custom… row is saved, not a fallback suggestion.
 func TestOnboardCustomLLMModelWhenFetchFails(t *testing.T) {
 	m := NewOnboardModel()
+	// The wizard probes the typed host on Enter; never the real localhost:11434.
+	m.embHostInput.SetValue(testenv.DeadOllamaHost)
 	m = pressKey(m, kEnter) // leave the quick/advanced screen untouched below
 	m.phase = phaseLLMFetching
 	res, _ := m.Update(modelsFetchedMsg{err: errors.New("404"), forLLM: true})

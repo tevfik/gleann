@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/tevfik/gleann/internal/testenv"
 	"github.com/tevfik/gleann/pkg/memory"
 )
 
@@ -23,6 +24,7 @@ func TestMain(m *testing.M) {
 	_ = os.Setenv("GLEANN_MEMORY_DIR", filepath.Join(tmpDir, "memory"))
 	_ = os.Setenv("HOME", tmpDir)
 
+	testenv.PinOllamaHost() // tests never default to localhost:11434
 	memory.ResetRemoteForTesting()
 
 	code := m.Run()
@@ -52,3 +54,5 @@ func TestMain(m *testing.M) {
 	_ = os.RemoveAll(tmpDir)
 	os.Exit(code)
 }
+
+func TestOllamaHostPinned(t *testing.T) { testenv.AssertPinned(t) }

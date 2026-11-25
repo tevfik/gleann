@@ -17,6 +17,7 @@ import (
 	"testing"
 
 	"github.com/tevfik/gleann/internal/modelcatalog"
+	"github.com/tevfik/gleann/internal/testenv"
 	"github.com/tevfik/gleann/pkg/gleann"
 )
 
@@ -33,7 +34,7 @@ func isolateFirstRunEnv(t *testing.T) string {
 	t.Setenv("GLEANN_CONFIG_DIR", filepath.Join(home, ".gleann"))
 	t.Setenv("GLEANN_INDEX_DIR", filepath.Join(home, ".gleann", "indexes"))
 	t.Setenv("GLEANN_MEMORY_DIR", filepath.Join(home, ".gleann", "memory"))
-	t.Setenv("OLLAMA_HOST", "")
+	t.Setenv("OLLAMA_HOST", testenv.DeadOllamaHost)
 	t.Setenv("OLLAMA_API_KEY", "")
 	return home
 }
@@ -301,5 +302,81 @@ func TestEnsureConfig_ClearsNoticeWhenLocalModelPresent(t *testing.T) {
 	}
 	if _, on := readFirstRunConfig(t, home)["setup_notice"]; on {
 		t.Error("setup_notice kept although the local model is present")
+	}
+}
+
+// OLLAMA_HOST decides the host for every auto-setup probe and download: with
+// it set, a nil/empty host argument reaches the fake, never localhost:11434.
+func TestAutoSetupHonoursOllamaHost(t *testing.T) {
+	home := isolateFirstRunEnv(t)
+	var mu sync.Mutex
+	seen := map[string]int{}
+	fake := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		seen[r.URL.Path]++
+		mu.Unlock()
+		if r.URL.Path == "/api/tags" {
+			_, _ = w.Write([]byte(`{"models":[{"name":"other:1"}]}`))
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer fake.Close()
+	t.Setenv("OLLAMA_HOST", fake.URL)
+
+	det := DetectOllama("")
+	if !det.OllamaFound || det.OllamaHost != fake.URL {
+		t.Fatalf("DetectOllama(\"\") = found %v host %q, want the fake %s", det.OllamaFound, det.OllamaHost, fake.URL)
+	}
+	if !HasModel("", "other") {
+		t.Errorf("HasModel(\"\") did not reach the fake")
+	}
+	if _, err := EnsureConfig("", true); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(home, ".gleann", "config.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cfg map[string]any
+	_ = json.Unmarshal(data, &cfg)
+	if cfg["ollama_host"] != fake.URL {
+		t.Errorf("config ollama_host = %v, want %s", cfg["ollama_host"], fake.URL)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if seen["/api/tags"] < 3 {
+		t.Errorf("fake saw %d /api/tags probes, want at least 3: %v", seen["/api/tags"], seen)
+	}
+	if seen["/api/pull"] != 0 {
+		t.Errorf("EnsureConfig pulled: %v", seen)
+	}
+}
+
+// MissingModels reads, never pulls; the notice names every missing model.
+func TestMissingModelsNeverPulls(t *testing.T) {
+	isolateFirstRunEnv(t)
+	var pulls int
+	fake := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/tags":
+			_, _ = w.Write([]byte(`{"models":[{"name":"have:1"}]}`))
+		case "/api/pull":
+			pulls++
+		}
+	}))
+	defer fake.Close()
+	miss := MissingModels(fake.URL, "have", "gone-a", "gone-b")
+	if strings.Join(miss, ",") != "gone-a,gone-b" {
+		t.Fatalf("missing = %v", miss)
+	}
+	note := MissingModelsNotice(fake.URL, miss)
+	for _, w := range []string{"gone-a", "ollama pull gone-b", "Nothing was downloaded"} {
+		if !strings.Contains(note, w) {
+			t.Errorf("notice lacks %q:\n%s", w, note)
+		}
+	}
+	if pulls != 0 || MissingModelsNotice(fake.URL, nil) != "" {
+		t.Errorf("pulls=%d or non-empty notice for no missing models", pulls)
 	}
 }

@@ -46,15 +46,11 @@ func cmdDoctor() {
 	// ── 2. Ollama connectivity ──────────────────────────────────────────
 	fmt.Println()
 	fmt.Println("Ollama")
-	host := "http://localhost:11434"
-	if cfg != nil && cfg.OllamaHost != "" {
-		host = cfg.OllamaHost
-	} else if envHost := os.Getenv("OLLAMA_HOST"); envHost != "" {
-		host = envHost
+	cfgHost := ""
+	if cfg != nil {
+		cfgHost = cfg.OllamaHost
 	}
-	if !strings.HasPrefix(host, "http://") && !strings.HasPrefix(host, "https://") {
-		host = "http://" + host
-	}
+	host := gleann.ResolveOllamaHost("", cfgHost)
 
 	ollamaUsed := cfg == nil || cfg.EmbeddingProvider == "ollama" || cfg.LLMProvider == "ollama"
 

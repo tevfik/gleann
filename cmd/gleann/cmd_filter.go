@@ -23,6 +23,7 @@ import (
 //   - exists: the value may be omitted (field is present), or be true or
 //     false; "lang exists false" keeps passages WITHOUT the field. This is
 //     the same boolean the REST and MCP "exists" filter takes.
+//     The derived fields ext/extension count an empty extension as absent.
 //   - every other operator: the value is a string, verbatim, so
 //     'version eq 1.10' compares "1.10". A value that starts with a double
 //     quote is decoded as a JSON string, which is how to keep leading or
@@ -44,6 +45,9 @@ func parseCLIFilter(expr string) (gleann.MetadataFilter, error) {
 	// Reuse the REST/MCP validator first so unknown operators fail the same way.
 	probe := f
 	probe.Value = []any{}
+	if probe.Operator == gleann.OpExists {
+		probe.Value = true // the value is parsed below; the operator check is what matters here
+	}
 	if err := probe.Validate(); err != nil {
 		return gleann.MetadataFilter{}, fmt.Errorf("--filter %q: %w", expr, err)
 	}

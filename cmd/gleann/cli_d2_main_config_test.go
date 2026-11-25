@@ -225,6 +225,7 @@ func TestCLID2ConfigErrors(t *testing.T) {
 
 func TestCLID2ConfigValidate(t *testing.T) {
 	e := newCLIEnv(t)
+	t.Setenv("OLLAMA_HOST", "") // the saved host is under test; the environment would override it
 
 	r := e.run("config", "validate")
 	wantExit(t, r, 0)

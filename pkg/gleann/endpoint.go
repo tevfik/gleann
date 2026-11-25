@@ -2,7 +2,9 @@ package gleann
 
 import (
 	"errors"
+	"net/url"
 	"os"
+	"strconv"
 	"strings"
 )
 
@@ -115,4 +117,72 @@ func (c Config) EmbeddingEndpoint() (baseURL, apiKey string) {
 	default:
 		return cleanOllamaHost(c.OllamaHost), ""
 	}
+}
+
+// NormalizeOllamaHost turns an Ollama host as users write it into a base URL,
+// the way Ollama's own client reads OLLAMA_HOST:
+//
+//   - no scheme means http; a bare number is a port on localhost;
+//   - no port means 11434 only when no scheme was given; an explicit
+//     http:// or https:// URL without a port keeps the scheme default (80,
+//     443), as Ollama's client and earlier gleann did (a reverse proxy);
+//   - an empty host (":11434") and the bind-all addresses 0.0.0.0 and ::,
+//     which Ollama documents for the server's bind, connect to 127.0.0.1 and
+//     [::1];
+//   - a trailing slash is dropped.
+//
+// An empty input stays empty; an input that cannot be parsed is returned
+// trimmed, unchanged.
+func NormalizeOllamaHost(h string) string {
+	h = strings.TrimSpace(h)
+	if h == "" {
+		return ""
+	}
+	if _, err := strconv.Atoi(h); err == nil {
+		h = "localhost:" + h
+	}
+	schemeGiven := strings.Contains(h, "://")
+	if !schemeGiven {
+		// A bare IPv6 address ("::1") needs brackets before a port is added.
+		if strings.Count(h, ":") > 1 && !strings.HasPrefix(h, "[") {
+			h = "[" + h + "]"
+		}
+		h = "http://" + h
+	}
+	u, err := url.Parse(h)
+	if err != nil {
+		return strings.TrimRight(h, "/")
+	}
+	host := u.Hostname()
+	switch host {
+	case "", "0.0.0.0":
+		host = "127.0.0.1"
+	case "::":
+		host = "::1"
+	}
+	port := u.Port()
+	if port == "" && !schemeGiven {
+		port = "11434"
+	}
+	if strings.Contains(host, ":") {
+		host = "[" + host + "]"
+	}
+	if port != "" {
+		host += ":" + port
+	}
+	out := u.Scheme + "://" + host + strings.TrimRight(u.Path, "/")
+	return out
+}
+
+// ResolveOllamaHost is the single place that decides which Ollama server a
+// command talks to. Precedence: explicit flag > OLLAMA_HOST > saved config >
+// DefaultOllamaHost. Every setup, bootstrap, doctor and serve path uses it, so
+// none of them can probe localhost:11434 while OLLAMA_HOST says otherwise.
+func ResolveOllamaHost(flagHost, cfgHost string) string {
+	for _, h := range []string{flagHost, os.Getenv("OLLAMA_HOST"), cleanOllamaHost(cfgHost)} {
+		if h = NormalizeOllamaHost(h); h != "" {
+			return h
+		}
+	}
+	return DefaultOllamaHost
 }

@@ -59,8 +59,9 @@ type ollamaModelDetail struct {
 }
 
 func fetchOllamaModels(host, apiKey string) ([]ModelInfo, error) {
-	if host == "" {
-		host = gleann.DefaultOllamaHost
+	// A typed host stays; an unset or default host follows OLLAMA_HOST.
+	if host == "" || host == gleann.DefaultOllamaHost {
+		host = gleann.ResolveOllamaHost("", "")
 	}
 
 	client := &http.Client{Timeout: 10 * time.Second}

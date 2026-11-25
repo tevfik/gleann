@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/tevfik/gleann/pkg/gleann"
 	"net/http"
 	"os"
 	"strings"
@@ -84,10 +85,8 @@ func (s *Summarizer) callLLM(ctx context.Context, prompt string) (string, error)
 }
 
 func (s *Summarizer) callOllama(ctx context.Context, client *http.Client, prompt string) (string, error) {
-	baseURL := s.BaseURL
-	if baseURL == "" {
-		baseURL = "http://localhost:11434"
-	}
+	// An unset base URL follows OLLAMA_HOST, then the local default.
+	baseURL := gleann.ResolveOllamaHost(s.BaseURL, "")
 
 	body := map[string]any{
 		"model":  s.Model,

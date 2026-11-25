@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"github.com/tevfik/gleann/internal/testenv"
 	"os"
 	"testing"
 )
@@ -25,7 +26,10 @@ func TestMain(m *testing.M) {
 			os.Exit(1)
 		}
 	}
+	testenv.PinOllamaHost() // tests never default to localhost:11434
 	code := m.Run()
 	_ = os.RemoveAll(home)
 	os.Exit(code)
 }
+
+func TestOllamaHostPinned(t *testing.T) { testenv.AssertPinned(t) }

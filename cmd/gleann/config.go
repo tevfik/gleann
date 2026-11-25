@@ -328,14 +328,7 @@ func applySavedConfig(config *gleann.Config, args []string) {
 	if savedCfg == nil {
 		if getFlag(args, "--host") == "" {
 			if envHost := os.Getenv("OLLAMA_HOST"); envHost != "" {
-				if !strings.Contains(envHost, "://") {
-					if !strings.Contains(envHost, ":") {
-						envHost = "http://localhost:" + envHost
-					} else {
-						envHost = "http://" + envHost
-					}
-				}
-				config.OllamaHost = envHost
+				config.OllamaHost = gleann.NormalizeOllamaHost(envHost)
 			}
 		}
 		return
@@ -347,25 +340,9 @@ func applySavedConfig(config *gleann.Config, args []string) {
 		config.EmbeddingModel = savedCfg.EmbeddingModel
 	}
 	if getFlag(args, "--host") == "" {
-		if savedCfg.OllamaHost != "" {
-			host := savedCfg.OllamaHost
-			if !strings.Contains(host, "://") {
-				if !strings.Contains(host, ":") {
-					host = "http://localhost:" + host
-				} else {
-					host = "http://" + host
-				}
-			}
-			config.OllamaHost = host
-		} else if envHost := os.Getenv("OLLAMA_HOST"); envHost != "" {
-			if !strings.Contains(envHost, "://") {
-				if !strings.Contains(envHost, ":") {
-					envHost = "http://localhost:" + envHost
-				} else {
-					envHost = "http://" + envHost
-				}
-			}
-			config.OllamaHost = envHost
+		// OLLAMA_HOST beats the saved host (flag > env > config > default).
+		if h := gleann.ResolveOllamaHost("", savedCfg.OllamaHost); os.Getenv("OLLAMA_HOST") != "" || savedCfg.OllamaHost != "" {
+			config.OllamaHost = h
 		}
 	}
 	if savedCfg.OpenAIKey != "" && config.OpenAIAPIKey == "" {

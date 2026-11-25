@@ -8,6 +8,7 @@ package autosetup
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/tevfik/gleann/internal/modelcatalog"
 	"github.com/tevfik/gleann/pkg/gleann"
@@ -56,4 +57,33 @@ To get models, choose one:
 // generated config so the guidance survives the terminal session.
 func NoOllamaNotice(host string) string {
 	return fmt.Sprintf("Ollama not detected at %s.\n%s", host, NoOllamaGuidance())
+}
+
+// MissingModels returns the models of the list that Ollama at host does not
+// have. It only reads (GET /api/tags); it never pulls.
+func MissingModels(host string, models ...string) []string {
+	var missing []string
+	for _, m := range models {
+		if m != "" && !HasModel(host, m) {
+			missing = append(missing, m)
+		}
+	}
+	return missing
+}
+
+// MissingModelsNotice tells the user which models Ollama lacks and how to
+// fetch them. Starting a server never downloads: pulling is an explicit
+// action ('ollama pull', 'gleann models download', 'gleann setup --auto').
+func MissingModelsNotice(host string, missing []string) string {
+	if len(missing) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "Ollama at %s is missing: %s. Nothing was downloaded.\n", host, strings.Join(missing, ", "))
+	b.WriteString("Download them explicitly:\n")
+	for _, m := range missing {
+		fmt.Fprintf(&b, "  ollama pull %s\n", m)
+	}
+	b.WriteString("or run 'gleann setup --auto' (asks first).")
+	return b.String()
 }

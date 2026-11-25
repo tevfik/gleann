@@ -102,9 +102,9 @@ func TestCLID2SetupAutoFailures(t *testing.T) {
 		t.Error("a cancelled setup saved a config")
 	}
 
-	// Pressing enter accepts; an empty directory has nothing to index.
+	// Typing y accepts; an empty directory has nothing to index.
 	empty := t.TempDir()
-	r = e.runIn("\n", "setup", "--auto", "--host", e.Ollama.URL, "--docs", empty)
+	r = e.runIn("y\n", "setup", "--auto", "--host", e.Ollama.URL, "--docs", empty)
 	wantExit(t, r, 1)
 	mustContain(t, "empty docs", r.Err, "no documents found in "+empty)
 	if _, err := os.Stat(d2ConfigPath(e)); err != nil {

@@ -143,6 +143,7 @@ func TestCallProviders_Failures(t *testing.T) {
 				}
 				return
 			}
+			t.Setenv("OLLAMA_HOST", "") // the default URL itself is under test; the client is a stub, nothing dials
 			out, err := p.call(NewSummarizer(SummarizerConfig{APIKey: "k"}), ctx, client)
 			if err != nil || out != p.want {
 				t.Fatalf("call = %q, %v; want %q", out, err, p.want)

@@ -58,10 +58,7 @@ type ollamaTagsResponse struct {
 // DetectOllama probes the given host (or localhost:11434) and returns
 // the available model list. It is safe to call even when Ollama is down.
 func DetectOllama(host string) Result {
-	if host == "" {
-		host = "http://localhost:11434"
-	}
-	host = strings.TrimRight(host, "/")
+	host = gleann.ResolveOllamaHost(host, "")
 
 	res := Result{
 		OllamaHost:     host,
@@ -302,10 +299,7 @@ type ollamaPullResponse struct {
 // It streams progress and calls progressFn for each update.
 // If progressFn is nil, progress is printed to stdout.
 func PullModel(host, model string, progressFn func(status string, completed, total int64)) error {
-	if host == "" {
-		host = "http://localhost:11434"
-	}
-	host = strings.TrimRight(host, "/")
+	host = gleann.ResolveOllamaHost(host, "")
 
 	body, _ := json.Marshal(map[string]any{
 		"name":   model,
@@ -356,10 +350,7 @@ func PullModel(host, model string, progressFn func(status string, completed, tot
 
 // HasModel checks if a model is available in Ollama.
 func HasModel(host, model string) bool {
-	if host == "" {
-		host = "http://localhost:11434"
-	}
-	host = strings.TrimRight(host, "/")
+	host = gleann.ResolveOllamaHost(host, "")
 
 	client := &http.Client{Timeout: 5 * time.Second}
 	resp, err := gleann.OllamaGet(client, host+"/api/tags", apiKey())
@@ -385,9 +376,7 @@ func HasModel(host, model string) bool {
 // EnsureModels checks that all required models are available in Ollama.
 // Missing models are automatically pulled. Returns the list of models that were pulled.
 func EnsureModels(host string, quiet bool, models ...string) ([]string, error) {
-	if host == "" {
-		host = "http://localhost:11434"
-	}
+	host = gleann.ResolveOllamaHost(host, "")
 
 	var pulled []string
 	for _, model := range models {
@@ -514,7 +503,7 @@ func FormatDetectedConfig(dc DetectedConfig) string {
 	sb.WriteString(fmt.Sprintf("  │  REST API   : %-37s │\n", srv))
 
 	sb.WriteString("  │                                                     │\n")
-	sb.WriteString("  │  [Enter] Accept & continue                          │\n")
+	sb.WriteString("  │  [y] Accept & continue (downloads models)           │\n")
 	sb.WriteString("  │  [e] Edit a setting       [a] Advanced setup        │\n")
 	sb.WriteString("  └─────────────────────────────────────────────────────┘\n")
 	return sb.String()

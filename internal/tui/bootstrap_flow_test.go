@@ -148,6 +148,7 @@ func TestBootstrap_SaveFailure(t *testing.T) {
 
 func TestCheckSetupAndHint(t *testing.T) {
 	isolateHome(t)
+	t.Setenv("OLLAMA_HOST", "") // the saved host is under test, not the environment
 	var ok bool
 	out := captureStdout(t, func() { ok = CheckSetup() })
 	if ok || !strings.Contains(out, "not configured") {
@@ -271,5 +272,22 @@ func TestBackupConfigAt_SameSecondCollision(t *testing.T) {
 		if err != nil || string(got) != content {
 			t.Errorf("%s = %q (%v), want %q", name, got, err, content)
 		}
+	}
+}
+
+// OLLAMA_HOST beats the saved host for the reachability probe
+// (flag > env > config > default).
+func TestCheckSetupProbesOllamaHostEnv(t *testing.T) {
+	isolateHome(t)
+	saved := fakeOllama(t, `{"models":[]}`, 200)
+	envSrv := fakeOllama(t, `{"models":[]}`, 200)
+	t.Setenv("OLLAMA_HOST", envSrv.URL)
+	if err := SaveConfig(OnboardResult{Completed: true, EmbeddingModel: "e", EmbeddingProvider: "ollama",
+		LLMModel: "l", LLMProvider: "ollama", OllamaHost: saved.URL}); err != nil {
+		t.Fatal(err)
+	}
+	out := captureStdout(t, func() { CheckSetup() })
+	if !strings.Contains(out, "reachable at "+envSrv.URL) {
+		t.Errorf("probe did not use OLLAMA_HOST %s:\n%s", envSrv.URL, out)
 	}
 }

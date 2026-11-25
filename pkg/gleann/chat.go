@@ -111,7 +111,7 @@ func DefaultChatConfig() ChatConfig {
 	return ChatConfig{
 		Provider:      LLMOllama,
 		Model:         DefaultModelName,
-		BaseURL:       DefaultOllamaHost,
+		BaseURL:       ResolveOllamaHost("", ""),
 		Temperature:   0.7,
 		RepeatPenalty: repPenalty,
 		MaxTokens:     2048,

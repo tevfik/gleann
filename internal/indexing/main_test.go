@@ -1,6 +1,7 @@
 package indexing
 
 import (
+	"github.com/tevfik/gleann/internal/testenv"
 	"os"
 	"os/exec"
 	"strings"
@@ -17,6 +18,7 @@ import (
 // keeps using the real module and build caches.
 func TestMain(m *testing.M) {
 	pinGoEnv()
+	testenv.PinOllamaHost() // tests never default to localhost:11434
 	home, err := os.MkdirTemp("", "gleann-indexing-home-")
 	if err != nil {
 		panic(err)
@@ -61,3 +63,5 @@ func unsetGleannDirEnv() {
 		os.Unsetenv(name)
 	}
 }
+
+func TestOllamaHostPinned(t *testing.T) { testenv.AssertPinned(t) }

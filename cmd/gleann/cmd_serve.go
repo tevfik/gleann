@@ -58,12 +58,13 @@ Options:
 		}
 		if len(modelsToEnsure) > 0 {
 			autosetup.SetOllamaAPIKey(config.OllamaAPIKey)
-			// T1: when Ollama is absent, inform instead of attempting a
-			// background pull (a pull cannot succeed without Ollama anyway).
+			// T1: starting the server never downloads. When Ollama is
+			// reachable, name the models it lacks; pulling is explicit
+			// ('ollama pull', 'gleann models download', 'setup --auto').
 			if autosetup.DetectOllama(config.OllamaHost).OllamaFound {
-				if _, err := autosetup.EnsureModels(config.OllamaHost, quiet, modelsToEnsure...); err != nil {
-					// Report it: a failed pull must not be dropped silently.
-					fmt.Fprintf(os.Stderr, "warning: could not ensure Ollama models: %v\n", err)
+				host := gleann.ResolveOllamaHost(config.OllamaHost, "") // config.OllamaHost already holds flag > env > config
+				if note := autosetup.MissingModelsNotice(host, autosetup.MissingModels(host, modelsToEnsure...)); note != "" {
+					fmt.Println(note)
 				}
 			} else if !bootstrapped {
 				// A first-run EnsureConfig just printed this guidance; show it

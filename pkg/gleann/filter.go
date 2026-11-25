@@ -58,6 +58,10 @@ func (f MetadataFilter) Validate() error {
 		default:
 			return fmt.Errorf("metadata filter on %q: operator %q needs an array value, got %T", f.Field, string(f.Operator), f.Value)
 		}
+	case OpExists:
+		if _, isBool := f.Value.(bool); f.Value != nil && !isBool {
+			return fmt.Errorf("metadata filter on %q: operator %q takes a boolean (true when omitted), got %T", f.Field, string(f.Operator), f.Value)
+		}
 	case OpGreaterThan, OpGreaterEqual, OpLessThan, OpLessEqual:
 		if n, ok := f.Value.(float64); ok && (math.IsNaN(n) || math.IsInf(n, 0)) {
 			return fmt.Errorf("metadata filter on %q: operator %q needs a finite number", f.Field, string(f.Operator))
@@ -142,7 +146,15 @@ func (e *MetadataFilterEngine) FilterResults(results []SearchResult) []SearchRes
 }
 
 // resolveMetadataField resolves metadata value with support for common aliases (type<->kind, source<->file, ext).
+//
+// ext and extension are derived fields: an empty extension (a stored "" or a
+// path without one, such as "Makefile") means the passage has none, so
+// "ext exists" is false for it and "ext exists false" keeps it. Other fields
+// keep the plain rule: a present key exists, whatever its value.
 func resolveMetadataField(field string, metadata map[string]any) (any, bool) {
+	if field == "ext" || field == "extension" {
+		return resolveExt(metadata)
+	}
 	if val, ok := metadata[field]; ok {
 		return val, true
 	}
@@ -163,20 +175,41 @@ func resolveMetadataField(field string, metadata map[string]any) (any, bool) {
 		if val, ok := metadata["source"]; ok {
 			return val, true
 		}
-	case "ext", "extension":
-		if val, ok := metadata["ext"]; ok {
+	}
+	return nil, false
+}
+
+// resolveExt returns the passage extension: the "ext" or "extension" key, else
+// the one derived from the file or source path. An empty extension is absent.
+func resolveExt(metadata map[string]any) (any, bool) {
+	for _, key := range []string{"ext", "extension"} {
+		if val, ok := metadata[key]; ok {
+			if str, isStr := val.(string); isStr && str == "" {
+				continue
+			}
 			return val, true
 		}
-		if val, ok := metadata["extension"]; ok {
-			return val, true
-		}
-		for _, key := range []string{"file", "source"} {
-			if pathVal, ok := metadata[key].(string); ok && pathVal != "" {
-				return filepath.Ext(pathVal), true
+	}
+	for _, key := range []string{"file", "source"} {
+		if pathVal, ok := metadata[key].(string); ok && pathVal != "" {
+			if ext := filepath.Ext(pathVal); ext != "" {
+				return ext, true
 			}
 		}
 	}
 	return nil, false
+}
+
+// existsWanted is the boolean an exists filter asks for. An omitted value
+// (nil) means true, as the REST/OpenAPI contract and the CLI say; an explicit
+// false means false. Every evaluator (engine, SQL pre-selection, metadata
+// index) reads it through here.
+func existsWanted(f MetadataFilter) bool {
+	if f.Value == nil {
+		return true
+	}
+	want, _ := f.Value.(bool)
+	return want
 }
 
 // evaluateFilter evaluates a single filter condition.
@@ -185,8 +218,7 @@ func evaluateFilter(f MetadataFilter, metadata map[string]any) bool {
 
 	// Handle exists operator.
 	if f.Operator == OpExists {
-		want, _ := f.Value.(bool)
-		return exists == want
+		return exists == existsWanted(f)
 	}
 
 	if !exists {

@@ -166,6 +166,7 @@ func TestCLID1DoctorOldFormatAndMigrationLeftovers(t *testing.T) {
 
 func TestCLID1DoctorOllamaAuthAndUnreachable(t *testing.T) {
 	e := newCLIEnv(t)
+	t.Setenv("OLLAMA_HOST", "") // the saved host is under test; the environment would override it
 	auth := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
 	}))

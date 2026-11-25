@@ -1,6 +1,7 @@
 package multimodal
 
 import (
+	"github.com/tevfik/gleann/internal/testenv"
 	"os"
 	"testing"
 )
@@ -16,6 +17,7 @@ func TestMain(m *testing.M) {
 	unsetGleannDirEnv()
 	os.Setenv("HOME", home)
 	os.Setenv("USERPROFILE", home)
+	testenv.PinOllamaHost() // tests never default to localhost:11434
 	code := m.Run()
 	os.RemoveAll(home)
 	os.Exit(code)
@@ -35,3 +37,5 @@ func unsetGleannDirEnv() {
 		os.Unsetenv(name)
 	}
 }
+
+func TestOllamaHostPinned(t *testing.T) { testenv.AssertPinned(t) }

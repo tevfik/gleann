@@ -139,10 +139,18 @@ func TestFApplySavedConfigEnvHost(t *testing.T) {
 	if cfg.OllamaHost != "http://envbox:7" {
 		t.Errorf("saved config without host: got %q", cfg.OllamaHost)
 	}
+	// OLLAMA_HOST beats a saved host (flag > env > config > default).
+	fSaveConfig(t, home, `{"ollama_host": "saved:1"}`)
+	cfg = gleann.DefaultConfig()
+	applySavedConfig(&cfg, nil)
+	if cfg.OllamaHost != "http://envbox:7" {
+		t.Errorf("env should beat saved host: got %q", cfg.OllamaHost)
+	}
 	for _, tc := range []struct{ saved, want string }{
 		{"7777", "http://localhost:7777"},
 		{"saved:1", "http://saved:1"},
 	} {
+		t.Setenv("OLLAMA_HOST", "") // env would win over the saved host
 		fSaveConfig(t, home, `{"ollama_host": "`+tc.saved+`"}`)
 		cfg := gleann.DefaultConfig()
 		applySavedConfig(&cfg, nil)

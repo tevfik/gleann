@@ -175,3 +175,27 @@ func TestParseFiltersRefusesMalformed(t *testing.T) {
 		t.Errorf("exists without value: %v %v", f, err)
 	}
 }
+
+// MCP: exists without value means true, an explicit false means false.
+func TestParseFiltersExistsOmittedValueMeansTrue(t *testing.T) {
+	for name, tc := range map[string]struct {
+		filter map[string]interface{}
+		want   bool
+	}{
+		"omitted": {map[string]interface{}{"field": "source", "operator": "exists"}, true},
+		"true":    {map[string]interface{}{"field": "source", "operator": "exists", "value": true}, true},
+		"false":   {map[string]interface{}{"field": "source", "operator": "exists", "value": false}, false},
+	} {
+		fs, _, err := parseFilters(map[string]interface{}{"filters": []interface{}{tc.filter}})
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		e := gleann.NewMetadataFilterEngine(fs)
+		if got := e.Match(map[string]any{"source": "a.go"}); got != tc.want {
+			t.Errorf("%s: passage with source matched=%v, want %v", name, got, tc.want)
+		}
+		if got := e.Match(map[string]any{}); got == tc.want {
+			t.Errorf("%s: passage without source matched=%v", name, got)
+		}
+	}
+}

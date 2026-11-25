@@ -151,17 +151,25 @@ func runAutoSetup(args []string) {
 	fmt.Println()
 
 	if !autoConfirm {
-		fmt.Print("→ ")
+		// Saving the config and pulling models needs an explicit yes: only
+		// a typed "y" or "yes" counts. EOF, an empty line or a closed stdin
+		// (CI, pipes, agents) mean no.
+		fmt.Print("Type y to accept and download any missing models → ")
 		reader := bufio.NewReader(os.Stdin)
 		input, _ := reader.ReadString('\n')
 		input = strings.TrimSpace(strings.ToLower(input))
 
 		switch input {
+		case "y", "yes":
+			// Continue
 		case "e", "a":
 			fmt.Println("Run 'gleann setup' for the full advanced wizard.")
 			exitFunc(0)
-		case "", "y", "yes":
-			// Continue
+		case "":
+			fmt.Println()
+			fmt.Println("No confirmation received (empty answer or non-interactive stdin): nothing was saved or downloaded.")
+			fmt.Println("Re-run and type y, or pass --yes (-y) to confirm non-interactively.")
+			exitFunc(1)
 		default:
 			fmt.Println("Cancelled.")
 			exitFunc(0)
@@ -325,7 +333,7 @@ Flags:
                        --code-model, --doc-model, --host, --ollama-api-key)
   --force              With --bootstrap: replace a completed configuration
                        (otherwise it is refused; the old file is kept as config.json.bak)
-  --yes, -y            Accept the detected defaults without asking (with --auto)
+  --yes, -y            Confirm without asking (with --auto): save the config and download missing models. Without it, only a typed y or yes confirms; EOF or an empty answer exits 1
   --docs <dir>         Directory to index (with --auto; default: current directory)
   --name <name>        Index name (with --auto; default: the directory name)
   --graph              Also build the code graph (with --auto)

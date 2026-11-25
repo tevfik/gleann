@@ -117,9 +117,9 @@ func TestCLIFSetupAutoNoOllamaGuidanceNoConfig(t *testing.T) {
 	}
 }
 
-// `gleann serve` with a reachable Ollama that lacks the models and fails the
-// pull reports the failure as a warning instead of dropping it silently.
-func TestCLIFServeReportsFailedEnsureModels(t *testing.T) {
+// `gleann serve` with a reachable Ollama that lacks the models never pulls:
+// it names the missing models and the explicit commands instead.
+func TestCLIFServeNeverPullsMissingModels(t *testing.T) {
 	e := newCLIEnv(t)
 	var pulls atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -140,9 +140,9 @@ func TestCLIFServeReportsFailedEnsureModels(t *testing.T) {
 	if !ok {
 		t.Fatalf("server never became healthy:\n%s\n%s", r.Out, r.Err)
 	}
-	mustContain(t, "serve warning", r.Err, "warning: could not ensure Ollama models")
-	if pulls.Load() == 0 {
-		t.Error("the fake Ollama never saw a pull attempt; the test does not exercise EnsureModels")
+	mustContain(t, "serve notice", r.Out, "Nothing was downloaded", "ollama pull")
+	if n := pulls.Load(); n != 0 {
+		t.Errorf("serve made %d /api/pull requests, want 0", n)
 	}
 }
 

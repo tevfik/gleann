@@ -8,6 +8,7 @@ package tui
 
 import (
 	"encoding/json"
+	"github.com/tevfik/gleann/internal/testenv"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -28,7 +29,7 @@ func isolateNoOllamaEnv(t *testing.T) string {
 	t.Setenv("GLEANN_CONFIG_DIR", filepath.Join(home, ".gleann"))
 	t.Setenv("GLEANN_INDEX_DIR", filepath.Join(home, ".gleann", "indexes"))
 	t.Setenv("GLEANN_MEMORY_DIR", filepath.Join(home, ".gleann", "memory"))
-	t.Setenv("OLLAMA_HOST", "")
+	t.Setenv("OLLAMA_HOST", testenv.DeadOllamaHost) // never the real localhost:11434
 	t.Setenv("OLLAMA_API_KEY", "")
 	return home
 }

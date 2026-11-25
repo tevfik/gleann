@@ -193,10 +193,7 @@ func cmdConfigValidate() {
 
 	// Verify Ollama connectivity.
 	if cfg.EmbeddingProvider == "ollama" || cfg.LLMProvider == "ollama" {
-		host := cfg.OllamaHost
-		if host == "" {
-			host = "http://localhost:11434"
-		}
+		host := gleann.ResolveOllamaHost("", cfg.OllamaHost)
 		client := http.Client{
 			Timeout: 2 * time.Second,
 		}

@@ -932,7 +932,7 @@ func metadataFilterSchema() map[string]any {
 		"properties": map[string]any{
 			"field":    map[string]any{"type": "string"},
 			"operator": map[string]any{"type": "string", "enum": []string{"eq", "ne", "gt", "gte", "lt", "lte", "in", "nin", "contains", "startswith", "endswith", "exists"}},
-			"value":    map[string]any{"description": "Operand. For in and nin it must be a JSON array (null or a scalar answers 400); for gt, gte, lt and lte a finite number; for exists a boolean (true when omitted)"},
+			"value":    map[string]any{"description": "Operand. For in and nin it must be a JSON array (null or a scalar answers 400); for gt, gte, lt and lte a finite number; for exists a boolean (true when omitted; ext and extension are derived, an empty extension counts as absent)"},
 		},
 	}
 }

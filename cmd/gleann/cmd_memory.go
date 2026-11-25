@@ -844,7 +844,7 @@ func cmdMemoryReflect(args []string) {
 			n, err := strconv.Atoi(raw)
 			if err != nil || n < 0 {
 				fmt.Fprintf(os.Stderr, "error: invalid --limit %q\n", raw)
-				exitFunc(1)
+				exitFunc(2)
 			}
 			limit = n
 		}

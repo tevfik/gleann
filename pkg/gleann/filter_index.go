@@ -71,7 +71,7 @@ func compileFilterIndex(f MetadataFilter) (indexedFilter, bool) {
 			return indexedFilter{}, false
 		}
 	case OpExists:
-		if want, _ := f.Value.(bool); !want {
+		if !existsWanted(f) {
 			return indexedFilter{}, false // the passages WITHOUT the key are in no index
 		}
 	default:

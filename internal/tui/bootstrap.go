@@ -107,9 +107,7 @@ func BootstrapWithAPIKey(ollamaHost, ollamaAPIKey string, dualModels ...string) 
 
 func bootstrap(opts BootstrapOptions) (*OnboardResult, error) {
 	ollamaHost, ollamaAPIKey := opts.OllamaHost, opts.OllamaAPIKey
-	if ollamaHost == "" {
-		ollamaHost = "http://localhost:11434"
-	}
+	ollamaHost = gleann.ResolveOllamaHost(ollamaHost, "")
 
 	result := &OnboardResult{
 		EmbeddingProvider: "ollama",
@@ -229,10 +227,7 @@ func CheckSetup() bool {
 	fmt.Printf("  Indexes:   %s\n", cfg.IndexDir)
 
 	// Check Ollama connectivity.
-	host := cfg.OllamaHost
-	if host == "" {
-		host = "http://localhost:11434"
-	}
+	host := gleann.ResolveOllamaHost("", cfg.OllamaHost)
 	if ollamaReachable(host, cfg.OllamaAPIKey) {
 		fmt.Printf("  Ollama:    ✅ reachable at %s\n", host)
 	} else {

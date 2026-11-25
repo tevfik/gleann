@@ -270,15 +270,15 @@ func TestModelName(t *testing.T) {
 }
 
 func TestResolveOllamaHost(t *testing.T) {
-	// Default.
+	// Default (the pure function only: t.Setenv restores the pinned value).
+	t.Setenv("OLLAMA_HOST", "")
 	host := resolveOllamaHost()
 	if host != "http://localhost:11434" {
 		t.Errorf("expected default host, got %s", host)
 	}
 
 	// From env.
-	os.Setenv("OLLAMA_HOST", "http://custom:1234")
-	defer os.Unsetenv("OLLAMA_HOST")
+	t.Setenv("OLLAMA_HOST", "http://custom:1234")
 	host = resolveOllamaHost()
 	if host != "http://custom:1234" {
 		t.Errorf("expected custom host, got %s", host)

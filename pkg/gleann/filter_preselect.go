@@ -236,7 +236,7 @@ func compileFilterBranch(f MetadataFilter) (string, []any, bool) {
 	}
 
 	if f.Operator == OpExists {
-		want, _ := f.Value.(bool) // non-bool means false, as in evaluateFilter
+		want := existsWanted(f)
 		var parts []string
 		var args []any
 		for _, c := range chain {

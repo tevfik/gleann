@@ -223,13 +223,7 @@ func TestLoadFromDiskMissing(t *testing.T) {
 
 func TestResolveOllamaHostExtended(t *testing.T) {
 	// Clear env to test default
-	orig := os.Getenv("OLLAMA_HOST")
-	os.Unsetenv("OLLAMA_HOST")
-	defer func() {
-		if orig != "" {
-			os.Setenv("OLLAMA_HOST", orig)
-		}
-	}()
+	t.Setenv("OLLAMA_HOST", "")
 
 	host := resolveOllamaHost()
 	if host == "" {
@@ -238,8 +232,7 @@ func TestResolveOllamaHostExtended(t *testing.T) {
 }
 
 func TestResolveOllamaHostFromEnv(t *testing.T) {
-	os.Setenv("OLLAMA_HOST", "http://custom:1234")
-	defer os.Unsetenv("OLLAMA_HOST")
+	t.Setenv("OLLAMA_HOST", "http://custom:1234")
 
 	host := resolveOllamaHost()
 	if host != "http://custom:1234" {

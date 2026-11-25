@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/tevfik/gleann/internal/testenv"
 	"github.com/tevfik/gleann/pkg/gleann"
 )
 
@@ -30,7 +31,9 @@ func postConfig(s *Server, body string) *httptest.ResponseRecorder {
 
 func TestHandleUpdateConfig_Rejections(t *testing.T) {
 	isolateHome(t)
-	s := &Server{config: gleann.DefaultConfig(), searchers: map[string]*gleann.LeannSearcher{}}
+	cfg := gleann.DefaultConfig()
+	cfg.OllamaHost = testenv.DeadOllamaHost // the vision check asks Ollama; never the real localhost:11434
+	s := &Server{config: cfg, searchers: map[string]*gleann.LeannSearcher{}}
 
 	tests := []struct {
 		name, body, want string

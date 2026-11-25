@@ -136,8 +136,14 @@ func TestCmdMemoryReflectListFlagErrors(t *testing.T) {
 	if got := runExit(t, func() { cmdMemory([]string{"reflect", "--list", "--revert", "run-1"}) }); got != 1 {
 		t.Errorf("reflect --list --revert: exit status %d, want 1", got)
 	}
-	if got := runExit(t, func() { cmdMemory([]string{"reflect", "--list", "--limit", "many"}) }); got != 1 {
-		t.Errorf("reflect --list --limit many: exit status %d, want 1", got)
+	if got := runExit(t, func() { cmdMemory([]string{"reflect", "--list", "--limit", "many"}) }); got != 2 {
+		t.Errorf("reflect --list --limit many: exit status %d, want 2", got)
+	}
+	// A bad flag value is a usage error (2), not a runtime failure (1).
+	for _, bad := range []string{"x", "-1", "1.5"} {
+		if got := runExit(t, func() { cmdMemory([]string{"reflect", "--list", "--limit=" + bad}) }); got != 2 {
+			t.Errorf("reflect --list --limit=%s: exit status %d, want 2", bad, got)
+		}
 	}
 	// --list and --limit are real flags now; a bogus one is still rejected.
 	if got := runExit(t, func() { cmdMemory([]string{"reflect", "--list", "--limit", "2", bogusFlag}) }); got != 2 {

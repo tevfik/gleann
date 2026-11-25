@@ -97,6 +97,7 @@ func h2cSlash(t *testing.T, m ChatModel, input string) ChatModel {
 func TestH2cNewChatModelUsesSavedProviderAndSettings(t *testing.T) {
 	h2cHome(t)
 	t.Setenv("GLEANN_TEST_MODE", "") // take the real model-fetch and memory paths
+	t.Setenv("OLLAMA_HOST", "")      // the saved host is under test; the environment would override it
 	srv := h2cOllamaTags(t, "llama3:8b", "nomic-embed-text", "mock")
 	if err := SaveConfig(OnboardResult{
 		LLMProvider:    "ollama",

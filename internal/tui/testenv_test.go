@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"github.com/tevfik/gleann/internal/testenv"
 	"os"
 	"testing"
 )
@@ -25,8 +26,11 @@ func TestMain(m *testing.M) {
 	}
 	os.Setenv("HOME", home)
 	os.Setenv("USERPROFILE", home)
+	testenv.PinOllamaHost() // tests never default to localhost:11434
 	code := m.Run()
 	os.Unsetenv("GLEANN_TEST_MODE")
 	_ = os.RemoveAll(home)
 	os.Exit(code)
 }
+
+func TestOllamaHostPinned(t *testing.T) { testenv.AssertPinned(t) }

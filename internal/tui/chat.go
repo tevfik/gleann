@@ -242,11 +242,12 @@ func NewChatModel(chat *gleann.LeannChat, indexName, modelName string) ChatModel
 			key = savedCfg.AnthropicKey
 		} else if savedCfg.LLMProvider == "ollama" {
 			key = savedCfg.OllamaAPIKey
+			host = gleann.ResolveOllamaHost("", savedCfg.OllamaHost)
 		}
 		allModels, err = fetchModels(savedCfg.LLMProvider, host, key)
 	} else {
 		// Fallback to local ollama default.
-		allModels, err = fetchModels("ollama", gleann.DefaultOllamaHost, "")
+		allModels, err = fetchModels("ollama", gleann.ResolveOllamaHost("", ""), "")
 	}
 
 	if err == nil {

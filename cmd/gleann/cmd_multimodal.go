@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/tevfik/gleann/internal/multimodal"
+	"github.com/tevfik/gleann/pkg/gleann"
 )
 
 func printMultimodalUsage() {
@@ -63,9 +64,7 @@ func cmdMultimodalAnalyze(args []string) {
 	if host == "" {
 		host = config.OllamaHost
 	}
-	if host == "" {
-		host = "http://localhost:11434"
-	}
+	host = gleann.ResolveOllamaHost(host, "")
 	if model == "" {
 		model = config.MultimodalModel
 	}
