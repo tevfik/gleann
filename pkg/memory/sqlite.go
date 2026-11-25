@@ -164,6 +164,10 @@ func openSQLite(path string) (*Store, error) {
 		s.Close()
 		return nil, fmt.Errorf("normalizing stored memory scopes in %s: %w", path, err)
 	}
+	if err := retryBusy(func() error { return s.migrateLegacyScopeNames() }); err != nil {
+		s.Close()
+		return nil, fmt.Errorf("inventorying legacy memory scopes in %s: %w", path, err)
+	}
 	return s, nil
 }
 

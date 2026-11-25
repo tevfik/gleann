@@ -471,7 +471,7 @@ func (m *Manager) SearchScoped(scope, query string) ([]Block, error) {
 
 	// Rank only what the scope may see, so BM25 statistics are not skewed by
 	// blocks the caller cannot access.
-	return rankBlocks(filterScope(all, scope), query), nil
+	return rankBlocks(filterScopeAliases(all, scope, m.scopeAliases(scope)), query), nil
 }
 
 // List lists all blocks for a tier (empty string = all tiers).
@@ -497,7 +497,7 @@ func (m *Manager) ListScoped(scope string, tier Tier) ([]Block, error) {
 		return nil, err
 	}
 
-	return filterScope(all, scope), nil
+	return filterScopeAliases(all, scope, m.scopeAliases(scope)), nil
 }
 
 // Stats returns memory statistics.
@@ -563,9 +563,10 @@ func (m *Manager) BuildScopedContext(scope string) (*ContextWindow, error) {
 	}
 
 	if scope != "" {
-		cw.ShortTerm = filterScope(cw.ShortTerm, scope)
-		cw.MediumTerm = filterScope(cw.MediumTerm, scope)
-		cw.LongTerm = filterScope(cw.LongTerm, scope)
+		aliases := m.scopeAliases(scope)
+		cw.ShortTerm = filterScopeAliases(cw.ShortTerm, scope, aliases)
+		cw.MediumTerm = filterScopeAliases(cw.MediumTerm, scope, aliases)
+		cw.LongTerm = filterScopeAliases(cw.LongTerm, scope, aliases)
 	}
 	m.applyBudget(cw)
 	return cw, nil
@@ -727,10 +728,20 @@ func (m *Manager) applyDefaults(block *Block) {
 //	"acme"            -> {"", "acme"}
 //	"" (no scope)     -> all blocks
 func filterScope(blocks []Block, scope string) []Block {
+	return filterScopeAliases(blocks, scope, nil)
+}
+
+// filterScopeAliases is filterScope with extra allowed scopes. aliases carries
+// the pre-v1.22 bare-basename alias of a collision-safe scope, so memory stored
+// under the old unprefixed name stays readable (finding H7).
+func filterScopeAliases(blocks []Block, scope string, aliases []string) []Block {
 	if scope == "" {
 		return blocks
 	}
 	allowed := scopeAncestors(scope)
+	for _, a := range aliases {
+		allowed[a] = struct{}{}
+	}
 	var out []Block
 	for _, b := range blocks {
 		if _, ok := allowed[b.Scope]; ok {
@@ -738,6 +749,27 @@ func filterScope(blocks []Block, scope string) []Block {
 		}
 	}
 	return out
+}
+
+// scopeAliases returns the legacy bare-basename scopes that stay readable from
+// the collision-safe query scope (see migrateLegacyScopeNames).
+func (m *Manager) scopeAliases(scope string) []string {
+	if m.store == nil {
+		return nil
+	}
+	return m.store.scopeAliases(scope)
+}
+
+// scopeAliases is the Store form of Manager.scopeAliases.
+func (s *Store) scopeAliases(scope string) []string {
+	if len(s.legacyScopes) == 0 {
+		return nil
+	}
+	base, ok := legacyAliasScope(scope)
+	if !ok || !s.legacyScopes[base] {
+		return nil
+	}
+	return []string{base}
 }
 
 // scopeAncestors returns the set of scopes visible to a given query scope.
@@ -847,9 +879,25 @@ func (m *Manager) Export(dir string) (*ExportStats, error) {
 	return m.store.Export(dir)
 }
 
+// ExportWithOptions exports blocks and summaries with scope and tier filters
+// (see Store.ExportWithOptions).
+func (m *Manager) ExportWithOptions(dir string, opts ExportOptions) (*ExportStats, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.store.ExportWithOptions(dir, opts)
+}
+
 // Import imports memory blocks and summaries from markdown files in dir.
 func (m *Manager) Import(dir string) (*ImportStats, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.store.Import(dir)
+}
+
+// ImportWithOptions imports markdown files, optionally as a dry run that writes
+// nothing and only reports what would change (see Store.ImportWithOptions).
+func (m *Manager) ImportWithOptions(dir string, opts ImportOptions) (*ImportStats, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.store.ImportWithOptions(dir, opts)
 }

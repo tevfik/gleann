@@ -195,9 +195,9 @@ func (m *Manager) BuildTaskContext(scope, command string, paths []string) (*Cont
 		return nil, err
 	}
 	if scope != "" {
-		cw.ShortTerm = filterScope(cw.ShortTerm, scope)
-		cw.MediumTerm = filterScope(cw.MediumTerm, scope)
-		cw.LongTerm = filterScope(cw.LongTerm, scope)
+		cw.ShortTerm = filterScopeAliases(cw.ShortTerm, scope, m.scopeAliases(scope))
+		cw.MediumTerm = filterScopeAliases(cw.MediumTerm, scope, m.scopeAliases(scope))
+		cw.LongTerm = filterScopeAliases(cw.LongTerm, scope, m.scopeAliases(scope))
 	}
 	if command != "" || len(paths) > 0 {
 		cw.Failures, err = m.store.failuresFor(command, paths)
@@ -225,9 +225,9 @@ func (m *Manager) BuildTaskContextFor(scope, command string, paths, symbols []st
 		return nil, err
 	}
 	if scope != "" {
-		cw.ShortTerm = filterScope(cw.ShortTerm, scope)
-		cw.MediumTerm = filterScope(cw.MediumTerm, scope)
-		cw.LongTerm = filterScope(cw.LongTerm, scope)
+		cw.ShortTerm = filterScopeAliases(cw.ShortTerm, scope, m.scopeAliases(scope))
+		cw.MediumTerm = filterScopeAliases(cw.MediumTerm, scope, m.scopeAliases(scope))
+		cw.LongTerm = filterScopeAliases(cw.LongTerm, scope, m.scopeAliases(scope))
 	}
 	if command != "" || len(paths) > 0 || len(symbols) > 0 {
 		cw.Failures, err = m.store.failuresForScoped(scope, command, paths, symbols)
@@ -321,7 +321,7 @@ func (s *Store) listFailuresScoped(scope string) ([]Block, error) {
 	if scope == "" {
 		return failures, nil
 	}
-	return filterScope(failures, scope), nil
+	return filterScopeAliases(failures, scope, s.scopeAliases(scope)), nil
 }
 
 // failuresFor returns the failures matching command and/or paths. See
@@ -343,7 +343,7 @@ func (s *Store) failuresForScoped(scope, command string, paths, symbols []string
 		return nil, err
 	}
 	if scope != "" {
-		failures = filterScope(failures, scope)
+		failures = filterScopeAliases(failures, scope, s.scopeAliases(scope))
 	}
 	return matchFailures(failures, command, paths, symbols, scope), nil
 }

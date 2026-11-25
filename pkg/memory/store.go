@@ -37,6 +37,12 @@ type Store struct {
 
 	// In-memory short-term cache (session-scoped).
 	shortTerm []Block
+
+	// legacyScopes holds the bare-basename scopes that predate the v1.22
+	// collision-safe scope scheme; they stay readable from the matching
+	// "local:"/"dir:" scope (finding H7). Set at open time by
+	// migrateLegacyScopeNames.
+	legacyScopes map[string]bool
 }
 
 // DefaultStorePath returns the default memory database path. It keeps the

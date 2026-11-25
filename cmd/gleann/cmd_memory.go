@@ -93,7 +93,7 @@ All stored memory is automatically injected into every LLM query (ask, chat, mcp
 Usage:
   gleann memory remember <text> [--tag <tags>] [--label <label>] [--scope <scope>]  Store fact in long-term memory
   gleann memory forget   [--all] <query-or-id>   Remove memory by ID, or by content match (several matches need --all)
-  gleann memory list     [--tier <tier>]          List memories (all tiers or specific)
+  gleann memory list     [--tier <tier>] [--scope <s>|all]  List memories (default: global + detected repo scope)
   gleann memory search   <query>                 Full-text search across all tiers
   gleann memory add      <tier> <text>            Add note to specific tier
   gleann memory clear    [<tier>|--tier <tier>]  Delete memories of one tier (no tier = every tier)
@@ -112,8 +112,8 @@ Usage:
   gleann memory context --symbol <s> [--scope <s>]  Show context + failures matching symbols
   gleann memory failure add --command <c> --error <text> --fix <text> [--path <p>]... [--symbol <s>]... [--scope <s>]
   gleann memory failure list [--scope <s>]        List recorded failures (default: repo scope; --scope all = all scopes)
-  gleann memory export   --dir <dir>             Export memory blocks and summaries to markdown
-  gleann memory import   --dir <dir>             Import memory blocks and summaries from markdown
+  gleann memory export   --dir <dir> [--scope <s>|all]  Export memory blocks and summaries to markdown (skips short-term and expired blocks)
+  gleann memory import   --dir <dir> [--dry-run]        Import memory blocks and summaries from markdown (--dry-run previews without writing)
   gleann memory import-graph <file.json|dir>     Import entities exported from a v1.9 Kùzu store (kuzu-memory-export)
 
 Memory Tiers:
@@ -130,11 +130,13 @@ Options:
   --tag <tags>            Comma-separated tags (e.g. "preference,project")
   --label <label>         Semantic label (default: "note" or "user_memory")
   --age <duration>        Duration for prune (e.g. 30d, 90d, 2w, 24h)
-  --scope <scope>         Block/failure/context scope ("repo" or "." = the detected repository scope). remember: default global; failure/context: default detected repo. --scope all = global on add, all scopes on list/context
+  --scope <scope>         Block/failure/context/list scope ("repo" or "." = the detected repository scope). remember: default global; failure/context/list: default detected repo + global. --scope all = global on add, every scope on list/context/export
+  --include-short         Also export the session-scoped short-term blocks (memory export)
+  --include-expired       Also export blocks already past their expiry (memory export)
   --json                  Output as JSON (memory context includes the budget report)
   --verbose               Print the injection budget report to stderr (memory context)
   --extract               Also extract individual facts (with summarize)
-  --dry-run               Preview reflection change set without writing
+  --dry-run               Preview without writing: reflection change set, or memory import plan
   --list                  List stored reflection runs (memory reflect; no LLM needed)
   --limit <n>             Cap the reflection run list (0 or unset = all runs)
   --revert <run-id>       Revert reflection run by ID
@@ -177,7 +179,10 @@ Examples:
   gleann memory context
   gleann memory maintain
   gleann memory export --dir ./backup
+  gleann memory export --dir ./backup --scope repo   # only this repository plus global
   gleann memory import --dir ./backup
+  gleann memory import --dir ./backup --dry-run      # preview, writes nothing
+  gleann memory list --scope all                     # every scope, not just this repo
 
 Related Commands:
   gleann chat --list                  Browse conversation history
@@ -380,11 +385,25 @@ func cmdMemoryList(args []string) {
 		tier = t
 	}
 
+	// Same scope default as `memory context`: the detected repository plus
+	// global. --scope all (or *) lists every scope; --scope <name> lists one.
+	rawScope := getFlag(args, "--scope")
+	scope := resolveRepoScopeAlias(memory.NormalizeScope(rawScope))
+	if memory.IsAllScopesSentinel(scope) {
+		scope = ""
+	} else if scope == "" {
+		scope = memory.DetectRepoScope()
+	}
+	scopeLabel := scope
+	if scopeLabel == "" {
+		scopeLabel = "all"
+	}
+
 	var blocks []memory.Block
 	var err error
 	var remoteOk bool
 	if rc := remoteMemoryClient(); rc != nil {
-		blocks, err = rc.List(tier)
+		blocks, err = rc.ListScoped(scope, tier)
 		if err == nil {
 			remoteOk = true
 		}
@@ -392,7 +411,7 @@ func cmdMemoryList(args []string) {
 	if !remoteOk {
 		mgr := openMemoryManager()
 		defer mgr.Close()
-		blocks, err = mgr.List(tier)
+		blocks, err = mgr.ListScoped(scope, tier)
 	}
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
@@ -411,6 +430,7 @@ func cmdMemoryList(args []string) {
 		} else {
 			fmt.Println("No memories stored.")
 		}
+		fmt.Printf("Scope %q: pass --scope all for every scope or --scope <scope> for one.\n", scopeLabel)
 		return
 	}
 
@@ -418,7 +438,8 @@ func cmdMemoryList(args []string) {
 	if tier != "" {
 		tierLabel = string(tier)
 	}
-	fmt.Printf("🧠 Memories (%d, %s):\n\n", len(blocks), tierLabel)
+	fmt.Printf("🧠 Memories (%d, %s):\n", len(blocks), tierLabel)
+	fmt.Printf("Scope %s (--scope all lists every scope)\n\n", scopeLabel)
 
 	for _, b := range blocks {
 		age := time.Since(b.CreatedAt).Round(time.Second)
@@ -1284,37 +1305,59 @@ func cmdMemoryCompact(args []string) {
 func cmdMemoryExport(args []string) {
 	dir := getFlag(args, "--dir")
 	if dir == "" {
-		fmt.Fprintln(os.Stderr, "usage: gleann memory export --dir <dir>")
+		fmt.Fprintln(os.Stderr, "usage: gleann memory export --dir <dir> [--scope <s>|all] [--include-short] [--include-expired]")
 		exitFunc(1)
 		return
+	}
+
+	// Default: every scope, skipping the session-scoped short-term blocks and
+	// the ones already past their expiry. --scope narrows the run, --include-*
+	// widen it back to the full dump.
+	scope := resolveRepoScopeAlias(memory.NormalizeScope(getFlag(args, "--scope")))
+	if memory.IsAllScopesSentinel(scope) {
+		scope = ""
+	}
+	opts := memory.ExportOptions{
+		Scope:          scope,
+		IncludeShort:   hasFlag(args, "--include-short"),
+		IncludeExpired: hasFlag(args, "--include-expired"),
 	}
 
 	mgr := openMemoryManager()
 	defer mgr.Close()
 
-	stats, err := mgr.Export(dir)
+	stats, err := mgr.ExportWithOptions(dir, opts)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error exporting memory: %v\n", err)
 		exitFunc(1)
 		return
 	}
 
-	fmt.Printf("📦 Exported %d memory block(s) and %d summary(ies) to %s\n",
-		stats.Blocks, stats.Summaries, dir)
+	scopeLabel := scope
+	if scopeLabel == "" {
+		scopeLabel = "all"
+	}
+	line := fmt.Sprintf("📦 Exported %d memory block(s) and %d summary(ies) to %s  [scope: %s]",
+		stats.Blocks, stats.Summaries, dir, scopeLabel)
+	if stats.Pruned > 0 {
+		line += fmt.Sprintf(", pruned %d stale file(s)", stats.Pruned)
+	}
+	fmt.Println(line)
 }
 
 func cmdMemoryImport(args []string) {
 	dir := getFlag(args, "--dir")
 	if dir == "" {
-		fmt.Fprintln(os.Stderr, "usage: gleann memory import --dir <dir>")
+		fmt.Fprintln(os.Stderr, "usage: gleann memory import --dir <dir> [--dry-run]")
 		exitFunc(1)
 		return
 	}
+	dryRun := hasFlag(args, "--dry-run")
 
 	mgr := openMemoryManager()
 	defer mgr.Close()
 
-	stats, err := mgr.Import(dir)
+	stats, err := mgr.ImportWithOptions(dir, memory.ImportOptions{DryRun: dryRun})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error importing memory: %v\n", err)
 		exitFunc(1)
@@ -1322,20 +1365,45 @@ func cmdMemoryImport(args []string) {
 	}
 
 	var parts []string
-	parts = append(parts, fmt.Sprintf("%d imported", stats.BlocksImported))
-	if stats.BlocksUpdated > 0 {
-		parts = append(parts, fmt.Sprintf("%d updated", stats.BlocksUpdated))
+	if dryRun {
+		parts = append(parts, fmt.Sprintf("%d would import", stats.BlocksImported))
+		if stats.BlocksUpdated > 0 {
+			parts = append(parts, fmt.Sprintf("%d would update", stats.BlocksUpdated))
+		}
+		if stats.BlocksUnchanged > 0 {
+			parts = append(parts, fmt.Sprintf("%d unchanged", stats.BlocksUnchanged))
+		}
+		if stats.SummariesImported > 0 {
+			parts = append(parts, fmt.Sprintf("%d summary(ies)", stats.SummariesImported))
+		}
+		fmt.Printf("🔍 Dry run: %d block file(s) from %s: %s (nothing written)\n",
+			stats.BlocksTotal, dir, strings.Join(parts, ", "))
+	} else {
+		parts = append(parts, fmt.Sprintf("%d imported", stats.BlocksImported))
+		if stats.BlocksUpdated > 0 {
+			parts = append(parts, fmt.Sprintf("%d updated", stats.BlocksUpdated))
+		}
+		if stats.BlocksUnchanged > 0 {
+			parts = append(parts, fmt.Sprintf("%d unchanged", stats.BlocksUnchanged))
+		}
+		if stats.Conflicts > 0 {
+			parts = append(parts, fmt.Sprintf("%d conflict(s) resolved", stats.Conflicts))
+		}
+		if stats.SummariesImported > 0 {
+			parts = append(parts, fmt.Sprintf("%d summary(ies)", stats.SummariesImported))
+		}
+		fmt.Printf("📥 Imported memory blocks from %s: %s\n", dir, strings.Join(parts, ", "))
 	}
-	if stats.BlocksUnchanged > 0 {
-		parts = append(parts, fmt.Sprintf("%d unchanged", stats.BlocksUnchanged))
+
+	// A hand-edited export file is not applied: the stored block is newer or
+	// equal, so the edit would be lost without a word about it.
+	if len(stats.HandEditedFiles) > 0 {
+		fmt.Fprintf(os.Stderr, "⚠  %d exported file(s) were edited by hand but their updated_at did not move forward, so they were kept as stored:\n", len(stats.HandEditedFiles))
+		for _, f := range stats.HandEditedFiles {
+			fmt.Fprintf(os.Stderr, "   %s\n", f)
+		}
+		fmt.Fprintln(os.Stderr, "   raise `updated_at` in the file's front matter (or re-export) to import the edit.")
 	}
-	if stats.Conflicts > 0 {
-		parts = append(parts, fmt.Sprintf("%d conflict(s) resolved", stats.Conflicts))
-	}
-	if stats.SummariesImported > 0 {
-		parts = append(parts, fmt.Sprintf("%d summary(ies)", stats.SummariesImported))
-	}
-	fmt.Printf("📥 Imported memory blocks from %s: %s\n", dir, strings.Join(parts, ", "))
 }
 
 // cmdMemoryImportGraph loads the export files of tools/kuzu-memory-export

@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -20,17 +21,48 @@ import (
 type ExportStats struct {
 	Blocks    int
 	Summaries int
+	Pruned    int // stale files removed from the export directory
+}
+
+// ExportOptions selects what an export run writes.
+type ExportOptions struct {
+	// Scope restricts the export to that scope plus global blocks and its
+	// path ancestors. Empty (or the "all" sentinel) exports every scope.
+	Scope string
+	// IncludeShort also writes the session-scoped short-term blocks. They are
+	// skipped by default because they are about to disappear anyway.
+	IncludeShort bool
+	// IncludeExpired also writes blocks whose ExpiresAt is already past.
+	IncludeExpired bool
 }
 
 // ImportStats summarizes the outcome of an import operation.
 type ImportStats struct {
-	BlocksTotal       int // Total block files read
-	BlocksImported    int // New blocks inserted
-	BlocksUpdated     int // Existing blocks updated (newer updated_at in file)
-	BlocksUnchanged   int // Existing blocks preserved unchanged
-	Conflicts         int // Existing blocks encountered with conflicting fields
-	SummariesTotal    int // Total summary files read
-	SummariesImported int // Summaries saved/updated
+	BlocksTotal       int      // Total block files read
+	BlocksImported    int      // New blocks inserted
+	BlocksUpdated     int      // Existing blocks updated (newer updated_at in file)
+	BlocksUnchanged   int      // Existing blocks preserved unchanged
+	Conflicts         int      // Existing blocks encountered with conflicting fields
+	HandEdited        int      // Files edited by hand while updated_at stayed behind
+	HandEditedFiles   []string // Their file names, for the operator to review
+	SummariesTotal    int      // Total summary files read
+	SummariesImported int      // Summaries saved/updated
+	DryRun            bool     // Set when the run only previewed the outcome
+}
+
+// ImportOptions controls an import run.
+type ImportOptions struct {
+	// DryRun parses and compares every file but writes nothing: no SQLite row
+	// changes and no short-term block is added.
+	DryRun bool
+
+	// CurrentScope is the collision-safe scope of the directory the import
+	// runs from; empty means DetectRepoScope(). A bare (pre-v1.22) scope name
+	// carried by the imported blocks is registered as a legacy alias when it
+	// equals this directory's folder name, so an old backup restored into a
+	// fresh store stays visible from that directory. Names that do not match
+	// are imported as plain explicit scopes and are not aliased.
+	CurrentScope string
 }
 
 // blockFrontMatter represents the YAML front matter of a memory block file.
@@ -386,13 +418,55 @@ func blocksEqual(a, b *Block) bool {
 }
 
 // Export writes all memory blocks (one markdown file each) and summaries (in a "summaries" subdirectory)
-// to the specified directory.
+// to the specified directory. Every tier, including the short-term blocks and
+// expired ones, is written: the plain Export is the lossless full dump.
 func (s *Store) Export(dir string) (*ExportStats, error) {
+	return s.ExportWithOptions(dir, ExportOptions{IncludeShort: true, IncludeExpired: true})
+}
+
+// ExportWithOptions writes blocks and summaries to dir according to opts. The
+// CLI default skips short-term and expired blocks and exports every scope;
+// opts.Scope narrows the run to one scope (plus global and its ancestors).
+//
+// Each export run records the files it wrote in a hidden manifest inside the
+// export directory. A later run for the same scope deletes the files listed
+// there that it no longer writes — blocks forgotten in the meantime — and
+// touches nothing else in the directory, so a shared backup folder keeps the
+// user's own files.
+func (s *Store) ExportWithOptions(dir string, opts ExportOptions) (*ExportStats, error) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, fmt.Errorf("creating export directory %s: %w", dir, err)
 	}
 
+	scope := NormalizeScope(opts.Scope)
+	if IsAllScopesSentinel(scope) {
+		scope = ""
+	}
+	var allowed map[string]struct{}
+	if scope != "" {
+		allowed = scopeAncestors(scope)
+		// Pre-v1.22 bare-name blocks stay readable from their prefixed scope.
+		for _, a := range s.scopeAliases(scope) {
+			allowed[a] = struct{}{}
+		}
+	}
+	keepBlock := func(b *Block) bool {
+		if !opts.IncludeShort && b.Tier == TierShort {
+			return false
+		}
+		if !opts.IncludeExpired && b.IsExpired() {
+			return false
+		}
+		if allowed != nil {
+			if _, ok := allowed[b.Scope]; !ok {
+				return false
+			}
+		}
+		return true
+	}
+
 	stats := &ExportStats{}
+	written := []string{}
 
 	// 1. Gather all blocks (short-term from memory, medium/long from SQLite).
 	var allBlocks []Block
@@ -422,6 +496,7 @@ func (s *Store) Export(dir string) (*ExportStats, error) {
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("listing blocks for export: %w", err)
 	}
+	rows.Close()
 
 	sort.SliceStable(allBlocks, func(i, j int) bool {
 		if allBlocks[i].CreatedAt.Equal(allBlocks[j].CreatedAt) {
@@ -431,6 +506,9 @@ func (s *Store) Export(dir string) (*ExportStats, error) {
 	})
 	for i := range allBlocks {
 		b := &allBlocks[i]
+		if !keepBlock(b) {
+			continue
+		}
 		md, err := BlockToMarkdown(b)
 		if err != nil {
 			return nil, err
@@ -442,6 +520,7 @@ func (s *Store) Export(dir string) (*ExportStats, error) {
 		if err := os.WriteFile(outPath, md, 0o644); err != nil {
 			return nil, fmt.Errorf("writing block file %s: %w", outPath, err)
 		}
+		written = append(written, fname)
 		stats.Blocks++
 	}
 
@@ -469,11 +548,166 @@ func (s *Store) Export(dir string) (*ExportStats, error) {
 			if err := os.WriteFile(outPath, md, 0o644); err != nil {
 				return nil, fmt.Errorf("writing summary file %s: %w", outPath, err)
 			}
+			written = append(written, filepath.Join("summaries", fname))
 			stats.Summaries++
 		}
 	}
 
+	// 3. Prune files this scope's previous run wrote but this one does not,
+	// then record what this run wrote.
+	pruned, err := s.applyExportManifest(dir, scope, written)
+	if err != nil {
+		return nil, err
+	}
+	stats.Pruned = pruned
+
 	return stats, nil
+}
+
+// exportManifestName is the bookkeeping file Export writes inside the export
+// directory. It is a ".json" file, so Import (which reads "*.md") ignores it.
+const exportManifestName = ".gleann-export-manifest.json"
+
+// exportManifestVersion is the schema version of the manifest file.
+const exportManifestVersion = 1
+
+// exportManifest records, per export scope, the file names (relative to the
+// export directory) each run wrote. The scope key is the normalized scope, or
+// "all" for an unscoped export, so a scoped run never prunes another scope's
+// files.
+type exportManifest struct {
+	Version int                 `json:"version"`
+	Files   map[string][]string `json:"files"`
+}
+
+// exportScopeKey names the manifest bucket an export run belongs to.
+func exportScopeKey(scope string) string {
+	if scope == "" {
+		return "all"
+	}
+	return scope
+}
+
+// applyExportManifest deletes the files the previous run of the same scope
+// recorded but this run did not write, then stores the new list. Files that are
+// not in the manifest are never removed.
+func (s *Store) applyExportManifest(dir, scope string, written []string) (int, error) {
+	manifest := readExportManifest(dir)
+	key := exportScopeKey(scope)
+
+	keep := make(map[string]bool, len(written))
+	for _, name := range written {
+		keep[name] = true
+	}
+
+	pruned := 0
+	for _, name := range manifest.Files[key] {
+		if keep[name] || name == exportManifestName || !safeExportRelPath(name) || !isExportedFileName(name) {
+			continue
+		}
+		removed, err := removeExportedFile(dir, name)
+		if err != nil {
+			return pruned, fmt.Errorf("removing stale export file %s: %w", filepath.Join(dir, name), err)
+		}
+		if removed {
+			pruned++
+		}
+	}
+
+	if manifest.Files == nil {
+		manifest.Files = map[string][]string{}
+	}
+	sorted := append([]string(nil), written...)
+	sort.Strings(sorted)
+	manifest.Files[key] = sorted
+	manifest.Version = exportManifestVersion
+
+	data, err := json.MarshalIndent(manifest, "", "  ")
+	if err != nil {
+		return pruned, fmt.Errorf("encoding export manifest: %w", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, exportManifestName), append(data, '\n'), 0o644); err != nil {
+		return pruned, fmt.Errorf("writing export manifest: %w", err)
+	}
+	return pruned, nil
+}
+
+// exportedFileRe matches the names Export generates: "<name>-<8hex>.md" in the
+// export directory or in its "summaries" subdirectory. A manifest entry with
+// any other shape is never deleted, however it got into the manifest.
+var exportedFileRe = regexp.MustCompile(`^(summaries/)?[^/\\]+-[0-9a-f]{8}\.md$`)
+
+func isExportedFileName(name string) bool {
+	return exportedFileRe.MatchString(filepath.ToSlash(name))
+}
+
+// removeExportedFile deletes the regular file name under dir without ever
+// following a symlink: the export root is resolved once, then every path
+// component below it is Lstat-ed and a symlinked directory or file refuses the
+// removal. It reports whether a file was deleted; a missing file is not an
+// error.
+func removeExportedFile(dir, name string) (bool, error) {
+	root, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		return false, err
+	}
+	cur := root
+	parts := strings.Split(filepath.ToSlash(filepath.Clean(name)), "/")
+	for i, part := range parts {
+		cur = filepath.Join(cur, part)
+		fi, err := os.Lstat(cur)
+		if err != nil {
+			if os.IsNotExist(err) {
+				return false, nil
+			}
+			return false, err
+		}
+		if fi.Mode()&os.ModeSymlink != 0 {
+			return false, nil
+		}
+		last := i == len(parts)-1
+		if last && !fi.Mode().IsRegular() {
+			return false, nil
+		}
+		if !last && !fi.IsDir() {
+			return false, nil
+		}
+	}
+	if rel, err := filepath.Rel(root, cur); err != nil || strings.HasPrefix(rel, "..") {
+		return false, nil
+	}
+	if err := os.Remove(cur); err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	return true, nil
+}
+
+// readExportManifest loads the manifest of an export directory. A missing or
+// unreadable manifest yields an empty one: pruning then removes nothing, which
+// is the safe reading of an export directory gleann did not write.
+func readExportManifest(dir string) exportManifest {
+	out := exportManifest{Version: exportManifestVersion}
+	data, err := os.ReadFile(filepath.Join(dir, exportManifestName))
+	if err != nil {
+		return out
+	}
+	if err := json.Unmarshal(data, &out); err != nil || out.Files == nil {
+		return exportManifest{Version: exportManifestVersion}
+	}
+	return out
+}
+
+// safeExportRelPath rejects manifest entries that would escape the export
+// directory (absolute paths, "..", empty names).
+func safeExportRelPath(name string) bool {
+	if name == "" || filepath.IsAbs(name) {
+		return false
+	}
+	clean := filepath.Clean(name)
+	return clean != ".." && !strings.HasPrefix(clean, ".."+string(filepath.Separator))
 }
 
 // Import reads memory block markdown files and summaries from dir.
@@ -481,6 +715,15 @@ func (s *Store) Export(dir string) (*ExportStats, error) {
 // If an existing block with the same ID conflicts, the version with the newer updated_at is kept,
 // and the conflict is counted.
 func (s *Store) Import(dir string) (*ImportStats, error) {
+	return s.ImportWithOptions(dir, ImportOptions{})
+}
+
+// ImportWithOptions imports the markdown files of dir; with
+// ImportOptions.DryRun nothing is written and the stats describe what an import
+// would do. Either way the run reports hand-edited files: a file whose content
+// differs from the stored block while its updated_at did not move forward is
+// not silently skipped, it is listed in ImportStats.HandEditedFiles.
+func (s *Store) ImportWithOptions(dir string, opts ImportOptions) (*ImportStats, error) {
 	fi, err := os.Stat(dir)
 	if err != nil {
 		return nil, fmt.Errorf("reading import directory %s: %w", dir, err)
@@ -489,7 +732,11 @@ func (s *Store) Import(dir string) (*ImportStats, error) {
 		return nil, fmt.Errorf("import path is not a directory: %s", dir)
 	}
 
-	stats := &ImportStats{}
+	stats := &ImportStats{DryRun: opts.DryRun}
+	current := opts.CurrentScope
+	if current == "" && !opts.DryRun {
+		current = DetectRepoScope()
+	}
 
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -507,7 +754,8 @@ func (s *Store) Import(dir string) (*ImportStats, error) {
 	}
 	sort.Strings(blockFiles)
 
-	var incomingBlocks []*Block
+	type incoming = incomingBlock
+	var blocks []incomingBlock
 	for _, fpath := range blockFiles {
 		data, err := os.ReadFile(fpath)
 		if err != nil {
@@ -519,7 +767,7 @@ func (s *Store) Import(dir string) (*ImportStats, error) {
 		}
 		// Import is a scope write path: canonicalize front-matter scopes.
 		normalizeBlockScopes(b)
-		incomingBlocks = append(incomingBlocks, b)
+		blocks = append(blocks, incoming{file: fpath, block: b})
 		stats.BlocksTotal++
 	}
 
@@ -553,8 +801,16 @@ func (s *Store) Import(dir string) (*ImportStats, error) {
 		}
 	}
 
+	if opts.DryRun {
+		if err := s.planImport(blocks, incomingSummaries, stats); err != nil {
+			return nil, err
+		}
+		return stats, nil
+	}
+
 	// 1. Apply short-term blocks in-memory
-	for _, b := range incomingBlocks {
+	for _, in := range blocks {
+		b := in.block
 		if b.Tier != TierShort {
 			continue
 		}
@@ -565,27 +821,23 @@ func (s *Store) Import(dir string) (*ImportStats, error) {
 				break
 			}
 		}
-		if existing == nil {
+		switch classifyImport(existing, b, in.file, stats) {
+		case decisionAdd:
 			s.shortTerm = append(s.shortTerm, *b)
 			stats.BlocksImported++
-		} else {
-			if blocksEqual(existing, b) {
-				stats.BlocksUnchanged++
-			} else {
-				stats.Conflicts++
-				if b.UpdatedAt.After(existing.UpdatedAt) {
-					*existing = *b
-					stats.BlocksUpdated++
-				} else {
-					stats.BlocksUnchanged++
-				}
-			}
+		case decisionUpdate:
+			*existing = *b
+			stats.BlocksUpdated++
+		default:
+			stats.BlocksUnchanged++
 		}
 	}
 
 	// 2. Apply persisted blocks and summaries to SQLite inside writeTx
+	var aliased map[string]bool
 	err = s.writeTx(func(tx *sql.Tx) error {
-		for _, b := range incomingBlocks {
+		for _, in := range blocks {
+			b := in.block
 			if b.Tier == TierShort {
 				continue
 			}
@@ -593,7 +845,8 @@ func (s *Store) Import(dir string) (*ImportStats, error) {
 			if err != nil {
 				return fmt.Errorf("reading existing block %s: %w", b.ID, err)
 			}
-			if existing == nil {
+			switch classifyImport(existing, b, in.file, stats) {
+			case decisionAdd:
 				seq, err = insertBlockTx(tx, b)
 				if err != nil {
 					return err
@@ -602,23 +855,16 @@ func (s *Store) Import(dir string) (*ImportStats, error) {
 					return err
 				}
 				stats.BlocksImported++
-			} else {
-				if blocksEqual(existing, b) {
-					stats.BlocksUnchanged++
-				} else {
-					stats.Conflicts++
-					if b.UpdatedAt.After(existing.UpdatedAt) {
-						if err := updateBlockTx(tx, b); err != nil {
-							return err
-						}
-						if err := refreshLexTx(tx, seq, s.lexTokens(b)); err != nil {
-							return err
-						}
-						stats.BlocksUpdated++
-					} else {
-						stats.BlocksUnchanged++
-					}
+			case decisionUpdate:
+				if err := updateBlockTx(tx, b); err != nil {
+					return err
 				}
+				if err := refreshLexTx(tx, seq, s.lexTokens(b)); err != nil {
+					return err
+				}
+				stats.BlocksUpdated++
+			default:
+				stats.BlocksUnchanged++
 			}
 		}
 
@@ -635,11 +881,136 @@ func (s *Store) Import(dir string) (*ImportStats, error) {
 			stats.SummariesImported++
 		}
 
-		return nil
+		var err error
+		aliased, err = registerImportedLegacyScopesTx(tx, blocks, current, s.legacyScopes)
+		return err
 	})
 	if err != nil {
 		return nil, fmt.Errorf("importing into memory database: %w", err)
 	}
+	if aliased != nil {
+		s.legacyScopes = aliased
+	}
 
 	return stats, nil
+}
+
+// incomingBlock is one parsed markdown block file together with the file it
+// came from, so import errors and hand-edit reports can name the file.
+type incomingBlock struct {
+	file  string
+	block *Block
+}
+
+// importDecision is what should happen to one incoming block.
+type importDecision int
+
+const (
+	decisionAdd importDecision = iota
+	decisionUpdate
+	decisionUnchanged
+)
+
+// classifyImport compares an incoming block with the stored one, accounts for
+// the counters that do not depend on writing (Conflicts, HandEdited) and says
+// whether the caller must insert, update or leave the block alone.
+//
+// A file that differs from the stored block while its updated_at did not move
+// forward is a hand-edited export: importing it would throw away the user's
+// edit, so it is reported instead of being counted as a plain no-op.
+func classifyImport(existing, incoming *Block, file string, stats *ImportStats) importDecision {
+	if existing == nil {
+		return decisionAdd
+	}
+	if blocksEqual(existing, incoming) {
+		return decisionUnchanged
+	}
+	stats.Conflicts++
+	if incoming.UpdatedAt.After(existing.UpdatedAt) {
+		return decisionUpdate
+	}
+	if incoming.Content != existing.Content {
+		stats.HandEdited++
+		stats.HandEditedFiles = append(stats.HandEditedFiles, filepath.Base(file))
+	}
+	return decisionUnchanged
+}
+
+// planImport runs the same comparison as an import against a read-only view of
+// the store, so --dry-run reports exactly what a real run would change without
+// writing anything.
+func (s *Store) planImport(blocks []incomingBlock, summaries []*Summary, stats *ImportStats) error {
+	for _, in := range blocks {
+		b := in.block
+		var existing *Block
+		if b.Tier == TierShort {
+			for i := range s.shortTerm {
+				if s.shortTerm[i].ID == b.ID {
+					existing = &s.shortTerm[i]
+					break
+				}
+			}
+		} else {
+			stored, _, err := getBlockTx(s.reader, b.ID)
+			if err != nil {
+				return fmt.Errorf("reading existing block %s: %w", b.ID, err)
+			}
+			existing = stored
+		}
+		switch classifyImport(existing, b, in.file, stats) {
+		case decisionAdd:
+			stats.BlocksImported++
+		case decisionUpdate:
+			stats.BlocksUpdated++
+		default:
+			stats.BlocksUnchanged++
+		}
+	}
+	// Summaries are upserted unconditionally, so every summary file counts as
+	// imported in a preview as well as in a real run.
+	stats.SummariesImported += len(summaries)
+	return nil
+}
+
+// registerImportedLegacyScopesTx records, in the legacy-alias ledger, the bare
+// scope name of the current directory when the imported blocks carry it. It
+// returns the new alias set, or nil when nothing changed. The change commits
+// with the import, so a failed import leaves the ledger untouched.
+func registerImportedLegacyScopesTx(tx *sql.Tx, blocks []incomingBlock, current string, have map[string]bool) (map[string]bool, error) {
+	base, ok := legacyAliasScope(current)
+	if !ok || have[base] {
+		return nil, nil
+	}
+	found := false
+	for _, in := range blocks {
+		if in.block.Scope == base {
+			found = true
+			break
+		}
+	}
+	if !found {
+		return nil, nil
+	}
+	merged := map[string]bool{base: true}
+	for n := range have {
+		merged[n] = true
+	}
+	names := make([]string, 0, len(merged))
+	for n := range merged {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	data, err := json.Marshal(names)
+	if err != nil {
+		return nil, fmt.Errorf("encoding legacy scope names: %w", err)
+	}
+	if _, err := tx.Exec(`INSERT INTO memory_meta (key, value) VALUES (?, ?)
+		ON CONFLICT(key) DO UPDATE SET value = excluded.value`, scopeLegacyNamesKey, string(data)); err != nil {
+		return nil, fmt.Errorf("recording imported legacy scope name: %w", err)
+	}
+	if _, err := tx.Exec(`INSERT INTO memory_meta (key, value) VALUES (?, '1')
+		ON CONFLICT(key) DO UPDATE SET value = '1'`, scopeCollisionMigration); err != nil {
+		return nil, fmt.Errorf("recording scope collision migration: %w", err)
+	}
+	return merged, nil
 }

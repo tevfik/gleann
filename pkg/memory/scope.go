@@ -9,9 +9,28 @@ import (
 	"strings"
 )
 
+// Collision-safe scope prefixes introduced in v1.22 (finding H7).
+//
+// Before v1.22 a git repository without an origin remote scoped its memory to
+// the bare toplevel basename and a plain directory to its own basename, so
+// /tmp/app (not a repository) and /work/app (a remote-less clone) shared one
+// scope named "app" and each saw the other's memory. The prefixes plus a hash
+// of the canonical path make the two cases distinguishable:
+//
+//	"local:<base>-<8hex>"  git repository without a remote, hashed toplevel path
+//	"dir:<base>-<8hex>"    plain directory, hashed working-directory path
+//
+// Remote-backed repositories keep the unchanged normalized remote
+// ("github.com/org/repo").
+const (
+	localScopePrefix = "local:"
+	dirScopePrefix   = "dir:"
+)
+
 // DetectRepoScope returns the memory scope of the current working directory:
-// the normalized git remote origin, else the repository root name, else the
-// working directory basename, else "global".
+// the normalized git remote origin, else a collision-safe scoped name for a
+// remote-less repository ("local:<base>-<hash>"), else one for a plain
+// directory ("dir:<base>-<hash>"), else "global".
 //
 // It is the default scope of the MCP memory tools and of the memory that
 // gleann ask, chat and the TUI inject. The working directory is read on every
@@ -35,6 +54,10 @@ func DetectRepoScopeAt(dir string) string {
 	if abs, err := filepath.Abs(dir); err == nil {
 		dir = abs
 	}
+	// Resolve symlinks so a symlinked path and the real path hash to one scope.
+	if real, err := filepath.EvalSymlinks(dir); err == nil {
+		dir = real
+	}
 
 	// 1. The git remote origin is the most stable, portable scope.
 	if out, err := gitOutput(dir, "config", "--get", "remote.origin.url"); err == nil {
@@ -42,17 +65,54 @@ func DetectRepoScopeAt(dir string) string {
 			return NormalizeGitRemote(raw)
 		}
 	}
-	// 2. A repository without a remote is identified by its root name.
+	// 2. A repository without a remote is identified by its root path: the
+	// "local:" prefix keeps it apart from plain directories and the path hash
+	// apart from other repositories that share its folder name (finding H7).
 	if out, err := gitOutput(dir, "rev-parse", "--show-toplevel"); err == nil {
 		if top := strings.TrimSpace(string(out)); top != "" {
-			return filepath.Base(top)
+			if real, err := filepath.EvalSymlinks(top); err == nil {
+				top = real
+			}
+			return prefixedScope(localScopePrefix, top)
 		}
 	}
-	// 3. A plain directory falls back to its own name.
-	if base := filepath.Base(dir); base != "" && base != "." && base != string(filepath.Separator) {
-		return base
+	// 3. A plain directory is identified by its own path ("dir:" prefix).
+	return prefixedScope(dirScopePrefix, dir)
+}
+
+// prefixedScope builds "<prefix><basename>-<hash>" for path, where hash is
+// eight hex digits of the canonical (cleaned, absolute) path. Two directories
+// with the same folder name therefore always get different scopes, and the
+// prefix separates remote-less repositories from plain directories. A path with
+// no usable basename (the filesystem root) has no scope: "global".
+func prefixedScope(prefix, path string) string {
+	base := filepath.Base(path)
+	if base == "" || base == "." || base == string(filepath.Separator) {
+		return "global"
 	}
-	return "global"
+	return prefix + base + "-" + keyHash(filepath.Clean(path))
+}
+
+// legacyAliasScope is the pre-v1.22 bare-basename scope a collision-safe scope
+// was derived from: "local:app-1a2b3c4d" and "dir:app-1a2b3c4d" both come from
+// a directory called "app". It is only used to keep blocks stored under that
+// old name readable (see migrateLegacyScopeNames); remote-backed and explicitly
+// scoped names have no alias.
+func legacyAliasScope(scope string) (string, bool) {
+	var rest string
+	switch {
+	case strings.HasPrefix(scope, localScopePrefix):
+		rest = strings.TrimPrefix(scope, localScopePrefix)
+	case strings.HasPrefix(scope, dirScopePrefix):
+		rest = strings.TrimPrefix(scope, dirScopePrefix)
+	default:
+		return "", false
+	}
+	i := strings.LastIndex(rest, "-")
+	if i <= 0 {
+		return "", false
+	}
+	return rest[:i], true
 }
 
 // gitOutput runs git in dir so detection does not depend on the process

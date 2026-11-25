@@ -382,15 +382,27 @@ layer (`scopeAncestors`) so no schema migration is needed.
 view, and the MCP `memory_context`, `memory_search`, `memory_list` and
 `memory_remember` tools default to the current repository's scope. The scope is
 detected from the process working directory: the normalized git remote origin
-(`github.com/org/repo`), else the repository root name, else the directory
-basename, else `"global"` for filesystem roots. Global blocks and path-style
-ancestors stay visible; sibling repositories do not. `gleann memory context`
-without `--scope` does the same (the SessionStart hook installed by
+(`github.com/org/repo`), else a collision-safe name for a repository without a
+remote (`local:<root-name>-<8-hex-path-hash>`), else one for a plain directory
+(`dir:<dir-name>-<8-hex-path-hash>`), else `"global"` for filesystem roots.
+The path hash keeps two folders that share a name (say `/tmp/app` and
+`/work/app`) in separate scopes, and the `local:`/`dir:` prefixes keep a
+remote-less repository apart from a plain directory of the same name. Global
+blocks and path-style ancestors stay visible; sibling repositories do not.
+`gleann memory context` and `gleann memory list` without `--scope` show the
+detected scope plus global (the SessionStart hook installed by
 `gleann install claude` relies on it, so a session sees only its own
-repository's memory); outside a repository it shows the global blocks and the
-blocks scoped to the directory name. `gleann memory context --scope all` shows
-every scope. `GET /api/blocks/context` without a scope remains global for API
+repository's memory). `--scope all` shows every scope.
+`GET /api/blocks/context` without a scope remains global for API
 compatibility.
+
+Blocks stored before v1.22 under a bare folder name (the old fallback) are
+never rewritten — the store cannot know which directory a bare name came
+from. Instead, the first open after the upgrade records the bare names that
+already existed, and those blocks stay readable from the matching
+`local:`/`dir:` scope of the directory they came from. New writes always use
+the collision-safe scope, and a bare scope created after the upgrade (an
+explicit `--scope app`) is not widened.
 
 ---
 
@@ -426,18 +438,34 @@ The operation works seamlessly through the active `gleann serve` REST endpoint (
 Memory blocks and conversation digests can be exported to and imported from individual Markdown files with YAML front matter:
 
 ```bash
-# Export all memory blocks and summaries to a directory
+# Export memory blocks and summaries to a directory (every scope; the
+# session-scoped short-term blocks and already-expired blocks are skipped)
 gleann memory export --dir ./memory-backup
+
+# Export one repository's blocks (plus global and its path ancestors)
+gleann memory export --dir ./memory-backup --scope repo
+
+# Full lossless dump, including short-term and expired blocks
+gleann memory export --dir ./memory-backup --include-short --include-expired
+
+# Preview an import without writing anything
+gleann memory import --dir ./memory-backup --dry-run
 
 # Import memory blocks and summaries from a directory
 gleann memory import --dir ./memory-backup
 ```
 
+Each export run records the files it wrote in a hidden manifest
+(`.gleann-export-manifest.json`) inside the export directory, per scope. A
+later run for the same scope deletes the files it no longer writes (blocks
+forgotten in the meantime) and touches nothing else, so a shared backup
+folder keeps your own files.
+
 ### File Structure & Front Matter
 
 - **Memory Blocks**: Each memory block is saved as an individual `.md` file in `--dir` with a deterministic, Windows-safe filename (`<id>-<hash>.md`: the readable ID, sanitized and shortened to 64 characters, plus 8 hex characters of a hash of the exact ID, so IDs that differ only in case or in characters Windows forbids never share a file). The YAML front matter carries every Block field (`id`, `tier`, `label`, `source`, `tags`, `metadata`, `created_at`, `updated_at`, `expires_at`, `char_limit`, `scope`, `repo`, `paths`, `symbols`, `commit_hash`, `suspect`, `stale_reason`, `confirms`, `conflicts`, `access_count`, `last_accessed_at`), while the markdown body holds the block content.
 - **Conversation Summaries**: Stored in a `summaries/` subdirectory within `--dir` (`summaries/<timestamp>_<conv_id>-<hash>.md`), with summary metadata in YAML front matter and the summary text as body.
-- **Lossless & Idempotent**: Re-importing unchanged files changes nothing. When an existing block with the same ID conflicts, the version with the newer `updated_at` timestamp is kept, and the conflict count is reported.
+- **Lossless & Idempotent**: Re-importing unchanged files changes nothing. When an existing block with the same ID conflicts, the version with the newer `updated_at` timestamp is kept, and the conflict count is reported. `--dry-run` previews the same outcome without writing. A file edited by hand whose `updated_at` did not move forward is kept as stored and reported by name, so the edit is not silently lost — raise `updated_at` in the front matter (or re-export) to import it.
 
 ---
 
