@@ -66,8 +66,8 @@ func TestDownloadFailures(t *testing.T) {
 			if _, err := os.Stat(e.Path()); err == nil {
 				t.Error("a failed download left the model under its real name")
 			}
-			if _, err := os.Stat(e.Path() + ".part"); err == nil {
-				t.Error("a failed download left a .part file")
+			if m, _ := filepath.Glob(filepath.Join(Dir(), "*.part")); len(m) != 0 {
+				t.Errorf("a failed download left temp files: %v", m)
 			}
 		})
 	}
@@ -131,17 +131,10 @@ func TestDownloadCannotCreatePartFile(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte("x")) }))
 	defer srv.Close()
 	e := Entry{Name: "m", File: "m.gguf", URL: srv.URL}
-	// A models dir that cannot be written makes creating the temp file fail.
-	if os.Geteuid() == 0 {
-		t.Skip("root ignores directory permissions")
-	}
-	if err := os.MkdirAll(Dir(), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Chmod(Dir(), 0o555); err != nil {
-		t.Fatal(err)
-	}
-	defer os.Chmod(Dir(), 0o755)
+	// Creating the temp file fails (injected, so it holds on every OS).
+	orig := createTemp
+	createTemp = func(string, string) (*os.File, error) { return nil, os.ErrPermission }
+	defer func() { createTemp = orig }()
 	if err := Download(context.Background(), e, nil); err == nil {
 		t.Fatal("want an error")
 	}

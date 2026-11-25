@@ -505,3 +505,56 @@ func TestAddNewDir_RecordsExistingFiles(t *testing.T) {
 		t.Errorf("nested new directory not watched: %v", ai.watcher.WatchList())
 	}
 }
+
+// End to end behind a symlinked root (the macOS /var -> /private/var and
+// Windows 8.3 situation): a new file syncs, a new subdirectory is watched and
+// the files created in it sync too, a deleted subtree's late event still maps
+// to the index, and the recorded paths stay under the root as given.
+func TestEventLoop_SymlinkedRootSyncsNewFilesAndWatchesNewDirs(t *testing.T) {
+	base := t.TempDir()
+	real := filepath.Join(base, "real")
+	mkdirs(t, real)
+	link := filepath.Join(base, "link")
+	if err := os.Symlink(real, link); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	ai := newTestIndexer(t, time.Hour)
+	if err := ai.Watch("l", link); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	ai.Start(ctx)
+
+	wait := func(cond func() bool) bool {
+		deadline := time.Now().Add(5 * time.Second)
+		for !cond() && time.Now().Before(deadline) {
+			time.Sleep(20 * time.Millisecond)
+		}
+		return cond()
+	}
+	file := filepath.Join(link, "a.md")
+	writeFile(t, file, "x")
+	if !wait(func() bool { return slices.Contains(pendingFor(ai, "l"), file) }) {
+		t.Fatalf("a new file behind a symlinked root was not recorded: %v", pendingFor(ai, "l"))
+	}
+
+	sub := filepath.Join(link, "sub")
+	mkdirs(t, sub)
+	csub := filepath.Join(canonicalDir(real), "sub")
+	if !wait(func() bool { return slices.Contains(ai.watcher.WatchList(), csub) }) {
+		t.Fatalf("a new subdirectory behind a symlinked root was not watched: %v", ai.watcher.WatchList())
+	}
+	nested := filepath.Join(sub, "b.md")
+	writeFile(t, nested, "y")
+	if !wait(func() bool { return slices.Contains(pendingFor(ai, "l"), nested) }) {
+		t.Fatalf("a file in the new subdirectory was not recorded: %v", pendingFor(ai, "l"))
+	}
+
+	// An event for a path whose directory is already gone still resolves.
+	gone := filepath.Join(link, "deleted-dir", "c.md")
+	ai.recordChange(gone) // spelled through the link, directory missing
+	if !slices.Contains(pendingFor(ai, "l"), gone) {
+		t.Errorf("event under a removed directory not mapped: %v", pendingFor(ai, "l"))
+	}
+}

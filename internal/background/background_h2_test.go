@@ -41,7 +41,11 @@ func TestWatchSkipsHiddenAndBuildDirs(t *testing.T) {
 	}
 	got := ai.watcher.WatchList()
 	slices.Sort(got)
-	want := []string{root, filepath.Join(root, "src"), filepath.Join(root, "src", "pkg")}
+	// The watcher registers canonical paths (symlinks and 8.3 names resolved),
+	// so expectations are canonical too (/private/var on macOS, long names on
+	// Windows).
+	croot := canonicalDir(root)
+	want := []string{croot, filepath.Join(croot, "src"), filepath.Join(croot, "src", "pkg")}
 	slices.Sort(want)
 	if !slices.Equal(got, want) {
 		t.Fatalf("watched %q, want %q", got, want)
@@ -111,12 +115,13 @@ func TestEventLoopWatchesNewDirectoriesAndLogsErrors(t *testing.T) {
 	if err := os.Mkdir(sub, 0o755); err != nil {
 		t.Fatal(err)
 	}
+	csub := filepath.Join(canonicalDir(root), "newdir")
 	deadline := time.Now().Add(5 * time.Second)
-	for !slices.Contains(ai.watcher.WatchList(), sub) && time.Now().Before(deadline) {
+	for !slices.Contains(ai.watcher.WatchList(), csub) && time.Now().Before(deadline) {
 		time.Sleep(20 * time.Millisecond)
 	}
-	if !slices.Contains(ai.watcher.WatchList(), sub) {
-		t.Fatalf("new directory %s was not added to the watch list", sub)
+	if !slices.Contains(ai.watcher.WatchList(), csub) {
+		t.Fatalf("new directory %s was not added to the watch list %v", csub, ai.watcher.WatchList())
 	}
 	// Files in the new directory are now picked up.
 	file := filepath.Join(sub, "a.txt")

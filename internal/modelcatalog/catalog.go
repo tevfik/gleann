@@ -105,6 +105,11 @@ func (e Entry) Installed() bool {
 	return err == nil && (e.finalBytes() == 0 || fi.Size() == e.finalBytes())
 }
 
+// createTemp creates the unique temp file of a download; a seam so tests can
+// make it fail on every OS (directory permissions do not block file creation
+// on Windows).
+var createTemp = os.CreateTemp
+
 // client has no overall timeout (multi-GB files) but bounds connection setup.
 var client = &http.Client{Transport: &http.Transport{
 	Proxy:                 http.ProxyFromEnvironment,
@@ -144,7 +149,7 @@ func Download(ctx context.Context, e Entry, progress func(done, total int64)) er
 
 	// A unique temp name per download: two processes fetching the same model
 	// (serve and a CLI command) must not truncate each other's partial file.
-	f, err := os.CreateTemp(Dir(), e.File+".*.part")
+	f, err := createTemp(Dir(), e.File+".*.part")
 	if err != nil {
 		return err
 	}
@@ -177,6 +182,11 @@ func Download(ctx context.Context, e Entry, progress func(done, total int64)) er
 	}
 	if err := os.Rename(part, e.Path()); err != nil {
 		_ = os.Remove(part)
+		// Windows refuses to replace a file another process just opened; a
+		// complete, verified model that is there anyway is a success.
+		if e.Installed() && sameChecksum(e) {
+			return nil
+		}
 		return err
 	}
 	return nil

@@ -135,20 +135,32 @@ func canonicalDir(p string) string {
 	return abs
 }
 
-// canonicalLeaf is canonicalDir for an event path: only the parent directory
-// is resolved, never the last element. A symlinked file inside a watched
-// directory stays inside it (a build reads it through its link name), and a
-// file that no longer exists still resolves.
+// canonicalLeaf is canonicalDir for an event path: only the directory part is
+// resolved, never the last element. A symlinked file inside a watched
+// directory stays inside it (a build reads it through its link name). A path
+// whose directory no longer exists (a deleted or moved subtree) resolves its
+// nearest existing ancestor and re-appends the rest, so it still lands in the
+// same canonical form as the watched roots (symlinks, macOS /private/var,
+// Windows 8.3 names). The match itself is filepath.Rel, which compares
+// case-insensitively on Windows.
 func canonicalLeaf(p string) string {
 	abs, err := filepath.Abs(p)
 	if err != nil {
 		abs = p
 	}
 	abs = filepath.Clean(abs)
-	if r, err := filepath.EvalSymlinks(filepath.Dir(abs)); err == nil {
-		return filepath.Join(r, filepath.Base(abs))
+	dir, tail := filepath.Dir(abs), filepath.Base(abs)
+	for {
+		if r, err := filepath.EvalSymlinks(dir); err == nil {
+			return filepath.Join(r, tail)
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return abs
+		}
+		tail = filepath.Join(filepath.Base(dir), tail)
+		dir = parent
 	}
-	return abs
 }
 
 // within reports whether p is root or lies inside it, comparing on a path
