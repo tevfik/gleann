@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -85,15 +86,9 @@ func TestDetectRepoScopeAt(t *testing.T) {
 			}
 			want := tc.remote
 			if tc.prefix != "" {
-				// git reports the symlink-resolved toplevel; a plain
-				// directory is hashed as given.
-				hashPath := dir
-				if tc.init {
-					if resolved, err := filepath.EvalSymlinks(dir); err == nil {
-						hashPath = resolved
-					}
-				}
-				want = tc.prefix + filepath.Base(dir) + "-" + keyHash(hashPath)
+				// The expected hash comes from the canonical path (symlinks and
+				// Windows 8.3 names resolved), never from the raw t.TempDir().
+				want = wantPrefixedScope(tc.prefix, dir)
 			} else if want != "" {
 				want = NormalizeGitRemote(want)
 			}
@@ -305,4 +300,20 @@ func TestInjectRepoContextErr_ReportsBuildFailureAndKeepsContext(t *testing.T) {
 	if err := InjectRepoContextErr(nil, nil); err != nil {
 		t.Errorf("nil inputs: %v", err)
 	}
+}
+
+// wantPrefixedScope computes the expected "<prefix><base>-<hash>" scope of dir
+// from its EvalSymlinks-resolved path, independently of DetectRepoScopeAt.
+func wantPrefixedScope(prefix, dir string) string {
+	if abs, err := filepath.Abs(dir); err == nil {
+		dir = abs
+	}
+	if real, err := filepath.EvalSymlinks(dir); err == nil {
+		dir = real
+	}
+	key := filepath.ToSlash(filepath.Clean(dir))
+	if runtime.GOOS == "windows" {
+		key = strings.ToLower(key)
+	}
+	return prefix + filepath.Base(dir) + "-" + keyHash(key)
 }

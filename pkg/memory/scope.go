@@ -4,8 +4,10 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 )
 
@@ -51,13 +53,9 @@ func DetectRepoScopeAt(dir string) string {
 		}
 		dir = wd
 	}
-	if abs, err := filepath.Abs(dir); err == nil {
-		dir = abs
-	}
-	// Resolve symlinks so a symlinked path and the real path hash to one scope.
-	if real, err := filepath.EvalSymlinks(dir); err == nil {
-		dir = real
-	}
+	// Resolve symlinks (and Windows 8.3 short names) so every spelling of one
+	// directory hashes to one scope.
+	dir = canonicalDir(dir)
 
 	// 1. The git remote origin is the most stable, portable scope.
 	if out, err := gitOutput(dir, "config", "--get", "remote.origin.url"); err == nil {
@@ -70,9 +68,6 @@ func DetectRepoScopeAt(dir string) string {
 	// apart from other repositories that share its folder name (finding H7).
 	if out, err := gitOutput(dir, "rev-parse", "--show-toplevel"); err == nil {
 		if top := strings.TrimSpace(string(out)); top != "" {
-			if real, err := filepath.EvalSymlinks(top); err == nil {
-				top = real
-			}
 			return prefixedScope(localScopePrefix, top)
 		}
 	}
@@ -86,11 +81,48 @@ func DetectRepoScopeAt(dir string) string {
 // prefix separates remote-less repositories from plain directories. A path with
 // no usable basename (the filesystem root) has no scope: "global".
 func prefixedScope(prefix, path string) string {
+	path = canonicalDir(path)
 	base := filepath.Base(path)
 	if base == "" || base == "." || base == string(filepath.Separator) {
 		return "global"
 	}
-	return prefix + base + "-" + keyHash(filepath.Clean(path))
+	return prefix + base + "-" + keyHash(pathHashKey(runtime.GOOS, path))
+}
+
+// canonicalDir returns the absolute, symlink-resolved, cleaned form of p. On
+// Windows EvalSymlinks also expands 8.3 short names (RUNNER~1) and, as does
+// macOS, resolves links such as /var -> /private/var, so two spellings of one
+// directory canonicalise to the same string. A path that cannot be resolved
+// (it does not exist) keeps its absolute, cleaned form.
+func canonicalDir(p string) string {
+	if abs, err := filepath.Abs(p); err == nil {
+		p = abs
+	}
+	if real, err := filepath.EvalSymlinks(p); err == nil {
+		p = real
+	}
+	return filepath.Clean(p)
+}
+
+// pathHashKey turns a canonical directory path into the string that is hashed
+// for a scope, so the hash depends neither on the separator style nor, where
+// the filesystem ignores case, on letter case.
+//
+//   - windows: separators become "/" and the whole path is lower-cased. NTFS is
+//     case-insensitive, so C:\Users\X and c:\users\x are one directory.
+//   - darwin and others: no case folding. The default APFS is case-insensitive
+//     but case-sensitive volumes exist, and EvalSymlinks does not canonicalise
+//     case there, so folding could merge two distinct directories; a rare
+//     case-only respelling on darwin gets a separate scope instead (safe).
+//   - separators are only rewritten on Windows: a backslash is a legal file
+//     name character elsewhere.
+//
+// goos is a parameter so tests can exercise every rule on any host.
+func pathHashKey(goos, p string) string {
+	if goos == "windows" {
+		p = strings.ToLower(strings.ReplaceAll(p, `\`, "/"))
+	}
+	return path.Clean(p)
 }
 
 // legacyAliasScope is the pre-v1.22 bare-basename scope a collision-safe scope

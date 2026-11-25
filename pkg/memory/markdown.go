@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -548,7 +549,7 @@ func (s *Store) ExportWithOptions(dir string, opts ExportOptions) (*ExportStats,
 			if err := os.WriteFile(outPath, md, 0o644); err != nil {
 				return nil, fmt.Errorf("writing summary file %s: %w", outPath, err)
 			}
-			written = append(written, filepath.Join("summaries", fname))
+			written = append(written, path.Join("summaries", fname))
 			stats.Summaries++
 		}
 	}
@@ -602,6 +603,9 @@ func (s *Store) applyExportManifest(dir, scope string, written []string) (int, e
 
 	pruned := 0
 	for _, name := range manifest.Files[key] {
+		// Manifests are stored with forward slashes; tolerate backslash entries
+		// an older Windows run may have written.
+		name = filepath.ToSlash(name)
 		if keep[name] || name == exportManifestName || !safeExportRelPath(name) || !isExportedFileName(name) {
 			continue
 		}
@@ -617,7 +621,11 @@ func (s *Store) applyExportManifest(dir, scope string, written []string) (int, e
 	if manifest.Files == nil {
 		manifest.Files = map[string][]string{}
 	}
-	sorted := append([]string(nil), written...)
+	// The manifest always records forward-slash relative paths, on every OS.
+	sorted := make([]string, len(written))
+	for i, w := range written {
+		sorted[i] = filepath.ToSlash(w)
+	}
 	sort.Strings(sorted)
 	manifest.Files[key] = sorted
 	manifest.Version = exportManifestVersion
